@@ -211,6 +211,39 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC on Kotlin/Native: an `EndpointCore` whose construction fails (a refused key, a loop group's keys already
+  released) frees the stateless buffer, the reset key, the address-token keys and the admission queue it had made
+  instead of leaking them, and `EndpointCore.close` runs every release even when one of them throws.
+- QUIC: a `QuicEndpoint.bind` that fails after opening its sockets (the endpoint loop cannot be built or started) closes
+  the main and the preferred-address sockets instead of leaving them bound, and the loop frees the endpoint core and the
+  datagram batches it had made. A loop group that fails to build or start likewise closes every loop's sockets and frees
+  the loops already built.
+- QUIC: closing an endpoint frees its endpoint core, datagram batches and remaining sockets even when one release in
+  the sequence throws (a socket whose close fails); before, the rest was skipped and leaked. The first failure is still
+  counted as the loop's uncaught failure.
+- QUIC on Kotlin/Native: a `PacketBatch` whose slot allocation fails part-way frees the slots it had already allocated,
+  and its `close` frees every slot even when one of them fails to close.
+- QUIC server: the Retry token key is freed when making the NEW_TOKEN key fails while a server endpoint is set up,
+  instead of leaking.
+- HTTP/3: a peer that sends `H3_DATAGRAM=1` with a transport `max_datagram_frame_size` of 2 is no longer refused with
+  `H3_SETTINGS_ERROR`; the check asks whether the peer advertised the parameter, not whether a non-empty datagram fits.
+- QUIC datagrams: a peer whose `max_datagram_frame_size` is small (2 to 34 bytes) is no longer reported as not
+  supporting datagrams. The 32 bytes kept free for an ACK beside a packet-sized datagram were taken from the peer's limit
+  too, so `maxDatagramSize` came out 0 or below, nothing was ever sent and `sendDatagram` failed with
+  `PeerDoesNotSupport`, although RFC 9221 section 3 makes any value above 0 support. The payload limit is now what the
+  peer's frame size allows (8 bytes for a 10-byte limit, an empty datagram for 2), the reserve only shrinking the
+  packet's bound; a peer limit below the packet's is no longer cut by 32 bytes either (497 instead of 465 bytes for a
+  500-byte limit). A limit of 1, which no DATAGRAM frame with a Length field fits, still counts as no support.
+- QUIC BBR (experimental): after persistent congestion the window from before comes back only once the losses are
+  repaired (draft-ietf-ccwg-bbr-06 section 5.6.4.4, "by repairing all losses"): a packet sent since must be acknowledged
+  and every packet declared lost settled, acknowledged late or kept past the persistent congestion period. Before, the
+  first acknowledgement of a newer packet restored it about one round trip after the congestion, while most of the lost
+  data was still being resent.
+- QUIC: a local close puts its CONNECTION_CLOSE on the wire sooner. The endpoint loop now sends the frame before it fails
+  the connection's streams, wakes its waiters and calls the listener's `onClosed`, and an endpoint loads the close
+  exceptions' classes once when it starts instead of on the first close: on a cold JVM, close() to the first datagram
+  went from about 8 ms to 1.3-2.7 ms (in-memory sockets, local measurement), which narrows the window in which a peer's
+  packet can still reach an open connection (the interop closing-challenge race).
 - ksl: `ksl_ctx_set_ciphers` holds a TLS 1.2 list to the RFC 10015 profile itself: a list with any suite that is not
   ECDHE with RSA or ECDSA and an AEAD of 128 bits or more (static RSA, FFDHE, CBC, CCM_8, anonymous, PSK) is refused
   with `KSL_E_BAD_ARG`, as the version bounds are. Kotlin never passed one; the C ABI accepted any. A refused list also
@@ -453,39 +486,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   placeholder and the connection ID registry's key scratch were allocated outside the heap and never freed), which grew
   RSS by about 3 MB per hour under the soak's churn. `EndpointCore.close` also frees the endpoint's own buffers and keys
   when a connection's release throws.
-- QUIC on Kotlin/Native: an `EndpointCore` whose construction fails (a refused key, a loop group's keys already
-  released) frees the stateless buffer, the reset key, the address-token keys and the admission queue it had made
-  instead of leaking them, and `EndpointCore.close` runs every release even when one of them throws.
-- QUIC: a `QuicEndpoint.bind` that fails after opening its sockets (the endpoint loop cannot be built or started) closes
-  the main and the preferred-address sockets instead of leaving them bound, and the loop frees the endpoint core and the
-  datagram batches it had made. A loop group that fails to build or start likewise closes every loop's sockets and frees
-  the loops already built.
-- QUIC: closing an endpoint frees its endpoint core, datagram batches and remaining sockets even when one release in
-  the sequence throws (a socket whose close fails); before, the rest was skipped and leaked. The first failure is still
-  counted as the loop's uncaught failure.
-- QUIC on Kotlin/Native: a `PacketBatch` whose slot allocation fails part-way frees the slots it had already allocated,
-  and its `close` frees every slot even when one of them fails to close.
-- QUIC server: the Retry token key is freed when making the NEW_TOKEN key fails while a server endpoint is set up,
-  instead of leaking.
-- HTTP/3: a peer that sends `H3_DATAGRAM=1` with a transport `max_datagram_frame_size` of 2 is no longer refused with
-  `H3_SETTINGS_ERROR`; the check asks whether the peer advertised the parameter, not whether a non-empty datagram fits.
-- QUIC datagrams: a peer whose `max_datagram_frame_size` is small (2 to 34 bytes) is no longer reported as not
-  supporting datagrams. The 32 bytes kept free for an ACK beside a packet-sized datagram were taken from the peer's limit
-  too, so `maxDatagramSize` came out 0 or below, nothing was ever sent and `sendDatagram` failed with
-  `PeerDoesNotSupport`, although RFC 9221 section 3 makes any value above 0 support. The payload limit is now what the
-  peer's frame size allows (8 bytes for a 10-byte limit, an empty datagram for 2), the reserve only shrinking the
-  packet's bound; a peer limit below the packet's is no longer cut by 32 bytes either (497 instead of 465 bytes for a
-  500-byte limit). A limit of 1, which no DATAGRAM frame with a Length field fits, still counts as no support.
-- QUIC BBR (experimental): after persistent congestion the window from before comes back only once the losses are
-  repaired (draft-ietf-ccwg-bbr-06 section 5.6.4.4, "by repairing all losses"): a packet sent since must be acknowledged
-  and every packet declared lost settled, acknowledged late or kept past the persistent congestion period. Before, the
-  first acknowledgement of a newer packet restored it about one round trip after the congestion, while most of the lost
-  data was still being resent.
-- QUIC: a local close puts its CONNECTION_CLOSE on the wire sooner. The endpoint loop now sends the frame before it fails
-  the connection's streams, wakes its waiters and calls the listener's `onClosed`, and an endpoint loads the close
-  exceptions' classes once when it starts instead of on the first close: on a cold JVM, close() to the first datagram
-  went from about 8 ms to 1.3-2.7 ms (in-memory sockets, local measurement), which narrows the window in which a peer's
-  packet can still reach an open connection (the interop closing-challenge race).
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the
