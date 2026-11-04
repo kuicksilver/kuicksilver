@@ -20,6 +20,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connections keep theirs. A closed identity or an expired leaf is refused and the old identity stays; the replaced one
   is closed and its native key freed once no connection uses it. Session tickets issued before a reload still resume
   (and their 0-RTT is still accepted): they do not depend on the certificate.
+- Ktor server: certificate rotation without a restart (`docs/guide/ktor.md`, "Certificate rotation"). A connector's
+  identity (or the configuration's `identity`) may be a `TlsIdentity.Reloadable`: HTTP/1.1 and HTTP/3 handshakes after a
+  `reload` present the new certificate, open connections keep theirs. `EngineMain` watches its PEM files with the new
+  key `kuicksilver.tls.reloadInterval` (experimental `identityReloadInterval`; off by default, at least 1 s): a changed
+  chain is applied once two reads a second apart agree and the key matches; a failure keeps the identity in use, is
+  logged once (never with key material) and retried after 1 s, then twice as long each time up to the interval.
+  `EngineMain` now reads the key file without making a `String` of it, and refuses PEM files above 1 MiB.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,

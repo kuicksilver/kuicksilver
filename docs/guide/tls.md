@@ -74,6 +74,8 @@ freed under them.
   (`SessionTicketConfig.ticketLifetime`) ends. After a key compromise a reload is not enough: restart with new
   `SessionTicketConfig.keys` too, so the old sessions cannot be resumed.
 
+The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](ktor.md#certificate-rotation).
+
 ## Trust
 
 Host names are always checked (RFC 9525) and the check cannot be disabled; it can be redirected with `ExpectedName`
