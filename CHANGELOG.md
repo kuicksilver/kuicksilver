@@ -236,7 +236,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   500-byte limit). A limit of 1, which no DATAGRAM frame with a Length field fits, still counts as no support.
 - QUIC BBR (experimental): after persistent congestion the window from before comes back only once the losses are
   repaired (draft-ietf-ccwg-bbr-06 section 5.6.4.4, "by repairing all losses"): a packet sent since must be acknowledged
-  and every packet declared lost settled, acknowledged late or kept past the persistent congestion period. Before, the
+  and every packet declared lost up to the congestion settled, acknowledged late or kept past the persistent congestion
+  period; losses declared later do not hold it. Before, the
   first acknowledgement of a newer packet restored it about one round trip after the congestion, while most of the lost
   data was still being resent.
 - QUIC: a local close puts its CONNECTION_CLOSE on the wire sooner. The endpoint loop now sends the frame before it fails

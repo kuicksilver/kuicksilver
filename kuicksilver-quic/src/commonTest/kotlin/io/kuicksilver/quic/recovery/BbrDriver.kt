@@ -26,6 +26,7 @@ internal class BbrDriver(
     private var pn = 0L
     private val outstanding = ArrayDeque<SentPacket>()
     private var lostRemembered = 0 // lost packets the "core" still remembers (each later spurious or settled)
+    private val lostWhen = ArrayDeque<TimeMark>() // their declaration times, oldest first
     var ops = 0
         private set
     private var lastState = cc.state
@@ -111,7 +112,7 @@ internal class BbrDriver(
         val spurious = minOf(lostRemembered, (flags ushr 4) and 3)
         repeat(spurious) {
             lostRemembered--
-            cc.onSpuriousLoss(now)
+            cc.onSpuriousLoss(now, lostWhen.removeFirstOrNull() ?: now)
         }
         if (flags and 1 != 0) cc.onEcnCe(now, now)
         // packets 3 or more below the largest acknowledged are lost (RFC 9002 section 6.1.1)
@@ -144,6 +145,7 @@ internal class BbrDriver(
         for (p in lost) {
             cc.onPacketLost(p, now)
             lostRemembered++
+            lostWhen.addLast(now)
             bytes += p.size
         }
         cc.onLoss(now, bytes, lost.last().timeSent, persistent)
@@ -152,7 +154,7 @@ internal class BbrDriver(
     private fun settle(n: Int) {
         repeat(minOf(n, lostRemembered)) {
             lostRemembered--
-            cc.onLossSettled(now)
+            cc.onLossSettled(now, lostWhen.removeFirstOrNull() ?: now)
         }
     }
 

@@ -251,16 +251,18 @@ internal class ConnectionLossListener(
         cc: io.kuicksilver.quic.CongestionController?,
         pathId: Int,
         now: TimeMark,
+        declaredAt: TimeMark,
     ) {
         core.spuriousLosses++
-        (cc as? io.kuicksilver.quic.Bbr)?.onSpuriousLoss(now)
+        (cc as? io.kuicksilver.quic.Bbr)?.onSpuriousLoss(now, declaredAt)
     }
 
     override fun onLossSettled(
         cc: io.kuicksilver.quic.CongestionController?,
         now: TimeMark,
+        declaredAt: TimeMark,
     ) {
-        (cc as? io.kuicksilver.quic.Bbr)?.onLossSettled(now)
+        (cc as? io.kuicksilver.quic.Bbr)?.onLossSettled(now, declaredAt)
     }
 
     override fun onLost(
