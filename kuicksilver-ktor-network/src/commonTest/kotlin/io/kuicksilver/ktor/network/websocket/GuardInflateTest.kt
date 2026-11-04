@@ -10,7 +10,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.ktor.network.WS_RSV1
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.io.EOFException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -88,9 +88,7 @@ class GuardInflateTest {
         inflate: WebSocketInflate = WebSocketInflate(noContextTakeover = false, maxMessageSize = 16L * 1024 * 1024),
         peerMasks: Boolean = false,
         block: suspend (List<Out>) -> Unit,
-    ) = runBlocking {
-        // nothing here waits on time; runTest would also report uncaught exceptions other tests leaked
-
+    ) = runTest {
         val raw = ByteChannel()
         launch {
             raw.writeFully(input)

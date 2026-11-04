@@ -85,6 +85,9 @@ public class TlsSocket private constructor(
     public val negotiatedAlpn: String? get() = tls.negotiatedAlpn
 
     private var attachedWriter: ReaderJob? = null
+
+    /** The application's side of [attachedWriter], as given to [attachForWriting] (closeFromSocketClose). */
+    private var attachedChannel: ByteChannel? = null
     private var closing = false
 
     /**
@@ -152,8 +155,8 @@ public class TlsSocket private constructor(
             }
             tls.output.flushAndClose()
         }.also {
-            attachedWriter =
-                it
+            attachedChannel = channel
+            attachedWriter = it
         }
 
     /**
@@ -177,7 +180,7 @@ public class TlsSocket private constructor(
         launch {
             try {
                 attachedWriter?.let { rj ->
-                    runCatching { rj.channel.flushAndClose() }
+                    runCatching { attachedChannel?.closeFromSocketClose() ?: rj.channel.flushAndClose() }
                     rj.job.join()
                 }
                 tls.shutdown(drainTimeout = bound)
