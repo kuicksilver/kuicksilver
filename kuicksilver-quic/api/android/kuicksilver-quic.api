@@ -901,6 +901,7 @@ public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/A
 	public abstract fun getPathEvents ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun getPaths ()Ljava/util/List;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
+	public fun getPeerSupportsDatagrams ()Z
 	public abstract fun getStats ()Lio/kuicksilver/quic/ConnectionStats;
 	public fun isHandshakeComplete ()Z
 	public abstract fun keyUpdate (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -919,6 +920,7 @@ public final class io/kuicksilver/quic/QuicConnection$DefaultImpls {
 	public static fun awaitHandshake (Lio/kuicksilver/quic/QuicConnection;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun close$default (Lio/kuicksilver/quic/QuicConnection;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/quic/QuicConnection;)Ljava/lang/Boolean;
+	public static fun getPeerSupportsDatagrams (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static fun isHandshakeComplete (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static synthetic fun openBidi$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun openUni$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;

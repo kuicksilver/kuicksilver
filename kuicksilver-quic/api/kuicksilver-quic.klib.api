@@ -270,6 +270,8 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
         open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.quic/QuicConnection.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
     open val isHandshakeComplete // io.kuicksilver.quic/QuicConnection.isHandshakeComplete|{}isHandshakeComplete[0]
         open fun <get-isHandshakeComplete>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.isHandshakeComplete.<get-isHandshakeComplete>|<get-isHandshakeComplete>(){}[0]
+    open val peerSupportsDatagrams // io.kuicksilver.quic/QuicConnection.peerSupportsDatagrams|{}peerSupportsDatagrams[0]
+        open fun <get-peerSupportsDatagrams>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.peerSupportsDatagrams.<get-peerSupportsDatagrams>|<get-peerSupportsDatagrams>(){}[0]
 
     abstract fun trySendDatagram(kotlin/ByteArray, io.kuicksilver.quic/DatagramPolicy = ...): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.quic/QuicConnection.trySendDatagram|trySendDatagram(kotlin.ByteArray;io.kuicksilver.quic.DatagramPolicy){}[0]
     abstract suspend fun acceptStream(): io.kuicksilver.quic/QuicStream // io.kuicksilver.quic/QuicConnection.acceptStream|acceptStream(){}[0]

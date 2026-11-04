@@ -555,6 +555,22 @@ class H3DatagramTest {
             }
         }
 
+    /**
+     * A transport limit of 2 leaves the QUIC layer room for an empty DATAGRAM frame only (maxDatagramSize 0), but the peer
+     * did advertise max_datagram_frame_size: its H3_DATAGRAM=1 is no SETTINGS_ERROR (RFC 9221 section 3).
+     */
+    @Test fun h3DatagramWithATinyTransportLimitIsNoSettingsError() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect(clientQuic = quicConfig { maxDatagramFrameSize = 2 })
+                val h = Http3Connection.server(s)
+                RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                val seen = withTimeoutOrNull(10.seconds) { h.peerSettings.filterNotNull().first() }
+                assertEquals(true, seen?.h3Datagram, "the server took the client's SETTINGS (closed: ${c.closed.isCompleted})")
+                assertEquals(false, c.closed.isCompleted)
+            }
+        }
+
     @Test fun unsupportedUntilBothSettings() =
         h3Test {
             H3Pair

@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC: experimental `QuicConnection.peerSupportsDatagrams`, true once the peer advertised `max_datagram_frame_size`
+  above 0 (RFC 9221 section 3). `maxDatagramSize` is 0 both without support and with a limit of 2, which leaves room for
+  an empty datagram only; this tells them apart.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,
@@ -464,6 +467,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and its `close` frees every slot even when one of them fails to close.
 - QUIC server: the Retry token key is freed when making the NEW_TOKEN key fails while a server endpoint is set up,
   instead of leaking.
+- HTTP/3: a peer that sends `H3_DATAGRAM=1` with a transport `max_datagram_frame_size` of 2 is no longer refused with
+  `H3_SETTINGS_ERROR`; the check asks whether the peer advertised the parameter, not whether a non-empty datagram fits.
 - QUIC datagrams: a peer whose `max_datagram_frame_size` is small (2 to 34 bytes) is no longer reported as not
   supporting datagrams. The 32 bytes kept free for an ACK beside a packet-sized datagram were taken from the peer's limit
   too, so `maxDatagramSize` came out 0 or below, nothing was ever sent and `sendDatagram` failed with

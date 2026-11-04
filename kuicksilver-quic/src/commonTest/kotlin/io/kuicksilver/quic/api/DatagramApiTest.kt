@@ -263,6 +263,7 @@ class DatagramApiTest {
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     assertEquals(0, c.maxDatagramSize.value)
+                    assertEquals(false, c.peerSupportsDatagrams)
                     assertEquals(
                         DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport),
                         c.trySendDatagram(ByteArray(10)),
@@ -291,6 +292,25 @@ class DatagramApiTest {
                     c.sendDatagram(ByteArray(0), DatagramPolicy.Reject)
                     assertEquals(DatagramSendResult.TooLarge(8), c.trySendDatagram(ByteArray(9)))
                     assertEquals(listOf(payload(1, 8).toList(), emptyList()), got.await().map { it.data.toList() })
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /** A peer limit of 2 leaves room for an empty datagram only: maxDatagramSize is 0, yet the peer supports datagrams. */
+    @Test fun aPeerLimitOfTwoIsSupportForEmptyDatagrams() =
+        runBlocking {
+            ApiPair.open(serverQuic = quicConfig { maxDatagramFrameSize = 2 }).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    assertEquals(0, c.maxDatagramSize.value)
+                    assertEquals(true, c.peerSupportsDatagrams)
+                    assertEquals(true, s.peerSupportsDatagrams, "the client advertises the default 65535")
+                    val got = async { s.datagrams.take(1).toList() }
+                    assertEquals(DatagramSendResult.Sent, c.trySendDatagram(ByteArray(0)))
+                    assertEquals(DatagramSendResult.TooLarge(0), c.trySendDatagram(ByteArray(1)))
+                    assertEquals(listOf(0), got.await().map { it.data.size })
                     c.close()
                     s.close()
                 }

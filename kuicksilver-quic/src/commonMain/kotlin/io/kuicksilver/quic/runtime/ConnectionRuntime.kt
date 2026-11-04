@@ -361,6 +361,11 @@ internal class ConnectionRuntime(
 
     /** The core's `datagramPayloadLimit` as last drained: -1 while the peer accepts no DATAGRAM frame (or before its parameters). */
     @kotlin.concurrent.Volatile private var datagramLimit = -1
+
+    @kotlin.concurrent.Volatile private var peerDatagrams = false
+
+    @ExperimentalKuicksilverApi
+    override val peerSupportsDatagrams: Boolean get() = peerDatagrams
     override val maxDatagramSize: StateFlow<Int> get() = maxDatagramSizeFlow
     private val datagramSignal = Channel<Unit>(Channel.CONFLATED)
 
@@ -464,6 +469,7 @@ internal class ConnectionRuntime(
         refreshPathRemotes()
         val limit = core.datagramPayloadLimit
         datagramLimit = limit
+        peerDatagrams = core.peerAcceptsDatagrams
         val max = maxOf(limit, 0)
         if (max != maxDatagramSizeFlow.value) maxDatagramSizeFlow.value = max
         core.datagramsDroppedSend = sendQueue.dropped
