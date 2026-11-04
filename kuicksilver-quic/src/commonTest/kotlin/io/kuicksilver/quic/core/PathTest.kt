@@ -2030,21 +2030,19 @@ class PathTest {
                     if (forged == null &&
                         b[0].toInt() and 0xf0 == 0xc0
                     ) {
-                        forged =
-                            b.copyOf().also { f ->
-                                val off =
-                                    1 + 4 + 1 + (f[5].toInt() and 0xff)
-                                val pnOff =
-                                    off + 1 + (f[off].toInt() and 0xff) + 1 + 2
-                                f[pnOff + (f[0].toInt() and 0x03)] = 0x33
-                            }
+                        forged = withPacketNumber(b, 1)
                     }
                     ; true
-                } // the client's first Initial with a fresh packet number (Null crypto: the header is plaintext)
+                }
+            // the client's first Initial with packet number 1, which the client sends next (its ACK of our Initial): an unused number
+            // would have the server acknowledge a packet the client never sent, and the client close the connection (RFC 9000 section
+            // 13.1; the residual of threat-model 3.5)
             val c = p.connect()
             p.step()
             val s = p.server.connections().single()
+            val received = s.stats.packetsReceived
             p.feed(p.server, forged!!, attacker)
+            assertEquals(received + 1, s.stats.packetsReceived, "the forged Initial decrypts and is processed")
             assertEquals(p.clientAddr, s.remoteAddressForTest, "a forged Initial from a third address does not move a live path")
             assertTrue(p.confirmed(c))
             assertEquals(p.clientAddr, s.remoteAddressForTest)
@@ -2346,6 +2344,25 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * [initial], a client Initial datagram under the Null cipher (plaintext header, the 8-byte tag at the end of the packet is the
+     * packet number), with its packet number set to [pn] (one byte, so below 256) and the tag to match: a forged Initial that
+     * decrypts, as one under the public Initial keys would.
+     */
+    private fun withPacketNumber(
+        initial: ByteArray,
+        pn: Int,
+    ): ByteArray =
+        initial.copyOf().also { f ->
+            val off = 1 + 4 + 1 + (f[5].toInt() and 0xff)
+            val pnOff = off + 1 + (f[off].toInt() and 0xff) + 1 + 2
+            val pnLen = (f[0].toInt() and 0x03) + 1
+            val length = ((f[pnOff - 2].toInt() and 0x3f) shl 8) or (f[pnOff - 1].toInt() and 0xff)
+            for (i in 0 until pnLen) f[pnOff + i] = if (i == pnLen - 1) pn.toByte() else 0
+            val end = pnOff + length
+            for (i in 0 until 8) f[end - 8 + i] = ((pn.toLong() ushr (8 * (7 - i))) and 0xff).toByte()
+        }
 
     /** The bounds of the client's first Handshake packet in [d] (start, packet number offset, end), or null. */
     private fun handshakePacketBounds(d: ByteArray): IntArray? {
@@ -2821,88 +2838,106 @@ class PathTest {
     }
 
     /**
-     * Review of the mirrored flight: one forged Initial from a third address, before the client read anything of ours, makes the
-     * server retransmit the flight there at its PTO, within that address's budget, and adds nothing on the client's own address: the
-     * PTO sends no more there than without the forged Initial, and nothing queued again for the mirror is resent there afterwards as
-     * fresh data (spending that unvalidated address's own 3x budget).
+     * Review of the mirrored flight (S2): an Initial of the client's from a third address X (here a copy of its repeated ClientHello
+     * that wins the race; a forged one under the public Initial keys does the same) makes the server retransmit its flight to X at
+     * each PTO, within X's budget. The flight (an ML-KEM key share and a certificate) does not fit X's budget, so part of what was
+     * queued again for X stays unsent; before the review it then went to the client's own address as fresh data at the next poll,
+     * spending that unvalidated address's 3x budget. Now the client's address gets exactly what it gets without X: the same
+     * datagrams and bytes.
      */
-    @Test fun negative_forgedInitialChangesNothingSentToTheClientsAddress() {
+    @Test fun negative_mirroredFlightChangesNothingSentToTheClientsAddress() {
         val x = InetSocketAddress("10.0.0.66", 6666)
 
-        /** Datagrams to the client's address at the server's first three PTOs and right after each, and bytes to [x]. */
-        fun run(forge: Boolean): Triple<Int, Int, Long> {
-            val p = EndpointPair()
+        /** Datagrams and bytes the server sends to the client's address (which never receives them) over three PTOs; bytes to [x]. */
+        fun run(race: Boolean): Triple<Int, Long, Long> {
+            val p = EndpointPair(crypto = KslQuicCrypto)
             try {
                 val c = p.connect()
-                p.batch.clear()
-                assertEquals(1, c.poll(p.batch, p.now))
-                val first = p.batch.buffer(0).toByteArray(p.batch.length(0))
-                val s = assertNotNull(p.feed(p.server, first, p.clientAddr))
+
+                fun clientFlight(): List<ByteArray> {
+                    p.batch.clear()
+                    val n = c.poll(p.batch, p.now)
+                    return List(n) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                }
+                var toClient = 0
+                var toClientBytes = 0L
                 var toX = 0L
 
-                fun serverSends(): Int {
-                    var toClient = 0
+                fun serverSends(s: ConnectionCore) {
                     while (true) {
                         p.batch.clear()
                         val n = s.poll(p.batch, p.now)
                         if (n == 0) break
                         for (i in 0 until n) {
+                            val len = p.batch.length(i)
                             if (p.batch.address(i) == p.clientAddr) {
                                 toClient++
+                                toClientBytes += len
                             } else if (p.batch.address(i) == x) {
-                                toX += p.batch.length(i)
+                                toX += len
                             }
                         }
                     }
-                    return toClient
+                    p.drain(s)
                 }
-                serverSends() // the server's first flight is lost
-                if (forge) {
-                    // the client's first Initial with a fresh packet number, from a third address (Null crypto: the header is plaintext
-                    // and the 8-byte tag at the end of the packet is the packet number)
-                    val forged =
-                        first.copyOf().also { f ->
-                            val off = 1 + 4 + 1 + (f[5].toInt() and 0xff)
-                            val pnOff = off + 1 + (f[off].toInt() and 0xff) + 1 + 2
-                            val pnLen = (f[0].toInt() and 0x03) + 1
-                            val length = ((f[pnOff - 2].toInt() and 0x3f) shl 8) or (f[pnOff - 1].toInt() and 0xff)
-                            f[pnOff + pnLen - 1] = 0x33
-                            var pn = 0L
-                            for (i in 0 until pnLen) pn = (pn shl 8) or (f[pnOff + i].toLong() and 0xff)
-                            val end = pnOff + length
-                            for (i in 0 until 8) f[end - 8 + i] = ((pn ushr (8 * (7 - i))) and 0xff).toByte()
-                        }
-                    p.feedNoAdmit(p.server, forged, x)
-                    assertNotNull(s.handshakeCandidate, "the forged address is mirrored")
-                    serverSends()
-                }
-                // copies of the client's first datagram from its own address: duplicates, but counted toward that address's budget, so
-                // the budget does not hide what would go there
-                repeat(4) { p.feedNoAdmit(p.server, first, p.clientAddr) }
-                var atPto = 0
-                var after = 0
+                val hello = clientFlight()
+                assertEquals(2, hello.size, "ksl ClientHello spans two Initial datagrams")
+                val s = assertNotNull(p.feed(p.server, hello[0], p.clientAddr))
+                p.feedNoAdmit(p.server, hello[1], p.clientAddr)
+                serverSends(s) // the whole flight is lost: the client never holds a handshake key
+                p.now = c.nextTimeoutOrNever()
+                c.onTimeout(p.now)
+                val repeat = clientFlight()
+                assertTrue(repeat.size >= 2, "the PTO repeats the ClientHello")
+                p.feedNoAdmit(p.server, repeat[0], p.clientAddr)
+                if (race) p.feedNoAdmit(p.server, repeat[1], x) // the copy wins: the genuine one below is a duplicate
+                for (d in repeat.drop(1)) p.feedNoAdmit(p.server, d, p.clientAddr)
+                if (race) assertNotNull(s.handshakeCandidate, "X is mirrored")
+                serverSends(s)
                 repeat(3) {
-                    // three PTOs of the handshake flight: the mirror runs out of budget on the way
                     p.now = s.nextTimeoutOrNever()
                     s.onTimeout(p.now)
-                    atPto += serverSends()
-                    after += serverSends()
+                    serverSends(s)
                 }
-                if (forge) {
-                    assertTrue(s.handshakeMirrorSent, "the flight was retransmitted to the forged address")
-                    assertTrue(toX in 1L..3L * first.size, "$toX bytes to the forged address")
+                if (race) {
+                    assertTrue(s.handshakeMirrorSent, "the flight was retransmitted to X")
+                    assertTrue(toX <= 3L * repeat[1].size, "$toX bytes to X for ${repeat[1].size} received from it")
                 }
-                assertEquals(0, after, "nothing more goes to the client's address after a PTO's probe (forged=$forge)")
-                return Triple(atPto, after, toX)
+                return Triple(toClient, toClientBytes, toX)
             } finally {
                 p.close()
             }
         }
-        val baseline = run(forge = false)
-        val withForged = run(forge = true)
-        // the forged Initial's own ACK already went to the client's address (its budget allows one probe datagram less there); the
-        // mirror adds nothing to what the PTO sends there
-        assertTrue(withForged.first <= baseline.first, "datagrams to the client's address at the PTO: $withForged, baseline $baseline")
+        val baseline = run(race = false)
+        val raced = run(race = true)
         assertEquals(0L, baseline.third)
+        assertTrue(raced.third > 0, "something went to X")
+        assertEquals(baseline.first, raced.first, "datagrams to the client's address (raced $raced, baseline $baseline)")
+        assertEquals(baseline.second, raced.second, "bytes to the client's address (raced $raced, baseline $baseline)")
+    }
+
+    /**
+     * The residual of threat-model 3.5, pinned: an Initial forged under the public Initial keys with a packet number the client never
+     * sent is processed like any other client Initial (nothing tells it apart), the server acknowledges it, and the client treats
+     * the acknowledgement of a packet it did not send as a PROTOCOL_VIOLATION (RFC 9000 section 13.1 SHOULD, as quic-go, quiche,
+     * ngtcp2 and msquic do). RFC 9000 section 21.1.1.3 accepts it: "An on-path or off-path attacker can force a handshake to fail by
+     * replacing or racing Initial packets."
+     */
+    @Test fun forgedInitialWithAnUnusedPacketNumberEndsTheHandshake() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            p.batch.clear()
+            assertEquals(1, c.poll(p.batch, p.now))
+            val first = p.batch.buffer(0).toByteArray(p.batch.length(0))
+            assertNotNull(p.feed(p.server, first, p.clientAddr))
+            // the forgery arrives before the server answered, so its acknowledgement reaches the client while it still reads Initials
+            p.feedNoAdmit(p.server, withPacketNumber(first, 0x33), InetSocketAddress("10.0.0.66", 6666))
+            assertFalse(p.confirmed(c))
+            val closed = assertNotNull(p.closed(c), "the client closed")
+            assertTrue(closed.toString().contains("ACK for a packet never sent"), "$closed")
+        } finally {
+            p.close()
+        }
     }
 }
