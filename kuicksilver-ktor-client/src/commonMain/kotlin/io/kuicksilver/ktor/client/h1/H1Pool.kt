@@ -161,7 +161,10 @@ internal class H1Pool(
      * connecting share the connect timeout, as in the CIO engine ([ConnectTimeoutException]). For a WebSocket
      * ([webSocketKeys] not null) the remote host's keys are taken once the pool granted a connection or the room to open
      * one, and before a new one is opened: the connection is CONNECTING from then on (RFC 6455 section 4.1), and a
-     * WebSocket that waits for a slot holds no key.
+     * WebSocket that waits for a slot holds no key. The wait for the keys is not part of the connect timeout: RFC 6455
+     * has the client wait for the other WebSocket's connection, not give up, so only the call (its request timeout or
+     * its cancellation) bounds it; the connect timeout then counts from the moment the keys are held (review 2026-10-28
+     * R1: forty WebSockets started at once to one address failed from about the 33rd on).
      */
     private suspend fun obtain(
         data: HttpRequestData,
@@ -172,27 +175,43 @@ internal class H1Pool(
     ): Obtained {
         var conn: H1Connection? = null
         var reused = false
+        var permit = false
         var held: WebSocketConnecting.Held? = null
         try {
+            if (webSocketKeys != null) {
+                withTimeout(data.connectTimeoutMillis(config)) {
+                    val idle = pool.acquire(key)
+                    if (idle != null) {
+                        conn = idle
+                        reused = true
+                    } else {
+                        permit = true
+                    }
+                }
+                held = webSocketConnecting.acquire(webSocketKeys)
+            }
             withTimeout(data.connectTimeoutMillis(config)) {
-                val idle = pool.acquire(key)
+                val idle = if (webSocketKeys != null) conn else pool.acquire(key)
                 if (idle != null) {
                     conn = idle
                     reused = true
-                    if (webSocketKeys != null) held = webSocketConnecting.acquire(webSocketKeys)
                 } else {
+                    permit = true
                     try {
-                        if (webSocketKeys != null) held = webSocketConnecting.acquire(webSocketKeys)
                         conn =
                             connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns)
                                 .also { pool.adopt(it) }
+                        permit = false
                     } catch (e: Throwable) {
+                        permit = false
                         pool.releasePermit(key)
                         throw e
                     }
                 }
             }
         } catch (e: Throwable) {
+            // a WebSocket that got a permit and failed (or was cancelled) while it waited for the keys gives it back
+            if (permit) pool.releasePermit(key)
             held?.release()
             if (e is CancellationException) {
                 // a timeout that fired as the block returned: the connection is not handed out, so its slot comes back here

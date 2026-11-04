@@ -393,7 +393,9 @@ the server's stream credit (MAX_STREAMS) until the request or socket timeout
 A WebSocket over HTTP/1.1 fails with `ConnectTimeoutException` ("The WebSocket was not connected within the connect
 timeout") when the server accepted the connection but did not answer the opening handshake within the connect timeout.
 WebSockets to one IP address connect one at a time (RFC 6455 section 4.1), so the next one to that address waited for
-this one until then.
+this one until then. That queue does not count against the connect timeout of the WebSockets in it: many WebSockets
+started at once to one address connect one after another, bounded only by each call's request timeout (`HttpTimeout`)
+or its cancellation.
 
 ### A chunked body fails with "Whitespace before the end of a chunk size line"
 

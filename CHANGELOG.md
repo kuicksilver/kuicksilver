@@ -226,7 +226,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection or the room to open one (not while it waits for a slot) until the server answers the handshake, and the
   answer must arrive within the connect timeout (`HttpTimeout`'s, else `connectTimeout`, 10 s), counted from then, or
   the WebSocket fails with `ConnectTimeoutException`: a server that accepts the connection and never answers holds up
-  the next WebSocket to the address for at most that long. Before, any number connected at once.
+  the next WebSocket to the address for at most that long. The wait for another WebSocket's handshake is not part of
+  the connect timeout: WebSockets started together queue for as long as the call allows (its request timeout or
+  cancellation), and each one's connect timeout starts once it holds the address. Before, any number connected at once.
 - HTTP/3 client: any number of interim (1xx) responses is accepted before the final one, as RFC 9110 section 15.2
   requires ("A client MUST be able to parse one or more 1xx responses"); a request failed at the sixth. Endless 1xx
   still end: the decoded fields of all of a request's interim responses together are bounded by `maxFieldSectionSize`
