@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.http3.runtime
 
@@ -22,6 +22,7 @@ import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -107,6 +108,9 @@ internal class DatagramDemux(
         // draft-ietf-webtrans-http3-16 section 4.6: a session's datagrams may overtake its CONNECT; kept, 16 per connection
         // (as its streams, WtStreamRouter), each on the order of a round trip (RFC 9297 section 2.1). Others are dropped.
         if (!session.isServer || !session.settings.webTransport || !session.requestMayStillOpen(streamId)) return
+        // RFC 9297 section 2.1: after the stream's receive side is closed a datagram "MUST be silently dropped". A request
+        // whose HEADERS and FIN have all arrived (its HEADERS still QPACK-blocked) can never take one (review S2)
+        if (session.pendingHeaders[streamId]?.first?.receivedAll == true) return
         prunePending()
         if (pending.size < MAX_PENDING) pending.addLast(Pending(streamId, payload, clock.markNow() + holdFor(streamId)))
     }

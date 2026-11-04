@@ -40,6 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -205,8 +206,8 @@ class QpackDynamicTest {
         val enc = QpackEncoder()
         lateinit var encoderStream: QuicStream
 
-        suspend fun start() {
-            raw.openControl()
+        suspend fun start(settings: List<Pair<Long, Long>> = emptyList()) {
+            raw.openControl(settings)
             encoderStream = raw.uni(StreamType.QPACK_ENCODER)
             enc.onPeerSettings(4096, 16)
         }
@@ -271,6 +272,60 @@ class QpackDynamicTest {
                 assertEquals("late-insert-value", withTimeout(5.seconds) { accepted.await() })
                 // Section Acknowledgment
                 withTimeout(5.seconds) { while (!decoderBytes.value.contains((0x80 or st.id.toInt()).toByte())) delay(20) }
+            }
+        }
+
+    /**
+     * A datagram for a request that came whole (HEADERS and FIN received) but whose HEADERS are still QPACK-blocked is
+     * dropped, not kept for it (review S2 of 62cef960): RFC 9297 section 2.1 has a datagram after the receive side closed
+     * "silently dropped". It was kept, and the GET was then aborted with H3_DATAGRAM_ERROR once its HEADERS decoded.
+     */
+    @Test fun aDatagramForAWholeRequestWithBlockedHeadersIsDropped() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server =
+                    Http3Connection.server(
+                        s,
+                        http3Settings {
+                            enableQpackDynamicTable()
+                            enableConnectProtocol = true
+                            webTransport = true
+                        },
+                    )
+                val dc = DynClient(c)
+                dc.start(io.kuicksilver.http3.webtransport.wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                val st = c.openBidi()
+                val block = dc.enc.encode(st.id, GET + ("x-custom" to "late-insert-value"))
+                val ins = dc.enc.drainEncoderStream()
+                st.output.writeFully(FrameHeaders.frame(FrameType.HEADERS, block))
+                st.output.flushAndClose()
+                withTimeout(5.seconds) {
+                    while (withContext(server.session.dispatcher) {
+                            server.session.pendingHeaders[st.id]
+                                ?.first
+                                ?.receivedAll
+                        } != true
+                    ) {
+                        yield()
+                    }
+                }
+                c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                withTimeout(5.seconds) {
+                    while (withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } ==
+                        0
+                    ) {
+                        yield()
+                    }
+                }
+                assertEquals(0, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount }, "the datagram was kept")
+                val served = async { server.acceptRequest().respond(204).finish() }
+                dc.sendEncoder(ins)
+                val answer = ByteArray(64)
+                val n = withTimeout(5.seconds) { st.input.readAvailable(answer, 0, answer.size) }
+                assertTrue(n > 0, "the GET got no response")
+                served.await()
             }
         }
 
