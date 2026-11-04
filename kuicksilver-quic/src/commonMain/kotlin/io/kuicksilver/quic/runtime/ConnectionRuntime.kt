@@ -306,7 +306,7 @@ internal class ConnectionRuntime(
     private var seen = 0
 
     /** Each path reports its own peer address ([PathRuntime.remote]); a handshake-time rebinding moves it. Loop dispatcher only. */
-    private fun refreshPathRemotes() {
+    internal fun refreshPathRemotes() {
         val all = core.paths.all
         for (i in 0 until all.size) {
             val p = all[i]
@@ -358,6 +358,16 @@ internal class ConnectionRuntime(
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val datagramsQueuedForTest: Int get() = sendQueue.count.load()
     private val maxDatagramSizeFlow = MutableStateFlow(0)
+
+    /**
+     * The core's datagram state as last drained, in one volatile word so a caller never sees half an update: [NO_DATAGRAMS]
+     * while the peer advertised no `max_datagram_frame_size` (or before its parameters), else the core's payload limit,
+     * -1 when the peer's limit (1) leaves room for no frame at all.
+     */
+    @kotlin.concurrent.Volatile private var datagramLimit = NO_DATAGRAMS
+
+    @ExperimentalKuicksilverApi
+    override val peerSupportsDatagrams: Boolean get() = datagramLimit != NO_DATAGRAMS
     override val maxDatagramSize: StateFlow<Int> get() = maxDatagramSizeFlow
     private val datagramSignal = Channel<Unit>(Channel.CONFLATED)
 
@@ -387,13 +397,11 @@ internal class ConnectionRuntime(
 
     private fun datagramPrecheck(size: Int): DatagramSendResult? {
         if (core.config.maxDatagramFrameSize == 0L) return DatagramSendResult.Unsupported(DatagramUnsupportedReason.Disabled)
-        val max = maxDatagramSizeFlow.value
-        if (max <=
-            0
-        ) {
-            return DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport)
-        }
-        if (size > max) return DatagramSendResult.TooLarge(max)
+        // RFC 9221 section 3: any max_datagram_frame_size above 0 is support; a small one only bounds the payload
+        val max = datagramLimit
+        if (max == NO_DATAGRAMS) return DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport)
+        // max is never below 0: at a peer limit of 1 (max -1) not even an empty datagram fits, and that is TooLarge(0)
+        if (size > max) return DatagramSendResult.TooLarge(maxOf(max, 0))
         return null
     }
 
@@ -462,7 +470,9 @@ internal class ConnectionRuntime(
 
     internal fun drainEvents() {
         refreshPathRemotes()
-        val max = core.maxDatagramPayload
+        val limit = core.datagramPayloadLimit
+        datagramLimit = if (core.peerAcceptsDatagrams) limit else NO_DATAGRAMS
+        val max = maxOf(limit, 0)
         if (max != maxDatagramSizeFlow.value) maxDatagramSizeFlow.value = max
         core.datagramsDroppedSend = sendQueue.dropped
         while (true) {
@@ -809,5 +819,8 @@ internal class ConnectionRuntime(
 
     private companion object {
         val NO_BYTES = ByteArray(0)
+
+        /** [datagramLimit] while the peer takes no DATAGRAM frames. */
+        const val NO_DATAGRAMS = Int.MIN_VALUE
     }
 }

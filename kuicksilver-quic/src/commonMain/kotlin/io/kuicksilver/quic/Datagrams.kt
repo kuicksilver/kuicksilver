@@ -41,7 +41,11 @@ public sealed interface DatagramSendResult {
         override fun toString(): String = "Closed"
     }
 
-    /** The payload exceeds [QuicConnection.maxDatagramSize], which was [max] bytes at the call. */
+    /**
+     * The payload exceeds what the peer's limit and the path allow at the call ([QuicConnection.maxDatagramSize]). [max] is the
+     * largest payload that fits, 0 also when none fits; a TooLarge for an empty payload means not even an empty datagram fits
+     * (e.g. a peer `max_datagram_frame_size` of 1). Machine-readable: `peerSupportsDatagrams && maxDatagramSize.value == 0`.
+     */
     public class TooLarge(
         public val max: Int,
     ) : DatagramSendResult {
@@ -66,7 +70,10 @@ public sealed interface DatagramSendResult {
 
 /** Why datagrams cannot be sent on this connection. */
 public enum class DatagramUnsupportedReason {
-    /** The peer did not advertise `max_datagram_frame_size` (RFC 9221 section 3). */
+    /**
+     * The peer did not advertise `max_datagram_frame_size`, or advertised 0 (RFC 9221 section 3). Any value above 0, however
+     * small, is support: a datagram it does not fit is [DatagramSendResult.TooLarge].
+     */
     PeerDoesNotSupport,
 
     /** Our own `QuicConfig.maxDatagramFrameSize` is 0. */

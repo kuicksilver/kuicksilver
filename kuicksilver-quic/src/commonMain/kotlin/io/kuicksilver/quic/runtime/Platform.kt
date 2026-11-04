@@ -7,3 +7,6 @@ internal expect val portableServerSupported: Boolean
 
 /** True where a `poll` of 1 ms waits about 1 ms; false on Windows, whose `WSAPoll` waits whole timer ticks (15.6 ms by default). */
 internal expect val millisecondPollWaits: Boolean
+
+/** True where classes load and string templates link on first use (JVM, Android): an endpoint then preloads its close path. */
+internal expect val preloadsCloseClasses: Boolean

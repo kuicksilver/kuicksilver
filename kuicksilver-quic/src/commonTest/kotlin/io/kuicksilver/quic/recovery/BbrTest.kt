@@ -124,14 +124,12 @@ internal class Bottleneck(
         }
         for (p in acked) cc.onPacketAcked(p, now)
         while (lostAt.isNotEmpty() && lostAt.first() + baseRtt * 3 < now) {
-            lostAt.removeFirst()
-            cc.onLossSettled(now)
+            cc.onLossSettled(now, lostAt.removeFirst())
         }
         val late = lateAcks.count { it <= now }
         lateAcks.removeAll { it <= now }
         repeat(late) {
-            lostAt.removeFirstOrNull()
-            cc.onSpuriousLoss(now)
+            cc.onSpuriousLoss(now, lostAt.removeFirstOrNull() ?: now)
         }
         if (anyCe) cc.onEcnCe(now, ceSent)
         for (p in lost) {
@@ -324,7 +322,7 @@ class BbrTest {
      * draft-ietf-ccwg-bbr-06 section 5.6.4.4: "When BBR exits loss recovery it restores C.cwnd to the "last known good" value
      * that C.cwnd held before entering recovery", and "Upon exiting loss recovery (RTO recovery or Fast Recovery) ... BBR
      * restores the best-known cwnd value we had upon entering loss recovery: RestoreCwnd()". Persistent congestion is that RTO
-     * recovery: it ends with the acknowledgement of a packet sent after it began.
+     * recovery: with no loss left unsettled (none reported here), it ends with the acknowledgement of a packet sent after it began.
      */
     @Test fun theWindowBeforePersistentCongestionComesBackWhenItsRecoveryEnds() {
         val t = TimeMark(1_000_000_000L)
@@ -344,6 +342,82 @@ class BbrTest {
         cc.onAckProcessed(t + 1.seconds + 120.milliseconds)
         // RestoreCwnd, then SetCwnd (section 5.6.4.6) adds the newly acknowledged datagram: Startup, the pipe is not full yet
         assertEquals(before + 1200, cc.cwnd, "RestoreCwnd")
+    }
+
+    /**
+     * draft-ietf-ccwg-bbr-06 section 5.6.4.4: the RTO recovery ends "by repairing all losses or undoing recovery". The first
+     * ACK of a packet sent after persistent congestion only shows the path works again; while packets it declared lost are
+     * still unsettled (neither acknowledged late nor past the persistent congestion period), their repair is under way and
+     * the window from before stays away. It comes back once the last of them settles.
+     */
+    @Test fun theWindowBeforePersistentCongestionWaitsForItsLossesToBeRepaired() {
+        val t = TimeMark(1_000_000_000L)
+        val cc = bbr()
+        val before = cc.cwnd
+        val sent = inFlight(cc, t, 10)
+        for (p in sent.take(9)) cc.onPacketLost(p, t + 1.seconds)
+        cc.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
+        assertEquals(4L * 1200, cc.cwnd)
+        val after = inFlight(cc, t + 1.seconds + 20.milliseconds, 1).single()
+        cc.onPacketAcked(after, t + 1.seconds + 120.milliseconds)
+        cc.onAck(t + 1.seconds + 120.milliseconds, after.timeSent, 1200, 100.milliseconds, false)
+        cc.onAckProcessed(t + 1.seconds + 120.milliseconds)
+        assertTrue(cc.cwnd < before, "nine losses still unsettled: still in the recovery, ${cc.cwnd}")
+        repeat(8) { cc.onLossSettled(t + 2.seconds, t + 1.seconds) }
+        assertTrue(cc.cwnd < before, "one loss still unsettled: ${cc.cwnd}")
+        cc.onLossSettled(t + 2.seconds, t + 1.seconds)
+        assertTrue(cc.cwnd >= before, "every loss settled after a packet sent since was acknowledged: RestoreCwnd, ${cc.cwnd}")
+    }
+
+    /**
+     * Losses declared after the RTO do not hold its recovery: a path that keeps losing one packet in ten (every one settling
+     * only after three round trips) leaves the RTO recovery once the losses declared up to the congestion have settled.
+     */
+    @Test fun ongoingLossesAfterPersistentCongestionDoNotHoldItsRecovery() {
+        val t = TimeMark(1_000_000_000L)
+        val rtt = 100.milliseconds
+        val cc = bbr()
+        val sent = inFlight(cc, t, 10)
+        for (p in sent.take(9)) cc.onPacketLost(p, t + 1.seconds)
+        cc.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
+        val rtoLosses = ArrayDeque(List(9) { t + 1.seconds })
+        val later = ArrayDeque<TimeMark>()
+        var now = t + 1.seconds
+        var leftAt = -1
+        for (round in 1..200) {
+            val sentAt = now
+            val batch = inFlight(cc, sentAt, 10)
+            now = sentAt + rtt
+            for (p in batch.take(9)) cc.onPacketAcked(p, now)
+            // the core settles a loss once it is older than the persistent congestion period (about 3 round trips)
+            while (rtoLosses.isNotEmpty() && rtoLosses.first() + rtt * 3 < now) cc.onLossSettled(now, rtoLosses.removeFirst())
+            while (later.isNotEmpty() && later.first() + rtt * 3 < now) cc.onLossSettled(now, later.removeFirst())
+            cc.onPacketLost(batch[9], now)
+            later.addLast(now)
+            cc.onLoss(now, 1200, sentAt, false)
+            for (p in batch.take(9)) cc.onAck(now, p.timeSent, p.size, rtt, false)
+            cc.onAckProcessed(now)
+            if (leftAt < 0 && !cc.inRtoRecoveryForTest) leftAt = round
+        }
+        assertTrue(leftAt in 1..5, "the RTO recovery ended once its own losses settled (round $leftAt), new losses notwithstanding")
+        assertTrue(later.isNotEmpty(), "losses were still pending")
+    }
+
+    /** The losses may settle first: the recovery then ends with the first ACK of a packet sent after it began, as before. */
+    @Test fun lossesSettledBeforeTheFirstNewAckEndTheRecoveryWithThatAck() {
+        val t = TimeMark(1_000_000_000L)
+        val cc = bbr()
+        val before = cc.cwnd
+        val sent = inFlight(cc, t, 10)
+        for (p in sent.take(9)) cc.onPacketLost(p, t + 1.seconds)
+        cc.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
+        repeat(9) { cc.onLossSettled(t + 2.seconds, t + 1.seconds) }
+        assertTrue(cc.cwnd < before, "no packet sent since the RTO acknowledged yet: ${cc.cwnd}")
+        val after = inFlight(cc, t + 2.seconds, 1).single()
+        cc.onPacketAcked(after, t + 2.seconds + 100.milliseconds)
+        cc.onAck(t + 2.seconds + 100.milliseconds, after.timeSent, 1200, 100.milliseconds, false)
+        cc.onAckProcessed(t + 2.seconds + 100.milliseconds)
+        assertTrue(cc.cwnd >= before, "RestoreCwnd: ${cc.cwnd}")
     }
 
     @Test fun pacesTheInitialWindowAtTheStartupGainBeforeTheFirstAck() {

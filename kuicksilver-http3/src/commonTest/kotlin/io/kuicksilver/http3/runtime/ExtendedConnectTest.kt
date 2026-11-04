@@ -555,6 +555,40 @@ class H3DatagramTest {
             }
         }
 
+    /**
+     * A transport limit of 2 leaves the QUIC layer room for an empty DATAGRAM frame only (maxDatagramSize 0), but the peer
+     * did advertise max_datagram_frame_size: its H3_DATAGRAM=1 is no SETTINGS_ERROR (RFC 9221 section 3).
+     */
+    @Test fun h3DatagramWithATinyTransportLimitIsNoSettingsError() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect(clientQuic = quicConfig { maxDatagramFrameSize = 2 })
+                val h = Http3Connection.server(s)
+                RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                val seen = withTimeoutOrNull(10.seconds) { h.peerSettings.filterNotNull().first() }
+                assertEquals(true, seen?.h3Datagram, "the server took the client's SETTINGS (closed: ${c.closed.isCompleted})")
+                assertEquals(false, c.closed.isCompleted)
+            }
+        }
+
+    /**
+     * A transport limit of 1 is DATAGRAM support (RFC 9221 section 3) that no frame fits: the SETTINGS are taken, the session
+     * works, and an HTTP/3 datagram is too large rather than unsupported.
+     */
+    @Test fun h3DatagramOverAOneByteTransportLimitIsTooLarge() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn, serverQuic = quicConfig { maxDatagramFrameSize = 1 }).useScoped { p ->
+                val ps =
+                    p.client.peerSettings
+                        .filterNotNull()
+                        .first()
+                assertEquals(true, ps.h3Datagram, "the client took the server's H3_DATAGRAM=1")
+                launch { p.server.acceptRequest().acceptConnect() }
+                val s = p.client.connect(connectReq(), "echo")
+                assertIs<DatagramSendResult.TooLarge>(s.trySendDatagram(byteArrayOf(1)))
+            }
+        }
+
     @Test fun unsupportedUntilBothSettings() =
         h3Test {
             H3Pair

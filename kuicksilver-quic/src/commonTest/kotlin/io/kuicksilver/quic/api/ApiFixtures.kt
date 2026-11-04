@@ -46,6 +46,7 @@ internal class ApiPair private constructor(
             serverEarlyData: Boolean = false,
             serverLogger: KuicksilverLogger? = null,
             serverTls: io.kuicksilver.tls.TlsConfig = CoreFixtures.server(),
+            clientListener: io.kuicksilver.quic.ConnectionListener? = null,
         ): ApiPair {
             val net = MemoryNetwork()
             val a = net.open(InetSocketAddress("10.0.0.1", 1111), df = df)
@@ -76,6 +77,7 @@ internal class ApiPair private constructor(
                         .apply {
                             this.crypto = crypto
                             io = { a }
+                            clientListener?.let { listener = it }
                         }.build(),
                 )
             return ApiPair(server, client, net, a, b)

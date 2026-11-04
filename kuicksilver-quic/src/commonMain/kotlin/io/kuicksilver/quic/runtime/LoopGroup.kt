@@ -13,8 +13,11 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.Releaser
 import io.kuicksilver.quic.withLiteralHost
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -222,11 +225,21 @@ internal class LoopGroup private constructor(
             return create(config, ios, preferred = preferred)
         }
 
+        private fun closeSockets(
+            r: Releaser,
+            ios: List<io.kuicksilver.quic.DatagramIo>,
+            preferred: List<List<io.kuicksilver.quic.DatagramIo>>,
+        ) {
+            for (io in ios) r.release { io.close() }
+            for (l in preferred) for (p in l) r.release { p.close() }
+        }
+
         /** Builds every loop first, then starts them: a loop that receives before its peers exist would forward into nothing. [afterBuild] is a test hook. */
         internal suspend fun create(
             config: QuicEndpointConfig,
             ios: List<io.kuicksilver.quic.DatagramIo>,
             preferred: List<List<io.kuicksilver.quic.DatagramIo>> = emptyList(),
+            allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
             afterBuild: suspend () -> Unit = {},
         ): LoopGroup {
             val g = LoopGroup(config)
@@ -234,12 +247,18 @@ internal class LoopGroup private constructor(
             // socket. The group holds one reference while it builds the loops, each loop's endpoint core takes its own, and the
             // last one to close frees the keys; a loop that fails to build leaves no reference behind
             val tokens =
-                io.kuicksilver.quic.endpoint.AddressTokens(
-                    config.crypto,
-                    KslRandom.newSource(),
-                    newTokenLifetime = config.server!!.newTokenLifetime,
-                    replayCapacity = config.server.newTokenReplayCapacity,
-                )
+                try {
+                    io.kuicksilver.quic.endpoint.AddressTokens(
+                        config.crypto,
+                        KslRandom.newSource(),
+                        newTokenLifetime = config.server!!.newTokenLifetime,
+                        replayCapacity = config.server.newTokenReplayCapacity,
+                    )
+                } catch (e: Throwable) {
+                    // no loop exists yet; the sockets were handed to this group
+                    closeSockets(Releaser(e), ios, preferred)
+                    throw e
+                }
             val loops = ArrayList<EndpointLoop>(ios.size)
             try {
                 for ((i, io) in ios.withIndex()) {
@@ -254,17 +273,28 @@ internal class LoopGroup private constructor(
                             g.sessions,
                             tokens,
                             preferred.getOrElse(i) { emptyList() },
+                            allocate,
                         )
                 }
+                afterBuild()
             } catch (e: Throwable) {
-                for (l in loops) l.core.close() // never started: their cores are all they hold of the group's keys
+                // never started: each built loop frees its core (its reference to the group's keys) and batches; the sockets
+                // were handed to this group, so they close here too
+                val r = Releaser(e)
+                for (l in loops) r.release { l.discardUnstarted() }
+                closeSockets(r, ios, preferred)
                 throw e
             } finally {
                 tokens.close() // the group's own reference
             }
-            afterBuild()
             g.loops = loops
-            for (l in loops) l.start()
+            try {
+                for (l in loops) l.start()
+            } catch (e: Throwable) {
+                // a loop that started may already receive: the group's close takes every loop down, sockets included
+                Releaser(e).release { withContext(NonCancellable) { g.closeAndJoin() } }
+                throw e
+            }
             return g
         }
     }

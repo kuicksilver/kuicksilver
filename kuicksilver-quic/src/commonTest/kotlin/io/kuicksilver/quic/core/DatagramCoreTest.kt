@@ -113,9 +113,52 @@ class DatagramCoreTest {
         val q = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 500 })
         try {
             assertTrue(q.handshake())
-            assertEquals(497 - 32, q.client.maxDatagramPayload)
+            // the peer's limit binds, not the packet: the whole 500-byte frame is allowed (type, 2-byte Length, 497 bytes), and
+            // it still leaves far more than 32 bytes of the packet for an ACK
+            assertEquals(497, q.client.maxDatagramPayload)
         } finally {
             q.close()
+        }
+    }
+
+    /**
+     * RFC 9221 section 3: "A value greater than 0 indicates that the endpoint supports the DATAGRAM frame types and is willing
+     * to receive such frames on this connection", the value being "the maximum size of a DATAGRAM frame (including the frame
+     * type, length, and payload)". A small limit is still support: the payload is what the frame leaves, and the 32 bytes kept
+     * for an ACK beside a packet-sized datagram do not come out of it.
+     */
+    @Test fun aSmallPeerLimitStillCarriesDatagrams() {
+        for ((limit, payload) in listOf(2L to 0, 3L to 1, 10L to 8, 34L to 32, 66L to 63, 67L to 64)) {
+            val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = limit })
+            try {
+                assertTrue(p.handshake())
+                assertEquals(payload, p.client.maxDatagramPayload, "limit $limit")
+                val s = Sender()
+                s.queue += ByteArray(payload) { 9 } to 1L
+                p.client.datagramSender = s
+                assertTrue(p.runUntil(2.seconds) { s.acked.isNotEmpty() }, "limit $limit: the datagram was acknowledged")
+                assertEquals(listOf(List(payload) { 9.toByte() }), readAll(p.server!!).map { it.toList() })
+                assertNull(p.server!!.closedReason, "limit $limit: the server took the frame")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /** A limit of 1 leaves no room for a DATAGRAM frame with a Length field (the only one this sender writes): nothing is sent. */
+    @Test fun aPeerLimitOfOneByteTakesNoDatagram() {
+        val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 1 })
+        try {
+            assertTrue(p.handshake())
+            assertEquals(0, p.client.maxDatagramPayload)
+            val s = Sender()
+            s.queue += ByteArray(0) to 1L
+            p.client.datagramSender = s
+            p.runUntil(500.milliseconds) { false }
+            assertEquals(0, s.transmits, "the sender is never asked")
+            assertNull(p.server!!.closedReason)
+        } finally {
+            p.close()
         }
     }
 

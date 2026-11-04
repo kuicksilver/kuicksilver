@@ -56,6 +56,8 @@ public class SimConnection internal constructor(
 /**
  * A deterministic network between two cores under virtual time: every random choice comes from [seed],
  * so a run reproduces byte for byte with [NullCryptoProvider] (OpenSSL draws its own randomness for key shares).
+ * Its batch and both endpoint cores hold native memory on Kotlin/Native: [close] it (`use {}`) when the run is over. One
+ * simulator runs one connection: a second [connect] fails.
  */
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 public class Simulator(
@@ -64,7 +66,7 @@ public class Simulator(
     serverToClient: LinkParams = clientToServer,
     private val crypto: QuicCrypto = NullCryptoProvider,
     private val pathCapabilities: io.kuicksilver.quic.IoCapabilities = io.kuicksilver.quic.IoCapabilities.Portable,
-) {
+) : AutoCloseable {
     public var now: TimeMark = TimeMark(1_000_000_000L)
         private set
     private val random = Random(seed)
@@ -98,11 +100,16 @@ public class Simulator(
         private set
     private val batch = PacketBatch(32)
     private var conn: SimConnection? = null
-    private val clientEndpoint =
-        EndpointCore(
-            QuicEndpointConfig.Builder().apply { this.crypto = this@Simulator.crypto }.build(),
-            Random(seed + 3),
-        )
+    private val clientEndpoint: EndpointCore =
+        try {
+            EndpointCore(
+                QuicEndpointConfig.Builder().apply { this.crypto = this@Simulator.crypto }.build(),
+                Random(seed + 3),
+            )
+        } catch (e: Throwable) {
+            batch.close() // native memory: nothing else would free it
+            throw e
+        }
     private var serverEndpoint: EndpointCore? = null
     private val invariants = SimInvariants()
     private var traceHash = 1469598103934665603L
@@ -182,6 +189,8 @@ public class Simulator(
         preferredAddress: io.kuicksilver.quic.PreferredAddress?,
     ): SimConnection {
         preferred = preferredAddress?.ipv4 ?: preferredAddress?.ipv6
+        // one connection per simulator: replacing the server would free the cores the first SimConnection still points at
+        check(serverEndpoint == null) { "a Simulator runs one connection; make another Simulator for the next" }
         serverEndpoint =
             EndpointCore(
                 QuicEndpointConfig
@@ -267,6 +276,27 @@ public class Simulator(
             last = ep.connections().last().takeIf { ep.connectionCount > before }
         }
         return last
+    }
+
+    private var closed = false
+
+    /**
+     * Frees the batch and both endpoint cores, with every connection they hold (native memory on Kotlin/Native); the
+     * simulator cannot run afterwards. A second call does nothing.
+     */
+    override fun close() {
+        if (closed) return
+        closed = true
+        try {
+            serverEndpoint?.close()
+        } finally {
+            serverEndpoint = null
+            try {
+                clientEndpoint.close()
+            } finally {
+                batch.close()
+            }
+        }
     }
 
     private fun pollEndpoint(

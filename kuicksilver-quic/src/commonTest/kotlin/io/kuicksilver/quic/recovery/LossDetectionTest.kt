@@ -61,6 +61,7 @@ class LossDetectionTest {
             cc: io.kuicksilver.quic.CongestionController?,
             pathId: Int,
             now: TimeMark,
+            declaredAt: TimeMark,
         ) {
             spurious += pn
         }
@@ -68,6 +69,7 @@ class LossDetectionTest {
         override fun onLossSettled(
             cc: io.kuicksilver.quic.CongestionController?,
             now: TimeMark,
+            declaredAt: TimeMark,
         ) {
             settled++
         }

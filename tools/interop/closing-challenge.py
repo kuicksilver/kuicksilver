@@ -30,8 +30,10 @@ probing or acknowledging on P after the close reached it is no ENVIRONMENT verdi
 
 X may also reach the client between its entering the closing state and its CONNECTION_CLOSE leaving (CI run 40645584772, result
 20261028-070320, quinn->kuicksilver:rebind-addr, the JVM image: our client closed at 11.0147 s, quinn's challenge reached the
-client's link at 11.0165 s, our close left at 11.0225 s; the JVM client's close takes 4-10 ms to reach the wire in every cell of
-that run). The capture alone cannot tell this from a client that ignored a challenge, so it is excused only for our client, by
+client's link at 11.0165 s, our close left at 11.0225 s; the JVM client's close took 4-10 ms to reach the wire in every cell of
+that run; the frame now goes out before the close's application callbacks and the close exceptions are preloaded: 1.3-2.7
+ms from close() to the first datagram on a cold JVM, measured locally over in-memory sockets, interop not re-run). The
+capture alone cannot tell this from a client that ignored a challenge, so it is excused only for our client, by
 its qlog: exactly one kuicksilver client qlog, its connection_closed is local with application code 0, and that moment, mapped
 to the capture's clock, came before X arrived. The mapping is the smallest gap between a 1-RTT packet's packet_sent time in the
 qlog and its time on the client-side capture, over at least 10 packets in the second before the close left: a packet reaches

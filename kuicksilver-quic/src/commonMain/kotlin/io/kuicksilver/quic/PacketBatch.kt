@@ -11,11 +11,27 @@ import io.kuicksilver.native.PacketBuffer
  * @property capacity Number of slots; one `poll` produces at most this many datagrams.
  * @property segmentSize Bytes per slot: the largest datagram a slot holds (1500 by default; larger for a core configured beyond it).
  */
-public class PacketBatch(
+public class PacketBatch internal constructor(
     public val capacity: Int,
-    public val segmentSize: Int = 1500,
+    public val segmentSize: Int,
+    allocate: (Int) -> PacketBuffer,
 ) : AutoCloseable {
-    private val buffers = Array(capacity) { PacketBuffer.allocate(segmentSize) }
+    /** A batch of [capacity] slots of [segmentSize] bytes each. */
+    public constructor(capacity: Int, segmentSize: Int = 1500) : this(capacity, segmentSize, PacketBuffer::allocate)
+
+    // native memory on Kotlin/Native: an allocation that fails part-way frees the slots made before it
+    private val buffers: Array<PacketBuffer> =
+        arrayOfNulls<PacketBuffer>(capacity).let { made ->
+            try {
+                for (i in 0 until capacity) made[i] = allocate(segmentSize)
+            } catch (e: Throwable) {
+                val r = Releaser(e) // what a release throws is suppressed into e
+                for (b in made) if (b != null) r.release { b.close() }
+                throw e
+            }
+            @Suppress("UNCHECKED_CAST")
+            made as Array<PacketBuffer>
+        }
     private val lengths = IntArray(capacity)
     private val addresses = arrayOfNulls<InetSocketAddress>(capacity)
     private val ecns = Array(capacity) { Ecn.NotEct }
@@ -80,6 +96,8 @@ public class PacketBatch(
     }
 
     override fun close() {
-        buffers.forEach { it.close() }
+        val r = Releaser() // every slot even when one before it fails to close
+        for (b in buffers) r.release { b.close() }
+        r.finish()
     }
 }

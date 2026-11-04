@@ -74,33 +74,34 @@ class SimLinkTest {
     }
 
     @Test fun rebindChangesSourceAddressSeenByServer() {
-        val sim = Simulator(seed = 11, LinkParams())
-        val (ct, st) = SimScenario.defaultTls!!()
-        val conn = sim.connect(tlsClient = ct, tlsServer = st)
-        assertTrue(sim.runUntil(5.seconds) { conn.handshakeDone }.finished)
-        assertEquals(40000, sim.lastClientSourceSeenByServer!!.port)
-        sim.rebindClient(port = 40001)
-        assertEquals(40001, sim.clientAddress.port)
-        val r = SimScenario.transfer(sim, 64 shl 10, connection = conn) // traffic after the rebind
-        assertTrue(r.finished, "${r.violations}")
-        assertEquals(40001, sim.lastClientSourceSeenByServer!!.port, "the server now sees the new source port")
+        Simulator(seed = 11, LinkParams()).use { sim ->
+            val (ct, st) = SimScenario.defaultTls!!()
+            val conn = sim.connect(tlsClient = ct, tlsServer = st)
+            assertTrue(sim.runUntil(5.seconds) { conn.handshakeDone }.finished)
+            assertEquals(40000, sim.lastClientSourceSeenByServer!!.port)
+            sim.rebindClient(port = 40001)
+            assertEquals(40001, sim.clientAddress.port)
+            val r = SimScenario.transfer(sim, 64 shl 10, connection = conn) // traffic after the rebind
+            assertTrue(r.finished, "${r.violations}")
+            assertEquals(40001, sim.lastClientSourceSeenByServer!!.port, "the server now sees the new source port")
+        }
     }
 
     @Test fun secondPathIndependentLoss() {
-        val sim = Simulator(seed = 12, LinkParams())
-        val idx = sim.addClientPath(InetSocketAddress("10.0.1.1", 41000), LinkParams(lossRate = 1.0))
-        assertEquals(1, idx)
-        val r = SimScenario.transfer(sim, 256 shl 10)
-        assertTrue(r.finished && r.violations.isEmpty(), "a dead second path does not touch the first: ${r.violations}")
-        assertEquals(0L, sim.pathDelivered(idx), "nothing travels on the unused path yet")
+        Simulator(seed = 12, LinkParams()).use { sim ->
+            val idx = sim.addClientPath(InetSocketAddress("10.0.1.1", 41000), LinkParams(lossRate = 1.0))
+            assertEquals(1, idx)
+            val r = SimScenario.transfer(sim, 256 shl 10)
+            assertTrue(r.finished && r.violations.isEmpty(), "a dead second path does not touch the first: ${r.violations}")
+            assertEquals(0L, sim.pathDelivered(idx), "nothing travels on the unused path yet")
+        }
     }
 
     @Test fun seedStillReproducesRun() {
         fun run() =
-            SimScenario.transfer(
-                Simulator(42, LinkParams(lossRate = 0.03, reorderRate = 0.02, ecn = EcnMarking.CeRate(0.1))),
-                256 shl 10,
-            )
+            Simulator(42, LinkParams(lossRate = 0.03, reorderRate = 0.02, ecn = EcnMarking.CeRate(0.1))).use {
+                SimScenario.transfer(it, 256 shl 10)
+            }
         val a = run()
         val b = run()
         assertTrue(a.finished && b.finished)

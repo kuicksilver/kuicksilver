@@ -250,7 +250,7 @@ internal class PacketBuilder(
             c.testInjectDataBlocked > 0 ||
             c.testInjectRepeatNewCid > 0 ||
             c.testInjectDatagramBytes > 0 ||
-            (c.datagramSender?.hasPending() == true && c.maxDatagramPayload > 0)
+            (c.datagramSender?.hasPending() == true && c.datagramPayloadLimit >= 0)
     }
 
     private fun wantsToSend(
@@ -721,8 +721,8 @@ internal class PacketBuilder(
                     }
                     if (writeControlFrames(w, frames)) ackEliciting = true
                     c.datagramSender?.let { s ->
-                        val max = c.maxDatagramPayload
-                        if (max > 0 &&
+                        val max = c.datagramPayloadLimit // 0: an empty datagram still goes (a peer limit of 2)
+                        if (max >= 0 &&
                             w.remaining > 3
                         ) {
                             c.datagramWriter.bind(w, frames, max)

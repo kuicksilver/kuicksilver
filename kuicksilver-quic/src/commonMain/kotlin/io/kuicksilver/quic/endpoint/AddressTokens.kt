@@ -134,7 +134,15 @@ internal class AddressTokens(
 
     init {
         keys[RETRY_KIND][0] = crypto.newTokenKey()
-        if (newTokenLifetime != null) keys[NEW_TOKEN_KIND][0] = crypto.newTokenKey()
+        try {
+            if (newTokenLifetime != null) keys[NEW_TOKEN_KIND][0] = crypto.newTokenKey()
+        } catch (e: Throwable) {
+            // nothing else would close the Retry key: this object never comes into existence
+            io.kuicksilver.quic
+                .Releaser(e)
+                .release { keys[RETRY_KIND][0]?.close() }
+            throw e
+        }
         generations[0] = 0
     }
 

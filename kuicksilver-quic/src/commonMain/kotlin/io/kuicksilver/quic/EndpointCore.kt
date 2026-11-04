@@ -73,29 +73,56 @@ public class EndpointCore internal constructor(
     )
 
     internal val stateless = ArrayDeque<Stateless>()
-    internal val vnBuffer = PacketBuffer.allocate(1500)
+    internal val vnBuffer: PacketBuffer
 
     /** One reset key per endpoint (loop), random for the life of the process (RFC 9000 section 10.3; ADR-0003). */
-    internal val resetKey: ResetKey = config.crypto.newResetKey()
-    internal val limiter = StatelessRateLimiter(config.statelessPerAddressPerSecond, config.statelessTotalPerSecond)
+    internal val resetKey: ResetKey
+    internal val limiter: StatelessRateLimiter
 
     /** Retry and NEW_TOKEN tokens (RFC 9000 section 8.1): a group's, or this endpoint's own; null without a server. */
-    internal val addressTokens: AddressTokens? =
-        if (config.server == null) {
-            null
-        } else {
-            sharedTokens?.also { check(it.retain()) { "the group's address tokens are closed" } }
-                ?: AddressTokens(
-                    config.crypto,
-                    random,
-                    newTokenLifetime = config.server.newTokenLifetime,
-                    replayCapacity = config.server.newTokenReplayCapacity,
-                )
-        }
-    internal val queue: AdmissionQueue? = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
+    internal val addressTokens: AddressTokens?
+    internal val queue: AdmissionQueue?
 
     /** The server's 0-RTT setup (configuration digest and the replay register shared by every loop), or null without 0-RTT. */
-    internal val serverEarly: io.kuicksilver.quic.core.ServerEarlyData? = config.server?.earlySetup(random)
+    internal val serverEarly: io.kuicksilver.quic.core.ServerEarlyData?
+
+    init {
+        // native memory (the buffers, the keys) is freed only by close(): a constructor that fails part-way frees what it made
+        var vn: PacketBuffer? = null
+        var rk: ResetKey? = null
+        var tokens: AddressTokens? = null
+        var q: AdmissionQueue? = null
+        try {
+            vn = PacketBuffer.allocate(1500)
+            vnBuffer = vn
+            rk = config.crypto.newResetKey()
+            resetKey = rk
+            limiter = StatelessRateLimiter(config.statelessPerAddressPerSecond, config.statelessTotalPerSecond)
+            tokens =
+                if (config.server == null) {
+                    null
+                } else {
+                    sharedTokens?.also { check(it.retain()) { "the group's address tokens are closed" } }
+                        ?: AddressTokens(
+                            config.crypto,
+                            random,
+                            newTokenLifetime = config.server.newTokenLifetime,
+                            replayCapacity = config.server.newTokenReplayCapacity,
+                        )
+                }
+            addressTokens = tokens
+            q = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
+            queue = q
+            serverEarly = config.server?.earlySetup(random)
+        } catch (e: Throwable) {
+            val r = Releaser(e) // what a release throws is suppressed into e
+            r.release { q?.close() }
+            r.release { tokens?.close() } // this endpoint's own, or its reference to the group's
+            r.release { rk?.close() }
+            r.release { vn?.close() }
+            throw e
+        }
+    }
 
     /** 0-RTT datagrams that arrived before the Initial that creates their connection, by DCID (as quic-go: 100 ms, 32 IDs, 31 each). */
     private class EarlyDatagram(
@@ -641,19 +668,25 @@ public class EndpointCore internal constructor(
 
     /** Frees the queue, the stateless buffer and every connection's native resources. */
     public fun close() {
+        // every release runs even when one before it threw; the first failure is rethrown at the end
+        val r = Releaser()
         try {
-            for (c in connections) c.release()
+            for (c in connections) r.release { c.release() }
         } finally {
             // the endpoint's own buffers and keys even when a connection's release failed
             connections.clear()
             accepted.clear()
             perIp.clear()
             registry.clear()
-            vnBuffer.close()
-            resetKey.close()
-            if (!tokensReleased) addressTokens?.close() // one release per owner: a group's other loops may still use the keys
-            tokensReleased = true
-            queue?.close()
+            r.release { vnBuffer.close() }
+            r.release { resetKey.close() }
+            r.release {
+                val release = !tokensReleased
+                tokensReleased = true
+                if (release) addressTokens?.close() // one release per owner: a group's other loops may still use the keys
+            }
+            r.release { queue?.close() }
+            r.finish()
         }
     }
 

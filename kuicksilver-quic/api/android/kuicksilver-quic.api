@@ -901,6 +901,7 @@ public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/A
 	public abstract fun getPathEvents ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun getPaths ()Ljava/util/List;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
+	public abstract fun getPeerSupportsDatagrams ()Z
 	public abstract fun getStats ()Lio/kuicksilver/quic/ConnectionStats;
 	public fun isHandshakeComplete ()Z
 	public abstract fun keyUpdate (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

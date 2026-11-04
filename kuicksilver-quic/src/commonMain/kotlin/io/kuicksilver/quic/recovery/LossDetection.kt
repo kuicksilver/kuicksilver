@@ -85,12 +85,16 @@ internal interface LossListener {
         cc: io.kuicksilver.quic.CongestionController?,
         pathId: Int,
         now: TimeMark,
+        /** When the packet was declared lost. */
+        declaredAt: TimeMark,
     ) {}
 
     /** A lost packet left the memory of spurious-loss detection unacknowledged (or its space was discarded): the loss stands. */
     fun onLossSettled(
         cc: io.kuicksilver.quic.CongestionController?,
         now: TimeMark,
+        /** When the packet was declared lost. */
+        declaredAt: TimeMark,
     ) {}
 
     fun onLost(
@@ -304,7 +308,7 @@ internal class LossDetection(
         sp.lostCc[h] = null
         sp.lostHead = (h + 1) % LOST_KEEP
         sp.lostCount--
-        if (live) listener.onLossSettled(cc, now)
+        if (live) listener.onLossSettled(cc, now, TimeMark(sp.lostAt[h]))
     }
 
     private fun rememberLost(
@@ -348,7 +352,7 @@ internal class LossDetection(
             if (sp.lostSize[i] > 0) {
                 val bytes = sp.lostSize[i]
                 sp.lostSize[i] = 0
-                listener.onSpuriousLoss(space, pn, bytes, sp.lostCc[i], sp.lostPath[i], now)
+                listener.onSpuriousLoss(space, pn, bytes, sp.lostCc[i], sp.lostPath[i], now, TimeMark(sp.lostAt[i]))
             }
             k--
         }

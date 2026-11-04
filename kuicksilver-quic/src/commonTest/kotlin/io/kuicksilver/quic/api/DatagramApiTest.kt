@@ -263,6 +263,7 @@ class DatagramApiTest {
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     assertEquals(0, c.maxDatagramSize.value)
+                    assertEquals(false, c.peerSupportsDatagrams)
                     assertEquals(
                         DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport),
                         c.trySendDatagram(ByteArray(10)),
@@ -273,6 +274,59 @@ class DatagramApiTest {
                             c.sendDatagram(ByteArray(10))
                         }.reason,
                     )
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /** A peer `max_datagram_frame_size` of 3..34 is support for small datagrams (RFC 9221 section 3), not PeerDoesNotSupport. */
+    @Test fun aSmallPeerLimitSendsSmallDatagrams() =
+        runBlocking {
+            ApiPair.open(serverQuic = quicConfig { maxDatagramFrameSize = 10 }).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    assertEquals(8, c.maxDatagramSize.value, "a 10-byte frame: type, 1-byte Length, 8 bytes")
+                    val got = async { s.datagrams.take(2).toList() }
+                    assertEquals(DatagramSendResult.Sent, c.trySendDatagram(payload(1, 8)))
+                    c.sendDatagram(ByteArray(0), DatagramPolicy.Reject)
+                    assertEquals(DatagramSendResult.TooLarge(8), c.trySendDatagram(ByteArray(9)))
+                    assertEquals(listOf(payload(1, 8).toList(), emptyList()), got.await().map { it.data.toList() })
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /** A peer limit of 2 leaves room for an empty datagram only: maxDatagramSize is 0, yet the peer supports datagrams. */
+    @Test fun aPeerLimitOfTwoIsSupportForEmptyDatagrams() =
+        runBlocking {
+            ApiPair.open(serverQuic = quicConfig { maxDatagramFrameSize = 2 }).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    assertEquals(0, c.maxDatagramSize.value)
+                    assertEquals(true, c.peerSupportsDatagrams)
+                    assertEquals(true, s.peerSupportsDatagrams, "the client advertises the default 65535")
+                    val got = async { s.datagrams.take(1).toList() }
+                    assertEquals(DatagramSendResult.Sent, c.trySendDatagram(ByteArray(0)))
+                    assertEquals(DatagramSendResult.TooLarge(0), c.trySendDatagram(ByteArray(1)))
+                    assertEquals(listOf(0), got.await().map { it.data.size })
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /** A peer limit of 1 is support (RFC 9221 section 3) that no frame this endpoint writes fits: TooLarge(0) even when empty, not Unsupported. */
+    @Test fun aPeerLimitOfOneIsSupportThatNothingFits() =
+        runBlocking {
+            ApiPair.open(serverQuic = quicConfig { maxDatagramFrameSize = 1 }).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    assertEquals(true, c.peerSupportsDatagrams)
+                    assertEquals(0, c.maxDatagramSize.value)
+                    assertEquals(DatagramSendResult.TooLarge(0), c.trySendDatagram(ByteArray(0)))
+                    assertEquals(0, assertFailsWith<QuicException.DatagramTooLarge> { c.sendDatagram(ByteArray(0)) }.max)
                     c.close()
                     s.close()
                 }

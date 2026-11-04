@@ -933,9 +933,10 @@ internal class H3Session(
                 m.filterKeys { it !in known },
                 webTransport = WtVersion.of(m) != null,
             )
-        // RFC 9297 section 2.1.1: H3_DATAGRAM=1 needs the transport's max_datagram_frame_size
+        // H3_DATAGRAM=1 needs the transport's max_datagram_frame_size (RFC 9297 section 2.1: HTTP/3 Datagrams are QUIC DATAGRAM
+        // frames), as quic-go and quiche check: any value above 0 is support (RFC 9221 section 3), however small
         if (ps.h3Datagram &&
-            quic.maxDatagramSize.value == 0
+            !quic.peerSupportsDatagrams
         ) {
             throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "H3_DATAGRAM without QUIC datagram support")
         }

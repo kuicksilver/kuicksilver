@@ -23,6 +23,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.Releaser
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
@@ -94,6 +95,8 @@ internal class EndpointLoop private constructor(
     tokens: io.kuicksilver.quic.endpoint.AddressTokens? = null,
     /** The sockets on the server's preferred addresses, one per family offered ([PREFERRED_SOCKET]). */
     preferredIos: List<DatagramIo> = emptyList(),
+    /** Allocates the batches' buffers (a test seam: a failing allocator). */
+    allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
 ) : QuicEndpoint {
     /** Last-resort failures of coroutines the loop launched (none is expected to throw): counted, never handed to the thread's uncaught handler, which on Android kills the process. */
     internal val uncaughtFailures = AtomicLong(0)
@@ -105,13 +108,41 @@ internal class EndpointLoop private constructor(
     /** The preferred-address sockets; emptied when the preferred address goes down ([dropPreferred]). Loop dispatcher only. */
     private var preferredIos: List<DatagramIo> = preferredIos
 
-    // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
-    internal val core = EndpointCore(config, KslRandom.newSource(), index, tokens)
-
     /** Lifecycle counters, the connection listener and the logger of this loop (docs/guide/quic.md, "Observability"). */
     internal val observer = LoopObserver(config.logger, config.listener)
-    private val inBatch = PacketBatch(16, SLOT_SIZE)
-    private val outBatch = PacketBatch(32, SLOT_SIZE)
+
+    // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
+    internal val core: EndpointCore
+    private val inBatch: PacketBatch
+    private val outBatch: PacketBatch
+
+    /** One datagram of a slot sent on its own (another socket than the batch's). */
+    private val single: PacketBatch
+
+    init {
+        // the core and the batches are native memory that only the close job frees: a constructor that fails part-way frees
+        // what it made (the sockets stay the caller's, bind closes them)
+        var c: EndpointCore? = null
+        var i: PacketBatch? = null
+        var o: PacketBatch? = null
+        try {
+            c = EndpointCore(config, KslRandom.newSource(), index, tokens)
+            core = c
+            i = PacketBatch(16, SLOT_SIZE, allocate)
+            inBatch = i
+            o = PacketBatch(32, SLOT_SIZE, allocate)
+            outBatch = o
+            single = PacketBatch(1, SLOT_SIZE, allocate)
+        } catch (e: Throwable) {
+            val r = Releaser(e) // what a release throws is suppressed into e
+            r.release { o?.close() }
+            r.release { i?.close() }
+            r.release { c?.close() } // and its reference to a group's address tokens
+            scope.cancel()
+            throw e
+        }
+    }
+
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
@@ -142,6 +173,23 @@ internal class EndpointLoop private constructor(
     private var receiveJob: kotlinx.coroutines.Job? = null
     private var forwardJob: kotlinx.coroutines.Job? = null
 
+    // the coroutines that write into the core and the batches: the close job stops and joins them before it frees those
+    private var timerJob: kotlinx.coroutines.Job? = null
+    private val preferredJobs = ArrayList<kotlinx.coroutines.Job>(2)
+
+    /** The coroutines that write into the core and the batches have all ended (test hook). */
+    internal val writersEndedForTest: Boolean
+        get() = (listOfNotNull(receiveJob, forwardJob, timerJob) + preferredJobs).all { it.isCompleted }
+
+    /** Test hook: runs in the close job after the writers were joined and before the flush lock is taken to release. */
+    internal var beforeReleaseForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: runs [block] holding the flush lock, as a flush does. */
+    internal suspend fun <T> withFlushLockForTest(block: suspend () -> T): T = flushLock.withLock { block() }
+
+    /** Set by the close job once the core and the batches are freed: a flush after that does nothing. Loop dispatcher only. */
+    private var released = false
+
     /** Batches whose send threw (a transient socket error): the datagrams are treated as lost, nothing else happens. */
     internal var sendFailures = 0L
 
@@ -166,14 +214,37 @@ internal class EndpointLoop private constructor(
         core.acceptBacklog = { pendingAccept.load() }
     }
 
+    /** Frees what the constructor made, for a loop that was never started; its sockets stay the caller's. */
+    internal fun discardUnstarted() {
+        val r = Releaser()
+        r.release { single.close() }
+        r.release { outBatch.close() }
+        r.release { inBatch.close() }
+        r.release { core.close() } // and its reference to a group's address tokens
+        scope.cancel()
+        r.finish()
+    }
+
     /** Starts the receive, timer and forward coroutines; a [LoopGroup] calls it only once every loop exists, so no datagram is forwarded to a loop not built yet. */
     internal fun start() {
         QuicResourceProbe.register(this)
+        if (preloadsCloseClasses && closeClassesLoaded.compareAndSet(0, 1)) {
+            // ATOMIC: it runs even if this endpoint closes at once, so the flag never stands for a preload that did not happen
+            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+            scope.launch(Dispatchers.Default, start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
+                try {
+                    loadCloseClasses()
+                } catch (e: Throwable) {
+                    closeClassesLoaded.store(0) // the next endpoint tries again
+                    throw e
+                }
+            }
+        }
         receiveJob = scope.launch { receiveLoop() }
-        scope.launch { timerLoop() }
+        timerJob = scope.launch { timerLoop() }
         scope.launch { followCapabilities(io, PathId.Initial) }
         for (p in preferredIos) {
-            scope.launch { receivePreferred(p) }
+            preferredJobs += scope.launch { receivePreferred(p) }
             scope.launch { followCapabilities(p, PREFERRED_SOCKET) }
         }
         if (group !=
@@ -370,7 +441,6 @@ internal class EndpointLoop private constructor(
         flush()
     }
 
-    private val single = PacketBatch(1, SLOT_SIZE)
     private val copy = ByteArray(SLOT_SIZE)
 
     /** Sends [out]: in one call when every slot uses the endpoint socket, otherwise slot by slot through each path's socket. */
@@ -686,6 +756,7 @@ internal class EndpointLoop private constructor(
         signalTimer: Boolean = true,
     ) {
         flushLock.withLock {
+            if (released) return@withLock // a coroutine resumed after the close job freed the batches
             if (touched != null) core.markDirty(touched)
             val now = now()
             val dirty = core.dirtyConnections
@@ -702,7 +773,9 @@ internal class EndpointLoop private constructor(
                 for (c in list) {
                     val rt = runtimes[c] ?: continue
                     try {
-                        rt.drainEvents()
+                        // a connection closing: its CONNECTION_CLOSE goes to the socket first, and the application side of the end
+                        // (failing streams, waking waiters, the listener's onClosed) follows; the paths' addresses are what the send needs
+                        if (c.state == ConnectionState.Closing) rt.refreshPathRemotes() else rt.drainEvents()
                         outBatch.clear()
                         if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
                         rt.drainEvents()
@@ -1040,6 +1113,8 @@ internal class EndpointLoop private constructor(
         forwarded.close()
         closeJob =
             scope.launch {
+                // created first: a failure of the body below is the one rethrown, the releases' failures are suppressed into it
+                val r = Releaser()
                 try {
                     sessions.close() // a group's loops close together (LoopGroup.closeWith), so the shared cache can close too
                     val now = now()
@@ -1048,28 +1123,39 @@ internal class EndpointLoop private constructor(
                         core.markDirty(c)
                     }
                     flush(signalTimer = false)
+                } catch (e: Throwable) {
+                    r.note(e)
                 } finally {
+                    // every step runs even when one before it threw (a socket whose close fails must not leak the core and the
+                    // batches); the first failure is rethrown at the end, later ones suppressed
                     for (rt in runtimes.values.toList()) {
-                        rt.retire(
-                            QuicException.ConnectionLost.Internal("endpoint closed", QuicException.EndpointClosing()),
-                        )
+                        r.release {
+                            rt.retire(
+                                QuicException.ConnectionLost.Internal("endpoint closed", QuicException.EndpointClosing()),
+                            )
+                        }
                     }
                     runtimes.clear()
                     // the socket first: it wakes a receiver blocked inside the socket call; its batch is freed only once that call returned (a native receive writes into the batch's memory)
-                    io.close()
-                    for (p in preferredIos) p.close()
-                    receiveJob?.cancel()
-                    forwardJob?.cancel()
-                    withContext(kotlinx.coroutines.NonCancellable) {
-                        receiveJob?.join()
-                        forwardJob?.join()
-                    }
-                    core.close()
-                    inBatch.close()
-                    outBatch.close()
-                    single.close()
-                    QuicResourceProbe.unregister(this@EndpointLoop)
+                    r.release { io.close() }
+                    for (p in preferredIos) r.release { p.close() }
+                    // every coroutine that writes into the core or the batches stops before they are freed: the receivers, the
+                    // forwarder, the timer (its flush polls into the out batch) and the preferred-address receivers
+                    val writers = listOfNotNull(receiveJob, forwardJob, timerJob) + preferredJobs
+                    for (j in writers) j.cancel()
+                    r.release { withContext(kotlinx.coroutines.NonCancellable) { for (j in writers) j.join() } }
+                    beforeReleaseForTest?.invoke()
+                    // a flush started elsewhere (an application call, the one after a verification) may be suspended in a send
+                    // over the out batch: taking the flush lock waits for it, and every later flush sees `released`; the lock is
+                    // also the happens-before edge for a dispatcher with more than one thread
+                    r.release { withContext(kotlinx.coroutines.NonCancellable) { flushLock.withLock { released = true } } }
+                    r.release { core.close() }
+                    r.release { inBatch.close() }
+                    r.release { outBatch.close() }
+                    r.release { single.close() }
+                    r.release { QuicResourceProbe.unregister(this@EndpointLoop) }
                     scope.cancel()
+                    r.finish()
                 }
             }
     }
@@ -1115,6 +1201,21 @@ internal class EndpointLoop private constructor(
             }
         }
 
+        private val closeClassesLoaded = AtomicInt(0)
+
+        /**
+         * Makes the exceptions a close carries once, so their classes are loaded and their message templates linked before the
+         * first close() needs them: on a cold JVM the first `ConnectionLost` took 3 to 5 ms to make (measured inside
+         * `ConnectionCore.close`, where it sat between close() and the CONNECTION_CLOSE on the wire); the next takes about 20 us.
+         * Once per process, off the loop, and only on the JVM and Android ([preloadsCloseClasses]): Kotlin/Native has no class
+         * loading to save.
+         */
+        internal fun loadCloseClasses() {
+            // a reason, so the message's inner template is linked too (on the JVM each string template links on its first run)
+            QuicException.ConnectionLost.ApplicationClosed(0, "-", io.kuicksilver.quic.Initiator.Local)
+            QuicException.ConnectionLost.TransportClosed(0, 0, "-", ByteArray(0), io.kuicksilver.quic.Initiator.Local, null)
+        }
+
         /** Forwarded datagrams handled before admission, flush and a yield. */
         const val FORWARD_BATCH: Int = 16
 
@@ -1124,6 +1225,8 @@ internal class EndpointLoop private constructor(
         suspend fun bind(
             local: InetSocketAddress,
             config: QuicEndpointConfig,
+            allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
+            beforeStartForTest: () -> Unit = {},
         ): QuicEndpoint {
             config.server?.let { checkPayloadSize(it.quic) }
             val io =
@@ -1148,7 +1251,24 @@ internal class EndpointLoop private constructor(
                     io.close()
                     throw e
                 }
-            return EndpointLoop(config, io, config.dispatcher ?: ownDispatcher(), preferredIos = preferred).also { it.start() }
+            val loop =
+                try {
+                    EndpointLoop(config, io, config.dispatcher ?: ownDispatcher(), preferredIos = preferred, allocate = allocate)
+                } catch (e: Throwable) {
+                    val r = Releaser(e) // the loop freed its own part; the sockets are bind's
+                    r.release { io.close() }
+                    for (p in preferred) r.release { p.close() }
+                    throw e
+                }
+            try {
+                beforeStartForTest()
+                loop.start()
+            } catch (e: Throwable) {
+                // whatever start launched goes with the loop: the close job frees the sockets, the core and the batches
+                Releaser(e).release { withContext(kotlinx.coroutines.NonCancellable) { loop.closeAndJoin() } }
+                throw e
+            }
+            return loop
         }
 
         /** The server's preferred-address sockets ([io.kuicksilver.quic.QuicServerConfig.preferredAddress]), opened with [open]; all or none. */
@@ -1180,8 +1300,9 @@ internal class EndpointLoop private constructor(
             sessions: SessionCache,
             tokens: io.kuicksilver.quic.endpoint.AddressTokens,
             preferredIos: List<DatagramIo> = emptyList(),
+            allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
         ): EndpointLoop =
-            EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions, tokens, preferredIos)
+            EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions, tokens, preferredIos, allocate)
 
         /**
          * The accept queue, whose slots [pending] counts. A connection the queue cannot deliver (an `accept()` cancelled
