@@ -225,6 +225,15 @@ internal class LoopGroup private constructor(
             return create(config, ios, preferred = preferred)
         }
 
+        private fun closeSockets(
+            r: Releaser,
+            ios: List<io.kuicksilver.quic.DatagramIo>,
+            preferred: List<List<io.kuicksilver.quic.DatagramIo>>,
+        ) {
+            for (io in ios) r.release { io.close() }
+            for (l in preferred) for (p in l) r.release { p.close() }
+        }
+
         /** Builds every loop first, then starts them: a loop that receives before its peers exist would forward into nothing. [afterBuild] is a test hook. */
         internal suspend fun create(
             config: QuicEndpointConfig,
@@ -237,12 +246,18 @@ internal class LoopGroup private constructor(
             // socket. The group holds one reference while it builds the loops, each loop's endpoint core takes its own, and the
             // last one to close frees the keys; a loop that fails to build leaves no reference behind
             val tokens =
-                io.kuicksilver.quic.endpoint.AddressTokens(
-                    config.crypto,
-                    KslRandom.newSource(),
-                    newTokenLifetime = config.server!!.newTokenLifetime,
-                    replayCapacity = config.server.newTokenReplayCapacity,
-                )
+                try {
+                    io.kuicksilver.quic.endpoint.AddressTokens(
+                        config.crypto,
+                        KslRandom.newSource(),
+                        newTokenLifetime = config.server!!.newTokenLifetime,
+                        replayCapacity = config.server.newTokenReplayCapacity,
+                    )
+                } catch (e: Throwable) {
+                    // no loop exists yet; the sockets were handed to this group
+                    closeSockets(Releaser(e), ios, preferred)
+                    throw e
+                }
             val loops = ArrayList<EndpointLoop>(ios.size)
             try {
                 for ((i, io) in ios.withIndex()) {
@@ -265,8 +280,7 @@ internal class LoopGroup private constructor(
                 // were handed to this group, so they close here too
                 val r = Releaser(e)
                 for (l in loops) r.release { l.discardUnstarted() }
-                for (io in ios) r.release { io.close() }
-                for (l in preferred) for (p in l) r.release { p.close() }
+                closeSockets(r, ios, preferred)
                 throw e
             } finally {
                 tokens.close() // the group's own reference

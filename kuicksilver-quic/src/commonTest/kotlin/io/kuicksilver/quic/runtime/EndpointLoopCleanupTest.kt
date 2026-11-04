@@ -71,6 +71,18 @@ class EndpointLoopCleanupTest {
             assertEquals(0, crypto.live, "loop 0's reset key and its reference to the group's token keys")
         }
 
+    @Test fun aGroupWhoseTokenKeysCannotBeMadeClosesEverySocket() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val crypto = TrackingCrypto(tokenKeys = 0) // the group's Retry key is refused before any loop exists
+            val ios = listOf(net.open(serverAddr), net.open(otherAddr))
+            val preferred = listOf(listOf<DatagramIo>(net.open(preferredAddr)), emptyList())
+            assertFailsWith<IllegalStateException> { LoopGroup.create(config(crypto, loops = 2), ios, preferred) }
+            assertTrue(ios.all { it.closed }, "the loops' sockets")
+            assertTrue((preferred[0][0] as MemoryDatagramIo).closed, "the preferred socket")
+            assertEquals(0, crypto.live)
+        }
+
     /** A socket whose close throws, after it really closed (an OS error on close). */
     private class ThrowingCloseIo(
         val inner: MemoryDatagramIo,

@@ -216,8 +216,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   instead of leaking them, and `EndpointCore.close` runs every release even when one of them throws.
 - QUIC: a `QuicEndpoint.bind` that fails after opening its sockets (the endpoint loop cannot be built or started) closes
   the main and the preferred-address sockets instead of leaving them bound, and the loop frees the endpoint core and the
-  datagram batches it had made. A loop group that fails to build or start likewise closes every loop's sockets and frees
-  the loops already built.
+  datagram batches it had made. A loop group that fails to build or start (its shared token keys included) likewise
+  closes every loop's sockets and frees the loops already built.
 - QUIC: closing an endpoint frees its endpoint core, datagram batches and remaining sockets even when one release in
   the sequence throws (a socket whose close fails); before, the rest was skipped and leaked. The first failure is still
   counted as the loop's uncaught failure.
