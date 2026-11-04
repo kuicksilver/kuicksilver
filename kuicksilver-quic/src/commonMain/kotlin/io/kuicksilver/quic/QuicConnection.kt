@@ -87,7 +87,11 @@ public interface QuicConnection : AutoCloseable {
      */
     public val datagrams: Flow<Datagram>
 
-    /** Largest payload [sendDatagram] accepts right now; 0 while unknown or unsupported. Follows the path MTU. */
+    /**
+     * Largest payload [sendDatagram] accepts right now; 0 while unknown or unsupported, and also when the peer's
+     * `max_datagram_frame_size` (2) leaves room for an empty datagram only, which is then accepted. Follows the path MTU and
+     * the peer's limit (RFC 9221 section 3).
+     */
     public val maxDatagramSize: StateFlow<Int>
 
     /**

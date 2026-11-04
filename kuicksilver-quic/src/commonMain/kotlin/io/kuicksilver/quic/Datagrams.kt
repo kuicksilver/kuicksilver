@@ -66,7 +66,11 @@ public sealed interface DatagramSendResult {
 
 /** Why datagrams cannot be sent on this connection. */
 public enum class DatagramUnsupportedReason {
-    /** The peer did not advertise `max_datagram_frame_size` (RFC 9221 section 3). */
+    /**
+     * The peer did not advertise `max_datagram_frame_size` (RFC 9221 section 3), or advertised 1, which leaves no room for a
+     * DATAGRAM frame with a Length field. Any larger value, however small, is support: a datagram above it is
+     * [DatagramSendResult.TooLarge].
+     */
     PeerDoesNotSupport,
 
     /** Our own `QuicConfig.maxDatagramFrameSize` is 0. */

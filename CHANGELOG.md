@@ -460,6 +460,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: closing an endpoint frees its endpoint core, datagram batches and remaining sockets even when one release in
   the sequence throws (a socket whose close fails); before, the rest was skipped and leaked. The first failure is still
   counted as the loop's uncaught failure.
+- QUIC datagrams: a peer whose `max_datagram_frame_size` is small (2 to 34 bytes) is no longer reported as not
+  supporting datagrams. The 32 bytes kept free for an ACK beside a packet-sized datagram were taken from the peer's limit
+  too, so `maxDatagramSize` came out 0 or below, nothing was ever sent and `sendDatagram` failed with
+  `PeerDoesNotSupport`, although RFC 9221 section 3 makes any value above 0 support. The payload limit is now what the
+  peer's frame size allows (8 bytes for a 10-byte limit, an empty datagram for 2), the reserve only shrinking the
+  packet's bound; a peer limit below the packet's is no longer cut by 32 bytes either (497 instead of 465 bytes for a
+  500-byte limit). A limit of 1, which no DATAGRAM frame with a Length field fits, still counts as no support.
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the

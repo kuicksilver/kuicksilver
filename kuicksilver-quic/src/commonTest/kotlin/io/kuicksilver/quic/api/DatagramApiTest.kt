@@ -279,6 +279,24 @@ class DatagramApiTest {
             }
         }
 
+    /** A peer `max_datagram_frame_size` of 3..34 is support for small datagrams (RFC 9221 section 3), not PeerDoesNotSupport. */
+    @Test fun aSmallPeerLimitSendsSmallDatagrams() =
+        runBlocking {
+            ApiPair.open(serverQuic = quicConfig { maxDatagramFrameSize = 10 }).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    assertEquals(8, c.maxDatagramSize.value, "a 10-byte frame: type, 1-byte Length, 8 bytes")
+                    val got = async { s.datagrams.take(2).toList() }
+                    assertEquals(DatagramSendResult.Sent, c.trySendDatagram(payload(1, 8)))
+                    c.sendDatagram(ByteArray(0), DatagramPolicy.Reject)
+                    assertEquals(DatagramSendResult.TooLarge(8), c.trySendDatagram(ByteArray(9)))
+                    assertEquals(listOf(payload(1, 8).toList(), emptyList()), got.await().map { it.data.toList() })
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
     @Test fun unsupportedWhenLocallyDisabled() =
         runBlocking {
             ApiPair.open().use { p ->

@@ -42,6 +42,7 @@ import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.keepAliveDeadline
 import io.kuicksilver.quic.core.largePacketUnanswered
+import io.kuicksilver.quic.core.largestDatagramPayload
 import io.kuicksilver.quic.core.markClosed
 import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.onBlockedRepeatTimer
@@ -295,16 +296,26 @@ public class ConnectionCore internal constructor(
     private val datagramAckReserve = 32
 
     /**
-     * Largest DATAGRAM payload the peer accepts in one of our packets (RFC 9221 section 3): min(peer `max_datagram_frame_size`, MTU minus
-     * short header and tag) minus the frame header and 32 bytes kept for a short ACK; 0 when the peer did not advertise support.
+     * Largest DATAGRAM payload the peer accepts in one of our packets (RFC 9221 section 3), the smaller of two bounds: the
+     * payload whose whole frame (type, Length, payload) fits the peer's `max_datagram_frame_size`, and the payload of a frame
+     * filling a packet (MTU minus short header and tag) less 32 bytes kept for a short ACK beside it. The reserve only shrinks
+     * the packet's bound: a small peer limit is support for small datagrams, not none. 0 when the peer did not advertise
+     * support, and when its limit leaves room for an empty datagram only (2) or for no frame with a Length field at all (1).
      */
-    public val maxDatagramPayload: Int get() {
+    public val maxDatagramPayload: Int get() = maxOf(datagramPayloadLimit, 0)
+
+    /**
+     * [maxDatagramPayload], or -1 when no DATAGRAM frame can be sent: the peer did not advertise `max_datagram_frame_size`, or
+     * advertised 1, which leaves no room for the type and Length of the only frame this sender writes (type 0x31). quiche
+     * treats a limit that small the same way (`dgram_max_writable_len` returns None).
+     */
+    internal val datagramPayloadLimit: Int get() {
         val peer = peerTp?.maxDatagramFrameSize ?: 0L
-        if (peer <= 0L) return 0
-        val frameMax = minOf(peer, (path.mtu - (1 + remoteCid.length + 4 + 16)).toLong()).toInt()
-        if (frameMax <= 2) return 0
+        if (peer < 2L) return -1
+        val room = path.mtu - (1 + remoteCid.length + 4 + 16)
         // a datagram of this size still fits a packet that carries a short ACK
-        return frameMax - 1 - VarInt.size(frameMax.toLong()) - datagramAckReserve
+        val byPacket = room - 1 - VarInt.size(room.toLong()) - datagramAckReserve
+        return if (peer >= room) byPacket else minOf(largestDatagramPayload(peer.toInt()), byPacket)
     }
 
     /** Copies the oldest received datagram into [into] at [offset]; -1 when the queue is empty. */

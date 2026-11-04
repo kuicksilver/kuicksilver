@@ -358,6 +358,9 @@ internal class ConnectionRuntime(
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val datagramsQueuedForTest: Int get() = sendQueue.count.load()
     private val maxDatagramSizeFlow = MutableStateFlow(0)
+
+    /** The core's `datagramPayloadLimit` as last drained: -1 while the peer accepts no DATAGRAM frame (or before its parameters). */
+    @kotlin.concurrent.Volatile private var datagramLimit = -1
     override val maxDatagramSize: StateFlow<Int> get() = maxDatagramSizeFlow
     private val datagramSignal = Channel<Unit>(Channel.CONFLATED)
 
@@ -387,12 +390,9 @@ internal class ConnectionRuntime(
 
     private fun datagramPrecheck(size: Int): DatagramSendResult? {
         if (core.config.maxDatagramFrameSize == 0L) return DatagramSendResult.Unsupported(DatagramUnsupportedReason.Disabled)
-        val max = maxDatagramSizeFlow.value
-        if (max <=
-            0
-        ) {
-            return DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport)
-        }
+        // RFC 9221 section 3: any max_datagram_frame_size above 0 is support; a small one only bounds the payload
+        val max = datagramLimit
+        if (max < 0) return DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport)
         if (size > max) return DatagramSendResult.TooLarge(max)
         return null
     }
@@ -462,7 +462,9 @@ internal class ConnectionRuntime(
 
     internal fun drainEvents() {
         refreshPathRemotes()
-        val max = core.maxDatagramPayload
+        val limit = core.datagramPayloadLimit
+        datagramLimit = limit
+        val max = maxOf(limit, 0)
         if (max != maxDatagramSizeFlow.value) maxDatagramSizeFlow.value = max
         core.datagramsDroppedSend = sendQueue.dropped
         while (true) {
