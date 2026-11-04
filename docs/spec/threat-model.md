@@ -309,6 +309,8 @@ Pre-release status (Alt-Svc): the client engine learns `Alt-Svc` only from respo
 
 Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the same `TlsConfig` (trust, pins, TLS 1.3): with h3 unavailable and a pin that does not match the server key, the request ends with `TlsException` rather than succeeding over TCP (`ClientFallbackTest.negative_fallbackKeepsPins`); ALPN on TCP is strictly `http/1.1`, on QUIC `h3` (a mismatch — `no_application_protocol`, `negative_alpnMismatchClosesConnection`); a non-idempotent request that went out over h3 is not retried over h1.1 (`nonIdempotentNotRetriedAfterHeadersSent`).
 
+0.3.0 status (per-call diagnostics): every answered call of the client engine says why it did not go over HTTP/3 (`ProtocolDiagnostics`, docs/guide/ktor.md), and the engine logs one line per such call. The line names the method, scheme, host, port and path only: no query and no user info, which often carry tokens, and the HTTP/3 failure by its type, never a peer's reason phrase (attacker-chosen text, up to 1 KiB, that could forge log lines). Verification: `ProtocolDiagnosticsTest.negative_diagnosticsLogHasNoQuery`, `ClientDiagnosticsTest.negative_diagnosticsLogHasNoQueryThroughTheEngine`. The diagnostics live as long as their response; a broken-alternative mark keeps only a `FallbackReason`, so the bounded mark table (`negative_brokenMarksBounded`) holds no exception or connection state.
+
 ### 3.19 Kotlin/Native TCP bind and connect addresses
 
 - **Threats:** a server connector meant for one address (a loopback-only admin endpoint on `::1`) reachable from other addresses; a client request meant for one host answered by another (cleartext `http://` is answered by it; with TLS, host-name verification fails).

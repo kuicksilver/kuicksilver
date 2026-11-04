@@ -188,6 +188,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `priority` field and, over HTTP/3, schedules the request's stream with it (a WebSocket over HTTP/3 included); it
   replaces a `Priority` header on the same request. `response.updatePriority(urgency, incremental)` sends a
   PRIORITY_UPDATE while the response is coming and returns false over HTTP/1.1 or once the call is over.
+- Ktor client: per-call protocol diagnostics (experimental; `docs/guide/ktor.md`, "Why did this request not use
+  HTTP/3?"). Every response carries a `ProtocolDiagnostics` (`response.kuicksilverDiagnostics`, the call attribute
+  `KuicksilverDiagnosticsKey`): the protocol that served it, the `ProtocolReason`, why it did not go over HTTP/3 as a
+  `FallbackReason` (`HandshakeTimeout`, `TlsFailure`, `BrokenAlternative`, `H3NotReady`, ...), the HTTP/3 alternative
+  and its `AlternativeSource`, the race and its head start, the HTTP/3 failure and the number of attempts. The engine's
+  logger gets one line per call HTTP/3 could have served but did not, at `http3 { diagnosticsLogLevel }` (`Info` by
+  default; HTTP/3 calls at `Debug`; `null` for none), without the URL's query or user info. A broken alternative now
+  remembers why it broke, and when both the HTTP/3 and the HTTP/1.1 setups fail the HTTP/1.1 failure carries the HTTP/3
+  one in `suppressed`.
 
 ### Changed
 

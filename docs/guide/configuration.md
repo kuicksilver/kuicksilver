@@ -268,6 +268,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | lifecycle of every QUIC connection |
 | `webTransportIgnoresProxy` (*experimental*) | `Boolean` | `false` | `HttpClient.webTransport` connects directly although a proxy applies to the URL; otherwise such a call fails with `UnsupportedOperationException` ([WebTransport on the client](ktor.md#webtransport-on-the-client-experimental)) |
 | `maxWebTransportSessions` (*experimental*) | `Int` | 64 | WebTransport sessions open at once, each on its own QUIC connection; at least 1; one more fails at once with `IllegalStateException` |
+| `diagnosticsLogLevel` (*experimental*) | `LogLevel?` | `Info` | level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)) |
 
 ## Ktor server engine
 

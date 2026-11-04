@@ -665,6 +665,8 @@ internal class H3Pool(
                     )
                 }
                 if (++attempts > 2) throw H3NotSent(e)
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
                 events.emit("retry") { retry(data, attempts + 1, e) }
             }
         }

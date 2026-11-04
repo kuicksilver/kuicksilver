@@ -37,7 +37,8 @@ internal class RaceResult<T>(
  * section 5), also when the caller is cancelled. A losing h3 setup is not cancelled: the race stops waiting for it, but
  * the QUIC connection goes on in the engine's background scope, so later requests to the origin can use it (RFC 7838
  * section 2.4: the client SHOULD use the alternative service as soon as it is available), the deviation from RFC 8305
- * section 5's "SHOULD be canceled" the compliance row documents.
+ * section 5's "SHOULD be canceled" the compliance row documents. When both fail, the h1 failure is thrown with the h3
+ * one suppressed in it.
  */
 internal class ProtocolRace(
     private val hardDelay: Duration?,
@@ -109,7 +110,13 @@ internal class ProtocolRace(
                         h3Job.cancel()
                         return@coroutineScope RaceResult(h1Result.getOrThrow(), Protocol.H1, h3Result?.exceptionOrNull())
                     }
-                    if (h3Result != null && h1Result != null) throw h1Result.exceptionOrNull()!!
+                    if (h3Result != null && h1Result != null) {
+                        // the HTTP/1.1 failure is the call's; HTTP/3's goes with it, so a failed call still says why
+                        // HTTP/3 failed (ProtocolDiagnostics exist only for answered calls)
+                        val h1Failure = h1Result.exceptionOrNull()!!
+                        h3Result.exceptionOrNull()?.let { if (it !== h1Failure) h1Failure.addSuppressed(it) }
+                        throw h1Failure
+                    }
                     select<Unit> {
                         if (h3Result == null) h3Done.onAwait { h3Result = it }
                         if (h1Result == null) h1Done.onAwait { h1Result = it }

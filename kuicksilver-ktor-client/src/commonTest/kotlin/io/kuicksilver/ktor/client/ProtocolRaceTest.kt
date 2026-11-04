@@ -186,6 +186,15 @@ class ProtocolRaceTest {
             val e = assertFailsWith<IOException> { race.race<String>({ throw IOException("h3") }, { throw IOException("h1") }, null, true) }
             assertEquals("h1", e.message)
         }
+
+    /** Both setups failed: the HTTP/1.1 failure is thrown and carries the HTTP/3 one, so a failed call still says why HTTP/3 failed. */
+    @Test fun bothFailKeepsTheHttp3FailureSuppressed() =
+        runTest {
+            val h3 = IOException("h3")
+            val e = assertFailsWith<IOException> { race.race<String>({ throw h3 }, { throw IOException("h1") }, null, true) }
+            // kotlinx.coroutines' stack trace recovery (tests run with assertions on) may hand out a copy whose cause is the original
+            assertEquals(listOf<Throwable>(h3), generateSequence<Throwable>(e) { it.cause }.flatMap { it.suppressedExceptions }.toList())
+        }
 }
 
 class BrokenAltSvcTest {
@@ -238,6 +247,18 @@ class BrokenAltSvcTest {
         assertEquals(AltSvcCache.MAX_ORIGINS, (0 until n).count { broken.isBroken("o$it", "a") })
         assertFalse(broken.quicConfirmedOn("net0"))
         assertEquals(AltSvcCache.MAX_ORIGINS, (0 until n).count { broken.quicConfirmedOn("net$it") })
+    }
+
+    /** A mark remembers why the alternative broke, for the diagnostics of the calls it sends to HTTP/1.1. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun markRemembersItsReason() {
+        broken.markBroken("o", "a", FallbackReason.HandshakeTimeout)
+        assertEquals(FallbackReason.HandshakeTimeout, broken.brokenReason("o", "a"))
+        broken.markBroken("o", "a", FallbackReason.TlsFailure)
+        assertEquals(FallbackReason.TlsFailure, broken.brokenReason("o", "a"))
+        now += 10.minutes.inWholeMilliseconds
+        assertNull(broken.brokenReason("o", "a"), "an expired mark says nothing")
     }
 
     @Test fun networkChangeResets() {

@@ -39,7 +39,11 @@ class ClientRaceTest {
                     val r1 = c.get("https://127.0.0.1:$port/1")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r1.version)
                     assertEquals("ok", r1.bodyAsText())
-                    assertEquals("ok", c.get("https://127.0.0.1:$port/2").bodyAsText())
+                    val r2 = c.get("https://127.0.0.1:$port/2")
+                    assertEquals("ok", r2.bodyAsText())
+                    // the stale connection's retry counts as an attempt (ProtocolDiagnostics)
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    assertEquals(2, r2.kuicksilverDiagnostics?.attempts)
                 }
             }
             assertEquals(listOf("0:GET /1 HTTP/1.1", "0:GET /2 HTTP/1.1", "1:GET /2 HTTP/1.1"), served)

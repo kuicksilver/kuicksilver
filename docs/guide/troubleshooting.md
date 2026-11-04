@@ -22,6 +22,7 @@ counter or a qlog trace than by guessing.
 | Connection counters | `QuicConnection.stats` (`ConnectionStats`) | `smoothedRtt`, `minRtt`, `cwnd`, `bytesInFlight`, `lostPackets`, `ptoCount`, `pathMtu`, `ecnState`, `datagramsDropped`, `datagramsDroppedSend`, `datagramsDroppedSocket`, `glitchTokensSpent`, `authenticationFailures`, `invalidResets` |
 | qlog | `quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(dir)) }`; Ktor client `http3 { qlog = … }`; Ktor server `qlog = …` | one `<odcid>_<client\|server>_<random>.sqlog` file (JSON-SEQ) per connection, in a directory only this user can change, readable with qvis; `ConnectionInfo.id` and the logger's `<id>` are the same original destination connection ID |
 | Ktor client events | `engine { eventListener = object : KuicksilverEventListener() { … } }` | why a protocol was chosen (`protocolSelected` with a `ProtocolReason`), the race (`raceEnded`), `altSvcUsed`, `altSvcMarkedBroken`, `fallback`, `retry`, pool reuse |
+| Ktor client diagnostics | `response.kuicksilverDiagnostics`; the engine logger at `Info` | per response: the protocol, why not HTTP/3 (`FallbackReason`), the alternative, the race; one log line per such call |
 | Ktor server events | `eventListener = object : KuicksilverServerEventListener() { … }` | connections per protocol, `tlsHandshakeFailed`, requests with their failure |
 | Key log | `tlsConfig(…) { keylog = keylogFile(path) }` (`@DelicateKuicksilverApi`) | TLS secrets for Wireshark; see [Key logging is refused](#key-logging-is-refused) |
 
@@ -43,7 +44,7 @@ within `QuicConfig.handshakeTimeout` (10 s).
 
 | Cause | How to tell | Fix |
 |---|---|---|
-| UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only) | the server's `EndpointStats.datagramsReceived` does not move; TCP to the same port works | open UDP on the port; with the Ktor client use `Http3DiscoveryMode.Auto` or `Preferred`, which fall back to HTTP/1.1 ([below](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
+| UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only) | the server's `EndpointStats.datagramsReceived` does not move; TCP to the same port works; the Ktor client's `kuicksilverDiagnostics.fallback` is `HandshakeTimeout`, later `BrokenAlternative` | open UDP on the port; with the Ktor client use `Http3DiscoveryMode.Auto` or `Preferred`, which fall back to HTTP/1.1 ([below](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
 | The server refuses silently: `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached | server `EndpointStats.connectionsRefusedLimits`, `initialsDropped` | raise the limits in `quicEndpointConfig { }` or spread the load |
 | Wrong address or port, nothing listening | no server traffic at all; on Kotlin/Native a QUIC server needs the accelerated socket | check `QuicEndpoint.localAddress` on the server and the address the client resolved |
 | Heavy loss on the first flight (radio links, a peer using `X25519MLKEM768`, whose first flights span two datagrams) | the qlog shows Initial retransmissions at 1 s, 2 s, 4 s | lower `QuicConfig.initialRtt` (default 333 ms, at most 10 s), see [QUIC: Configuration](quic.md#configuration); a client endpoint that already finished a connection to the same server address starts from its last smoothed RTT on its own |
@@ -350,7 +351,11 @@ process: fix the cause and restart.
 
 ### The Ktor client never uses HTTP/3, or stops using it
 
-Check `KuicksilverEventListener.protocolSelected`'s `ProtocolReason`:
+Every response says why: `response.kuicksilverDiagnostics?.fallback` is a `FallbackReason` (`HandshakeTimeout` when UDP
+is blocked, `NoAlternative` without `Alt-Svc`, `BrokenAlternative`, `TlsFailure`, ...), with what to check for each in
+[Ktor: Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3); with
+`engine { logger = KuicksilverLogger.stderr(LogLevel.Info) }` the engine logs one line per such call. The event
+listener tells the same story as it happens; check `KuicksilverEventListener.protocolSelected`'s `ProtocolReason`:
 
 | Reason | Meaning and fix |
 |---|---|

@@ -56,7 +56,28 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
         assertTrue("guide:ktor:proxy" in guide, "marker proxy")
         assertTrue("guide:ktor:websocket-deflate-client" in guide, "marker websocket-deflate-client")
+        assertTrue("guide:ktor:client-diagnostics" in guide, "marker client-diagnostics")
     }
+
+    @Test fun diagnosticsSample() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            val url = "https://127.0.0.1:$port/"
+            try {
+                HttpClient(Kuicksilver) { engine { trust = ClientFixtures.trust } }.use { client ->
+                    // guide:ktor:client-diagnostics
+                    val response = client.get(url)
+                    val d = response.kuicksilverDiagnostics
+                    if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
+                        println("HTTP/3 not used: ${d.fallback} (alternative ${d.alternative} via ${d.alternativeSource})")
+                    }
+
+                    assertEquals(FallbackReason.NoAlternative, d?.fallback)
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
 
     @Test fun webSocketDeflateSample() =
         clientTest {

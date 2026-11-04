@@ -682,6 +682,65 @@ HttpClient(Kuicksilver) {
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.
 
+### Why did this request not use HTTP/3?
+
+Every response of the client engine carries a `ProtocolDiagnostics` (experimental): `response.kuicksilverDiagnostics`
+(the call attribute `KuicksilverDiagnosticsKey`) says which `protocol` served the call, the `reason` that
+`protocolSelected` heard last, and, when the call did not go over HTTP/3, why (`fallback`, a `FallbackReason`), with
+the HTTP/3 `alternative` (`host:port`) and its `alternativeSource` (`AltSvc`, `QuicHint`, `Preferred`, `H3Only`),
+whether the setups `raced` and HTTP/3's `headStart`, the HTTP/3 failure itself (`h3Failure`) when there was one, and
+the number of `attempts` (retries after GOAWAY or a stale connection, and the fallback, each count one).
+
+```kotlin
+val url = "https://example.com/"
+// guide:ktor:client-diagnostics
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val response = client.get(url)
+val d = response.kuicksilverDiagnostics
+if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
+    println("HTTP/3 not used: ${d.fallback} (alternative ${d.alternative} via ${d.alternativeSource})")
+}
+```
+
+| `fallback` | Meaning | What to check |
+|---|---|---|
+| `NotSecure` | an `http://` or `ws://` URL | HTTP/3 needs `https` |
+| `Proxy` | a proxy applies to the URL | `proxy` and `proxyResolver` ([Proxies](#proxies)) |
+| `Configuration` | `discovery = H1Only` | the discovery mode |
+| `NoAlternative` | `Auto` and no `Alt-Svc` from the origin yet: the first call always goes over HTTP/1.1 | the server's `Alt-Svc`; `quicHints`, `FileAltSvcStore` |
+| `BrokenAlternative` | HTTP/3 to this alternative failed recently on this network | the log line's `broken since:` names why |
+| `WebSocket` | a WebSocket without an HTTP/3 connection that allows Extended CONNECT | expected for the first WebSocket |
+| `HandshakeTimeout` | no QUIC answer within the handshake or connect timeout | UDP to the port: a firewall, a VPN, a cloud security group open for TCP only |
+| `UdpUnreachable` | ICMP unreachable for the UDP port | not reported yet: such calls show `HandshakeTimeout` |
+| `H3NotReady` | HTTP/1.1 was ready before HTTP/3 answered (HTTP/3 had not failed) | nothing; the QUIC setup goes on and serves later calls |
+| `Refused` | the server closed the QUIC connection without a TLS alert (`CONNECTION_REFUSED`), or no common QUIC version | the server's QUIC listener and its limits |
+| `TlsFailure` | a TLS alert in the QUIC handshake, or a local certificate failure | the UDP side's certificate and its `h3` ALPN |
+| `Http3Error` | the HTTP/3 connection failed as a whole (an HTTP/3 or QPACK error, a stateless reset, an idle timeout) | `h3Failure`, a qlog trace |
+| `ZeroRttRejected` | the server rejected 0-RTT | nothing |
+| `GoAway` | the server refused the request with GOAWAY on every attempt | the server is stopping |
+| `StreamFailed` | one HTTP/3 stream failed and the idempotent request went again over HTTP/1.1 | `h3Failure` |
+| `Other` | any other HTTP/3 failure | `h3Failure` |
+
+The engine's `logger` gets one line per call that HTTP/3 could have served but did not (a lost race, a fallback, a
+broken alternative, a proxy) at `http3 { diagnosticsLogLevel }`, `Info` by default — which the default logger, warnings
+and up, leaves out: set `logger = KuicksilverLogger.stderr(LogLevel.Info)` to see them. Calls over HTTP/3, and calls
+HTTP/3 was never a candidate for (`http://`, `H1Only`, `Auto` without `Alt-Svc`), are logged at `Debug`; `null` turns
+the lines off. The line is built only when the logger wants its level, and its format stays the same within 0.3.x:
+
+```text
+kuicksilver: GET https://example.com/path -> HTTP/1.1 (fallback=HandshakeTimeout, alt=example.com:443 via AltSvc, raced, headStart=10ms, h3Failure=Timeout, marked broken)
+```
+
+It names the method, scheme, host, port (when not the default) and path — never the query or the user info, which
+often carry tokens — and the HTTP/3 failure by its type only (a peer's reason phrase is not logged). `broken since: <reason>`
+says why a broken alternative was marked, `marked broken` that this call's failure marked it, `attempts=<n>` appears
+from two attempts on.
+
+A call that fails has no response and so no diagnostics: its exception says what happened. When both the HTTP/3 and the
+HTTP/1.1 setups failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`. The diagnostics live as long
+as the response (they are one of its call's attributes); the engine keeps no copy of the HTTP/3 failure, and a broken
+mark remembers only its `FallbackReason`.
+
 ### Graceful stop
 
 `stop(gracePeriodMillis, timeoutMillis)` stops accepting TCP connections, sends GOAWAY on every live HTTP/3 connection at

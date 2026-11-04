@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.quic.ConnectionListener
 import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -126,6 +127,18 @@ public class Http3ClientConfig {
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var maxWebTransportSessions: Int = 64
+
+    /**
+     * The level at which the engine's `logger` gets one line per answered call that HTTP/3 could have served but did not
+     * (docs/guide/ktor.md, "Why did this request not use HTTP/3?"): a lost race, a fallback, a broken alternative, a proxy,
+     * HTTP/3 turned off. [LogLevel.Info] by default, which the default logger (warnings and up) leaves out; calls over
+     * HTTP/3, and calls HTTP/3 was never a candidate for (`http://`, `H1Only`, `Auto` without `Alt-Svc`), are logged at
+     * [LogLevel.Debug]. Null writes no line. The line names the method, scheme, host, port and path, never the query
+     * or the user info: `kuicksilver: GET https://example.com/ -> HTTP/1.1 (fallback=HandshakeTimeout, alt=example.com:443
+     * via AltSvc, raced, headStart=10ms, h3Failure=Timeout, marked broken)`.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var diagnosticsLogLevel: LogLevel? = LogLevel.Info
 }
 
 /** Configuration of `HttpClient(Kuicksilver)`. */
