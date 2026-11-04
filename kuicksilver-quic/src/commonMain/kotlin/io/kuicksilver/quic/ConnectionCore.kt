@@ -49,6 +49,7 @@ import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.onBlockedRepeatTimer
 import io.kuicksilver.quic.core.onHandshakeDatagramDone
 import io.kuicksilver.quic.core.onPathFailed
+import io.kuicksilver.quic.core.onRevalidateDue
 import io.kuicksilver.quic.core.pmtudUpperBound
 import io.kuicksilver.quic.core.probeOtherHandshakeSpace
 import io.kuicksilver.quic.core.pto
@@ -508,6 +509,7 @@ public class ConnectionCore internal constructor(
     /** Server: the two client addresses of the first handshake-time rebind (the one left, the one moved to); no other becomes a candidate. */
     internal var handshakeRebindFrom: InetSocketAddress? = null
     internal var handshakeRebindTo: InetSocketAddress? = null
+
     internal var closeFrame: CloseFrame? = null
 
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
@@ -921,6 +923,7 @@ public class ConnectionCore internal constructor(
                     t = p.nextChallengeAt
                 }
             }
+            if (p.revalidateAt < t) t = p.revalidateAt
             p.pmtud?.let { m ->
                 val mt = m.timeout()
                 if (mt < t) t = mt
@@ -974,6 +977,7 @@ public class ConnectionCore internal constructor(
         cids.expireRetired(now)
         if (zeroRttReadDiscardAt <= now) discardZeroRttKeys()
         for (i in 0 until paths.all.size) paths.all[i].pmtud?.onTimeout(now)
+        for (i in paths.all.size - 1 downTo 0) paths.all.getOrNull(i)?.let { if (it.revalidateAt <= now) onRevalidateDue(it) }
         var pi = paths.all.size - 1
         while (pi >=
             0

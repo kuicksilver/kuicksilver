@@ -366,6 +366,7 @@ private fun ConnectionCore.initServerPath(
 internal val PATH_IDLE_TIMEOUT: Duration = 5.seconds
 
 internal fun ConnectionCore.startValidation(p: Path) {
+    p.revalidateAt = TimeMark.NEVER
     p.forgetChallenges()
     p.challengePending = true
     p.state = PathState.Validating
@@ -377,6 +378,37 @@ internal fun ConnectionCore.startValidation(p: Path) {
     // a client probe reserves its peer ID now; without a spare one it waits for a NEW_CONNECTION_ID instead of spending its
     // validation period on challenges that cannot be sent
     if (role == TlsRole.Client && p !== paths.active && dcidFor(p) == null) awaitPeerCid(p)
+}
+
+/**
+ * Section 9.3.3: "In response to an apparent migration, endpoints MUST validate the previously active path using a PATH_CHALLENGE
+ * frame." The validation starts at once, but its first PATH_CHALLENGE leaves no sooner than one PTO after the latest one sent on
+ * that path (section 8.2.1: "An endpoint SHOULD NOT probe a new path with packets containing a PATH_CHALLENGE frame more frequently
+ * than it would send an Initial packet"). Without that gap, an observer racing copies of the client's datagrams from a second
+ * address, with both alive, made every answer to a challenge the next apparent migration and the next challenge: an endless
+ * exchange, one round per round trip, that only the AEAD confidentiality limit ended. quic-go keeps its probes of a path behind a
+ * backoff (path_manager.go:93, :114-116) and switches only to validated paths; ngtcp2 does not validate a path again within ten
+ * minutes of validating it (lib/ngtcp2_conn.c:9128, :14653), which skips the section 9.3.3 challenge altogether.
+ */
+private fun ConnectionCore.revalidatePreviousPath(p: Path) {
+    val last = p.lastChallengeAt
+    if (last != TimeMark.NEVER && now - last < pto()) {
+        // the path keeps its state (it stays a fallback and may give its slot up as before); the validation starts at that time
+        p.revalidateAt = last + pto()
+    } else {
+        startValidation(p)
+    }
+}
+
+/** [revalidatePreviousPath]'s deferred validation of [p] is due: it starts unless the path is active again or already validating. */
+internal fun ConnectionCore.onRevalidateDue(p: Path) {
+    p.revalidateAt = TimeMark.NEVER
+    if (p === paths.active) return
+    if (p.state == PathState.Validated) {
+        startValidation(p)
+    } else if (p.state != PathState.Validating) {
+        releasePathCid(p)
+    }
 }
 
 /**
@@ -414,7 +446,7 @@ internal fun ConnectionCore.switchPath(
     loss.activePath = p.id.value
     if (old.remote != p.remote) onRemoteChanged?.invoke(old.remote, p.remote)
     // RFC 9000 section 9.3.3: probe the previous path too, against off-path forwarding
-    if (challengeOld && old.state == PathState.Validated) startValidation(old)
+    if (challengeOld && old.state == PathState.Validated) revalidatePreviousPath(old)
     // RFC 9000 section 9.5: the new path keeps the unused ID it probed with (or takes one); the old path keeps its own while it is still probed, otherwise it is retired
     val held = p.peerCid?.takeIf { cids.isActive(it) }
     p.peerCid = null
@@ -428,9 +460,10 @@ internal fun ConnectionCore.switchPath(
     if (moved && oldPeer != null &&
         oldPeer !== cids.currentPeer
     ) {
-        if (old.state ==
-            PathState.Validating
-        ) {
+        // a deferred revalidation (revalidatePreviousPath) counts as a validation under way: retiring the ID now would have the client
+        // issue a new one at once, and under a copy race every switch would cost a NEW_CONNECTION_ID that the race turns into the
+        // next switch
+        if (old.state == PathState.Validating || old.revalidateAt != TimeMark.NEVER) {
             oldPeer.heldByPath = true
             old.peerCid = oldPeer
         } else {
@@ -470,6 +503,7 @@ internal fun ConnectionCore.newChallengeData(p: Path): Long {
     var d = random.nextLong()
     while (d == 0L || p.answers(d)) d = random.nextLong()
     p.onChallengeSent(d)
+    p.lastChallengeAt = now
     return d
 }
 

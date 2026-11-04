@@ -2583,4 +2583,73 @@ class PathTest {
             h.close()
         }
     }
+
+    /**
+     * After the handshake, an observer races copies of every client datagram from a second address, both mappings alive, the copy
+     * winning every other race. Each won race is an apparent migration: the server follows the newest non-probing packet and
+     * validates the previous path (RFC 9000 section 9.3.3), the client answers that PATH_CHALLENGE in a non-probing packet, whose
+     * raced copy is the next apparent migration. With no gap between a challenge and the next one on the same path, this loop ran
+     * without end in this zero-latency harness (and at one challenge per round trip on a real network) until the AEAD
+     * confidentiality limit closed the connection. A path is now challenged no more often than once per PTO, the pace of an Initial
+     * packet (section 8.2.1: "SHOULD NOT probe a new path with packets containing a PATH_CHALLENGE frame more frequently than it
+     * would send an Initial packet"); a revalidation asked for sooner is sent when that gap has passed.
+     */
+    @Test fun negative_copyRaceAfterTheHandshakeDoesNotDriveUnboundedPathValidations() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val other = InetSocketAddress("10.0.0.1", 40002)
+            var index = 0
+            var serverDatagrams = 0
+            var rounds = 0
+
+            fun pump(): Boolean { // one exchange at the current instant; false once neither side sends
+                p.batch.clear()
+                val n = c.poll(p.batch, p.now)
+                val out = List(n) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                for (d in out) {
+                    val first = if (index++ % 2 == 0) p.clientAddr else other
+                    p.feedNoAdmit(p.server, d, first)
+                    p.feedNoAdmit(p.server, d, if (first == other) p.clientAddr else other)
+                }
+                var sent = 0
+                while (true) {
+                    p.batch.clear()
+                    val m = s.poll(p.batch, p.now)
+                    if (m == 0) break
+                    val back = List(m) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                    sent += m
+                    for (b in back) p.feedNoAdmit(p.client, b, p.serverAddr) // both mappings alive
+                }
+                serverDatagrams += sent
+                p.drain(c)
+                p.drain(s)
+                return n + sent > 0
+            }
+            val stream = c.openStream(true)
+            val chunk = ByteArray(100) { 0x41 }
+            c.writeStream(stream, chunk, 0, chunk.size, false)
+            while (rounds < 10_000 && pump()) rounds++
+            assertTrue(rounds < 100, "the exchange at one instant ends ($rounds rounds, $serverDatagrams server datagrams)")
+            val start = p.now
+            val challengesBefore = s.challengedAddressesForTest.size
+            val pto = s.pto()
+            val end = p.now + pto * 40
+            while (p.now < end && p.closed(c) == null) {
+                c.writeStream(stream, chunk, 0, chunk.size, false) // the client keeps sending, so the races go on
+                var k = 0
+                while (k < 10_000 && pump()) k++
+                assertTrue(k < 100, "the exchange at ${p.now - start} ends ($k rounds)")
+                p.now = maxOf(p.now + pto / 4, minOf(end, c.nextTimeoutOrNever(), s.nextTimeoutOrNever()))
+                if (c.nextTimeoutOrNever() <= p.now) c.onTimeout(p.now)
+                if (s.nextTimeoutOrNever() <= p.now) s.onTimeout(p.now)
+            }
+            assertNull(p.closed(c), "the connection survives the race")
+            val challenges = s.challengedAddressesForTest.size - challengesBefore
+            // at most one challenge per path per PTO (two addresses), plus the repeats of the validations under way
+            assertTrue(challenges <= 2 * 40 + 8, "$challenges PATH_CHALLENGEs over 40 PTOs")
+        } finally {
+            p.close()
+        }
+    }
 }

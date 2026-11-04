@@ -108,6 +108,12 @@ internal class Path(
         sentChallengeCount = 0
     }
 
+    /** When the latest PATH_CHALLENGE went out on this path (any validation); [TimeMark.NEVER] before the first. */
+    var lastChallengeAt: TimeMark = TimeMark.NEVER
+
+    /** A validation of this path asked for less than a PTO after its latest PATH_CHALLENGE starts at this time (`revalidatePreviousPath`). */
+    var revalidateAt: TimeMark = TimeMark.NEVER
+
     /** A PATH_CHALLENGE must go out on this path at the next poll. */
     var challengePending: Boolean = false
 
