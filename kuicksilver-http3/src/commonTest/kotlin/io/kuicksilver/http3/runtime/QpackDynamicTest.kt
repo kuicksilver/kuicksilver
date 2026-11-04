@@ -22,6 +22,7 @@ import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -38,9 +39,11 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -133,6 +136,42 @@ class QpackDynamicTest {
                 withContext(p.client.session.dispatcher) { qpack.cancelStream(12) }
                 withTimeout(5.seconds) { while (p.server.session.qpack.peerStreamCancellations < 3L) delay(5) }
                 assertEquals(3L, p.server.session.qpack.peerStreamCancellations)
+            }
+        }
+
+    /**
+     * The decoder stream's output never makes its caller wait (review S1 of 1d574fc8 and adcfc423): a peer that grants our
+     * decoder stream no more credit (it never reads it) used to block every QPACK cancellation, which runs NonCancellable,
+     * so a request could no longer be cancelled. With 64 bytes of stream credit and a 1 KiB send buffer, a thousand
+     * cancellations each return at once and the connection lives.
+     */
+    @Test fun qpackCancellationsDoNotWaitForDecoderStreamCredit() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { initialStreamWindow = 64 }).use { q ->
+                val (c, s) = q.connect(quicConfig { maxSendBuffer = 1024 })
+                RawPeer(s).openControl() // and never reads the client's streams
+                val client = Http3Connection.client(c, dyn)
+                for (i in 0 until 1000) {
+                    withTimeoutOrNull(5.seconds) { withContext(client.session.dispatcher) { client.session.qpack.cancelStream(4L * i) } }
+                        ?: error("QPACK cancellation $i waited 5 s for credit on the decoder stream")
+                }
+                assertFalse(client.closed.isCompleted, "the connection ended")
+            }
+        }
+
+    /** Decoder-stream bytes the peer does not take pile up only to a bound: past it the connection ends with H3_EXCESSIVE_LOAD. */
+    @Test fun negative_decoderStreamBytesThePeerDoesNotTakeAreBounded() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { initialStreamWindow = 64 }).use { q ->
+                val (c, s) = q.connect(quicConfig { maxSendBuffer = 1024 })
+                RawPeer(s).openControl()
+                val client = Http3Connection.client(c, dyn)
+                client.session.decoderQueueLimit = 512
+                for (i in 0 until 1000) withContext(client.session.dispatcher) { client.session.qpack.cancelStream(4L * i) }
+                val end =
+                    withTimeoutOrNull(5.seconds) { client.closed.await() }
+                        ?: error("the connection still lives with more than 512 decoder-stream bytes queued")
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, (end as Http3Exception.Protocol).h3Code)
             }
         }
 

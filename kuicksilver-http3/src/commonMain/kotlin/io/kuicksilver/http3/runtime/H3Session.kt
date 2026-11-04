@@ -62,6 +62,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -259,8 +260,43 @@ internal class H3Session(
         QpackRuntime(
             settings,
             { b -> writeCritical(encoderLock, { it.encoder }, b) },
-            { b -> writeCritical(decoderLock, { it.decoder }, b) },
+            { b -> queueDecoderBytes(b) },
         )
+
+    /**
+     * Decoder-stream bytes waiting for [decoderWriter], each with the critical-stream generation it was made for. The decoder
+     * stream's output never makes its caller wait: a peer that grants that stream no credit would otherwise block every
+     * QPACK cancellation and acknowledgment, NonCancellable ones included, so requests could no longer be cancelled (review
+     * S1). What the peer does not take is bounded by [decoderQueueLimit].
+     */
+    private val decoderQueue = Channel<Pair<Int, ByteArray>>(Channel.UNLIMITED)
+    private val decoderQueued = AtomicLong(0)
+
+    /**
+     * Decoder-stream bytes queued and not written yet above which the connection ends with H3_EXCESSIVE_LOAD: a decoder that
+     * cannot hand its instructions over is a peer not reading its encoder's feedback (RFC 9204 section 7.3 asks for bounds on
+     * what a peer can make us buffer). Tests lower it.
+     */
+    var decoderQueueLimit: Long = DECODER_QUEUE_LIMIT
+
+    private fun queueDecoderBytes(b: ByteArray) {
+        if (decoderQueued.addAndFetch(b.size.toLong()) > decoderQueueLimit) {
+            scope.launch { fail(Http3ErrorCode.EXCESSIVE_LOAD, "the peer does not take our decoder stream's instructions") }
+            return
+        }
+        decoderQueue.trySend(criticalGen to b)
+    }
+
+    /** Writes the queued decoder-stream bytes in order, each on the decoder stream of the generation it was made for. */
+    private suspend fun decoderWriter() {
+        for ((gen, b) in decoderQueue) {
+            try {
+                writeCritical(decoderLock, { it.decoder }, b, madeFor = gen)
+            } finally {
+                decoderQueued.addAndFetch(-b.size.toLong())
+            }
+        }
+    }
 
     /**
      * Writes [b] on our critical stream [pick] once the streams are open, on the session's dispatcher (the bookkeeping
@@ -276,10 +312,12 @@ internal class H3Session(
         pick: (Critical) -> QuicStream,
         b: ByteArray,
         again: (() -> Boolean)? = null,
+        madeFor: Int? = null,
     ): Unit =
         withContext(dispatcher) {
             checkOnDispatcher()
-            var gen = criticalGen
+            // bytes made earlier (queued) are for the streams of the generation they were made in
+            var gen = madeFor ?: criticalGen
             while (true) {
                 awaitCriticalStreams()
                 val written =
@@ -469,6 +507,7 @@ internal class H3Session(
             onTransportClosed(e)
         }
         scope.launch { guarded { criticalStreamsLoop(criticalStreamsDeadline) } }
+        scope.launch { guarded { decoderWriter() } }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new }
         }
@@ -1392,6 +1431,9 @@ internal class H3Session(
 
         /** How long readers may go on finishing what a peer sent once its connection is lost ([drains]). */
         val DRAIN_GRACE: Duration = 1.seconds
+
+        /** See [decoderQueueLimit]. */
+        const val DECODER_QUEUE_LIMIT: Long = 64L * 1024
 
         private const val DRAINERS_PRUNE_MIN = 64
 
