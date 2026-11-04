@@ -34,7 +34,10 @@ shopt -s nullglob   # a glob that matches nothing expands to nothing, never to i
 # started meanwhile) never restores or removes what a running prune is replacing. The lock is a symbolic link whose target
 # is the holder's pid, made in one step (ln -s fails when it exists). A holder that is gone is taken over by renaming the
 # link to a name of our own (of two takers only one rename succeeds) and checking that it still names that pid; a process we
-# may not signal (EPERM) counts as alive; a lock that names no pid (a non-link) and is older than a minute is stale.
+# may not signal (EPERM) counts as alive; a lock that names no pid (a non-link) and is older than a minute is stale. A link
+# taken from a live taker by mistake goes back only where no lock is (ln -s again, never a rename over a newer one). A pid
+# that stays alive for 30 minutes may be a reused one: the wait ends with an error that names the lock to remove.
+replace_lock_wait_s=${KSL_FUZZ_REPLACE_LOCK_WAIT_S:-1800}   # tests shorten it
 replace_lock="$state/replace.lock"
 holder_alive() {
   local out
@@ -43,7 +46,7 @@ holder_alive() {
   return 1
 }
 take_replace_lock() {
-  local holder stale
+  local holder stale waited=0
   while :; do
     ln -s "$$" "$replace_lock" 2>/dev/null && return 0
     holder=$(readlink "$replace_lock" 2>/dev/null || true)
@@ -52,11 +55,24 @@ take_replace_lock() {
       if [ -n "$(find "$replace_lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -rf "$replace_lock"; else sleep 1; fi
       continue
     fi
-    if holder_alive "$holder"; then sleep 1; continue; fi
+    if holder_alive "$holder"; then
+      waited=$((waited + 1))
+      if [ "$waited" -ge "$replace_lock_wait_s" ]; then
+        echo "campaign: $replace_lock has been held by pid $holder for $((replace_lock_wait_s / 60)) minutes; if no campaign is running (the pid may have been reused), remove it" >&2
+        exit 1
+      fi
+      sleep 1
+      continue
+    fi
     stale="$replace_lock.stale.$$"
     if mv "$replace_lock" "$stale" 2>/dev/null; then
       # ours now, unless another taker replaced the dead holder's link before our rename: then it goes back
-      if [ "$(readlink "$stale" 2>/dev/null)" = "$holder" ]; then rm -f "$stale"; else mv "$stale" "$replace_lock" 2>/dev/null || rm -f "$stale"; fi
+      if [ "$(readlink "$stale" 2>/dev/null)" = "$holder" ]; then
+        rm -f "$stale"
+      else
+        ln -s "$(readlink "$stale")" "$replace_lock" 2>/dev/null || true
+        rm -f "$stale"
+      fi
     fi
   done
 }

@@ -98,6 +98,12 @@ if [ "$(id -u)" != 0 ]; then
   check "a holder that may not be signalled (EPERM) counts as alive" 0 "" -- kill -0 "$waiter"
   rm -f "$state/replace.lock"; wait "$waiter"
 fi
+# a holder alive for longer than the wait (a pid that may have been reused) ends the run with an error naming the lock
+sleep 30 & holder=$!
+ln -s "$holder" "$state/replace.lock"
+KSL_FUZZ_REPLACE_LOCK_WAIT_S=2 check "a lock held past the wait ends the run with an error" 1 "remove it" -- campaign status
+check "  and leaves the holder's lock alone" 0 "" -- test "$(readlink "$state/replace.lock")" = "$holder"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null; rm -f "$state/replace.lock"
 # two takers of a dead holder's lock: both get through, one at a time, and leave neither the lock nor a stale link behind
 sleep 0.1 & dead=$!; wait "$dead" 2>/dev/null
 ln -s "$dead" "$state/replace.lock"
