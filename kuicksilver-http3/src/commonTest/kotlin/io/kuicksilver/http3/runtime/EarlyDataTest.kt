@@ -454,7 +454,8 @@ class EarlyDataTest {
         runBlocking {
             withTimeout(30.seconds) {
                 val attempts = AtomicInt(0)
-                val hold = AtomicInt(1) // the server's packets are dropped, the client stays in 0-RTT, until its first attempt opened its streams
+                // the server's packets are dropped, so the client stays in 0-RTT, until its first attempt opened its streams
+                val hold = AtomicInt(1)
                 val accepted =
                     earlyAcceptedAfterResuming(
                         issuer = http3Settings {},

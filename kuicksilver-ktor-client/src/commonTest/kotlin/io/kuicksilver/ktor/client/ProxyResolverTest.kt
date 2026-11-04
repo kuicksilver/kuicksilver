@@ -285,7 +285,7 @@ class ProxyResolverTest {
             var calls = 0
             val resolver = ProxyResolver { _ -> null.also { calls++ } }
             val held = HeldDispatcher()
-            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, NO_LOG, cleanup = held) { now }
+            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, noLog, cleanup = held) { now }
             routing.lookup(Url("https://x.test/"))
             assertEquals(1, routing.inFlightSize(), "the completed call is still listed: its cleanup is held")
             now += ProxyRouting.TTL_MILLIS
@@ -311,7 +311,7 @@ class ProxyResolverTest {
                     gate.await()
                     answer
                 }
-            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, NO_LOG)
+            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, noLog)
             val a = async { routing.lookup(Url("https://x.test/")) }
             withTimeout(5.seconds) { started.await() }
             val b = async { routing.lookup(Url("https://x.test/")) }
@@ -322,7 +322,7 @@ class ProxyResolverTest {
             assertEquals(1, calls.load(), "the second lookup asked the resolver too")
         }
 
-    private val NO_LOG =
+    private val noLog =
         object : KuicksilverLogger {
             override fun isEnabled(level: LogLevel) = false
 
