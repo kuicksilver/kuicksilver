@@ -390,7 +390,8 @@ class ServerH3Test {
      * With port 0 and several UDP sockets on the port (udpSocketCount = 2, the accelerated transport with SO_REUSEPORT), a
      * UDP twin in use is retried like any taken port and HTTP/3 is still served (review of 19e3f88b: ksl's refused bind
      * was a KslException, which the engine now takes for a configuration error, so such a start failed). Where
-     * SO_REUSEPORT flow hashing is not available (not Linux or Android) the engine serves HTTP/1.1 only and the test says so.
+     * SO_REUSEPORT flow hashing is not available (not Linux or Android) the engine serves HTTP/1.1 only and the test is
+     * skipped visibly; on Linux and Android an unavailable SO_REUSEPORT or accelerated transport fails it.
      */
     @Test fun ephemeralPortWithSeveralUdpSocketsRetriesATakenTwin() =
         h3ServerTest {
@@ -418,10 +419,20 @@ class ServerH3Test {
                     }, log = log) { routing { get("/") { call.respondText("ok") } } }
                 try {
                     val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
-                    if (log.lines.any { "SO_REUSEPORT" in it.message || "accelerated transport" in it.message }) {
-                        println("ephemeralPortWithSeveralUdpSocketsRetriesATakenTwin skipped: no SO_REUSEPORT flow hashing here")
+                    val noReusePort = log.lines.any { "SO_REUSEPORT" in it.message || "accelerated transport" in it.message }
+                    if (!io.kuicksilver.ktor.server.contract.reusePortFlowHashing) {
+                        // only where the kernel has no flow hashing: there the engine serves HTTP/1.1 alone by design
+                        assertTrue(noReusePort, "udpSocketCount = 2 served HTTP/3 without SO_REUSEPORT flow hashing: $resp")
+                        println("ephemeralPortWithSeveralUdpSocketsRetriesATakenTwin skipped: no SO_REUSEPORT flow hashing on this OS")
+                        io.kuicksilver.ktor.server.contract
+                            .skipTest("no SO_REUSEPORT flow hashing on this OS")
                         return@h3ServerTest
                     }
+                    // a host with flow hashing must serve HTTP/3 here: anything else is the failure this test is for
+                    assertTrue(
+                        !noReusePort,
+                        "SO_REUSEPORT or the accelerated transport was unavailable on a flow-hashing host: ${log.lines}",
+                    )
                     assertTrue(tried.size >= 2, "tried $tried")
                     assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), "no HTTP/3 after a taken twin: $resp")
                 } finally {
