@@ -2940,4 +2940,64 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * A mirrored datagram carries the flight and nothing else: no ACK frame of its space (an acknowledgement owed to the client goes to
+     * the active address, where the client is believed to be). The server owes one here: X's Initial (packet number 1, which it
+     * processed) is still unacknowledged when its PTO fires.
+     */
+    @Test fun negative_mirroredFlightCarriesNoAcknowledgement() {
+        val p = EndpointPair()
+        try {
+            val x = InetSocketAddress("10.0.0.66", 6666)
+            val c = p.connect()
+            p.batch.clear()
+            assertEquals(1, c.poll(p.batch, p.now))
+            val first = p.batch.buffer(0).toByteArray(p.batch.length(0))
+            val s = assertNotNull(p.feed(p.server, first, p.clientAddr))
+            val toX = ArrayList<ByteArray>()
+
+            fun serverSends() {
+                while (true) {
+                    p.batch.clear()
+                    val n = s.poll(p.batch, p.now)
+                    if (n == 0) break
+                    for (i in 0 until n) if (p.batch.address(i) == x) toX += p.batch.buffer(i).toByteArray(p.batch.length(i))
+                }
+            }
+            serverSends() // the flight is lost
+            p.feedNoAdmit(p.server, withPacketNumber(first, 1), x)
+            assertNotNull(s.handshakeCandidate, "X is mirrored")
+            var rounds = 0
+            while (toX.isEmpty() && rounds++ < 5) { // the acknowledgement's own timer may come first; then the PTO
+                p.now = s.nextTimeoutOrNever()
+                s.onTimeout(p.now)
+                serverSends()
+            }
+            assertTrue(toX.isNotEmpty(), "the flight was mirrored to X")
+            val hv =
+                io.kuicksilver.quic.wire
+                    .PacketHeaderView()
+            for (d in toX) {
+                val b = PacketBuffer.of(d)
+                try {
+                    var off = 0
+                    while (off < d.size && d[off].toInt() != 0 &&
+                        io.kuicksilver.quic.wire.PacketHeaderCodec
+                            .parse(b, off, d.size, 8, hv)
+                    ) {
+                        // Null cipher: the header is not protected, the payload is plaintext; the first frame follows the number
+                        val pnLen = (d[off].toInt() and 0x03) + 1
+                        val frameType = d[hv.pnOffset + pnLen].toInt() and 0xff
+                        assertTrue(frameType != 0x02 && frameType != 0x03, "an ACK frame in a mirrored packet (type $frameType)")
+                        off = hv.packetEnd
+                    }
+                } finally {
+                    b.close()
+                }
+            }
+        } finally {
+            p.close()
+        }
+    }
 }

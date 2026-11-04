@@ -202,15 +202,20 @@ internal class PacketBuilder(
         first: Int,
         now: TimeMark,
     ): Int {
-        c.handshakeMirrorDue = false
-        val k = c.handshakeCandidate ?: return 0
-        val to = c.handshakeRebindTo ?: return 0
-        if (!c.handshakeMirror || !k.isRemote(to) || c.state != ConnectionState.Handshaking) return 0
-        // room first: nothing is queued unless at least one full datagram can go there now
-        if (first >= out.capacity || !(k.amplification.validated || k.amplification.budget() >= 1200)) return 0
+        val k = c.handshakeCandidate
+        val to = c.handshakeRebindTo
+        if (k == null || to == null || !c.handshakeMirror || !k.isRemote(to) || c.state != ConnectionState.Handshaking) {
+            c.handshakeMirrorDue = false
+            return 0
+        }
+        // no room in this batch: at the next poll
+        if (first >= out.capacity) return 0
         val levels = intArrayOf(0, 2)
-        // data the active path has not sent yet goes there first (it would be pulled behind the retransmitted ranges)
-        for (l in levels) if (c.cryptoStreams.send[l].hasUnsent) return 0
+        // data the active path has not sent yet goes there first (it would be pulled behind the retransmitted ranges): once it has
+        if (levels.any { c.cryptoStreams.send[it].hasUnsent }) return 0
+        c.handshakeMirrorDue = false
+        // nothing is queued unless at least one full datagram can go there now; more budget comes only with what X sends
+        if (!(k.amplification.validated || k.amplification.budget() >= 1200)) return 0
         val saved = Array(2) { c.cryptoStreams.send[levels[it]].saveRetransmit() }
         try {
             // what the flight has outstanding, queued again for this address only: the active path's own probes are not affected
@@ -223,6 +228,7 @@ internal class PacketBuilder(
                 }
             }
             initialAckOnly = false
+            mirroring = true
             var count = first
             while (count < out.capacity) {
                 val budget = if (k.amplification.validated) Long.MAX_VALUE else k.amplification.budget()
@@ -249,9 +255,13 @@ internal class PacketBuilder(
             }
             return count - first
         } finally {
+            mirroring = false
             for (i in levels.indices) c.cryptoStreams.send[levels[i]].restoreRetransmit(saved[i])
         }
     }
+
+    /** Set while [mirrorFlight] builds: its packets carry no ACK frame (acknowledgements go to the active address). */
+    private var mirroring = false
 
     /** Set when a packet number space has no number left to send (RFC 9000 section 12.3). */
     private var pnExhausted = false
@@ -549,7 +559,7 @@ internal class PacketBuilder(
         } else {
             val a = sp.ack
             // a test probe (testInjectPathChallenges) carries no ACK: a probing-only packet, RFC 9000 section 9.1
-            if (a.hasRanges && (hasAckToSend(space, now) || hasData(space)) &&
+            if (a.hasRanges && (hasAckToSend(space, now) || hasData(space)) && !mirroring &&
                 c.testInjectPathChallenges == 0 && type != PacketType.ZeroRtt
             ) {
                 val o = a.ackOverhead(now, c.config.ackDelayExponent)

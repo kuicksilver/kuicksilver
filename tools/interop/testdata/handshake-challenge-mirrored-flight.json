@@ -16,14 +16,15 @@
   },
   {
    "n": 47,
-   "t": 1792139659.992536,
+   "t": 1792139660.0067728,
    "dst": "193.167.0.100:35334",
    "short": false,
    "long": [
-    "0"
+    "0",
+    "2"
    ],
    "challenges": [],
-   "crypto": false,
+   "crypto": true,
    "done": false
   },
   {
@@ -122,5 +123,5 @@
    "done": true
   }
  ],
- "_comment": "synthetic (0.3.0 review S1): handshake-challenge-quiche-rebind-addr-undecryptable.json with our ServerHello sent to the old binding first and our first datagram on the new path being the mirrored flight retransmission (Initial + Handshake with CRYPTO), before any Handshake packet of ours reached the client"
+ "_comment": "synthetic (0.3.0 review S1): handshake-challenge-quiche-rebind-addr-undecryptable.json with our ServerHello sent to the old binding first and our first datagram on the new path being the mirrored flight retransmission (Initial + Handshake with CRYPTO), before any Handshake packet of ours reached the client; our PTO probe to the old binding (n 47, CRYPTO) leaves in the same burst just before it: the active path stays there, which is what tells the mirror from a move"
 }
