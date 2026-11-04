@@ -363,7 +363,8 @@ internal fun CoroutineScope.startH1Pipeline(
         }
         // what ends the wait for the next request head: the server stopping, or the writer having stopped
         val stopReading = Job()
-        draining?.invokeOnCompletion { stopReading.complete() }
+        // the listener's draining job outlives every connection: its handler goes when this pipeline ends (review M1)
+        val drainingHandle = draining?.invokeOnCompletion { stopReading.complete() }
         writerStopped.invokeOnCompletion { stopReading.complete() }
 
         val requestContext = RequestHandlerName + Dispatchers.Unconfined
@@ -614,11 +615,12 @@ internal fun CoroutineScope.startH1Pipeline(
             // the client went away
         } finally {
             actorChannel.close()
+            drainingHandle?.dispose()
+            stopReading.cancel()
         }
         // the writer ended the connection after a failed response (its FIN is out): the client may still be sending, and a
         // close over unread input is a reset that can destroy the responses before it (RFC 9112 section 9.6)
         if (writerStopped.isCompleted) lingerAfterRefusal(actorChannel, connection, draining)
-        stopReading.cancel()
     }
 
 /**

@@ -8,6 +8,7 @@ import io.ktor.http.cio.Request
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -116,6 +117,64 @@ class H1PipelineFailedResponseTest {
             val (_, failed) = fromServer.readToEnd()
             assertTrue(failed, "a response cut after its first bytes ended the connection cleanly")
         }
+
+    /**
+     * Each connection's pipeline leaves nothing on the listener-wide draining job once it ended (review M1): the completion
+     * handler it registered is disposed, so connections do not pile up on a long-lived listener.
+     */
+    @Test fun aFinishedPipelineLeavesNoHandlerOnDraining() =
+        runTest {
+            val draining = CountingJob(Job())
+            repeat(50) {
+                val toServer = ByteChannel()
+                val fromServer = ByteChannel()
+                val job =
+                    backgroundScope.startH1Pipeline(
+                        H1Connection(toServer, fromServer, null, null),
+                        45.seconds,
+                        30.seconds,
+                        draining = draining,
+                    ) {
+                        it.release()
+                        output.writeStringUtf8("HTTP/1.1 204 No Content\r\n\r\n")
+                        output.flush()
+                    }
+                toServer.writeStringUtf8("GET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n")
+                toServer.flushAndClose()
+                fromServer.readToEnd()
+                job.join()
+            }
+            assertEquals(0, draining.live, "completion handlers left on the draining job")
+        }
+
+    /** [delegate], counting the completion handlers registered on it and not disposed yet. */
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
+    private class CountingJob(
+        private val delegate: kotlinx.coroutines.CompletableJob,
+    ) : kotlinx.coroutines.CompletableJob by delegate {
+        @kotlin.concurrent.Volatile var live = 0
+
+        override fun invokeOnCompletion(handler: kotlinx.coroutines.CompletionHandler): kotlinx.coroutines.DisposableHandle =
+            counted(delegate.invokeOnCompletion(handler))
+
+        override fun invokeOnCompletion(
+            onCancelling: Boolean,
+            invokeImmediately: Boolean,
+            handler: kotlinx.coroutines.CompletionHandler,
+        ): kotlinx.coroutines.DisposableHandle = counted(delegate.invokeOnCompletion(onCancelling, invokeImmediately, handler))
+
+        private fun counted(h: kotlinx.coroutines.DisposableHandle): kotlinx.coroutines.DisposableHandle {
+            live++
+            var disposed = false
+            return kotlinx.coroutines.DisposableHandle {
+                if (!disposed) {
+                    disposed = true
+                    live--
+                }
+                h.dispose()
+            }
+        }
+    }
 
     /**
      * An upgraded connection (a WebSocket) whose client side fails (a reset) fails the handler's input, which the engine
