@@ -26,5 +26,23 @@ public final class io/kuicksilver/http2/Http2ErrorCode$Companion {
 
 public final class io/kuicksilver/http2/Http2Settings {
 	public fun <init> ()V
+	public synthetic fun <init> (IIIIIIIIJIIIIIJILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (IIIIIIIIJIIIIIJLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getHeaderTableSize ()I
+	public final fun getInitialConnectionWindow ()I
+	public final fun getInitialStreamWindow ()I
+	public final fun getMaxConcurrentStreams ()I
+	public final fun getMaxConnectionWindow ()I
+	public final fun getMaxContinuationFrames ()I
+	public final fun getMaxControlFramesQueued ()I
+	public final fun getMaxEmptyFrames ()I
+	public final fun getMaxFrameSize ()I
+	public final fun getMaxHeaderBlockTime-UwyO8pc ()J
+	public final fun getMaxHeaderListSize ()I
+	public final fun getMaxStreamWindow ()I
+	public final fun getResetBurst ()I
+	public final fun getResetsPerSecond ()I
+	public final fun getSettingsAckTimeout-UwyO8pc ()J
+	public fun toString ()Ljava/lang/String;
 }
 

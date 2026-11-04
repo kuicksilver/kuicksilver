@@ -350,7 +350,12 @@ Status: the sans-IO core of `kuicksilver-http2` (ADR-0017); the engines do not u
 - **Threats:** a decompression bomb: a small block of HPACK references to one large dynamic table entry that decodes to
   megabytes (the "HPACK bomb", CVE-2016-6581 class); huge declared string lengths and integer overflows in the decoder;
   invalid Huffman padding; CRIME-style recovery of credentials from the compression ratio (RFC 7541 §7.1); a declared
-  frame length that sizes a buffer; frames of unknown types buffered whole.
+  frame length that sizes a buffer; frames of unknown types buffered whole. The flood family: PING and SETTINGS floods whose
+  acknowledgements pile up while the peer does not read (CVE-2019-9512, CVE-2019-9515), empty DATA frames
+  (CVE-2019-9518), PRIORITY trees (CVE-2019-9513), Rapid Reset (CVE-2023-44487: HEADERS then RST_STREAM, so the stream
+  never counts toward the concurrency limit while its handler runs), the CONTINUATION flood (CVE-2023-45288,
+  CVE-2024-27316: a field block that never ends is buffered without limit), MadeYouReset (CVE-2025-8671: frames that make
+  the server reset the stream itself), a trickled field block, flow-control windows that let a peer park unbounded data.
 - **Mitigations:** the frame decoder checks every declared length against SETTINGS_MAX_FRAME_SIZE and the type's size
   before a payload buffer exists, and streams unknown types past unbuffered (RFC 9113 §4.2, §5.5). The HPACK decoder
   counts the decoded field list (name + value + 32 per field) against `maxHeaderListSize` and stops passing fields on at
@@ -358,12 +363,27 @@ Status: the sans-IO core of `kuicksilver-http2` (ADR-0017); the engines do not u
   checked against its limit and the block's remaining bytes before allocation, Huffman output never grows past the
   limit, integers above 31 bits or with more than five continuation bytes are COMPRESSION_ERRORs. The encoder never
   indexes credentials (`authorization`, `proxy-authorization`, `set-cookie`, short `cookie` values) and keeps its table
-  at min(4096, the peer's setting).
+  at min(4096, the peer's setting). The connection core (`H2ConnectionCore`, `H2Limits.kt`), per connection, each limit in
+  `Http2Settings`: a field block is collected to at most SETTINGS_MAX_HEADER_LIST_SIZE compressed bytes, 8 CONTINUATION
+  frames and 10 s before HPACK sees it (else ENHANCE_YOUR_CALM); at most 10 000 control frames (PING and SETTINGS
+  acknowledgements, RST_STREAM, WINDOW_UPDATE) wait for the peer to read them; at most 100 empty DATA frames in a row;
+  PRIORITY creates no state; the peer's RST_STREAM frames and the resets its own errors make us send (WINDOW_UPDATE of 0,
+  DATA on a closed stream, a refused stream) take from one token bucket (1000, 33 per second), one reset per stream; a
+  stream the peer reset counts toward SETTINGS_MAX_CONCURRENT_STREAMS until its handler returns (`release`), and more than
+  4 x that limit refused in a row ends the connection; receive windows grow only as the application reads (memory per
+  connection stays within the connection window, 15 MiB at most), and a sender holds at most one DATA frame per stream.
 - **Verification:** `frame.FrameCodecTest.negative_frameAboveMaxFrameSizeIsFrameSizeError`, `.unknownFrameTypeSkippedStreaming`,
   `.negative_padLengthBeyondPayloadIsProtocolError`, `hpack.HpackLimitsTest.negative_hpackBomb`,
   `.negative_hugeStringLengthRejectedBeforeAllocation`, `.negative_integerOverflow`, `.negative_huffmanEosOrBadPadding`,
   `.negative_tableSizeUpdateAboveSettingIsCompressionError`, `.negative_tableSizeUpdateAfterFirstFieldIsCompressionError`,
-  `.negative_requiredTableSizeUpdateMissing`, `.negative_indexZeroAndBeyondTable`, `.sensitiveFieldsNeverIndexed`.
+  `.negative_requiredTableSizeUpdateMissing`, `.negative_indexZeroAndBeyondTable`, `.sensitiveFieldsNeverIndexed`;
+  `core.FloodTest.negative_continuationFloodClosesBeforeDecoding`, `.negative_continuationBytesAboveListSize`,
+  `.negative_headerBlockTakingTooLongCloses`, `.negative_pingFloodBoundedQueue`, `.negative_settingsFloodBounded`,
+  `.negative_emptyDataFlood`, `.negative_rapidResetExhaustsBudget`, `.negative_rapidResetHandlersStayWithinConcurrency`,
+  `.negative_madeYouResetCountsOurResets`, `.negative_resetStreamStillRunningCountsTowardConcurrency`,
+  `.negative_priorityFloodCreatesNoState`, `.resetBudgetRefills` (30 cancellations a second for a minute are not
+  punished); `core.FlowControlTest.windowUpdateOnlyAfterConsumed`, `.negative_dataBeyondWindowIsFlowControlError`,
+  `.zeroWindowSenderBlocksWithoutBuffering`; `core.SettingsTest.negative_settingsAckTimeoutIsSettingsTimeout`.
 
 ## 4. What we do not protect against
 
@@ -402,7 +422,7 @@ HTTP/1.1 and WebSockets (§3.20, §3.20.1, §3.22):
 12. `negative_proxyCredentialsStayOnTheConnect`, `negative_socksCredentialsNotSentWhenServerChoosesNoAuth`, `negative_socksAuthRejected`, `negative_socksOverlongCredentialsRejected`, `negative_socksReplyUnknownAtypFails`, `negative_socksH3OnlyFails`, `negative_httpsProxyUrlRefused`, `negative_unsupportedProxySchemeFailsClosed`, `negative_webTransportRefusedThroughResolvedProxy`, `negative_conflictingContentLengthFailsAndClosesConnection`, `negative_signedContentLengthRejected`, `negative_contentLengthWithTransferEncodingIsNotReused`, `negative_hugeTrailerSectionFails`, `negative_chunkedBodyCutBeforeLastChunkFails`, `negative_hugeResponseHeadFails`, `negative_endlessInterimResponsesFail`, `negative_hugeConnectResponseHeadFails`, `negative_contentLengthWithTransferEncodingIsRejectedAndClosed`, `negative_invalidContentLengthIsRejected`, `negative_unknownTransferCodingIsRejected`, `negative_bareCrInChunkSizeIsRejected`, `negative_bareCrInChunkSizeLineIsRejected`, `negative_bareLfInChunkSizeLineIsRejected`, `negative_malformedChunkSizeIsRejected`, `negative_quoteOutsideAnExtensionIsRejected`, `negative_overlongChunkSizeIsRejected`, `negative_missingOrRepeatedHostIsRejected`, `negative_badRequestDoesNotEchoTheHeaderSection`, `negative_acceptFailuresBackOff`, `negative_silentClientIsClosedAtTheHeaderDeadline`, `negative_tricklingHeadGets408AtTheHeaderDeadline`, `negative_idleKeepAliveConnectionClosesSilentlyAfterTheHeaderDeadline`, `negative_partialPipelinedHeadGets408AfterThePreviousResponse`, `negative_idleTimeoutClosesTheWholeConnection`, `negative_silentClientOnTlsConnectorIsClosed`, `negative_unfinishedHeadGets408`, `negative_headOverTheLimitGets431`, `negative_hugeHeaderSectionGets431`, `negative_headerSectionSizeIsBounded`, `negative_clientThatStopsReadingIsClosed`, `negative_upgradedClientThatStopsReadingIsClosed`, `negative_closeThatDoesNotFinishIsAbortedAfterTheTimeout`, `negative_clientThatNeverReadsIsDisconnected`, `negative_abortedConnectionsReleaseTheirSockets`, `negative_abortReleasesAPlainSocketWhosePeerDoesNotRead`, `negative_abortReleasesATlsSocketWhosePeerDoesNotRead`, `negative_slowReaderGetsTheWholeClosingResponse`, `negative_aDrainThatMovesIsNotCutOnlyOneThatStops`, `negative_gracefulStopWaitsForALargeResponseInFlight`, `negative_contentLengthBodyThatStopsFailsAtTheIdleTimeout`, `negative_chunkedBodyThatStopsFailsAtTheIdleTimeout`, `negative_stalledRequestBodyGets408`, `negative_bodyThatNeverFollowsContinueGets408`, `negative_bodyTimeout408HasAFixedBody`, `negative_earlierPipelinedRequestsOwn500IsNotRelabelled`, `negative_largeUnreadBodyClosesTheConnection`, `negative_expectContinueAnsweredWithoutContinueCloses`, `negative_unreadChunkedBodyClosesTheConnectionAsItsHeadSays`, `negative_unofferedExtensionInResponseFailsHandshake`, `negative_rsv1WithoutNegotiationClosesWith1002`, `negative_rsv1OnContinuationOrControlFrameCloses1002`, `negative_maskedFrameFromServerClosesWith1002`, `negative_unmaskedFrameFromClientClosesWith1002` (WebSocket framing, §3.20.1, client and server, HTTP/1.1 and HTTP/3)
 
 HTTP/2 and HPACK (§3.23):
-13. `negative_frameAboveMaxFrameSizeIsFrameSizeError`, `negative_padLengthBeyondPayloadIsProtocolError`, `negative_hpackBomb`, `negative_hugeStringLengthRejectedBeforeAllocation`, `negative_integerOverflow`, `negative_huffmanEosOrBadPadding`, `negative_tableSizeUpdateAboveSettingIsCompressionError`, `negative_tableSizeUpdateAfterFirstFieldIsCompressionError`, `negative_requiredTableSizeUpdateMissing`, `negative_indexZeroAndBeyondTable`
+13. `negative_frameAboveMaxFrameSizeIsFrameSizeError`, `negative_padLengthBeyondPayloadIsProtocolError`, `negative_hpackBomb`, `negative_hugeStringLengthRejectedBeforeAllocation`, `negative_integerOverflow`, `negative_huffmanEosOrBadPadding`, `negative_tableSizeUpdateAboveSettingIsCompressionError`, `negative_tableSizeUpdateAfterFirstFieldIsCompressionError`, `negative_requiredTableSizeUpdateMissing`, `negative_indexZeroAndBeyondTable`, `negative_continuationFloodClosesBeforeDecoding`, `negative_continuationBytesAboveListSize`, `negative_headerBlockTakingTooLongCloses`, `negative_pingFloodBoundedQueue`, `negative_settingsFloodBounded`, `negative_emptyDataFlood`, `negative_rapidResetExhaustsBudget`, `negative_rapidResetHandlersStayWithinConcurrency`, `negative_madeYouResetCountsOurResets`, `negative_resetStreamStillRunningCountsTowardConcurrency`, `negative_priorityFloodCreatesNoState`, `negative_dataBeyondWindowIsFlowControlError`, `negative_settingsAckTimeoutIsSettingsTimeout`
 
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (no test of this name: the export checks with nm/dumpbin on all platforms, including Android)

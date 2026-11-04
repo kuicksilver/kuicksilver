@@ -25,6 +25,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   references stops at the limit and allocates nothing per reference) while keeping its table in step, rejects integers
   above 31 bits, oversized strings before allocating them and invalid Huffman padding; the encoder never indexes
   credentials and follows the peer's table size.
+  The connection core (RFC 9113 sections 3.4, 5, 6) runs the preface, stream states, SETTINGS with an acknowledgement
+  deadline, flow control that returns credit only as the application reads (with window auto-tuning), PING and a two-phase
+  GOAWAY, and bounds every flood per connection: CONTINUATION frames and field-block bytes before decoding, queued control
+  frames, empty DATA frames, and a reset budget shared by the peer's RST_STREAM frames and the resets its errors cause
+  (Rapid Reset, MadeYouReset), with reset streams counted until their handler returns. New experimental `Http2Settings`.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,
