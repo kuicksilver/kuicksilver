@@ -16,9 +16,14 @@ import io.ktor.server.routing.routing
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -27,6 +32,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /** The built-in proxy resolvers' parsing (environment, Windows strings, CFNetwork answers) and the engine's use of them. */
 class ProxyResolverTest {
@@ -267,6 +273,61 @@ class ProxyResolverTest {
             assertEquals(303, calls)
             assertEquals(listOf(PAC_WARNING), lines)
         }
+
+    /**
+     * The race 96b7f862 fixed, made deterministic (review 2026-10-28 ci-fixes.md P1): a completed call's entry stays in the
+     * in-flight map until its cleanup gets the lock, which the test holds back. A lookup whose cached answer expired in that
+     * window must ask the resolver again, not take the completed call's old answer; once the cleanups run, nothing is left.
+     */
+    @Test fun anExpiredAnswerIsAskedAgainWhileTheOldCallIsStillListed() =
+        runBlocking {
+            var now = 0L
+            var calls = 0
+            val resolver = ProxyResolver { _ -> null.also { calls++ } }
+            val held = HeldDispatcher()
+            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, NO_LOG, cleanup = held) { now }
+            routing.lookup(Url("https://x.test/"))
+            assertEquals(1, routing.inFlightSize(), "the completed call is still listed: its cleanup is held")
+            now += ProxyRouting.TTL_MILLIS
+            routing.lookup(Url("https://x.test/"))
+            assertEquals(2, calls, "the expired answer was not asked for again")
+            held.runAll()
+            withTimeout(5.seconds) { while (routing.inFlightSize() != 0) yield() }
+        }
+
+    private val NO_LOG =
+        object : KuicksilverLogger {
+            override fun isEnabled(level: LogLevel) = false
+
+            override fun log(
+                level: LogLevel,
+                message: String,
+                cause: Throwable?,
+            ) {}
+        }
+
+    /** Runs nothing until [runAll]: a dispatcher that holds back what is dispatched to it. */
+    private class HeldDispatcher : kotlinx.coroutines.CoroutineDispatcher() {
+        private val queue = ArrayList<Runnable>()
+
+        override fun dispatch(
+            context: kotlin.coroutines.CoroutineContext,
+            block: Runnable,
+        ) {
+            synchronizedAdd(block)
+        }
+
+        private fun synchronizedAdd(block: Runnable) = lock.withLock { queue += block }
+
+        fun runAll() {
+            val blocks = lock.withLock { queue.toList().also { queue.clear() } }
+            blocks.forEach { it.run() }
+        }
+
+        private val lock =
+            io.kuicksilver.ktor.client.h1
+                .SpinLock()
+    }
 
     /** A proxy from the environment carries a request (CONNECT to the origin's name). */
     @Test fun environmentResolverDrivesRequests() =

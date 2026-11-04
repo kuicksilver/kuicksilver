@@ -475,6 +475,8 @@ internal const val PAC_WARNING: String =
 internal class ProxyRouting(
     private val config: KuicksilverEngineConfig,
     private val logger: KuicksilverLogger,
+    /** Where a completed call's entry is removed from [inFlight] (tests hold it back to reach the race in [callFor]). */
+    private val cleanup: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
     private val clock: () -> Long = monotonicMillis(),
 ) {
     private val lock = Mutex()
@@ -559,7 +561,15 @@ internal class ProxyRouting(
                         inFlight[key] = d
                         d.invokeOnCompletion {
                             slots.release()
-                            kotlinx.coroutines.GlobalScope.launch { lock.withLock { if (inFlight[key] === d) inFlight.remove(key) } }
+                            kotlinx.coroutines.GlobalScope.launch(cleanup) {
+                                lock.withLock {
+                                    if (inFlight[key] ===
+                                        d
+                                    ) {
+                                        inFlight.remove(key)
+                                    }
+                                }
+                            }
                         }
                     }
             }
@@ -567,6 +577,9 @@ internal class ProxyRouting(
             if (!started) slots.release() // another caller started it meanwhile, or this one was cancelled first
         }
     }
+
+    /** Calls in flight or completed and not cleaned up yet (tests). */
+    internal suspend fun inFlightSize(): Int = lock.withLock { inFlight.size }
 
     private fun warnOnce(message: String) {
         if (warned.compareAndSet(0, 1) && logger.isEnabled(LogLevel.Warn)) logger.log(LogLevel.Warn, message, null)
