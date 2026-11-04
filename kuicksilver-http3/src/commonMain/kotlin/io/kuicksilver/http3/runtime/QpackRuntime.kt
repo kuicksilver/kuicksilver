@@ -6,10 +6,12 @@ import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.qpack.DecodeResult
 import io.kuicksilver.http3.qpack.QpackDecoder
 import io.kuicksilver.http3.qpack.QpackEncoder
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -130,9 +132,18 @@ internal class QpackRuntime(
         val BLOCKED_POLL = 50.milliseconds
     }
 
+    /**
+     * Sends what the decoder holds for the peer's encoder. The drain takes every pending instruction, other streams'
+     * acknowledgments and Insert Count Increments included, so the drain and the write are one NonCancellable section: a
+     * cancelled caller would otherwise lose them at the write's hop to the dispatcher, and the peer's encoder would stall
+     * on its known received count (review 2026-10-28 quic-h3.md R2). The write is on the decoder stream, a critical stream
+     * whose end ends the connection, so it cannot outlive the connection.
+     */
     private suspend fun flushDecoder() =
-        decLock.withLock {
-            val b = decoder.drainDecoderStream()
-            if (b.isNotEmpty()) decoderOut(b)
+        withContext(NonCancellable) {
+            decLock.withLock {
+                val b = decoder.drainDecoderStream()
+                if (b.isNotEmpty()) decoderOut(b)
+            }
         }
 }

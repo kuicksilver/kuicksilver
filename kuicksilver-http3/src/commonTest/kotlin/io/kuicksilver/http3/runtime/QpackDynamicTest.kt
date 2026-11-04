@@ -25,6 +25,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
@@ -101,6 +102,37 @@ class QpackDynamicTest {
                 }.join()
                 assertEquals(1L, withContext(p.client.session.dispatcher) { p.client.session.qpack.streamCancellationsMade }, "made")
                 withTimeout(5.seconds) { while (p.server.session.qpack.peerStreamCancellations < 1L) delay(5) }
+            }
+        }
+
+    /**
+     * Decoder-stream bytes drained by a flush that a cancelled coroutine runs are not lost (review 2026-10-28 quic-h3.md R2):
+     * the drain took every pending instruction, other streams' included, and the write then threw at its hop to the
+     * dispatcher. A QPACK cancellation made by a cancelled coroutine, then one made normally: the peer gets both.
+     */
+    @Test fun decoderStreamBytesDrainedByACancelledFlushStillGoOut() =
+        h3Test {
+            H3Pair.open(clientSettings = dyn, serverSettings = dyn).useScoped { p ->
+                p.client.peerSettings
+                    .filterNotNull()
+                    .first()
+                p.server.peerSettings
+                    .filterNotNull()
+                    .first()
+                val qpack = p.client.session.qpack
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    coroutineContext.job.cancel()
+                    runCatching { withContext(p.client.session.dispatcher + NonCancellable) { qpack.cancelStream(4) } }
+                }.join()
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    withContext(p.client.session.dispatcher) {
+                        coroutineContext.job.cancel()
+                        runCatching { qpack.cancelStream(8) }
+                    }
+                }.join()
+                withContext(p.client.session.dispatcher) { qpack.cancelStream(12) }
+                withTimeout(5.seconds) { while (p.server.session.qpack.peerStreamCancellations < 3L) delay(5) }
+                assertEquals(3L, p.server.session.qpack.peerStreamCancellations)
             }
         }
 
