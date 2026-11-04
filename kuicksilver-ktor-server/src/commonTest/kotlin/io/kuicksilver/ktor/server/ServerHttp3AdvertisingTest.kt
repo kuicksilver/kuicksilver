@@ -21,6 +21,8 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.AdmissionDecision
+import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.CompletableDeferred
@@ -37,10 +39,13 @@ import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * `KuicksilverApplicationEngine.http3Advertising` (docs/guide/ktor.md, "Turning HTTP/3 off remotely"): `Alt-Svc` per response
- * (RFC 7838 section 3 `clear`), GOAWAY to live HTTP/3 connections (RFC 9114 section 5.2) and new QUIC connections refused with
- * CONNECTION_REFUSED (RFC 9000 section 10.2.3) under `Drain`. Every wait is on an event (a response, GOAWAY, a refusal) under a
- * deadline that names it; nothing sleeps.
+ * `KuicksilverApplicationEngine.http3Advertising` (docs/guide/ktor.md, "Turning HTTP/3 off on the server"): `Alt-Svc` per
+ * response (RFC 7838 section 3 `clear`, on HTTP/3 responses too, section 2.2), GOAWAY to live HTTP/3 connections (RFC 9114
+ * section 5.2) and new QUIC connections refused with CONNECTION_REFUSED (RFC 9000 sections 5.2.2, 10.2.3 and 20.1) under
+ * `Drain`. Every wait is on an event (a response, GOAWAY, a refusal) under a deadline that names it; nothing sleeps.
+ *
+ * Follow-up when U.1 merges: `drainRefusesNewQuic` through the Ktor client too (`FallbackReason.Refused`, the Alt-Svc cache
+ * cleared by the next HTTP/1.1 response); this branch has no such client API yet.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class ServerHttp3AdvertisingTest {
@@ -171,7 +176,7 @@ class ServerHttp3AdvertisingTest {
                 tlsServer { routing { get("/") { call.respondText("ok") } } }.also { (srv, _) ->
                     srv.engine.afterH3AcceptForTest = {
                         srv.advertising(Http3Advertising.Drain)
-                        withTimeout(10.seconds) { srv.engine.drainRoundForTest!!.join() }
+                        withTimeout(10.seconds) { srv.engine.lastDrainRound!!.join() }
                     }
                 }
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
@@ -278,6 +283,83 @@ class ServerHttp3AdvertisingTest {
                 }
             } finally {
                 ep.close()
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * HTTP/3 responses carry `Alt-Svc: clear` under `Clear` and `Drain` (an alternative may clear its origin's entries, RFC 7838
+     * section 2.2), so a client already on HTTP/3 drops the alternative too; under `On`, and with `altSvc = false`, none.
+     */
+    @Test fun h3ResponsesSayClearWhileWithdrawn() =
+        h3ServerTest {
+            for (altSvcOn in listOf(true, false)) {
+                val (server, port) = tlsServer(configure = { altSvc = altSvcOn }) { routing { get("/") { call.respondText("ok") } } }
+                val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+                try {
+                    val c = ep.connect(InetSocketAddress("127.0.0.1", port), h3Tls)
+                    val seen =
+                        listOf(Http3Advertising.On, Http3Advertising.Clear, Http3Advertising.On, Http3Advertising.Drain).map { mode ->
+                            server.advertising(mode)
+                            val r = withTimeout(10.seconds) { c.request(get()) }
+                            r.body.readFullBody()
+                            r.headers["alt-svc"]
+                        }
+                    val expected = if (altSvcOn) listOf(null, "clear", null, "clear") else listOf(null, null, null, null)
+                    assertEquals(expected, seen, "altSvc = $altSvcOn")
+                    c.close()
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                }
+            }
+        }
+
+    /**
+     * A configured `quicAdmission` decides under `On`; under `Drain` it is not asked, and the client gets CONNECTION_REFUSED.
+     * The policy records the client ports it saw, so a late retransmission from the first client cannot pass for the second.
+     */
+    @Test fun configuredAdmissionAppliesUnderOnAndIsBypassedUnderDrain() =
+        h3ServerTest {
+            val askedPorts = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+            val (server, port) =
+                tlsServer(configure = {
+                    quicAdmission =
+                        ConnectionAdmission { attempt ->
+                            askedPorts.trySend(attempt.remote.port)
+                            AdmissionDecision.Close(TransportError.APPLICATION_ERROR)
+                        }
+                }) { routing { get("/") { call.respondText("ok") } } }
+            val first = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            val second = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val underOn =
+                    withTimeout(10.seconds) {
+                        assertFailsWith<QuicException.ConnectionLost.TransportClosed> {
+                            first.connect(
+                                InetSocketAddress("127.0.0.1", port),
+                                h3Tls,
+                            )
+                        }
+                    }
+                assertEquals(TransportError.APPLICATION_ERROR, underOn.code, "the policy's decision applies under On")
+                server.advertising(Http3Advertising.Drain)
+                val underDrain =
+                    withTimeout(10.seconds) {
+                        assertFailsWith<QuicException.ConnectionLost.TransportClosed> {
+                            second.connect(
+                                InetSocketAddress("127.0.0.1", port),
+                                h3Tls,
+                            )
+                        }
+                    }
+                assertEquals(TransportError.CONNECTION_REFUSED, underDrain.code)
+                val seen = generateSequence { askedPorts.tryReceive().getOrNull() }.toSet()
+                assertEquals(true, first.localAddress.port in seen, "the policy was asked under On: $seen")
+                assertEquals(false, second.localAddress.port in seen, "the policy was asked under Drain: $seen")
+            } finally {
+                first.close()
+                second.close()
                 server.stop(100, 500)
             }
         }

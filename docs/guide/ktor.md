@@ -101,7 +101,7 @@ ADR-0006); `udpSocketCount > 1` needs Linux or Android. Where a QUIC server cann
 HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
 identity per SNI name (not supported for QUIC yet), so that connector skips HTTP/3 with a warning instead of failing to start.
 
-### Turning HTTP/3 off remotely
+### Turning HTTP/3 off on the server
 
 A running server can stop advertising HTTP/3, or take it out of service, without a restart: set
 `engine.http3Advertising` (experimental) from wherever your remote configuration arrives — a config poll, an admin
@@ -119,27 +119,36 @@ server.engine.http3Advertising = Http3Advertising.Drain
 server.engine.http3Advertising = Http3Advertising.On
 ```
 
-| Value | HTTP/1.1 responses | Live HTTP/3 connections | New QUIC connections |
-|---|---|---|---|
-| `On` (default) | `Alt-Svc: h3=":<port>"; ma=86400` | served | accepted |
-| `Clear` | `Alt-Svc: clear` (RFC 7838 section 3: the client drops the origin's cached alternatives) | served | accepted |
-| `Drain` | `Alt-Svc: clear` | GOAWAY (RFC 9114 section 5.2): requests in flight finish, then the connection closes | refused at the first Initial with CONNECTION_REFUSED |
+| Value | HTTP/1.1 responses | HTTP/3 responses | Live HTTP/3 connections | New QUIC connections |
+|---|---|---|---|---|
+| `On` (default) | `Alt-Svc: h3=":<port>"; ma=86400` | no `Alt-Svc` | served | accepted |
+| `Clear` | `Alt-Svc: clear` | `Alt-Svc: clear` | served | accepted |
+| `Drain` | `Alt-Svc: clear` | `Alt-Svc: clear` | GOAWAY (RFC 9114 section 5.2): requests in flight finish, then the connection closes | refused at the first Initial with CONNECTION_REFUSED |
 
-- Every HTTP/1.1 response reads the value as its head goes out, so the next response on a keep-alive connection follows
-  a change; every new client Initial is checked when the QUIC endpoint admits it. The setter returns at once.
+RFC 7838 section 3: "A field value containing the special value "clear" indicates that the origin requests all
+alternatives for that origin to be invalidated". An HTTP/3 response may send it too, since section 2.2 says
+"Alternative services are fully authoritative for the origin in question, including the ability to clear or update
+cached alternative service entries".
+
+- Every response reads the value as its head goes out, so the next response on a keep-alive connection follows a
+  change; every new client Initial is checked when the QUIC endpoint admits it. The setter returns at once.
 - The header part applies where the engine sends `Alt-Svc` at all: on a TLS connector that serves HTTP/3, with
   `altSvc = true`. With `altSvc = false` no `Alt-Svc` is sent in any mode, but `Drain` still sends GOAWAY and refuses new
   QUIC connections. An `Alt-Svc` the application sets itself is left as it is in every mode, and a 421 gets none.
-- `Clear` only stops the advertising. `clear` reaches a client on its next HTTP/1.1 response; a client that already talks
-  HTTP/3 to the server keeps doing so until its cached alternative expires (`ma`, up to 24 hours). To move those clients
-  too, use `Drain`.
+- `Clear` stops the advertising and withdraws it: a client drops the alternative at its next response, over HTTP/1.1 or
+  HTTP/3. A connection it already has may go on serving it (RFC 7838 section 2.2 lets a client keep using one); to move
+  those connections to TCP, use `Drain`.
 - `Drain` sends GOAWAY to every live HTTP/3 connection at once, as a [graceful stop](#graceful-stop) does, and to every
   connection whose handshake completes while it is set. The requests in flight complete; once the last response is
-  acknowledged the client closes the connection (a Kuicksilver client does), or the server three seconds later. There is
-  no grace deadline: a long-lived stream (a WebSocket or WebTransport session over HTTP/3) keeps its connection until it
-  ends. A new client is refused with a stateless Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED (RFC 9000 sections
-  10.2.3 and 20.1), under the endpoint's stateless rate limit; this runs before `quicAdmission`, and
-  `EndpointStats.connectionsRefusedAdmission` counts it. A refused client falls back to TCP at once instead of waiting for
+  acknowledged the client closes the connection (a Kuicksilver client does), or the server three seconds later.
+  **Not bounded in 0.3.0:** `Drain` has no grace deadline, so a long-lived stream (a WebSocket or WebTransport session
+  over HTTP/3) keeps its connection until the application or the client ends it; a drain deadline is planned for 0.3.x.
+  To cut such sessions, stop the server (its grace period applies) or end them in the application.
+- A new client is refused with a stateless Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED, as RFC 9000 section
+  5.2.2 asks: "If a server refuses to accept a new connection, it SHOULD send an Initial packet containing a
+  CONNECTION_CLOSE frame with error code CONNECTION_REFUSED" (sections 10.2.3 and 20.1). It is under the endpoint's
+  stateless rate limit, runs before `quicAdmission` (which is not asked), unless a hard limit (`maxConnections`,
+  `maxConnectionsPerIp`) drops the Initial first, and `EndpointStats.connectionsRefusedAdmission` counts it. A refused client falls back to TCP at once instead of waiting for
   its handshake timeout, and its next HTTP/1.1 response clears its cached alternative.
 - The UDP socket stays bound under `Drain`: releasing the port and binding it again on `On` would race other processes
   for it (and, with `udpSocketCount > 1`, for each of its sockets), and a closed port answers with nothing or an ICMP

@@ -238,7 +238,7 @@ public class KuicksilverApplicationEngine(
 
     /**
      * Whether HTTP/3 is advertised and new HTTP/3 connections accepted, switched at runtime (docs/guide/ktor.md, "Turning HTTP/3
-     * off remotely"); [Http3Advertising.On] until set. Every HTTP/1.1 response reads it as its head goes out (so the next
+     * off on the server"); [Http3Advertising.On] until set. Every response reads it as its head goes out (so the next
      * response on a keep-alive connection already follows a change), and every new client Initial when the QUIC endpoint
      * admits it. Setting [Http3Advertising.Drain] sends GOAWAY to every live HTTP/3 connection in the background and returns
      * at once; a connection accepted while it is set gets GOAWAY too. GOAWAY cannot be taken back: going back to
@@ -251,7 +251,7 @@ public class KuicksilverApplicationEngine(
         set(value) {
             advertising = value
             // after the write: a connection registered after this round took its list reads Drain in its accept loop
-            if (value == Http3Advertising.Drain) drainRoundForTest = serverScope?.launch { goAwayAll() }
+            if (value == Http3Advertising.Drain) lastDrainRound = serverScope?.launch { goAwayAll() }
         }
 
     /**
@@ -261,6 +261,8 @@ public class KuicksilverApplicationEngine(
      */
     private suspend fun goAwayAll() {
         startupJob.join()
+        // switched back while the start was still running: no GOAWAY for a mode that is no longer in force
+        if (advertising != Http3Advertising.Drain) return
         coroutineScope {
             for (l in h3ListenersForProbe) for (c in l.live()) launch { runCatching { c.goAway() } }
         }
@@ -270,9 +272,9 @@ public class KuicksilverApplicationEngine(
     @Volatile
     private var serverScope: CoroutineScope? = null
 
-    /** The background GOAWAY round of the last switch to [Http3Advertising.Drain], for tests; null before one. */
+    /** The background GOAWAY round of the last switch to [Http3Advertising.Drain] (tests join it); null before one. */
     @Volatile
-    internal var drainRoundForTest: Job? = null
+    internal var lastDrainRound: Job? = null
 
     /** The grace period of the stop in progress: each HTTP/3 endpoint gets it for `QuicEndpoint.shutdown`. */
     @Volatile

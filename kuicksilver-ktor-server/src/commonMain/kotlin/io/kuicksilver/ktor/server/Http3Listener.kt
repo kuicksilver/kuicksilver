@@ -110,7 +110,9 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
                     }.build()
             connectionIdLength = quic.connectionIdLength
             loops = configuration.udpSocketCount
-            // the HTTP/3 switch first: under Drain every new client is refused statelessly (RFC 9000 section 10.2.3), whatever the policy
+            // the HTTP/3 switch first: under Drain every new client is refused with CONNECTION_REFUSED, statelessly, whatever the
+            // policy (RFC 9000 section 5.2.2: a server that refuses a new connection SHOULD send an Initial CONNECTION_CLOSE with
+            // CONNECTION_REFUSED; sections 10.2.3 and 20.1)
             val policy = configuration.quicAdmission ?: admission
             admission =
                 ConnectionAdmission { attempt ->
@@ -203,6 +205,18 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
     }
 }
 
+/**
+ * The engine's `Alt-Svc` on HTTP/3 responses: nothing under [Http3Advertising.On] (the client already uses the alternative),
+ * `clear` otherwise (RFC 7838 sections 2.2 and 3), so a client on HTTP/3 also drops the alternative; none with `altSvc = false`.
+ */
+private val KuicksilverApplicationEngine.h3AltSvc: () -> String?
+    get() =
+        if (!configuration.altSvc) {
+            { null }
+        } else {
+            { if (advertising == Http3Advertising.On) null else "clear" }
+        }
+
 private suspend fun KuicksilverApplicationEngine.handleHttp3(
     req: Http3ServerRequest,
     local: InetSocketAddress,
@@ -237,6 +251,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 webSocket,
                 webTransport,
                 beforeH3UpgradeForTest,
+                h3AltSvc,
             )
         events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
         var failure: Throwable? = null
