@@ -124,8 +124,9 @@ private const val PERMESSAGE_DEFLATE = "permessage-deflate"
 /**
  * The WebSocket frames of [input], passed through unchanged frame by frame after their first byte was checked (RFC 6455
  * section 5.2): an opcode that is not defined (3-7, 11-15), an RSV bit outside [allowedRsv], or, when [allowedRsv] is
- * exactly [WS_RSV1] (permessage-deflate), RSV1 on a continuation or control frame (RFC 7692 section 6.1), or a mask bit
- * that does not match [peerMasks] (RFC 6455 section 5.1: a client masks every frame, a server none) fails the
+ * exactly [WS_RSV1] (permessage-deflate), RSV1 on a continuation or control frame (RFC 7692 section 6.1), a mask bit
+ * that does not match [peerMasks] (RFC 6455 section 5.1: a client masks every frame, a server none), or a 64-bit payload
+ * length whose most significant bit is set (section 5.2: it MUST be 0) fails the
  * connection (RFC 6455 section 7.1.7) with code 1002 (protocol error): in place of that frame the returned channel
  * carries a Close frame with 1002 and the reason, then ends. Ktor's session answers it with the same Close through its
  * own writer (the only writer of the connection), so 1002 is what goes on the wire and is the session's `closeReason`;
@@ -196,9 +197,9 @@ public fun guardWebSocketInput(
                 }
                 val maskAt = n
                 if (b1.toInt() and 0x80 != 0) repeat(4) { header[n++] = input.readByte() } // masking key
-                if (length < 0) { // out of range: the reader rejects the header
-                    out.writeFully(header, 0, n)
-                    break
+                if (length < 0) {
+                    out.failWith(CLOSE_PROTOCOL_ERROR, "Received illegal frame: a 64-bit length with its most significant bit set")
+                    return@launch
                 }
                 val opcode = b0.toInt() and 0x0f
                 if (inflater != null && opcode < OPCODE_CLOSE) {

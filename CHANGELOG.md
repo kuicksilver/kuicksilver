@@ -166,8 +166,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `WebSockets` plugin offers and negotiates the installed extensions over HTTP/1.1 and HTTP/3 (Ktor's JVM
   `WebSocketDeflateExtension` included); an answer that accepts an extension the client did not offer fails the call
   with `WebSocketException`. Both engines end a session whose peer sets an RSV bit no negotiated extension defines, or
-  uses a reserved opcode, or masks its frames in the wrong direction (RFC 6455 section 5.1), with a Close frame with code
-  1002 (threat model 3.20.1).
+  uses a reserved opcode, or masks its frames in the wrong direction (RFC 6455 section 5.1), or gives a 64-bit payload
+  length with its most significant bit set (section 5.2), with a Close frame with code 1002 (threat model 3.20.1).
 - WebSockets: permessage-deflate on every target (RFC 7692; experimental `PerMessageDeflate` in
   `kuicksilver-ktor-network`; `docs/guide/ktor.md`, "WebSocket compression"). A Ktor `WebSocketExtension` for the client
   and server `WebSockets` plugins on any engine: java.util.zip on the JVM and Android, the platform's zlib on
