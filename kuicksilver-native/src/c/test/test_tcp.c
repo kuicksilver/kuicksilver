@@ -946,7 +946,7 @@ static void test_read_waiting_for_room_says_so(void) {
     size_t room0 = BIO_ctrl_get_write_guarantee(SSL_get_wbio(c->ssl));
     CHECK(ksl_tcp_write(c, big, sizeof big, &n) == KSL_OK, "a full record into the client's pair");
     size_t room = BIO_ctrl_get_write_guarantee(SSL_get_wbio(c->ssl)), overhead = room0 - room - sizeof big;
-    if (room > overhead + 5) CHECK(ksl_tcp_write(c, big, room - overhead - 5, &n) == KSL_OK, "a record that leaves 5 bytes");
+    CHECK(room > overhead + 5 && ksl_tcp_write(c, big, room - overhead - 5, &n) == KSL_OK, "setup: a record that leaves 5 bytes");
     uint8_t b = 9;
     CHECK(ksl_ssl_key_update(c, 0) == KSL_OK && ksl_tcp_write(c, &b, 1, &n) == KSL_WANT_READ, "the KeyUpdate ahead of the next write finds no room");
     CHECK(ksl_tcp_write(s, &b, 1, &n) == KSL_OK && shuttle(s, c) > 0, "the server sends a byte");
