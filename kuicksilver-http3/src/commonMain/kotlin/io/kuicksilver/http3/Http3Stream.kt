@@ -40,7 +40,9 @@ public interface Http3Stream {
     /**
      * Sends an HTTP datagram on this stream; `Unsupported` until both sides sent `SETTINGS_H3_DATAGRAM=1` (RFC 9297 section
      * 2.1.1), `Closed` once our send side is closed — [output] closed (FIN) or failed, or [reset] — since datagrams must
-     * not be sent then (RFC 9297 section 2.1), and always `Closed` on a stream whose protocol has no datagram semantics
+     * not be sent then (RFC 9297 section 2.1); `TooLarge` with `max` 0 when the peer's `max_datagram_frame_size` leaves
+     * no room for the Quarter Stream ID, so not even an empty HTTP datagram fits; and always `Closed` on a stream whose
+     * protocol has no datagram semantics
      * (`websocket`, a classic CONNECT; RFC 9297 section 2: "HTTP Datagrams MUST only be sent with an association to an HTTP
      * request that explicitly supports them").
      */

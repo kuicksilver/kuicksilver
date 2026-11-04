@@ -639,7 +639,8 @@ static void test_abort_after_pending_messages(void) {
     ksl_ssl_free(c); ksl_ssl_free(s);
     /* the bytes ksl keeps for a write that is not yet a record (review 2026-10-28 NIT-3): a KeyUpdate queued while the pair is full
        goes out first when the transport takes more, so the next write stays plaintext behind it; the abort sends the KeyUpdate,
-       that write as a record, then the alert */
+       that write as a record, then the alert. This pins the behaviour the corrected comment describes; it passed before the
+       NIT-3 change too (which changed the comment, the copy on a retry of another length and the malloc case, below). */
     c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); key_updates ku = {0, 0}; ksl_ssl_msg_observer_for_test(c, key_update_kind_cb, &ku);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
     CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_OK && ksl_ssl_key_update(s, 0) == KSL_OK, "a record fills the pair, a KeyUpdate is queued");

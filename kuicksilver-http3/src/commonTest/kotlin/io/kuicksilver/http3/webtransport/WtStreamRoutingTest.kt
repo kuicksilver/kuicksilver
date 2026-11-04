@@ -448,7 +448,8 @@ class WtStreamRoutingTest {
                 }
                 c.sendDatagram(VarInt.encode(st.id / 4) + "early".encodeToByteArray())
                 server.awaitDatagrams(1)
-                clock += 1.seconds // past the round-trip hold (at most 5 s), within an early stream's
+                // past the round-trip hold of this loopback path (its 50 ms floor), within the 5 s an early stream gets
+                clock += 1.seconds
                 st.output.writeFully(connect, connect.size / 2, connect.size) // start and end index
                 st.output.flush()
                 val wt = withTimeout(5.seconds) { accepted.await() }
