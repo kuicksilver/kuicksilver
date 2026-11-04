@@ -282,7 +282,14 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
        the sending keys' limit (ksl_tcp.c), alerts and handshake messages included (a TLS 1.2 peer's HelloRequests draw one
        no_renegotiation alert each). OpenSSL 3.5 calls this with SSL3_RT_HEADER once per record it writes (tls_common.c,
        tls_post_encryption_processing_default), before the message callback of what the record carried. */
-    if (s->mode == KSL_MODE_TCP && write_p && content_type == SSL3_RT_HEADER && s->done) s->records_sent++;
+    if (s->mode == KSL_MODE_TCP && write_p) {
+        /* the application keys are ours from the record after our ChangeCipherSpec (TLS 1.2; TLS 1.3's compatibility one changes
+           nothing) or after our Finished (TLS 1.3): records count from there, not from the end of the handshake, which comes later
+           (a TLS 1.2 side's own Finished, a TLS 1.3 server's tickets written in the same handshake call) */
+        if (content_type == SSL3_RT_HEADER && (s->app_keys_out || s->done)) s->records_sent++;
+        else if (content_type == SSL3_RT_CHANGE_CIPHER_SPEC && SSL_version(ssl) < TLS1_3_VERSION) s->app_keys_out = 1;
+        else if (content_type == SSL3_RT_HANDSHAKE && len >= 1 && m[0] == SSL3_MT_FINISHED && SSL_version(ssl) >= TLS1_3_VERSION) s->app_keys_out = 1;
+    }
     /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed
        2^48-1"; "If a sending implementation receives a KeyUpdate with request_update set to update_requested, it MUST NOT send its
        own KeyUpdate if that would cause it to exceed these limits and SHOULD instead ignore the update_requested flag. This may result

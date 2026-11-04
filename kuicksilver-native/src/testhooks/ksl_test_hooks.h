@@ -5,7 +5,8 @@
 #ifndef KSL_TEST_HOOKS_H
 #define KSL_TEST_HOOKS_H
 #include <stdint.h>
-/* The records the session's current sending keys may still protect from now on (every record ksl writes counts, those already
-   written are added): ksl ends the session one record before the limit (RFC 9846 section 5.5). ssl is a ksl_ssl handle. */
+/* The records the session's current sending keys may still protect from now on (relative, like the C tests'
+   ksl_tcp_set_record_limit_for_test: every record ksl writes counts, those already written are added): ksl ends the session one
+   record before the limit (RFC 9846 section 5.5). ssl is a ksl_ssl handle. */
 void ksl_test_hooks_set_record_limit(void *ssl, uint64_t records);
 #endif

@@ -164,7 +164,9 @@ int ksl_tcp_shutdown(ksl_ssl *s) {
 /* Test hook: the number of records after which ksl_tcp_write updates the sending key (by the AEAD otherwise; UINT64_MAX, never), counted from now. */
 void ksl_tcp_set_key_update_records_for_test(ksl_ssl *s, uint64_t records) { s->key_update_records = records; s->records_sent = 0; }
 /* Test hook: the records the keys may protect (the AEAD's limit otherwise); UINT64_MAX, none */
-void ksl_tcp_set_record_limit_for_test(ksl_ssl *s, uint64_t records) { s->record_limit = records; }
+/* The sending keys reach their record limit [records] records from now (relative, as the Kotlin tests' ksl_test_hooks_set_record_limit:
+   records ksl already wrote under the keys, a TLS 1.2 side's Finished or a TLS 1.3 server's tickets, are added) */
+void ksl_tcp_set_record_limit_for_test(ksl_ssl *s, uint64_t records) { s->record_limit = s->records_sent + records; }
 /* Test hook: the record count of the automatic KeyUpdate and the record limit, as the session applies them */
 void ksl_tcp_record_bounds_for_test(ksl_ssl *s, uint64_t *key_update_at, uint64_t *limit) { *key_update_at = key_update_records(s); *limit = record_limit(s); }
 #endif

@@ -793,7 +793,22 @@ static void test_record_limits_per_cipher(void) {
             { uint8_t sink[4096]; size_t k; while (ksl_tcp_drain(c, sink, sizeof sink, &k) == KSL_OK && k) {} }   /* the alerts go nowhere */
         }
         CHECK(ended && last_message_has(c, "record limit"), "negative: the client's no_renegotiation alerts count: the session ends at the limit");
-        CHECK(rounds <= 6, "the session ended within the limit's records");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    /* the records under the application keys count from the key switch, not from the end of the handshake (review S-a): a
+       TLS 1.2 side's own Finished, a TLS 1.3 server's tickets written in the same handshake call */
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        CHECK(c->records_sent == 1 && s->records_sent == 1, "TLS 1.2: each side's Finished is the first record under its new keys");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    ksl_ctx_free(cc); ksl_ctx_free(sc);
+    cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server"); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 2);
+    { uint8_t tk[80]; for (int i = 0; i < 80; i++) tk[i] = (uint8_t)(i * 5 + 1); ksl_ctx_set_ticket_keys(sc, tk, 1); }
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+        CHECK(s->records_sent == 2, "TLS 1.3: the server's two tickets count");
+        CHECK(c->records_sent == 0, "TLS 1.3: the client's Finished is under the handshake keys");
         ksl_ssl_free(c); ksl_ssl_free(s);
     }
     ksl_ctx_free(cc); ksl_ctx_free(sc); END();

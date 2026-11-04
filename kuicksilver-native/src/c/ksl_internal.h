@@ -67,6 +67,7 @@ struct ksl_ssl {
     uint64_t fed, update_requested_at;              /* ciphertext bytes fed (ksl_tcp_feed); how many had been when our update_requested was written */
     int server_hello_ems, ems_refused;               /* client: the ServerHello carried extended_master_secret; the handshake was refused for its lack (RFC 7627 section 5.2) */
     uint64_t records_sent, key_update_records;       /* records written under the current key; the bound for a KeyUpdate (ksl_tcp_write) */
+    int app_keys_out;                                /* our application keys are in use (ksl_msg_cb): records count from here */
     uint64_t record_limit;                           /* records the current keys may protect (RFC 9846 5.5), per AEAD; 0 = not yet known */
     /* keylog lines */
     char *keylog; size_t keylog_len, keylog_cap;
