@@ -282,9 +282,20 @@ sealed interface io.kuicksilver.tls/TlsIdentity { // io.kuicksilver.tls/TlsIdent
         final fun close() // io.kuicksilver.tls/TlsIdentity.InMemory.close|close(){}[0]
     }
 
+    final class Reloadable : io.kuicksilver.tls/TlsIdentity, kotlin/AutoCloseable { // io.kuicksilver.tls/TlsIdentity.Reloadable|null[0]
+        final val chain // io.kuicksilver.tls/TlsIdentity.Reloadable.chain|{}chain[0]
+            final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsIdentity.Reloadable.chain.<get-chain>|<get-chain>(){}[0]
+        final val current // io.kuicksilver.tls/TlsIdentity.Reloadable.current|{}current[0]
+            final fun <get-current>(): io.kuicksilver.tls/TlsIdentity.InMemory // io.kuicksilver.tls/TlsIdentity.Reloadable.current.<get-current>|<get-current>(){}[0]
+
+        final fun close() // io.kuicksilver.tls/TlsIdentity.Reloadable.close|close(){}[0]
+        final fun reload(io.kuicksilver.tls/TlsIdentity.InMemory) // io.kuicksilver.tls/TlsIdentity.Reloadable.reload|reload(io.kuicksilver.tls.TlsIdentity.InMemory){}[0]
+    }
+
     final object Companion { // io.kuicksilver.tls/TlsIdentity.Companion|null[0]
         final fun fromDer(kotlin.collections/List<kotlin/ByteArray>, kotlin/ByteArray): io.kuicksilver.tls/TlsIdentity.InMemory // io.kuicksilver.tls/TlsIdentity.Companion.fromDer|fromDer(kotlin.collections.List<kotlin.ByteArray>;kotlin.ByteArray){}[0]
         final fun fromPem(kotlin/String, kotlin/CharArray, kotlin/CharArray? = ...): io.kuicksilver.tls/TlsIdentity.InMemory // io.kuicksilver.tls/TlsIdentity.Companion.fromPem|fromPem(kotlin.String;kotlin.CharArray;kotlin.CharArray?){}[0]
+        final fun reloadable(io.kuicksilver.tls/TlsIdentity.InMemory): io.kuicksilver.tls/TlsIdentity.Reloadable // io.kuicksilver.tls/TlsIdentity.Companion.reloadable|reloadable(io.kuicksilver.tls.TlsIdentity.InMemory){}[0]
     }
 }
 

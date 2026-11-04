@@ -138,6 +138,11 @@ public class TlsConnection private constructor(
                     e.close()
                     return@let
                 }
+                // a client identity reloaded since the ticket was issued: that session speaks for the old certificate
+                if (e.identityTag != ctx.identityTag) {
+                    e.close()
+                    return@let
+                }
                 cached = e
                 try {
                     lock.withLock { Ksl.sslSetSession(s(), e.session) }
@@ -561,7 +566,7 @@ public class TlsConnection private constructor(
                             } else {
                                 (cached?.validated ?: presented)
                             }
-                        SessionCache.Entry(session, presented, validated)
+                        SessionCache.Entry(session, presented, validated, identityTag = ctx.identityTag)
                     } catch (t: Throwable) {
                         Ksl.sessionFree(session)
                         throw t
@@ -814,6 +819,8 @@ public class SessionCache(
         val chain: List<Certificate>,
         val validated: List<Certificate>,
         val created: Long = nowSeconds(),
+        /** The client identity the session was authenticated with (`KslContext.identityTag`); resumed only under the same one. */
+        val identityTag: String? = null,
     ) {
         var session: Long = session
             private set

@@ -22,7 +22,10 @@ import io.kuicksilver.tls.tlsConfig
 public class KuicksilverTlsConnector private constructor(
     override val host: String,
     override val port: Int,
-    /** The server certificate chain and key, shared by TCP and QUIC. */
+    /**
+     * The server certificate chain and key, shared by TCP and QUIC. A `TlsIdentity.Reloadable` replaces them at run time:
+     * each new handshake on either takes the identity current when it starts, running connections keep theirs.
+     */
     public val identity: TlsIdentity,
     /** Whether a client certificate is asked for ([ClientAuth.Optional]) or required ([ClientAuth.Required]). */
     public val clientAuth: ClientAuth,
@@ -58,7 +61,8 @@ public class KuicksilverTlsConnector private constructor(
     /**
      * Builds a [KuicksilverTlsConnector]; used by `tlsConnector(identity) { ... }` in the engine configuration.
      *
-     * @property identity the server certificate chain and key, shared by TCP and QUIC.
+     * @property identity the server certificate chain and key, shared by TCP and QUIC; a `TlsIdentity.Reloadable` can be
+     *   replaced while the server runs (docs/guide/ktor.md, "Certificate rotation").
      */
     @KuicksilverDsl
     public class Builder(

@@ -45,6 +45,7 @@ internal class ApiPair private constructor(
             df: Boolean = false,
             serverEarlyData: Boolean = false,
             serverLogger: KuicksilverLogger? = null,
+            serverTls: io.kuicksilver.tls.TlsConfig = CoreFixtures.server(),
         ): ApiPair {
             val net = MemoryNetwork()
             val a = net.open(InetSocketAddress("10.0.0.1", 1111), df = df)
@@ -57,7 +58,7 @@ internal class ApiPair private constructor(
                         .apply {
                             this.server =
                                 QuicServerConfig
-                                    .Builder(CoreFixtures.server())
+                                    .Builder(serverTls)
                                     .apply {
                                         quic = serverQuic
                                         earlyData = serverEarlyData

@@ -34,6 +34,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getHttp3 ()Z
 	public final fun getHttp3Settings ()Lio/kuicksilver/http3/Http3Settings;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getIdentityReloadInterval-FghU774 ()Lkotlin/time/Duration;
 	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
@@ -51,6 +52,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun setHttp3 (Z)V
 	public final fun setHttp3Settings (Lio/kuicksilver/http3/Http3Settings;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun setIdentityReloadInterval-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V

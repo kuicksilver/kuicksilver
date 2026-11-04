@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class)
+@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.tls
 
@@ -16,6 +16,13 @@ internal class KslContext private constructor(
     val handle: Long,
     val config: TlsConfig,
     val quic: Boolean,
+    /**
+     * The SHA-256 of the whole leaf certificate this context presents (not of its key: a renewal that keeps the key is another
+     * certificate, as the server's ticket binding sees it too) (the snapshot a `TlsIdentity.Reloadable` gave), null without an identity.
+     * A client stores it with each ticket and resumes a ticket only under the same one: the cache key reads the identity
+     * separately, and a reload in between must not resume a session authenticated with another client certificate.
+     */
+    val identityTag: String?,
 ) : AutoCloseable {
     /** The verifier `ksl` runs itself (AnchoredCa) or the pause for Kotlin-side trust. */
     val verifyMode: Int = verifyModeFor(config)
@@ -83,8 +90,9 @@ internal class KslContext private constructor(
             }
             val h = Ksl.ctxNew(if (config.role == TlsRole.Client) KslConst.CLIENT else KslConst.SERVER)
             try {
+                val tag: String?
                 try {
-                    configure(h, config, quic)
+                    tag = configure(h, config, quic)
                     if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData)
                 } catch (
                     e: KslException.Internal,
@@ -92,26 +100,43 @@ internal class KslContext private constructor(
                     throw TlsException.Config("invalid TLS configuration: ${e.message}")
                 }
                 Ksl.ctxFreeze(h)
-                return KslContext(h, config, quic)
+                return KslContext(h, config, quic, tag)
             } catch (t: Throwable) {
                 Ksl.ctxFree(h)
                 throw t
             }
         }
 
+        /** [identityTag] of [leaf]: the SHA-256 of its DER, hex. */
+        private fun certificateTag(leaf: Certificate): String =
+            Ksl.sha2(256, leaf.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
+        /** Returns the [identityTag] of the identity it configured. */
         private fun configure(
             h: Long,
             config: TlsConfig,
             quic: Boolean,
-        ) {
+        ): String? {
             if (config.alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(config.alpn))
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
-            config.identity?.let { id ->
-                when (id) {
-                    is TlsIdentity.InMemory -> id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
+            val tag =
+                config.identity?.let { id ->
+                    when (id) {
+                        is TlsIdentity.InMemory -> {
+                            id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
+                            certificateTag(id.chain[0])
+                        }
+
+                        // chain and key from one snapshot: a reload between them would pair one identity's chain with another's key
+                        is TlsIdentity.Reloadable -> {
+                            id.withCurrentKey { cur, k ->
+                                Ksl.ctxSetIdentityKey(h, cur.chain.map { it.encoded }, k)
+                                certificateTag(cur.chain[0])
+                            }
+                        }
+                    }
                 }
-            }
             if (config.role ==
                 TlsRole.Client
             ) {
@@ -161,6 +186,7 @@ internal class KslContext private constructor(
             }
             if (config.keylog != null) Ksl.ctxSetOption(h, KslConst.OPT_KEYLOG, 1)
             if (config.genericAlerts) Ksl.ctxSetOption(h, KslConst.OPT_GENERIC_ALERTS, 1)
+            return tag
         }
 
         private fun quicServerTickets(

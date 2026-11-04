@@ -132,7 +132,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `serverName` | `String?` | `null` | a client needs it (or `TrustConfig.ExpectedName`) | SNI and the name the certificate must match; an IP literal is verified but never sent as SNI. Servers ignore it |
 | `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | TLS 1.3 is the default (RFC 9852); `Tls12And13` allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) | at least one; QUIC refuses `TLS_AES_128_CCM_8_SHA256` | TLS 1.3 suites in preference order |
-| `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | certificate chain and key |
+| `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | certificate chain and key; `TlsIdentity.reloadable(...)` for one replaced at run time ([TLS guide](tls.md#rotating-the-server-certificate)) |
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | how the peer is verified ([below](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | `None`, `Optional` or `Required` client certificates |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
@@ -277,7 +277,8 @@ Guide: [Ktor: Client](ktor.md#client).
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `tlsConnector(identity) { … }` | | | a TLS connector: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port (below) |
-| `identity` | `TlsIdentity?` | `null` | turns every plain connector (`port = …`, `connector { }`) into a TLS connector |
+| `identity` | `TlsIdentity?` | `null` | turns every plain connector (`port = …`, `connector { }`) into a TLS connector; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](ktor.md#certificate-rotation)) |
+| `identityReloadInterval` (*experimental*) | `Duration?` | `null` | at least 1 s; how often the PEM files `EngineMain` read are checked for a renewed certificate (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](ktor.md#certificate-rotation)) |
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](ktor.md#server)) |
 | `http3` | `Boolean` | `true` | serve HTTP/3 on every TLS connector |
@@ -313,7 +314,9 @@ keep their defaults and are not configurable from the engine. Ktor's `connection
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | | identity per SNI name over TCP; the connector then serves no HTTP/3 (warning) |
 
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
-`kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together), `kuicksilver.http3`,
+`kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
+`kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
+`kuicksilver.http3`,
 `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 

@@ -441,11 +441,19 @@ public final class io/kuicksilver/tls/TlsIdentity$Companion {
 	public final fun fromDer (Ljava/util/List;[B)Lio/kuicksilver/tls/TlsIdentity$InMemory;
 	public final fun fromPem (Ljava/lang/String;[C[C)Lio/kuicksilver/tls/TlsIdentity$InMemory;
 	public static synthetic fun fromPem$default (Lio/kuicksilver/tls/TlsIdentity$Companion;Ljava/lang/String;[C[CILjava/lang/Object;)Lio/kuicksilver/tls/TlsIdentity$InMemory;
+	public final fun reloadable (Lio/kuicksilver/tls/TlsIdentity$InMemory;)Lio/kuicksilver/tls/TlsIdentity$Reloadable;
 }
 
 public final class io/kuicksilver/tls/TlsIdentity$InMemory : io/kuicksilver/tls/TlsIdentity, java/lang/AutoCloseable {
 	public fun close ()V
 	public fun getChain ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/tls/TlsIdentity$Reloadable : io/kuicksilver/tls/TlsIdentity, java/lang/AutoCloseable {
+	public fun close ()V
+	public fun getChain ()Ljava/util/List;
+	public final fun getCurrent ()Lio/kuicksilver/tls/TlsIdentity$InMemory;
+	public final fun reload (Lio/kuicksilver/tls/TlsIdentity$InMemory;)V
 }
 
 public final class io/kuicksilver/tls/TlsIdentity_jvmKt {

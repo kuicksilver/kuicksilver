@@ -29,6 +29,7 @@ import kotlinx.coroutines.withTimeout
 import java.io.File
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -48,6 +49,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:server" in guide, "marker server")
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
         assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
+        assertTrue("guide:ktor:certificate-rotation" in guide, "marker certificate-rotation")
     }
 
     private object Metrics {
@@ -110,6 +112,27 @@ class GuideSamplesTest {
                 }
             }
         assertTrue(server.engine.configuration.webTransport) // ServerWebTransportTest runs such a route
+    }
+
+    @Test fun certificateRotationSample() {
+        val renewedChainPem =
+            TestCerts.toPem("CERTIFICATE", TestCerts.serverViaIntermediate) + TestCerts.toPem("CERTIFICATE", TestCerts.intermediate)
+        val keyChars = keyPem.toCharArray() // the guide's arrays come from a file read without a String (readPemKey does that)
+        val renewedKeyChars = TestCerts.toPem("PRIVATE KEY", TestCerts.serverViaIntermediateKey).toCharArray()
+        // guide:ktor:certificate-rotation
+        val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainPem, keyChars)) // the key array is zeroed after import
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+            }, module = Application::module)
+        // later, when the renewed files are in place: new TCP and QUIC handshakes present them, open connections keep theirs
+        identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyChars))
+        assertTrue(
+            server.engine.configuration.connectors
+                .single() is KuicksilverTlsConnector,
+        ) // ServerIdentityReloadTest serves it
+        assertEquals(Certificate(TestCerts.serverViaIntermediate), identity.current.chain[0])
+        identity.close()
     }
 
     @Test fun prioritySample() =

@@ -174,6 +174,47 @@ dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certi
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
 `docs/spec/interop.md`, "Interop WebTransport".
 
+### Certificate rotation
+
+A renewed certificate can be put in place without a restart (experimental). Give the connector a
+`TlsIdentity.Reloadable` and call `reload` when the new files are there (from a deploy hook, an admin route, a timer):
+
+```kotlin
+// guide:ktor:certificate-rotation
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainPem, keyChars)) // the key array is zeroed after import
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+}, module = Application::module)
+// later, when the renewed files are in place: new TCP and QUIC handshakes present them, open connections keep theirs
+identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyChars))
+```
+
+`keyChars` and `renewedKeyChars` are the key files read into `CharArray`s (not through a `String`, which would leave the
+key on the heap). Every handshake that starts after `reload` returns, HTTP/1.1 over TCP and HTTP/3 over QUIC, presents
+the new chain and key; handshakes in progress and open connections keep the old ones. A key that does not match its
+certificate fails in `fromPem`, and `reload` refuses an expired leaf and one not valid yet (`TlsException.Config`): the
+identity in use stays. Session tickets are bound to the certificate they were issued under, so after a reload clients
+run one full handshake and see the new certificate (see [Rotating the server certificate](tls.md#rotating-the-server-certificate)
+for ownership, resumption and key compromise). The same works for `identity` in the engine configuration (plain
+connectors served over TLS); on the JVM, an `sslConnector` keystore is read once, so build the identity with
+`TlsIdentity.fromKeyStore` and wrap it yourself instead.
+
+With `EngineMain`, set `kuicksilver.tls.reloadInterval` (`1h`, `30m`, ...; off by default) and the engine checks the
+PEM files of `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` that often (the configuration's
+`identityReloadInterval`). It reloads when the chain file holds other certificates than those served: a chain read
+twice a second apart with the same content, and a key that matches it. Tools that write the chain before the key
+(certbot) or swap a symlinked directory (Kubernetes secrets) are covered: a pair that does not match yet keeps the old
+identity and is tried again after 1 s, then 2 s, 4 s and so on up to the interval. Failures are logged as warnings
+(once per distinct failure, never with key material); a successful reload is logged at info level, and the files are
+read once more a second later, so a chain whose writer paused longer than that is corrected then. Each file is read
+whole on every check and refused above 1 MiB; a chain file that also holds a private key is refused, at startup too (keep
+the key in its own file). The stop waits at most a second for a check in progress (a read on a hung network file system
+cannot be interrupted). Polling once an hour means a renewed certificate may wait an hour to be served; certbot's `--deploy-hook`
+(or a restart) is the alternative when it must take effect at once. With `kuicksilver.tls.reloadInterval` set, the
+files at startup get the same checks as a reload, so an expired or not yet valid certificate fails the start; without
+it, `EngineMain` serves the files as they are, as before. The identity `EngineMain` made is closed when the server stops.
+
 ### EngineMain and configuration keys
 
 `io.kuicksilver.ktor.server.EngineMain` reads the usual `ktor.deployment.*` keys (and on the JVM `-sslPort` with
@@ -182,6 +223,7 @@ prints `ok` on the page and the Gradle run passes once the page has posted its r
 | Key | Meaning |
 |---|---|
 | `kuicksilver.tls.certificateChain`, `kuicksilver.tls.privateKey` | PEM files; the deployment port then serves TLS and HTTP/3 |
+| `kuicksilver.tls.reloadInterval` | how often those PEM files are checked for a renewed certificate (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.altSvc` | send `Alt-Svc` on HTTP/1.1 responses (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
