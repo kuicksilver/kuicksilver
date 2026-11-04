@@ -36,6 +36,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -408,6 +409,30 @@ class ServerH3Test {
             } finally {
                 server.stop(100, 500)
             }
+        }
+
+    /**
+     * With `port = 0` only a failure to bind is a reason to try another pair (review 2026-10-28 last3 R2): an HTTP/3
+     * configuration the endpoint refuses fails the start at the first attempt, as with a fixed port, instead of being
+     * tried [EPHEMERAL_PAIR_ATTEMPTS] times and then dropped for HTTP/1.1 with a warning.
+     */
+    @Test fun negative_ephemeralPortDoesNotRetryAConfigurationError() =
+        h3ServerTest {
+            val tried = ArrayList<Int>()
+            val failure =
+                assertFails {
+                    tlsServer(configure = {
+                        http3Bind = { a, _, _ ->
+                            tried += a.port
+                            throw IllegalArgumentException("the server TLS configuration must offer ALPN \"h3\"")
+                        }
+                    }) { routing { get("/") { call.respondText("ok") } } }.first.stop(100, 500)
+                }
+            assertEquals(1, tried.size, "tried $tried ($failure)")
+            assertTrue(
+                generateSequence(failure) { it.cause }.any { it is IllegalArgumentException },
+                "the start failed with $failure, not with the configuration error",
+            )
         }
 
     @Test fun altSvcOnH1Responses() =

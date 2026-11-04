@@ -136,6 +136,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor server: with `port = 0`, a TLS connector whose HTTP/3 endpoint refuses its configuration (an argument or state it
+  rejects, a TLS identity it cannot use) fails the start at once, as with a fixed port. Before, every such failure was
+  taken for a taken UDP port: the pair was tried 16 times and the server then served HTTP/1.1 alone with only a warning.
+  Only a failure to bind is retried now.
 - HTTP/3: stricter towards peers (each also under "Fixed"); a peer that got away with these before now fails a request or
   the connection. An HTTP/3 datagram for a stream beyond the client-initiated bidirectional stream limit closes the
   connection with `H3_ID_ERROR` (RFC 9297 section 2.1, SHOULD); one for a request other than CONNECT whose stream is

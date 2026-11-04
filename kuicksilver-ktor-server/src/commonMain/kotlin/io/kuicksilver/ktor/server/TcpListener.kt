@@ -38,6 +38,7 @@ import io.kuicksilver.ktor.server.h1.H1RequestScope
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
@@ -76,7 +77,8 @@ internal const val EPHEMERAL_PAIR_ATTEMPTS = 16
 
 /**
  * Binds the TCP socket of [l] and, with [h3], its HTTP/3 endpoint on the same port number. With `port = 0` the pair is
- * retried up to [EPHEMERAL_PAIR_ATTEMPTS] times, then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone. The
+ * retried up to [EPHEMERAL_PAIR_ATTEMPTS] times when a side fails to bind ([mayBeTaken]; a refused configuration fails the
+ * start at once), then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone. The
  * attempts alternate which side the OS picks: first the TCP port, whose UDP twin may be taken, then a free UDP port, whose
  * TCP twin may be taken, and so on. Retrying only the TCP side is not enough where the OS hands out TCP ports one after
  * the other (Windows does): every retry then lands on the next number, and a run of taken UDP ports (handed out one after
@@ -103,6 +105,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
                     environment.log.warn("HTTP/3 is not served: ${e.message}")
                     return bindTcp(selector, l.config.host, l.config.port) to null
                 } catch (e: Throwable) {
+                    if (!mayBeTaken(e)) throw e
                     environment.log.debug("no free UDP port ($e); trying another TCP + UDP pair")
                     last = e
                     return@repeat
@@ -114,8 +117,9 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
                 endpoint.close()
                 throw e
             } catch (e: Throwable) {
-                environment.log.debug("TCP port $port is taken ($e); trying another TCP + UDP pair")
                 endpoint.close()
+                if (!mayBeTaken(e)) throw e
+                environment.log.debug("TCP port $port is taken ($e); trying another TCP + UDP pair")
                 last = e
                 return@repeat
             }
@@ -131,7 +135,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
             return server to null
         } catch (e: Throwable) {
-            if (!ephemeral) {
+            if (!ephemeral || !mayBeTaken(e)) {
                 server.close()
                 throw e
             }
@@ -145,6 +149,15 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
     )
     return bindTcp(selector, l.config.host, l.config.port) to null
 }
+
+/**
+ * Whether [e], from binding one side of an ephemeral TCP + UDP pair, may come from a port that is in use, so that another
+ * pair may succeed: anything but a refused configuration (an argument or state the endpoint rejects, a TLS identity it
+ * cannot use), which fails every attempt alike and so fails the start at once, as with a fixed port (review 2026-10-28
+ * last3 R2). The address-in-use failure itself has no common type (`java.net.BindException` on the JVM, ktor's
+ * `PosixException` on Kotlin/Native, an `IOException` from ksl), so the refusals are what is named.
+ */
+private fun mayBeTaken(e: Throwable): Boolean = e !is IllegalArgumentException && e !is IllegalStateException && e !is TlsException
 
 /** The accept loop of one TCP connector, after Ktor CIO's `httpServer`, with a TLS handshake per connection. */
 @OptIn(InternalAPI::class)
