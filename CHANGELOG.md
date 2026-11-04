@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- HTTP/3: `Http3Endpoint.closeAndJoin()` (experimental) closes the endpoint and waits until its connections are closed
+  and its UDP socket released, so the port can be bound again as soon as it returns. The Ktor server uses it for the
+  endpoint of a TCP + UDP pair that failed with `port = 0`: that UDP port is free before the next attempt and before the
+  start returns.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,

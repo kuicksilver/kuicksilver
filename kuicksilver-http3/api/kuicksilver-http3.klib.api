@@ -253,6 +253,7 @@ final class io.kuicksilver.http3/Http3Endpoint : kotlin/AutoCloseable { // io.ku
 
     final fun close() // io.kuicksilver.http3/Http3Endpoint.close|close(){}[0]
     final suspend fun accept(): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.accept|accept(){}[0]
+    final suspend fun closeAndJoin() // io.kuicksilver.http3/Http3Endpoint.closeAndJoin|closeAndJoin(){}[0]
     final suspend fun connect(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connect|connect(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings){}[0]
     final suspend fun connectEarly(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ..., io.kuicksilver.tls/EarlyDataState = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connectEarly|connectEarly(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings;io.kuicksilver.tls.EarlyDataState){}[0]
     final suspend fun shutdown(kotlin.time/Duration, kotlin/Long = ..., kotlin/String = ...) // io.kuicksilver.http3/Http3Endpoint.shutdown|shutdown(kotlin.time.Duration;kotlin.Long;kotlin.String){}[0]

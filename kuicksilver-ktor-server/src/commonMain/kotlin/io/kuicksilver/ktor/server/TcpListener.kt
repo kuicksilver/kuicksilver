@@ -114,10 +114,11 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             try {
                 return bindTcp(selector, l.config.host, port) to endpoint
             } catch (e: CancellationException) {
-                endpoint.close()
+                releaseFailedPair(endpoint)
                 throw e
             } catch (e: Throwable) {
-                endpoint.close()
+                // released before the next attempt and before the start returns: its UDP port is free again then
+                releaseFailedPair(endpoint)
                 if (!mayBeTaken(e)) throw e
                 environment.log.debug("TCP port $port is taken ($e); trying another TCP + UDP pair")
                 last = e
@@ -149,6 +150,10 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
     )
     return bindTcp(selector, l.config.host, l.config.port) to null
 }
+
+/** Closes the HTTP/3 endpoint of a pair that failed and waits until its UDP socket is released, also when cancelled. */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+private suspend fun releaseFailedPair(endpoint: Http3Endpoint) = withContext(NonCancellable) { endpoint.closeAndJoin() }
 
 /**
  * Whether [e], from binding one side of an ephemeral TCP + UDP pair, may come from a port that is in use, so that another

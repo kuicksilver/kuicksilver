@@ -335,7 +335,8 @@ class ServerH3Test {
     /**
      * The UDP-first pair loses its TCP twin: the first pair's UDP twin is taken (TCP first), then the hook binds the
      * UDP-first endpoint and holds a TCP listener on the number the OS gave it, so the engine's TCP bind there fails. The
-     * engine closes that endpoint (its UDP port can be bound again) and the third pair, TCP first again, serves h3.
+     * engine closes that endpoint and waits until its socket is released (its UDP port can be bound again as soon as the start
+     * returns) and the third pair, TCP first again, serves h3.
      */
     @Test fun ephemeralPortUdpFirstPairWhoseTcpTwinIsTakenIsReleased() =
         h3ServerTest {
@@ -372,15 +373,11 @@ class ServerH3Test {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
                 h3(port) { c -> assertEquals(200, c.request(get()).status) }
-                // the endpoint of the failed UDP-first pair was closed: its port is free again (the close is asynchronous)
-                var again: Result<DatagramIo> = Result.failure(IllegalStateException("not tried"))
-                for (i in 0 until 60) {
-                    again = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", heldPort)) }
-                    if (again.isSuccess) break
-                    delay(50)
-                }
+                // the endpoint of the failed UDP-first pair was closed and joined before the start returned: its port can be
+                // bound at once (one try, no waiting; the engine owns no socket on it any more)
+                val again = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", heldPort)) }
                 again.getOrNull()?.close()
-                assertTrue(again.isSuccess, "UDP $heldPort still bound 3 s after its pair failed ($why): ${again.exceptionOrNull()}")
+                assertTrue(again.isSuccess, "UDP $heldPort still bound after the start returned ($why): ${again.exceptionOrNull()}")
             } finally {
                 server.stop(100, 500)
                 heldTcp?.close()
