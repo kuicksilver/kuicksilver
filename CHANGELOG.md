@@ -457,6 +457,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the main and the preferred-address sockets instead of leaving them bound, and the loop frees the endpoint core and the
   datagram batches it had made. A loop group that fails to build or start likewise closes every loop's sockets and frees
   the loops already built.
+- QUIC: closing an endpoint frees its endpoint core, datagram batches and remaining sockets even when one release in
+  the sequence throws (a socket whose close fails); before, the rest was skipped and leaked. The first failure is still
+  counted as the loop's uncaught failure.
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the

@@ -70,4 +70,31 @@ class EndpointLoopCleanupTest {
             assertTrue((preferred[0][0] as MemoryDatagramIo).closed, "the preferred socket")
             assertEquals(0, crypto.live, "loop 0's reset key and its reference to the group's token keys")
         }
+
+    /** A socket whose close throws, after it really closed (an OS error on close). */
+    private class ThrowingCloseIo(
+        val inner: MemoryDatagramIo,
+    ) : DatagramIo by inner {
+        override fun close() {
+            inner.close()
+            throw kotlinx.io.IOException("close: EIO (test)")
+        }
+    }
+
+    @Test fun aSocketWhoseCloseThrowsDoesNotKeepTheEndpointFromFreeingTheRest() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val crypto = TrackingCrypto()
+            var preferred: MemoryDatagramIo? = null
+            val ep =
+                EndpointLoop.bind(
+                    serverAddr,
+                    config(crypto) { at ->
+                        if (at == preferredAddr) net.open(at).also { preferred = it } else ThrowingCloseIo(net.open(at))
+                    },
+                )
+            ep.closeAndJoin()
+            assertTrue(preferred!!.closed, "the preferred socket after the main socket's close threw")
+            assertEquals(0, crypto.live, "the endpoint core's keys")
+        }
 }

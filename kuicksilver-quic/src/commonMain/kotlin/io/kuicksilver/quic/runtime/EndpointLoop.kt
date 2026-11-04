@@ -1088,27 +1088,35 @@ internal class EndpointLoop private constructor(
                     }
                     flush(signalTimer = false)
                 } finally {
+                    // every step runs even when one before it threw (a socket whose close fails must not leak the core and the
+                    // batches); the first failure is rethrown at the end, later ones suppressed
+                    val r = Releaser()
                     for (rt in runtimes.values.toList()) {
-                        rt.retire(
-                            QuicException.ConnectionLost.Internal("endpoint closed", QuicException.EndpointClosing()),
-                        )
+                        r.release {
+                            rt.retire(
+                                QuicException.ConnectionLost.Internal("endpoint closed", QuicException.EndpointClosing()),
+                            )
+                        }
                     }
                     runtimes.clear()
                     // the socket first: it wakes a receiver blocked inside the socket call; its batch is freed only once that call returned (a native receive writes into the batch's memory)
-                    io.close()
-                    for (p in preferredIos) p.close()
+                    r.release { io.close() }
+                    for (p in preferredIos) r.release { p.close() }
                     receiveJob?.cancel()
                     forwardJob?.cancel()
-                    withContext(kotlinx.coroutines.NonCancellable) {
-                        receiveJob?.join()
-                        forwardJob?.join()
+                    r.release {
+                        withContext(kotlinx.coroutines.NonCancellable) {
+                            receiveJob?.join()
+                            forwardJob?.join()
+                        }
                     }
-                    core.close()
-                    inBatch.close()
-                    outBatch.close()
-                    single.close()
-                    QuicResourceProbe.unregister(this@EndpointLoop)
+                    r.release { core.close() }
+                    r.release { inBatch.close() }
+                    r.release { outBatch.close() }
+                    r.release { single.close() }
+                    r.release { QuicResourceProbe.unregister(this@EndpointLoop) }
                     scope.cancel()
+                    r.finish()
                 }
             }
     }
