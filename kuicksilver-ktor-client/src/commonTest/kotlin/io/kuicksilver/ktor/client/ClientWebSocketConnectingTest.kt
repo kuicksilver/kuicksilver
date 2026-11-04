@@ -28,7 +28,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -165,46 +164,38 @@ class ClientWebSocketConnectingTest {
         }
 
     /**
-     * The wait for the address is not connecting time (review 2026-10-28 R1): with a 300 ms connect timeout, a WebSocket
-     * that waits longer than that for the address (held here by the test, as another WebSocket's CONNECTING connection
-     * holds it) still connects once the address is free; the connect timeout bounds only its own connection and handshake.
-     * Before, the queue counted against its connect timeout, and WebSockets queued behind others failed with
-     * ConnectTimeoutException while every server answered.
+     * The wait for the address is not connecting time and takes nothing from the pool (review 2026-10-28 R1 and review S2):
+     * a WebSocket waiting for the address (held here by the test, as another WebSocket's CONNECTING connection holds it)
+     * has neither a pool permit nor a connection, so no connect timeout runs for it and it cannot starve other requests;
+     * once the address is free it connects within its own 300 ms. Before R1 the queue counted against the connect timeout;
+     * after R1 and before S2 the waiting WebSocket held a pool permit for as long as it waited.
      */
-    @Test fun aWebSocketQueuedLongerThanTheConnectTimeoutStillConnects() =
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun aWebSocketWaitingForTheAddressHoldsNothingOfThePool() =
         clientTest {
+            val accepted = kotlin.concurrent.atomics.AtomicInt(0)
             rawServer({ _, input, output ->
                 while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                 answer(input, output)
-            }) { port ->
+            }, onAccept = { accepted.addAndFetch(1) }) { port ->
                 testClient(
                     engine = { connectTimeout = 300.milliseconds },
                     block = { install(WebSockets) },
                 ).use { c ->
-                    val connecting = (c.engine as KuicksilverEngine).h1.webSocketConnecting
+                    val engine = c.engine as KuicksilverEngine
+                    val connecting = engine.h1.webSocketConnecting
                     val other = connecting.acquire(listOf("address 127.0.0.1"))
                     coroutineScope {
-                        val failed = CompletableDeferred<Throwable>()
                         var opened = false
-                        val ws =
-                            launch {
-                                try {
-                                    c.webSocket("ws://127.0.0.1:$port/") { opened = true }
-                                } catch (e: Throwable) {
-                                    failed.complete(e)
-                                }
-                            }
+                        val ws = launch { c.webSocket("ws://127.0.0.1:$port/") { opened = true } }
                         withTimeout(10.seconds) { connecting.waitsForTest.first { it >= 1 } }
-                        // three connect timeouts in the queue: the event that must not happen is the failure
-                        assertEquals(
-                            null,
-                            withTimeoutOrNull(900.milliseconds) { failed.await() },
-                            "the queued WebSocket failed while it waited",
-                        )
+                        assertEquals(0, engine.h1.pool.liveCount, "a WebSocket waiting for the address holds a pool permit or connection")
+                        assertEquals(0, engine.h1.pool.queuedForTest.value, "a WebSocket waiting for the address waits for the pool too")
+                        assertEquals(0, accepted.load(), "a WebSocket waiting for the address connected")
                         other.release()
                         ws.join()
-                        assertFalse(failed.isCompleted, "the WebSocket failed once the address was free")
-                        assertTrue(opened, "the queued WebSocket did not open")
+                        assertTrue(opened, "the WebSocket did not open once the address was free")
                     }
                     assertEquals(0, connecting.size(), "an entry outlived its WebSocket")
                 }
@@ -239,12 +230,12 @@ class ClientWebSocketConnectingTest {
         }
 
     /**
-     * The address is held only while a connection is CONNECTING, not while a WebSocket waits for a pool slot. With one
-     * connection per route and a session holding it, two more WebSockets wait for the slot without holding the address;
-     * cancelling one lets the other through once the session ends. Before, the first of them took the address and then
-     * waited for the slot, and every further one queued behind it on the address.
+     * A WebSocket takes the address first and then waits for the pool (review S2: a pool permit is never held while
+     * waiting for the address). With one connection per route and a session holding it, the second WebSocket holds the
+     * address while it waits for the slot, the third waits for the address; cancelling the second lets the third through
+     * once the session ends, and nothing is left held.
      */
-    @Test fun negative_waitingForAPoolSlotHoldsNoAddress() =
+    @Test fun aWebSocketWaitingForAPoolSlotHoldsItsAddressOnly() =
         clientTest {
             rawServer({ _, input, output ->
                 while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
@@ -268,13 +259,17 @@ class ClientWebSocketConnectingTest {
                             }
                         firstOpen.await()
                         val second = launch { c.webSocket("ws://127.0.0.1:$port/") {} }
+                        withTimeout(10.seconds) {
+                            engine.h1.pool.queuedForTest
+                                .first { it >= 1 }
+                        }
                         var thirdOpened = false
                         val third = launch { c.webSocket("ws://127.0.0.1:$port/") { thirdOpened = true } }
                         withTimeout(10.seconds) {
-                            engine.h1.pool.queuedForTest
-                                .first { it >= 2 }
+                            engine.h1.webSocketConnecting.waitsForTest
+                                .first { it >= 1 }
                         }
-                        assertEquals(0, engine.h1.webSocketConnecting.size(), "a WebSocket waiting for a slot holds an address")
+                        assertEquals(1, engine.h1.pool.waiterCount, "only the WebSocket holding the address waits for the pool")
                         second.cancel()
                         endFirst.complete(Unit)
                         first.join()
