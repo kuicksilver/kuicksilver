@@ -1,3 +1,29 @@
+public final class io/kuicksilver/http2/Http2ErrorCode : java/lang/Enum {
+	public static final field CANCEL Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field COMPRESSION_ERROR Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field CONNECT_ERROR Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field Companion Lio/kuicksilver/http2/Http2ErrorCode$Companion;
+	public static final field ENHANCE_YOUR_CALM Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field FLOW_CONTROL_ERROR Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field FRAME_SIZE_ERROR Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field HTTP_1_1_REQUIRED Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field INADEQUATE_SECURITY Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field INTERNAL_ERROR Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field NO_ERROR Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field PROTOCOL_ERROR Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field REFUSED_STREAM Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field SETTINGS_TIMEOUT Lio/kuicksilver/http2/Http2ErrorCode;
+	public static final field STREAM_CLOSED Lio/kuicksilver/http2/Http2ErrorCode;
+	public final fun getCode ()J
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/http2/Http2ErrorCode;
+	public static fun values ()[Lio/kuicksilver/http2/Http2ErrorCode;
+}
+
+public final class io/kuicksilver/http2/Http2ErrorCode$Companion {
+	public final fun of (J)Lio/kuicksilver/http2/Http2ErrorCode;
+}
+
 public final class io/kuicksilver/http2/Http2Settings {
 	public fun <init> ()V
 }

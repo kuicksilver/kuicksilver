@@ -6,6 +6,35 @@
 // - Show declarations: true
 
 // Library unique name: <io.kuicksilver:kuicksilver-http2>
+final enum class io.kuicksilver.http2/Http2ErrorCode : kotlin/Enum<io.kuicksilver.http2/Http2ErrorCode> { // io.kuicksilver.http2/Http2ErrorCode|null[0]
+    enum entry CANCEL // io.kuicksilver.http2/Http2ErrorCode.CANCEL|null[0]
+    enum entry COMPRESSION_ERROR // io.kuicksilver.http2/Http2ErrorCode.COMPRESSION_ERROR|null[0]
+    enum entry CONNECT_ERROR // io.kuicksilver.http2/Http2ErrorCode.CONNECT_ERROR|null[0]
+    enum entry ENHANCE_YOUR_CALM // io.kuicksilver.http2/Http2ErrorCode.ENHANCE_YOUR_CALM|null[0]
+    enum entry FLOW_CONTROL_ERROR // io.kuicksilver.http2/Http2ErrorCode.FLOW_CONTROL_ERROR|null[0]
+    enum entry FRAME_SIZE_ERROR // io.kuicksilver.http2/Http2ErrorCode.FRAME_SIZE_ERROR|null[0]
+    enum entry HTTP_1_1_REQUIRED // io.kuicksilver.http2/Http2ErrorCode.HTTP_1_1_REQUIRED|null[0]
+    enum entry INADEQUATE_SECURITY // io.kuicksilver.http2/Http2ErrorCode.INADEQUATE_SECURITY|null[0]
+    enum entry INTERNAL_ERROR // io.kuicksilver.http2/Http2ErrorCode.INTERNAL_ERROR|null[0]
+    enum entry NO_ERROR // io.kuicksilver.http2/Http2ErrorCode.NO_ERROR|null[0]
+    enum entry PROTOCOL_ERROR // io.kuicksilver.http2/Http2ErrorCode.PROTOCOL_ERROR|null[0]
+    enum entry REFUSED_STREAM // io.kuicksilver.http2/Http2ErrorCode.REFUSED_STREAM|null[0]
+    enum entry SETTINGS_TIMEOUT // io.kuicksilver.http2/Http2ErrorCode.SETTINGS_TIMEOUT|null[0]
+    enum entry STREAM_CLOSED // io.kuicksilver.http2/Http2ErrorCode.STREAM_CLOSED|null[0]
+
+    final val code // io.kuicksilver.http2/Http2ErrorCode.code|{}code[0]
+        final fun <get-code>(): kotlin/Long // io.kuicksilver.http2/Http2ErrorCode.code.<get-code>|<get-code>(){}[0]
+    final val entries // io.kuicksilver.http2/Http2ErrorCode.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.http2/Http2ErrorCode> // io.kuicksilver.http2/Http2ErrorCode.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.http2/Http2ErrorCode // io.kuicksilver.http2/Http2ErrorCode.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.http2/Http2ErrorCode> // io.kuicksilver.http2/Http2ErrorCode.values|values#static(){}[0]
+
+    final object Companion { // io.kuicksilver.http2/Http2ErrorCode.Companion|null[0]
+        final fun of(kotlin/Long): io.kuicksilver.http2/Http2ErrorCode // io.kuicksilver.http2/Http2ErrorCode.Companion.of|of(kotlin.Long){}[0]
+    }
+}
+
 final class io.kuicksilver.http2/Http2Settings { // io.kuicksilver.http2/Http2Settings|null[0]
     constructor <init>() // io.kuicksilver.http2/Http2Settings.<init>|<init>(){}[0]
 }

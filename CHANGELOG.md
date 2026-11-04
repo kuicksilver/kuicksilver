@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HPACK (RFC 7541) as a sans-IO core for the Ktor engines; it depends only on `kuicksilver-native` and is in the BOM. Its
   HPACK static and Huffman tables and the RFC 7541 appendix C vectors (`tools/vectors/`) are generated from the RFC text
   by `tools/http/gen-tables.py`, whose `--check` also verifies that `kuicksilver-http3` carries the same Huffman table.
+  The module's frame codec (RFC 9113 sections 4 and 6) checks every declared frame length against the frame's type and
+  the local SETTINGS_MAX_FRAME_SIZE before buffering anything and streams frames of unknown types past unbuffered;
+  `Http2ErrorCode` (experimental) lists the section 7 error codes.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,
