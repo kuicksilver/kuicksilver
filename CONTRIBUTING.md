@@ -135,7 +135,7 @@ that ran on the simulator the timed-out cell before it left running (`Container 
 `run-local.sh` has compose recreate the simulator in every cell, this rule is the backstop), and a cell whose server
 container started only after the simulator had stopped waiting for it (`timeout occurred after waiting ... for
 server:443` and no capture started: the scenario never ran and no endpoint sent a packet).
-`bash tools/interop/environment-test.sh` runs those rules on `tools/interop/testdata`.
+`bash tools/interop/environment-test.sh` runs those rules on `tools/interop/testdata`. `bash tools/interop/peer-images-test.sh` runs the pre-run image check (`peer-images.sh`: pull a missing image, `linux/amd64` on an arm64 host without its own manifest, a clear failure naming an image that cannot be obtained) on a stub docker CLI.
 
 The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a
 warning (exit 0) while a failed or missing cell still fails. To make the floors blocking, run `run-local.sh --perf` a

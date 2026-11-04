@@ -9,6 +9,9 @@
 # Results: build/interop/<date>/<peer>-{server,client}/ (logs) and <peer>-{server,client}.json (matrix); --out DIR puts this run's
 # results there instead (relative to the repository, not existing yet; CI's debug rerun keeps them out of the results artifact). With --check-required every cell listed in
 # tools/interop/required.json that this run could produce (its implementations and test cases) must be successful, otherwise exit 1; --results dir1,dir2 merges runs.
+# Before a run every image it needs (the peers', the simulator, the iperf endpoint) is made present: a missing one is pulled, for
+# linux/amd64 (emulated on arm64) when it has no manifest for the host; one that cannot be obtained fails the run up front, naming it
+# (tools/interop/peer-images.sh, cases in peer-images-test.sh). A required peer the runner finds "not compliant" is an error naming its image.
 # --perf runs only the runner's measurements (goodput, crosstraffic; -t narrows them) against the peers of tools/interop/perf-thresholds.json
 # (unless peers are given) and then tools/interop/check-perf.sh on the results: exit 1 on a measurement below its threshold or missing.
 # The sim container runs tools/interop/sim-entrypoint.sh (a compose override written next to the runner's docker-compose.yml) so its
@@ -77,6 +80,8 @@ fi
 [ -n "$tests" ] || tests="handshake,transfer"
 [ ${#peers[@]} -gt 0 ] || peers=(quic-go ngtcp2 quiche picoquic quinn msquic)
 runner=build/interop/runner; lock=$(cat tools/interop/runner.lock)
+# shellcheck source=tools/interop/peer-images.sh
+source tools/interop/peer-images.sh   # ensure_images, image_of, report_noncompliant
 # shellcheck source=tools/interop/environment.sh
 source tools/interop/environment.sh   # truncated_captures, handshake_rebind, environment_cells
 environment_memo=$(mktemp -d); yellow_keys=""; trap 'rm -rf "$environment_memo" ${yellow_keys:+"$yellow_keys"}' EXIT   # one classification per role directory
@@ -117,9 +122,23 @@ d["kuicksilver"] = {"image": f"kuicksilver-interop:{tag}", "url": "https://githu
 d["kuicksilver-native"] = {"image": f"kuicksilver-interop-native:{tag}", "url": "https://github.com/kuicksilver/kuicksilver", "role": "both"}
 json.dump(d, open(p, "w"), indent=2)
 PY
+  # every image this run needs must be present for a platform this host can run, or the run fails here naming it: the runner's
+  # compliance probe of an image that does not run (cloudflare/quiche-qns:latest has no linux/arm64 manifest) skips the whole pair
+  # silently (0.2.1 gate, 2026-11-04). Our own image is built locally (build-image.sh), never pulled: it is checked, not fetched.
+  images=(martenseemann/quic-network-simulator)
+  # the iperf endpoint serves the measurements only
+  if [ $perf -eq 1 ] || [[ ",$tests," == *,goodput,* ]] || [[ ",$tests," == *,crosstraffic,* ]]; then images+=(martenseemann/quic-interop-iperf-endpoint); fi
+  for peer in "$me" "${peers[@]}"; do
+    img=$(image_of "$peer" "$runner/implementations_quic.json")
+    [ -n "$img" ] || { echo "peer $peer is not in the runner's implementations_quic.json" >&2; exit 2; }
+    images+=("$img")
+  done
+  ensure_images "${images[@]}" || exit 2
 elif ! command -v tshark >/dev/null 2>&1; then
   echo "WARNING: no tshark: the ENVIRONMENT classifiers that read the captures cannot analyse a cell (any version will do for them)" >&2
 fi
+# a required peer the runner found not compliant is an error naming its image (report_noncompliant, peer-images.sh), never just red cells
+noncompliant=0
 dbg=(); [ -z "${KSL_INTEROP_DEBUG:-}" ] || dbg=(-d)   # the runner's debug log, docker compose output included (CI prints it for a failed job)
 fail=0
 if [ -n "$results" ]; then out="$results"; else
@@ -136,6 +155,7 @@ for peer in "${peers[@]}"; do
       ( cd "$runner" && ../venv/bin/python run.py ${dbg[@]+"${dbg[@]}"} -s "$s" -c "$c" -t "$tests" -l "../../../$dir" -j "../../../$dir.json" ) 2> >(tee -a "$dir.runner.log" >&2) || fail=1
       [ -f "$dir.json" ] || { echo "RUNNER CRASH: $dir again left no result file" >&2; fail=1; }
     fi
+    report_noncompliant tools/interop/required.json "$runner/implementations_quic.json" "$dir.runner.log" || noncompliant=1
     [ $perf -eq 1 ] && continue
     yellow=$(environment_yellow_cells "$dir")
     while read -r pair case why; do
@@ -147,7 +167,8 @@ for peer in "${peers[@]}"; do
       echo "ENVIRONMENT: $dir/$pair/$case: $why; rerunning the cell"
       for attempt in $(seq 1 "$env_reruns"); do
         rerun="$dir-rerun-$case"; [ "$attempt" -gt 1 ] && rerun="$dir-rerun$attempt-$case"
-        ( cd "$runner" && ../venv/bin/python run.py ${dbg[@]+"${dbg[@]}"} -s "$s" -c "$c" -t "$case" -l "../../../$rerun" -j "../../../$rerun.json" ) || true   # --check-required merges all runs; the plain exit code keeps the first run's verdict
+        ( cd "$runner" && ../venv/bin/python run.py ${dbg[@]+"${dbg[@]}"} -s "$s" -c "$c" -t "$case" -l "../../../$rerun" -j "../../../$rerun.json" ) 2> >(tee "$rerun.runner.log" >&2) || true   # --check-required merges all runs; the plain exit code keeps the first run's verdict
+        report_noncompliant tools/interop/required.json "$runner/implementations_quic.json" "$rerun.runner.log" || noncompliant=1
         again=$(environment_cells "$rerun")
         [ -n "$again" ] || break   # a verdict of the endpoints, green or red, stands
         echo "ENVIRONMENT: rerun $attempt of $env_reruns hit the environment again: $rerun/$pair/$case: ${again#* * }" >&2
@@ -158,6 +179,12 @@ for peer in "${peers[@]}"; do
 done
 fi
 echo "results in $out"
+if [ -n "$results" ]; then   # the runner logs of the existing results (reruns included) are scanned too
+  for d in ${out//,/ }; do
+    report_noncompliant tools/interop/required.json "$runner/implementations_quic.json" "$d"/*.runner.log || noncompliant=1
+  done
+fi
+[ $noncompliant -eq 0 ] || fail=1   # also under --check-required and --perf
 if [ -n "$results" ] && [ $perf -eq 0 ]; then   # --results: report cells whose verdict rests on the environment (no rerun here)
   for d in ${out//,/ }; do for r in "$d"/*-server "$d"/*-client; do [ -d "$r" ] || continue
     yellow=$(environment_yellow_cells "$r")
@@ -169,13 +196,13 @@ if [ -n "$results" ] && [ $perf -eq 0 ]; then   # --results: report cells whose 
   done; done
 fi
 if [ $perf -eq 1 ]; then
-  bash tools/interop/check-perf.sh --expect "$(IFS=,; echo "${peers[*]}")" "$out" "$thresholds" || exit 1   # a role without a result file is MISSING
-  exit $fail   # a runner crash that left no result file for a role also fails the run
+  bash tools/interop/check-perf.sh --expect "$(IFS=,; echo "${peers[*]}")" "$out" "$thresholds" || fail=1   # a role without a result file is MISSING
+  exit $fail   # a runner crash that left no result file for a role, or a peer not compliant, also fails the run
 fi
 if [ $check -eq 1 ]; then
   yellow_keys=$(mktemp)
   environment_yellow_keys "$out" > "$yellow_keys"
-  python3 tools/interop/check-required.py "$out" tools/interop/required.json "$yellow_keys"
-exit $?   # with --check-required only the required cells decide; a red optional cell is reported, not fatal
+  python3 tools/interop/check-required.py "$out" tools/interop/required.json "$yellow_keys" || exit 1
+  exit $noncompliant   # with --check-required only the required cells decide; a red optional cell is reported, not fatal
 fi
 exit $fail

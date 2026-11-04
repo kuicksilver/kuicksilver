@@ -55,6 +55,10 @@ jobs:
         run: bash tools/check/doc-refs-test.sh
       - name: 'lint: fuzz campaign.sh on paths with spaces (stubs)'
         run: bash tools/fuzz/campaign-test.sh
+      - name: 'lint: interop peer-image check and environment rules (stubs, fixtures)'
+        run: |
+          bash tools/interop/peer-images-test.sh
+          bash tools/interop/environment-test.sh
       - name: 'lint: RFC compliance summary table'
         run: bash tools/check/rfc-table.sh
       - name: 'lint: HPACK tables and vectors (http2 and http3 agree)'
