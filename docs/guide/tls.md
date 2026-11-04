@@ -205,7 +205,8 @@ all at the latest, also when the peer stopped reading.
 Secrets never leave native memory unless you ask. That includes the TCP client's session cache: a ticket kept for
 resumption is a handle to a native OpenSSL session, never its serialized bytes, and the secret is wiped when the
 entry is used, replaced, evicted or expires, or when the engine that owns the cache closes. Each Ktor client engine
-keeps its own cache of at most 256 sessions (the least recently stored one is evicted first); `Socket.tls` and
+keeps its own cache of at most 384 sessions, six tickets for each of 64 origins (the least recently stored one is
+evicted first); `Socket.tls` and
 `TlsConnection.client` share one process-wide cache with the same bound (the cache itself is internal API). `TlsConfig.keylog` accepts a `KeylogSink` (RFC 9850 lines); the
 `SSLKEYLOGFILE` variable is not read on the library's own and is ignored by the bundled OpenSSL; only
 `keylogFromEnvironment()`, called by the application, turns it into a sink. A `libksl` built against the system

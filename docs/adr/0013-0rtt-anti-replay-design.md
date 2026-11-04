@@ -107,7 +107,7 @@ and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemente
    documented residue. A pluggable `ReplayRegister` interface is out of scope.
    *Amended by ADR-0015:* there is no `QuicServer` class; the register is one per process (`ProcessReplayRegister`),
    shared by every server endpoint, after the security review found a replay into a second listener of the same process.
-3. **Client tickets are single-use.** The per-engine `SessionCache` (LRU, 256) takes a ticket out when it is
+3. **Client tickets are single-use.** The per-engine `SessionCache` (LRU, 384 since 0.3.0: six tickets for each of 64 origins) takes a ticket out when it is
    used for 0-RTT (RFC 9846 §C.4) instead of reading it. The server issues two tickets per handshake
    (`ksl_ssl_new_session_ticket` ×2 after the pin verdict, OpenSSL's own default count) so the next connection still
    has one. The cache entry gains

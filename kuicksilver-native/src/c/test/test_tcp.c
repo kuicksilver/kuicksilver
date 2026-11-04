@@ -150,6 +150,25 @@ static void test_client_verification_still_refuses(void) {
     ksl_ssl_free(c); c = tcp_client(none, "server.test");
     CHECK(ksl_ssl_set_session(c, unverified) == KSL_OK && ksl_ssl_set_session(c, verified) == KSL_OK, "control: a context without verification takes either");
     ksl_ssl_free(c); ksl_session_free(unverified); ksl_session_free(verified); ksl_ctx_free(none); ksl_ctx_free(verifying); ksl_ctx_free(sc);
+    /* a session handed out again keeps the stamp it got first (review 2026-10-28 T-N1): a TLS 1.2 resumption hands out the very
+       SSL_SESSION that was set, so a client without verification resuming a verified ticket must not turn that shared object into
+       one made without verification for every other holder of it (nor write its ex data while another thread reads it) */
+    none = client_ctx(NULL, KSL_VERIFY_NONE); verifying = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server");
+    for (int k = 0; k < 2; k++) { ksl_ctx_set_option(k ? verifying : none, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(k ? verifying : none, KSL_OPT_MAX_VERSION, KSL_TLS1_2); }
+    /* a server that renews no ticket on resumption, so the client's OpenSSL keeps the session it set (ksl servers renew every
+       one: here OpenSSL's own ticket handling replaces ksl's callbacks) */
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1);
+    SSL_CTX_set_session_ticket_cb(sc->ctx, NULL, NULL, NULL); SSL_CTX_set_tlsext_ticket_key_evp_cb(sc->ctx, NULL);
+    c = tcp_client(verifying, "server.test"); ksl_ssl *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2: a verified full handshake");
+    verified = ksl_ssl_get1_session(c); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(none, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(verified && ksl_ssl_set_session(c, verified) == KSL_OK && tcp_pump(c, s, NULL, NULL) == KSL_OK && SSL_session_reused(c->ssl), "TLS 1.2: a client without verification resumes it");
+    ksl_session *again = ksl_ssl_get1_session(c);
+    CHECK(again == verified, "TLS 1.2: the resumed session is the object that was set");
+    ksl_ssl_free(c); ksl_ssl_free(s); c = tcp_client(verifying, "server.test");
+    CHECK(ksl_ssl_set_session(c, verified) == KSL_OK, "negative: the verified session handed out again by that client still resumes where verification is on");
+    ksl_ssl_free(c); ksl_session_free(again); ksl_session_free(verified); ksl_ctx_free(none); ksl_ctx_free(verifying); ksl_ctx_free(sc);
     END();
 }
 
@@ -618,6 +637,32 @@ static void test_abort_after_pending_messages(void) {
     size_t used; for (size_t off = 0; off < held_n; off += used) if (ksl_tcp_feed(c, held + off, held_n - off, &used) != KSL_OK || !used) break;
     CHECK(read_all_after_abort_from(s, c, &alert, &rc) == 2 * sizeof big && rc == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives both records, then internal_error");
     ksl_ssl_free(c); ksl_ssl_free(s);
+    /* the bytes ksl keeps for a write that is not yet a record (review 2026-10-28 NIT-3): a KeyUpdate queued while the pair is full
+       goes out first when the transport takes more, so the next write stays plaintext behind it; the abort sends the KeyUpdate,
+       that write as a record, then the alert. This pins the behaviour the corrected comment describes; it passed before the
+       NIT-3 change too (which changed the comment, the copy on a retry of another length and the malloc case, below). */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); key_updates ku = {0, 0}; ksl_ssl_msg_observer_for_test(c, key_update_kind_cb, &ku);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_OK && ksl_ssl_key_update(s, 0) == KSL_OK, "a record fills the pair, a KeyUpdate is queued");
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_WANT_READ && n == 0, "the next write waits behind the KeyUpdate");
+    held_n = 0; while (held_n < sizeof held && ksl_tcp_drain(s, held + held_n, sizeof held - held_n, &k2) == KSL_OK && k2) held_n += k2;
+    CHECK(held_n > 0 && ksl_tcp_abort(s) == KSL_OK, "the KeyUpdate and the write go out, then the alert");
+    for (size_t off = 0; off < held_n; off += used) if (ksl_tcp_feed(c, held + off, held_n - off, &used) != KSL_OK || !used) break;
+    CHECK(read_all_after_abort_from(s, c, &alert, &rc) == 2 * sizeof big && rc == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100) && ku.updates == 1,
+          "the client receives the record, the KeyUpdate, the write, then internal_error");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* a retry with a longer length replaces the copy: the abort completes what OpenSSL holds, and its alert follows */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    size_t accepted = 0; int w;
+    while ((w = ksl_tcp_write(s, big, 100, &n)) == KSL_OK && accepted < (1u << 20)) accepted += n;   /* 100-byte records until the pair is full */
+    CHECK(w == KSL_WANT_READ && accepted > 0 && s->pending_write_len == 100, "a 100-byte write is pending");
+    CHECK(ksl_tcp_write(s, big, 200, &n) == KSL_WANT_READ && s->pending_write_len == 200, "its retry with 200 bytes, still no room, replaces the copy");
+    held_n = 0; while (held_n < sizeof held && ksl_tcp_drain(s, held + held_n, sizeof held - held_n, &k2) == KSL_OK && k2) held_n += k2;
+    CHECK(held_n > 0 && ksl_tcp_abort(s) == KSL_OK, "the pending write goes out, then the alert");
+    for (size_t off = 0; off < held_n; off += used) if (ksl_tcp_feed(c, held + off, held_n - off, &used) != KSL_OK || !used) break;
+    CHECK(read_all_after_abort_from(s, c, &alert, &rc) >= accepted + 100 && rc == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives the writes, then internal_error");
+    ksl_ssl_free(c); ksl_ssl_free(s);
     /* a pending write is retried from another buffer holding the same bytes (the JNI layer copies each call's bytes) */
     c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
@@ -728,6 +773,55 @@ static void test_record_limits_per_cipher(void) {
         else CHECK(ksl_tcp_drain(w, out, sizeof out, &n) == KSL_OK && n == 0 && ksl_tcp_shutdown(w) == KSL_ERROR, "the server sends nothing more, no close_notify");
         ksl_ssl_free(c); ksl_ssl_free(s);
     }
+    ksl_ctx_free(cc); ksl_ctx_free(sc);
+    /* every record counts toward the limit, not only the application data ksl_tcp_write sends (review: NIT-7, RFC 9846 section
+       5.5): a TLS 1.2 server that asks for renegotiation again and again, ignoring the answers (here they are dropped), makes the
+       client answer each HelloRequest with a no_renegotiation alert, under the same keys. With a limit of 6 records the client's
+       session ends before its keys reach it; before, those alerts went uncounted for ever. */
+    cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server");
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        ksl_tcp_set_record_limit_for_test(c, 6);
+        SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
+        int rounds = 0, ended = 0;
+        for (; rounds < 50 && !ended; rounds++) {
+            if (SSL_renegotiate(s->ssl) != 1) ERR_clear_error();
+            (void)SSL_do_handshake(s->ssl); ERR_clear_error();
+            shuttle(s, c);
+            if (ksl_tcp_read(c, r, sizeof r, &n) == KSL_ERROR) ended = 1;
+            { uint8_t sink[4096]; size_t k; while (ksl_tcp_drain(c, sink, sizeof sink, &k) == KSL_OK && k) {} }   /* the alerts go nowhere */
+        }
+        CHECK(ended && last_message_has(c, "record limit"), "negative: the client's no_renegotiation alerts count: the session ends at the limit");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    /* one read must not write past the limit either (review M1): 40 HelloRequests fed at once, one ksl_tcp_read. With OpenSSL's
+       SSL_MODE_AUTO_RETRY one SSL_read_ex went through all of them, an alert for each */
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        uint64_t start = c->records_sent; ksl_tcp_set_record_limit_for_test(c, 6);
+        SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
+        for (int k = 0; k < 40; k++) { if (SSL_renegotiate(s->ssl) != 1) ERR_clear_error(); (void)SSL_do_handshake(s->ssl); ERR_clear_error(); shuttle(s, c); }
+        CHECK(ksl_tcp_read(c, r, sizeof r, &n) == KSL_ERROR && last_message_has(c, "record limit"), "negative: one read of 40 HelloRequests ends at the limit");
+        CHECK(c->records_sent <= start + 6, "no record written past the limit by one read");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    /* the records under the application keys count from the key switch, not from the end of the handshake (review S-a): a
+       TLS 1.2 side's own Finished, a TLS 1.3 server's tickets written in the same handshake call */
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        CHECK(c->records_sent == 1 && s->records_sent == 1, "TLS 1.2: each side's Finished is the first record under its new keys");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    ksl_ctx_free(cc); ksl_ctx_free(sc);
+    cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server"); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 2);
+    { uint8_t tk[80]; for (int i = 0; i < 80; i++) tk[i] = (uint8_t)(i * 5 + 1); ksl_ctx_set_ticket_keys(sc, tk, 1); }
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+        CHECK(s->records_sent == 2, "TLS 1.3: the server's two tickets count");
+        CHECK(c->records_sent == 0, "TLS 1.3: the client's Finished is under the handshake keys");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
     ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
@@ -835,6 +929,32 @@ static void test_key_update_epoch_is_bounded(void) {
     int alert = 0, rc;
     CHECK(ksl_tcp_write(s, &b, 1, &n) == KSL_ERROR && last_message_has(s, "record limit"), "negative: the fourth record would reach the keys' limit: the session ends");
     CHECK(shuttle(s, c) > 0 && read_all_after_abort(c, &alert, &rc) == 0 && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives internal_error");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
+static void test_read_waiting_for_room_says_so(void) {
+    SECTION("tcp_read_waiting_for_room_says_so");
+    /* A read that has to write first (here the rest of a KeyUpdate whose write found the pair full: OpenSSL is in a handshake
+       state until it is out) stops with records fed and unread. It answers KSL_OK with nothing read, not KSL_WANT_READ, which
+       callers take for "feed more": the caller drains and reads again, and the records already fed come out without more input
+       from the transport (review 2026-11-04 N2). */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    uint8_t big[16384] = {0}, r[64]; size_t n;
+    (void)ksl_tcp_read(c, r, sizeof r, &n);   /* the tickets */
+    size_t room0 = BIO_ctrl_get_write_guarantee(SSL_get_wbio(c->ssl));
+    CHECK(ksl_tcp_write(c, big, sizeof big, &n) == KSL_OK, "a full record into the client's pair");
+    size_t room = BIO_ctrl_get_write_guarantee(SSL_get_wbio(c->ssl)), overhead = room0 - room - sizeof big;
+    CHECK(room > overhead + 5 && ksl_tcp_write(c, big, room - overhead - 5, &n) == KSL_OK, "setup: a record that leaves 5 bytes");
+    uint8_t b = 9;
+    CHECK(ksl_ssl_key_update(c, 0) == KSL_OK && ksl_tcp_write(c, &b, 1, &n) == KSL_WANT_READ, "the KeyUpdate ahead of the next write finds no room");
+    CHECK(ksl_tcp_write(s, &b, 1, &n) == KSL_OK && shuttle(s, c) > 0, "the server sends a byte");
+    int rc = ksl_tcp_read(c, r, sizeof r, &n);
+    CHECK(rc == KSL_OK && n == 0, "negative: the read waits for room to finish the KeyUpdate, and says so (not KSL_WANT_READ)");
+    uint8_t sink[4096]; while (ksl_tcp_drain(c, sink, sizeof sink, &n) == KSL_OK && n) {}
+    rc = ksl_tcp_read(c, r, sizeof r, &n);
+    CHECK(rc == KSL_OK && n == 1 && r[0] == 9, "after a drain, the byte already fed is read without more input");
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
@@ -966,4 +1086,4 @@ static void test_ticket_lifetime_clamped(void) {
     if (sess) ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_resumption_bounded(); test_ticket_lifetime_clamped(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_resumption_bounded(); test_ticket_lifetime_clamped(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_read_waiting_for_room_says_so(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }

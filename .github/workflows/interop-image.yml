@@ -143,9 +143,17 @@ jobs:
           echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           trap 'docker logout ghcr.io' EXIT
           { echo "### Interop images $VERSION"; echo; echo '| image | digest |'; echo '|---|---|'; } >> "$GITHUB_STEP_SUMMARY"
+          # both :VERSION tags first, both :latest last: a push that fails halfway leaves :latest where it was on both images
+          # (a re-run then finds :VERSION published and needs force, docs/release.md)
+          for n in kuicksilver-interop kuicksilver-interop-native; do docker push "$REGISTRY/$n:$VERSION"; done
+          if [ "$latest" = true ]; then
+            for n in kuicksilver-interop kuicksilver-interop-native; do
+              # two statements: in an && list a failed tag would not stop the step (bash -e), and :latest would be skipped silently
+              docker tag "$REGISTRY/$n:$VERSION" "$REGISTRY/$n:latest"
+              docker push "$REGISTRY/$n:latest"
+            done
+          fi
           for n in kuicksilver-interop kuicksilver-interop-native; do
-            docker push "$REGISTRY/$n:$VERSION"
-            if [ "$latest" = true ]; then docker tag "$REGISTRY/$n:$VERSION" "$REGISTRY/$n:latest" && docker push "$REGISTRY/$n:latest"; fi
             digest=$(docker image inspect -f '{{index .RepoDigests 0}}' "$REGISTRY/$n:$VERSION")
             also=""; [ "$latest" = true ] && also=", \`:latest\`"
             echo "| \`$REGISTRY/$n:$VERSION\`$also | \`$digest\` |" >> "$GITHUB_STEP_SUMMARY"

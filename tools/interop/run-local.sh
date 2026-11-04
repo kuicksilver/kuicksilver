@@ -45,7 +45,20 @@ export LC_ALL=C   # the runner's certs.sh pipes /dev/urandom through tr, which r
 check=0; perf=0; results=""; outdir=""; tests=""; peers=(); image=jvm; me=kuicksilver
 env_reruns=${KSL_INTEROP_ENV_RERUNS:-5}   # reruns of a cell while its verdict rests on the environment (see environment.sh); 0: none
 [[ "$env_reruns" =~ ^[0-9]+$ ]] || { echo "KSL_INTEROP_ENV_RERUNS must be a number, not '$env_reruns'" >&2; exit 2; }
-while [ $# -gt 0 ]; do case "$1" in --check-required) check=1 ;; --perf) perf=1 ;; --results) results="$2"; shift ;; --out) outdir="$2"; shift ;; --image) image="$2"; shift ;; -t) tests="$2"; shift ;; *) peers+=("$1") ;; esac; shift; done
+usage() { echo "usage: run-local.sh [--check-required | --perf] [--results DIR | --out DIR] [--image native] [-t testcases] [peer ...]" >&2; exit 2; }
+# an option it does not know is refused, never taken for a peer name (a misquoted --out made one, review 2026-10-28 ci.md B1)
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-required) check=1 ;;
+    --perf) perf=1 ;;
+    --results|--out|--image|-t) [ $# -ge 2 ] && [ -n "$2" ] || { echo "$1 needs a value" >&2; usage; }
+      case "$1" in --results) results="$2" ;; --out) outdir="$2" ;; --image) image="$2" ;; -t) tests="$2" ;; esac; shift ;;
+    -*) echo "unknown option $1" >&2; usage ;;
+    *) peers+=("$1") ;;
+  esac
+  shift
+done
+case "$image" in jvm|native) ;; *) echo "--image takes native (or jvm), not $image" >&2; usage ;; esac
 [ -z "$results" ] || [ -z "$outdir" ] || { echo "--results checks existing results, --out names a new run's: one of them" >&2; exit 2; }
 if [ -n "$outdir" ]; then   # the runner is given the paths relative to its checkout, build/interop/runner
   case "$outdir" in /*|*..*) echo "--out takes a path relative to the repository, without '..', not $outdir" >&2; exit 2 ;; esac

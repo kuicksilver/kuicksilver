@@ -182,13 +182,18 @@ class EarlyDataTest {
         clientSettings: Http3Settings = Http3Settings.Default,
         responseHeaders: Http3Headers = Http3Headers.Empty,
         /**
-         * Runs right after `connectEarly`, while the network holds the server's answers back (the client is in 0-RTT), with
-         * a function that lets them through; they go through when it returns at the latest.
+         * Runs right after `connectEarly`, while the network drops the server's packets to the client (the client is in
+         * 0-RTT; the server's PTO sends them again), with a function that stops the dropping; it stops when this returns at
+         * the latest.
          */
         beforeRequest: (suspend (Http3Connection, () -> Unit) -> Unit)? = null,
         /** Sees the client's socket. */
         clientIo: (io.kuicksilver.http3.MemoryIo) -> Unit = {},
-        /** 1 while the network holds the server's answers to the resuming client back (the client stays in 0-RTT); the test lets them go. */
+        /**
+         * 1 while the network drops the server's packets to the resuming client (the client stays in 0-RTT); the test sets it
+         * to 0, and the server's PTO then sends them again. Dropped, not queued: what the test holds back comes later, not in
+         * the order it was sent.
+         */
         clientHold: AtomicInt? = null,
         /** Sees the resuming client's HTTP/3 session before it starts. */
         clientSession: ((H3Session) -> Unit)? = null,
@@ -259,7 +264,12 @@ class EarlyDataTest {
             warm.close()
             val holding = clientHold ?: AtomicInt(if (beforeRequest != null) 1 else 0)
             net.drop = { _, to, _ -> holding.load() == 1 && to == a.localAddress }
-            if (clientSession != null) H3Session.createdForTest = { if (!it.isServer) clientSession(it) }
+            // the hook is global: the first client session made from here on is this connection's, and only that one gets the
+            // per-session hooks (a hook that waits for a rejection would spin on any other session)
+            val taken = kotlin.concurrent.atomics.AtomicInt(0)
+            if (clientSession != null) {
+                H3Session.createdForTest = { if (!it.isServer && taken.compareAndSet(0, 1)) clientSession(it) }
+            }
             val c =
                 try {
                     client.connectEarly(second.localAddress, H3Fixtures.client(), settings = clientSettings)
@@ -444,7 +454,8 @@ class EarlyDataTest {
         runBlocking {
             withTimeout(30.seconds) {
                 val attempts = AtomicInt(0)
-                val hold = AtomicInt(1) // the client stays in 0-RTT until its first attempt opened its streams
+                // the server's packets are dropped, so the client stays in 0-RTT, until its first attempt opened its streams
+                val hold = AtomicInt(1)
                 val accepted =
                     earlyAcceptedAfterResuming(
                         issuer = http3Settings {},
@@ -493,10 +504,14 @@ class EarlyDataTest {
                                 !c.session.droppedByRejectedZeroRtt(early)
                             }
                         },
-                    ) { _, resumed ->
+                    ) { c, resumed ->
                         val s = resumed().single()
                         s.session.goAwayReceived.first { it != null }
                         assertEquals(8L, s.session.goAwayReceived.value, "the GOAWAY went again on the new control stream")
+                        // a marker sent after the replay: the control stream is in order, so a PRIORITY_UPDATE replayed by mistake
+                        // has been read once the marker is (review 2026-10-28 quic-h3.md R5)
+                        c.session.sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(4))
+                        s.session.goAwayReceived.first { it == 4L }
                         withContext(s.session.dispatcher) {
                             assertEquals(0, s.session.priorityUpdatesForTest, "no PRIORITY_UPDATE for the dropped stream")
                         }

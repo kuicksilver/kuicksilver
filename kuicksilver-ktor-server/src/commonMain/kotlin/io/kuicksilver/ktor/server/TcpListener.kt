@@ -38,6 +38,7 @@ import io.kuicksilver.ktor.server.h1.H1RequestScope
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
@@ -69,6 +70,8 @@ internal class TcpServer(
     val h3Endpoint: CompletableDeferred<Http3Endpoint?>,
     /** Completed when the server stops: its HTTP/1.1 connections read no further request ([startH1Pipeline]). */
     val draining: CompletableJob,
+    /** The parent of its HTTP/1.1 connections, listed for the probe ([KuicksilverApplicationEngine.tcpConnectionsForProbe]). */
+    val connections: Job,
 )
 
 /** `port = 0`: TCP + UDP pairs tried before HTTP/3 is given up for the connector. */
@@ -76,7 +79,8 @@ internal const val EPHEMERAL_PAIR_ATTEMPTS = 16
 
 /**
  * Binds the TCP socket of [l] and, with [h3], its HTTP/3 endpoint on the same port number. With `port = 0` the pair is
- * retried up to [EPHEMERAL_PAIR_ATTEMPTS] times, then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone. The
+ * retried up to [EPHEMERAL_PAIR_ATTEMPTS] times when a side fails to bind ([mayBeTaken]; a refused configuration fails the
+ * start at once), then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone. The
  * attempts alternate which side the OS picks: first the TCP port, whose UDP twin may be taken, then a free UDP port, whose
  * TCP twin may be taken, and so on. Retrying only the TCP side is not enough where the OS hands out TCP ports one after
  * the other (Windows does): every retry then lands on the next number, and a run of taken UDP ports (handed out one after
@@ -103,6 +107,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
                     environment.log.warn("HTTP/3 is not served: ${e.message}")
                     return bindTcp(selector, l.config.host, l.config.port) to null
                 } catch (e: Throwable) {
+                    if (!mayBeTaken(e)) throw e
                     environment.log.debug("no free UDP port ($e); trying another TCP + UDP pair")
                     last = e
                     return@repeat
@@ -111,11 +116,13 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             try {
                 return bindTcp(selector, l.config.host, port) to endpoint
             } catch (e: CancellationException) {
-                endpoint.close()
+                releaseFailedPair(endpoint)
                 throw e
             } catch (e: Throwable) {
+                // released before the next attempt and before the start returns: its UDP port is free again then
+                releaseFailedPair(endpoint)
+                if (!mayBeTaken(e)) throw e
                 environment.log.debug("TCP port $port is taken ($e); trying another TCP + UDP pair")
-                endpoint.close()
                 last = e
                 return@repeat
             }
@@ -131,7 +138,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
             return server to null
         } catch (e: Throwable) {
-            if (!ephemeral) {
+            if (!ephemeral || !mayBeTaken(e)) {
                 server.close()
                 throw e
             }
@@ -145,6 +152,30 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
     )
     return bindTcp(selector, l.config.host, l.config.port) to null
 }
+
+/**
+ * Closes the HTTP/3 endpoint of a pair that failed and waits until its UDP socket is released, also when cancelled, for at
+ * most [RELEASE_WAIT]: a release that hangs must not hold the start; it is logged and the start goes on.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+private suspend fun KuicksilverApplicationEngine.releaseFailedPair(endpoint: Http3Endpoint) =
+    withContext(NonCancellable) {
+        withTimeoutOrNull(RELEASE_WAIT) { endpoint.closeAndJoin() }
+            ?: environment.log.warn("the HTTP/3 endpoint on UDP ${endpoint.localAddress.port} was not released within $RELEASE_WAIT")
+    }
+
+/** How long [releaseFailedPair] waits for a failed pair's endpoint. */
+private val RELEASE_WAIT: Duration = 5.seconds
+
+/**
+ * Whether [e], from binding one side of an ephemeral TCP + UDP pair, may come from a port that is in use, so that another
+ * pair may succeed: anything but a refused configuration (an argument or state the endpoint rejects, a TLS identity it
+ * cannot use, a failure of the native layer: loading, ABI, OpenSSL internals), which fails every attempt alike and so
+ * fails the start at once, as with a fixed port (review 2026-10-28 last3 R2). The address-in-use failure itself has no common type (`java.net.BindException` on the JVM, ktor's
+ * `PosixException` on Kotlin/Native, an `IOException` from ksl), so the refusals are what is named.
+ */
+private fun mayBeTaken(e: Throwable): Boolean =
+    e !is IllegalArgumentException && e !is IllegalStateException && e !is TlsException && e !is io.kuicksilver.native.KslException
 
 /** The accept loop of one TCP connector, after Ktor CIO's `httpServer`, with a TLS handshake per connection. */
 @OptIn(InternalAPI::class)
@@ -173,7 +204,18 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val scheme = if (l.tls != null) "https" else "http"
         val acceptJob =
             launch(rootJob + CoroutineName("accept-${l.config}")) {
-                val (server, endpoint) = bindTcpAndUdp(selector, l, h3)
+                val (server, endpoint) =
+                    try {
+                        bindTcpAndUdp(selector, l, h3)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        // a start that cannot bind fails the start ([socket]), not this coroutine: a failure thrown out of it
+                        // reached no handler, which aborts the process on Kotlin/Native
+                        socket.completeExceptionally(e)
+                        h3Endpoint.completeExceptionally(e)
+                        return@launch
+                    }
                 h3Endpoint.complete(endpoint)
                 server.use {
                     socket.complete(server)
@@ -263,7 +305,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
             latch.complete()
         }
         rootJob.invokeOnCompletion { selector.close() }
-        return TcpServer(rootJob, acceptJob, socket, h3Endpoint, draining)
+        return TcpServer(rootJob, acceptJob, socket, h3Endpoint, draining, connections)
     }
 }
 

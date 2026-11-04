@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.server.engine.connector
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.quicConfig
 import kotlin.test.Test
@@ -62,6 +63,60 @@ class ServerQuicConfigTest {
                     quic = quicConfig { maxUniStreams = 2 }
                 }) {}
             server.stop(100, 500)
+        }
+
+    /**
+     * A start that fails at a later connector stops the ones before it: a plain connector on a fixed port, then a TLS one
+     * whose HTTP/3 settings are refused while it is set up. Before, the failure left the first connector accepting.
+     */
+    @Test fun negative_aFailedStartLeavesNoEarlierConnectorAccepting() =
+        serverTest {
+            val selector =
+                io.ktor.network.selector
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            try {
+                val probe =
+                    io.ktor.network.sockets
+                        .aSocket(selector)
+                        .tcp()
+                        .bind("127.0.0.1", 0)
+                val port = (probe.localAddress as io.ktor.network.sockets.InetSocketAddress).port
+                probe.close()
+                val server =
+                    kuicksilverServer(null, configure = {
+                        quic = quicConfig { maxUniStreams = 2 }
+                        connector {
+                            host = "127.0.0.1"
+                            this.port = port
+                        }
+                        tlsConnector(ServerFixtures.identity()) {
+                            host = "127.0.0.1"
+                            this.port = 0
+                        }
+                    }) {}
+                assertFailsWith<IllegalArgumentException> { server.startSuspend(false) }
+                assertEquals(0, server.engine.tcpConnectionsForProbe.size, "a connector that failed to start is still counted by the probe")
+                // without stop(): the first connector's port is free again, its listener closed by the failed start itself
+                val again =
+                    kotlinx.coroutines.withTimeoutOrNull(5.seconds) {
+                        var bound: io.ktor.network.sockets.ServerSocket? = null
+                        while (bound == null) {
+                            bound =
+                                runCatching {
+                                    io.ktor.network.sockets
+                                        .aSocket(selector)
+                                        .tcp()
+                                        .bind("127.0.0.1", port)
+                                }.getOrNull()
+                            if (bound == null) kotlinx.coroutines.yield()
+                        }
+                        bound
+                    } ?: error("port $port of the first connector still taken 5 s after the failed start")
+                again.close()
+                runCatching { server.stop(100, 500) }
+            } finally {
+                selector.close()
+            }
         }
 
     @Test fun nothingSetKeepsTheDefault() {

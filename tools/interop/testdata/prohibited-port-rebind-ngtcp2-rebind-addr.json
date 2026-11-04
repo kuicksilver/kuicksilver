@@ -207,7 +207,8 @@
    "last_sent": 9.148449,
    "last_received": 9.148436,
    "bytes_in_flight": 0,
-   "tracked_after": 0
+   "tracked_after": 0,
+   "lost_after": 0
   }
  ]
 }

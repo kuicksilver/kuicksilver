@@ -245,15 +245,28 @@ public class KslUdpSocket private constructor(
                 null
             } catch (e: KslException) {
                 e.message ?: e.toString()
+            } catch (e: kotlinx.io.IOException) {
+                e.message ?: e.toString()
             }
 
-        /** Opens and binds to [addr] (see [encodeAddress]) with the wanted [flags]; what the kernel granted is in [grantedFlags]. */
+        /**
+         * Opens and binds to [addr] (see [encodeAddress]) with the wanted [flags]; what the kernel granted is in [grantedFlags].
+         * A refused bind (the port in use, an address not on this host) throws a `kotlinx.io.IOException` naming the bind, as
+         * a socket's bind failure is elsewhere: a caller that tries another port for a taken one can tell it from a failure of
+         * the native layer ([KslException]).
+         */
         public fun open(
             addr: ByteArray,
             flags: Int,
         ): KslUdpSocket {
             KslLoader.ensureLoaded()
-            return KslUdpSocket(Ksl.udpOpen(addr, flags))
+            return try {
+                KslUdpSocket(Ksl.udpOpen(addr, flags))
+            } catch (e: KslException.Internal) {
+                // ksl_udp_open says which step failed in its code: KSL_E_BIND for a refused bind
+                if (e.packed == KslConst.E_BIND) throw kotlinx.io.IOException("UDP ${e.message}", e)
+                throw e
+            }
         }
 
         /**
@@ -268,6 +281,9 @@ public class KslUdpSocket private constructor(
             try {
                 open(addr, flags)
             } catch (e: KslException) {
+                failed(e)
+                null
+            } catch (e: kotlinx.io.IOException) {
                 failed(e)
                 null
             }

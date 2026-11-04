@@ -60,4 +60,50 @@ check "first publish: no package yet"                        0 '^latest=true$'  
 tree 0.3.0-SNAPSHOT
 check "the checkout is another line (0.3.0 for 0.2.1)"       1 'not 0.2.1-SNAPSHOT\|0.2.1-SNAPSHOT: it is not' -- 0.2.1 refs/tags/v0.2.1 false
 check "  a prerelease of the line is fine"                   0 '^latest=false$' -- 0.3.0-beta1 refs/heads/main false
+
+# the registry query itself, against a stub curl (no KSL_GHCR_TAGS_DIR): two pages of tags linked by a relative or an absolute
+# Link (OCI distribution spec), and neither the GitHub token nor the registry's bearer token on curl's command line
+mkdir -p "$tmp/bin"
+cat > "$tmp/bin/curl" <<'SH'
+#!/bin/bash
+printf '%s\n' "$@" >> "$STUB_DIR/argv"
+out=""; hdr=""; url=""; prev=""; stdin=""
+for a in "$@"; do
+  case "$prev" in -o) out=$a ;; -D) hdr=$a ;; --config|-K) [ "$a" = - ] && stdin=1 ;; esac
+  case "$a" in https://*) url=$a ;; esac
+  prev=$a
+done
+[ -z "$stdin" ] || cat >> "$STUB_DIR/config"
+case "$url" in
+  "https://ghcr.io/token?service=ghcr.io&scope=repository:kuicksilver/"*":pull") echo '{"token":"bearer-0123"}' ;;
+  "https://ghcr.io/v2/kuicksilver/"*"/tags/list?n=1000")
+    name=${url#https://ghcr.io/v2/}; name=${name%/tags/list*}
+    next="/v2/$name/tags/list?n=1000&last=0.2.0"; [ "$STUB_LINK" = absolute ] && next="https://ghcr.io$next"
+    echo '{"tags":["0.2.0","latest"]}' > "$out"; printf 'HTTP/2 200\r\nlink: <%s>; rel="next"\r\n\r\n' "$next" > "$hdr"; printf 200 ;;
+  "https://ghcr.io/v2/kuicksilver/"*"/tags/list?n=1000&last=0.2.0")
+    echo '{"tags":["0.3.0"]}' > "$out"; printf 'HTTP/2 200\r\n\r\n' > "$hdr"; printf 200 ;;
+  *) echo "stub curl: unexpected URL $url" >&2; : > "$out"; : > "$hdr"; printf 400 ;;
+esac
+SH
+chmod +x "$tmp/bin/curl"
+net() {   # name expected-exit pattern link -- version ref force: the gate with the stub curl
+  local name=$1 want=$2 pat=$3 link=$4; shift 5
+  rm -rf "$tmp/net"; mkdir -p "$tmp/net"
+  local got out; out=$(env -u KSL_GHCR_TAGS_DIR PATH="$tmp/bin:$PATH" STUB_DIR="$tmp/net" STUB_LINK="$link" GITHUB_TOKEN=gh-secret-4567 \
+    ACTOR=bot GITHUB_ACTIONS=true bash "$tmp/tree/tools/ci/interop-image-gate.sh" "$@" Kuicksilver 2>&1); got=$?
+  if [ "$got" != "$want" ]; then echo "FAIL $name: exit $got, want $want"; printf '    %s\n' "$out"; fails=$((fails + 1))
+  elif ! grep -q -- "$pat" <<< "$out"; then echo "FAIL $name: no '$pat' in"; printf '    %s\n' "$out"; fails=$((fails + 1))
+  else echo "ok   $name"; fi
+}
+tree 0.2.1-SNAPSHOT
+net "registry: a relative Link is followed to the second page"  0 'older than the published 0.3.0' relative -- 0.2.1 refs/tags/v0.2.1 false
+net "registry: an absolute Link is followed as well"            0 'older than the published 0.3.0' absolute -- 0.2.1 refs/tags/v0.2.1 false
+holds() {   # name -- command: the command succeeds
+  local name=$1; shift 2
+  if "$@"; then echo "ok   $name"; else echo "FAIL $name"; fails=$((fails + 1)); fi
+}
+holds "registry: no token on curl's command line" -- bash -c "! grep -qE 'gh-secret-4567|bearer-0123' '$tmp/net/argv'"
+holds "registry: the tokens reach curl on its standard input" -- bash -c "grep -qF 'user = \"bot:gh-secret-4567\"' '$tmp/net/config' && grep -qF 'Authorization: Bearer bearer-0123' '$tmp/net/config'"
+net "registry: the bearer token is masked in the job's log"     0 '::add-mask::bearer-0123' relative -- 0.2.1 refs/tags/v0.2.1 false
+
 if [ "$fails" -eq 0 ]; then echo "all cases passed"; else echo "$fails case(s) failed"; exit 1; fi

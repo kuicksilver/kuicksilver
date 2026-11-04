@@ -7,6 +7,9 @@ package io.kuicksilver.ktor.client.h1
 import io.ktor.client.engine.ClientEngineClosedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -142,6 +145,11 @@ internal class ConnectionPool<C : PooledConnection>(
     /** Requests waiting for a connection (tests). */
     val waiterCount: Int get() = lock.withLock { waiters.size }
 
+    private val queued = MutableStateFlow(0)
+
+    /** How many requests have had to wait for a connection so far (tests: wait for a request to be queued, no polling). */
+    val queuedForTest: StateFlow<Int> get() = queued
+
     /**
      * An idle connection to [route], or null: the caller holds a permit and must open a connection, then [adopt] it or
      * [releasePermit] when that fails. Waits in FIFO order while the limits are reached. Cancellation while waiting
@@ -165,6 +173,7 @@ internal class ConnectionPool<C : PooledConnection>(
         } finally {
             closeAll(toClose)
         }
+        queued.update { it + 1 }
         try {
             return waiter.result.await()
         } catch (e: CancellationException) {

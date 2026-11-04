@@ -36,6 +36,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -334,7 +335,8 @@ class ServerH3Test {
     /**
      * The UDP-first pair loses its TCP twin: the first pair's UDP twin is taken (TCP first), then the hook binds the
      * UDP-first endpoint and holds a TCP listener on the number the OS gave it, so the engine's TCP bind there fails. The
-     * engine closes that endpoint (its UDP port can be bound again) and the third pair, TCP first again, serves h3.
+     * engine closes that endpoint and waits until its socket is released (its UDP port can be bound again as soon as the start
+     * returns) and the third pair, TCP first again, serves h3.
      */
     @Test fun ephemeralPortUdpFirstPairWhoseTcpTwinIsTakenIsReleased() =
         h3ServerTest {
@@ -371,20 +373,74 @@ class ServerH3Test {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
                 h3(port) { c -> assertEquals(200, c.request(get()).status) }
-                // the endpoint of the failed UDP-first pair was closed: its port is free again (the close is asynchronous)
-                var again: Result<DatagramIo> = Result.failure(IllegalStateException("not tried"))
-                for (i in 0 until 60) {
-                    again = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", heldPort)) }
-                    if (again.isSuccess) break
-                    delay(50)
-                }
+                // the endpoint of the failed UDP-first pair was closed and joined before the start returned: its port can be
+                // bound at once (one try, no waiting; the engine owns no socket on it any more)
+                val again = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", heldPort)) }
                 again.getOrNull()?.close()
-                assertTrue(again.isSuccess, "UDP $heldPort still bound 3 s after its pair failed ($why): ${again.exceptionOrNull()}")
+                assertTrue(again.isSuccess, "UDP $heldPort still bound after the start returned ($why): ${again.exceptionOrNull()}")
             } finally {
                 server.stop(100, 500)
                 heldTcp?.close()
                 selector.close()
                 taken.forEach { it.close() }
+            }
+        }
+
+    /**
+     * With port 0 and several UDP sockets on the port (udpSocketCount = 2, the accelerated transport with SO_REUSEPORT), a
+     * UDP twin in use is retried like any taken port and HTTP/3 is still served (review of 19e3f88b: ksl's refused bind
+     * was a KslException, which the engine now takes for a configuration error, so such a start failed). Where
+     * SO_REUSEPORT flow hashing is not available (not Linux or Android) the engine serves HTTP/1.1 only and the test is
+     * skipped visibly; on Linux and Android an unavailable SO_REUSEPORT or accelerated transport fails it.
+     */
+    @Test fun ephemeralPortWithSeveralUdpSocketsRetriesATakenTwin() =
+        h3ServerTest {
+            val selector = SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            val held = ArrayList<io.ktor.network.sockets.BoundDatagramSocket>()
+            val tried = ArrayList<Int>()
+            val log = CapturedLog()
+            try {
+                val (server, port) =
+                    tlsServer(configure = {
+                        udpSocketCount = 2
+                        http3Bind = { a, c, st ->
+                            tried += a.port
+                            if (tried.size ==
+                                1
+                            ) {
+                                held +=
+                                    io.ktor.network.sockets
+                                        .aSocket(selector)
+                                        .udp()
+                                        .bind(InetSocketAddress("127.0.0.1", a.port))
+                            }
+                            Http3Endpoint.bind(a, c, st)
+                        }
+                    }, log = log) { routing { get("/") { call.respondText("ok") } } }
+                try {
+                    val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                    val noReusePort = log.lines.any { "SO_REUSEPORT" in it.message || "accelerated transport" in it.message }
+                    if (!io.kuicksilver.ktor.server.contract.reusePortFlowHashing) {
+                        // only where the kernel has no flow hashing: there the engine serves HTTP/1.1 alone by design
+                        assertTrue(noReusePort, "udpSocketCount = 2 served HTTP/3 without SO_REUSEPORT flow hashing: $resp")
+                        println("ephemeralPortWithSeveralUdpSocketsRetriesATakenTwin skipped: no SO_REUSEPORT flow hashing on this OS")
+                        io.kuicksilver.ktor.server.contract
+                            .skipTest("no SO_REUSEPORT flow hashing on this OS")
+                        return@h3ServerTest
+                    }
+                    // a host with flow hashing must serve HTTP/3 here: anything else is the failure this test is for
+                    assertTrue(
+                        !noReusePort,
+                        "SO_REUSEPORT or the accelerated transport was unavailable on a flow-hashing host: ${log.lines}",
+                    )
+                    assertTrue(tried.size >= 2, "tried $tried")
+                    assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), "no HTTP/3 after a taken twin: $resp")
+                } finally {
+                    server.stop(100, 500)
+                }
+            } finally {
+                held.forEach { it.close() }
+                selector.close()
             }
         }
 
@@ -407,6 +463,42 @@ class ServerH3Test {
                 assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * With `port = 0` only a failure to bind is a reason to try another pair (review 2026-10-28 last3 R2): an HTTP/3
+     * configuration the endpoint refuses fails the start at the first attempt, as with a fixed port, instead of being
+     * tried [EPHEMERAL_PAIR_ATTEMPTS] times and then dropped for HTTP/1.1 with a warning.
+     */
+    @Test fun negative_ephemeralPortDoesNotRetryAConfigurationError() =
+        h3ServerTest {
+            val refusals: List<() -> Throwable> =
+                listOf(
+                    { IllegalArgumentException("the server TLS configuration must offer ALPN \"h3\"") },
+                    // a native-layer failure (loading, ABI, OpenSSL internals) is no taken port either (review NIT)
+                    {
+                        io.kuicksilver.native.KslException
+                            .Internal(0, 0, "ksl: the context refused the identity")
+                    },
+                )
+            for (refusal in refusals) {
+                val tried = ArrayList<Int>()
+                val failure =
+                    assertFails {
+                        tlsServer(configure = {
+                            http3Bind = { a, _, _ ->
+                                tried += a.port
+                                throw refusal()
+                            }
+                        }) { routing { get("/") { call.respondText("ok") } } }.first.stop(100, 500)
+                    }
+                assertEquals(1, tried.size, "tried $tried ($failure)")
+                val expected = refusal()::class
+                assertTrue(
+                    generateSequence(failure) { it.cause }.any { expected.isInstance(it) },
+                    "the start failed with $failure, not with the configuration error",
+                )
             }
         }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.webtransport
 
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
@@ -18,6 +19,7 @@ import io.kuicksilver.http3.runtime.RawPeer
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.runtime.peerMayHaveClosed
 import io.kuicksilver.http3.runtime.peerSawClose
+import io.kuicksilver.http3.runtime.peerStopped
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
@@ -32,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -373,17 +376,114 @@ class WtStreamRoutingTest {
                 val get = c.openBidi()
                 // the abort follows the HEADERS at once, so it can reach us while the flush still waits: then our side
                 // sees the STOP_SENDING, which must carry the same code as the RESET_STREAM
-                try {
+                peerStopped(Http3ErrorCode.DATAGRAM_ERROR) {
                     get.output.writeFully(raw.headers(get.id, GET))
                     get.output.flush()
-                } catch (e: Throwable) {
-                    val stopped =
-                        generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Stopped>().firstOrNull()
-                            ?: throw e
-                    assertEquals(Http3ErrorCode.DATAGRAM_ERROR, stopped.code)
                 }
                 assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(get))
                 assertEquals(0, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount })
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * Holds vary with the RTT, so the queue is not ordered by expiry (review 2026-10-28 H3R-3): a datagram with a short hold
+     * stored behind one with a long hold goes at its own end, not when the head's ends. Stream 4's datagram gets 1 s, then
+     * stream 0's 50 ms; 100 ms later stream 0 becomes a session, which gets only what came after its datagram's hold.
+     */
+    @Test fun aShortHoldBehindALongOneEndsOnTime() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val clock = TestTimeSource()
+                withContext(server.session.dispatcher) {
+                    server.session.datagrams.clock = clock
+                    server.session.datagrams.pendingHoldForTest = 1.seconds
+                }
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+                c.sendDatagram(VarInt.encode(1) + "long".encodeToByteArray()) // stream 4, not opened yet
+                server.awaitDatagrams(1)
+                withContext(server.session.dispatcher) { server.session.datagrams.pendingHoldForTest = 50.milliseconds }
+                c.sendDatagram(VarInt.encode(0) + "short".encodeToByteArray()) // stream 0, not opened yet
+                server.awaitDatagrams(2)
+                clock += 100.milliseconds
+                val accepted = CompletableDeferred<WebTransportSession>()
+                launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st))
+                st.output.flush()
+                val wt = withTimeout(5.seconds) { accepted.await() }
+                c.sendDatagram(VarInt.encode(0) + "fresh".encodeToByteArray())
+                assertEquals("fresh", withTimeout(5.seconds) { wt.receiveDatagram() }.decodeToString(), "a datagram past its hold")
+                assertEquals(1, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount }, "stream 4's is kept")
+            }
+        }
+
+    /**
+     * A datagram for a stream that exists but whose CONNECT HEADERS are still on the way waits as an early WebTransport
+     * stream does, not only on the order of a round trip (review 2026-10-28 H3R-5): with half of the HEADERS frame in, a
+     * datagram for the stream is still delivered to the session a second later, past any round-trip hold.
+     */
+    @Test fun aDatagramForAStreamWhoseHeadersAreOnTheWayWaitsLonger() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val clock = TestTimeSource()
+                withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+                val accepted = CompletableDeferred<WebTransportSession>()
+                launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
+                val st = c.openBidi()
+                val connect = raw.wtConnect(st)
+                st.output.writeFully(connect, 0, connect.size / 2)
+                st.output.flush()
+                io.kuicksilver.http3.runtime.awaitCondition("the server taking the stream whose HEADERS are half in") {
+                    withContext(server.session.dispatcher) { server.session.requestOpenWithoutHeaders(st.id) }
+                }
+                c.sendDatagram(VarInt.encode(st.id / 4) + "early".encodeToByteArray())
+                server.awaitDatagrams(1)
+                // past the round-trip hold of this loopback path (its 50 ms floor), within the 5 s an early stream gets
+                clock += 1.seconds
+                st.output.writeFully(connect, connect.size / 2, connect.size) // start and end index
+                st.output.flush()
+                val wt = withTimeout(5.seconds) { accepted.await() }
+                assertEquals("early", withTimeout(5.seconds) { wt.receiveDatagram() }.decodeToString())
+            }
+        }
+
+    /**
+     * A datagram whose hold ended is gone also for the stream it named: a GET opened then is not aborted for it (review
+     * 2026-10-28 H3R-3; nothing pruned the queue between the datagram and the GET's HEADERS).
+     */
+    @Test fun aGetAfterItsDatagramsHoldIsNotAborted() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val clock = TestTimeSource()
+                withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+                c.sendDatagram(VarInt.encode(0) + "d".encodeToByteArray()) // stream 0, not opened yet
+                server.awaitDatagrams(1)
+                clock += DatagramDemux.MAX_HOLD + 1.milliseconds
+                launch {
+                    val req = server.acceptRequest()
+                    req.respond(204).finish()
+                }
+                val get = c.openBidi()
+                get.output.writeFully(raw.headers(get.id, GET))
+                get.output.flushAndClose()
+                val response = ByteArray(64)
+                val n = withTimeout(5.seconds) { get.input.readAvailable(response, 0, response.size) }
+                assertTrue(n > 0, "the GET got no response")
                 assertFalse(server.closed.isCompleted)
             }
         }

@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.http3.runtime
 
@@ -22,6 +22,7 @@ import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -107,15 +108,30 @@ internal class DatagramDemux(
         // draft-ietf-webtrans-http3-16 section 4.6: a session's datagrams may overtake its CONNECT; kept, 16 per connection
         // (as its streams, WtStreamRouter), each on the order of a round trip (RFC 9297 section 2.1). Others are dropped.
         if (!session.isServer || !session.settings.webTransport || !session.requestMayStillOpen(streamId)) return
+        // RFC 9297 section 2.1: after the stream's receive side is closed a datagram "MUST be silently dropped". A request
+        // whose HEADERS and FIN have all arrived (its HEADERS still QPACK-blocked) can never take one (review S2)
+        if (session.pendingHeaders[streamId]?.first?.receivedAll == true) return
         prunePending()
-        if (pending.size < MAX_PENDING) pending.addLast(Pending(streamId, payload, clock.markNow() + pendingHold()))
+        if (pending.size < MAX_PENDING) pending.addLast(Pending(streamId, payload, clock.markNow() + holdFor(streamId)))
     }
 
     /** How the hold of a kept datagram is measured; a test replaces it to move time by hand. Session dispatcher only. */
     var clock: TimeSource = TimeSource.Monotonic
 
+    /**
+     * How long a datagram for [streamId] may wait: [MAX_HOLD] for a stream that exists and whose HEADERS are on the way (a
+     * large or QPACK-blocked section; draft-ietf-webtrans-http3-16 section 4.6 "SHOULD buffer ... until they can be
+     * associated", bounded as early WebTransport streams are), [pendingHold] for a stream not created yet, which RFC 9297
+     * section 2.1 allows to buffer only "on the order of a round trip" (review 2026-10-28 H3R-5).
+     */
+    private fun holdFor(streamId: Long): Duration = if (session.requestOpenWithoutHeaders(streamId)) MAX_HOLD else pendingHold()
+
+    /** Replaces [pendingHold] when set (tests: holds that differ without moving the RTT). Session dispatcher only. */
+    var pendingHoldForTest: Duration? = null
+
     /** How long a datagram kept now may wait for its stream's HEADERS: [pendingHold] of the connection's RTT estimate. */
     fun pendingHold(): Duration {
+        pendingHoldForTest?.let { return it }
         val stats = session.quic.stats
         return pendingHold(stats.smoothedRtt, stats.rttVar)
     }
@@ -132,11 +148,21 @@ internal class DatagramDemux(
         return ch
     }
 
-    /** Stream [streamId] will not become a session: its waiting datagrams go. Returns whether there were any. */
-    fun dropPending(streamId: Long): Boolean = pending.isNotEmpty() && pending.removeAll { it.streamId == streamId }
+    /**
+     * Stream [streamId] will not become a session: its waiting datagrams go. Returns whether there were any still within their
+     * hold (one past it was dropped already, as far as the peer can tell).
+     */
+    fun dropPending(streamId: Long): Boolean {
+        prunePending()
+        return pending.isNotEmpty() && pending.removeAll { it.streamId == streamId }
+    }
 
+    /**
+     * Drops the datagrams whose hold ended. Holds follow the RTT estimate when each datagram arrives, so the queue is not in
+     * expiry order: every entry is looked at (at most [MAX_PENDING]), not only the head (review 2026-10-28 H3R-3).
+     */
     private fun prunePending() {
-        while (pending.isNotEmpty() && pending.first().expires.hasPassedNow()) pending.removeFirst()
+        if (pending.isNotEmpty()) pending.removeAll { it.expires.hasPassedNow() }
     }
 
     /** Datagrams waiting for their stream's CONNECT (test hook; session dispatcher only). */
@@ -168,7 +194,7 @@ internal class DatagramDemux(
         val prefix = VarInt.encode(streamId / 4)
         return when (val r = session.quic.trySendDatagram(prefix + payload)) {
             is DatagramSendResult.TooLarge -> {
-                DatagramSendResult.TooLarge(r.max - prefix.size)
+                DatagramSendResult.TooLarge(httpDatagramMax(r.max, prefix.size))
             }
 
             else -> {
@@ -196,7 +222,7 @@ internal class DatagramDemux(
         ) {
             throw QuicException.DatagramTooLarge(
                 payload.size,
-                e.max - prefix.size,
+                httpDatagramMax(e.max, prefix.size),
             )
         }
     }
@@ -230,10 +256,32 @@ internal class DatagramDemux(
             rttVar: Duration,
         ): Duration = (smoothedRtt * 2 + maxOf(rttVar * 4, GRANULARITY) + DEFAULT_MAX_ACK_DELAY).coerceIn(MIN_HOLD, MAX_HOLD)
 
+        /**
+         * The largest HTTP datagram payload a QUIC datagram of at most [quicMax] bytes carries after a Quarter Stream ID of
+         * [prefix] bytes; 0 when even an empty one does not fit (a peer's max_datagram_frame_size of 2 leaves a QUIC maximum
+         * of 0), never negative.
+         */
+        fun httpDatagramMax(
+            quicMax: Int,
+            prefix: Int,
+        ): Int = (quicMax - prefix).coerceAtLeast(0)
+
         /** Quarter stream IDs above 2^60 - 1 cannot name a client-initiated bidirectional stream. */
         const val MAX_QUARTER_ID = (1L shl 60) - 1
     }
 }
+
+/**
+ * Whether a request with [method] and `:protocol` [protocol] has HTTP datagram semantics (RFC 9297 section 2: "HTTP Datagrams
+ * MUST only be sent with an association to an HTTP request that explicitly supports them"; one received for a request
+ * without them aborts it). Only an Extended CONNECT does: a classic CONNECT is a TCP tunnel (RFC 9110 section 9.3.6) and
+ * RFC 9220's `websocket` defines none, so neither does; other protocols (WebTransport, `connect-udp`, an application's own,
+ * which the application serves through [Http3Stream]) do (review 2026-10-28 h3.md H3R-4).
+ */
+internal fun hasDatagramSemantics(
+    method: String,
+    protocol: String?,
+): Boolean = method == "CONNECT" && protocol != null && !protocol.equals("websocket", ignoreCase = true)
 
 /**
  * An Extended CONNECT stream: the request stream's data in both directions plus its datagrams.
@@ -253,6 +301,8 @@ internal class Http3StreamImpl(
     internal val localHeaders: Http3Headers,
     internal val isClient: Boolean,
     private val onReset: () -> Unit = {},
+    /** False for a CONNECT whose protocol has no datagram semantics ([hasDatagramSemantics]): none are sent on it. */
+    internal val datagramsAllowed: Boolean = true,
 ) : Http3Stream {
     /** The connection's scope, on its dispatcher: the capsule reader and writer run there. */
     internal val scope: CoroutineScope get() = session.scope
@@ -296,9 +346,12 @@ internal class Http3StreamImpl(
     internal val sendOpen: Boolean get() = !resetSent && !writer.output.isClosedForWrite && !st.output.isClosedForWrite
 
     override fun trySendDatagram(payload: ByteArray): DatagramSendResult =
-        if (!sendOpen) DatagramSendResult.Closed else session.datagrams.trySend(st.id, payload)
+        if (!datagramsAllowed || !sendOpen) DatagramSendResult.Closed else session.datagrams.trySend(st.id, payload)
 
     override suspend fun sendDatagram(payload: ByteArray) {
+        check(datagramsAllowed) {
+            "stream ${st.id} is a CONNECT whose protocol has no HTTP datagrams (classic CONNECT, websocket): none are sent (RFC 9297 section 2)"
+        }
         check(sendOpen) { "the send side of stream ${st.id} is closed: HTTP datagrams are no longer sent (RFC 9297 section 2.1)" }
         session.datagrams.send(st.id, payload)
     }

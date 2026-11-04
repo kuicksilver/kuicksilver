@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,6 +85,7 @@ private suspend fun H3Session.connectOnDispatcher(
         ) {
             resp.cancel(Http3ErrorCode.REQUEST_CANCELLED)
             datagrams.unregister(resp.streamId)
+            clientRequestsWithoutDatagrams.remove(resp.streamId)
             exchangeEnded()
             throw Http3Exception.ConnectRejected(resp.status, resp.headers)
         }
@@ -93,6 +95,7 @@ private suspend fun H3Session.connectOnDispatcher(
                 resp.pump.join()
                 writer.pump.join()
             } finally {
+                clientRequestsWithoutDatagrams.remove(resp.streamId)
                 exchangeEnded()
                 ended?.complete(Unit) // both directions of the tunnel are over (a WebTransport session ends here)
             }
@@ -107,14 +110,14 @@ private suspend fun H3Session.connectOnDispatcher(
             resp.stream,
             resp.body,
             writer,
-            resp.datagramChannel!!,
+            resp.datagramChannel ?: Channel<ByteArray>(0).also { it.close() },
             resp.headers,
             status = resp.status,
             localHeaders = r.headers,
             isClient = true,
-        ) {
-            scope.launch { datagrams.unregister(resp.streamId) }
-        }.also(made)
+            onReset = { scope.launch { datagrams.unregister(resp.streamId) } },
+            datagramsAllowed = resp.datagramChannel != null,
+        ).also(made)
     }
 
 /**
@@ -205,9 +208,10 @@ private suspend fun H3Session.requestOnDispatcher(
             }
         }
         clientStreams[st.id] = st
-        if (!keepOpen && r.method != "CONNECT") clientRequestsWithoutDatagrams[st.id] = st
+        val semantics = hasDatagramSemantics(r.method, r.protocol)
+        if (!semantics) clientRequestsWithoutDatagrams[st.id] = st
         exchangeOpened()
-        val dgrams = if (keepOpen) datagrams.register(st.id) else null
+        val dgrams = if (keepOpen && semantics) datagrams.register(st.id) else null
         try {
             exchange(st, r, keepOpen, callbacks).also {
                 it.datagramChannel = dgrams

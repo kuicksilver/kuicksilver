@@ -37,6 +37,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
@@ -46,6 +47,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -61,6 +63,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -258,8 +261,43 @@ internal class H3Session(
         QpackRuntime(
             settings,
             { b -> writeCritical(encoderLock, { it.encoder }, b) },
-            { b -> writeCritical(decoderLock, { it.decoder }, b) },
+            { b -> queueDecoderBytes(b) },
         )
+
+    /**
+     * Decoder-stream bytes waiting for [decoderWriter], each with the critical-stream generation it was made for. The decoder
+     * stream's output never makes its caller wait: a peer that grants that stream no credit would otherwise block every
+     * QPACK cancellation and acknowledgment, NonCancellable ones included, so requests could no longer be cancelled (review
+     * S1). What the peer does not take is bounded by [decoderQueueLimit].
+     */
+    private val decoderQueue = Channel<Pair<Int, ByteArray>>(Channel.UNLIMITED)
+    private val decoderQueued = AtomicLong(0)
+
+    /**
+     * Decoder-stream bytes queued and not written yet above which the connection ends with H3_EXCESSIVE_LOAD: a decoder that
+     * cannot hand its instructions over is a peer not reading its encoder's feedback (RFC 9204 section 7.3 asks for bounds on
+     * what a peer can make us buffer). Tests lower it.
+     */
+    var decoderQueueLimit: Long = DECODER_QUEUE_LIMIT
+
+    private fun queueDecoderBytes(b: ByteArray) {
+        if (decoderQueued.addAndFetch(b.size.toLong()) > decoderQueueLimit) {
+            scope.launch { fail(Http3ErrorCode.EXCESSIVE_LOAD, "the peer does not take our decoder stream's instructions") }
+            return
+        }
+        decoderQueue.trySend(criticalGen to b)
+    }
+
+    /** Writes the queued decoder-stream bytes in order, each on the decoder stream of the generation it was made for. */
+    private suspend fun decoderWriter() {
+        for ((gen, b) in decoderQueue) {
+            try {
+                writeCritical(decoderLock, { it.decoder }, b, madeFor = gen)
+            } finally {
+                decoderQueued.addAndFetch(-b.size.toLong())
+            }
+        }
+    }
 
     /**
      * Writes [b] on our critical stream [pick] once the streams are open, on the session's dispatcher (the bookkeeping
@@ -275,10 +313,12 @@ internal class H3Session(
         pick: (Critical) -> QuicStream,
         b: ByteArray,
         again: (() -> Boolean)? = null,
+        madeFor: Int? = null,
     ): Unit =
         withContext(dispatcher) {
             checkOnDispatcher()
-            var gen = criticalGen
+            // bytes made earlier (queued) are for the streams of the generation they were made in
+            var gen = madeFor ?: criticalGen
             while (true) {
                 awaitCriticalStreams()
                 val written =
@@ -293,7 +333,15 @@ internal class H3Session(
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
-                            if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+                            val cause = transportCause(e)
+                            if (cause is QuicException.StreamError.Stopped || cause is QuicException.StreamError.Reset) {
+                                // the peer closed one of our critical streams: RFC 9114 section 6.2.1 ("If either control stream is
+                                // closed at any point, this MUST be treated as a connection error of type
+                                // H3_CLOSED_CRITICAL_STREAM") and RFC 9204 section 4.2 (the same for the encoder and decoder streams)
+                                fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer closed our critical stream ${pick(c).id}")
+                                throw e
+                            }
+                            if (cause !is QuicException.StreamError.EarlyDataRejected) throw e
                             criticalWriteFailuresForTest.addAndFetch(1)
                             false
                         }
@@ -315,6 +363,18 @@ internal class H3Session(
             }
         }
 
+    /**
+     * The peer stopping one of our critical streams closes it: RFC 9114 section 6.2.1 ("If either control stream is closed at
+     * any point, this MUST be treated as a connection error of type H3_CLOSED_CRITICAL_STREAM") and RFC 9204 section 4.2 for the
+     * QPACK streams. Noticed when the STOP_SENDING arrives, not at our next write there, which may never come.
+     */
+    private fun watchStopped(st: QuicStream) {
+        scope.launch {
+            val code = st.awaitSendStopped()
+            fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer stopped our critical stream ${st.id} (code $code)")
+        }
+    }
+
     /** [st] was dropped by the server's rejection of 0-RTT (RFC 9001 section 4.6.2): the server never saw anything of it. */
     fun droppedByRejectedZeroRtt(st: QuicStream): Boolean {
         val causes = listOf(runCatching { st.output.closedCause }.getOrNull(), runCatching { st.input.closedCause }.getOrNull())
@@ -328,7 +388,9 @@ internal class H3Session(
      */
     suspend fun cancelSections(st: QuicStream) {
         if (droppedByRejectedZeroRtt(st)) return
-        withContext(dispatcher) { qpack.cancelStream(st.id) } // QPACK is the dispatcher's
+        // QPACK is the dispatcher's. NonCancellable: the callers are often cancelled already (a body pump in its catch after
+        // its own cancellation), and withContext would throw at once without making the cancellation (review 2026-10-28 R1)
+        withContext(NonCancellable + dispatcher) { qpack.cancelStream(st.id) }
     }
 
     /**
@@ -466,6 +528,7 @@ internal class H3Session(
             onTransportClosed(e)
         }
         scope.launch { guarded { criticalStreamsLoop(criticalStreamsDeadline) } }
+        scope.launch { guarded { decoderWriter() } }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new }
         }
@@ -478,6 +541,11 @@ internal class H3Session(
         try {
             withContext(dispatcher) { awaitCriticalStreams() }
         } catch (e: Http3Exception) {
+            startEndedForTest?.invoke(this)
+            // a peer's H3_NO_ERROR close that arrived with its GOAWAY can be handled before the control reader parsed that
+            // GOAWAY (review 2026-10-28 quic-h3.md R3): the readers that drain the peer's streams finish what arrived, at most
+            // DRAIN_GRACE after the end, and the session's job ends then; only after that is the GOAWAY known to be absent
+            if (!isGracefulEndAfterGoAway(e) && e is Http3Exception.Protocol && e.h3Code == Http3ErrorCode.NO_ERROR) job.join()
             if (!isGracefulEndAfterGoAway(e)) throw e
         }
     }
@@ -521,7 +589,8 @@ internal class H3Session(
     /**
      * Opens the control and QPACK streams and sends SETTINGS (RFC 9114 section 6.2: the critical streams first, then
      * others, GREASE, as the peer allows): true once done, false when a rejected 0-RTT took them first (generation [gen]
-     * passed), null when the connection failed for want of stream credit.
+     * passed), null when the connection failed: for want of stream credit, or because the peer closed a critical stream of
+     * ours while it was being opened (H3_CLOSED_CRITICAL_STREAM).
      */
     private suspend fun openCriticalStreams(
         deadline: Duration,
@@ -573,12 +642,19 @@ internal class H3Session(
                     }
                     if (gen != criticalGen) return@withTimeoutOrNull false
                     critical = Critical(control, encoder, decoder)
+                    for (st in listOf(control, encoder, decoder)) watchStopped(st)
                     true
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+                val cause = transportCause(e)
+                if (cause is QuicException.StreamError.Stopped || cause is QuicException.StreamError.Reset) {
+                    // the peer closed a critical stream while we set it up (RFC 9114 section 6.2.1, RFC 9204 section 4.2)
+                    fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer closed our critical stream while it was opened")
+                    return null // the connection is closing: criticalStreamsLoop ends, as after the deadline
+                }
+                if (cause !is QuicException.StreamError.EarlyDataRejected) throw e
                 false
             }
         if (done == null) {
@@ -856,6 +932,7 @@ internal class H3Session(
 
                 FrameAction.Process -> {
                     FrameRules.checkControlLength(type, len)
+                    beforeControlFrameForTest?.invoke(this, type)
                     onControlFrame(type, st.input.readExact(len.toInt()))
                 }
             }
@@ -1020,6 +1097,12 @@ internal class H3Session(
         return QuicStreamLimits.peerBidiStreamsGranted(quic)?.let { id / 4 < it } ?: true
     }
 
+    /**
+     * Server: client bidirectional stream [id] exists (the transport handed it out) and its HEADERS are still on the way: a
+     * datagram for it may wait as long as an early WebTransport stream does (see [DatagramDemux]). Session dispatcher only.
+     */
+    fun requestOpenWithoutHeaders(id: Long): Boolean = id in handledBidi && id !in settledBidi
+
     /** Server: stream [id] read its HEADERS, or turned out to be no request (a WebTransport stream): see [requestMayStillOpen]. */
     fun bidiSettled(id: Long) {
         settledBidi += id
@@ -1028,23 +1111,29 @@ internal class H3Session(
     /**
      * RFC 9297 section 2: "If an HTTP Datagram is received and it is associated with a request that has no known semantics
      * for HTTP Datagrams, the receiver MUST terminate the request. If HTTP/3 is in use, the request stream MUST be aborted
-     * with H3_DATAGRAM_ERROR". Requests other than CONNECT have none (GET and POST are the RFC's examples). Section 2.1
+     * with H3_DATAGRAM_ERROR". Only an Extended CONNECT whose protocol is not `websocket` has them ([hasDatagramSemantics]):
+     * GET and POST are the RFC's examples of requests without, and a classic CONNECT and RFC 9220 define none. Section 2.1
      * comes first once the request's direction is over ("MUST be silently dropped"): only a stream still receiving is
-     * aborted. Returns whether [id] was such a request.
+     * aborted. A direction is over once every byte and the FIN arrived (RFC 9000 "Data Recvd", [receivedAll]), also while
+     * the application has not read them yet, so a message that came whole is never aborted by a stray datagram (review
+     * 2026-10-28 H3R-6). Returns whether [id] was such a request.
      */
     suspend fun abortRequestWithoutDatagrams(id: Long): Boolean {
         if (isServer) {
             val req = activeServerRequests[id] ?: return false
-            if (req.method == "CONNECT" || req.stream.input.isClosedForRead) return false
+            if (hasDatagramSemantics(req.method, req.protocol) || receiveOver(req.stream)) return false
             abort(req.stream, Http3ErrorCode.DATAGRAM_ERROR)
             req.done()
         } else {
             val st = clientRequestsWithoutDatagrams[id] ?: return false
-            if (st.input.isClosedForRead) return false
+            if (receiveOver(st)) return false
             abort(st, Http3ErrorCode.DATAGRAM_ERROR)
         }
         return true
     }
+
+    /** Whether the peer's direction of [st] is over: all of it arrived, or it was read to its end or failed. */
+    private fun receiveOver(st: QuicStream): Boolean = st.receivedAll || st.input.isClosedForRead
 
     /**
      * Client bidirectional stream [id] lies beyond the stream limit: the one we granted on a server, the one the server
@@ -1345,9 +1434,21 @@ internal class H3Session(
     }
 
     companion object {
-        /** Test hook: sees every session as it is made, before it starts (to install the per-session hooks). */
+        /**
+         * Test hook: sees every session as it is made, before it starts (to install the per-session hooks). It is global, so
+         * it is not safe for tests that run in parallel in one process (none do: each module's tests run one after another);
+         * a test sets it right before the connection it is for and takes the first matching session only.
+         */
         @kotlin.concurrent.Volatile
         internal var createdForTest: ((H3Session) -> Unit)? = null
+
+        /** Test hook: runs when the start's wait ended with an error, before it decides whether that error fails the start. */
+        @kotlin.concurrent.Volatile
+        internal var startEndedForTest: ((H3Session) -> Unit)? = null
+
+        /** Test hook: runs before a control frame of [type] the peer sent is handled (global: a test filters on the session). */
+        @kotlin.concurrent.Volatile
+        internal var beforeControlFrameForTest: (suspend (H3Session, type: Long) -> Unit)? = null
 
         /** Test hook: runs before a client's idle close after GOAWAY, so a test can let the peer's close win the race. */
         @kotlin.concurrent.Volatile
@@ -1365,6 +1466,9 @@ internal class H3Session(
 
         /** How long readers may go on finishing what a peer sent once its connection is lost ([drains]). */
         val DRAIN_GRACE: Duration = 1.seconds
+
+        /** See [decoderQueueLimit]. */
+        const val DECODER_QUEUE_LIMIT: Long = 64L * 1024
 
         private const val DRAINERS_PRUNE_MIN = 64
 

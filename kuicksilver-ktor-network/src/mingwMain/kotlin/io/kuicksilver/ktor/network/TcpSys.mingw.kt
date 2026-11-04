@@ -72,7 +72,7 @@ internal actual val bsdSockaddr: Boolean = false
 // unread input stays buffered until the close, as on Linux: after SD_RECEIVE, Winsock resets the connection on more data
 internal actual val tcpShutdownReadBeforeEnd: Boolean = false
 
-// a lost FD_READ or FD_CLOSE delays the read by at most this, see tcpReadRecheck
+// a lost FD_CLOSE (or FD_READ) delays the read by at most this, see tcpReadRecheck
 internal actual val tcpReadRecheck: Duration? = 1.seconds
 
 private val winsock: Int by lazy {

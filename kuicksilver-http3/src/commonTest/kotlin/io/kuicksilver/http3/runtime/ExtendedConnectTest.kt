@@ -26,6 +26,7 @@ import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -474,6 +475,77 @@ class H3DatagramTest {
         }
 
     /**
+     * A peer whose max_datagram_frame_size leaves no room for the Quarter Stream ID (2: the QUIC payload maximum is 0) fits
+     * no HTTP datagram, not even an empty one: the maximum reported is 0, not negative (TooLarge(-1) before). The end-to-end
+     * case needs H3Session to accept such a peer's H3_DATAGRAM=1, which the QUIC branch's peerSupportsDatagrams brings.
+     */
+    @Test fun httpDatagramMaximumIsNeverNegative() {
+        assertEquals(0, DatagramDemux.httpDatagramMax(quicMax = 0, prefix = 1))
+        assertEquals(0, DatagramDemux.httpDatagramMax(quicMax = 1, prefix = 2))
+        assertEquals(0, DatagramDemux.httpDatagramMax(quicMax = 1, prefix = 1))
+        assertEquals(1197, DatagramDemux.httpDatagramMax(quicMax = 1200, prefix = 3))
+    }
+
+    /**
+     * Extended CONNECT protocols without datagram semantics are no exception to section 2's MUST (review 2026-10-28 h3.md
+     * H3R-4): RFC 9220's `websocket` and a classic CONNECT tunnel (RFC 9110 section 9.3.6) define none, so a datagram for
+     * such a stream aborts it with H3_DATAGRAM_ERROR, as for a GET. Other protocols (WebTransport, an application's own)
+     * keep their datagrams ([datagramsPerStream]).
+     */
+    @Test fun negative_datagramForAWebSocketStreamAbortsItOnTheServer() =
+        h3Test {
+            for (protocol in listOf("websocket", null)) {
+                QuicPair.open().useScoped { q ->
+                    val (c, s) = q.connect()
+                    val server = Http3Connection.server(s, connectOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                    withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                    val st = c.openBidi()
+                    val fields =
+                        if (protocol == null) {
+                            listOf(":method" to "CONNECT", ":authority" to "server.test:443")
+                        } else {
+                            listOf(
+                                ":method" to "CONNECT",
+                                ":protocol" to protocol,
+                                ":scheme" to "https",
+                                ":authority" to "server.test",
+                                ":path" to "/",
+                            )
+                        }
+                    st.output.writeFully(raw.headers(st.id, fields))
+                    st.output.flush()
+                    withTimeout(5.seconds) { server.acceptRequest() }
+                    c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                    assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(st), "CONNECT ${protocol ?: "(classic)"}")
+                    assertFalse(server.closed.isCompleted)
+                }
+            }
+        }
+
+    /** The client side: a datagram for its WebSocket stream aborts it, and it sends none on it (no datagram semantics). */
+    @Test fun negative_datagramForAWebSocketStreamAbortsItOnTheClient() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, SettingsId.ENABLE_CONNECT_PROTOCOL to 1L))
+                val client = Http3Connection.client(c)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                val ws = async { client.connect(connectReq(), "websocket") }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                st.output.flush()
+                val stream = withTimeout(5.seconds) { ws.await() }
+                assertEquals(DatagramSendResult.Closed, stream.trySendDatagram(byteArrayOf(1)), "a datagram was sent on a WebSocket stream")
+                s.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(st))
+                assertFalse(client.closed.isCompleted)
+            }
+        }
+
+    /**
      * Section 2.1 takes precedence once the request's direction is over: "If a datagram is received after the
      * corresponding stream's receive side is closed, the received datagrams MUST be silently dropped". The GET is answered.
      */
@@ -494,6 +566,50 @@ class H3DatagramTest {
                 c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
                 withTimeout(5.seconds) {
                     while (withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } == seen) delay(5)
+                }
+                req.respond(204).output.flushAndClose()
+                val answer = withTimeout(5.seconds) { st.input.readAllBytes() }
+                assertTrue(answer.isNotEmpty(), "the response arrived, the stream was not reset")
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * A request that came whole (every byte and the FIN received, RFC 9000 "Data Recvd") is not aborted for a datagram while
+     * its body still waits to be read (review 2026-10-28 h3.md H3R-6): its receive side is over, so section 2.1 drops the
+     * datagram, as for a request read to its end. Here a POST body larger than the body channel holds (1 MiB), which no handler reads.
+     */
+    @Test fun datagramForAWholeUnreadPostIsDropped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                val st = c.openBidi()
+                val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+                st.output.writeFully(raw.headers(st.id, post) + raw.data(ByteArray(1280 * 1024)))
+                st.output.flushAndClose()
+                val req = withTimeout(5.seconds) { server.acceptRequest() }
+                awaitCondition("all of the POST arriving at the server") {
+                    withContext(server.session.dispatcher) {
+                        server.session.activeServerRequests[st.id]
+                            ?.stream
+                            ?.receivedAll
+                    } == true
+                }
+                assertFalse(
+                    withContext(server.session.dispatcher) {
+                        server.session.activeServerRequests[st.id]!!
+                            .stream.input.isClosedForRead
+                    },
+                    "the body was read to its end: the case this test is about did not arise",
+                )
+                val seen = withContext(server.session.dispatcher) { server.session.datagrams.receivedCount }
+                c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                awaitCondition("the server receiving the datagram") {
+                    withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } != seen
                 }
                 req.respond(204).output.flushAndClose()
                 val answer = withTimeout(5.seconds) { st.input.readAllBytes() }

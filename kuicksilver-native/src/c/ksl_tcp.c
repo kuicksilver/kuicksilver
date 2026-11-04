@@ -29,8 +29,10 @@ static int map_error(ksl_ssl *s, int r) {
    figure for AES-CCM; RFC 9147 appendix B.1 derives it for the same margin as TLS 1.3's: "q <= 2^23" records (the confidentiality
    bound; CCM_8 alike, appendix B.3), for records of 2^14 bytes. OpenSSL sends a KeyUpdate only on SSL_key_update, so ksl requests
    one well before the negotiated AEAD's limit: every 2^23 records for AES-GCM, 2^22 for AES-CCM (and any other AEAD), none for
-   ChaCha20-Poly1305. Records are counted as full ones of the negotiated size (16 KiB, or the max_fragment_length), at least one per
-   write: never fewer than were sent. The KeyUpdate goes out ahead of the next record. A session whose KeyUpdates do not go out ends
+   ChaCha20-Poly1305. Every record written under the sending keys counts as one, whatever it carries and however short it is: ksl_msg_cb
+   counts each record OpenSSL writes (SSL3_RT_HEADER), application data, alerts and handshake messages alike, so the count is the
+   records sent. A write takes at most one record's worth (the negotiated size: 16 KiB, or the max_fragment_length), so the limit
+   is checked per record. The KeyUpdate goes out ahead of the next record. A session whose KeyUpdates do not go out ends
    before its keys reach the limit (ksl_tcp_write).
    TLS 1.2 has no KeyUpdate. RFC 9325 section 4.4: "When a sender is approaching CL, the implementation SHOULD initiate a new
    handshake", and for AES-GCM "it is RECOMMENDED that the same limit of 2^24.5 records is used for both versions". ksl allows no
@@ -59,40 +61,65 @@ static uint64_t key_update_records(ksl_ssl *s) {
 }
 /* The plaintext size of a full record: 16 KiB, or the negotiated max_fragment_length (RFC 6066 section 4) */
 static size_t record_size(ksl_ssl *s) { uint8_t mfl = SSL_SESSION_get_max_fragment_length(SSL_get_session(s->ssl)); return mfl >= 1 && mfl <= 4 ? (size_t)256 << mfl : 16384; }
-static void count_records(ksl_ssl *s, size_t n) {
-    size_t frag = record_size(s);
-    s->records_sent += (n + frag - 1) / frag;
+/* After a write: the records are counted where they are written (ksl_msg_cb); at the KeyUpdate point an update is scheduled, and
+   the count starts over when its message goes out (ksl_msg_cb). */
+static void count_records(ksl_ssl *s) {
     if (s->records_sent < key_update_records(s) || s->key_updates_exhausted) return;   /* past the epoch bound: the record limit ends the session */
-    /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for): tried after the next
-       write. Called directly: the write succeeded, and the session's last error stays the last failure's */
-    if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) == 1) s->records_sent = 0; else ERR_clear_error();
+    /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for, or ours already
+       scheduled): tried after the next write. Called directly: the write succeeded, and the session's last error stays the last failure's */
+    if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) != 1) ERR_clear_error();
 }
+/* One more record under the sending keys would reach their limit (records ksl_tcp_write did not ask for count too) */
+static int at_record_limit(ksl_ssl *s) { return record_limit(s) != KSL_NO_RECORD_LIMIT && s->records_sent + 1 >= record_limit(s); }
 static int abort_session(ksl_ssl *s, const char *why);
 static void drop_pending_write(ksl_ssl *s) {
+    s->pending_write_unkept = 0;
     if (!s->pending_write) return;
     OPENSSL_cleanse(s->pending_write, s->pending_write_len); free(s->pending_write); s->pending_write = NULL; s->pending_write_len = 0;
 }
-/* One record per call: a write the transport has no room for leaves exactly that record pending inside OpenSSL, whose bytes ksl
-   keeps (pending_write), so that ksl_tcp_abort can complete it ahead of its alert. The caller retries a KSL_WANT_READ with the same
-   bytes, from any buffer (SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER). */
+/* One record per call. A write the transport has no room for stays pending inside OpenSSL: as a record already built, or still as
+   plaintext behind a handshake message under way (a queued KeyUpdate, a NewSessionTicket), which OpenSSL writes first and then
+   reports the write as wanting to write too. ksl keeps a copy of the caller's bytes (pending_write) so that ksl_tcp_abort can
+   complete that write ahead of its alert; the bytes then go out, as the caller asked. The caller retries a KSL_WANT_READ with the same
+   bytes and length, from any buffer (SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER); a retry with another length (OpenSSL allows a longer one)
+   replaces the copy, so the abort completes what OpenSSL holds now, never an older write it would refuse with SSL_R_BAD_LENGTH. */
 int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *consumed) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
     size_t frag = record_size(s); if (len > frag) len = frag;
     /* one more record would reach the keys' limit: the session ends, with internal_error where an alert can be sent */
-    if (len && !s->pending_write && record_limit(s) != KSL_NO_RECORD_LIMIT && s->records_sent + 1 >= record_limit(s))
+    if (len && !s->pending_write && at_record_limit(s))
         { (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)"); return KSL_ERROR; }
     ERR_clear_error(); size_t n = 0; int r = SSL_write_ex(s->ssl, plaintext, len, &n);
-    if (r == 1) { drop_pending_write(s); *consumed = n; count_records(s, n); return KSL_OK; }
-    if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && !s->pending_write && len) {
-        s->pending_write = malloc(len); if (s->pending_write) { memcpy(s->pending_write, plaintext, len); s->pending_write_len = len; }
+    if (r == 1) { drop_pending_write(s); *consumed = n; count_records(s); return KSL_OK; }
+    if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && len && (!s->pending_write || s->pending_write_len != len)) {
+        drop_pending_write(s);
+        s->pending_write = malloc(len);
+        if (s->pending_write) { memcpy(s->pending_write, plaintext, len); s->pending_write_len = len; } else s->pending_write_unkept = 1;
     }
     return map_error(s, r);
 }
+/* Reading can make OpenSSL write records too (an alert, a handshake answer). Without auto-retry each SSL_read_ex handles one record
+   that is not application data and writes at most one record for it, so the limit is checked before each call with room for that
+   record and for the abort's own alert, and after it. Records already fed are read on here, not left to a caller that waits for
+   more input. A read that must write first (a handshake message under way, such as a KeyUpdate whose write found the pair full) and
+   has no room answers KSL_OK with nothing read: drain, then read again. Plaintext read as the limit is reached is returned; the
+   next call ends the session. */
 int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
-    ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
-    if (r == 1) { *read = n; return KSL_OK; }
-    return map_error(s, r);
+    static const char *why = "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)";
+    uint64_t limit = record_limit(s);
+    for (;;) {
+        if (s->limit_due || (limit != KSL_NO_RECORD_LIMIT && s->records_sent + 2 >= limit)) { (void)abort_session(s, why); return KSL_ERROR; }
+        ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
+        if (r == 1) { if (at_record_limit(s)) s->limit_due = 1; *read = n; return KSL_OK; }
+        if (at_record_limit(s)) { (void)abort_session(s, why); return KSL_ERROR; }
+        int e = SSL_get_error(s->ssl, r);
+        if (e == SSL_ERROR_WANT_READ && BIO_ctrl_pending(SSL_get_rbio(s->ssl)) > 0) continue;
+        /* it must write first and the pair is full: KSL_OK with nothing read, so the caller drains and reads again rather than
+           wait for input the records already fed may not need */
+        if (e == SSL_ERROR_WANT_WRITE) { ERR_clear_error(); return KSL_OK; }
+        return map_error(s, r);
+    }
 }
 /* RFC 9846 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has
    already sent some error alert". A session whose application failed must not end with close_notify: the peer would take the cut
@@ -112,7 +139,9 @@ static int abort_session(ksl_ssl *s, const char *why) {
     if (!s->done) { ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); return KSL_ERROR; }
     ERR_clear_error(); int started = 0, client = s->owner->role == KSL_CLIENT; const char *stuck = NULL;
     s->abort_alert = 1; s->last_alert = 0;
-    if (s->pending_write) {
+    if (s->pending_write_unkept)
+        stuck = "ksl: session aborted without an alert: a record write is pending and its bytes could not be kept (out of memory)";
+    else if (s->pending_write) {
         size_t n = 0;
         if (SSL_write_ex(s->ssl, s->pending_write, s->pending_write_len, &n) == 1) drop_pending_write(s);
         else stuck = "ksl: session aborted without an alert: a record write is pending and the transport takes no more";
@@ -152,7 +181,9 @@ int ksl_tcp_shutdown(ksl_ssl *s) {
 /* Test hook: the number of records after which ksl_tcp_write updates the sending key (by the AEAD otherwise; UINT64_MAX, never), counted from now. */
 void ksl_tcp_set_key_update_records_for_test(ksl_ssl *s, uint64_t records) { s->key_update_records = records; s->records_sent = 0; }
 /* Test hook: the records the keys may protect (the AEAD's limit otherwise); UINT64_MAX, none */
-void ksl_tcp_set_record_limit_for_test(ksl_ssl *s, uint64_t records) { s->record_limit = records; }
+/* The sending keys reach their record limit [records] records from now (relative, as the Kotlin tests' ksl_test_hooks_set_record_limit:
+   records ksl already wrote under the keys, a TLS 1.2 side's Finished or a TLS 1.3 server's tickets, are added) */
+void ksl_tcp_set_record_limit_for_test(ksl_ssl *s, uint64_t records) { s->record_limit = s->records_sent + records; }
 /* Test hook: the record count of the automatic KeyUpdate and the record limit, as the session applies them */
 void ksl_tcp_record_bounds_for_test(ksl_ssl *s, uint64_t *key_update_at, uint64_t *limit) { *key_update_at = key_update_records(s); *limit = record_limit(s); }
 #endif

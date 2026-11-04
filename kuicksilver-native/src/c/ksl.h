@@ -133,6 +133,8 @@ extern "C" {
 #define KSL_E_TOO_LATE 0xff000au      /* the setting cannot change at this stage of the handshake */
 #define KSL_E_CRYPTO_LEVEL 0xff000bu  /* ksl_quic_provide: a level TLS no longer reads (RFC 9001 4.1.3) or more than
                                          KSL_QUIC_LEVEL_MAX unread bytes at one level */
+#define KSL_E_BIND 0xff000cu          /* ksl_udp_open: the bind was refused (a port in use, an address not on this host); additive
+                                         in ABI 7 */
 
 typedef struct ksl_ctx ksl_ctx;
 typedef struct ksl_ssl ksl_ssl;
@@ -218,7 +220,9 @@ int      ksl_ssl_client_hello(ksl_ssl *, ksl_client_hello *out);     /* during K
 int      ksl_ssl_sni_resume(ksl_ssl *, ksl_ctx *override_or_null, int alert); /* after KSL_WANT_SNI; the override is a server context (KSL_E_BAD_ARG otherwise) */
 int      ksl_ssl_export_keying_material(ksl_ssl *, uint8_t *out, size_t out_len, const char *label, size_t label_len, const uint8_t *context, size_t context_len);
 ksl_session *ksl_ssl_get1_session(ksl_ssl *);                     /* client: the resumable session (a new reference) or NULL; the same pointer until the session changes.
-                                                                      TCP: every ticket received and not yet handed out comes first, oldest first (ABI 7) */
+                                                                      TCP: every ticket received and not yet handed out comes first, oldest first (ABI 7).
+                                                                      A session keeps the verify mode of the ssl that first handed it out, also when a
+                                                                      resumption hands the set session out again */
 int      ksl_ssl_set_session(ksl_ssl *, ksl_session *);           /* client, before the handshake; the caller keeps its reference. A session made
                                                                       under KSL_VERIFY_NONE is refused (KSL_E_BAD_ARG) unless this session verifies nothing either */
 void     ksl_session_free(ksl_session *);                         /* drops one reference; the last one cleanses the secrets */
@@ -238,9 +242,11 @@ int      ksl_quic_peek_event(ksl_ssl *, ksl_event *out);  /* same without consum
 int      ksl_tcp_feed(ksl_ssl *, const uint8_t *ciphertext, size_t len, size_t *consumed);
 int      ksl_tcp_drain(ksl_ssl *, uint8_t *out, size_t cap, size_t *written);
 /* Takes at most one record's worth (16 KiB, or the negotiated max_fragment_length) per call (ABI 7); KSL_WANT_READ when the pair has no
-   room: drain it and retry with the same bytes, from this or another buffer */
+   room: drain it and retry with the same bytes and the same length, from this or another buffer */
 int      ksl_tcp_write(ksl_ssl *, const uint8_t *plaintext, size_t len, size_t *consumed);
-int      ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);  /* KSL_EOF after close_notify */
+/* KSL_EOF after close_notify; KSL_OK with *read 0 when the read must write first and the pair has no room: drain, then read again
+   (records already fed may wait behind it, not for more input) */
+int      ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);
 int      ksl_tcp_shutdown(ksl_ssl *);                                       /* sends close_notify; KSL_OK when the peer's arrived */
 /* Ends a session whose application failed with a fatal internal_error alert instead of close_notify (RFC 9846 section 6.1), where
    OpenSSL 3.5 can send one: a TLS 1.3 server, a TLS 1.2 client. KSL_OK: the alert is queued, drain it (ksl_tcp_drain); KSL_ERROR

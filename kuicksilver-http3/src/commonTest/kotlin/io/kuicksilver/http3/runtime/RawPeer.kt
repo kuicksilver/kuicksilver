@@ -73,6 +73,22 @@ internal suspend fun peerMayHaveClosed(write: suspend () -> Unit) {
     }
 }
 
+/**
+ * [peerMayHaveClosed] for a write the peer may answer with STOP_SENDING [code] before it returns: only that STOP_SENDING
+ * is tolerated (stricter: a connection close or another code propagates).
+ */
+internal suspend fun peerStopped(
+    code: Long,
+    write: suspend () -> Unit,
+) {
+    try {
+        write()
+    } catch (e: Throwable) {
+        val stopped = generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Stopped>().firstOrNull() ?: throw e
+        kotlin.test.assertEquals(code, stopped.code, "STOP_SENDING code")
+    }
+}
+
 internal suspend fun QuicStream.readVarInt(): Long {
     val first = input.readByte()
     val n = VarInt.encodedLength(first)
@@ -93,3 +109,16 @@ internal suspend fun QuicConnection.acceptBidi(): QuicStream {
 internal val GET = listOf(":method" to "GET", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
 
 internal val POST = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+
+/**
+ * Waits until [check] holds, looking again after each yield (no delay), and fails with "[what] did not happen within
+ * [timeout]" when it does not: a test's wait names what it waited for.
+ */
+internal suspend fun awaitCondition(
+    what: String,
+    timeout: kotlin.time.Duration = kotlin.time.Duration.parse("5s"),
+    check: suspend () -> Boolean,
+) {
+    kotlinx.coroutines.withTimeoutOrNull(timeout) { while (!check()) kotlinx.coroutines.yield() }
+        ?: kotlin.test.fail("$what did not happen within $timeout")
+}

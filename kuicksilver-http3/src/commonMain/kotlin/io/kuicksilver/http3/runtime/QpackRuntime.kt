@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -24,7 +25,7 @@ internal class StreamAbandoned : Exception("stream abandoned while blocked")
 internal class QpackRuntime(
     settings: Http3Settings,
     private val encoderOut: suspend (ByteArray) -> Unit,
-    private val decoderOut: suspend (ByteArray) -> Unit,
+    private val decoderOut: (ByteArray) -> Unit,
 ) {
     private val encoder = QpackEncoder(settings.encoderMaxTableCapacity)
     private val decoder = QpackDecoder(settings.qpackMaxTableCapacity, settings.qpackBlockedStreams.toInt(), settings.maxFieldSectionSize)
@@ -130,6 +131,10 @@ internal class QpackRuntime(
         val BLOCKED_POLL = 50.milliseconds
     }
 
+    /**
+     * Hands what the decoder holds for the peer's encoder to the decoder stream's queue ([decoderOut] never suspends: the
+     * session writes the queue in order), so a cancelled caller loses nothing and no caller waits for the peer's credit.
+     */
     private suspend fun flushDecoder() =
         decLock.withLock {
             val b = decoder.drainDecoderStream()

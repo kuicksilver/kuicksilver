@@ -46,6 +46,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -58,6 +59,7 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** The listen backlog of ktor-network's native TCP server socket. */
@@ -65,6 +67,118 @@ private const val BACKLOG = 50
 
 /** Bytes per `recv`/`send` call. */
 private const val IO_BUFFER = 8192
+
+/**
+ * How long a pending connect waits for the selector before it looks at the socket itself, or null to wait until the
+ * selector reports it. Windows posts `FD_CONNECT` once, like `FD_CLOSE`, and ktor-network's selector there can lose such
+ * an event (see [tcpReadRecheck]): a connect that completed or failed meanwhile would wait for ever, and callers of
+ * [connectTcp] outside the engines (which bound it with their connect timeout) have no other bound (review 2026-10-28
+ * readwait.md R2).
+ */
+internal val tcpConnectRecheck: Duration? = tcpReadRecheck
+
+/**
+ * How long a connect whose selector wait is bounded ([tcpConnectRecheck]) may stay pending with no verdict from the socket
+ * (`SO_ERROR` 0 and no peer) before it fails: the longest a system's own connect timeout runs (Windows retries a SYN for
+ * about 21 s, Linux for about 2 minutes), so a failure whose error the lost event took with it ends too.
+ */
+internal val CONNECT_UNDECIDED_LIMIT: Duration = 3.minutes
+
+/**
+ * Waits for the pending connect of [fd]: connected once `SO_ERROR` is 0 and the socket has a peer (`getpeername`), failed
+ * with any other error that is not "not yet". With [recheck] the selector's wait is given up after that long (the select is
+ * kept for the next wait) and the socket is looked at; after [undecidedLimit] of rechecks without a verdict the connect
+ * fails. [rechecks] counts the waits that gave up (tests).
+ */
+internal suspend fun awaitConnected(
+    selector: SelectorManager,
+    socket: NativeTcpSocket,
+    fd: Int,
+    recheck: Duration?,
+    undecidedLimit: Duration = CONNECT_UNDECIDED_LIMIT,
+    rechecks: (() -> Unit)? = null,
+) = awaitConnectedWith(
+    select = { selector.select(socket, SelectInterest.CONNECT) },
+    pendingError = { tcpPendingError(fd) },
+    hasPeer = { runCatching { tcpAddressOf(fd, peer = true) }.isSuccess },
+    wouldBlock = ::tcpWouldBlock,
+    failed = { throw PosixException.forErrno(it, "connect") },
+    recheck = recheck,
+    undecidedLimit = undecidedLimit,
+    rechecks = rechecks,
+)
+
+/**
+ * [awaitConnected] over its seams (tests drive it without sockets): [select] waits for the selector's CONNECT report,
+ * [pendingError] reads `SO_ERROR`, [hasPeer] asks for a peer address, [failed] throws for an error. A report with no error and
+ * no peer fails at once: the selector reports a connect once (Windows posts FD_CONNECT once), so nothing more will come.
+ */
+internal suspend fun awaitConnectedWith(
+    select: suspend () -> Unit,
+    pendingError: () -> Int,
+    hasPeer: () -> Boolean,
+    wouldBlock: (Int) -> Boolean,
+    failed: (Int) -> Nothing,
+    recheck: Duration?,
+    undecidedLimit: Duration = CONNECT_UNDECIDED_LIMIT,
+    rechecks: (() -> Unit)? = null,
+) {
+    if (recheck == null) {
+        while (true) {
+            select()
+            val error = pendingError()
+            if (error == 0) return
+            if (!wouldBlock(error)) failed(error)
+        }
+    }
+    coroutineScope {
+        var pending: Deferred<Unit>? = null
+        var undecided = Duration.ZERO
+        try {
+            while (true) {
+                val wait = pending ?: async(start = CoroutineStart.UNDISPATCHED) { select() }.also { pending = it }
+                val reported = withTimeoutOrNull(recheck) { wait.await() } != null
+                if (reported) pending = null else rechecks?.invoke()
+                val error = pendingError()
+                if (error != 0 && !wouldBlock(error)) failed(error)
+                if (error == 0 && hasPeer()) return@coroutineScope
+                if (reported && error == 0) {
+                    throw IOException("the connect was reported done, but the socket has neither an error nor a peer")
+                }
+                if (!reported) {
+                    undecided += recheck
+                    if (undecided >= undecidedLimit) {
+                        throw IOException("the connect was neither completed nor failed after $undecided (its event was lost)")
+                    }
+                }
+            }
+        } finally {
+            pending?.cancel()
+        }
+    }
+}
+
+/** How many times [NativeTcpSocket.readRecheck] an idle read waits at most between two receives (1 s grows to 8 s on Windows). */
+private const val MAX_READ_BACKOFF = 8
+
+/**
+ * The idle backoff of a bounded wait for data: the next wait is [base], doubled each time a wait gives up with nothing
+ * read, up to [MAX_READ_BACKOFF] times [base], and [base] again once data was read.
+ */
+internal class ReadBackoff(
+    val base: Duration,
+) {
+    var next: Duration = base
+        private set
+
+    fun gaveUp() {
+        next = minOf(next * 2, base * MAX_READ_BACKOFF)
+    }
+
+    fun dataRead() {
+        next = base
+    }
+}
 
 /**
  * How long the write loop waits for room before it tries the send again ([NativeTcpSocket.RoomWait]): the bound on how
@@ -95,6 +209,15 @@ public actual suspend fun connectTcp(
 public actual suspend fun connectTcpAddress(
     selector: SelectorManager,
     address: TcpAddress,
+): Socket = connectTcpAddressWith(selector, address, tcpConnectRecheck)
+
+/** [connectTcpAddress] with the bounds of [awaitConnected] given (tests use short ones). */
+internal suspend fun connectTcpAddressWith(
+    selector: SelectorManager,
+    address: TcpAddress,
+    recheck: Duration?,
+    undecidedLimit: Duration = CONNECT_UNDECIDED_LIMIT,
+    rechecks: (() -> Unit)? = null,
 ): Socket {
     tcpStartup()
     val to = Sockaddr.of(address)
@@ -106,14 +229,7 @@ public actual suspend fun connectTcpAddress(
         }
     val socket = NativeTcpSocket(selector, fd, to.toInet(), null)
     try {
-        if (!tcpConnect(fd, to)) {
-            while (true) {
-                selector.select(socket, SelectInterest.CONNECT)
-                val error = tcpPendingError(fd)
-                if (error == 0) break
-                if (!tcpWouldBlock(error)) throw PosixException.forErrno(error, "connect")
-            }
-        }
+        if (!tcpConnect(fd, to)) awaitConnected(selector, socket, fd, recheck, undecidedLimit, rechecks)
         return socket
     } catch (e: PosixException) {
         socket.close()
@@ -239,6 +355,9 @@ internal class NativeTcpSocket(
      */
     @Volatile internal var readRecheck: Duration? = tcpReadRecheck
 
+    /** Each wait for data that [ReadWait] gave up, as how long it waited (tests: the idle backoff). */
+    internal val readRechecksForTest = kotlinx.coroutines.flow.MutableStateFlow<List<Duration>>(emptyList())
+
     override fun close() {
         if (!closeFlag.compareAndSet(expectedValue = false, newValue = true)) return
         launch(CoroutineName("socket-close")) {
@@ -321,6 +440,7 @@ internal class NativeTcpSocket(
                             throw e
                         }
                     if (n > 0) {
+                        data.dataRead()
                         channel.writeFully(buffer, 0, n)
                         channel.flush()
                     } else if (n == 0) {
@@ -390,7 +510,10 @@ internal class NativeTcpSocket(
      * The read loop's wait for data: a READ select, given up after [readRecheck] (when set) so the loop tries the receive
      * again, which returns the data or the end of the stream the selector did not report (see [tcpReadRecheck]). Like
      * [RoomWait], the select outlives a wait that gave up and serves the next one: an idle connection leaves one select
-     * behind, not one per recheck.
+     * behind, not one per recheck. While nothing arrives the recheck backs off, doubling up to [MAX_READ_BACKOFF] times
+     * [readRecheck] (1, 2, 4, 8 s on Windows), and starts over once data was read: an idle keep-alive connection costs a
+     * receive every 8 s instead of every second (review 2026-10-28 readwait.md R3), and a lost end of stream right after
+     * data still shows within [readRecheck].
      */
     private inner class ReadWait(
         scope: CoroutineScope,
@@ -398,20 +521,33 @@ internal class NativeTcpSocket(
         private val waits = SupervisorJob(scope.coroutineContext.job)
         private val waitScope = CoroutineScope(scope.coroutineContext + waits)
         private var select: Deferred<Unit>? = null
+        private var backoff: ReadBackoff? = null
 
-        /** Returns when the receive may be tried again: the socket is readable, or [readRecheck] has passed. */
+        /** Returns when the receive may be tried again: the socket is readable, or the recheck has passed. */
         suspend fun await() {
-            val recheck = readRecheck ?: return selector.select(this@NativeTcpSocket, SelectInterest.READ)
+            val base = readRecheck ?: return selector.select(this@NativeTcpSocket, SelectInterest.READ)
+            val steps = backoff?.takeIf { it.base == base } ?: ReadBackoff(base).also { backoff = it }
+            val recheck = steps.next
             val pending =
                 select ?: waitScope
                     .async(start = CoroutineStart.UNDISPATCHED) { selector.select(this@NativeTcpSocket, SelectInterest.READ) }
                     .also { select = it }
             try {
-                if (withTimeoutOrNull(recheck) { pending.await() } != null) select = null
+                if (withTimeoutOrNull(recheck) { pending.await() } != null) {
+                    select = null
+                } else {
+                    readRechecksForTest.value += recheck
+                    steps.gaveUp()
+                }
             } catch (e: Throwable) {
                 select = null // a select that failed is not kept: the read loop ends with its failure
                 throw e
             }
+        }
+
+        /** Data was read: the next wait gives up after [readRecheck] again. */
+        fun dataRead() {
+            backoff?.dataRead()
         }
 
         /** Cancels the select in flight: the read loop has ended. */

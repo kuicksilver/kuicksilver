@@ -12,7 +12,11 @@
 #include "ksl_internal.h"
 #include "ksl_test_hooks.h"
 
-__attribute__((visibility("default"))) void ksl_test_hooks_set_record_limit(void *ssl, uint64_t records) { ((ksl_ssl *)ssl)->record_limit = records; }
+/* The sending keys reach their record limit [records] records from now: every record ksl writes counts (the tickets a TLS 1.3
+   server sent after its handshake included), so the limit is set past those already written */
+__attribute__((visibility("default"))) void ksl_test_hooks_set_record_limit(void *ssl, uint64_t records) {
+    ksl_ssl *s = ssl; s->record_limit = s->records_sent + records;
+}
 
 #ifdef KSL_TEST_HOOKS_JNI
 #include <jni.h>

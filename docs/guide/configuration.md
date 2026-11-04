@@ -349,7 +349,7 @@ Not configurable, listed so you can plan around them:
 | Connection ID rotation | every migration and every 10 000 1-RTT packets |
 | Reassembly | 256 gaps per stream, 4096 per connection |
 | qlog per connection | 64 MiB; after that the connection is not traced further |
-| TCP client session cache | 256 sessions per Ktor client engine (one process-wide cache for `Socket.tls` and `TlsConnection.client`) |
+| TCP client session cache | 384 sessions (six tickets for each of 64 origins) per Ktor client engine (one process-wide cache for `Socket.tls` and `TlsConnection.client`) |
 | Alt-Svc | 8 alternatives per origin, 1000 origins; default `ma` 86 400 s; broken marks 5 min doubling up to 2 days |
 | Ktor client race head start | 100 ms..2 s when derived from the RTT |
 | Datagram slots of `QuicEndpoint` | 1500 bytes (hence the `maxUdpPayloadSize` ceiling) |

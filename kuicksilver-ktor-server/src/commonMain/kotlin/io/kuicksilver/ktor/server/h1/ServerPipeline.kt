@@ -355,8 +355,30 @@ internal fun CoroutineScope.startH1Pipeline(
         // responses handed to the writer and not yet written: the deadline of the next request head starts at zero
         val unwritten = MutableStateFlow(0)
         val pipelineJob = coroutineContext.job
-        startPipelineWriter(actorChannel, timeout, sendTimeout, connection, unwritten) { why ->
-            pipelineJob.cancel(CancellationException(why))
+        // completed when the writer stopped at a response that failed before any of its bytes went out: it closed the output
+        // cleanly after the responses before it, so the connection ends without reading or processing any further request
+        val writerStopped = Job()
+        val writerJob =
+            startPipelineWriter(actorChannel, timeout, sendTimeout, connection, unwritten, writerStopped) { why ->
+                pipelineJob.cancel(CancellationException(why))
+            }
+        // what ends the wait for the next request head: the server stopping, or the writer having stopped
+        val stopReading = Job()
+        // the listener's draining job outlives every connection: its handler goes when this pipeline ends (review M1)
+        val drainingHandle = draining?.invokeOnCompletion { stopReading.complete() }
+        writerStopped.invokeOnCompletion { stopReading.complete() }
+        // completed when a handler failed: no later request is processed (RFC 9112 section 9.3.2: a server may process only
+        // what it then answers in order, and the connection ends after the failed response), whatever the writer has reached
+        // by then (it may still be writing an earlier response the client reads slowly)
+        val responseFailed = Job()
+        responseFailed.invokeOnCompletion { stopReading.complete() }
+        // the input is lingered on once at most, by whichever path ends the connection first
+        var lingered = false
+
+        suspend fun linger() {
+            if (lingered) return
+            lingered = true
+            lingerAfterRefusal(actorChannel, connection, draining, writerJob, sendTimeout)
         }
 
         val requestContext = RequestHandlerName + Dispatchers.Unconfined
@@ -369,14 +391,14 @@ internal fun CoroutineScope.startH1Pipeline(
             while (true) { // parse requests loop
                 val request =
                     try {
-                        readRequestHead(input, headBudget, unwritten, draining)
+                        readRequestHead(input, headBudget, unwritten, stopReading)
                     } catch (e: RequestHeadTimeout) {
                         if (e.partial) respondRequestTimeout(actorChannel) else actorChannel.close()
                         break
                     } catch (_: RequestHeadTooLarge) {
                         // empty, also for HEAD
                         respondStatus(actorChannel, 431, "Request Header Fields Too Large")
-                        lingerAfterRefusal(actorChannel, connection, draining)
+                        linger()
                         break
                     } catch (refused: RequestHeadRefused) {
                         if (refused.status == 400) {
@@ -387,11 +409,11 @@ internal fun CoroutineScope.startH1Pipeline(
                                 closingResponsePacket(refused.status, refused.reason, refused.location, refused.body, input.headMethod),
                             )
                         }
-                        lingerAfterRefusal(actorChannel, connection, draining)
+                        linger()
                         break
                     } catch (_: TooLongLineException) {
                         respondBadRequest(actorChannel, input.headMethod)
-                        lingerAfterRefusal(actorChannel, connection, draining)
+                        linger()
                         break
                     } catch (io: IOException) {
                         throw io
@@ -399,7 +421,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         throw cancelled
                     } catch (_: Throwable) {
                         respondBadRequest(actorChannel, input.headMethod)
-                        lingerAfterRefusal(actorChannel, connection, draining)
+                        linger()
                         break
                     } ?: break
                 headBudget = headerTimeout
@@ -414,7 +436,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     } else {
                         respondBadRequest(actorChannel, input.headMethod)
                     }
-                    lingerAfterRefusal(actorChannel, connection, draining)
+                    linger()
                     break
                 }
 
@@ -466,6 +488,11 @@ internal fun CoroutineScope.startH1Pipeline(
                 if (!safe) {
                     // an unsafe request runs alone: after the handlers before it (its response waits for theirs anyway)
                     for (earlier in running) earlier.join()
+                    if (responseFailed.isCompleted) {
+                        request.release()
+                        response.cancel(IOException("not processed: an earlier response failed"))
+                        break
+                    }
                     running.clear()
                 }
                 val handlerJob =
@@ -494,6 +521,7 @@ internal fun CoroutineScope.startH1Pipeline(
                                 // reset that could destroy the responses before this one
                                 response.close()
                             } else {
+                                responseFailed.complete()
                                 response.close(cause)
                             }
                         } finally {
@@ -562,13 +590,13 @@ internal fun CoroutineScope.startH1Pipeline(
 
                         BodyOutcome.Abandoned -> {
                             // the client may still be sending the body
-                            if (body.continueWithheld) actorChannel.close() else lingerAfterRefusal(actorChannel, connection, draining)
+                            if (body.continueWithheld) actorChannel.close() else linger()
                             break
                         }
 
                         BodyOutcome.Malformed -> {
                             // the 400 for a broken chunked body: the rest of it may still be coming
-                            lingerAfterRefusal(actorChannel, connection, draining)
+                            linger()
                             break
                         }
 
@@ -586,7 +614,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     // sent optimistically, which read as a request would be smuggled. The handler's response goes out,
                     // then the input is drained so the refusal (a 407 the client needs) is not lost to a reset
                     handlerJob.join()
-                    lingerAfterRefusal(actorChannel, connection, draining)
+                    linger()
                     break
                 }
                 if (lastRequest) break
@@ -602,12 +630,18 @@ internal fun CoroutineScope.startH1Pipeline(
                     // and before the handlers after it: the next request is read once this one's handler has ended
                     handlerJob.join()
                 }
+                if (responseFailed.isCompleted) break
             }
         } catch (_: IOException) {
             // the client went away
         } finally {
             actorChannel.close()
+            drainingHandle?.dispose()
+            stopReading.cancel()
         }
+        // the writer ended the connection after a failed response (its FIN is out), or a handler failed: the client may still
+        // be sending, and a close over unread input is a reset that can destroy the responses before it (RFC 9112 section 9.6)
+        if (writerStopped.isCompleted || responseFailed.isCompleted) linger()
     }
 
 /**
@@ -646,18 +680,21 @@ private fun CoroutineScope.startPipelineWriter(
     sendTimeout: Duration,
     connection: H1Connection,
     unwritten: MutableStateFlow<Int>,
+    stopped: CompletableJob,
     onEnd: (String) -> Unit,
 ): Job =
     launch(context = PipelineWriterName, start = CoroutineStart.UNDISPATCHED) {
         var failure: Throwable? = null
         try {
-            pipelineWriterLoop(actorChannel, timeout, sendTimeout, connection, unwritten, onEnd)
+            pipelineWriterLoop(actorChannel, timeout, sendTimeout, connection, unwritten, stopped, onEnd)
         } catch (cause: Throwable) {
             failure = cause
         } finally {
             actorChannel.close(failure)
             connection.output.close(failure)
             actorChannel.cancelPendingResponses(failure)
+            // nothing more is written: the deadline of a request head the reader may still be reading starts now
+            if (stopped.isCompleted) unwritten.value = 0
         }
     }
 
@@ -795,8 +832,25 @@ private suspend fun lingerAfterRefusal(
     actorChannel: Channel<ByteReadChannel>,
     connection: H1Connection,
     draining: Job?,
+    writer: Job? = null,
+    sendTimeout: Duration = Duration.ZERO,
 ) {
     actorChannel.close()
+    // the responses still to write go out first, for at most [sendTimeout] in all (a fixed total, not a deadline on progress)
+    // and not once the server stops ([draining]): the linger window then starts once they are on their way, not while they
+    // still queue behind the writer
+    if (writer != null) {
+        withTimeoutOrNull(sendTimeout) {
+            if (draining == null) {
+                writer.join()
+            } else {
+                select {
+                    writer.onJoin {}
+                    draining.onJoin {}
+                }
+            }
+        }
+    }
     try {
         withTimeoutOrNull(LINGER) {
             if (draining == null) {
@@ -952,6 +1006,7 @@ private suspend fun pipelineWriterLoop(
     sendTimeout: Duration,
     connection: H1Connection,
     unwritten: MutableStateFlow<Int>,
+    stopped: CompletableJob,
     onEnd: (String) -> Unit,
 ) {
     while (true) {
@@ -964,6 +1019,11 @@ private suspend fun pipelineWriterLoop(
         val child = next.getOrNull() ?: break
         try {
             child.copyToClient(connection.output, sendTimeout)
+        } catch (failed: FailedBeforeItsFirstByte) {
+            // nothing of this response went out, so the connection can end cleanly: the responses before it are whole on
+            // the wire, and none after it is sent in its place (KTOR-10037; upstream Ktor stops its writer the same way)
+            stopped.complete()
+            break
         } catch (cause: Throwable) {
             if (child is ByteWriteChannel) child.close(cause)
             if (cause is ClientNotReading) {
@@ -977,6 +1037,11 @@ private suspend fun pipelineWriterLoop(
         }
     }
 }
+
+/** A response failed with [cause] before any of its bytes went to the client: see [copyToClient]. */
+private class FailedBeforeItsFirstByte(
+    override val cause: Throwable,
+) : IOException("a response failed before its first byte went out", cause)
 
 /** The client took no bytes of a response for [timeout]. */
 private class ClientNotReading(
@@ -995,17 +1060,21 @@ private suspend fun ByteReadChannel.copyToClient(
     output: ByteWriteChannel,
     stall: Duration,
 ) {
+    var sent = false
     try {
         while (!isClosedForRead) {
-            readBuffer.transferTo(output.writeBuffer)
+            if (readBuffer.transferTo(output.writeBuffer) > 0) sent = true
             withTimeoutOrNull(stall) { output.flush() } ?: throw ClientNotReading(stall)
             awaitContent()
         }
         // a response whose handler failed is "closed for read" too, also before this copy reached it (it waited behind
-        // a pipelined one): it ends the connection with its failure, not with nothing sent for it
+        // a pipelined one): it ends the connection, never with the next response sent in its place
         closedCause?.let { throw it }
     } catch (cause: Throwable) {
         cancel(cause)
+        // none of it went out: the caller ends the connection cleanly. Part of it went out: only a failure (a reset) keeps
+        // the client from taking that part for the whole response (one delimited by the close, or chunked)
+        if (!sent && cause !is ClientNotReading && cause !is CancellationException) throw FailedBeforeItsFirstByte(cause)
         output.close(cause)
         throw cause
     }

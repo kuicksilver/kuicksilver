@@ -47,13 +47,21 @@ tasks.matching { it.name.startsWith("compileAndroid") || it.name.contains("merge
 // They need the OpenSSL headers of the host target (ksl_internal.h), reused like any other with kuicksilver.openssl.prebuilt. Where a
 // task is skipped by host, it must not depend on that OpenSSL build either: onlyIf does not prune dependencies, and on the Windows
 // runner (windows-jvm) opensslBuildMingwX64 finds no build/openssl/mingw-x64 to reuse, so opensslFetch ran and failed.
-val hostOpenSsl = "opensslBuild" + (if (hostClassifier == "osx-aarch_64") "MacosArm64" else if (hostClassifier == "osx-x86_64") "MacosX64" else if (hostClassifier == "linux-aarch_64") "LinuxArm64" else "LinuxX64")
-val testHooksJniHost = !hostClassifier.startsWith("windows")
+// The OpenSSL build the hooks need on this host, null on Windows, where they are not built: unlike buildJniHost's map above
+// (which builds the mingw OpenSSL for the Windows JNI library), there is deliberately none, so nothing can depend on one there.
+val hostOpenSsl: String? = when (hostClassifier) {
+    "osx-aarch_64" -> "opensslBuildMacosArm64"
+    "osx-x86_64" -> "opensslBuildMacosX64"
+    "linux-aarch_64" -> "opensslBuildLinuxArm64"
+    "linux-x86_64" -> "opensslBuildLinuxX64"
+    else -> null
+}
+val testHooksJniHost = hostOpenSsl != null
 val testHooksMacHost = System.getProperty("os.name").lowercase().contains("mac")
 tasks.register<Exec>("buildTestHooksJni") {
     group = "native"; description = "Builds the JVM tests' native hooks for the host"
     onlyIf("the host is not Windows") { testHooksJniHost }
-    if (testHooksJniHost) dependsOn(hostOpenSsl)
+    hostOpenSsl?.let { dependsOn(it) }
     inputs.files(fileTree("src/c"), fileTree("src/testhooks"), root.resolve("tools/build-test-hooks.sh"))
     outputs.dir(layout.buildDirectory.dir("test-hooks/jni"))
     commandLine("bash", root.resolve("tools/build-test-hooks.sh").path, "jni", layout.buildDirectory.dir("test-hooks/jni").get().asFile.path)

@@ -193,10 +193,10 @@ void run_udp_win(void) {
     { SOCKET f = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); struct sockaddr_in sa; memset(&sa, 0, sizeof sa); sa.sin_family = AF_INET; sa.sin_addr.s_addr = htonl(INADDR_ANY); int l = (int)sizeof sa;
       CHECK(f != INVALID_SOCKET && bind(f, (struct sockaddr *)&sa, sizeof sa) == 0 && getsockname(f, (struct sockaddr *)&sa, &l) == 0, "an IPv4 socket on 0.0.0.0");
       uint8_t at[KSL_UDP_ADDR_LEN] = { 6 }; at[1] = (uint8_t)(ntohs(sa.sin_port) >> 8); at[2] = (uint8_t)ntohs(sa.sin_port); uint32_t err = 0; char msg[128] = {0};
-      ksl_udp *w = ksl_udp_open(at, 0, &err, msg, sizeof msg); CHECK(w == NULL && err == KSL_E_BAD_ARG, ":: on a port an IPv4 socket holds is refused");
+      ksl_udp *w = ksl_udp_open(at, 0, &err, msg, sizeof msg); CHECK(w == NULL && err == KSL_E_BIND, ":: on a port an IPv4 socket holds is refused");
       if (w) ksl_udp_close(w);
       uint8_t at4[KSL_UDP_ADDR_LEN]; w4(at4, ntohs(sa.sin_port)); memset(at4 + 3, 0, 4); err = 0; w = ksl_udp_open(at4, 0, &err, msg, sizeof msg);
-      CHECK(w == NULL && err == KSL_E_BAD_ARG, "0.0.0.0 on a port an IPv4 socket holds is refused");
+      CHECK(w == NULL && err == KSL_E_BIND, "0.0.0.0 on a port an IPv4 socket holds is refused");
       if (w) ksl_udp_close(w); if (f != INVALID_SOCKET) closesocket(f); }
     /* udp_win_wildcard_dual_stack: 0.0.0.0 opens one dual-stack socket on ::, as on Linux and Apple: 0.0.0.0 and the chosen port are
        reported, IPv4 peers arrive as family 4, and IPv6 destinations are reachable (the Ktor client binds 0.0.0.0:0) */
@@ -224,7 +224,7 @@ void run_udp_win(void) {
         CHECK(wping(a, w, to4, 1, 100, 0, NULL, NULL, rl) == 1, "the fallback receives IPv4"); ksl_udp_close(w); }
       if (w6) ksl_udp_close(w6); }
     /* udp_win_exclusive_bind: a second socket on a bound port is refused (SO_EXCLUSIVEADDRUSE), REUSEPORT or not */
-    { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(la, KSL_UDP_REUSEPORT, &err, msg, sizeof msg); CHECK(r2 == NULL && err == KSL_E_BAD_ARG, "no second socket on the same port"); if (r2) ksl_udp_close(r2);
+    { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(la, KSL_UDP_REUSEPORT, &err, msg, sizeof msg); CHECK(r2 == NULL && err == KSL_E_BIND, "no second socket on the same port"); if (r2) ksl_udp_close(r2);
       /* a foreign socket asking for SO_REUSEADDR: without SO_EXCLUSIVEADDRUSE on ours, Windows would let it bind the same port */
       CHECK(raw_reuseaddr_bind_fails(la), "a raw SO_REUSEADDR socket cannot bind the exclusive port"); }
     /* udp_win_arrival_wakes_blocked_recv: a datagram arriving while ksl_udp_recv waits in WSAPoll ends the wait at once, not at the

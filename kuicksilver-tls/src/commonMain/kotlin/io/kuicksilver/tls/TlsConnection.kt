@@ -64,6 +64,9 @@ public class TlsConnection private constructor(
     private var readerJob: Job? = null
     private var writerJob: Job? = null
 
+    /** The most plaintext one ksl_tcp_write takes (a record), learnt from a write that took less than offered; the writer's alone. */
+    private var recordBytes = Int.MAX_VALUE
+
     /** Plaintext from the peer. Closed cleanly after `close_notify`; closed with a [TlsException] on any other end. */
     public val input: ByteReadChannel get() = inputChannel
 
@@ -343,6 +346,7 @@ public class TlsConnection private constructor(
             }
             transportOut.flush()
         }
+        drained.trySend(Unit)
     }
 
     private val drainLock = Mutex()
@@ -350,6 +354,9 @@ public class TlsConnection private constructor(
 
     /** Signalled by the reader pump when what it fed may have produced ciphertext (handshake messages, alerts, key updates). */
     private val drainRequests = Channel<Unit>(Channel.CONFLATED)
+
+    /** Signalled after each drain: a reader pump whose read must write first waits for room here, not for transport input. */
+    private val drained = Channel<Unit>(Channel.CONFLATED)
 
     /** Drains for the reader pump, so that the reader pump never waits on the transport. */
     private suspend fun drainerPump() {
@@ -359,6 +366,7 @@ public class TlsConnection private constructor(
             throw e
         } catch (e: Throwable) {
             val failure = e as? TlsException ?: TlsException.Protocol(null, e.message ?: "transport failure", e)
+            drained.close(failure)
             inputChannel.cancel(failure)
             outputChannel.cancel(failure)
         }
@@ -385,6 +393,15 @@ public class TlsConnection private constructor(
                             // client that reads one response and closes would otherwise cancel this pump first
                             rememberSession()
                             inputChannel.writeFully(plain, 0, r)
+                        }
+
+                        r == 0 -> {
+                            // ksl must write first (a handshake message under way) and its pair is full: the records
+                            // already fed are read once the drainer made room, not when the transport brings more input
+                            drained.tryReceive()
+                            drainRequests.trySend(Unit)
+                            // closed when the drainer failed, which ended the input with its failure
+                            if (drained.receiveCatching().isClosed) return
                         }
 
                         r == -KslConst.EOF -> {
@@ -441,16 +458,22 @@ public class TlsConnection private constructor(
                 }
                 var off = 0
                 while (off < n) {
+                    // ksl takes one record per call: offering more only makes the JNI layer copy bytes it does not take (32
+                    // times what it takes with a 512-byte max_fragment_length)
+                    val ask = minOf(n - off, recordBytes)
                     val w =
                         try {
-                            lock.withLock { Ksl.tcpWrite(s(), buf, off, n - off) }
+                            lock.withLock { Ksl.tcpWrite(s(), buf, off, ask) }
                         } catch (
                             e: KslException.Internal,
                         ) {
                             alertAfterFailedWrite(e)
                             throw e.toTlsFailure(presented).first
                         }
-                    if (w > 0) off += w
+                    if (w > 0) {
+                        if (w < ask) recordBytes = w // a whole record was less than offered: that is the session's record size
+                        off += w
+                    }
                     drainToTransport()
                 }
             }
@@ -850,8 +873,11 @@ public class SessionCache(
     /** The process-wide cache, key derivation and the default bound. */
     @InternalKuicksilverApi
     public companion object {
-        /** Sessions a cache keeps before the oldest is evicted. */
-        public const val DEFAULT_MAX_ENTRIES: Int = 256
+        /**
+         * Sessions a cache keeps before the oldest is evicted: the [TICKETS_PER_ORIGIN] tickets of each of 64 TCP origins (or 384
+         * QUIC origins, one ticket each).
+         */
+        public const val DEFAULT_MAX_ENTRIES: Int = 384
 
         /**
          * Tickets kept per TCP origin (RFC 9846 appendix C.4: one for each of the client's parallel connections; six, as a server's

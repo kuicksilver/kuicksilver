@@ -50,19 +50,30 @@ tags() {   # <image>: its tags in the registry, one per line (none when the pack
     [ ! -f "$KSL_GHCR_TAGS_DIR/$1.tags" ] || cat "$KSL_GHCR_TAGS_DIR/$1.tags"; return 0
   fi
   : "${GITHUB_TOKEN:?GITHUB_TOKEN is needed to read the registry}" "${ACTOR:?ACTOR is needed to read the registry}"
-  token=$(curl -fsS --retry 3 -u "$ACTOR:$GITHUB_TOKEN" "https://ghcr.io/token?service=ghcr.io&scope=repository:$repo:pull" | jq -er .token) \
+  # the credentials reach curl as a config on its standard input, never on its command line (visible in the process list)
+  token=$(curl -fsS --retry 3 --config - "https://ghcr.io/token?service=ghcr.io&scope=repository:$repo:pull" \
+      <<< "user = \"$ACTOR:$GITHUB_TOKEN\"" | jq -er .token) \
     || { echo "::error::interop-image: no pull token for ghcr.io/$repo" >&2; return 1; }
+  # Actions masks GITHUB_TOKEN in the log by itself, the registry's token only when told (the runner reads stderr too)
+  [ "${GITHUB_ACTIONS:-}" != true ] || echo "::add-mask::$token" >&2
   url="https://ghcr.io/v2/$repo/tags/list?n=1000"; body=$(mktemp)
   while [ -n "$url" ]; do
-    status=$(curl -sS --retry 3 -o "$body" -D "$body.h" -w '%{http_code}' -H "Authorization: Bearer $token" "$url") || status=000
+    status=$(curl -sS --retry 3 -o "$body" -D "$body.h" -w '%{http_code}' --config - "$url" \
+      <<< "header = \"Authorization: Bearer $token\"") || status=000
     case "$status" in
       200) jq -r '.tags // [] | .[]' "$body" || { echo "::error::interop-image: ghcr.io/$repo: no tag list in the answer" >&2; rm -f "$body" "$body.h"; return 1; } ;;
       404) rm -f "$body" "$body.h"; return 0 ;;   # NAME_UNKNOWN: no such package yet
       *) echo "::error::interop-image: cannot list the tags of ghcr.io/$repo (HTTP $status)" >&2; rm -f "$body" "$body.h"; return 1 ;;
     esac
-    # pagination (OCI distribution spec): Link: </v2/<name>/tags/list?n=1000&last=<tag>>; rel="next"
+    # pagination (OCI distribution spec): Link: </v2/<name>/tags/list?n=1000&last=<tag>>; rel="next", the URL relative or
+    # absolute
     next=$(tr -d '\r' < "$body.h" | sed -nE 's/^[Ll]ink: *<([^>]*)>; *rel="next".*/\1/p' | head -1)
-    url=""; [ -z "$next" ] || url="https://ghcr.io$next"
+    case "$next" in
+      "") url="" ;;
+      https://ghcr.io/*) url=$next ;;
+      /*) url="https://ghcr.io$next" ;;
+      *) echo "::error::interop-image: ghcr.io/$repo: a next page at '$next'" >&2; rm -f "$body" "$body.h"; return 1 ;;
+    esac
   done
   rm -f "$body" "$body.h"
 }

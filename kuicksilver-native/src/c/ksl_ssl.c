@@ -21,6 +21,9 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
         /* a write left pending is retried from another buffer holding the same bytes: the JNI layer copies each call's bytes, and
            ksl_tcp_abort retries from its own copy */
         SSL_set_mode(s->ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+        /* one SSL_read_ex handles at most one record that is not application data: with auto-retry it went through every record
+           fed, answering each (a HelloRequest draws an alert) past the record limit before ksl could look (ksl_tcp_read) */
+        SSL_clear_mode(s->ssl, SSL_MODE_AUTO_RETRY);
     }
     /* TCP: for the session's life (KeyUpdate accounting); a QUIC client: until the handshake ends (its ServerHello) */
     if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT) { SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s); }
@@ -151,7 +154,14 @@ static CRYPTO_ONCE session_mode_once = CRYPTO_ONCE_STATIC_INIT;
 static int session_mode_idx = -1;
 static void session_mode_index(void) { session_mode_idx = SSL_SESSION_get_ex_new_index(0, NULL, NULL, NULL, NULL); }
 static int session_mode_ready(void) { return CRYPTO_THREAD_run_once(&session_mode_once, session_mode_index) && session_mode_idx >= 0; }
-static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) { if (session_mode_ready()) (void)SSL_SESSION_set_ex_data(sess, session_mode_idx, (void *)(intptr_t)(s->verify_mode + 1)); }
+/* A session keeps the stamp it got when it was first handed out: a TLS 1.2 resumption (or TLS 1.3 before the first ticket) hands out
+   the very SSL_SESSION that was set, which other holders share. Stamping it again would let a client without verification turn a
+   verified session into one made without verification for all of them, and write its ex data while another thread reads it in
+   ksl_ssl_set_session (review 2026-10-28 T-N1). A new session (a ticket, a full handshake's) has no stamp yet and gets this one's. */
+static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) {
+    if (session_mode_ready() && SSL_SESSION_get_ex_data(sess, session_mode_idx) == NULL)
+        (void)SSL_SESSION_set_ex_data(sess, session_mode_idx, (void *)(intptr_t)(s->verify_mode + 1));
+}
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
     ERR_clear_error();
@@ -271,6 +281,18 @@ static int server_hello_has_ems(const uint8_t *m, size_t len) {
      protocol_version (a TLS 1.2 ServerHello's legacy_version is its version, which OpenSSL checks itself). */
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
     ksl_ssl *s = arg; const uint8_t *m = buf;
+    /* RFC 9846 section 5.5 counts records, not application data: every record written once the handshake is done counts toward
+       the sending keys' limit (ksl_tcp.c), alerts and handshake messages included (a TLS 1.2 peer's HelloRequests draw one
+       no_renegotiation alert each). OpenSSL 3.5 calls this with SSL3_RT_HEADER once per record it writes (tls_common.c,
+       tls_post_encryption_processing_default), before the message callback of what the record carried. */
+    if (s->mode == KSL_MODE_TCP && write_p) {
+        /* the application keys are ours from the record after our ChangeCipherSpec (TLS 1.2; TLS 1.3's compatibility one changes
+           nothing) or after our Finished (TLS 1.3): records count from there, not from the end of the handshake, which comes later
+           (a TLS 1.2 side's own Finished, a TLS 1.3 server's tickets written in the same handshake call) */
+        if (content_type == SSL3_RT_HEADER && (s->app_keys_out || s->done)) s->records_sent++;
+        else if (content_type == SSL3_RT_CHANGE_CIPHER_SPEC && SSL_version(ssl) < TLS1_3_VERSION) s->app_keys_out = 1;
+        else if (content_type == SSL3_RT_HANDSHAKE && len >= 1 && m[0] == SSL3_MT_FINISHED && SSL_version(ssl) >= TLS1_3_VERSION) s->app_keys_out = 1;
+    }
     /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed
        2^48-1"; "If a sending implementation receives a KeyUpdate with request_update set to update_requested, it MUST NOT send its
        own KeyUpdate if that would cause it to exceed these limits and SHOULD instead ignore the update_requested flag. This may result
@@ -291,6 +313,9 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
         if (write_p) {
             if (m[4] == SSL_KEY_UPDATE_REQUESTED) s->update_requested_at = s->fed;
             if (++s->key_updates_sent >= bound) s->key_updates_exhausted = 1;
+            /* the KeyUpdate's own record went out under the old keys (its header was counted just before this message
+               callback, ssl3_do_write); every record from here on is under the new ones */
+            s->records_sent = 0;
         } else {
             uint64_t record_end = s->fed - (uint64_t)BIO_ctrl_pending(SSL_get_rbio(ssl));
             if (record_end > s->update_requested_at) s->update_requested_pending = 0;

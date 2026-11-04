@@ -13,7 +13,8 @@
 #        tools/fuzz/campaign.sh status            per-target time, executions, coverage, findings
 #        tools/fuzz/campaign.sh minimize [ids]     merge the grown corpora into tools/fuzz/corpus/<id>/ (committed)
 #        tools/fuzz/campaign.sh prune [ids]        reduce the grown corpora in place to the inputs that add coverage beyond the
-#                                                  committed corpus and the seeds (.github/workflows/fuzz.yml, before it caches them)
+#                                                  committed corpus and the seeds (.github/workflows/fuzz.yml, before it caches them);
+#                                                  both exit 1 when a target's merge failed (its corpus is then left as it was)
 #        tools/fuzz/campaign.sh list              target ids
 # Options: --slice MIN (≤ 20, default 20)  --goal HOURS per target (default 2)  --goals id=HOURS,... (per-target goals
 #          that override --goal)  --hours HOURS wall clock for this invocation (default: until every selected target
@@ -27,6 +28,85 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 state="${KSL_FUZZ_STATE:-$root/build/fuzz-campaign}"
 stats="$state/stats.tsv"
 mkdir -p "$state"
+shopt -s nullglob   # a glob that matches nothing expands to nothing, never to itself
+
+# Corpus replacement (replace_dir) and its recovery run under their own lock, so that a second invocation (status, a run
+# started meanwhile) never restores or removes what a running prune is replacing. The lock is a symbolic link whose target
+# is the holder's pid, made in one step (ln -s fails when it exists). A holder that is gone is taken over by renaming the
+# link to a name of our own (of two takers only one rename succeeds) and checking that it still names that pid; a process we
+# may not signal (EPERM) counts as alive; a lock that names no pid (a non-link) and is older than a minute is stale. A link
+# taken from a live taker by mistake goes back only where no lock is (ln -s again, never a rename over a newer one). A pid
+# that stays alive for 30 minutes may be a reused one: the wait ends with an error that names the lock to remove.
+# Residual case, three processes: A and B both read the dead holder's pid; B renames its link away, removes it and makes
+# its own; A's late rename then takes B's link, sees it is not the dead pid and puts it back with ln -s. If C made a lock
+# between A's rename and that ln -s, the ln -s fails, B goes on without its link and C holds the lock too: two runs may
+# replace corpora at once. It needs three campaign.sh runs on one state directory at the same instant, which CI (one run
+# per job) and a local campaign do not do; flock(1) would close it, but macOS does not ship it.
+replace_lock_wait_s=${KSL_FUZZ_REPLACE_LOCK_WAIT_S:-1800}   # tests shorten it
+replace_lock="$state/replace.lock"
+holder_alive() {
+  local out
+  out=$(kill -0 "$1" 2>&1) && return 0
+  case "$out" in *ermitted*) return 0 ;; esac
+  return 1
+}
+take_replace_lock() {
+  local holder stale waited=0
+  while :; do
+    ln -s "$$" "$replace_lock" 2>/dev/null && return 0
+    holder=$(readlink "$replace_lock" 2>/dev/null || true)
+    if [ -z "$holder" ]; then
+      [ -e "$replace_lock" ] || [ -L "$replace_lock" ] || continue
+      if [ -n "$(find "$replace_lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -rf "$replace_lock"; else sleep 1; fi
+      continue
+    fi
+    if holder_alive "$holder"; then
+      waited=$((waited + 1))
+      if [ "$waited" -ge "$replace_lock_wait_s" ]; then
+        echo "campaign: $replace_lock has been held by pid $holder for $((replace_lock_wait_s / 60)) minutes; if no campaign is running (the pid may have been reused), remove it" >&2
+        exit 1
+      fi
+      sleep 1
+      continue
+    fi
+    stale="$replace_lock.stale.$$"
+    if mv "$replace_lock" "$stale" 2>/dev/null; then
+      # ours now, unless another taker replaced the dead holder's link before our rename: then it goes back
+      if [ "$(readlink "$stale" 2>/dev/null)" = "$holder" ]; then
+        rm -f "$stale"
+      else
+        ln -s "$(readlink "$stale")" "$replace_lock" 2>/dev/null || true
+        rm -f "$stale"
+      fi
+    fi
+  done
+}
+drop_replace_lock() { [ "$(readlink "$replace_lock" 2>/dev/null)" != "$$" ] || rm -f "$replace_lock"; }
+
+# A prune or minimize killed while it replaced a corpus (replace_dir) left the old one as <dir>.old: put it back, and drop a
+# half-copied <dir>.new, so an interruption never loses what had grown.
+take_replace_lock
+for old in "$state"/corpus/*.old "$root"/tools/fuzz/corpus/*.old; do
+  [ -d "$old" ] || continue
+  if [ -e "${old%.old}" ]; then rm -rf "$old"; else mv "$old" "${old%.old}"; fi
+done
+for new in "$state"/corpus/*.new "$root"/tools/fuzz/corpus/*.new; do rm -rf "$new"; done
+drop_replace_lock
+
+# Replaces directory [dest] by a copy of the files in [from]: copied next to it first, then two renames (dest -> dest.old,
+# dest.new -> dest) and the old one removed. A step killed at any point leaves either the old directory whole, or both
+# (the start-up check above restores the old one when dest is missing).
+replace_dir() {
+  local from=$1 dest=$2 files
+  take_replace_lock
+  rm -rf "$dest.new" "$dest.old"; mkdir -p "$dest.new"
+  files=("$from"/*)
+  [ ${#files[@]} -eq 0 ] || cp "${files[@]}" "$dest.new"/
+  [ ! -e "$dest" ] || mv "$dest" "$dest.old"
+  mv "$dest.new" "$dest"
+  rm -rf "$dest.old"
+  drop_replace_lock
+}
 
 # id kind module class method (kind: jvm = Jazzer @FuzzTest, c = tools/fuzz/ksl harness)
 targets_table() {
@@ -79,7 +159,7 @@ if [ "$cmd" = status ]; then
     awk -F'\t' -v id="$id" '$2 == id { n++; s += $3; e += $4; if ($5 > c) c = $5; if ($6 > f) f = $6; corp = $7; if ($8 != "ok" && $8 != "load-timeout") bad = bad " " $8 }
       END { if (n) printf "%-26s %8d %8.2f %14d %8d %8d %8s  %s\n", id, n, s / 3600, e, c, f, corp, (bad == "" ? "none" : bad) }' "$stats"
   done
-  ls "$state"/crashes/*/crash-* "$state"/crashes/*/timeout-* "$state"/crashes/*/oom-* 2>/dev/null | sed 's/^/finding: /' || true
+  for f in "$state"/crashes/*/crash-* "$state"/crashes/*/timeout-* "$state"/crashes/*/oom-*; do [ -f "$f" ] && echo "finding: $f"; done
   exit 0
 fi
 
@@ -143,21 +223,22 @@ snapshot_classpath() {
       case "$line" in "FUZZ_CP "*) ;; *) continue ;; esac
       line=${line#FUZZ_CP }; module=${line%%=*}; entries=${line#*=}
       mkdir -p "$out.new/$module"; i=0; new=""
-      for e in ${entries//:/ }; do
+      # split on ':' only: a path may contain spaces (a checkout or Gradle home under "Desktop/temp last")
+      IFS=: read -r -a cp_entries <<< "$entries"
+      for e in ${cp_entries[@]+"${cp_entries[@]}"}; do
         [ -e "$e" ] || continue
         case "$e" in
-          "$root"/*) i=$((i + 1)); dest="$out.new/$module/$i-$(basename "$e")"; cp -R "$e" "$dest" ;;
+          # copied into cp.new, recorded under the name it has once cp.new becomes cp
+          "$root"/*) i=$((i + 1)); dest="$module/$i-$(basename "$e")"; cp -R "$e" "$out.new/$dest"; dest="$out/$dest" ;;
           *) dest=$e ;;
         esac
         new="$new${new:+:}$dest"
       done
-      echo "$new" > "$out.new/$module.cp"
+      [ -z "$new" ] || printf '%s\n' "$new" > "$out.new/$module.cp"
     done < "$tmp"
     rm -f "$tmp"
     for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3 kuicksilver-http2; do [ -s "$out.new/$m.cp" ] || die "Gradle printed no classpath for $m"; done
     rm -rf "$out"; mv "$out.new" "$out"
-    # rewrite the copied paths (they were recorded under cp.new)
-    for f in "$out"/*.cp; do sed -i '' -e "s|$out.new/|$out/|g" "$f" 2>/dev/null || sed -i -e "s|$out.new/|$out/|g" "$f"; done
     head_rev > "$out/HEAD"
     [ -x "$root/build/fuzz-ksl/ksl_fuzz" ] && quiet bash "$root/tools/fuzz/ksl/build.sh" >/dev/null || true
   fi
@@ -239,6 +320,7 @@ run_slice() {
 
 if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
   snapshot_classpath
+  failed=""
   for id in $selected; do
     corpus="$state/corpus/$id"; [ -d "$corpus" ] || continue
     kind=$(field "$id" 2); module=$(field "$id" 3); cls=$(field "$id" 4); method=$(field "$id" 5)
@@ -257,20 +339,24 @@ if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
       (cd "$state/work/$id" 2>/dev/null || cd "$state"; quiet java -Xmx1536m -Xss4m -XX:+UseSerialGC -cp "$(cat "$state/cp/$module.cp")" \
         com.code_intelligence.jazzer.Jazzer --target_class="$cls" --target_method="$method" \
         --instrumentation_includes='io.kuicksilver.**' -merge=1 -timeout=60 -rss_limit_mb=3072 "$out/min" "${inputs[@]}") \
-        > "$out/merge.log" 2>&1 || { echo "$id: merge failed (see $out/merge.log)"; continue; }
+        > "$out/merge.log" 2>&1 || { echo "$id: merge failed (see $out/merge.log)"; failed="$failed $id"; continue; }
     else
-      quiet "$(ksl_harness)" -merge=1 "$out/min" "${inputs[@]}" > "$out/merge.log" 2>&1 || { echo "$id: merge failed"; continue; }
+      quiet "$(ksl_harness)" -merge=1 "$out/min" "${inputs[@]}" > "$out/merge.log" 2>&1 \
+        || { echo "$id: merge failed (see $out/merge.log)"; failed="$failed $id"; continue; }
     fi
     rm -f "$out/min"/seed-baseline-*
     before=$(find "$corpus" -type f | wc -l | tr -d ' ')
+    # a step killed meanwhile (fuzz.yml's prune timeout) leaves the old corpus whole, never a partial one the cache would keep
+    dest=$committed; [ "$cmd" = prune ] && dest=$corpus
+    replace_dir "$out/min" "$dest"
     if [ "$cmd" = prune ]; then
-      rm -rf "$corpus"; mkdir -p "$corpus"; cp "$out/min"/* "$corpus"/ 2>/dev/null || true
       echo "$id: $before grown inputs -> $(find "$corpus" -type f | wc -l | tr -d ' ') beyond tools/fuzz/corpus/$id and the seeds"
     else
-      rm -rf "$committed"; mkdir -p "$committed"; cp "$out/min"/* "$committed"/ 2>/dev/null || true
       echo "$id: $before grown inputs -> $(find "$committed" -type f | wc -l | tr -d ' ') in tools/fuzz/corpus/$id"
     fi
   done
+  # a merge that failed left that corpus as it was; the exit status says so (fuzz.yml turns it into a warning)
+  [ -z "$failed" ] || { echo "campaign: no merge for$failed" >&2; exit 1; }
   exit 0
 fi
 

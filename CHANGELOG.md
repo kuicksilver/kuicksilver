@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   until their handler returns. Field lists are HPACK-encoded in wire order. New experimental `Http2Settings`.
   New fuzz targets `http2.frames`, `http2.hpackDecode`, `http2.connectionServer` and `http2.hpackRoundTrip` (differential),
   with seeds from `tools/http/gen-fuzz-seeds.py`.
+- HTTP/3: `Http3Endpoint.closeAndJoin()` (experimental) closes the endpoint and waits until its connections are closed
+  and its UDP socket released, so the port can be bound again as soon as it returns. The Ktor server uses it for the
+  endpoint of a TCP + UDP pair that failed with `port = 0`: that UDP port is free before the next attempt and before the
+  start returns.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,
@@ -188,6 +192,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   is accepted. Tickets issued by earlier versions are not resumed. During a rolling upgrade of nodes that share
   `SessionTicketConfig.keys`, a 0.2.x node renews 0.3.0 tickets in the old format, which 0.3.0 nodes refuse: those clients
   run a full handshake (harmless, one per client).
+- Windows (mingwX64) TCP: an idle connection's read tries the receive again after 1, 2, 4 and then every 8 seconds
+  instead of every second, and after 1 second again once data was read: the bound on a lost `FD_CLOSE` costs an idle
+  keep-alive connection a receive every 8 s, not every second.
+- HTTP/3: only an Extended CONNECT whose protocol is not `websocket` has HTTP datagrams (RFC 9297 section 2). A datagram for
+  a classic CONNECT or a WebSocket (RFC 9220) stream whose direction is still open now aborts that stream with
+  `H3_DATAGRAM_ERROR`, as one for a GET does, and `Http3Stream.trySendDatagram` answers `Closed` on such a stream
+  (`sendDatagram` throws `IllegalStateException`); before, every CONNECT took and sent them.
+- TLS: a client session cache keeps 384 sessions by default instead of 256, so that the six tickets a TCP origin keeps
+  (one per parallel connection) cover 64 origins, as the bound did before tickets came six at a time; 256 covered 42.
+- Ktor server: with `port = 0`, a TLS connector whose HTTP/3 endpoint refuses its configuration (an argument or state it
+  rejects, a TLS identity it cannot use) fails the start at once, as with a fixed port. Before, every such failure was
+  taken for a taken UDP port: the pair was tried 16 times and the server then served HTTP/1.1 alone with only a warning.
+  Only a failure to bind is retried now. The accelerated UDP socket reports a refused bind (a port in use) as an
+  IOException, so a taken twin with `udpSocketCount` above 1 is retried like any other.
 - HTTP/3: stricter towards peers (each also under "Fixed"); a peer that got away with these before now fails a request or
   the connection. An HTTP/3 datagram for a stream beyond the client-initiated bidirectional stream limit closes the
   connection with `H3_ID_ERROR` (RFC 9297 section 2.1, SHOULD); one for a request other than CONNECT whose stream is
@@ -314,6 +332,37 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   endpoint loads the close exceptions' classes once when it starts instead of on the first close: on a cold JVM,
   close() to the first datagram went from about 8 ms to 1.3-2.7 ms (in-memory sockets, local measurement), which
   narrows the window in which a peer's packet can still reach an open connection (the interop closing-challenge race).
+- TLS over TCP: every record ksl writes under the sending keys counts toward their record limit (RFC 9846 section 5.5),
+  from the record after its switch to the application keys, not only the application data: alerts, a TLS 1.2 side's
+  Finished and a TLS 1.3 server's tickets count too, and a read handles one non-application record at a time with the
+  limit checked before and after each, so no read writes past it. A TLS 1.2 peer could make the client answer
+  HelloRequest after HelloRequest with a `no_renegotiation` alert, none of them counted.
+- TLS over TCP: a read that had to finish writing a handshake message first (a KeyUpdate whose write found ksl's buffer
+  full) answered as if it needed more input, so records already received waited for the peer to send something else.
+  `ksl_tcp_read` now answers `KSL_OK` with nothing read in that case, and the connection's reader reads again once the
+  drain made room.
+- HTTP/3: a peer that stops one of our critical streams (control, QPACK encoder or decoder) or closes one of its own
+  now ends the connection with `H3_CLOSED_CRITICAL_STREAM` (RFC 9114 section 6.2.1, RFC 9204 section 4.2), as soon as
+  its STOP_SENDING arrives rather than at our next write on that stream; before, a stop ended it with
+  `H3_INTERNAL_ERROR`, or for the control stream not at all.
+- Ktor server: a start that failed while setting up a later connector (for example HTTP/3 settings it refuses) left the
+  connectors before it accepting connections until the server was stopped; they are now stopped with the failed start.
+- Ktor server on Kotlin/Native: a connector that could not bind (a port in use, an HTTP/3 endpoint that refused its
+  configuration) aborted the process: the failure was thrown out of the accept coroutine, where no handler took it. It
+  now fails the start only, as on the JVM.
+- Windows (mingwX64) TCP: a pending connect could wait for ever when the selector lost its `FD_CONNECT`, which Winsock
+  posts once, like `FD_CLOSE`. The engines bound it with their connect timeout; a direct `connectTcp` had no bound. The
+  wait now looks at the socket itself every second (`SO_ERROR` and its peer address).
+- TLS, `ksl` C ABI (not reachable from Kotlin): a session keeps the verify mode of the ssl that first handed it out.
+  A TLS 1.2 resumption from a server that renews no ticket hands out the very session that was set, and
+  `ksl_ssl_get1_session` stamped it again: a client without verification resuming a verified session turned it, for
+  every other holder, into one made without verification, which verifying clients then refused, and the stamp was
+  written while another thread could read it.
+- Ktor server, HTTP/1.1: a pipelined response that failed before any of its bytes went out (its handler failed while it
+  waited behind an earlier response) ended the connection with a reset, which could destroy the earlier responses
+  still on their way. The connection now ends cleanly: the responses before it are sent whole, then the close, and no
+  later request is read or answered (KTOR-10037, as upstream Ktor). A response that fails after part of it went out
+  still ends the connection with its failure, so the client cannot take that part for the whole response.
 - ksl: `ksl_ctx_set_ciphers` holds a TLS 1.2 list to the RFC 10015 profile itself: a list with any suite that is not
   ECDHE with RSA or ECDSA and an AEAD of 128 bits or more (static RSA, FFDHE, CBC, CCM_8, anonymous, PSK) is refused
   with `KSL_E_BAD_ARG`, as the version bounds are. Kotlin never passed one; the C ABI accepted any. A refused list also
@@ -322,12 +371,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: at most one WebSocket connection is in the CONNECTING state per remote host (RFC 6455 section 4.1,
   step 2, MUST: "If multiple connections to the same IP address are attempted simultaneously, the client MUST
   serialize them"): a WebSocket over HTTP/1.1 to an IP address another one is still connecting to, on any port, waits
-  until that handshake is answered or failed, also when it uses another name for the address; through a proxy that
-  resolves names the name counts as the host. A WebSocket holds the address from the moment the pool gives it a
-  connection or the room to open one (not while it waits for a slot) until the server answers the handshake, and the
-  answer must arrive within the connect timeout (`HttpTimeout`'s, else `connectTimeout`, 10 s), counted from then, or
+  until that handshake is answered or failed, also when it uses another name for the address (an IPv4-mapped IPv6
+  address counts as its IPv4 address); through a proxy that resolves names the name counts as the host, compared
+  without case and without a final dot. A WebSocket takes the address first, then a connection from the pool,
+  and holds the address until the server answers the handshake (a WebSocket waiting for the address holds nothing of the
+  pool); the pool wait, the connection and the answer must fit in the connect timeout (`HttpTimeout`'s, else
+  `connectTimeout`, 10 s), counted from the moment it holds the address, or
   the WebSocket fails with `ConnectTimeoutException`: a server that accepts the connection and never answers holds up
-  the next WebSocket to the address for at most that long. Before, any number connected at once.
+  the next WebSocket to the address for at most that long. The wait for another WebSocket's handshake is not part of
+  the connect timeout: WebSockets started together queue for as long as the call allows (its request timeout or
+  cancellation), and each one's connect timeout starts once it holds the address. Before, any number connected at once.
 - HTTP/3 client: any number of interim (1xx) responses is accepted before the final one, as RFC 9110 section 15.2
   requires ("A client MUST be able to parse one or more 1xx responses"); a request failed at the sixth. Endless 1xx
   still end: the decoded fields of all of a request's interim responses together are bounded by `maxFieldSectionSize`

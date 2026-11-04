@@ -153,6 +153,16 @@ public class Http3Endpoint private constructor(
         endpoint.closeWith(Http3ErrorCode.NO_ERROR, "endpoint closed")
     }
 
+    /**
+     * [close], then waits until every connection is closed and the UDP socket released (`QuicEndpoint.closeAndJoin`): the
+     * port can be bound again as soon as this returns.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun closeAndJoin() {
+        close()
+        endpoint.closeAndJoin()
+    }
+
     /** The QUIC endpoint's counters (`QuicEndpoint.stats`): admission, handshakes, 0-RTT, datagrams, failures. */
     public val stats: EndpointStats get() = endpoint.stats
 

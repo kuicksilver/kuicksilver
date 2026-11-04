@@ -475,6 +475,8 @@ internal const val PAC_WARNING: String =
 internal class ProxyRouting(
     private val config: KuicksilverEngineConfig,
     private val logger: KuicksilverLogger,
+    /** Where a completed call's entry is removed from [inFlight] (tests hold it back to reach the race in [callFor]). */
+    private val cleanup: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
     private val clock: () -> Long = monotonicMillis(),
 ) {
     private val lock = Mutex()
@@ -538,7 +540,10 @@ internal class ProxyRouting(
      * The call in flight for [key], or a new one once one of the [MAX_ROUTES] slots is free (a caller queues for it). It
      * runs detached on [resolverDispatcher] and frees its slot when it completes, however long that takes. A completed call
      * is never shared: its entry leaves [inFlight] only once a coroutine of its own gets the lock, and until then a caller
-     * whose cached answer had expired would get that old answer again instead of asking the resolver.
+     * whose cached answer had expired would get that old answer again instead of asking the resolver. The cost is at most one
+     * extra resolver call per key per completion, never overlapping the one before: a caller that missed the cache while the
+     * previous call completed and its answer was not cached yet asks again (and gets a newer answer); a caller that took
+     * the call just before it completed still awaits it.
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     private suspend fun callFor(
@@ -559,7 +564,15 @@ internal class ProxyRouting(
                         inFlight[key] = d
                         d.invokeOnCompletion {
                             slots.release()
-                            kotlinx.coroutines.GlobalScope.launch { lock.withLock { if (inFlight[key] === d) inFlight.remove(key) } }
+                            kotlinx.coroutines.GlobalScope.launch(cleanup) {
+                                lock.withLock {
+                                    if (inFlight[key] ===
+                                        d
+                                    ) {
+                                        inFlight.remove(key)
+                                    }
+                                }
+                            }
                         }
                     }
             }
@@ -567,6 +580,9 @@ internal class ProxyRouting(
             if (!started) slots.release() // another caller started it meanwhile, or this one was cancelled first
         }
     }
+
+    /** Calls in flight or completed and not cleaned up yet (tests). */
+    internal suspend fun inFlightSize(): Int = lock.withLock { inFlight.size }
 
     private fun warnOnce(message: String) {
         if (warned.compareAndSet(0, 1) && logger.isEnabled(LogLevel.Warn)) logger.log(LogLevel.Warn, message, null)
