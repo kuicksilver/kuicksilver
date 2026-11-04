@@ -173,6 +173,18 @@ class GuardInflateTest {
         }
     }
 
+    /** Empty blocks inflate to nothing: past the compressed-bytes cap the message closes with 1009, and says why. */
+    @Test fun negative_endlessEmptyBlocksCloseWith1009() {
+        // 00 00 00 ff ff, 20 000 times: 100 KB, past the cap of 8 x 100 bytes + 64 KiB
+        val emptyBlocks = ByteArray(5 * 20_000) { if (it % 5 >= 3) 0xff.toByte() else 0 }
+        guarded(frame(0xC2, emptyBlocks), WebSocketInflate(noContextTakeover = false, maxMessageSize = 100)) { out ->
+            val close = out.single()
+            assertEquals(1009, close.closeCode)
+            val reason = close.payload.decodeToString(2, close.payload.size)
+            assertTrue("compressed bytes" in reason, reason)
+        }
+    }
+
     @Test fun negative_corruptDeflateStreamClosesWith1002() =
         guarded(frame(0xC1, bytes(0xff, 0xff, 0xff)) + frame(0x81, "never".encodeToByteArray())) { out ->
             assertEquals(1, out.size)

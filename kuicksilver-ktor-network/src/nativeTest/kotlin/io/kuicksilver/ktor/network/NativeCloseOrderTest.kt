@@ -40,7 +40,8 @@ class NativeCloseOrderTest {
                 val peerOut = peer.openWriteChannel(autoFlush = true)
                 peerOut.writeFully("pipelined, never read".encodeToByteArray()) // unread received data
                 val out = socket.openWriteChannel(autoFlush = true)
-                val size = 8 shl 20
+                // more than the kernel's buffers on both ends can hold (Linux tcp_wmem up to 4 MiB, plus the receive side)
+                val size = 32 shl 20
                 // UNDISPATCHED: the write hands over all its bytes before it waits for room (the peer does not read yet)
                 launch(start = CoroutineStart.UNDISPATCHED) { runCatching { out.writeFully(ByteArray(size)) } }
                 socket.close()
@@ -48,7 +49,7 @@ class NativeCloseOrderTest {
                 repeat(200) { yield() }
                 assertTrue(!native.writeLoopEnded, "the write loop still drains: the peer has read nothing")
                 assertTrue(!native.readLoopEnded, "so the read loop is still running")
-                val read = withTimeout(30.seconds) { peer.openReadChannel().discard() }
+                val read = withTimeout(60.seconds) { peer.openReadChannel().discard() }
                 assertEquals(size.toLong(), read, "every byte the application wrote, then the end of the stream")
                 withTimeout(10.seconds) { socket.socketContext.join() }
                 assertTrue(native.writeLoopEnded && native.readLoopEnded)

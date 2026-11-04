@@ -15,11 +15,21 @@ internal const val INFLATE_CHUNK: Int = 64 * 1024
 /** The empty stored block a sync flush ends with, which RFC 7692 section 7.2.1 removes and section 7.2.2 appends again. */
 private val TAIL = byteArrayOf(0x00, 0x00, 0xff.toByte(), 0xff.toByte())
 
-/** A message that decompresses to more than the limit (RFC 6455 section 7.4.1: 1009, message too big); [size] so far. */
+/**
+ * A message too big to process (RFC 6455 section 7.4.1: 1009): it inflates to more than [limit] bytes ([size] so far),
+ * or, with [compressedBytes], its compressed data passed [limit] bytes.
+ */
 internal class MessageTooBigException(
     val size: Long,
-    limit: Long,
-) : IOException("a compressed message inflates to more than $limit bytes")
+    val limit: Long,
+    val compressedBytes: Boolean = false,
+) : IOException(
+        if (compressedBytes) {
+            "a compressed message has more than $limit bytes of compressed data"
+        } else {
+            "a compressed message inflates to more than $limit bytes"
+        },
+    )
 
 /**
  * Decompresses the messages of one direction (RFC 7692 section 7.2.2): the payloads of a message's frames go to [input]
@@ -28,7 +38,8 @@ internal class MessageTooBigException(
  * [MessageTooBigException] once at most one piece past the limit was produced: nothing is sized by what the data claims.
  * With [noContextTakeover] each message starts with an empty window. Without it, the next message is decompressed with
  * the window of the last one (section 7.2.2, MUST), also after a message that ended its DEFLATE stream with a final block
- * (section 7.2.3.4): the stream is restarted and primed with the last 32 KiB of output, which is kept for that.
+ * (section 7.2.3.4): the stream is restarted and primed with the window, which zlib hands over on Kotlin/Native
+ * (inflateGetDictionary); on the JVM and Android, whose Inflater cannot, the last 32 KiB of output is kept for that.
  *
  * A message is malformed (DeflateDataException) when it has no compressed data at all (the empty message is 0x00,
  * section 7.2.3.6), when data follows a final block other than the 0x00 that pads it (section 7.2.3.4), and, where the
@@ -84,7 +95,7 @@ internal class MessageInflater(
     ) {
         if (length == 0) return
         compressed += length
-        if (compressed > maxCompressed) throw MessageTooBigException(produced, maxMessageSize)
+        if (compressed > maxCompressed) throw MessageTooBigException(compressed, maxCompressed, compressedBytes = true)
         if (streamEnded) return trailing(bytes, offset, length)
         check(raw?.needsInput != false) { "the previous input was not read to its end" }
         raw().setInput(bytes, offset, length)
@@ -122,7 +133,8 @@ internal class MessageInflater(
         } else if (n == 0 && tail && r.atBlockBoundary == false) {
             throw DeflateDataException("a compressed message that does not end at a DEFLATE block boundary")
         }
-        if (n > 0 && !noContextTakeover) remember(output, offset, n)
+        // the window survives a final block: zlib on Native hands it over then (inflateGetDictionary), the JDK cannot
+        if (n > 0 && !noContextTakeover && !r.readsWindow) remember(output, offset, n)
         produced += n
         if (produced > maxMessageSize) throw MessageTooBigException(produced, maxMessageSize)
         return n
@@ -171,6 +183,12 @@ internal class MessageInflater(
             r.reset()
         } else if (r != null && streamEnded) {
             // a final block ended the stream: a new one, primed with the window the next message may refer back into
+            if (r.readsWindow) {
+                val window = r.window()
+                r.reset()
+                r.setDictionary(window, 0, window.size)
+                return finishMessage()
+            }
             r.reset()
             val h = history
             if (h != null) {
@@ -182,6 +200,10 @@ internal class MessageInflater(
                 }
             }
         }
+        finishMessage()
+    }
+
+    private fun finishMessage() {
         compressed = 0
         produced = 0
         tail = false

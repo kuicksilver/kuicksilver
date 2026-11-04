@@ -618,7 +618,7 @@ from sharing a window with the next (a secret and attacker data within one messa
 
 Memory per connection with permessage-deflate: the deflater's zlib state (about 256 KiB with a 32 KiB window, made on
 the first outgoing compressed message), the inflater's (about 40 KiB, on the first incoming one), 32 KiB of output
-history with context takeover and 80 KiB of buffers, plus the message being reassembled (at most the limit).
+history with context takeover on the JVM and Android and 80 KiB of buffers, plus the message being reassembled (at most the limit).
 Kuicksilver's engines free the zlib state when the session ends. On another engine only a cleaner frees it, once the
 garbage collector finds the extension unreachable: zlib's memory is native and does not press the collector, so many
 short sessions can hold some 300 KiB each until it runs.

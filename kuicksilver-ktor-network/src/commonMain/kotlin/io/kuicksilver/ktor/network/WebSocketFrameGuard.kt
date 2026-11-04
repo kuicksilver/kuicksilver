@@ -212,8 +212,14 @@ public fun guardWebSocketInput(
                         val mask = if (n > maskAt) header.copyOfRange(maskAt, n) else null
                         try {
                             inflater.inflateFrame(input, out, length, mask, fin)
-                        } catch (_: MessageTooBigException) {
-                            out.failWith(CLOSE_MESSAGE_TOO_BIG, "Message is too big: more than ${inflater.limit} bytes inflated")
+                        } catch (e: MessageTooBigException) {
+                            val reason =
+                                if (e.compressedBytes) {
+                                    "Message is too big: more than ${e.limit} compressed bytes"
+                                } else {
+                                    "Message is too big: more than ${e.limit} bytes inflated"
+                                }
+                            out.failWith(CLOSE_MESSAGE_TOO_BIG, reason)
                             return@launch
                         } catch (_: DeflateDataException) {
                             // zlib's own message stays here: it says nothing the peer needs
@@ -259,7 +265,6 @@ private const val MAX_HEADER = 14
 private class GuardInflater(
     spec: WebSocketInflate,
 ) {
-    val limit = spec.maxMessageSize
     private val inflater = MessageInflater(spec.noContextTakeover, spec.maxMessageSize)
     private var inMessage = false
     private var compressed = false
