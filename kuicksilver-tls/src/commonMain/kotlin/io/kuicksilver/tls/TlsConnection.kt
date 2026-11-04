@@ -341,6 +341,7 @@ public class TlsConnection private constructor(
             }
             transportOut.flush()
         }
+        drained.trySend(Unit)
     }
 
     private val drainLock = Mutex()
@@ -348,6 +349,9 @@ public class TlsConnection private constructor(
 
     /** Signalled by the reader pump when what it fed may have produced ciphertext (handshake messages, alerts, key updates). */
     private val drainRequests = Channel<Unit>(Channel.CONFLATED)
+
+    /** Signalled after each drain: a reader pump whose read must write first waits for room here, not for transport input. */
+    private val drained = Channel<Unit>(Channel.CONFLATED)
 
     /** Drains for the reader pump, so that the reader pump never waits on the transport. */
     private suspend fun drainerPump() {
@@ -357,6 +361,7 @@ public class TlsConnection private constructor(
             throw e
         } catch (e: Throwable) {
             val failure = e as? TlsException ?: TlsException.Protocol(null, e.message ?: "transport failure", e)
+            drained.close(failure)
             inputChannel.cancel(failure)
             outputChannel.cancel(failure)
         }
@@ -383,6 +388,15 @@ public class TlsConnection private constructor(
                             // client that reads one response and closes would otherwise cancel this pump first
                             rememberSession()
                             inputChannel.writeFully(plain, 0, r)
+                        }
+
+                        r == 0 -> {
+                            // ksl must write first (a handshake message under way) and its pair is full: the records
+                            // already fed are read once the drainer made room, not when the transport brings more input
+                            drained.tryReceive()
+                            drainRequests.trySend(Unit)
+                            // closed when the drainer failed, which ended the input with its failure
+                            if (drained.receiveCatching().isClosed) return
                         }
 
                         r == -KslConst.EOF -> {

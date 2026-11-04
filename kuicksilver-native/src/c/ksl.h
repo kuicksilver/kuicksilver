@@ -244,7 +244,9 @@ int      ksl_tcp_drain(ksl_ssl *, uint8_t *out, size_t cap, size_t *written);
 /* Takes at most one record's worth (16 KiB, or the negotiated max_fragment_length) per call (ABI 7); KSL_WANT_READ when the pair has no
    room: drain it and retry with the same bytes and the same length, from this or another buffer */
 int      ksl_tcp_write(ksl_ssl *, const uint8_t *plaintext, size_t len, size_t *consumed);
-int      ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);  /* KSL_EOF after close_notify */
+/* KSL_EOF after close_notify; KSL_OK with *read 0 when the read must write first and the pair has no room: drain, then read again
+   (records already fed may wait behind it, not for more input) */
+int      ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);
 int      ksl_tcp_shutdown(ksl_ssl *);                                       /* sends close_notify; KSL_OK when the peer's arrived */
 /* Ends a session whose application failed with a fatal internal_error alert instead of close_notify (RFC 9846 section 6.1), where
    OpenSSL 3.5 can send one: a TLS 1.3 server, a TLS 1.2 client. KSL_OK: the alert is queued, drain it (ksl_tcp_drain); KSL_ERROR

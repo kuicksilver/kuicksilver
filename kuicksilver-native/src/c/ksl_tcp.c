@@ -101,7 +101,9 @@ int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *cons
 /* Reading can make OpenSSL write records too (an alert, a handshake answer). Without auto-retry each SSL_read_ex handles one record
    that is not application data and writes at most one record for it, so the limit is checked before each call with room for that
    record and for the abort's own alert, and after it. Records already fed are read on here, not left to a caller that waits for
-   more input. Plaintext read as the limit is reached is returned; the next call ends the session. */
+   more input. A read that must write first (a handshake message under way, such as a KeyUpdate whose write found the pair full) and
+   has no room answers KSL_OK with nothing read: drain, then read again. Plaintext read as the limit is reached is returned; the
+   next call ends the session. */
 int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
     static const char *why = "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)";
@@ -111,7 +113,11 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
         ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
         if (r == 1) { if (at_record_limit(s)) s->limit_due = 1; *read = n; return KSL_OK; }
         if (at_record_limit(s)) { (void)abort_session(s, why); return KSL_ERROR; }
-        if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_READ && BIO_ctrl_pending(SSL_get_rbio(s->ssl)) > 0) continue;
+        int e = SSL_get_error(s->ssl, r);
+        if (e == SSL_ERROR_WANT_READ && BIO_ctrl_pending(SSL_get_rbio(s->ssl)) > 0) continue;
+        /* it must write first and the pair is full: KSL_OK with nothing read, so the caller drains and reads again rather than
+           wait for input the records already fed may not need */
+        if (e == SSL_ERROR_WANT_WRITE) { ERR_clear_error(); return KSL_OK; }
         return map_error(s, r);
     }
 }

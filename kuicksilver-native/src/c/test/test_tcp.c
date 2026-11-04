@@ -932,6 +932,32 @@ static void test_key_update_epoch_is_bounded(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
+static void test_read_waiting_for_room_says_so(void) {
+    SECTION("tcp_read_waiting_for_room_says_so");
+    /* A read that has to write first (here the rest of a KeyUpdate whose write found the pair full: OpenSSL is in a handshake
+       state until it is out) stops with records fed and unread. It answers KSL_OK with nothing read, not KSL_WANT_READ, which
+       callers take for "feed more": the caller drains and reads again, and the records already fed come out without more input
+       from the transport (review 2026-11-04 N2). */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    uint8_t big[16384] = {0}, r[64]; size_t n;
+    (void)ksl_tcp_read(c, r, sizeof r, &n);   /* the tickets */
+    size_t room0 = BIO_ctrl_get_write_guarantee(SSL_get_wbio(c->ssl));
+    CHECK(ksl_tcp_write(c, big, sizeof big, &n) == KSL_OK, "a full record into the client's pair");
+    size_t room = BIO_ctrl_get_write_guarantee(SSL_get_wbio(c->ssl)), overhead = room0 - room - sizeof big;
+    if (room > overhead + 5) CHECK(ksl_tcp_write(c, big, room - overhead - 5, &n) == KSL_OK, "a record that leaves 5 bytes");
+    uint8_t b = 9;
+    CHECK(ksl_ssl_key_update(c, 0) == KSL_OK && ksl_tcp_write(c, &b, 1, &n) == KSL_WANT_READ, "the KeyUpdate ahead of the next write finds no room");
+    CHECK(ksl_tcp_write(s, &b, 1, &n) == KSL_OK && shuttle(s, c) > 0, "the server sends a byte");
+    int rc = ksl_tcp_read(c, r, sizeof r, &n);
+    CHECK(rc == KSL_OK && n == 0, "negative: the read waits for room to finish the KeyUpdate, and says so (not KSL_WANT_READ)");
+    uint8_t sink[4096]; while (ksl_tcp_drain(c, sink, sizeof sink, &n) == KSL_OK && n) {}
+    rc = ksl_tcp_read(c, r, sizeof r, &n);
+    CHECK(rc == KSL_OK && n == 1 && r[0] == 9, "after a drain, the byte already fed is read without more input");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
 static void test_client_keeps_every_ticket(void) {
     SECTION("tcp_client_keeps_every_ticket");
     /* RFC 9846 appendix C.4: "Servers that issue tickets SHOULD offer at least as many tickets as the number of connections that a
@@ -992,4 +1018,4 @@ static void test_default_versions_and_tls12_profile(void) {
     END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_read_waiting_for_room_says_so(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }

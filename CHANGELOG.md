@@ -231,6 +231,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Finished and a TLS 1.3 server's tickets count too, and a read handles one non-application record at a time with the
   limit checked before and after each, so no read writes past it. A TLS 1.2 peer could make the client answer
   HelloRequest after HelloRequest with a `no_renegotiation` alert, none of them counted.
+- TLS over TCP: a read that had to finish writing a handshake message first (a KeyUpdate whose write found ksl's buffer
+  full) answered as if it needed more input, so records already received waited for the peer to send something else.
+  `ksl_tcp_read` now answers `KSL_OK` with nothing read in that case, and the connection's reader reads again once the
+  drain made room.
 - HTTP/3: a peer that stops one of our critical streams (control, QPACK encoder or decoder) or closes one of its own
   now ends the connection with `H3_CLOSED_CRITICAL_STREAM` (RFC 9114 section 6.2.1, RFC 9204 section 4.2), as soon as
   its STOP_SENDING arrives rather than at our next write on that stream; before, a stop ended it with
