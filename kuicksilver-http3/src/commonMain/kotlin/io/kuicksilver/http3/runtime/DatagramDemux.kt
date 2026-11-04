@@ -190,7 +190,7 @@ internal class DatagramDemux(
         val prefix = VarInt.encode(streamId / 4)
         return when (val r = session.quic.trySendDatagram(prefix + payload)) {
             is DatagramSendResult.TooLarge -> {
-                DatagramSendResult.TooLarge(r.max - prefix.size)
+                DatagramSendResult.TooLarge(httpDatagramMax(r.max, prefix.size))
             }
 
             else -> {
@@ -218,7 +218,7 @@ internal class DatagramDemux(
         ) {
             throw QuicException.DatagramTooLarge(
                 payload.size,
-                e.max - prefix.size,
+                httpDatagramMax(e.max, prefix.size),
             )
         }
     }
@@ -251,6 +251,16 @@ internal class DatagramDemux(
             smoothedRtt: Duration,
             rttVar: Duration,
         ): Duration = (smoothedRtt * 2 + maxOf(rttVar * 4, GRANULARITY) + DEFAULT_MAX_ACK_DELAY).coerceIn(MIN_HOLD, MAX_HOLD)
+
+        /**
+         * The largest HTTP datagram payload a QUIC datagram of at most [quicMax] bytes carries after a Quarter Stream ID of
+         * [prefix] bytes; 0 when even an empty one does not fit (a peer's max_datagram_frame_size of 2 leaves a QUIC maximum
+         * of 0), never negative.
+         */
+        fun httpDatagramMax(
+            quicMax: Int,
+            prefix: Int,
+        ): Int = (quicMax - prefix).coerceAtLeast(0)
 
         /** Quarter stream IDs above 2^60 - 1 cannot name a client-initiated bidirectional stream. */
         const val MAX_QUARTER_ID = (1L shl 60) - 1

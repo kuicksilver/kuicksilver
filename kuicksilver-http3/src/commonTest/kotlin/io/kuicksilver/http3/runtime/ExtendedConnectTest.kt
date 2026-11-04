@@ -475,6 +475,18 @@ class H3DatagramTest {
         }
 
     /**
+     * A peer whose max_datagram_frame_size leaves no room for the Quarter Stream ID (2: the QUIC payload maximum is 0) fits
+     * no HTTP datagram, not even an empty one: the maximum reported is 0, not negative (TooLarge(-1) before). The end-to-end
+     * case needs H3Session to accept such a peer's H3_DATAGRAM=1, which the QUIC branch's peerSupportsDatagrams brings.
+     */
+    @Test fun httpDatagramMaximumIsNeverNegative() {
+        assertEquals(0, DatagramDemux.httpDatagramMax(quicMax = 0, prefix = 1))
+        assertEquals(0, DatagramDemux.httpDatagramMax(quicMax = 1, prefix = 2))
+        assertEquals(0, DatagramDemux.httpDatagramMax(quicMax = 1, prefix = 1))
+        assertEquals(1197, DatagramDemux.httpDatagramMax(quicMax = 1200, prefix = 3))
+    }
+
+    /**
      * Extended CONNECT protocols without datagram semantics are no exception to section 2's MUST (review 2026-10-28 h3.md
      * H3R-4): RFC 9220's `websocket` and a classic CONNECT tunnel (RFC 9110 section 9.3.6) define none, so a datagram for
      * such a stream aborts it with H3_DATAGRAM_ERROR, as for a GET. Other protocols (WebTransport, an application's own)
