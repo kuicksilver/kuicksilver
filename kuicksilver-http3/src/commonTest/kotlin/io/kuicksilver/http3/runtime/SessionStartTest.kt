@@ -135,13 +135,16 @@ class SessionStartTest {
     @Test fun peerNoErrorCloseHandledBeforeItsGoAwayStillRefusesRequests() =
         h3Test {
             val goAwayReached = CompletableDeferred<Unit>()
+            val startEnded = CompletableDeferred<Unit>()
             try {
                 QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
                     val (c, s) = q.connect()
+                    H3Session.startEndedForTest = { if (it.quic === c) startEnded.complete(Unit) }
                     H3Session.beforeControlFrameForTest = { session, type ->
                         if (session.quic === c && type == FrameType.GOAWAY) {
                             goAwayReached.complete(Unit)
-                            session.closed.await() // the close is handled first
+                            // the close is handled, and the start has seen it end, before the GOAWAY is
+                            startEnded.await()
                         }
                     }
                     val raw = RawPeer(s)
@@ -157,6 +160,7 @@ class SessionStartTest {
                 }
             } finally {
                 H3Session.beforeControlFrameForTest = null
+                H3Session.startEndedForTest = null
             }
         }
 
