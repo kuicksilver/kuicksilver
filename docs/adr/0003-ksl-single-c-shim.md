@@ -61,4 +61,6 @@ process and record who started it (ADR-0006, Windows); they are additive. 70 fun
 `ksl_udp_take_ptb` (Packet Too Big from the Linux error queue) and `ksl_udp_emsgsize` (sends lost to EMSGSIZE), and a
 `ksl_udp_recv` that no longer answers `KSL_ERROR` for a queued ICMP error (ADR-0006, "Linux and Android"). The functions
 alone would be additive, but the receive behaviour changes and the 0.3.0 plan bumps once for every `ksl.h` change of the
-release: `KSL_ABI_VERSION 7`, and later 0.3.0 additions go under 7. 72 functions.
+release: `KSL_ABI_VERSION 7`, and later 0.3.0 additions go under 7. 72 functions. Under 7 as well: the error code `KSL_E_BIND`
+(0xff000c: `ksl_udp_open` whose bind was refused; other steps keep their codes), and `ksl_tcp_read` answering `KSL_OK`
+with nothing read when it must write first and the pair is full (it answered `KSL_WANT_READ`).
