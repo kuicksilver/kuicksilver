@@ -17,6 +17,8 @@ internal class TrackingCrypto(
     /** Reset keys handed out before every further one is refused. */
     var resetKeys: Int = Int.MAX_VALUE,
     var failTokenKey: Boolean = false,
+    /** Token keys handed out before every further one is refused. */
+    var tokenKeys: Int = Int.MAX_VALUE,
 ) : QuicCrypto by NullCryptoProvider {
     var made = 0
         private set
@@ -40,7 +42,7 @@ internal class TrackingCrypto(
     }
 
     override fun newTokenKey(): TokenKey {
-        if (failTokenKey) throw IllegalStateException("token key refused (test)")
+        if (failTokenKey || tokenKeys-- <= 0) throw IllegalStateException("token key refused (test)")
         val k = NullCryptoProvider.newTokenKey()
         made++
         return object : TokenKey by k {

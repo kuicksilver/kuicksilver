@@ -462,6 +462,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   counted as the loop's uncaught failure.
 - QUIC on Kotlin/Native: a `PacketBatch` whose slot allocation fails part-way frees the slots it had already allocated,
   and its `close` frees every slot even when one of them fails to close.
+- QUIC server: the Retry token key is freed when making the NEW_TOKEN key fails while a server endpoint is set up,
+  instead of leaking.
 - QUIC datagrams: a peer whose `max_datagram_frame_size` is small (2 to 34 bytes) is no longer reported as not
   supporting datagrams. The 32 bytes kept free for an ACK beside a packet-sized datagram were taken from the peer's limit
   too, so `maxDatagramSize` came out 0 or below, nothing was ever sent and `sendDatagram` failed with

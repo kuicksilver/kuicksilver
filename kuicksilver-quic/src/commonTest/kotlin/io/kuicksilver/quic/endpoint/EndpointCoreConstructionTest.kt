@@ -48,4 +48,11 @@ class EndpointCoreConstructionTest {
         EndpointCore(serverConfig(crypto), Random(4)).close()
         assertEquals(0, crypto.live)
     }
+
+    @Test fun addressTokensWhoseSecondKeyFailsCloseTheFirst() {
+        val crypto = TrackingCrypto(tokenKeys = 1) // the Retry key is made, the NEW_TOKEN key is refused
+        assertFailsWith<IllegalStateException> { AddressTokens(crypto, Random(5)) }
+        assertEquals(1, crypto.made)
+        assertEquals(0, crypto.live, "the Retry key")
+    }
 }
