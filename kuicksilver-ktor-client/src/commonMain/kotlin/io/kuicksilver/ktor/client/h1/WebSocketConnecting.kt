@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client.h1
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -27,6 +30,10 @@ internal class WebSocketConnecting {
 
     private val lock = SpinLock()
     private val entries = HashMap<String, Entry>()
+    private val waits = MutableStateFlow(0)
+
+    /** How many [acquire] calls so far found a key in use by another WebSocket and waited (tests, no polling). */
+    val waitsForTest: StateFlow<Int> get() = waits
 
     /** The keys one WebSocket holds from [acquire]; [release] gives them back, once, however often it is called. */
     inner class Held internal constructor(
@@ -48,7 +55,17 @@ internal class WebSocketConnecting {
      */
     suspend fun acquire(keys: Collection<String>): Held {
         val sorted = keys.distinct().sorted()
-        val taken = lock.withLock { sorted.map { k -> entries.getOrPut(k) { Entry() }.also { it.users++ } } }
+        var contended = false
+        val taken =
+            lock.withLock {
+                sorted.map { k ->
+                    entries.getOrPut(k) { Entry() }.also {
+                        it.users++
+                        if (it.users > 1) contended = true
+                    }
+                }
+            }
+        if (contended) waits.update { it + 1 }
         val held = ArrayList<Mutex>(taken.size)
         try {
             for (e in taken) {

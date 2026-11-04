@@ -21,10 +21,12 @@ import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
@@ -44,43 +46,39 @@ class ClientWebSocketConnectingTest {
     /**
      * Two WebSockets to two names of one address: the second connection is opened only once the first handshake was
      * answered ("even if the remote host is known by another name, the client MUST wait"; "There MUST be no more than one
-     * connection in a CONNECTING state"). Before, both connected and sent their handshakes at once.
+     * connection in a CONNECTING state"). Before, both connected and sent their handshakes at once. The first handshake is
+     * held until the second WebSocket either waits for the address or reaches the server, whichever comes first: no window
+     * of real time decides it.
      */
     @Test fun negative_secondHandshakeToTheSameAddressWaitsForTheFirst() =
         clientTest {
             val firstHead = CompletableDeferred<Unit>()
+            val decided = CompletableDeferred<Unit>()
             val secondAccepted = CompletableDeferred<Unit>()
-            var firstAnswered = false
-            var secondWhileConnecting = false
             rawServer({ index, input, output ->
                 while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                 if (index == 0) {
                     firstHead.complete(Unit)
-                    // the second connection, if the client opens it now, arrives meanwhile
-                    withTimeoutOrNull(500.milliseconds) { secondAccepted.await() }
-                    firstAnswered = true
+                    decided.await()
                 }
                 answer(input, output)
-            }, onAccept = {
-                if (it == 1) {
-                    secondWhileConnecting = !firstAnswered
-                    secondAccepted.complete(Unit)
-                }
-            }) { port ->
+            }, onAccept = { if (it == 1) secondAccepted.complete(Unit) }) { port ->
                 testClient(
                     engine = { resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) } },
                     block = { install(WebSockets) },
                 ).use { c ->
+                    val engine = c.engine as KuicksilverEngine
                     coroutineScope {
                         val opened = CompletableDeferred<Unit>()
                         launch { c.webSocket("ws://a.test:$port/") { opened.await() } }
                         firstHead.await()
                         launch { c.webSocket("ws://b.test:$port/") { opened.complete(Unit) } }
+                        assertEquals("waited", waitedOrConnected(engine, secondAccepted), "the second WebSocket to the address")
+                        decided.complete(Unit)
                     }
-                    assertEquals(0, (c.engine as KuicksilverEngine).h1.webSocketConnecting.size(), "an entry outlived its WebSocket")
+                    assertEquals(0, engine.h1.webSocketConnecting.size(), "an entry outlived its WebSocket")
                 }
             }
-            assertFalse(secondWhileConnecting, "a second connection was in CONNECTING while the first was")
         }
 
     /**
@@ -91,19 +89,16 @@ class ClientWebSocketConnectingTest {
     @Test fun negative_handshakeToAnotherPortOfTheAddressWaits() =
         clientTest {
             val firstHead = CompletableDeferred<Unit>()
+            val decided = CompletableDeferred<Unit>()
             val secondHead = CompletableDeferred<Unit>()
-            var firstAnswered = false
-            var secondWhileConnecting = false
             rawServer({ _, input, output ->
                 while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                 firstHead.complete(Unit)
-                withTimeoutOrNull(500.milliseconds) { secondHead.await() }
-                firstAnswered = true
+                decided.await()
                 answer(input, output)
             }) { first ->
                 rawServer({ _, input, output ->
                     while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
-                    secondWhileConnecting = !firstAnswered
                     secondHead.complete(Unit)
                     answer(input, output)
                 }) { second ->
@@ -113,11 +108,16 @@ class ClientWebSocketConnectingTest {
                             launch { c.webSocket("ws://127.0.0.1:$first/") { opened.await() } }
                             firstHead.await()
                             launch { c.webSocket("ws://127.0.0.1:$second/") { opened.complete(Unit) } }
+                            assertEquals(
+                                "waited",
+                                waitedOrConnected(c.engine as KuicksilverEngine, secondHead),
+                                "the WebSocket to another port",
+                            )
+                            decided.complete(Unit)
                         }
                     }
                 }
             }
-            assertFalse(secondWhileConnecting, "a second connection to the address was in CONNECTING while the first was")
         }
 
     /**
@@ -179,7 +179,10 @@ class ClientWebSocketConnectingTest {
                         val second = launch { c.webSocket("ws://127.0.0.1:$port/") {} }
                         var thirdOpened = false
                         val third = launch { c.webSocket("ws://127.0.0.1:$port/") { thirdOpened = true } }
-                        while (engine.h1.pool.waiterCount < 2) delay(5.milliseconds)
+                        withTimeout(10.seconds) {
+                            engine.h1.pool.queuedForTest
+                                .first { it >= 2 }
+                        }
                         assertEquals(0, engine.h1.webSocketConnecting.size(), "a WebSocket waiting for a slot holds an address")
                         second.cancel()
                         endFirst.complete(Unit)
@@ -189,6 +192,28 @@ class ClientWebSocketConnectingTest {
                     }
                     assertEquals(0, engine.h1.webSocketConnecting.size(), "an entry outlived its WebSocket")
                 }
+            }
+        }
+
+    /**
+     * Whether the second WebSocket waited for the address ([WebSocketConnecting.waitsForTest]) or reached its server
+     * ([accepted]) first; each is an event that happens, so whichever comes first decides, without a window of real time.
+     */
+    private suspend fun waitedOrConnected(
+        engine: KuicksilverEngine,
+        accepted: CompletableDeferred<Unit>,
+    ): String =
+        withTimeout(10.seconds) {
+            coroutineScope {
+                val waited =
+                    async {
+                        engine.h1.webSocketConnecting.waitsForTest
+                            .first { it >= 1 }
+                    }
+                select {
+                    waited.onAwait { "waited" }
+                    accepted.onAwait { "connected" }
+                }.also { waited.cancel() }
             }
         }
 
