@@ -364,6 +364,59 @@ class TcpSocketsNativeTest {
             }
         }
 
+    /**
+     * A pending connect whose completion the selector never reports (Windows posts FD_CONNECT once, and its selector can
+     * lose it) still completes: the wait gives up after the recheck and finds the socket connected (review 2026-10-28
+     * readwait.md R2). Before, it waited for ever.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun aConnectTheSelectorNeverReportsStillCompletes() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            val deaf = NoConnectWakeUpSelector(selector)
+            val saved = tcpConnectRecheck
+            tcpConnectRecheck = 50.milliseconds
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val before = tcpConnectRechecksForTest.load()
+                    val client = connectTcp(deaf, InetSocketAddress("127.0.0.1", port))
+                    val accepted = server.accept()
+                    // a loopback connect may complete at once; when it was pending, the selector never woke it
+                    assertTrue(
+                        deaf.connectSelects == 0 || tcpConnectRechecksForTest.load() > before,
+                        "a pending connect ended without a recheck",
+                    )
+                    client.close()
+                    accepted.close()
+                    server.close()
+                }
+            } finally {
+                tcpConnectRecheck = saved
+                selector.close()
+            }
+        }
+
+    /** [delegate], whose waits for a connect never end (as on Windows for an FD_CONNECT it lost). */
+    private class NoConnectWakeUpSelector(
+        private val delegate: SelectorManager,
+    ) : SelectorManager by delegate {
+        @kotlin.concurrent.Volatile var connectSelects = 0
+
+        override suspend fun select(
+            selectable: Selectable,
+            interest: SelectInterest,
+        ) {
+            if (interest == SelectInterest.CONNECT) {
+                connectSelects++
+                awaitCancellation()
+            }
+            delegate.select(selectable, interest)
+        }
+    }
+
     private enum class SelectorKind { Platform, NoWriteWakeUp }
 
     /**

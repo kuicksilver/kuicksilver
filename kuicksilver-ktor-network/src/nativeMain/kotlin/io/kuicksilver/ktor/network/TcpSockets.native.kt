@@ -46,6 +46,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -65,6 +66,57 @@ private const val BACKLOG = 50
 
 /** Bytes per `recv`/`send` call. */
 private const val IO_BUFFER = 8192
+
+/**
+ * How long a pending connect waits for the selector before it looks at the socket itself, or null to wait until the
+ * selector reports it. Windows posts `FD_CONNECT` once, like `FD_CLOSE`, and ktor-network's selector there can lose such
+ * an event (see [tcpReadRecheck]): a connect that completed or failed meanwhile would wait for ever, and callers of
+ * [connectTcp] outside the engines (which bound it with their connect timeout) have no other bound (review 2026-10-28
+ * readwait.md R2). Tests set it.
+ */
+internal var tcpConnectRecheck: Duration? = tcpReadRecheck
+
+/** Connect waits that gave up on the selector and looked at the socket (tests). */
+internal val tcpConnectRechecksForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
+/**
+ * Waits for the pending connect of [fd]: done once `SO_ERROR` is 0 after the selector reported the socket, failed with any
+ * other error that is not "not yet". With [tcpConnectRecheck] the selector's wait is given up after that long (the select
+ * is kept for the next wait), and the socket is connected when `SO_ERROR` is 0 and it has a peer (`getpeername`).
+ */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+private suspend fun awaitConnected(
+    selector: SelectorManager,
+    socket: NativeTcpSocket,
+    fd: Int,
+) {
+    val recheck = tcpConnectRecheck
+    if (recheck == null) {
+        while (true) {
+            selector.select(socket, SelectInterest.CONNECT)
+            val error = tcpPendingError(fd)
+            if (error == 0) return
+            if (!tcpWouldBlock(error)) throw PosixException.forErrno(error, "connect")
+        }
+    }
+    coroutineScope {
+        var pending: Deferred<Unit>? = null
+        try {
+            while (true) {
+                val select =
+                    pending ?: async(start = CoroutineStart.UNDISPATCHED) { selector.select(socket, SelectInterest.CONNECT) }
+                        .also { pending = it }
+                val reported = withTimeoutOrNull(recheck) { select.await() } != null
+                if (reported) pending = null else tcpConnectRechecksForTest.addAndFetch(1)
+                val error = tcpPendingError(fd)
+                if (error != 0 && !tcpWouldBlock(error)) throw PosixException.forErrno(error, "connect")
+                if (error == 0 && (reported || runCatching { tcpAddressOf(fd, peer = true) }.isSuccess)) return@coroutineScope
+            }
+        } finally {
+            pending?.cancel()
+        }
+    }
+}
 
 /** How many times [NativeTcpSocket.readRecheck] an idle read waits at most between two receives (1 s grows to 8 s on Windows). */
 private const val MAX_READ_BACKOFF = 8
@@ -109,14 +161,7 @@ public actual suspend fun connectTcpAddress(
         }
     val socket = NativeTcpSocket(selector, fd, to.toInet(), null)
     try {
-        if (!tcpConnect(fd, to)) {
-            while (true) {
-                selector.select(socket, SelectInterest.CONNECT)
-                val error = tcpPendingError(fd)
-                if (error == 0) break
-                if (!tcpWouldBlock(error)) throw PosixException.forErrno(error, "connect")
-            }
-        }
+        if (!tcpConnect(fd, to)) awaitConnected(selector, socket, fd)
         return socket
     } catch (e: PosixException) {
         socket.close()
