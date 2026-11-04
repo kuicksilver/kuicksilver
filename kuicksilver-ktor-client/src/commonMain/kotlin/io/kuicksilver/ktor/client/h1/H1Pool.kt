@@ -246,7 +246,8 @@ internal class H1Pool(
     /**
      * The remote hosts [data] may connect to, as [WebSocketConnecting] keys: the IP addresses of the origin, without the
      * port, when the engine resolves its name (the request's own resolution, which the connection then uses, under the
-     * connect timeout), else (an HTTP proxy, a SOCKS5 proxy that resolves names) the origin's name.
+     * connect timeout), else (an HTTP proxy, a SOCKS5 proxy that resolves names) the origin's name; each in one form per
+     * host ([WebSocketConnecting.addressKey], [WebSocketConnecting.nameKey]).
      */
     private suspend fun remoteHosts(
         data: HttpRequestData,
@@ -255,7 +256,7 @@ internal class H1Pool(
     ): List<String> {
         val url = data.url
         if (proxy != null && (proxy.kind != ResolvedProxy.Kind.Socks5 || proxy.remoteDns)) {
-            return listOf("name ${socketHost(url.host)}")
+            return listOf(WebSocketConnecting.nameKey(url.host))
         }
         val addresses =
             try {
@@ -263,7 +264,7 @@ internal class H1Pool(
             } catch (e: TimeoutCancellationException) {
                 throw ConnectTimeoutException(data, e)
             }
-        return addresses.map { "address ${it.hostText}" }
+        return addresses.map { WebSocketConnecting.addressKey(it) }
     }
 
     /**

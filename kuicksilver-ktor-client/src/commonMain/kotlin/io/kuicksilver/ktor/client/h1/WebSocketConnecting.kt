@@ -1,7 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.client.h1
 
+import io.kuicksilver.ktor.client.socketHost
+import io.kuicksilver.ktor.network.TcpAddress
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -89,4 +93,26 @@ internal class WebSocketConnecting {
 
     /** Remote hosts with a WebSocket connecting or waiting; for tests. */
     internal fun size(): Int = lock.withLock { entries.size }
+
+    companion object {
+        /**
+         * The key of the remote host at [address]. An IPv4-mapped IPv6 address (`::ffff:0:0/96`, RFC 4291 section
+         * 2.5.5.2) is that IPv4 host: Kotlin/Native's `getaddrinfo` keeps the AF_INET6 form of `[::ffff:127.0.0.1]`
+         * where the JVM gives an `Inet4Address`, and a resolver may return mapped AAAA records.
+         */
+        fun addressKey(address: TcpAddress): String {
+            val b = address.bytes
+            val mapped = b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } && b[10] == FF && b[11] == FF
+            if (!mapped) return "address ${address.hostText}"
+            return "address ${b[12].toUByte()}.${b[13].toUByte()}.${b[14].toUByte()}.${b[15].toUByte()}"
+        }
+
+        /**
+         * The key of the remote host named [host] when a proxy resolves it: DNS names compare without case (RFC 4343),
+         * and a final dot (an absolute name) names the same host; an IPv6 literal loses its brackets.
+         */
+        fun nameKey(host: String): String = "name ${socketHost(host).lowercase().removeSuffix(".")}"
+
+        private const val FF: Byte = -1
+    }
 }
