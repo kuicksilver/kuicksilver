@@ -651,7 +651,7 @@ internal class H3Session(
                 if (cause is QuicException.StreamError.Stopped || cause is QuicException.StreamError.Reset) {
                     // the peer closed a critical stream while we set it up (RFC 9114 section 6.2.1, RFC 9204 section 4.2)
                     fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer closed our critical stream while it was opened")
-                    return false
+                    return null // the connection is closing: criticalStreamsLoop ends, as after the deadline
                 }
                 if (cause !is QuicException.StreamError.EarlyDataRejected) throw e
                 false
