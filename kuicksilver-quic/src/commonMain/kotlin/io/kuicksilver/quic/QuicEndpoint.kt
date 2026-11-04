@@ -124,6 +124,15 @@ public suspend fun QuicStream.awaitFinished() {
 }
 
 /**
+ * Suspends until the peer sends STOP_SENDING for [this] stream (RFC 9000 section 19.5) and returns its error code; it does
+ * not wait for a write to meet the stop. Never returns for a stream the peer does not stop, or for streams of other
+ * implementations. HTTP/3 watches its critical streams with it (RFC 9114 section 6.2.1: closed "at any point").
+ */
+@InternalKuicksilverApi
+public suspend fun QuicStream.awaitSendStopped(): Long =
+    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendStopped?.await() ?: kotlinx.coroutines.awaitCancellation()
+
+/**
  * True once the peer's FIN and every byte before it have arrived on [this] stream (RFC 9000 section 3.2, the receiving
  * part's "Data Recvd" state, or "Data Read" once the application read them): reading [QuicStream.input] needs nothing more
  * from the network, so it ends whole even after the connection is lost. It turns true once the endpoint's loop processed

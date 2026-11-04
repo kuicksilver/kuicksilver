@@ -98,8 +98,12 @@ internal class StreamRuntime(
     }
 
     internal fun peerStopped(code: Long) {
+        sendStopped.complete(code)
         outChannel?.closeWith(QuicException.StreamError.Stopped(id, code, Initiator.Peer))
     }
+
+    /** Completed with the error code when the peer's STOP_SENDING for this stream arrives (see `awaitSendStopped`). */
+    internal val sendStopped = kotlinx.coroutines.CompletableDeferred<Long>()
 
     /** The server rejected 0-RTT and the core dropped this stream (RFC 9001 section 4.6.2): the wrapper failed for good. */
     @Volatile

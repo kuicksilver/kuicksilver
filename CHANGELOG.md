@@ -231,8 +231,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Finished and a TLS 1.3 server's tickets count too, and a read handles one non-application record at a time with the
   limit checked before and after each, so no read writes past it. A TLS 1.2 peer could make the client answer
   HelloRequest after HelloRequest with a `no_renegotiation` alert, none of them counted.
-- HTTP/3: a peer that stops or resets one of our critical streams (control, QPACK encoder or decoder) now ends the
-  connection with `H3_CLOSED_CRITICAL_STREAM` (RFC 9114 section 6.2.1, RFC 9204 section 4.2); before, it ended with
+- HTTP/3: a peer that stops one of our critical streams (control, QPACK encoder or decoder) or closes one of its own
+  now ends the connection with `H3_CLOSED_CRITICAL_STREAM` (RFC 9114 section 6.2.1, RFC 9204 section 4.2), as soon as
+  its STOP_SENDING arrives rather than at our next write on that stream; before, a stop ended it with
   `H3_INTERNAL_ERROR`, or for the control stream not at all.
 - Ktor server: a start that failed while setting up a later connector (for example HTTP/3 settings it refuses) left the
   connectors before it accepting connections until the server was stopped; they are now stopped with the failed start.

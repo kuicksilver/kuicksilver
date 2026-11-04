@@ -251,6 +251,35 @@ class QpackDynamicTest {
             }
         }
 
+    /**
+     * A STOP_SENDING on one of our critical streams ends the connection with H3_CLOSED_CRITICAL_STREAM by itself, without a
+     * later write of ours meeting it (RFC 9114 section 6.2.1, RFC 9204 section 4.2: "closed at any point"; review S1 of
+     * 286f66eb, which noticed the stop only at the next write there).
+     */
+    @Test fun negative_aStoppedCriticalStreamEndsTheConnectionWithoutAWrite() =
+        h3Test {
+            for (target in listOf(StreamType.CONTROL, StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER)) {
+                QuicPair.open().use { q ->
+                    val (c, s) = q.connect()
+                    RawPeer(s).openControl()
+                    launch {
+                        runCatching {
+                            while (true) {
+                                val st = s.acceptStream()
+                                if (st.readVarInt() == target) st.stopSending(0x3ff)
+                            }
+                        }
+                    }
+                    val client = Http3Connection.client(c, dyn)
+                    val end =
+                        withTimeoutOrNull(5.seconds) { client.closed.await() }
+                            ?: error("the connection still lives 5 s after the peer stopped critical stream type $target")
+                    assertEquals(Http3ErrorCode.CLOSED_CRITICAL_STREAM, (end as Http3Exception.Protocol).h3Code, "type $target: $end")
+                    coroutineContext.cancelChildren()
+                }
+            }
+        }
+
     @Test fun defaultIsStaticOnly() =
         h3Test {
             H3Pair.open().useScoped { p ->

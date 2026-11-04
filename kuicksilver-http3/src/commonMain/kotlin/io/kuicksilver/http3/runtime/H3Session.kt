@@ -37,6 +37,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
@@ -362,6 +363,18 @@ internal class H3Session(
             }
         }
 
+    /**
+     * The peer stopping one of our critical streams closes it: RFC 9114 section 6.2.1 ("If either control stream is closed at
+     * any point, this MUST be treated as a connection error of type H3_CLOSED_CRITICAL_STREAM") and RFC 9204 section 4.2 for the
+     * QPACK streams. Noticed when the STOP_SENDING arrives, not at our next write there, which may never come.
+     */
+    private fun watchStopped(st: QuicStream) {
+        scope.launch {
+            val code = st.awaitSendStopped()
+            fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer stopped our critical stream ${st.id} (code $code)")
+        }
+    }
+
     /** [st] was dropped by the server's rejection of 0-RTT (RFC 9001 section 4.6.2): the server never saw anything of it. */
     fun droppedByRejectedZeroRtt(st: QuicStream): Boolean {
         val causes = listOf(runCatching { st.output.closedCause }.getOrNull(), runCatching { st.input.closedCause }.getOrNull())
@@ -628,12 +641,19 @@ internal class H3Session(
                     }
                     if (gen != criticalGen) return@withTimeoutOrNull false
                     critical = Critical(control, encoder, decoder)
+                    for (st in listOf(control, encoder, decoder)) watchStopped(st)
                     true
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+                val cause = transportCause(e)
+                if (cause is QuicException.StreamError.Stopped || cause is QuicException.StreamError.Reset) {
+                    // the peer closed a critical stream while we set it up (RFC 9114 section 6.2.1, RFC 9204 section 4.2)
+                    fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer closed our critical stream while it was opened")
+                    return false
+                }
+                if (cause !is QuicException.StreamError.EarlyDataRejected) throw e
                 false
             }
         if (done == null) {
