@@ -389,6 +389,53 @@ class ServerH3Test {
             }
         }
 
+    /**
+     * With port 0 and several UDP sockets on the port (udpSocketCount = 2, the accelerated transport with SO_REUSEPORT), a
+     * UDP twin in use is retried like any taken port and HTTP/3 is still served (review of 19e3f88b: ksl's refused bind
+     * was a KslException, which the engine now takes for a configuration error, so such a start failed). Where
+     * SO_REUSEPORT flow hashing is not available (not Linux or Android) the engine serves HTTP/1.1 only and the test says so.
+     */
+    @Test fun ephemeralPortWithSeveralUdpSocketsRetriesATakenTwin() =
+        h3ServerTest {
+            val selector = SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            val held = ArrayList<io.ktor.network.sockets.BoundDatagramSocket>()
+            val tried = ArrayList<Int>()
+            val log = CapturedLog()
+            try {
+                val (server, port) =
+                    tlsServer(configure = {
+                        udpSocketCount = 2
+                        http3Bind = { a, c, st ->
+                            tried += a.port
+                            if (tried.size ==
+                                1
+                            ) {
+                                held +=
+                                    io.ktor.network.sockets
+                                        .aSocket(selector)
+                                        .udp()
+                                        .bind(InetSocketAddress("127.0.0.1", a.port))
+                            }
+                            Http3Endpoint.bind(a, c, st)
+                        }
+                    }, log = log) { routing { get("/") { call.respondText("ok") } } }
+                try {
+                    val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                    if (log.lines.any { "SO_REUSEPORT" in it.message || "accelerated transport" in it.message }) {
+                        println("ephemeralPortWithSeveralUdpSocketsRetriesATakenTwin skipped: no SO_REUSEPORT flow hashing here")
+                        return@h3ServerTest
+                    }
+                    assertTrue(tried.size >= 2, "tried $tried")
+                    assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), "no HTTP/3 after a taken twin: $resp")
+                } finally {
+                    server.stop(100, 500)
+                }
+            } finally {
+                held.forEach { it.close() }
+                selector.close()
+            }
+        }
+
     /** No free twin within [EPHEMERAL_PAIR_ATTEMPTS] pairs: exactly that many tries, then HTTP/1.1 alone, no Alt-Svc. */
     @Test fun ephemeralPortGivesUpHttp3AfterTheBudget() =
         h3ServerTest {

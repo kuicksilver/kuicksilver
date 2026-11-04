@@ -50,11 +50,30 @@ class KslUdpSocketTest {
         if (!accelerated) return
         var why: Throwable? = null
         assertEquals(null, KslUdpSocket.openOrNull(KslUdpSocket.encodeAddress(byteArrayOf(192.toByte(), 0, 2, 1), 0), 0) { why = it })
-        assertTrue(why is KslException, "$why")
+        assertTrue(why is kotlinx.io.IOException && "bind" in why?.message.orEmpty(), "a refused bind is an I/O failure: $why")
         KslUdpSocket.openOrNull(loopback(), 0)!!.close()
     }
 
     private fun loopback() = KslUdpSocket.encodeAddress(byteArrayOf(127, 0, 0, 1), 0)
+
+    /**
+     * A port in use is an I/O failure of the bind, not a failure of the native layer: [KslUdpSocket.open] throws an IOException
+     * naming the bind, so a server that tries another port for a taken one (the Ktor engine with port 0) does (review of
+     * 19e3f88b, which made a KslException fail the start: a taken twin with udpSocketCount > 1 failed it).
+     */
+    @Test fun aPortInUseIsAnIoFailureOfTheBind() {
+        if (!accelerated) return
+        val held = java.net.DatagramSocket(0, java.net.InetAddress.getByName("127.0.0.1"))
+        try {
+            val e =
+                assertFailsWith<kotlinx.io.IOException> {
+                    KslUdpSocket.open(KslUdpSocket.encodeAddress(byteArrayOf(127, 0, 0, 1), held.localPort), 0).close()
+                }
+            assertTrue("bind" in e.message.orEmpty(), "$e")
+        } finally {
+            held.close()
+        }
+    }
 
     @Test fun openSendReceive() {
         if (!accelerated) return // another OS: covered by openOnUnsupportedPlatformThrows
