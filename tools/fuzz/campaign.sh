@@ -75,7 +75,7 @@ if [ "$cmd" = status ]; then
     awk -F'\t' -v id="$id" '$2 == id { n++; s += $3; e += $4; if ($5 > c) c = $5; if ($6 > f) f = $6; corp = $7; if ($8 != "ok" && $8 != "load-timeout") bad = bad " " $8 }
       END { if (n) printf "%-26s %8d %8.2f %14d %8d %8d %8s  %s\n", id, n, s / 3600, e, c, f, corp, (bad == "" ? "none" : bad) }' "$stats"
   done
-  ls "$state"/crashes/*/crash-* "$state"/crashes/*/timeout-* "$state"/crashes/*/oom-* 2>/dev/null | sed 's/^/finding: /' || true
+  for f in "$state"/crashes/*/crash-* "$state"/crashes/*/timeout-* "$state"/crashes/*/oom-*; do [ -f "$f" ] && echo "finding: $f"; done
   exit 0
 fi
 
@@ -139,21 +139,22 @@ snapshot_classpath() {
       case "$line" in "FUZZ_CP "*) ;; *) continue ;; esac
       line=${line#FUZZ_CP }; module=${line%%=*}; entries=${line#*=}
       mkdir -p "$out.new/$module"; i=0; new=""
-      for e in ${entries//:/ }; do
+      # split on ':' only: a path may contain spaces (a checkout or Gradle home under "Desktop/temp last")
+      IFS=: read -r -a cp_entries <<< "$entries"
+      for e in ${cp_entries[@]+"${cp_entries[@]}"}; do
         [ -e "$e" ] || continue
         case "$e" in
-          "$root"/*) i=$((i + 1)); dest="$out.new/$module/$i-$(basename "$e")"; cp -R "$e" "$dest" ;;
+          # copied into cp.new, recorded under the name it has once cp.new becomes cp
+          "$root"/*) i=$((i + 1)); dest="$module/$i-$(basename "$e")"; cp -R "$e" "$out.new/$dest"; dest="$out/$dest" ;;
           *) dest=$e ;;
         esac
         new="$new${new:+:}$dest"
       done
-      echo "$new" > "$out.new/$module.cp"
+      [ -z "$new" ] || printf '%s\n' "$new" > "$out.new/$module.cp"
     done < "$tmp"
     rm -f "$tmp"
     for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3; do [ -s "$out.new/$m.cp" ] || die "Gradle printed no classpath for $m"; done
     rm -rf "$out"; mv "$out.new" "$out"
-    # rewrite the copied paths (they were recorded under cp.new)
-    for f in "$out"/*.cp; do sed -i '' -e "s|$out.new/|$out/|g" "$f" 2>/dev/null || sed -i -e "s|$out.new/|$out/|g" "$f"; done
     head_rev > "$out/HEAD"
     [ -x "$root/build/fuzz-ksl/ksl_fuzz" ] && quiet bash "$root/tools/fuzz/ksl/build.sh" >/dev/null || true
   fi
