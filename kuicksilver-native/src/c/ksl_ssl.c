@@ -151,7 +151,14 @@ static CRYPTO_ONCE session_mode_once = CRYPTO_ONCE_STATIC_INIT;
 static int session_mode_idx = -1;
 static void session_mode_index(void) { session_mode_idx = SSL_SESSION_get_ex_new_index(0, NULL, NULL, NULL, NULL); }
 static int session_mode_ready(void) { return CRYPTO_THREAD_run_once(&session_mode_once, session_mode_index) && session_mode_idx >= 0; }
-static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) { if (session_mode_ready()) (void)SSL_SESSION_set_ex_data(sess, session_mode_idx, (void *)(intptr_t)(s->verify_mode + 1)); }
+/* A session keeps the stamp it got when it was first handed out: a TLS 1.2 resumption (or TLS 1.3 before the first ticket) hands out
+   the very SSL_SESSION that was set, which other holders share. Stamping it again would let a client without verification turn a
+   verified session into one made without verification for all of them, and write its ex data while another thread reads it in
+   ksl_ssl_set_session (review 2026-10-28 T-N1). A new session (a ticket, a full handshake's) has no stamp yet and gets this one's. */
+static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) {
+    if (session_mode_ready() && SSL_SESSION_get_ex_data(sess, session_mode_idx) == NULL)
+        (void)SSL_SESSION_set_ex_data(sess, session_mode_idx, (void *)(intptr_t)(s->verify_mode + 1));
+}
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
     ERR_clear_error();

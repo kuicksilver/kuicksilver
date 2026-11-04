@@ -212,6 +212,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS, `ksl` C ABI (not reachable from Kotlin): a session keeps the verify mode of the ssl that first handed it out.
+  A TLS 1.2 resumption from a server that renews no ticket hands out the very session that was set, and
+  `ksl_ssl_get1_session` stamped it again: a client without verification resuming a verified session turned it, for
+  every other holder, into one made without verification, which verifying clients then refused, and the stamp was
+  written while another thread could read it.
 - Ktor server, HTTP/1.1: a pipelined response that failed before any of its bytes went out (its handler failed while it
   waited behind an earlier response) ended the connection with a reset, which could destroy the earlier responses
   still on their way. The connection now ends cleanly: the responses before it are sent whole, then the close, and no

@@ -218,7 +218,9 @@ int      ksl_ssl_client_hello(ksl_ssl *, ksl_client_hello *out);     /* during K
 int      ksl_ssl_sni_resume(ksl_ssl *, ksl_ctx *override_or_null, int alert); /* after KSL_WANT_SNI; the override is a server context (KSL_E_BAD_ARG otherwise) */
 int      ksl_ssl_export_keying_material(ksl_ssl *, uint8_t *out, size_t out_len, const char *label, size_t label_len, const uint8_t *context, size_t context_len);
 ksl_session *ksl_ssl_get1_session(ksl_ssl *);                     /* client: the resumable session (a new reference) or NULL; the same pointer until the session changes.
-                                                                      TCP: every ticket received and not yet handed out comes first, oldest first (ABI 7) */
+                                                                      TCP: every ticket received and not yet handed out comes first, oldest first (ABI 7).
+                                                                      A session keeps the verify mode of the ssl that first handed it out, also when a
+                                                                      resumption hands the set session out again */
 int      ksl_ssl_set_session(ksl_ssl *, ksl_session *);           /* client, before the handshake; the caller keeps its reference. A session made
                                                                       under KSL_VERIFY_NONE is refused (KSL_E_BAD_ARG) unless this session verifies nothing either */
 void     ksl_session_free(ksl_session *);                         /* drops one reference; the last one cleanses the secrets */

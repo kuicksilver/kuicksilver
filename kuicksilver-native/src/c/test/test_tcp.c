@@ -150,6 +150,25 @@ static void test_client_verification_still_refuses(void) {
     ksl_ssl_free(c); c = tcp_client(none, "server.test");
     CHECK(ksl_ssl_set_session(c, unverified) == KSL_OK && ksl_ssl_set_session(c, verified) == KSL_OK, "control: a context without verification takes either");
     ksl_ssl_free(c); ksl_session_free(unverified); ksl_session_free(verified); ksl_ctx_free(none); ksl_ctx_free(verifying); ksl_ctx_free(sc);
+    /* a session handed out again keeps the stamp it got first (review 2026-10-28 T-N1): a TLS 1.2 resumption hands out the very
+       SSL_SESSION that was set, so a client without verification resuming a verified ticket must not turn that shared object into
+       one made without verification for every other holder of it (nor write its ex data while another thread reads it) */
+    none = client_ctx(NULL, KSL_VERIFY_NONE); verifying = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server");
+    for (int k = 0; k < 2; k++) { ksl_ctx_set_option(k ? verifying : none, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(k ? verifying : none, KSL_OPT_MAX_VERSION, KSL_TLS1_2); }
+    /* a server that renews no ticket on resumption, so the client's OpenSSL keeps the session it set (ksl servers renew every
+       one: here OpenSSL's own ticket handling replaces ksl's callbacks) */
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1);
+    SSL_CTX_set_session_ticket_cb(sc->ctx, NULL, NULL, NULL); SSL_CTX_set_tlsext_ticket_key_evp_cb(sc->ctx, NULL);
+    c = tcp_client(verifying, "server.test"); ksl_ssl *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2: a verified full handshake");
+    verified = ksl_ssl_get1_session(c); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(none, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(verified && ksl_ssl_set_session(c, verified) == KSL_OK && tcp_pump(c, s, NULL, NULL) == KSL_OK && SSL_session_reused(c->ssl), "TLS 1.2: a client without verification resumes it");
+    ksl_session *again = ksl_ssl_get1_session(c);
+    CHECK(again == verified, "TLS 1.2: the resumed session is the object that was set");
+    ksl_ssl_free(c); ksl_ssl_free(s); c = tcp_client(verifying, "server.test");
+    CHECK(ksl_ssl_set_session(c, verified) == KSL_OK, "negative: the verified session handed out again by that client still resumes where verification is on");
+    ksl_ssl_free(c); ksl_session_free(again); ksl_session_free(verified); ksl_ctx_free(none); ksl_ctx_free(verifying); ksl_ctx_free(sc);
     END();
 }
 
