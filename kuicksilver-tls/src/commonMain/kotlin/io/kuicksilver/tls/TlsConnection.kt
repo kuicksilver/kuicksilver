@@ -64,6 +64,9 @@ public class TlsConnection private constructor(
     private var readerJob: Job? = null
     private var writerJob: Job? = null
 
+    /** The most plaintext one ksl_tcp_write takes (a record), learnt from a write that took less than offered; the writer's alone. */
+    private var recordBytes = Int.MAX_VALUE
+
     /** Plaintext from the peer. Closed cleanly after `close_notify`; closed with a [TlsException] on any other end. */
     public val input: ByteReadChannel get() = inputChannel
 
@@ -436,16 +439,22 @@ public class TlsConnection private constructor(
                 }
                 var off = 0
                 while (off < n) {
+                    // ksl takes one record per call: offering more only makes the JNI layer copy bytes it does not take (32
+                    // times what it takes with a 512-byte max_fragment_length)
+                    val ask = minOf(n - off, recordBytes)
                     val w =
                         try {
-                            lock.withLock { Ksl.tcpWrite(s(), buf, off, n - off) }
+                            lock.withLock { Ksl.tcpWrite(s(), buf, off, ask) }
                         } catch (
                             e: KslException.Internal,
                         ) {
                             alertAfterFailedWrite(e)
                             throw e.toTlsFailure(presented).first
                         }
-                    if (w > 0) off += w
+                    if (w > 0) {
+                        if (w < ask) recordBytes = w // a whole record was less than offered: that is the session's record size
+                        off += w
+                    }
                     drainToTransport()
                 }
             }
