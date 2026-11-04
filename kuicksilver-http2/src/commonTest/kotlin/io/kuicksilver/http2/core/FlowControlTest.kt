@@ -229,6 +229,29 @@ class FlowControlTest {
     }
 
     @Test
+    fun negative_clientDroppedRequestDataReturnsConnectionWindow() {
+        // reset() of a request whose HEADERS and DATA were never written: the queued DATA gives its window back
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000_000))
+        val body = ByteArray(16_384)
+        val a = c.core.openStream(GET, endStream = false)
+        assertEquals(16_384, c.core.sendData(a, body, 0, body.size, endStream = true))
+        c.core.reset(a, Http2ErrorCode.CANCEL, 0)
+        assertEquals(65_535L, c.core.connectionSendWindowAccounted)
+        assertEquals(emptyList(), c.read().filterIsInstance<Frame.Data>())
+        // the peer's GOAWAY drops a request above its last stream while its DATA waits
+        val b = c.core.openStream(GET, endStream = false)
+        val d = c.core.openStream(GET, endStream = false)
+        c.read() // both HEADERS written
+        assertEquals(16_384, c.core.sendData(d, body, 0, body.size, endStream = true))
+        c.send(FrameEncoder.goAway(b, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+        assertEquals(65_535L, c.core.connectionSendWindowAccounted)
+        assertEquals(emptyList(), c.read().filterIsInstance<Frame.Data>())
+        // and stream b can use the whole connection window again
+        assertEquals(16_384, c.core.sendData(b, body, 0, body.size, endStream = false))
+    }
+
+    @Test
     fun windowUpdatesOnClosedStreamsAreFree() {
         // Go's client sends a WINDOW_UPDATE per 4 KiB it reads, also while it still reads a body whose stream is already closed on our side (transport.go:2261-2265):
         // thousands a second on closed streams on a busy connection, which must not be counted as glitches
