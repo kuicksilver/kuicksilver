@@ -265,11 +265,11 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
 }
 
 final class io.kuicksilver.ktor.client/ProtocolDiagnostics { // io.kuicksilver.ktor.client/ProtocolDiagnostics|null[0]
+    final val alternative // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternative|{}alternative[0]
+        final fun <get-alternative>(): kotlin/String? // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternative.<get-alternative>|<get-alternative>(){}[0]
     final val headStart // io.kuicksilver.ktor.client/ProtocolDiagnostics.headStart|{}headStart[0]
         final fun <get-headStart>(): kotlin.time/Duration? // io.kuicksilver.ktor.client/ProtocolDiagnostics.headStart.<get-headStart>|<get-headStart>(){}[0]
 
-    final var alternative // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternative|{}alternative[0]
-        final fun <get-alternative>(): kotlin/String? // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternative.<get-alternative>|<get-alternative>(){}[0]
     final var alternativeSource // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternativeSource|{}alternativeSource[0]
         final fun <get-alternativeSource>(): io.kuicksilver.ktor.client/AlternativeSource? // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternativeSource.<get-alternativeSource>|<get-alternativeSource>(){}[0]
     final var attempts // io.kuicksilver.ktor.client/ProtocolDiagnostics.attempts|{}attempts[0]

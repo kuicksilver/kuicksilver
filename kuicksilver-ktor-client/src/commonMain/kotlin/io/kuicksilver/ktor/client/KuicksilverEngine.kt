@@ -268,7 +268,7 @@ internal class KuicksilverEngine(
         val network = checkNetwork()
         return when {
             config.http3.discovery == Http3DiscoveryMode.H3Only -> {
-                d.alternative("${uriHost(target.host)}:${target.port}", AlternativeSource.H3Only)
+                d.alternative(target.host, target.port, AlternativeSource.H3Only)
                 selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Configuration, d)
                 try {
                     h3.execute(target, data, callContext)
@@ -280,7 +280,8 @@ internal class KuicksilverEngine(
 
             config.http3.discovery == Http3DiscoveryMode.Preferred || HostPort(url.host, url.port) in config.http3.quicHints -> {
                 d.alternative(
-                    "${uriHost(target.host)}:${target.port}",
+                    target.host,
+                    target.port,
                     if (config.http3.discovery == Http3DiscoveryMode.Preferred) AlternativeSource.Preferred else AlternativeSource.QuicHint,
                 )
                 // WebSockets take HTTP/3 only on a connection that already allows Extended CONNECT (RFC 9220; else h1.1 Upgrade first)
@@ -522,7 +523,7 @@ internal class KuicksilverEngine(
         if (alt != null) {
             val altHost = alt.host ?: url.host
             val t = H3Target(url.host, altHost, alt.port)
-            d.alternative("${uriHost(altHost)}:${alt.port}", AlternativeSource.AltSvc)
+            d.alternative(altHost, alt.port, AlternativeSource.AltSvc)
             if (!webSocket || h3.canConnectProtocol(t)) {
                 events.emit("altSvcUsed") { altSvcUsed(data, "${uriHost(altHost)}:${alt.port}") }
                 val r = raced(t, data, callContext, network, listOf("alt-used" to "${uriHost(altHost)}:${alt.port}"), d)

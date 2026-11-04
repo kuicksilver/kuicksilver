@@ -105,7 +105,7 @@ class ProtocolDiagnosticsTest {
                 reason = ProtocolReason.Race
                 fallback = FallbackReason.HandshakeTimeout
                 h3Failure = QuicException.ConnectionLost.TransportClosed(0x2, 0, "secret-reason", ByteArray(0), Initiator.Peer)
-                alternative("example.com:443", AlternativeSource.AltSvc)
+                alternative("example.com", 443, AlternativeSource.AltSvc)
                 raced(10.milliseconds)
                 markedBroken = true
             }
@@ -122,7 +122,7 @@ class ProtocolDiagnosticsTest {
         val d =
             ProtocolDiagnostics().apply {
                 protocol = HttpProtocolVersion.HTTP_3_0
-                alternative("[::1]:443", AlternativeSource.Preferred)
+                alternative("::1", 443, AlternativeSource.Preferred)
             }
         assertEquals("kuicksilver: GET https://[::1]/ -> HTTP/3.0 (alt=[::1]:443 via Preferred)", d.line("GET", Url("https://[::1]")))
         assertNull(d.headStart)

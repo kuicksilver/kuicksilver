@@ -51,9 +51,11 @@ public class ProtocolDiagnostics internal constructor() {
     public var h3Failure: Throwable? = null
         internal set
 
-    /** The HTTP/3 endpoint (`host:port`) considered for the call, when there was one. */
-    public var alternative: String? = null
-        internal set
+    private var alternativeHost: String? = null
+    private var alternativePort: Int = 0
+
+    /** The HTTP/3 endpoint (`host:port`, an IPv6 address in brackets) considered for the call, when there was one. */
+    public val alternative: String? get() = alternativeHost?.let { "${uriHost(it)}:$alternativePort" } // built when read
 
     /** Where [alternative] came from; null when there was none. */
     public var alternativeSource: AlternativeSource? = null
@@ -95,11 +97,14 @@ public class ProtocolDiagnostics internal constructor() {
         headStartNanos = if (headStart.isInfinite()) Long.MAX_VALUE else headStart.inWholeNanoseconds
     }
 
+    /** No string is built here: a call over HTTP/3 allocates nothing for its diagnostics beyond this object. */
     internal fun alternative(
-        hostPort: String,
+        host: String,
+        port: Int,
         source: AlternativeSource,
     ) {
-        alternative = hostPort
+        alternativeHost = host
+        alternativePort = port
         alternativeSource = source
     }
 
