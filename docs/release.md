@@ -33,8 +33,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `local-release.sh` checks that they are present and never prints them.
 4. **Publishing limits**: Sonatype's default for a free namespace is 1167 files and 78 MB (30 days of grace above
    that). On 2026-10-20 `io.kuicksilver` was granted 7 releases, 100 MB and 2620 files per month. One release is
-   1404 files and 49.8 MB, so one release fits in a month, and the project plans at most one release a month. A Kuicksilver release is
-   seven Kotlin Multiplatform modules with up to nine publications each, plus the BOM; the deployment holds every
+   1404 files and 49.8 MB (0.2.x, seven modules), so one release fits in a month, and the project plans at most one release a month. A Kuicksilver release is
+   eight Kotlin Multiplatform modules from 0.3.0 (`kuicksilver-http2` joined, ADR-0017) with up to nine publications each, plus the BOM; the deployment holds every
    artifact with its `.asc`, `.md5` and `.sha1` (the plugin leaves out `maven-metadata` and checksums of signatures).
    `local-release.sh` counts it from a local publication before every upload and refuses above the limits
    (`--allow-over-limit` within the grace); its defaults are the namespace's granted limits (2620 files,

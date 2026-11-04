@@ -314,7 +314,7 @@ jobs:
           ls -l kuicksilver-native/build/jni/resources/META-INF/native
           $G --max-workers=2 --continue -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost \
             :kuicksilver-native:jvmTest :kuicksilver-tls:jvmTest :kuicksilver-quic:jvmTest :kuicksilver-http3:jvmTest \
-            :kuicksilver-ktor-network:jvmTest :kuicksilver-ktor-client:jvmTest :kuicksilver-ktor-server:jvmTest
+            :kuicksilver-http2:jvmTest :kuicksilver-ktor-network:jvmTest :kuicksilver-ktor-client:jvmTest :kuicksilver-ktor-server:jvmTest
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
