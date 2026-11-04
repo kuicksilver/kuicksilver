@@ -328,12 +328,25 @@ class TcpSocketsNativeTest {
             }
         }
 
+    /** The idle backoff on its own (review R3): 1, 2, 4, 8, 8 s, and 1 s again after data. No socket, no time. */
+    @Test fun readBackoffDoublesToEightTimesAndStartsOverAfterData() {
+        val b = ReadBackoff(1.seconds)
+        val seen = ArrayList<Long>()
+        repeat(5) {
+            seen += b.next.inWholeSeconds
+            b.gaveUp()
+        }
+        assertEquals(listOf(1L, 2L, 4L, 8L, 8L), seen)
+        b.dataRead()
+        assertEquals(1.seconds, b.next)
+    }
+
     /**
-     * The bounded wait for data keeps one select however often it gives up (review 2026-10-28 readwait.md N1), and backs off
-     * while nothing arrives: 50, 100, 200, 400 ms, then 400 ms (eight times the first) until data is read, after which it
-     * starts at 50 ms again (R3: an idle connection on Windows tried a receive every second for as long as it lived).
+     * The bounded wait for data keeps one select however often it gives up (review 2026-10-28 readwait.md N1): after three
+     * rechecks with nothing readable there is still one READ select. How long the rechecks take is
+     * [readBackoffDoublesToEightTimesAndStartsOverAfterData]'s concern; nothing here asserts on time.
      */
-    @Test fun idleReadRechecksBackOffAndKeepOneSelect() =
+    @Test fun idleReadRechecksKeepOneSelect() =
         runBlocking {
             val selector = SelectorManager(Dispatchers.Default)
             val deaf = NoReadWakeUpSelector(selector)
@@ -342,19 +355,15 @@ class TcpSocketsNativeTest {
                     val server = bindTcp(selector, "127.0.0.1", 0)
                     val port = (server.localAddress as InetSocketAddress).port
                     val client = connectTcp(deaf, InetSocketAddress("127.0.0.1", port)) as NativeTcpSocket
-                    client.readRecheck = 50.milliseconds
+                    client.readRecheck = 10.milliseconds
                     val accepted = server.accept()
                     val input = client.openReadChannel()
-                    val idle = client.readRechecksForTest.first { it.size >= 5 }
-                    assertEquals(listOf(50, 100, 200, 400, 400), idle.take(5).map { it.inWholeMilliseconds.toInt() }, "the idle rechecks")
+                    client.readRechecksForTest.first { it.size >= 3 }
                     assertEquals(1, deaf.readSelects, "a select per recheck")
                     val out = accepted.openWriteChannel()
                     out.writeFully("x".encodeToByteArray())
                     out.flush()
                     assertEquals('x'.code.toByte(), input.readByte())
-                    val after = client.readRechecksForTest.value.size
-                    val next = client.readRechecksForTest.first { it.size > after }[after]
-                    assertEquals(50, next.inWholeMilliseconds.toInt(), "the first recheck after data")
                     client.close()
                     accepted.close()
                     server.close()
@@ -367,34 +376,85 @@ class TcpSocketsNativeTest {
     /**
      * A pending connect whose completion the selector never reports (Windows posts FD_CONNECT once, and its selector can
      * lose it) still completes: the wait gives up after the recheck and finds the socket connected (review 2026-10-28
-     * readwait.md R2). Before, it waited for ever.
+     * readwait.md R2). A host that connects to loopback synchronously never reaches the wait: the test says so and proves
+     * nothing there (it does on macOS, where the old unbounded wait hung).
      */
-    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    @Test
-    fun aConnectTheSelectorNeverReportsStillCompletes() =
+    @Test fun aConnectTheSelectorNeverReportsStillCompletes() =
         runBlocking {
             val selector = SelectorManager(Dispatchers.Default)
             val deaf = NoConnectWakeUpSelector(selector)
-            val saved = tcpConnectRecheck
-            tcpConnectRecheck = 50.milliseconds
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
                     val port = (server.localAddress as InetSocketAddress).port
-                    val before = tcpConnectRechecksForTest.load()
-                    val client = connectTcp(deaf, InetSocketAddress("127.0.0.1", port))
+                    var rechecks = 0
+                    val client = connectTcpAddressWith(deaf, TcpAddress(byteArrayOf(127, 0, 0, 1), port), 50.milliseconds) { rechecks++ }
                     val accepted = server.accept()
-                    // a loopback connect may complete at once; when it was pending, the selector never woke it
-                    assertTrue(
-                        deaf.connectSelects == 0 || tcpConnectRechecksForTest.load() > before,
-                        "a pending connect ended without a recheck",
-                    )
+                    if (deaf.connectSelects == 0) {
+                        println(
+                            "aConnectTheSelectorNeverReportsStillCompletes: the loopback connect completed at once, nothing to prove here",
+                        )
+                    } else {
+                        assertTrue(rechecks > 0, "the pending connect ended without a recheck")
+                    }
                     client.close()
                     accepted.close()
                     server.close()
                 }
             } finally {
-                tcpConnectRecheck = saved
+                selector.close()
+            }
+        }
+
+    /** A refused connect whose event the selector never reports fails (it neither hangs nor passes for connected). */
+    @Test fun negative_aRefusedConnectTheSelectorNeverReportsFails() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            val deaf = NoConnectWakeUpSelector(selector)
+            try {
+                val probe = bindTcp(selector, "127.0.0.1", 0)
+                val port = (probe.localAddress as InetSocketAddress).port
+                probe.close() // nothing listens there now
+                val failure =
+                    withTimeoutOrNull(10.seconds) {
+                        runCatching { connectTcpAddressWith(deaf, TcpAddress(byteArrayOf(127, 0, 0, 1), port), 50.milliseconds) }
+                    } ?: error("a refused connect was still waiting after 10 s")
+                assertTrue(failure.isFailure, "a connect to a port nobody listens on succeeded")
+            } finally {
+                selector.close()
+            }
+        }
+
+    /**
+     * A connect that stays undecided (no error, no peer: what is left when the event that carried the error was lost) fails
+     * once its rechecks add up to the limit, instead of waiting for ever. A SYN to an address that never answers stays
+     * undecided; where the system refuses it at once (no route), the connect fails all the same.
+     */
+    @Test fun negative_anUndecidedConnectEndsAtItsLimit() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            val deaf = NoConnectWakeUpSelector(selector)
+            try {
+                val failure =
+                    withTimeoutOrNull(10.seconds) {
+                        runCatching {
+                            // TEST-NET-1 (RFC 5737): no host answers there
+                            connectTcpAddressWith(
+                                deaf,
+                                TcpAddress(byteArrayOf(192.toByte(), 0, 2, 1), 9),
+                                20.milliseconds,
+                                undecidedLimit = 100.milliseconds,
+                            )
+                        }
+                    } ?: error("an undecided connect was still waiting after 10 s")
+                assertTrue(failure.isFailure, "a connect to an address that never answers succeeded")
+                if (deaf.connectSelects > 0) {
+                    assertTrue(
+                        "neither completed nor failed" in failure.exceptionOrNull().toString(),
+                        "the undecided connect ended otherwise: ${failure.exceptionOrNull()}",
+                    )
+                }
+            } finally {
                 selector.close()
             }
         }
