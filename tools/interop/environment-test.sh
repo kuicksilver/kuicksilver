@@ -262,6 +262,8 @@ check "port: two client qlogs"                                    1 "" -- python
 check "port: bytes in flight at its last recovery update"        1 "" -- python3 "$pp" --decoded "$(pvar inflight '.client_qlogs[0].bytes_in_flight = 1250')"
 check "port: no recovery update in its qlog"                      1 "" -- python3 "$pp" --decoded "$(pvar nometrics '.client_qlogs[0].bytes_in_flight = null')"
 check "port: an ack-eliciting packet sent after it (MAX_DATA)"    1 "" -- python3 "$pp" --decoded "$(pvar tracked '.client_qlogs[0].tracked_after = 1')"
+check "port: a loss declared after its last tracked packet (C-N1)" 1 "" -- python3 "$pp" --decoded "$(pvar lost '.client_qlogs[0].lost_after = 1')"
+check "port:   a summary without the loss count cannot be analysed" 2 "cannot analyse" -- python3 "$pp" --decoded "$(pvar nolost 'del(.client_qlogs[0].lost_after)')"
 check "port: the client exited 133 (Kotlin/Native uncaught)"      1 "" -- python3 "$pp" --decoded "$(pvar k133 '.client_exit = 133')"
 check "port: a summary without the client's side cannot be analysed" 2 "cannot analyse" -- python3 "$pp" --decoded "$(pvar noclient 'del(.client_qlogs)')"
 # the client's side as decoded from a cell (no tshark needed): the compose output's client lines and the client's qlog
@@ -282,6 +284,12 @@ sed -i.bak 's/^{"time":9830.0,"name":"transport:packet_sent","data":{"frames":\[
 check "port: cell client side, a packet listing only ACK and PADDING is ACK-only" 0 '^\[0,0\]$' -- pj '[.client_qlogs[0].bytes_in_flight, .client_qlogs[0].tracked_after]'
 sed -i.bak 's/{"frame_type":"padding"}/{"frame_type":"ping"}/' "$pc/client/qlog/a_client_b.sqlog"
 check "port: cell client side, ACK with PING is tracked"          0 '^\[0,1\]$' -- pj '[.client_qlogs[0].bytes_in_flight, .client_qlogs[0].tracked_after]'
+cp "$tmp/qlog.keep" "$pc/client/qlog/a_client_b.sqlog"
+# a loss the last ACK declared, with the update after it at 0 in flight: counted until a tracked packet goes out again
+sed -i.bak 's/^{"time":9800.0,"name":"recovery:metrics_updated"/{"time":9799.0,"name":"recovery:packet_lost","data":{"header":{"packet_type":"1RTT","packet_number":7},"trigger":"reordering_threshold"}}\n&/' "$pc/client/qlog/a_client_b.sqlog"
+check "port: cell client side, a loss after the last tracked packet" 0 '^\[0,0,1\]$' -- pj '[.client_qlogs[0].bytes_in_flight, .client_qlogs[0].tracked_after, .client_qlogs[0].lost_after]'
+sed -i.bak 's/^{"time":9799.0,"name":"recovery:packet_lost".*$/&\n{"time":9799.5,"name":"transport:packet_sent","data":{"frames":[{"frame_type":"stream"}]}}/' "$pc/client/qlog/a_client_b.sqlog"
+check "port: cell client side, sent again: no loss outstanding"    0 '^\[0,0,0\]$' -- pj '[.client_qlogs[0].bytes_in_flight, .client_qlogs[0].tracked_after, .client_qlogs[0].lost_after]'
 cp "$tmp/qlog.keep" "$pc/client/qlog/a_client_b.sqlog"
 sed -i.bak 's/\$ConnectionLost\$Timeout: Idle timeout after 30s/.ConnectionLost.Timeout: Idle timeout after 1m 0.5s/' "$pc/output.txt"
 check "port: cell client side, Kotlin/Native class name, 1m 0.5s" 0 '^60.5$' -- pj '.client_idle_timeout'

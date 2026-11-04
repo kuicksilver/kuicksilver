@@ -29,7 +29,8 @@ its one qlog shows the connection closed by the idle timer (trigger idle_timeout
 it received and, less the 0.5 s an ACK may wait, after the last packet it sent. Its last sent packet is its last one from B:
 on the server-side capture it sent from no later binding. And it had nothing to send: its last recovery:metrics_updated has
 bytes_in_flight 0 and every packet it sent after that is ACK-only (no frames but ACK and PADDING in the qlog's packet_sent),
-so no PTO was due (RFC 9002 section 6.2); a client that went quiet with something in flight has a broken loss timer, not an idle connection. A client that died of anything else between the rebind and its
+so no PTO was due (RFC 9002 section 6.2), and no packet it declared lost after its last tracked one (that data is sent again
+at once, so silence then is a dead send loop); a client that went quiet with something in flight has a broken loss timer, not an idle connection. A client that died of anything else between the rebind and its
 idle timeout (an exception, a crash, an early exit) is no ENVIRONMENT verdict. Anything else is none either.
 
 Usage: prohibited-port-rebind.py CELL_DIR          decodes the cell's output.txt, server log, client log and qlog and
@@ -143,12 +144,14 @@ def ack_only(frames):
 
 def client_qlogs(cell):
     """Per qlog of the client: the trigger and time (s) of its connection_closed, of its last sent and received packet, the
-    bytes_in_flight of its last recovery:metrics_updated, and how many packets it sent after that with frames recovery tracks."""
+    bytes_in_flight of its last recovery:metrics_updated, how many packets it sent after that with frames recovery tracks, and
+    how many packets it declared lost after the last such packet it sent."""
     result = []
     for root, _, files in os.walk(os.path.join(cell, "client")):
         for name in sorted(files):
             if not name.endswith((".sqlog", ".qlog")): continue
-            q = {"trigger": None, "closed": None, "last_sent": None, "last_received": None, "bytes_in_flight": None, "tracked_after": 0}
+            q = {"trigger": None, "closed": None, "last_sent": None, "last_received": None, "bytes_in_flight": None, "tracked_after": 0,
+                 "lost_after": 0}
             with open(os.path.join(root, name), errors="replace") as f:
                 for line in f:
                     line = line.strip().lstrip("\x1e")
@@ -161,9 +164,10 @@ def client_qlogs(cell):
                         q["last_sent"] = t
                         # ACK-only: no frame but ACK and PADDING (RFC 9002 section 2), whether the qlog lists them or, as
                         # QlogWriter does today for a packet recovery does not track, leaves the list empty
-                        if not ack_only(e.get("data", {}).get("frames") or []): q["tracked_after"] += 1
+                        if not ack_only(e.get("data", {}).get("frames") or []): q["tracked_after"] += 1; q["lost_after"] = 0
                     elif ev == "recovery:metrics_updated":
                         q["bytes_in_flight"], q["tracked_after"] = e.get("data", {}).get("bytes_in_flight"), 0
+                    elif ev == "recovery:packet_lost": q["lost_after"] += 1
                     elif ev == "transport:packet_received": q["last_received"] = t
                     elif ev == "connectivity:connection_closed": q["closed"], q["trigger"] = t, e.get("data", {}).get("trigger")
             result.append(q)
@@ -201,6 +205,9 @@ def idled_out(d):
     # it had nothing to send: nothing in flight at its last recovery update, and only ACK-only packets after it (a client
     # with an ack-eliciting packet outstanding must probe, RFC 9002 6.2; one that stayed silent then is broken, not idle)
     if q["bytes_in_flight"] != 0 or q["tracked_after"] != 0: return False
+    # and nothing waited for a retransmission: a loss declared after its last tracked packet (the update that follows a loss
+    # shows 0 in flight) leaves data a live client sends again at once (RFC 9002 section 6.1; review 2026-10-28 C-N1)
+    if q["lost_after"] != 0: return False
     return q["closed"] - q["last_received"] >= idle - 1e-3 and q["closed"] - q["last_sent"] >= idle - ACK_WAIT_S
 
 
