@@ -1,6 +1,6 @@
 # Kuicksilver — RFC compliance
 
-Date: 2026-10-02; as of 0.2.1 (2026-10-21); split into this summary and one details file per RFC on 2026-10-28. Status: living document, updated with each change it describes.
+Date: 2026-10-02; as of 0.2.1 (released 2026-11-04); split into this summary and one details file per RFC on 2026-10-28. Status: living document, updated with each change it describes.
 
 0.2.0 is the first release (TLS, QUIC v1/v2, HTTP/3, the Ktor engines and the 0.2.0 work). One row per requirement or topic:
 

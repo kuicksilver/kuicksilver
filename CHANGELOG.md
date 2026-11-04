@@ -72,41 +72,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `QuicClientConfig.tokenStore`, off by default because a token links the connections that use it; `QuicTokenStore`,
   `MemoryTokenStore`). Tokens are keyed by server name and port, used once, replaced by a Retry token when a Retry comes,
   and bounded per connection (eight of at most 1024 bytes; more NEW_TOKEN frames spend glitch tokens).
-- Supply chain (`docs/release.md`, "Supply chain: SBOM and provenance"): a CycloneDX 1.6 SBOM of every publication
-  (64 documents: each platform publication, each module, the BOM), with the statically linked OpenSSL (version, tarball
-  SHA-256, CPE, configure flags) and the `ksl` shim as components, checked against the CycloneDX schema; and an in-toto
-  / SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball and configure flags, SHA-256 of every
-  published file), signed with the release key. `local-release.sh` makes both, dry run included; they are attached to the GitHub release
-  and not uploaded to Maven Central, so the deployment's file count is unchanged. The provenance reaches SLSA Build
-  Level 1, not more: it is produced and signed on the machine that builds.
-- Verifying a release (`docs/verifying.md`): `tools/verify/verify-release.sh <version>` downloads a version from Maven
-  Central, checks every file's signature against the pinned release key and Central's `.sha1`, checks the GitHub
-  release's SBOM and provenance when present (signatures, every subject digest, the source commit against the tag), and
-  rebuilds from the signed tag the native libraries this host can build (on macOS: the two macOS JNI dylibs, the static
-  archives of the Apple and Kotlin/Native Linux cinterop klibs, the three Android `libksl.so`), comparing them byte for
-  byte with the published ones; `--offline <dir>` reads a local repository. The Linux and Windows JNI libraries and the
-  Kotlin/Gradle outputs are reported as not rebuilt, with the reason. `tools/verify/verify-release-test.sh` (in the local
-  gate) runs it on fixtures without network. The page also covers Gradle dependency verification for `io.kuicksilver`.
-  The tag must be signed by the release key before anything is compared with it or built from it; from 0.2.1 a missing
-  SBOM or provenance fails, and a file that does not download, a missing `.sha1` or a server-supplied name that is not
-  a plain name (BOM, module file, directory listing, provenance subject) fails rather than being skipped.
-- `context7.json`: the configuration of the Context7 documentation index (what it reads, a description, rules for coding
-  agents, the 0.2.0 tag), and a release step that keeps it on the newest published version (`docs/release.md`).
-- `docs/stability.md` and `SECURITY.md` state that Kuicksilver is not FIPS-certified and that the bundled OpenSSL is
-  built without the FIPS provider; every release build checks the latter (`tools/check/openssl-no-fips.sh`).
-- `docs/benchmarks.md`: a published benchmark table — the QUIC Interop Runner's goodput and crosstraffic, CPU time per
-  transferred GB (cgroup accounting per container, over a plain router) and handshakes per second, for the JVM and
-  Kotlin/Native interop images against quiche, quinn and msquic, with the method, the raw data (`docs/benchmarks/`) and
-  the caveats (one Apple Silicon host; the amd64 peer images run under emulation, calibrated with an amd64 build of
-  our own endpoint). `tools/bench/run-table.sh` regenerates it.
-- Interop tooling: `KSL_INTEROP_TAG` makes `build-image.sh` and `run-local.sh` build and run
-  `kuicksilver-interop[-native]:<tag>` instead of `:local`.
-- Benchmark tooling: `KSL_BENCH_JAVA_OPTS` hands JAVA_OPTS to the JVM server of `tools/bench/cpu-transfer.sh` and
-  `handshakes.sh` (a JFR recording into `/profile`, which is `$KSL_BENCH_WORK/profile`); `ksl-ctx-bench.sh` reports the
-  server's share of a handshake with the hybrid X25519MLKEM768 key share and with X25519 alone; `kuicksilver-bench` has
-  a `macosArm64` target and a `core` configuration (`CoreThroughputBenchmark` with the Null and the `ksl` crypto), and
-  the interop endpoint a `macosArm64` executable, to profile Kotlin/Native with `sample` or Instruments
-  (`docs/benchmarks.md`, "Profiling").
 - HTTP/3 (*experimental*): the Capsule Protocol of RFC 9297 section 3 on Extended CONNECT streams.
   `Http3Stream.useCapsuleProtocol(CapsuleConfig)` returns a `CapsuleStream`: `capsules` delivers the declared
   `knownTypes` (64 KiB each at most by default) and skips other types without buffering them, `send` writes whole
@@ -171,30 +136,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
-- Ktor 3.6.1 (was 3.6.0). It fixes KTOR-9959, ktor-network's JVM socket writer spinning at 100 % CPU when a write
-  answered 0, which the engines never used (their JVM sockets have their own writer, which stays). Applications on Ktor
-  3.6.0 keep working: Kuicksilver supports Ktor 3.6.x.
 - HTTP/3: stricter towards peers (each also under "Fixed"); a peer that got away with these before now fails a request or
   the connection. An HTTP/3 datagram for a stream beyond the client-initiated bidirectional stream limit closes the
   connection with `H3_ID_ERROR` (RFC 9297 section 2.1, SHOULD); one for a request other than CONNECT whose stream is
   still receiving aborts that request with `H3_DATAGRAM_ERROR` (RFC 9297 section 2, MUST); and on a server every
   MAX_PUSH_ID after the first spends a glitch token, so a client that keeps re-sending it (some stacks send one with every
   push-credit update) meets `H3_EXCESSIVE_LOAD` once the bucket is empty (RFC 9114 section 10.5).
-- Ktor client, HTTP/1.1: a response `Content-Length` with leading zeros (`0000000000000000000005`) is read as its value
-  instead of failing as invalid when it has more than 18 characters (RFC 9110 section 8.6: "Any Content-Length field
-  value greater than or equal to zero is valid"). A valid length of 10^18 bytes or more still fails the response, now
-  with a `ParserException` that names it as this client's limit, not as an invalid length.
-- Ktor server, HTTP/1.1: a request whose `Content-Length` has 19 or more significant digits (10^18 bytes or more)
-  gets `413 Content Too Large` and the connection closes, instead of 400: RFC 9110 section 8.6 says "Any
-  Content-Length field value greater than or equal to zero is valid", so such a length is too large to process
-  (section 15.5.14), not invalid. Leading zeros no longer count towards the digits (`000000000000000000005` is 5).
-- Ktor server, HTTP/1.1 (behaviour): the engine answers `501 Not Implemented` (with `Connection: close` and the text
-  "This server does not support CONNECT tunnels.") when the application answers a CONNECT with a 2xx, and logs a
-  warning in the application log. A 2xx to CONNECT says the server "will switch to tunnel mode immediately after the
-  response header section" (RFC 9110 section 9.3.6), and the engine cannot tunnel: the handler gets no connection.
-  Before, the 2xx went out framed as an ordinary body and the connection served the next request, so the client's
-  tunnel bytes were read as requests. The connection still closes after every CONNECT (RFC 9931 section 8).
-  Tunnelling is planned for 0.3.0.
 - Ktor client and server, HTTP/1.1: a chunk-size line with SP or HTAB right before its CRLF (`5 \r\n`, `0 \r\n`,
   `5;a=b \r\n`) is now refused: the server answers the request with 400 and closes the connection, and the client fails
   the response with `MalformedChunkedBodyException` ("Whitespace before the end of a chunk size line"). RFC 9112
@@ -226,10 +173,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   no QPACK Stream Cancellation for the early requests (the request sent again reuses the stream ID, and a cancellation
   arriving after its response was encoded made the server fail the connection with `QPACK_DECODER_STREAM_ERROR`) and
   repeats each early request once.
-- QUIC: a lost connection no longer takes the bytes a peer sent before it (`QuicStream.input`): what was received is
-  still read, up to the FIN when it came too (then the stream ends cleanly), and only then do reads fail with the
-  `QuicException.ConnectionLost`. Before, every read failed at once, even with the whole stream received. A reset still
-  fails the reads at once.
 - Ktor client: requests now follow the platform's proxy settings by default (`proxyResolver = ProxyResolvers.System`):
   where the system, the JVM's properties or (on Linux) the environment name a proxy, requests go through it over
   HTTP/1.1, without HTTP/3 or Alt-Svc. Before, only an explicit `proxy` was used. `proxyResolver = ProxyResolvers.None`
@@ -238,10 +181,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   browsers do, instead of an absolute-form Upgrade the proxy may not forward. A CONNECT the proxy refuses fails with
   `ProxyException` (`replyCode` 407 when it wants credentials) instead of a plain `IOException`. The
   `protocolSelected` reason for a request through a proxy is the new `ProtocolReason.Proxy` (was `NotSecure`).
-- HTTP/3 scheduling: the control and QPACK streams are now sent before every request stream, whatever urgency the peer
-  asks for. Before, they were urgency 0 like any other stream, so a request at u=0 (non-incremental) with a lower
-  stream id had its whole response sent ahead of them: a QPACK insert that the response's own header or trailer
-  section needed, or a GOAWAY, waited behind the body.
 - HTTP/3 scheduling (RFC 9218): a CONNECT tunnel without a priority signal, a WebSocket over HTTP/3 among them, is now
   scheduled incremental on both sides, so it shares bandwidth with the other streams instead of holding back every
   response of the same urgency. A `priority` header on a request now schedules the client's own stream too, and a
@@ -266,6 +205,170 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: name lookups run at most 8 at a time on their own share of `Dispatchers.IO`, one per name however many
   requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
   is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
+
+### Fixed
+
+- ksl: `ksl_ctx_set_ciphers` holds a TLS 1.2 list to the RFC 10015 profile itself: a list with any suite that is not
+  ECDHE with RSA or ECDSA and an AEAD of 128 bits or more (static RSA, FFDHE, CBC, CCM_8, anonymous, PSK) is refused
+  with `KSL_E_BAD_ARG`, as the version bounds are. Kotlin never passed one; the C ABI accepted any. A refused list also
+  no longer leaves the context without TLS 1.2 suites (OpenSSL replaces the list before it refuses one that matches
+  none).
+- Ktor client: at most one WebSocket connection is in the CONNECTING state per remote host (RFC 6455 section 4.1,
+  step 2, MUST: "If multiple connections to the same IP address are attempted simultaneously, the client MUST
+  serialize them"): a WebSocket over HTTP/1.1 to an IP address another one is still connecting to, on any port, waits
+  until that handshake is answered or failed, also when it uses another name for the address; through a proxy that
+  resolves names the name counts as the host. A WebSocket holds the address from the moment the pool gives it a
+  connection or the room to open one (not while it waits for a slot) until the server answers the handshake, and the
+  answer must arrive within the connect timeout (`HttpTimeout`'s, else `connectTimeout`, 10 s), counted from then, or
+  the WebSocket fails with `ConnectTimeoutException`: a server that accepts the connection and never answers holds up
+  the next WebSocket to the address for at most that long. Before, any number connected at once.
+- HTTP/3 client: any number of interim (1xx) responses is accepted before the final one, as RFC 9110 section 15.2
+  requires ("A client MUST be able to parse one or more 1xx responses"); a request failed at the sixth. Endless 1xx
+  still end: the decoded fields of all of a request's interim responses together are bounded by `maxFieldSectionSize`
+  (64 KiB by default), past which the request fails with `H3_EXCESSIVE_LOAD` and its stream is reset, as the HTTP/1.1
+  client's 64 KiB budget. `Http3Settings.maxInformationalResponses` is deprecated and ignored (still validated, ABI
+  unchanged).
+- QUIC with BBR (`QuicConfig.congestionController`): persistent congestion is BBR's retransmission timeout
+  (draft-ietf-ccwg-bbr-06 section 5.6.4.4): the window still drops to max(bytes in flight + 1 datagram, 4 datagrams)
+  (`OnEnterRTO`), and now the window from before comes back once a packet sent after it is acknowledged (`RestoreCwnd`,
+  "Upon exiting loss recovery (RTO recovery or Fast Recovery)"). Before, it was never restored, except by a spurious-loss
+  undo.
+- QUIC on the portable JVM socket (`IoPreference.Portable`, or when the accelerated UDP cannot open): the Don't Fragment
+  bit is set where the JDK has the option (`IP_DONTFRAGMENT`, JDK 19 and later), as RFC 9000 section 14 requires ("MUST
+  be set if possible"). Datagrams there stay within 1200 bytes, so PMTUD stays off.
+- QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
+  it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
+  server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).
+  Tickets issued before the upgrade refuse 0-RTT once.
+- QUIC with `resetStreamAt`: a RESET_STREAM sent after our RESET_STREAM_AT (our own `reset`, or the answer to the
+  peer's STOP_SENDING) carries the RESET_STREAM_AT's error code, not the new one; draft-ietf-quic-reliable-stream-reset
+  section 5.2 says the initiator "MUST NOT change the Application Error Code", and a peer closed the connection with
+  STREAM_STATE_ERROR.
+- HTTP/3: a `priority` field or PRIORITY_UPDATE Priority Field Value that is not a valid Structured Fields
+  dictionary is ignored as a whole, so the defaults (u=3, i=?0) apply, or the current values when a response's field
+  is merged (RFC 8941 section 4.2, RFC 9218 section 4). The parser read it member by member before and kept the valid
+  members of a broken value such as `u=1, i,`. A `u` that is not an Integer 0 to 7 or an `i` that is not a Boolean is
+  still ignored on its own (RFC 9218 sections 4.1, 4.2), and several `priority` field lines are combined before
+  parsing; only the first one was read before.
+- HTTP/3 server with WebTransport: a WebTransport stream naming a Session ID beyond the bidirectional stream limit the
+  server granted closes the connection with `H3_ID_ERROR` at once; the client could never open that session. Such a
+  stream held one of the 16 buffer slots for 5 s before.
+- HTTP/3: an HTTP/3 datagram for a request other than CONNECT (a GET, a POST: no datagram semantics) aborts that
+  request's stream with `H3_DATAGRAM_ERROR` while its direction towards us is still open, as RFC 9297 section 2
+  requires ("the receiver MUST terminate the request"); the request fails, the connection lives on. Such datagrams were
+  dropped, and a WebTransport server kept them for up to 5 s in the 16 slots meant for sessions whose CONNECT is still on
+  the way. Once that direction ended they are still dropped silently (section 2.1).
+- HTTP/3: an HTTP/3 datagram whose quarter stream ID names a stream beyond the client-initiated bidirectional stream
+  limit (the one the server granted; on a client, the one granted to it) closes the connection with `H3_ID_ERROR`, as
+  RFC 9297 section 2.1 recommends ("SHOULD be treated as an HTTP/3 connection error of type H3_ID_ERROR"), the same
+  rule PRIORITY_UPDATE and WebTransport streams follow. Such a datagram was dropped silently.
+- HTTP/3 server with WebTransport: datagrams that arrive before their session's CONNECT HEADERS (reordering, or a
+  client that sends right after its CONNECT) are kept and delivered once the session is accepted, at most 16 per
+  connection (draft-ietf-webtrans-http3-16 section 4.6, "SHOULD buffer streams and datagrams until they can be associated
+  with an established session"), each on the order of a round trip as RFC 9297 section 2.1 allows: one PTO plus one
+  smoothed RTT of the connection, at least 50 ms and at most 5 s. They were dropped.
+- HTTP/3 with WebTransport: a WebTransport `WT_STREAM` signal as the first frame of the peer's control stream now closes
+  the connection with `H3_MISSING_SETTINGS`, as RFC 9114 section 6.2.1 requires of any first frame other than SETTINGS,
+  instead of `H3_FRAME_ERROR`.
+- TLS over TCP: a server now issues six session tickets after a full handshake (also the explicit post-verdict ones of a
+  pinned-client server), and a client keeps up to six per origin, each used once, so up to six parallel HTTP/1.1
+  connections to one origin each resume (RFC 9846 appendix C.4, SHOULD, whose example is a browser's six HTTP/1.1
+  connections). Before, one ticket per connection and one per origin meant only one of them resumed. A QUIC origin still
+  keeps its newest ticket only.
+- TLS over TCP: a connection whose application stream failed (a handler that threw mid-response) now ends with the fatal
+  alert internal_error after what was sent, then a FIN, where OpenSSL can send one: a TLS 1.3 server and a TLS 1.2 client
+  (RFC 9846 section 6.1). Before, it ended with a reset and no alert; it still never ends with `close_notify`, so a peer
+  never takes the cut stream for a whole one. A TLS 1.3 client and a TLS 1.2 server still reset the connection: OpenSSL
+  3.5 offers no way to send an alert there. New internal `TlsConnection.abortOutput` and `ksl_tcp_abort` (additive, ABI 7).
+  The alert also follows a KeyUpdate that was queued and not yet written, and a record write the transport had no room
+  for: both go out first (OpenSSL started no alert behind them, so the connection was reset). `ksl_tcp_write` takes at
+  most one record per call and accepts the retry of a pending write from another buffer with the same bytes.
+- Ktor client, HTTP/1.1: a status code must be exactly three digits (RFC 9112 section 4); `HTTP/1.1 20` and
+  `HTTP/1.1 2000` without a reason phrase were taken as statuses 20 and 2000, and now fail with `ParserException`.
+  Three digits outside 100..599 (`HTTP/1.1 600 Six`, `HTTP/1.1 042`) are an invalid status code that a client SHOULD
+  process as a 5xx (RFC 9110 section 15): the response is a 500 whose description is the code and reason sent
+  (`600 Six`), so response validation and retries on server errors take it as one, and a 0xx is never skipped as an
+  interim response. Before, it was passed on as is, 042 looking like a success. A response in `HTTP/1.2` or a later
+  minor version is processed as HTTP/1.1 (RFC 9110 section 6.2) instead of failing.
+- WebTransport: a session the peer closes with WT_CLOSE_SESSION and then, at once, its connection (Firefox does both
+  in back-to-back packets) ends with the capsule's code and reason. Before, the server saw code 0 and an empty reason:
+  the connection's end completed the session before its capsule reader had read the capsule. The capsule reader now
+  reads on to what the peer sent, and the connection's reason is the session's only when no capsule came. A
+  WebTransport stream whose pump the lost connection cancelled before it ran now ends instead of leaving the
+  application waiting.
+
+## [0.2.1] - 2026-11-04
+
+### Added
+
+- Supply chain (`docs/release.md`, "Supply chain: SBOM and provenance"): a CycloneDX 1.6 SBOM of every publication
+  (64 documents: each platform publication, each module, the BOM), with the statically linked OpenSSL (version, tarball
+  SHA-256, CPE, configure flags) and the `ksl` shim as components, checked against the CycloneDX schema; and an in-toto
+  / SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball and configure flags, SHA-256 of every
+  published file), signed with the release key. `local-release.sh` makes both, dry run included; they are attached to the GitHub release
+  and not uploaded to Maven Central, so the deployment's file count is unchanged. The provenance reaches SLSA Build
+  Level 1, not more: it is produced and signed on the machine that builds.
+- Verifying a release (`docs/verifying.md`): `tools/verify/verify-release.sh <version>` downloads a version from Maven
+  Central, checks every file's signature against the pinned release key and Central's `.sha1`, checks the GitHub
+  release's SBOM and provenance when present (signatures, every subject digest, the source commit against the tag), and
+  rebuilds from the signed tag the native libraries this host can build (on macOS: the two macOS JNI dylibs, the static
+  archives of the Apple and Kotlin/Native Linux cinterop klibs, the three Android `libksl.so`), comparing them byte for
+  byte with the published ones; `--offline <dir>` reads a local repository. The Linux and Windows JNI libraries and the
+  Kotlin/Gradle outputs are reported as not rebuilt, with the reason. `tools/verify/verify-release-test.sh` (in the local
+  gate) runs it on fixtures without network. The page also covers Gradle dependency verification for `io.kuicksilver`.
+  The tag must be signed by the release key before anything is compared with it or built from it; from 0.2.1 a missing
+  SBOM or provenance fails, and a file that does not download, a missing `.sha1` or a server-supplied name that is not
+  a plain name (BOM, module file, directory listing, provenance subject) fails rather than being skipped.
+- `context7.json`: the configuration of the Context7 documentation index (what it reads, a description, rules for coding
+  agents, the 0.2.0 tag), and a release step that keeps it on the newest published version (`docs/release.md`).
+- `docs/stability.md` and `SECURITY.md` state that Kuicksilver is not FIPS-certified and that the bundled OpenSSL is
+  built without the FIPS provider; every release build checks the latter (`tools/check/openssl-no-fips.sh`).
+- `docs/benchmarks.md`: a published benchmark table — the QUIC Interop Runner's goodput and crosstraffic, CPU time per
+  transferred GB (cgroup accounting per container, over a plain router) and handshakes per second, for the JVM and
+  Kotlin/Native interop images against quiche, quinn and msquic, with the method, the raw data (`docs/benchmarks/`) and
+  the caveats (one Apple Silicon host; the amd64 peer images run under emulation, calibrated with an amd64 build of
+  our own endpoint). `tools/bench/run-table.sh` regenerates it.
+- Interop tooling: `KSL_INTEROP_TAG` makes `build-image.sh` and `run-local.sh` build and run
+  `kuicksilver-interop[-native]:<tag>` instead of `:local`.
+- Benchmark tooling: `KSL_BENCH_JAVA_OPTS` hands JAVA_OPTS to the JVM server of `tools/bench/cpu-transfer.sh` and
+  `handshakes.sh` (a JFR recording into `/profile`, which is `$KSL_BENCH_WORK/profile`); `ksl-ctx-bench.sh` reports the
+  server's share of a handshake with the hybrid X25519MLKEM768 key share and with X25519 alone; `kuicksilver-bench` has
+  a `macosArm64` target and a `core` configuration (`CoreThroughputBenchmark` with the Null and the `ksl` crypto), and
+  the interop endpoint a `macosArm64` executable, to profile Kotlin/Native with `sample` or Instruments
+  (`docs/benchmarks.md`, "Profiling").
+
+### Changed
+
+- Ktor 3.6.1 (was 3.6.0). It fixes KTOR-9959, ktor-network's JVM socket writer spinning at 100 % CPU when a write
+  answered 0, which the engines never used (their JVM sockets have their own writer, which stays). Applications on Ktor
+  3.6.0 keep working: Kuicksilver supports Ktor 3.6.x.
+- QUIC client (behaviour): when the server rejects a 0-RTT that carried anything (a stream opened before the handshake
+  completed), the connection now closes with `QuicException.ConnectionLost.ZeroRttRejected`, which every such stream
+  fails with, and nothing of them is sent again in 1-RTT. RFC 9001 section 4.6.2: "When 0-RTT is rejected, all
+  connection characteristics that the client assumed might be incorrect ... The client therefore MUST reset the state of
+  all streams". Before, the transport sent their data again in 1-RTT whenever the ALPN and the new limits allowed it. A
+  connection that offered 0-RTT and opened nothing before the handshake goes on as before (except under
+  `EarlyDataState.Required`), and `ConnectionEvent.EarlyDataRejected` is emitted only for it. The HTTP/3 layer reports
+  the rejection as that `ZeroRttRejected`, never as a graceful end after a GOAWAY, and the Ktor client with
+  `http3 { earlyData = true }` sends the requests of such a connection again once, on a new connection without 0-RTT,
+  over HTTP/3 (`KuicksilverEventListener.retry`), a request with a streamed body that was waiting for the handshake
+  too (its body was never touched); before, they fell back to HTTP/1.1 and the alternative was marked broken, which a
+  rejected 0-RTT no longer does.
+- Ktor client, HTTP/1.1: a response `Content-Length` with leading zeros (`0000000000000000000005`) is read as its value
+  instead of failing as invalid when it has more than 18 characters (RFC 9110 section 8.6: "Any Content-Length field
+  value greater than or equal to zero is valid"). A valid length of 10^18 bytes or more still fails the response, now
+  with a `ParserException` that names it as this client's limit, not as an invalid length.
+- Ktor server, HTTP/1.1 (behaviour): the engine answers `501 Not Implemented` (with `Connection: close` and the text
+  "This server does not support CONNECT tunnels.") when the application answers a CONNECT with a 2xx, and logs a
+  warning in the application log. A 2xx to CONNECT says the server "will switch to tunnel mode immediately after the
+  response header section" (RFC 9110 section 9.3.6), and the engine cannot tunnel: the handler gets no connection.
+  Before, the 2xx went out framed as an ordinary body and the connection served the next request, so the client's
+  tunnel bytes were read as requests. The connection still closes after every CONNECT (RFC 9931 section 8).
+  Tunnelling is planned for 0.3.0.
+- QUIC: a lost connection no longer takes the bytes a peer sent before it (`QuicStream.input`): what was received is
+  still read, up to the FIN when it came too (then the stream ends cleanly), and only then do reads fail with the
+  `QuicException.ConnectionLost`. Before, every read failed at once, even with the whole stream received. A reset still
+  fails the reads at once.
 - HTTP/3 server: `QuicConfig.defaultStreamErrorCode` left at its default 0 (no HTTP/3 error code; a client reads it as
   H3_NO_ERROR, RFC 9114 section 9) becomes H3_REQUEST_REJECTED for `Http3Endpoint` and the Ktor engine's HTTP/3 side. It
   is the code of a request stream the QUIC layer gives up before the server saw it, which a client may then retry
@@ -333,66 +436,31 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   packet no longer overflows it. `DatagramPacketWriter.remaining` is 0 both when an empty payload fits and when no frame
   fits, and `write` wrote the 2-byte frame into the 0 or 1 byte left, which threw on the endpoint loop. `write` now returns
   false when the frame does not fit, and the datagram goes in the next packet. Found by the `connectionNull` fuzz target.
+- Ktor server, HTTP/1.1: a request whose `Content-Length` has 19 or more significant digits (10^18 bytes or more)
+  gets `413 Content Too Large` and the connection closes, instead of 400: RFC 9110 section 8.6 says "Any
+  Content-Length field value greater than or equal to zero is valid", so such a length is too large to process
+  (section 15.5.14), not invalid. Leading zeros no longer count towards the digits (`000000000000000000005` is 5).
+- HTTP/3 client: a server that sends GOAWAY and closes with `H3_NO_ERROR` at once no longer fails `Http3Endpoint.connect`
+  or `Http3Connection.client` now and then. When both arrived in one receive batch, the close could end the session before
+  the control stream's GOAWAY was applied, and the start failed with "H3_NO_ERROR from Peer" instead of returning the
+  connection with `goAwayReceived` set. The start now lets the control stream's reader finish what the server sent before
+  its close (at most one second) before it decides (RFC 9114 section 5.2), also when the control stream came in the same
+  batch and had not been accepted yet; a close before any control stream decides at once.
 - QUIC on Kotlin/Native: a connection and an endpoint no longer each leak a small native buffer (the receive path's
   placeholder and the connection ID registry's key scratch were allocated outside the heap and never freed), which grew
   RSS by about 3 MB per hour under the soak's churn. `EndpointCore.close` also frees the endpoint's own buffers and keys
   when a connection's release throws.
-- HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset) is no longer
+- HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the
   transport's end and closed with `H3_INTERNAL_ERROR`, which the Ktor client also took as a reason to mark the
   alternative broken. A failure caused by the session's own lost transport now leaves the end to the transport's close;
   a `ConnectionLost` of another connection (a handler relaying elsewhere) is still an internal error.
-- ksl: `ksl_ctx_set_ciphers` holds a TLS 1.2 list to the RFC 10015 profile itself: a list with any suite that is not
-  ECDHE with RSA or ECDSA and an AEAD of 128 bits or more (static RSA, FFDHE, CBC, CCM_8, anonymous, PSK) is refused
-  with `KSL_E_BAD_ARG`, as the version bounds are. Kotlin never passed one; the C ABI accepted any. A refused list also
-  no longer leaves the context without TLS 1.2 suites (OpenSSL replaces the list before it refuses one that matches
-  none).
-- Ktor client: at most one WebSocket connection is in the CONNECTING state per remote host (RFC 6455 section 4.1,
-  step 2, MUST: "If multiple connections to the same IP address are attempted simultaneously, the client MUST
-  serialize them"): a WebSocket over HTTP/1.1 to an IP address another one is still connecting to, on any port, waits
-  until that handshake is answered or failed, also when it uses another name for the address; through a proxy that
-  resolves names the name counts as the host. A WebSocket holds the address from the moment the pool gives it a
-  connection or the room to open one (not while it waits for a slot) until the server answers the handshake, and the
-  answer must arrive within the connect timeout (`HttpTimeout`'s, else `connectTimeout`, 10 s), counted from then, or
-  the WebSocket fails with `ConnectTimeoutException`: a server that accepts the connection and never answers holds up
-  the next WebSocket to the address for at most that long. Before, any number connected at once.
-- HTTP/3 client: any number of interim (1xx) responses is accepted before the final one, as RFC 9110 section 15.2
-  requires ("A client MUST be able to parse one or more 1xx responses"); a request failed at the sixth. Endless 1xx
-  still end: the decoded fields of all of a request's interim responses together are bounded by `maxFieldSectionSize`
-  (64 KiB by default), past which the request fails with `H3_EXCESSIVE_LOAD` and its stream is reset, as the HTTP/1.1
-  client's 64 KiB budget. `Http3Settings.maxInformationalResponses` is deprecated and ignored (still validated, ABI
-  unchanged).
-- QUIC with BBR (`QuicConfig.congestionController`): persistent congestion is BBR's retransmission timeout
-  (draft-ietf-ccwg-bbr-06 section 5.6.4.4): the window still drops to max(bytes in flight + 1 datagram, 4 datagrams)
-  (`OnEnterRTO`), and now the window from before comes back once a packet sent after it is acknowledged (`RestoreCwnd`,
-  "Upon exiting loss recovery (RTO recovery or Fast Recovery)"). Before, it was never restored, except by a spurious-loss
-  undo.
-- QUIC on the portable JVM socket (`IoPreference.Portable`, or when the accelerated UDP cannot open): the Don't Fragment
-  bit is set where the JDK has the option (`IP_DONTFRAGMENT`, JDK 19 and later), as RFC 9000 section 14 requires ("MUST
-  be set if possible"). Datagrams there stay within 1200 bytes, so PMTUD stays off.
 - QUIC client: the server's first Initial fixes its Source Connection ID, an ACK-only one too (RFC 9000 section 7.2,
   "MUST discard any subsequent packet ... with a different Source Connection ID"); before, an Initial without CRYPTO
   left the SCID open and a later one with another SCID was still adopted. The one exception is msquic's: an Initial with
   nothing but ACK, PING and PADDING whose SCID is the client's own DCID (msquic's connection sends from it until it has
-  the whole ClientHello) is processed, its ACK included, without fixing the SCID or recording its packet number. An
-  interim change on the integration branch dropped every such ACK-only Initial unprocessed; against quic-go, which
-  answers half a ClientHello with an ACK-only Initial from its real SCID, the client then had no RTT sample, resent on
-  the 1 s initial PTO and missed quic-go's 5 s handshake idle timeout (interop `amplificationlimit`, 3 server handshakes).
-- QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
-  it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
-  server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).
-  Tickets issued before the upgrade refuse 0-RTT once.
-- QUIC with `resetStreamAt`: a RESET_STREAM sent after our RESET_STREAM_AT (our own `reset`, or the answer to the
-  peer's STOP_SENDING) carries the RESET_STREAM_AT's error code, not the new one; draft-ietf-quic-reliable-stream-reset
-  section 5.2 says the initiator "MUST NOT change the Application Error Code", and a peer closed the connection with
-  STREAM_STATE_ERROR.
-- HTTP/3: a `priority` field or PRIORITY_UPDATE Priority Field Value that is not a valid Structured Fields
-  dictionary is ignored as a whole, so the defaults (u=3, i=?0) apply, or the current values when a response's field
-  is merged (RFC 8941 section 4.2, RFC 9218 section 4). The parser read it member by member before and kept the valid
-  members of a broken value such as `u=1, i,`. A `u` that is not an Integer 0 to 7 or an `i` that is not a Boolean is
-  still ignored on its own (RFC 9218 sections 4.1, 4.2), and several `priority` field lines are combined before
-  parsing; only the first one was read before.
+  the whole ClientHello) is processed, its ACK included, without fixing the SCID or recording its packet number.
 - HTTP/3 client: a server that sends GOAWAY before the client's SETTINGS went out (it is stopping right after the
   handshake) no longer makes `Http3Endpoint.connect` and `Http3Connection.client` fail with "closed locally with
   H3_NO_ERROR" (the client's own idle close after GOAWAY, RFC 9114 section 5.2). The connection is returned with
@@ -402,45 +470,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the server's own error close still fails the start.
 - HTTP/3: a response or request body whose stream came whole (its FIN and every byte before it) before the peer's
   CONNECTION_CLOSE is read whole however late its reader runs or the application reads it (RFC 9000 section 3.2, "Data
-  Recvd"). The one-second drain grace after a lost connection cut such a reader too: a body reader the scheduler paused
-  past it ended with `H3_NO_ERROR` from the peer instead of the bytes (`ConnectionEndTest` on a loaded Android 7 emulator,
-  a Windows VM, macOS under memory pressure). The grace now applies only to readers of streams cut short, and a field
-  section waiting for a dynamic-table insert fails once no insert can arrive any more instead of waiting. Whether a
-  stream came whole is decided when the transport is gone, not at the HTTP/3 close: after a local close the last DATA
-  and FIN may still arrive, and an unread body that came whole that way no longer kept the session waiting for the
-  application.
-- HTTP/3 server with WebTransport: a WebTransport stream naming a Session ID beyond the bidirectional stream limit the
-  server granted closes the connection with `H3_ID_ERROR` at once; the client could never open that session. Such a
-  stream held one of the 16 buffer slots for 5 s before.
-- HTTP/3: an HTTP/3 datagram for a request other than CONNECT (a GET, a POST: no datagram semantics) aborts that
-  request's stream with `H3_DATAGRAM_ERROR` while its direction towards us is still open, as RFC 9297 section 2
-  requires ("the receiver MUST terminate the request"); the request fails, the connection lives on. Such datagrams were
-  dropped, and a WebTransport server kept them for up to 5 s in the 16 slots meant for sessions whose CONNECT is still on
-  the way. Once that direction ended they are still dropped silently (section 2.1).
-- HTTP/3: an HTTP/3 datagram whose quarter stream ID names a stream beyond the client-initiated bidirectional stream
-  limit (the one the server granted; on a client, the one granted to it) closes the connection with `H3_ID_ERROR`, as
-  RFC 9297 section 2.1 recommends ("SHOULD be treated as an HTTP/3 connection error of type H3_ID_ERROR"), the same
-  rule PRIORITY_UPDATE and WebTransport streams follow. Such a datagram was dropped silently.
-- HTTP/3 server with WebTransport: datagrams that arrive before their session's CONNECT HEADERS (reordering, or a
-  client that sends right after its CONNECT) are kept and delivered once the session is accepted, at most 16 per
-  connection (draft-ietf-webtrans-http3-16 section 4.6, "SHOULD buffer streams and datagrams until they can be associated
-  with an established session"), each on the order of a round trip as RFC 9297 section 2.1 allows: one PTO plus one
-  smoothed RTT of the connection, at least 50 ms and at most 5 s. They were dropped.
+  Recvd"). The one-second drain grace after a lost connection cut such a reader too, and a response body reader started
+  between the session's end and the cancellation of its scope was cancelled with it: the body ended with `H3_NO_ERROR`
+  from the peer instead of the bytes (`ConnectionEndTest` on Linux, Windows, a loaded Android 7 emulator, macOS under
+  memory pressure). The grace now applies only to readers of streams cut short, and a field section waiting for a
+  dynamic-table insert fails once no insert can arrive any more instead of waiting. Whether a stream came whole is
+  decided when the transport is gone, not at the HTTP/3 close: after a local close the last DATA and FIN may still
+  arrive, and an unread body that came whole that way no longer kept the session waiting for the application.
 - HTTP/3 client: a response stream that ends without HEADERS fails the request with `Http3Exception.MessageError` and
   aborts the stream with `H3_MESSAGE_ERROR` (a response without `:status` is malformed, RFC 9114 section 4.1.2). It
   was `Http3Exception.Protocol` with `H3_REQUEST_INCOMPLETE`, which section 8.1 defines for an incomplete request.
-- HTTP/3: a request's `te: Trailers` (any case) is accepted: `"trailers"` is a quoted string of RFC 9110 section
-  10.1.4's ABNF, and ABNF strings are case-insensitive (RFC 9110 section 2.1, RFC 5234 section 2.3). Only the exact
-  lowercase `trailers` passed, so such a request was reset with `H3_MESSAGE_ERROR`.
-- HTTP/3 with WebTransport: a WebTransport `WT_STREAM` signal as the first frame of the peer's control stream now closes
-  the connection with `H3_MISSING_SETTINGS`, as RFC 9114 section 6.2.1 requires of any first frame other than SETTINGS,
-  instead of `H3_FRAME_ERROR`.
+- HTTP/3: a request's `te: Trailers` (any case) is accepted; transfer coding names are case-insensitive (RFC 9110
+  section 10.1.4), and only the exact lowercase `trailers` passed, so such a request was reset with `H3_MESSAGE_ERROR`.
 - HTTP/3: the QPACK encoder-stream string ceiling follows the configuration: min(`qpackMaxTableCapacity`,
   `maxFieldSectionSize`), at least 64 KiB (at most 256 MiB), as RFC 9204 section 7.4 asks. It was a fixed 64 KiB, so with
   a raised table capacity and field-section limit a peer inserting a larger field into the dynamic table closed the
-  connection with `QPACK_ENCODER_STREAM_ERROR`, though the same field sent as a literal was accepted. An insert cut by the
-  transport also waits whole when Huffman coding makes it longer than the field (up to 4 bytes per octet): one longer
-  than twice the ceiling failed that way too.
+  connection with `QPACK_ENCODER_STREAM_ERROR`, though the same field sent as a literal was accepted.
 - HTTP/3 server: a PRIORITY_UPDATE for a request stream the transport has opened but whose HEADERS have not arrived
   yet (a reordered stream 4 behind stream 8, or a request whose HEADERS are delayed) is now kept and applied when the
   request opens, as RFC 9218 section 7 asks; it was taken for a finished request and dropped. A PRIORITY_UPDATE naming a
@@ -462,40 +507,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS: a received `general_error` alert (117, RFC 9846 section 6.2) is reported by that name instead of `alert_117`, and
   in TLS 1.3 an error alert the peer sent at level warning is reported as `TlsException.AlertReceived` with its code
   instead of a generic protocol error (RFC 9846 section 6: error alerts count regardless of their level).
-- TLS over TCP: a server now issues six session tickets after a full handshake (also the explicit post-verdict ones of a
-  pinned-client server), and a client keeps up to six per origin, each used once, so up to six parallel HTTP/1.1
-  connections to one origin each resume (RFC 9846 appendix C.4, SHOULD, whose example is a browser's six HTTP/1.1
-  connections). Before, one ticket per connection and one per origin meant only one of them resumed. A QUIC origin still
-  keeps its newest ticket only.
 - TLS over TCP: `TlsConnection.keyUpdate(requestPeer = true)` called again before the peer answered the previous request
-  now updates only our key (`update_not_requested`) instead of asking the peer again (RFC 9846 section 4.7.3, MUST). A
-  KeyUpdate of the peer's that had already arrived when the request left is not taken for the answer.
-- TLS over TCP: a connection never lets its key update epoch pass 2^48-1 (RFC 9846 section 4.7.3, MUST): after its
-  2^48-1st KeyUpdate it sends no more, ignores the peer's `update_requested` flag (SHOULD) and goes on under its last
-  keys until their record limit (RFC 9846 section 5.5), where it ends. OpenSSL counts none.
+  now updates only our key (`update_not_requested`) instead of asking the peer again (RFC 9846 section 4.7.3, MUST).
+- TLS over TCP: a connection never lets its key update epoch pass 2^48-1 (RFC 9846 section 4.7.3, MUST); the session
+  that sent its last allowed KeyUpdate ends instead of sending another, also in answer to the peer. OpenSSL counts none.
 - TLS: a ClientHello, or a TLS 1.3 ServerHello, whose `legacy_version` is not 0x0303 is refused with `protocol_version`
   (RFC 9846 sections 4.2.2 and 4.2.3, MUST); OpenSSL 3.5 accepted 0x0301 and 0x0302 next to `supported_versions`.
-- TLS over TCP: a connection whose application stream failed (a handler that threw mid-response) now ends with the fatal
-  alert internal_error after what was sent, then a FIN, where OpenSSL can send one: a TLS 1.3 server and a TLS 1.2 client
-  (RFC 9846 section 6.1). Before, it ended with a reset and no alert; it still never ends with `close_notify`, so a peer
-  never takes the cut stream for a whole one. A TLS 1.3 client and a TLS 1.2 server still reset the connection: OpenSSL
-  3.5 offers no way to send an alert there. New internal `TlsConnection.abortOutput` and `ksl_tcp_abort` (additive, ABI 7).
-  The alert also follows a KeyUpdate that was queued and not yet written, and a record write the transport had no room
-  for: both go out first (OpenSSL started no alert behind them, so the connection was reset). `ksl_tcp_write` takes at
-  most one record per call and accepts the retry of a pending write from another buffer with the same bytes.
 - TLS 1.2: a peer without Extended Master Secret is now refused during the handshake with a `handshake_failure` alert (the
   server on the ClientHello, the client on the ServerHello), instead of being dropped without an alert after both
-  Finished messages (RFC 7627 section 5.2, SHOULD for an endpoint that does not interoperate with legacy peers, which
-  ksl's refusal is by policy; RFC 9325 section 3.5).
+  Finished messages (RFC 9846 appendix D, RFC 9325 section 3.6).
 - TLS over TCP: a connection updates its sending key (TLS 1.3 KeyUpdate) every 2^23 records it wrote, before the AES-GCM
   record limit of RFC 9846 section 5.5 (MUST since RFC 9846; 2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
-  very long-lived bulk connection kept one key for good. The point follows the negotiated AEAD: 2^22 records under
-  AES-CCM, whose limit is 2^23 (RFC 9147 appendix B.1; 2^23 would have reached it), none under ChaCha20-Poly1305 (no
-  limit before the sequence number wraps); a connection whose KeyUpdate could not go out ends before its keys reach the
-  limit, with internal_error where an alert can be sent; `TlsConnection` sends that alert on the transport before the
-  connection ends (with a FIN on a `Socket.tls`), as it does for an application's failed stream. A TLS 1.2 connection, which has no KeyUpdate and no
-  renegotiation, ends the same way before its keys reach the limit RFC 9325 section 4.4 recommends for TLS 1.2 too
-  (2^24.5 records for AES-GCM); before, it counted nothing.
+  very long-lived bulk connection kept one key for good.
+- TLS over TCP on the JVM and Android: a write the transport had no room for is retried with the same bytes from
+  another buffer (the JNI layer copies each call's bytes), and OpenSSL refused that retry with `bad write retry`
+  (`SSL_R_BAD_WRITE_RETRY`), failing the connection with "ksl: TLS error". It took a full 16 KiB write behind a record
+  that left the transport short of room, such as a server's session ticket after a pinned client certificate. TCP
+  sessions now set `SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER`; `ksl_tcp_write` accepts the retry from any buffer holding the
+  same bytes.
 - TLS server: a server that used the client's server name now acknowledges it with an empty `server_name` extension
   (in EncryptedExtensions for TLS 1.3, in the ServerHello of a full TLS 1.2 handshake), as RFC 6066 section 3 requires;
   before, the extension was never sent. Also on an SNI override and on QUIC.
@@ -517,10 +546,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   sent. The read loop's end (a graceful close, a stopped reader) shut the receiving direction down, and Winsock resets
   the connection when data arrives after `SD_RECEIVE`. On Windows the read loop now does so only at the end of the
   peer's stream; unread input stays buffered until the close, as on Linux.
-- Windows (mingwX64) TCP: a read could wait for ever for data or an end of stream that had already arrived. ktor-network's
-  selector there takes in a socket's events whenever it watches the socket, and an `FD_READ` or `FD_CLOSE` taken in
-  while only a wait for room was registered (the connection still sending) was lost; Winsock reports `FD_CLOSE` once.
-  The wait for data now tries the receive again every second.
+- Windows (mingwX64) TCP: a read could wait for ever for data or an end of stream that had already arrived. `FD_CLOSE`
+  (and, in some interleavings, `FD_READ`) can be lost by ktor-network's selector there, which re-issues `WSAEventSelect`
+  every round and completes only the waits that match; Winsock records `FD_CLOSE` once. The wait for data now tries the
+  receive again every second.
 - Ktor server: with `port = 0` a TLS connector could start without HTTP/3 where the OS hands out TCP ports one after the
   other (Windows): each retry of the TCP + UDP pair took the next TCP number, and a run of UDP ports held by other
   sockets refused all 16 twins. The retries now alternate with pairs whose UDP port the OS picks first and TCP follows.
@@ -528,15 +557,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   so code that reacts to the new value finds the stream already scheduled by it (RFC 9218 section 7).
 - HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114
   section 5.2). The transport's loss could reach the GOAWAY write before the session saw the close.
+- Building from source on a clean machine (a fresh `GRADLE_USER_HOME`, as `docs/verifying.md` and a CI runner start):
+  Gradle dependency verification failed, because an empty cache resolves other variants than a warm one (junit-bom
+  `.module` files the Plugin Portal serves without a usable signature, JUnit, OpenTelemetry, protobuf and poko artifacts
+  no trusted key covered). `gradle/verification-metadata.xml` now covers them (signature trust where the key verifies,
+  a sha256 checked against Maven Central's `.sha1` and the Plugin Portal otherwise; the new keys are in the keyring).
+  The keep-rule checks (`tools/check/android-keep-rules.sh`, `service-keep-rules.sh`) run the R8 pinned in
+  `gradle/libs.versions.toml` (`./gradlew -q ksR8Jar`) instead of whichever one another build left in the cache.
 - Ktor client, HTTP/1.1: a response whose `Content-Length` or `Transfer-Encoding` has whitespace other than SP and
   HTAB around a value (VT, FF, U+00A0) fails, and its connection is closed instead of reused (RFC 9110 sections 5.6.3
   and 8.6, RFC 9112 section 6.3 item 5). `Content-Length: 5<VT>` framed a 5-byte body and `Transfer-Encoding:
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
-  codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way. So does one that starts with a
-  Unicode space (`Transfer-Encoding: <U+00A0>chunked`, `Content-Length: <U+00A0>5`), which Ktor's parser skipped:
-  any response field value that starts with one (obs-text, opaque field content, RFC 9110 section 5.5) now reaches the
-  application as sent, as on the server.
+  codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
 - Ktor server, HTTP/1.1: a response no longer carries both `Content-Length` and `Transfer-Encoding` (RFC 9112 section
   6.2: a sender MUST NOT). A `Content-Length` the application set on a streamed response, which Ktor frames with
   `Transfer-Encoding: chunked`, is dropped; before, both went out, and a client or proxy that framed the response by
@@ -566,9 +599,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: what the application writes for a response to HEAD, or for a 1xx, 204 or 304 response, is
   dropped; the fields stay (RFC 9110 section 9.3.2: the server MUST NOT send content in the response to HEAD). Before,
   `head("/") { call.respondText("x") }` without the AutoHeadResponse plugin sent `x`, which a keep-alive client read
-  as the start of the next response. A streamed body (`respondBytesWriter`, a `ReadChannelContent`) for such a
-  response is not produced at all: its writer does not run and its channel is not read. The engine's own refusals of a
-  HEAD request (the 400 `Bad Request`, the 505) keep their fields and carry no content either.
+  as the start of the next response. The engine's own `400 Bad Request` refusing a HEAD request keeps its fields and
+  carries no content either.
 - Ktor server, HTTP/1.1: a 1xx or 204 response no longer carries `Content-Length` or `Transfer-Encoding`, and a 304
   no longer `Transfer-Encoding` or the `Content-Length: 0` Ktor adds for empty content (RFC 9110 section 8.6: a server
   MUST NOT send Content-Length in a 1xx or 204 response, nor in a 304 one other than the 200's length). Before,
@@ -576,8 +608,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `Transfer-Encoding: chunked`.
 - Ktor server, HTTP/1.1: after a 400, 501 or 505 refusal (and a 400 for a malformed chunked body) the server reads and
   drops what the client is still sending for up to 2 s before it closes, as it did after a 431 (RFC 9112 section
-  9.6: close in stages); a stopping server ends that wait at once. Before, it closed over the unread rest of the
-  request, the kernel answered with a reset, and the client could lose the 400.
+  9.6: close in stages). Before, it closed over the unread rest of the request, the kernel answered with a reset, and
+  the client could lose the 400.
 - Ktor server, HTTP/1.1: a Host field that is not `uri-host [":" port]` (`Host: a b`, `[::1`, `h:x`, `a%zz`) gets 400
   and the connection closes (RFC 9112 section 3.2: a server MUST respond with 400 to a Host with an invalid value); so
   does an absolute-form target with such an authority. Before, only `/?#@` and a trailing colon were refused, and the
@@ -598,15 +630,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a port from 1 to 65535, RFC 9110 section 9.3.6), `*` for OPTIONS only. Any other target is an invalid request line
   and gets 400 (section 3.2); a GET or HEAD whose path or query only has characters to encode (`|`, `{`, `^`, `[`,
   which browsers send unencoded, and non-ASCII bytes) gets `301 Moved Permanently` to the target properly encoded
-  instead, the other answer section 3.2 names, once the rest of its head is valid (a missing, repeated or invalid Host or faulty framing gets its own 400 or
-  501). Before, any run of non-whitespace reached routing.
+  instead, the other answer section 3.2 names, once the rest of its head is valid (a missing, repeated or invalid Host
+  or faulty framing gets its own 400 or 501). Before, any run of non-whitespace reached routing.
 - Ktor server, HTTP/1.1: the request line is checked before Ktor's parser reads it. A method that is not a token
   (`G"ET`, RFC 9112 section 3.1), a control character other than the whitespace section 3 allows as a separator, or a
   Unicode space (U+00A0), which Ktor's parser took as a separator, gets 400. A request in a higher minor version
   (`HTTP/1.2`) is processed as HTTP/1.1 instead of refused (RFC 9110 section 6.2), and one in another major version
-  (`HTTP/2.0`, `HTTP/0.9`) gets `505 HTTP Version Not Supported` instead of 400 (section 15.6.6), with a short
-  `text/plain` body that names the versions the connection speaks (HTTP/1.1, HTTP/1.0), the representation section
-  15.6.6 says the server SHOULD send.
+  (`HTTP/2.0`, `HTTP/0.9`) gets `505 HTTP Version Not Supported` instead of 400 (section 15.6.6).
 - Ktor server, HTTP/1.1: a request line longer than 8 KiB (a request-target longer than the server parses) gets
   `414 URI Too Long` instead of 400 (RFC 9112 section 3: the server MUST respond with 414), and what follows is read and
   dropped for a while before the close, as after a 431. A field line over 8 KiB still gets 400, and a method longer
@@ -656,15 +686,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client, HTTP/1.1: a response field folded over several lines (obs-fold, a line that starts with SP or HTAB) is
   now unfolded into one value with a space, as RFC 9112 section 5.2 requires of a user agent; Ktor's parser failed
   such a response.
-- Ktor client, HTTP/1.1: a status code must be exactly three digits (RFC 9112 section 4); `HTTP/1.1 20` and
-  `HTTP/1.1 2000` without a reason phrase were taken as statuses 20 and 2000, and now fail with `ParserException`.
-  Three digits outside 100..599 (`HTTP/1.1 600 Six`, `HTTP/1.1 042`) are an invalid status code that a client SHOULD
-  process as a 5xx (RFC 9110 section 15): the response is a 500 whose description is the code and reason sent
-  (`600 Six`), so response validation and retries on server errors take it as one, and a 0xx is never skipped as an
-  interim response. Before, it was passed on as is, 042 looking like a success. A response in `HTTP/1.2` or a later
-  minor version is processed as HTTP/1.1 (RFC 9110 section 6.2) instead of failing.
+- Ktor client, HTTP/1.1: a status code must be exactly three digits in 100..599 (RFC 9112 section 4, RFC 9110 section
+  15); `HTTP/1.1 20` and `HTTP/1.1 2000` without a reason phrase and `HTTP/1.1 600` were taken as statuses 20, 2000
+  and 600, and now fail with `ParserException`. A response in `HTTP/1.2` or a later minor version is processed as
+  HTTP/1.1 (RFC 9110 section 6.2) instead of failing.
 - Ktor client: an HTTP proxy's interim 1xx responses (100 Continue, 103 Early Hints) before its answer to `CONNECT` are
-  skipped, bounded by bytes as for a request, instead of failing the tunnel with a `ProxyException` (RFC 9110 section 15.2: a
+  skipped, at most 5 as for a request, instead of failing the tunnel with an `IOException` (RFC 9110 section 15.2: a
   client MUST be able to parse 1xx responses it did not expect).
 - Ktor client, HTTP/1.1: a request body with a transfer coding of its own (`Transfer-Encoding: gzip` in the request's or
   the content's headers) now goes out with `chunked` added as the final coding and without `Content-Length` (RFC 9112
@@ -704,9 +731,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   space whose keys were discarded is checked but not counted: `invalidResets` counts only datagrams whose first packet
   was not ours or did not authenticate.
 - QUIC: a CONNECTION_CLOSE that does not fit the room left in its packet (a server closing below its anti-amplification
-  budget with a long reason) now goes out with its reason cut to fit (RFC 9000 section 19.19: "Because a CONNECTION_CLOSE
-  frame cannot be split between packets, any limits on packet size will also limit the space available for a reason
-  phrase"). The frame
+  budget with a long reason) now goes out with its reason cut to fit (RFC 9000 sections 10.2.1 and 10.2.3). The frame
   was skipped, and the packet, holding only padding, still counted as the close, so the peer never learned of it.
 - QUIC: the reason phrase of a CONNECTION_CLOSE that is cut (to 1024 bytes, or to fit its packet) ends on a whole
   character, so the peer receives valid UTF-8 (RFC 9000 section 19.19). The encoded bytes were cut anywhere, which could
@@ -721,7 +746,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: a peer's first key update no longer closes the connection with KEY_UPDATE_ERROR when it arrives before any
   1-RTT packet of the first key phase was processed (RFC 9001 section 6.2), for instance when the peer updates right
   after the handshake and its earlier 1-RTT packets were lost. The packet is now taken as the update.
-- QUIC: sending a DATAGRAM (or WebTransport datagram) no longer closes the connection with an internal error when the
+- QUIC: sending a DATAGRAM (or an HTTP/3 datagram) no longer closes the connection with an internal error when the
   packet being built has exactly 66 bytes left. The room offered to the datagram was one byte too large there (a 64-byte
   payload, whose Length field takes 2 bytes), so the frame overflowed the packet (RFC 9221 section 5). The room is now
   the largest payload whose whole frame fits, for every size.
@@ -729,8 +754,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 6.6: "across all keys"), and in `ConnectionStats.authenticationFailures`. The limit (2^52 for AES-128-GCM)
   stays out of reach, so this changes the count, not when a connection closes in practice.
 - QUIC client: 0-RTT packets count toward the AEAD confidentiality limit of the 0-RTT key, and 0-RTT sending stops at
-  the limit, the rest of the early data waiting for 1-RTT (RFC 9001 section 6.6: "the endpoint MUST stop using those
-  keys"; RFC 9846 section 5.5, as early data has no key update). The limit
+  the limit, the rest of the early data waiting for 1-RTT (RFC 9846 section 5.5, RFC 9001 section 6.6). The limit
   (2^23 packets for AES-GCM) is far above what a client sends before the server's answer, so in practice nothing
   changes.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
@@ -746,6 +770,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   resumed `a.test`'s session and never saw `b.test`'s certificate. Such a ticket, or one without a server name when
   the connection has one (and the reverse), now runs a full handshake and gets a new ticket. Tickets issued before this
   release are not resumed (one full handshake each).
+- Ktor client: an HTTP/3 connection whose handshake completed just as the connect timeout fired is closed. It was
+  dropped by the timeout and stayed open with nobody holding it until its idle timeout.
+- QUIC: a peer's RESET_STREAM never reads as the end of the stream. The core answers -1 both at a FIN and at a reset;
+  when the reset's event had not reached the stream yet (the loop's flush waiting in a blocking send), a read that
+  pulled the core took the -1 for a clean end, `readAvailable` answered -1 and `closedCause` stayed null. The input now
+  asks the core which it was and fails with the reset.
 - Ktor server, HTTP/1.1: an upgrade request (WebSocket) whose handler failed before any response started, its error
   response failing too, no longer takes the connection's coroutine down with it. The failure was rethrown out of the
   connection's pipeline: the connection was reset, the responses pipelined before it were lost, and the exception
@@ -799,12 +829,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   so reading it hung; and when the connection ended while a response or a request body was being written, the
   application's writes hung once the channel's buffer was full. The body and trailers now fail with the connection's
   error, and so do those writes.
-- WebTransport: a session the peer closes with WT_CLOSE_SESSION and then, at once, its connection (Firefox does both
-  in back-to-back packets) ends with the capsule's code and reason. Before, the server saw code 0 and an empty reason:
-  the connection's end completed the session before its capsule reader had read the capsule. The capsule reader now
-  reads on to what the peer sent, and the connection's reason is the session's only when no capsule came. A
-  WebTransport stream whose pump the lost connection cancelled before it ran now ends instead of leaving the
-  application waiting.
 - HTTP/3: a response or request body whose last bytes came with the peer's CONNECTION_CLOSE is read whole. When the
   connection is lost, the readers of the peer's streams (message bodies, control and QPACK streams) now go on until
   their input ends, at most one second, before the connection's coroutines are cancelled; before, they were cancelled at
@@ -814,13 +838,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: data and FIN received just before a CONNECTION_CLOSE are delivered. A peer that sends its last bytes and closes
   at once (Firefox closes its WebTransport connection right after the session's WT_CLOSE_SESSION and FIN) lost them when
   the close was processed before the application read: the reads failed with the connection's end.
-- QUIC: `QuicPath.remoteAddress` reports each path's own peer address. Before, every path reported the connection's
-  current one: on a server whose client migrated, the path the client left (in `PathEvent.Changed.old` and
-  `QuicConnection.paths`) showed the client's new address, and a client's probe toward a server's preferred address
-  showed the original one.
 - HTTP/3: an application that cancels a request body (server) or a response body (client) now stops the stream at
   once with STOP_SENDING (`H3_NO_ERROR` on the server, `H3_REQUEST_CANCELLED` on the client). Before, the stream was
   stopped only when the peer sent its next DATA, so a peer that paused kept the stream and its flow-control credit.
+- QUIC server: Retry tokens are sealed with a counter nonce per key instead of 64 random bits, so AES-GCM never sees a
+  nonce twice under one key. Random nonces crossed NIST's 2^-32 collision bound after about 92,000 tokens per hourly
+  key (93 s at the default stateless rate limit of 1000 per second); a repeat an attacker observed among its own tokens
+  would give away the key's GHASH key and let it forge Retry tokens for other addresses while that key lives.
+- HTTP/3 scheduling: the control and QPACK streams are now sent before every request stream, whatever urgency the peer
+  asks for. Before, they were urgency 0 like any other stream, so a request at u=0 (non-incremental) with a stream id
+  below theirs had its whole response sent ahead of them: a QPACK insert that the response's own header or trailer
+  section needed, or a GOAWAY, waited behind the body (only on that client's own connection).
+- QUIC: `QuicPath.remoteAddress` reports each path's own peer address. Before, every path reported the connection's
+  current one: on a server whose client migrated, the path the client left (in `PathEvent.Changed.old`,
+  `QuicConnection.paths` and the path-change log line) showed the client's new address.
 - TCP and TLS sockets of the engines (JVM, Android, Kotlin/Native): when the application's stream failed mid-response
   (a handler that threw) or a write loop failed, the connection ended as if the stream were complete: a FIN on a plain
   connection, `close_notify` and a FIN on a TLS one. The peer saw a clean end of a cut stream, and a response delimited
@@ -939,10 +970,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   endless interim responses. Ktor's `parseResponse` bounds each line at 8 KiB but not their number, and the whole header
   section is buffered (2 bytes per character) before the call sees it; interim 1xx heads were skipped without a bound,
   so a server streaming 103 Early Hints held the request until a timeout, if any. A response head is now limited to
-  64 KiB (the field section size our HTTP/3 client advertises, and the server's limit for request heads), and the
-  interim heads before one final response to 64 KiB in all; beyond either the request fails with Ktor's
-  `ParserException` and the connection is closed. Interim responses are bounded by bytes, not by count: a client MUST
-  parse any number of them (RFC 9110 section 15.2).
+  64 KiB (the field section size our HTTP/3 client advertises, and the server's limit for request heads) and at most 5
+  interim responses are skipped (Go's `net/http` stops at the same count); beyond either the request fails with Ktor's
+  `ParserException` and the connection is closed.
 - Ktor client: the proxy's response to `CONNECT` had no size limit either (the same Ktor parser). It is read with the
   same 64 KiB limit, one byte at a time so that no byte of the tunnel after the head is consumed; a larger head fails
   the request with `ParserException` and the connection to the proxy is closed.
@@ -966,6 +996,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with decimal parts is now classified as the address it names, on every platform; a numeric host with an octal or hex
   part (`0177.0.0.1`, `0x7f.1`: octal or hex to inet_aton, decimal or refused by the JVM) or that is no address
   (`256.1.1.1`, `4294967296`) is never a destination.
+- Ktor client, HTTP/3: a WebSocket call that ended with a cause (a caller cancelled during the closing handshake, an
+  application that threw once its Close was out) reset the stream's send side even when the session had already
+  queued its Close frame and FIN: the reset could overtake them, and the peer then saw a reset, not the Close. A send
+  side the session finished is now left to deliver its Close and FIN; an unfinished one is still reset.
 - Ktor server: a graceful `stop(gracePeriod, timeout)` took the whole grace period while any HTTP/1.1 keep-alive
   client was connected. The stop waits for every HTTP/1.1 connection, and an idle keep-alive connection sat in the
   request parser (until the idle timeout), so it was only cut at the grace deadline. Once accepting stops, an HTTP/1.1
@@ -994,7 +1028,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 2.2 makes a bare CR invalid, and section 7.1 defines the line as `1*HEXDIG [ chunk-ext ] CRLF`; a front proxy
   that reads such a line differently frames the body differently (the "funky chunks" class). Both engines now parse the
   line by that grammar: hex digits, extensions as `;` name `=` token or quoted-string with optional whitespace around
-  the separators and none right before the CRLF (the grammar has none there), CRLF only, a size that fits a
+  the separators, whitespace tolerated before the CRLF (as nginx and Go accept it), CRLF only, a size that fits a
   signed 64-bit length, 128 bytes at most. A bare LF stays invalid on a chunk line (section 2.2 lets a recipient accept
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
@@ -1163,7 +1197,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the site. A target whose Location could name another authority (it starts with `//`, also once `%2F`, `%5C` and
   `%2E` are decoded, `\` is read as `/` and dot segments are removed) now gets 400, as does a target with a raw `#`
   (redirected to `%23` it named another resource, RFC 3986 section 2.2). The redirect now never leaves the server;
-  valid targets that start with `//` are still served as paths.
+  valid targets that start with `//` are still served as paths. The check removes dot segments in time linear in the
+  target's length (a straight reading of RFC 3986 section 5.2.4 is quadratic, a CPU cost an unauthenticated client
+  could raise with an 8 KiB target), and whether a head is for HEAD is decided once per head, not by rescanning the
+  buffered request line on every read.
+- TLS, `ksl` C ABI (not reachable from Kotlin, whose contexts and sessions are already used this way):
+  `ksl_ssl_sni_resume` refuses an SNI override that is not a server context (`KSL_E_BAD_ARG`, the pause stays open for
+  a valid answer), and the certificate callback takes its side from the SSL, not from the owning context; a session
+  keeps the verify mode of the context it was made with, so switching an unfrozen context to `KSL_VERIFY_NONE`
+  afterwards no longer drops the reference identifier rule (ADR-0011) for it; and every session `ksl_ssl_get1_session`
+  hands out carries the verify mode it was made under, so `ksl_ssl_set_session` refuses (`KSL_E_BAD_ARG`) a session
+  made under `KSL_VERIFY_NONE`, or one ksl did not hand out, on a session that verifies: a resumed handshake carries no
+  certificate, so nothing would have verified the server.
 - Ktor server, HTTP/1.1: a CONNECT request is now always the last on its connection. A CONNECT the application
   refused (a 407, a 502 or 504, Ktor's 404 or 405 for no route, a 500 from a failing handler) left the connection
   open, so the bytes behind it, which a proxy client may send optimistically as tunnel data, were read and executed as

@@ -101,31 +101,22 @@ bug fixed with a test before a release).
 
 ### 0.2.x — patch releases
 
-0.2.1 is a bug-fix release, prepared on the `release/0.2.x` branch for November 2026.
+0.2.1, a bug-fix release from the `release/0.2.x` branch, was released on 2026-11-04.
 
-- Fixes from early user reports.
-- A run of the iOS device checklist on a physical iPhone ([Device checklist](guide/ios.md#device-checklist)).
+- Fixes from early user reports and from the reviews against the RFCs ([CHANGELOG](../CHANGELOG.md)).
 - A published benchmark table: goodput, CPU per GB and handshakes per second against quiche, quinn and msquic (done for
   0.2.1, [benchmarks.md](benchmarks.md)).
 - Supply chain: an SBOM (CycloneDX) and build provenance for the published artifacts (done for 0.2.1,
   [release.md](release.md)).
-- Hosted CI (GitHub Actions) when the workflows are enabled again; until then the local gate (`tools/ci/local-matrix.sh`).
-- Longer soak (24–72 h) and fuzzing campaigns (at least 2 h per target).
+- Longer soak and fuzzing campaigns (done for 0.2.1: a 24-hour Kotlin/Native soak and a 37-hour JVM soak, both flat, and
+  2 hours per fuzz target).
 - A statement in [stability.md](stability.md) that the library is not FIPS-certified (done for 0.2.1).
-- Server CPU ([Where the time went](benchmarks.md#where-the-time-went)), each measured with `tools/bench` before and after:
-  - one `SSL_CTX` per server configuration, shared by its QUIC sessions, instead of one per session: 53 µs of the
-    server's ~180 µs of OpenSSL work per handshake (the context is frozen after configuration; what needs care is the
-    per-context state `ksl` keeps: the last error, the SNI override, the ticket-key reference);
-  - stream writes: every write through `QuicStream.output` is a flush that ends in a packet of its own, so a server
-    writing a file in 8 KiB pieces costs two to four times the CPU per GB of one large write, on both ends (a short
-    packet per write, about 2.8 times the ACKs). Coalesce: hand writes to the core without sending while more is queued
-    and in flight (Linux TCP's autocorking), keeping a lone write's latency;
-  - the Kotlin/Native core: 3.2 times the JVM's time in the core benchmark with the Null crypto, 1.5 times with AES-GCM,
-    after the `PacketBuffer` fix (`CoreThroughputBenchmark`); next in its profile are `Duration` arithmetic on the
-    per-packet paths (pacer, PTO, ACK delay; nanoseconds as `Long` instead), enum `==` compiled to a virtual `equals`,
-    list index checks in `ConnectionIdManager`, and varints read and written byte by byte;
-  - per connection, about 80 KiB of buffers allocated up front (16 KiB in each direction per stream, the crypto streams'
-    16 KiB scratch and four 4 KiB send rings): allocate on first use.
+- Hosted CI: the `build` workflow runs on GitHub Actions by manual dispatch; push, pull-request and scheduled runs come
+  back when its matrix is green on the public runners. The local gate (`tools/ci/local-matrix.sh`) stays the release
+  gate.
+
+Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
+([Device checklist](guide/ios.md#device-checklist)), and the server CPU work below.
 
 ### 0.3.0 — client and server completeness (planned for December 2026)
 
@@ -145,6 +136,21 @@ bug fixed with a test before a release).
   The Ktor client gets a `proxyResolver` setting whose default is the system proxy (HTTP/3 is not used through a proxy).
 - Server: certificate hot reload and a limit on TCP connections.
 - `loops > 1` on macOS and Windows.
+- A run of the iOS device checklist on a physical iPhone ([Device checklist](guide/ios.md#device-checklist)).
+- Server CPU ([Where the time went](benchmarks.md#where-the-time-went)), each measured with `tools/bench` before and after:
+  - one `SSL_CTX` per server configuration, shared by its QUIC sessions, instead of one per session: 53 µs of the
+    server's ~180 µs of OpenSSL work per handshake (the context is frozen after configuration; what needs care is the
+    per-context state `ksl` keeps: the last error, the SNI override, the ticket-key reference);
+  - stream writes: every write through `QuicStream.output` is a flush that ends in a packet of its own, so a server
+    writing a file in 8 KiB pieces costs two to four times the CPU per GB of one large write, on both ends (a short
+    packet per write, about 2.8 times the ACKs). Coalesce: hand writes to the core without sending while more is queued
+    and in flight (Linux TCP's autocorking), keeping a lone write's latency;
+  - the Kotlin/Native core: 3.2 times the JVM's time in the core benchmark with the Null crypto, 1.5 times with AES-GCM,
+    after the `PacketBuffer` fix (`CoreThroughputBenchmark`); next in its profile are `Duration` arithmetic on the
+    per-packet paths (pacer, PTO, ACK delay; nanoseconds as `Long` instead), enum `==` compiled to a virtual `equals`,
+    list index checks in `ConnectionIdManager`, and varints read and written byte by byte;
+  - per connection, about 80 KiB of buffers allocated up front (16 KiB in each direction per stream, the crypto streams'
+    16 KiB scratch and four 4 KiB send rings): allocate on first use.
 
 ### 0.3.x
 
