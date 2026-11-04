@@ -935,4 +935,35 @@ static void test_resumption_bounded(void) {
     if (sess) ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); ksl_ctx_free(reloaded); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_resumption_bounded(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
+/* The lifetime a ticket announces is cut to what is left of the authentication window and of the leaf, a connection with no time
+   left gets no ticket (and keeps working), and an authentication time a little ahead of our clock (another node) is accepted. */
+static unsigned long hint_of(ksl_session *s) { return s ? SSL_SESSION_get_ticket_lifetime_hint((const SSL_SESSION *)s) : 0; }
+static int has_ticket(ksl_session *s) { return s && SSL_SESSION_has_ticket((const SSL_SESSION *)s); }
+static void test_ticket_lifetime_clamped(void) {
+    SECTION("tcp_ticket_lifetime_clamped_to_authentication_and_notafter");
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 7 + 3);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+    ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1); ksl_ctx_set_ticket_keys(sc, keys, 1); ksl_ctx_set_option(sc, KSL_OPT_TICKET_LIFETIME, 7 * 24 * 3600);
+    ksl_session *sess = NULL; const int64_t day = 24 * 3600, now = (int64_t)time(NULL);
+    ksl_test_ticket_clock_skew = 0;
+    CHECK(resumed_with(cc, sc, &sess) == 0 && has_ticket(sess) && hint_of(sess) > 6 * day, "full handshake: a ticket for (almost) 7 days");
+    ksl_test_ticket_clock_skew = 6 * day;
+    CHECK(resumed_with(cc, sc, &sess) == 1 && has_ticket(sess) && hint_of(sess) <= (unsigned long)day, "a renewal 6 days in lives at most the day left");
+    /* the leaf's notAfter: 100 s left */
+    sc->auth_timeout = INT64_MAX / 4; ksl_test_ticket_clock_skew = sc->leaf_not_after - now - 100; ksl_session_free(sess); sess = NULL;
+    CHECK(resumed_with(cc, sc, &sess) == 0 && has_ticket(sess) && hint_of(sess) <= 100, "a ticket ends with the leaf's notAfter");
+    ksl_test_ticket_clock_skew = sc->leaf_not_after - now + 10;
+    ksl_session_free(sess); sess = NULL;
+    int r = resumed_with(cc, sc, &sess);
+    CHECK(r == 0 && !has_ticket(sess), "past notAfter: the handshake completes and no ticket is issued");
+    /* a ticket from a node whose clock is 30 s ahead resumes here; 120 s ahead does not */
+    sc->auth_timeout = 0; if (sess) ksl_session_free(sess); sess = NULL;
+    ksl_test_ticket_clock_skew = 30; resumed_with(cc, sc, &sess); ksl_test_ticket_clock_skew = 0;
+    CHECK(resumed_with(cc, sc, &sess) == 1, "an authentication time 30 s ahead is accepted");
+    ksl_session_free(sess); sess = NULL;
+    ksl_test_ticket_clock_skew = 120; resumed_with(cc, sc, &sess); ksl_test_ticket_clock_skew = 0;
+    CHECK(resumed_with(cc, sc, &sess) == 0, "negative: an authentication time 120 s ahead is refused");
+    if (sess) ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_resumption_bounded(); test_ticket_lifetime_clamped(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }

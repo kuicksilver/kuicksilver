@@ -17,7 +17,8 @@ internal class KslContext private constructor(
     val config: TlsConfig,
     val quic: Boolean,
     /**
-     * The SPKI hash of the leaf this context presents (the snapshot a `TlsIdentity.Reloadable` gave), null without an identity.
+     * The SHA-256 of the whole leaf certificate this context presents (not of its key: a renewal that keeps the key is another
+     * certificate, as the server's ticket binding sees it too) (the snapshot a `TlsIdentity.Reloadable` gave), null without an identity.
      * A client stores it with each ticket and resumes a ticket only under the same one: the cache key reads the identity
      * separately, and a reload in between must not resume a session authenticated with another client certificate.
      */
@@ -106,6 +107,10 @@ internal class KslContext private constructor(
             }
         }
 
+        /** [identityTag] of [leaf]: the SHA-256 of its DER, hex. */
+        private fun certificateTag(leaf: Certificate): String =
+            Ksl.sha2(256, leaf.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
         /** Returns the [identityTag] of the identity it configured. */
         private fun configure(
             h: Long,
@@ -120,14 +125,14 @@ internal class KslContext private constructor(
                     when (id) {
                         is TlsIdentity.InMemory -> {
                             id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
-                            id.chain[0].spkiSha256.toString()
+                            certificateTag(id.chain[0])
                         }
 
                         // chain and key from one snapshot: a reload between them would pair one identity's chain with another's key
                         is TlsIdentity.Reloadable -> {
                             id.withCurrentKey { cur, k ->
                                 Ksl.ctxSetIdentityKey(h, cur.chain.map { it.encoded }, k)
-                                cur.chain[0].spkiSha256.toString()
+                                certificateTag(cur.chain[0])
                             }
                         }
                     }

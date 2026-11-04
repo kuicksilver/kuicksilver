@@ -146,7 +146,11 @@ public sealed interface TlsIdentity {
             afterExchangeForTest?.invoke()
             if (next.isClosed) {
                 // closed by someone else meanwhile (it is ours now): never leave a closed identity current
-                if (ref.compareAndSet(next, old)) throw TlsException.Config("the new identity was closed during reload; the old one stays")
+                if (ref.compareAndSet(next, old)) {
+                    // a close() that ran meanwhile closed `next`, then current; `old` is current again and must be closed too
+                    if (closed.load() != 0) old.close()
+                    throw TlsException.Config("the new identity was closed during reload; the old one stays")
+                }
                 old.close() // a concurrent reload replaced `next` already, so `old` is no longer served
                 throw TlsException.Config("the new identity was closed during reload")
             }

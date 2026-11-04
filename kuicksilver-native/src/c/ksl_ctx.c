@@ -52,6 +52,7 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
        verdict: 0 sends an empty one, so no 1.2 session is resumable. SSL_OP_NO_TICKET would switch TLS 1.3 to stateful tickets, which
        need the server cache ksl keeps off. */
     if (enc && c->num_tickets == 0 && (SSL_version(ssl) < TLS1_3_VERSION || !s->ticket_authorized)) return 0;
+    if (enc && s->skip_ticket) return 0;   /* ticket_gen_cb: the session's authentication window or leaf has no time left */
     if (enc) { k = c->ticket_keys; memcpy(key_name, k, 16); if (RAND_bytes(iv, 16) != 1) return -1; }
     else { for (size_t i = 0; i < c->ticket_key_count; i++) if (!memcmp(c->ticket_keys + i * 80, key_name, 16)) { k = c->ticket_keys + i * 80; break; } if (!k) return 0; }
     if (EVP_CipherInit_ex(ectx, EVP_aes_256_cbc(), NULL, k + 16, iv, enc) != 1) return -1;
@@ -75,7 +76,9 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
    of our own a client reconnecting within the ticket lifetime resumes forever. So a ticket resumes only under the leaf certificate it
    was issued under (a reloaded identity means a full handshake), at most auth_timeout (7 days, BoringSSL's
    SSL_DEFAULT_SESSION_AUTH_TIMEOUT, ssl/ssl_session.cc) after the full handshake, and not past that leaf's notAfter; a renewed ticket
-   keeps the original authentication time. The final early-data decision also needs the transport's verdict for this hello (its replay
+   keeps the original authentication time, and an authentication time up to 60 s ahead of our clock is accepted (another node that
+   shares the ticket keys, its clock slightly ahead). The lifetime a ticket announces is cut to what is left of both bounds, and a
+   connection with no time left gets no ticket. The final early-data decision also needs the transport's verdict for this hello (its replay
    register). Both callbacks are the base (session) context's: OpenSSL keeps them across an SNI override, and they read the settings of
    the session's current owner and the certificate of the context in use. */
 #define KSL_TICKET_AFTER_VERDICT 1
@@ -84,6 +87,7 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
 #define KSL_TICKET_LEAF (5 + sizeof ((ksl_ssl *)0)->sni_tag)   /* offset of the leaf digest */
 #define KSL_TICKET_HEAD (KSL_TICKET_LEAF + 32 + 8 + 8)          /* flags, version, name tag, leaf digest, auth time, notAfter */
 #define KSL_AUTH_TIMEOUT_DEFAULT (7 * 24 * 3600)
+#define KSL_AUTH_CLOCK_SKEW 60   /* seconds an authentication time may lie ahead of our clock (another node's clock) */
 #ifdef KSL_TEST
 int64_t ksl_test_ticket_clock_skew = 0;
 int64_t ksl_ticket_now(void) { return (int64_t)time(NULL) + ksl_test_ticket_clock_skew; }
@@ -92,12 +96,12 @@ int64_t ksl_ticket_now(void) { return (int64_t)time(NULL); }
 #endif
 static void put64(uint8_t *p, int64_t v) { for (int i = 7; i >= 0; i--) { p[i] = (uint8_t)v; v = (int64_t)((uint64_t)v >> 8); } }
 static int64_t get64(const uint8_t *p) { uint64_t v = 0; for (int i = 0; i < 8; i++) v = (v << 8) | p[i]; return (int64_t)v; }
-/* The SHA-256 of the leaf certificate this connection presents and its notAfter in epoch seconds; 0 when there is none. */
-static int leaf_of(SSL *ssl, uint8_t digest[32], int64_t *not_after) {
-    X509 *x = SSL_get_certificate(ssl); unsigned int dl = 0; int days = 0, secs = 0;
-    if (!x || X509_digest(x, EVP_sha256(), digest, &dl) != 1 || dl != 32) return 0;
-    if (ASN1_TIME_diff(&days, &secs, NULL, X509_get0_notAfter(x)) != 1) return 0;   /* from now (the real clock) to notAfter */
-    *not_after = (int64_t)time(NULL) + (int64_t)days * 86400 + secs; return 1;
+/* The SHA-256 of the leaf certificate this connection presents and its notAfter (epoch seconds), digested once when the identity
+   was set (ksl_ctx_set_identity_pkey). The owner is the context whose certificate the session presents: the base context, or the
+   SNI override that replaced it (ksl_ssl_sni_resume moves the ownership and SSL_set_SSL_CTX the certificate). 0 without one. */
+static int leaf_of(const ksl_ssl *s, const uint8_t **digest, int64_t *not_after) {
+    if (!s->owner->has_leaf) return 0;
+    *digest = s->owner->leaf_sha256; *not_after = s->owner->leaf_not_after; return 1;
 }
 static uint32_t ticket_version(const ksl_ssl *s, int issuing) {
     if (s->mode != KSL_MODE_QUIC) return 0;
@@ -106,13 +110,23 @@ static uint32_t ticket_version(const ksl_ssl *s, int issuing) {
 static int ticket_gen_cb(SSL *ssl, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); SSL_SESSION *sess = SSL_get0_session(ssl);
     if (!s || !sess || s->abort_alert) return 0;   /* 0: OpenSSL fails the NewSessionTicket with internal_error (ksl_tcp_abort) */
-    uint8_t data[KSL_TICKET_HEAD + sizeof s->early_ctx]; uint32_t v = ticket_version(s, 1); int64_t not_after = 0;
-    if (!leaf_of(ssl, data + KSL_TICKET_LEAF, &not_after)) return 0;
+    uint8_t data[KSL_TICKET_HEAD + sizeof s->early_ctx]; uint32_t v = ticket_version(s, 1); int64_t not_after = 0; const uint8_t *leaf;
+    s->skip_ticket = 0;
+    /* no leaf (no identity): no ticket rather than a failed connection (ticket_cb then issues none) */
+    if (!leaf_of(s, &leaf, &not_after)) { s->skip_ticket = 1; return 1; }
+    int64_t now = ksl_ticket_now(), auth = SSL_session_reused(ssl) && s->auth_time ? s->auth_time : now;
+    int64_t timeout = s->owner->auth_timeout > 0 ? s->owner->auth_timeout : KSL_AUTH_TIMEOUT_DEFAULT;
+    /* the ticket's lifetime ends with the authentication window and the leaf (BoringSSL ssl_session.cc:208-209 clamps the same way):
+       a client never keeps a ticket the server would refuse; none at all when no time is left */
+    int64_t left = auth + timeout - now; if (not_after - now < left) left = not_after - now;
+    if (left <= 0) { s->skip_ticket = 1; return 1; }
+    if ((int64_t)SSL_SESSION_get_timeout(sess) > left) SSL_SESSION_set_timeout(sess, (long)left);
     data[0] = KSL_TICKET_NAME_BOUND | KSL_TICKET_AUTH_BOUND | (s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0);
     data[1] = (uint8_t)(v >> 24); data[2] = (uint8_t)(v >> 16); data[3] = (uint8_t)(v >> 8); data[4] = (uint8_t)v;
     memcpy(data + 5, s->sni_tag, sizeof s->sni_tag);
+    memcpy(data + KSL_TICKET_LEAF, leaf, 32);
     /* a resumed session keeps the time of the full handshake it came from; a full handshake authenticates now */
-    put64(data + KSL_TICKET_LEAF + 32, SSL_session_reused(ssl) && s->auth_time ? s->auth_time : ksl_ticket_now());
+    put64(data + KSL_TICKET_LEAF + 32, auth);
     put64(data + KSL_TICKET_LEAF + 40, not_after);
     memcpy(data + KSL_TICKET_HEAD, s->early_ctx, s->early_ctx_len);
     return SSL_SESSION_set1_ticket_appdata(sess, data, KSL_TICKET_HEAD + s->early_ctx_len);
@@ -133,12 +147,13 @@ static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsign
         /* RFC 6066 section 3: another server name (or a ticket from before names were bound) gets a full handshake and a new ticket */
         if (!(p[0] & KSL_TICKET_NAME_BOUND) || CRYPTO_memcmp(p + 5, s->sni_tag, sizeof s->sni_tag) != 0) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
         /* RFC 9846 section 4.7.1: the same leaf certificate, within auth_timeout of the full handshake and before the leaf's notAfter */
-        uint8_t leaf[32]; int64_t not_after = 0, now = ksl_ticket_now();
-        if (!(p[0] & KSL_TICKET_AUTH_BOUND) || l < KSL_TICKET_HEAD || !leaf_of(ssl, leaf, &not_after)
+        const uint8_t *leaf; int64_t not_after = 0, now = ksl_ticket_now();
+        if (!(p[0] & KSL_TICKET_AUTH_BOUND) || l < KSL_TICKET_HEAD || !leaf_of(s, &leaf, &not_after)
             || CRYPTO_memcmp(p + KSL_TICKET_LEAF, leaf, 32) != 0) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
         int64_t auth = get64(p + KSL_TICKET_LEAF + 32), expires = get64(p + KSL_TICKET_LEAF + 40);
         int64_t timeout = s->owner->auth_timeout > 0 ? s->owner->auth_timeout : KSL_AUTH_TIMEOUT_DEFAULT;
-        if (now < auth || now - auth > timeout || now > expires) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
+        /* KSL_AUTH_CLOCK_SKEW: a ticket issued by another node sharing the ticket keys whose clock runs a little ahead */
+        if (now + KSL_AUTH_CLOCK_SKEW < auth || now - auth > timeout || now > expires) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
         s->auth_time = auth;
         s->early_ctx_match = l > KSL_TICKET_HEAD && l - KSL_TICKET_HEAD == s->early_ctx_len && !memcmp(p + KSL_TICKET_HEAD, s->early_ctx, l - KSL_TICKET_HEAD);
         return SSL_TICKET_RETURN_USE_RENEW;   /* client tickets are single-use: every resumption gets a fresh one */
@@ -291,6 +306,12 @@ int ksl_ctx_set_identity_pkey(ksl_ctx *c, const uint8_t *chain, size_t chain_len
     /* SSL_CTX_use_PrivateKey takes its own reference to the EVP_PKEY: the caller's handle stays independent */
     int ok = SSL_CTX_use_certificate(c->ctx, sk_X509_value(sk, 0)) == 1 && SSL_CTX_use_PrivateKey(c->ctx, (EVP_PKEY *)key) == 1 && SSL_CTX_check_private_key(c->ctx) == 1;
     for (int i = 1; ok && i < sk_X509_num(sk); i++) ok = SSL_CTX_add1_chain_cert(c->ctx, sk_X509_value(sk, i)) == 1;
+    /* the leaf tickets are bound to (ticket_gen_cb), digested once here rather than per ticket */
+    if (ok) {
+        X509 *leaf = sk_X509_value(sk, 0); unsigned int dl = 0; int days = 0, secs = 0;
+        ok = X509_digest(leaf, EVP_sha256(), c->leaf_sha256, &dl) == 1 && dl == 32 && ASN1_TIME_diff(&days, &secs, NULL, X509_get0_notAfter(leaf)) == 1;
+        c->leaf_not_after = (int64_t)time(NULL) + (int64_t)days * 86400 + secs; c->has_leaf = ok;
+    }
     sk_X509_pop_free(sk, X509_free);
     if (!ok) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: identity rejected"); return KSL_ERROR; }
     return KSL_OK;

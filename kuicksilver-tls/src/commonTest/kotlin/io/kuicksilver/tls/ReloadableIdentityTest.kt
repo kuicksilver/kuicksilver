@@ -205,6 +205,19 @@ class ReloadableIdentityTest {
         r.close()
     }
 
+    /** A close() between the swap and the swap-back leaves no key behind: the identity swapped back in is closed too. */
+    @Test fun negative_closeDuringFailedReloadClosesTheOldIdentity() {
+        val a = identityA()
+        val r = TlsIdentity.reloadable(a)
+        val b = identityB()
+        r.afterExchangeForTest = {
+            b.close()
+            r.close() // closes `current`, which is `b` at this moment
+        }
+        assertFailsWith<TlsException.Config> { r.reload(b) }
+        assertTrue(a.isClosed, "the identity swapped back in after close() is closed")
+    }
+
     /** The retry of `withCurrentKey`: a snapshot replaced and closed between its load and its use is retried with the new one. */
     @Test fun snapshotReplacedBeforeUseIsRetried() {
         val r = TlsIdentity.reloadable(identityA())

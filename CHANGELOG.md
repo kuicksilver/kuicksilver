@@ -29,7 +29,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   logged once (never with key material) and retried after 1 s, then twice as long each time up to the interval.
   `EngineMain` now reads the key file without making a `String` of it or leaving it in kotlinx-io's pooled buffers
   (a buffer of its own, wiped), refuses PEM files above 1 MiB, and closes the identity it made when the server stops. The
-  watcher reads the files again a second after a reload and refuses a chain file that also holds a private key.
+  watcher reads the files again a second after a reload and refuses a chain file that also holds a private key (as
+  `EngineMain` does at startup when reloading is on). A watcher read that never returns no longer holds up the stop.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,
@@ -159,7 +160,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   was issued under, at most 7 days after the full handshake that authenticated the session (renewed tickets keep that
   time, as BoringSSL's `auth_timeout`) and not past the leaf's notAfter; otherwise the client runs a full handshake.
   Before, every resumption renewed the ticket with a fresh lifetime, so a client reconnecting within the ticket lifetime
-  resumed without bound, also under a replaced or expired certificate. Tickets issued by earlier versions are not resumed.
+  resumed without bound, also under a replaced or expired certificate. The lifetime a ticket announces is cut to what is
+  left of both bounds, and an authentication time up to 60 s ahead of the server's clock (another node sharing ticket keys)
+  is accepted. Tickets issued by earlier versions are not resumed. During a rolling upgrade of nodes that share
+  `SessionTicketConfig.keys`, a 0.2.x node renews 0.3.0 tickets in the old format, which 0.3.0 nodes refuse: those clients
+  run a full handshake (harmless, one per client).
 - HTTP/3: stricter towards peers (each also under "Fixed"); a peer that got away with these before now fails a request or
   the connection. An HTTP/3 datagram for a stream beyond the client-initiated bidirectional stream limit closes the
   connection with `H3_ID_ERROR` (RFC 9297 section 2.1, SHOULD); one for a request other than CONNECT whose stream is
