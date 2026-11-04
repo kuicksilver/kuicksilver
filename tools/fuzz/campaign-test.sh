@@ -77,6 +77,19 @@ rm -rf "$corpus" "$corpus.old" "$corpus.new"; mkdir -p "$corpus.old" "$corpus.ne
 check "an interrupted replacement is undone by the next run" 0 "" -- campaign status
 check "  the old corpus is back" 0 "" -- test -f "$corpus/in-a"
 check "  and neither staging directory is left" 1 "" -- test -e "$corpus.old" -o -e "$corpus.new"
+# the replacement and its recovery share a lock: while a live process holds it, a second run waits instead of touching the
+# corpus; a lock whose holder died is taken over
+sleep 30 & holder=$!
+mkdir -p "$state/replace.lock"; echo "$holder" > "$state/replace.lock/pid"
+rm -rf "$corpus"; mkdir -p "$corpus.old"; echo a > "$corpus.old/in-a"
+campaign status > /dev/null 2>&1 & waiter=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$waiter" 2>/dev/null || break; sleep 0.2; done
+check "a run waits while another holds the replace lock" 0 "" -- kill -0 "$waiter"
+check "  and leaves the corpus being replaced alone" 1 "" -- test -e "$corpus"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+wait "$waiter"
+check "  then, its holder gone, takes the lock and recovers the corpus" 0 "" -- test -f "$corpus/in-a"
+check "  and releases the lock" 1 "" -- test -e "$state/replace.lock"
 # a merge that keeps nothing leaves an empty corpus, not an error
 cat > "$tmp/bin/java" <<'SH'
 #!/bin/bash

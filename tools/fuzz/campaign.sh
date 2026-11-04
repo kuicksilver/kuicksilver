@@ -30,25 +30,43 @@ stats="$state/stats.tsv"
 mkdir -p "$state"
 shopt -s nullglob   # a glob that matches nothing expands to nothing, never to itself
 
+# Corpus replacement (replace_dir) and its recovery run under their own lock, so that a second invocation (status, a run
+# started meanwhile) never restores or removes what a running prune is replacing. A lock whose holder died is taken over.
+replace_lock="$state/replace.lock"
+take_replace_lock() {
+  local holder
+  until mkdir "$replace_lock" 2>/dev/null; do
+    holder=$(cat "$replace_lock/pid" 2>/dev/null || true)
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then rm -rf "$replace_lock"; continue; fi
+    sleep 1
+  done
+  echo $$ > "$replace_lock/pid"
+}
+drop_replace_lock() { rm -rf "$replace_lock"; }
+
 # A prune or minimize killed while it replaced a corpus (replace_dir) left the old one as <dir>.old: put it back, and drop a
 # half-copied <dir>.new, so an interruption never loses what had grown.
+take_replace_lock
 for old in "$state"/corpus/*.old "$root"/tools/fuzz/corpus/*.old; do
   [ -d "$old" ] || continue
   if [ -e "${old%.old}" ]; then rm -rf "$old"; else mv "$old" "${old%.old}"; fi
 done
 for new in "$state"/corpus/*.new "$root"/tools/fuzz/corpus/*.new; do rm -rf "$new"; done
+drop_replace_lock
 
 # Replaces directory [dest] by a copy of the files in [from]: copied next to it first, then two renames (dest -> dest.old,
 # dest.new -> dest) and the old one removed. A step killed at any point leaves either the old directory whole, or both
 # (the start-up check above restores the old one when dest is missing).
 replace_dir() {
   local from=$1 dest=$2 files
+  take_replace_lock
   rm -rf "$dest.new" "$dest.old"; mkdir -p "$dest.new"
   files=("$from"/*)
   [ ${#files[@]} -eq 0 ] || cp "${files[@]}" "$dest.new"/
   [ ! -e "$dest" ] || mv "$dest" "$dest.old"
   mv "$dest.new" "$dest"
   rm -rf "$dest.old"
+  drop_replace_lock
 }
 
 # id kind module class method (kind: jvm = Jazzer @FuzzTest, c = tools/fuzz/ksl harness)
