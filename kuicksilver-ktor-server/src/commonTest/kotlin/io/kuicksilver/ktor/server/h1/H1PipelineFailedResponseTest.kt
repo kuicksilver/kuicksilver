@@ -119,6 +119,46 @@ class H1PipelineFailedResponseTest {
         }
 
     /**
+     * Once a handler failed, no later request is processed (RFC 9112 section 9.6: the connection ends after that response,
+     * and the server MUST NOT process further requests on it). Here the failed POST /b waits behind a large GET /a the client
+     * does not read yet, so the writer has not reached /b when the reader has /c: /c's handler must not run.
+     */
+    @Test fun negative_noRequestRunsAfterAFailedHandler() =
+        runTest {
+            val ran = ArrayList<String>()
+            val (toServer, fromServer) =
+                pipeline { request ->
+                    val path = request.uri.toString()
+                    ran += path
+                    request.release()
+                    when (path) {
+                        "/a" -> {
+                            output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: ${1 shl 20}\r\n\r\n")
+                            output.writeFully(ByteArray(1 shl 20))
+                        }
+
+                        "/b" -> {
+                            throw IOException("the handler failed")
+                        }
+
+                        else -> {
+                            output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nc")
+                        }
+                    }
+                    output.flush()
+                }
+            val post = "Content-Length: 0\r\n\r\n"
+            toServer.writeStringUtf8(
+                "GET /a HTTP/1.1\r\nHost: s\r\n\r\nPOST /b HTTP/1.1\r\nHost: s\r\n$post" + "POST /c HTTP/1.1\r\nHost: s\r\n$post",
+            )
+            toServer.flush()
+            runCurrent()
+            assertEquals(listOf("/a", "/b"), ran, "the handlers that ran before the client read anything")
+            fromServer.readToEnd()
+            assertEquals(listOf("/a", "/b"), ran, "the handlers that ran")
+        }
+
+    /**
      * Each connection's pipeline leaves nothing on the listener-wide draining job once it ended (review M1): the completion
      * handler it registered is disposed, so connections do not pile up on a long-lived listener.
      */
