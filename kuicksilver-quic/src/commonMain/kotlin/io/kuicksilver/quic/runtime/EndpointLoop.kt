@@ -181,6 +181,12 @@ internal class EndpointLoop private constructor(
     internal val writersEndedForTest: Boolean
         get() = (listOfNotNull(receiveJob, forwardJob, timerJob) + preferredJobs).all { it.isCompleted }
 
+    /** Test hook: runs in the close job after the writers were joined and before the flush lock is taken to release. */
+    internal var beforeReleaseForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: runs [block] holding the flush lock, as a flush does. */
+    internal suspend fun <T> withFlushLockForTest(block: suspend () -> T): T = flushLock.withLock { block() }
+
     /** Set by the close job once the core and the batches are freed: a flush after that does nothing. Loop dispatcher only. */
     private var released = false
 
@@ -1138,7 +1144,11 @@ internal class EndpointLoop private constructor(
                     val writers = listOfNotNull(receiveJob, forwardJob, timerJob) + preferredJobs
                     for (j in writers) j.cancel()
                     r.release { withContext(kotlinx.coroutines.NonCancellable) { for (j in writers) j.join() } }
-                    released = true
+                    beforeReleaseForTest?.invoke()
+                    // a flush started elsewhere (an application call, the one after a verification) may be suspended in a send
+                    // over the out batch: taking the flush lock waits for it, and every later flush sees `released`; the lock is
+                    // also the happens-before edge for a dispatcher with more than one thread
+                    r.release { withContext(kotlinx.coroutines.NonCancellable) { flushLock.withLock { released = true } } }
                     r.release { core.close() }
                     r.release { inBatch.close() }
                     r.release { outBatch.close() }

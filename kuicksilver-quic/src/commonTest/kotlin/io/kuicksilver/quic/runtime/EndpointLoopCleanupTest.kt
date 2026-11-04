@@ -13,12 +13,14 @@ import io.kuicksilver.quic.PreferredAddress
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TrackingCrypto
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /** An endpoint that fails to come up closes every socket it opened and frees every key it made. */
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -176,5 +178,40 @@ class EndpointLoopCleanupTest {
             ep.closeAndJoin()
             assertTrue(ep.writersEndedForTest, "receive, timer and preferred receivers joined by the close job")
             assertTrue(alloc.allClosed)
+        }
+
+    /**
+     * A flush that holds the flush lock (here suspended as if in a send) when the close job is about to free the batches:
+     * the close waits for it, and a flush after the release does nothing.
+     */
+    @Test fun aFlushInFlightKeepsTheBatchesUntilItEnds() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val alloc = CountingAllocator()
+            val ep = EndpointLoop.bind(serverAddr, config(TrackingCrypto()) { at -> net.open(at) }, alloc::allocate) as EndpointLoop
+            val held = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val freedWhileHeld = kotlinx.coroutines.CompletableDeferred<Boolean>()
+            ep.beforeReleaseForTest = {
+                ep.scope.launch {
+                    ep.withFlushLockForTest {
+                        held.complete(Unit)
+                        try {
+                            kotlinx.coroutines.yield() // the close job runs now: it must wait for this lock, not free the batches
+                        } finally {
+                            // also when the close job, not waiting, freed everything and cancelled this coroutine
+                            freedWhileHeld.complete(alloc.made.any { runCatching { it[0] }.isFailure })
+                        }
+                    }
+                }
+                held.await()
+            }
+            kotlinx.coroutines.withTimeout(20.seconds) { ep.closeAndJoin() }
+            assertEquals(
+                false,
+                kotlinx.coroutines.withTimeout(20.seconds) { freedWhileHeld.await() },
+                "no batch freed while a flush held the lock",
+            )
+            assertTrue(alloc.allClosed)
+            kotlinx.coroutines.withContext(ep.dispatcher) { ep.flush() } // after the release: a no-op, no freed buffer touched
         }
 }
