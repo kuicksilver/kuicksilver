@@ -23,6 +23,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.Releaser
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
@@ -105,13 +106,41 @@ internal class EndpointLoop private constructor(
     /** The preferred-address sockets; emptied when the preferred address goes down ([dropPreferred]). Loop dispatcher only. */
     private var preferredIos: List<DatagramIo> = preferredIos
 
-    // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
-    internal val core = EndpointCore(config, KslRandom.newSource(), index, tokens)
-
     /** Lifecycle counters, the connection listener and the logger of this loop (docs/guide/quic.md, "Observability"). */
     internal val observer = LoopObserver(config.logger, config.listener)
-    private val inBatch = PacketBatch(16, SLOT_SIZE)
-    private val outBatch = PacketBatch(32, SLOT_SIZE)
+
+    // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
+    internal val core: EndpointCore
+    private val inBatch: PacketBatch
+    private val outBatch: PacketBatch
+
+    /** One datagram of a slot sent on its own (another socket than the batch's). */
+    private val single: PacketBatch
+
+    init {
+        // the core and the batches are native memory that only the close job frees: a constructor that fails part-way frees
+        // what it made (the sockets stay the caller's, bind closes them)
+        var c: EndpointCore? = null
+        var i: PacketBatch? = null
+        var o: PacketBatch? = null
+        try {
+            c = EndpointCore(config, KslRandom.newSource(), index, tokens)
+            core = c
+            i = PacketBatch(16, SLOT_SIZE)
+            inBatch = i
+            o = PacketBatch(32, SLOT_SIZE)
+            outBatch = o
+            single = PacketBatch(1, SLOT_SIZE)
+        } catch (e: Throwable) {
+            val r = Releaser(e) // what a release throws is suppressed into e
+            r.release { o?.close() }
+            r.release { i?.close() }
+            r.release { c?.close() } // and its reference to a group's address tokens
+            scope.cancel()
+            throw e
+        }
+    }
+
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
@@ -164,6 +193,17 @@ internal class EndpointLoop private constructor(
         // acceptQueue spoofed-source Initials per handshakeTimeout lock every client out before the admission policy (and
         // its Retry) could step in; the bound is enforced where a handshake completes (onHandshakeCompleted)
         core.acceptBacklog = { pendingAccept.load() }
+    }
+
+    /** Frees what the constructor made, for a loop that was never started; its sockets stay the caller's. */
+    internal fun discardUnstarted() {
+        val r = Releaser()
+        r.release { single.close() }
+        r.release { outBatch.close() }
+        r.release { inBatch.close() }
+        r.release { core.close() } // and its reference to a group's address tokens
+        scope.cancel()
+        r.finish()
     }
 
     /** Starts the receive, timer and forward coroutines; a [LoopGroup] calls it only once every loop exists, so no datagram is forwarded to a loop not built yet. */
@@ -370,7 +410,6 @@ internal class EndpointLoop private constructor(
         flush()
     }
 
-    private val single = PacketBatch(1, SLOT_SIZE)
     private val copy = ByteArray(SLOT_SIZE)
 
     /** Sends [out]: in one call when every slot uses the endpoint socket, otherwise slot by slot through each path's socket. */
@@ -1148,7 +1187,23 @@ internal class EndpointLoop private constructor(
                     io.close()
                     throw e
                 }
-            return EndpointLoop(config, io, config.dispatcher ?: ownDispatcher(), preferredIos = preferred).also { it.start() }
+            val loop =
+                try {
+                    EndpointLoop(config, io, config.dispatcher ?: ownDispatcher(), preferredIos = preferred)
+                } catch (e: Throwable) {
+                    val r = Releaser(e) // the loop freed its own part; the sockets are bind's
+                    r.release { io.close() }
+                    for (p in preferred) r.release { p.close() }
+                    throw e
+                }
+            try {
+                loop.start()
+            } catch (e: Throwable) {
+                // whatever start launched goes with the loop: the close job frees the sockets, the core and the batches
+                Releaser(e).release { withContext(kotlinx.coroutines.NonCancellable) { loop.closeAndJoin() } }
+                throw e
+            }
+            return loop
         }
 
         /** The server's preferred-address sockets ([io.kuicksilver.quic.QuicServerConfig.preferredAddress]), opened with [open]; all or none. */

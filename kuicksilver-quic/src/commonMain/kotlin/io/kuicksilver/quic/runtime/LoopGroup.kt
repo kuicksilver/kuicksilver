@@ -13,8 +13,11 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.Releaser
 import io.kuicksilver.quic.withLiteralHost
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -256,15 +259,26 @@ internal class LoopGroup private constructor(
                             preferred.getOrElse(i) { emptyList() },
                         )
                 }
+                afterBuild()
             } catch (e: Throwable) {
-                for (l in loops) l.core.close() // never started: their cores are all they hold of the group's keys
+                // never started: each built loop frees its core (its reference to the group's keys) and batches; the sockets
+                // were handed to this group, so they close here too
+                val r = Releaser(e)
+                for (l in loops) r.release { l.discardUnstarted() }
+                for (io in ios) r.release { io.close() }
+                for (l in preferred) for (p in l) r.release { p.close() }
                 throw e
             } finally {
                 tokens.close() // the group's own reference
             }
-            afterBuild()
             g.loops = loops
-            for (l in loops) l.start()
+            try {
+                for (l in loops) l.start()
+            } catch (e: Throwable) {
+                // a loop that started may already receive: the group's close takes every loop down, sockets included
+                Releaser(e).release { withContext(NonCancellable) { g.closeAndJoin() } }
+                throw e
+            }
             return g
         }
     }

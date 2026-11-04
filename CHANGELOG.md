@@ -453,6 +453,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC on Kotlin/Native: an `EndpointCore` whose construction fails (a refused key, a loop group's keys already
   released) frees the stateless buffer, the reset key, the address-token keys and the admission queue it had made
   instead of leaking them, and `EndpointCore.close` runs every release even when one of them throws.
+- QUIC: a `QuicEndpoint.bind` that fails after opening its sockets (the endpoint loop cannot be built or started) closes
+  the main and the preferred-address sockets instead of leaving them bound, and the loop frees the endpoint core and the
+  datagram batches it had made. A loop group that fails to build or start likewise closes every loop's sockets and frees
+  the loops already built.
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the

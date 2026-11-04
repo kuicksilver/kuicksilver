@@ -14,7 +14,8 @@ import io.kuicksilver.tls.TokenKey
  */
 @OptIn(DelicateKuicksilverApi::class, InternalKuicksilverApi::class)
 internal class TrackingCrypto(
-    var failResetKey: Boolean = false,
+    /** Reset keys handed out before every further one is refused. */
+    var resetKeys: Int = Int.MAX_VALUE,
     var failTokenKey: Boolean = false,
 ) : QuicCrypto by NullCryptoProvider {
     var made = 0
@@ -24,7 +25,7 @@ internal class TrackingCrypto(
     val live: Int get() = made - closed
 
     override fun newResetKey(): ResetKey {
-        if (failResetKey) throw IllegalStateException("reset key refused (test)")
+        if (resetKeys-- <= 0) throw IllegalStateException("reset key refused (test)")
         val k = NullCryptoProvider.newResetKey()
         made++
         return object : ResetKey by k {
