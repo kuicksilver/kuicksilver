@@ -136,6 +136,10 @@ jobs:
           [ -d "build/fuzz-campaign/corpus/$TARGET" ] || { echo "no corpus to prune"; exit 0; }
           bash tools/fuzz/campaign.sh prune --no-build --nice 0 --targets "$TARGET" \
             || echo "::warning::$TARGET: the corpus could not be pruned, it is cached as it grew"
+      - name: 'fuzz: restore a corpus replacement the prune did not finish'
+        if: always()
+        # campaign.sh puts back a corpus a killed prune left between its two renames (<corpus>.old) before any command runs
+        run: bash tools/fuzz/campaign.sh list > /dev/null
       - name: 'fuzz: save the ${{ matrix.target }} corpus'
         if: always()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
