@@ -429,47 +429,66 @@ check "override: two cells of one test case differ"        1 "" -- test "$(cell_
 check "override: v2 and zerortt differ"                     1 "" -- test "$(cell_value v2 v2 /tmp/s /tmp/c)" = "$(cell_value zerortt zerortt /tmp/s /tmp/c)"
 
 # sim-entrypoint.sh in a rebind scenario: the ready port refuses clients until the first rebind is over (stub run.sh, iptables,
-# netstat; the scenario starts listening 0.2 s in), and in any other scenario it is never touched
+# netstat and sleep; the scenario starts listening 0.2 s in), and in any other scenario it is never touched. The gate's delay is
+# checked as the number it hands to sleep, not as the time that passed: a wall-clock window failed on a loaded host (load
+# average 6, 2026-10-28). The stub sleep logs every call and really sleeps only the 0.05 s polls for the scenario's port.
 mkdir -p "$tmp/sim/bin"
 cat > "$tmp/sim/bin/iptables" <<'SH'
 #!/bin/bash
-echo "$(python3 -c 'import time; print(f"{time.time():.3f}")') $*" >> "$SIM_LOG"
+echo "iptables $*" >> "$SIM_LOG"
 SH
 cat > "$tmp/sim/bin/netstat" <<'SH'
 #!/bin/bash
 [ -f "$SIM_DIR/listening" ] && echo "tcp 0 0 0.0.0.0:57832 0.0.0.0:* LISTEN"
 SH
+cat > "$tmp/sim/bin/sleep" <<'SH'
+#!/bin/bash
+echo "sleep $*" >> "$SIM_LOG"
+if [ "$1" = 0.05 ]; then command -p sleep "$1"; fi
+exit 0
+SH
+# the scenario: listens after 0.2 s, then stays up until the gate opened the port (at most 30 s) or, with no gate, 0.5 s more
 cat > "$tmp/sim/run.sh" <<'SH'
 #!/bin/bash
-sleep 0.2; touch "$SIM_DIR/listening"; echo "$(python3 -c 'import time; print(f"{time.time():.3f}")') listening" >> "$SIM_LOG"; sleep 4.5
+command -p sleep 0.2; touch "$SIM_DIR/listening"; echo "listening" >> "$SIM_LOG"
+if [ -n "$SIM_GATED" ]; then
+  for _ in $(seq 1 600); do grep -q -- '-D INPUT' "$SIM_LOG" && break; command -p sleep 0.05; done
+else command -p sleep 0.5; fi
 SH
 chmod +x "$tmp/sim/bin/"* "$tmp/sim/run.sh"
-sim() {   # scenario [gate] -> the log of iptables calls and the moment the stub scenario listened (the stub outlives the gate)
+sim() {   # scenario [gate] -> the log of the iptables and sleep calls and of the moment the stub scenario listened
   rm -f "$tmp/sim/listening" "$tmp/sim/log"
-  ( cd "$tmp/sim" && SIM_DIR="$tmp/sim" SIM_LOG="$tmp/sim/log" PATH="$tmp/sim/bin:$PATH" SCENARIO="$1" KSL_INTEROP_START_GATE="${2:-}" bash "$here/sim-entrypoint.sh" > /dev/null 2>&1 )
+  local gated=""; [[ "$1" == rebind* ]] && gated=1
+  ( cd "$tmp/sim" && SIM_DIR="$tmp/sim" SIM_LOG="$tmp/sim/log" SIM_GATED="$gated" PATH="$tmp/sim/bin:$PATH" SCENARIO="$1" KSL_INTEROP_START_GATE="${2:-}" bash "$here/sim-entrypoint.sh" > /dev/null 2>&1 )
   cat "$tmp/sim/log" 2> /dev/null
 }
-opened() {   # log lo hi: the port was closed before the scenario, opened lo-hi s after the stub listened, once
-  python3 -c "
-import sys; l = [x.split(' ', 1) for x in open('$1').read().splitlines()]
-up = [float(t) for t, w in l if w == 'listening']; opened = [float(t) for t, w in l if w.startswith('-D INPUT -p tcp --dport 57832')]
-sys.exit(0 if l and l[0][1].startswith('-I INPUT -p tcp --dport 57832 -j REJECT') and len(up) == 1 and len(opened) == 1 and $2 <= opened[0] - up[0] <= $3 else 1)"
+opened() {   # log delay: the port was closed before the scenario and opened once, right after one sleep of [delay] s begun after it listened
+  python3 -c '
+import sys
+l = open(sys.argv[1]).read().splitlines()
+up = [i for i, w in enumerate(l) if w == "listening"]
+opened = [i for i, w in enumerate(l) if w.startswith("iptables -D INPUT -p tcp --dport 57832")]
+ok = bool(l) and l[0].startswith("iptables -I INPUT -p tcp --dport 57832 -j REJECT") and len(up) == 1 and len(opened) == 1 and up[0] < opened[0]
+gate = [w for w in l[up[0] + 1:opened[0]] if w.startswith("sleep ") and w != "sleep 0.05"] if ok else []
+sys.exit(0 if ok and len(gate) == 1 and l[opened[0] - 1] == gate[0] and abs(float(gate[0].split()[1]) - float(sys.argv[2])) < 1e-9 else 1)
+' "$1" "$2"
 }
 sim "rebind --delay=15ms --bandwidth=10Mbps --queue=25 --first-rebind=1s --rebind-freq=5s" > "$tmp/rebind-port.log"
 check "rebind-port: the ready port is closed before the scenario starts" 0 "" -- bash -c "head -1 '$tmp/rebind-port.log' | grep -q -- '-I INPUT -p tcp --dport 57832 -j REJECT'"
-check "rebind-port: opened 2.25 s after it listens (first rebind + 1.25 s)" 0 "" -- opened "$tmp/rebind-port.log" 2.2 2.75
+check "rebind-port: opened 2.25 s after it listens (first rebind + 1.25 s)" 0 "" -- opened "$tmp/rebind-port.log" 2.25
+check "rebind-port: a gate of another length fails the check"      1 "" -- opened "$tmp/rebind-port.log" 2.3
 sim "rebind --delay=15ms --bandwidth=10Mbps --queue=25 --first-rebind=1s --rebind-freq=5s --rebind-addr" > "$tmp/rebind-addr.log"
-check "rebind-addr: opened 1.3 s after it listens (first rebind + 0.3 s)" 0 "" -- opened "$tmp/rebind-addr.log" 1.25 1.8
+check "rebind-addr: opened 1.3 s after it listens (first rebind + 0.3 s)" 0 "" -- opened "$tmp/rebind-addr.log" 1.3
 sim "rebind --first-rebind=2s --rebind-freq=5s" > "$tmp/rebind2.log"
-check "rebind-port: the delay follows --first-rebind"             0 "" -- opened "$tmp/rebind2.log" 3.2 3.75
+check "rebind-port: the delay follows --first-rebind"             0 "" -- opened "$tmp/rebind2.log" 3.25
 sim "rebind --first-rebind=1s --rebind-freq=5s" 0.3 > "$tmp/rebind3.log"
-check "rebind-port: KSL_INTEROP_START_GATE overrides the delay"   0 "" -- opened "$tmp/rebind3.log" 1.25 1.8
+check "rebind-port: KSL_INTEROP_START_GATE overrides the delay"   0 "" -- opened "$tmp/rebind3.log" 1.3
 sim "rebind --first-rebind=1s --rebind-freq=5s --rebind-addr" 1.25 > "$tmp/rebind4.log"
-check "rebind-addr: KSL_INTEROP_START_GATE overrides the delay"   0 "" -- opened "$tmp/rebind4.log" 2.2 2.75
+check "rebind-addr: KSL_INTEROP_START_GATE overrides the delay"   0 "" -- opened "$tmp/rebind4.log" 2.25
 sim "rebind --first-rebind=1s --rebind-freq=5s" '1; touch /tmp/x' > "$tmp/rebind5.log"
-check "rebind-port: a KSL_INTEROP_START_GATE that is no number is ignored" 0 "" -- opened "$tmp/rebind5.log" 2.2 2.75
+check "rebind-port: a KSL_INTEROP_START_GATE that is no number is ignored" 0 "" -- opened "$tmp/rebind5.log" 2.25
 sim "rebind --first-rebind=1s --rebind-freq=5s --rebind-addr" '-1' > "$tmp/rebind6.log"
-check "rebind-addr: a negative KSL_INTEROP_START_GATE is ignored"   0 "" -- opened "$tmp/rebind6.log" 1.25 1.8
+check "rebind-addr: a negative KSL_INTEROP_START_GATE is ignored"   0 "" -- opened "$tmp/rebind6.log" 1.3
 check "run-local.sh refuses a KSL_INTEROP_START_GATE that is no number" 2 "must be a number of seconds" -- env KSL_INTEROP_START_GATE='1"; x' bash "$here/run-local.sh" --results "$tmp/none"
 sim "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25" > "$tmp/p2p.log"
 check "other scenarios: the port is never touched"                0 "" -- bash -c "! grep -q INPUT '$tmp/p2p.log'"
