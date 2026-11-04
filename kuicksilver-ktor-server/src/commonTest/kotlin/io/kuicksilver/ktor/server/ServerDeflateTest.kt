@@ -140,7 +140,7 @@ class ServerDeflateTest {
 
     @Test fun negative_bombFromClientClosesWith1009H3() = h3ServerTest { h3("permessage-deflate", "permessage-deflate", ::bombed) }
 
-    /** An offer the server must decline (RFC 7692 section 5.1) is answered without the extension. */
+    /** An offer the server must decline (RFC 7692 section 7) is answered without the extension. */
     @Test fun invalidOfferDeclined() =
         serverTest {
             h1("permessage-deflate; server_max_window_bits=7", expected = null) { input, output ->

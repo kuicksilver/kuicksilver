@@ -42,6 +42,7 @@ public final class io/kuicksilver/ktor/network/websocket/PerMessageDeflate$Compa
 
 public final class io/kuicksilver/ktor/network/websocket/PerMessageDeflate$Config {
 	public fun <init> ()V
+	public final fun compressIf (Lkotlin/jvm/functions/Function1;)V
 	public final fun getClientNoContextTakeover ()Z
 	public final fun getCompressionLevel ()I
 	public final fun getMaxInflatedMessageSize ()J

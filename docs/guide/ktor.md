@@ -582,6 +582,7 @@ install(WebSockets) {
 | `serverNoContextTakeover` | false | the server compresses each message on its own: a client requires it (an answer without it fails the handshake), a server announces it |
 | `maxInflatedMessageSize` | 16 MiB | the largest size an incoming compressed message may inflate to |
 | `minSizeToCompress` | 0 | smaller messages go uncompressed; a fragmented message is always compressed |
+| `compressIf { frame -> ... }` | every message | compresses a message only when every predicate agrees (decided on its first frame) |
 
 Only Text and Binary messages are compressed, with RSV1 on a message's first frame only (RFC 7692 section 6.1); a
 fragmented message is one DEFLATE stream across its frames. As a client the extension does not offer
@@ -589,7 +590,7 @@ fragmented message is one DEFLATE stream across its frames. As a client the exte
 offer (an unknown, repeated or malformed parameter, `client_max_window_bits`, `permessage-deflate` twice, or a requested
 `server_no_context_takeover` left out) fails the call: Kuicksilver's client engine fails it with `WebSocketException`
 before a session opens, other engines with the `ProtocolViolationException` the extension throws. As a server it
-accepts the first offer it can keep to and declines the others (RFC 7692 section 5.1): an offered
+accepts the first offer it can keep to and declines the others (RFC 7692 section 7): an offered
 `server_max_window_bits` is answered with the same value when the deflater can keep to it (9 to 15 on Kotlin/Native;
 only 15 on the JVM and Android, whose `Deflater` has a fixed 32 KiB window: a smaller one is declined, and a client that
 offered nothing else gets an uncompressed session), `client_max_window_bits` is a hint it leaves unanswered. Install one extension per RSV bit: Kuicksilver's server engine
@@ -600,16 +601,27 @@ messages are always inflated with a 32 KiB window, which reads every smaller one
 Decompression bombs. A compressed message may inflate to at most `maxInflatedMessageSize` bytes. Kuicksilver's engines
 decompress the frames as they arrive, in pieces of 64 KiB, and close the connection with 1009 (message too big, RFC 6455
 section 7.4.1) once a message passes the limit, after at most one piece more; malformed compressed data closes it with
-1002. On another engine the extension decompresses each message Ktor's session has reassembled (Ktor's `maxFrameSize`
-bounds that compressed size) and fails it with `FrameTooBigException`; what goes on the wire then is Ktor's choice
-(its session sends no 1009 for an extension's exception). DEFLATE cannot expand more than about 1032 times, so the
-time spent on a message is bounded by its compressed size as well; there is no separate ratio limit, which would only
-refuse legitimate, very repetitive messages.
+1002 ("Invalid compressed data"). On Kuicksilver's engines Ktor's `maxFrameSize` sees only the decompressed pieces, so
+the compressed bytes of a message have a bound of their own: 8 times the limit plus 64 KiB, past which the message
+fails as too big as well (data that inflates to nothing, such as empty blocks, cannot stream on). On another engine the
+extension decompresses each message Ktor's session has reassembled (Ktor's `maxFrameSize` bounds that compressed size)
+and fails it with `FrameTooBigException`; what goes on the wire then is Ktor's choice (its session sends no 1009 for an
+extension's exception). DEFLATE cannot expand more than about 1032 times, so the time spent on a message is bounded by
+its compressed size as well; there is no separate ratio limit, which would only refuse legitimate, very repetitive
+messages.
+
+Compression and secrets. A message compressed in a window shared with data an attacker can choose leaks, through its
+size, how much of a secret the attacker guessed (CRIME, BREACH; RFC 7692 section 8). Do not put secrets (tokens,
+session ids) into messages that also carry attacker-influenced data, or keep such messages out of the shared window:
+`compressIf { }` sends them uncompressed, and `serverNoContextTakeover` / `clientNoContextTakeover` stop one message
+from sharing a window with the next (a secret and attacker data within one message still share one).
 
 Memory per connection with permessage-deflate: the deflater's zlib state (about 256 KiB with a 32 KiB window, made on
-the first outgoing compressed message), the inflater's (about 40 KiB, on the first incoming one) and 80 KiB of
-buffers, plus the message being reassembled (at most the limit). Kuicksilver's engines free the zlib state when the
-session ends; on another engine it is freed when the extension is garbage collected.
+the first outgoing compressed message), the inflater's (about 40 KiB, on the first incoming one), 32 KiB of output
+history with context takeover and 80 KiB of buffers, plus the message being reassembled (at most the limit).
+Kuicksilver's engines free the zlib state when the session ends. On another engine only a cleaner frees it, once the
+garbage collector finds the extension unreachable: zlib's memory is native and does not press the collector, so many
+short sessions can hold some 300 KiB each until it runs.
 
 Linux Kotlin/Native binaries that use `kuicksilver-ktor-network` link the system's zlib dynamically (`libz.so.1`, in
 every glibc distribution, though a distroless or scratch image may need it added); on Windows zlib is linked statically,
@@ -814,6 +826,9 @@ request now contains its own failure.
   messages, the common case, pass.
 - A client that does not mask its frames, or a server that masks them, is closed with 1002, as the RFC requires; Ktor's
   own frame readers accept either.
+- Ktor 3.6.1's WebSocket writer on Kotlin/Native (its common `RawWebSocket`) sends every fragment of a message with the
+  message's opcode instead of 0 (continuation), so a fragmented message sent from Kotlin/Native, through any engine, is
+  refused by the peer as a new message inside an unfinished one; send whole messages there. Its JVM writer is right.
 - Ktor 3.6.1's `WebSocketDeflateExtension` fails (`IllegalArgumentException: byteCount: -5 < 0`, the session closes
   with 1011) when it compresses an empty message after an earlier one; it reads an empty message from
   `PerMessageDeflate` (a single 0x00 byte, RFC 7692 section 7.2.3.6) correctly. Otherwise the two interoperate in both

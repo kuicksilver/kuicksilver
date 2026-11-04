@@ -260,7 +260,7 @@ class PerMessageDeflateTest {
         }
     }
 
-    /** RFC 7692 section 5: a response with an unknown, repeated or invalid parameter fails the connection. */
+    /** RFC 7692 section 7: a response with an unknown, repeated or invalid parameter fails the connection. */
     @Test fun negative_invalidResponseParametersFail() {
         for (response in listOf(
             "permessage-deflate; x_unknown",
@@ -329,7 +329,7 @@ class PerMessageDeflateTest {
         )
     }
 
-    /** RFC 7692 section 5.1: the server declines an offer it cannot accept, and accepts nothing when none is left. */
+    /** RFC 7692 section 7: the server declines an offer it cannot accept, and accepts nothing when none is left. */
     @Test fun negative_serverDeclinesInvalidOffers() {
         for (offer in listOf(
             "permessage-deflate; x_unknown",
@@ -450,5 +450,24 @@ class PerMessageDeflateTest {
             }
         }
         inflater.close()
+    }
+
+    /** A message the application keeps out of the shared window (a secret next to attacker-chosen data, RFC 7692 section 8). */
+    @Test fun compressIfKeepsChosenMessagesUncompressed() {
+        val c =
+            client {
+                compressIf { it !is Frame.Binary }
+                compressIf { it.data.size < 1000 }
+            }
+        val binary = c.processOutgoingFrame(Frame.Binary(true, ByteArray(100)))
+        assertFalse(binary.rsv1, "the first predicate says no")
+        assertContentEquals(ByteArray(100), binary.data)
+        assertFalse(c.processOutgoingFrame(Frame.Text("x".repeat(2000))).rsv1, "the second one says no")
+        assertTrue(c.processOutgoingFrame(Frame.Text("both say yes")).rsv1)
+        // decided on a message's first frame: its continuations follow it
+        val first = c.processOutgoingFrame(Frame.Binary(false, ByteArray(10)))
+        val last = c.processOutgoingFrame(Frame.Text(true, "c".encodeToByteArray()))
+        assertFalse(first.rsv1 || last.rsv1)
+        assertEquals("c", last.data.decodeToString())
     }
 }

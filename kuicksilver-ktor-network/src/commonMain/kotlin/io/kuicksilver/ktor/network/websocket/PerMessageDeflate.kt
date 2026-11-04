@@ -41,19 +41,22 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * data fails the connection with 1002 (protocol error) on Kuicksilver's engines, with [ProtocolViolationException]
  * elsewhere.
  *
- * Negotiation (RFC 7692 sections 5 and 7.1). As a client it offers `permessage-deflate` with
+ * Negotiation (RFC 7692 sections 5, 7 and 7.1). As a client it offers `permessage-deflate` with
  * `client_no_context_takeover` and `server_no_context_takeover` as configured; it does not offer `client_max_window_bits`,
  * so it compresses with a 32 KiB window. A response that is not a valid acceptance of that offer (an unknown, repeated or
  * malformed parameter, `client_max_window_bits`, more than one `permessage-deflate`, or a requested
  * `server_no_context_takeover` left out) fails the handshake with [ProtocolViolationException]; any
  * `server_max_window_bits` from 8 to 15 is accepted (the inflater's 32 KiB window reads every smaller one). As a server it
- * accepts the first offer it can honour and declines invalid ones (section 5.1): it echoes `server_no_context_takeover`
+ * accepts the first offer it can honour and declines invalid ones (section 7): it echoes `server_no_context_takeover`
  * and `client_no_context_takeover` (adding them when configured), answers `server_max_window_bits` with the offered value
  * when its deflater can keep to it (9 to 15 on Kotlin/Native, 15 on the JVM, whose `Deflater` has a fixed window, and
  * declines the offer otherwise), and takes `client_max_window_bits` as a hint it leaves unanswered.
  *
  * Only Text and Binary messages are compressed (control frames never are, RFC 7692 section 6), with RSV1 on the first
- * frame of a message only (section 6.1); a fragmented message is one DEFLATE stream across its frames.
+ * frame of a message only (section 6.1); a fragmented message is one DEFLATE stream across its frames. Compression and
+ * secrets: a message compressed in a window shared with attacker-chosen data can leak a secret through its size (CRIME,
+ * BREACH; section 8); keep such messages uncompressed with [Config.compressIf], or use the `*_no_context_takeover`
+ * settings to stop one message from sharing a window with the next.
  *
  * Memory per connection: the deflater (≈ 256 KiB of zlib state with a 32 KiB window) and the inflater (≈ 40 KiB), each
  * made on first use, plus the 64 KiB piece the output is produced in. Kuicksilver's engines free the zlib state when the
@@ -88,6 +91,18 @@ public class PerMessageDeflate internal constructor(
          * its first frame, is compressed.
          */
         public var minSizeToCompress: Int = 0
+
+        internal var compressCondition: (Frame) -> Boolean = { true }
+
+        /**
+         * Compresses a message only when [predicate] (and every earlier one) agrees, decided on its first frame. For
+         * messages that put a secret next to data an attacker can choose: compressed in one window, their size can tell
+         * the secret (CRIME, BREACH; RFC 7692 section 8); sent uncompressed, they do not share it.
+         */
+        public fun compressIf(predicate: (Frame) -> Boolean) {
+            val earlier = compressCondition
+            compressCondition = { earlier(it) && predicate(it) }
+        }
     }
 
     /** Creates [PerMessageDeflate] for `extensions { install(PerMessageDeflate) { ... } }`; sets RSV1 only. */
@@ -149,7 +164,7 @@ public class PerMessageDeflate internal constructor(
     override fun serverNegotiation(requestedProtocols: List<WebSocketExtensionHeader>): List<WebSocketExtensionHeader> {
         for (offer in requestedProtocols) {
             if (!offer.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true)) continue
-            val p = parseParameters(offer, response = false) ?: continue // an invalid offer is declined (section 5.1)
+            val p = parseParameters(offer, response = false) ?: continue // an invalid offer is declined (section 7)
             val window = p.serverMaxWindowBits ?: MAX_WINDOW_BITS
             if (window < DEFLATE_MIN_WINDOW_BITS) continue // a window this deflater cannot keep to (section 7.1.2.1)
             val serverNoContextTakeover = p.serverNoContextTakeover || config.serverNoContextTakeover
@@ -179,7 +194,9 @@ public class PerMessageDeflate internal constructor(
         if (frame !is Frame.Text && frame !is Frame.Binary) return frame
         val a = agreement ?: return frame
         val first = !sendingFragments
-        if (first) compressingMessage = !frame.fin || frame.data.size >= config.minSizeToCompress
+        if (first) {
+            compressingMessage = (!frame.fin || frame.data.size >= config.minSizeToCompress) && config.compressCondition(frame)
+        }
         sendingFragments = !frame.fin
         if (!compressingMessage) return frame
         val data =
@@ -251,7 +268,7 @@ public class PerMessageDeflate internal constructor(
 
     /**
      * The client's view of the server's answer [response] to [protocols]: null when it did not accept `permessage-deflate`;
-     * an answer that is not a valid acceptance fails with [ProtocolViolationException] (RFC 7692 section 5: the client
+     * an answer that is not a valid acceptance fails with [ProtocolViolationException] (RFC 7692 section 7: the client
      * fails the WebSocket connection).
      */
     private fun clientAgreement(response: List<WebSocketExtensionHeader>): DeflateAgreement? {

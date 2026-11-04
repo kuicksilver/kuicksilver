@@ -36,6 +36,8 @@ final class io.kuicksilver.ktor.network.websocket/PerMessageDeflate : io.ktor.we
         final var serverNoContextTakeover // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.serverNoContextTakeover|{}serverNoContextTakeover[0]
             final fun <get-serverNoContextTakeover>(): kotlin/Boolean // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.serverNoContextTakeover.<get-serverNoContextTakeover>|<get-serverNoContextTakeover>(){}[0]
             final fun <set-serverNoContextTakeover>(kotlin/Boolean) // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.serverNoContextTakeover.<set-serverNoContextTakeover>|<set-serverNoContextTakeover>(kotlin.Boolean){}[0]
+
+        final fun compressIf(kotlin/Function1<io.ktor.websocket/Frame, kotlin/Boolean>) // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.compressIf|compressIf(kotlin.Function1<io.ktor.websocket.Frame,kotlin.Boolean>){}[0]
     }
 
     final object Companion : io.ktor.websocket/WebSocketExtensionFactory<io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config, io.kuicksilver.ktor.network.websocket/PerMessageDeflate> { // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion|null[0]

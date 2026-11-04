@@ -31,7 +31,7 @@ internal class WebSocketHandshake(
  * What the server's frames may carry after the WebSocket handshake of [request], whose answer carried [responseExtensions]
  * (the `Sec-WebSocket-Extensions` values of the 101, or of the 2xx of RFC 9220). An extension the request did not offer
  * fails the handshake with [WebSocketException] (RFC 6455 section 4.1: the client fails the connection), before a
- * session is opened; so does an answer to `PerMessageDeflate`'s offer that RFC 7692 section 5 makes the client fail, and
+ * session is opened; so does an answer to `PerMessageDeflate`'s offer that RFC 7692 section 7 makes the client fail, and
  * one that accepts two installed extensions claiming the same RSV bit (section 5: a PMCE and another user of RSV1).
  * The extension's zlib state is freed when the call ([callContext]) ends.
  */

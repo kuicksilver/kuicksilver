@@ -127,7 +127,7 @@ class ClientDeflateTest {
 
     private var lastTexts = emptyList<String>()
 
-    /** RFC 7692 section 5, RFC 6455 section 4.1: an answer the client must fail on fails the call; no session opens. */
+    /** RFC 7692 section 7, RFC 6455 section 4.1: an answer the client must fail on fails the call; no session opens. */
     @Test fun negative_invalidDeflateResponseFailsHandshake() =
         clientTest {
             for (answer in listOf("permessage-deflate; client_max_window_bits=10", "permessage-deflate; server_max_window_bits=16")) {
