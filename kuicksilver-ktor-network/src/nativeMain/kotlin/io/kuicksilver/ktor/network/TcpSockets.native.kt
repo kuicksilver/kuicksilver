@@ -343,6 +343,12 @@ internal class NativeTcpSocket(
     private val writeChannel = AtomicReference<ByteChannel?>(null)
     private val writerJob = AtomicReference<WriterJob?>(null)
 
+    /** The read loop ([writerJob]) has ended (tests: the close order). */
+    internal val readLoopEnded: Boolean get() = writerJob.load()?.isCompleted ?: true
+
+    /** The write loop ([readerJob]) has ended (tests: the close order). */
+    internal val writeLoopEnded: Boolean get() = readerJob.load()?.isCompleted ?: true
+
     /** Why the connection is gone, as the read loop's receive failed ([connectionLost]): a wait for room fails with it. */
     private val lost = AtomicReference<Throwable?>(null)
 
@@ -364,8 +370,11 @@ internal class NativeTcpSocket(
     override fun close() {
         if (!closeFlag.compareAndSet(expectedValue = false, newValue = true)) return
         launch(CoroutineName("socket-close")) {
-            // what was written is still sent: the write loop drains the closed channel, then ends
+            // what was written is still sent: the write loop drains the closed channel, then ends; only then is the read
+            // loop cancelled (its end shuts the read side down): cancelled earlier, a close with unread received data can
+            // make the kernel drop the response's tail (Linux answers it with a reset)
             writeChannel.load()?.let { runCatching { it.closeFromSocketClose() } }
+            readerJob.load()?.job?.join()
             writerJob.load()?.cancel()
             checkChannels()
         }
