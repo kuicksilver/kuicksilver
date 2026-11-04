@@ -37,6 +37,11 @@ shopt -s nullglob   # a glob that matches nothing expands to nothing, never to i
 # may not signal (EPERM) counts as alive; a lock that names no pid (a non-link) and is older than a minute is stale. A link
 # taken from a live taker by mistake goes back only where no lock is (ln -s again, never a rename over a newer one). A pid
 # that stays alive for 30 minutes may be a reused one: the wait ends with an error that names the lock to remove.
+# Residual case, three processes: A and B both read the dead holder's pid; B renames its link away, removes it and makes
+# its own; A's late rename then takes B's link, sees it is not the dead pid and puts it back with ln -s. If C made a lock
+# between A's rename and that ln -s, the ln -s fails, B goes on without its link and C holds the lock too: two runs may
+# replace corpora at once. It needs three campaign.sh runs on one state directory at the same instant, which CI (one run
+# per job) and a local campaign do not do; flock(1) would close it, but macOS does not ship it.
 replace_lock_wait_s=${KSL_FUZZ_REPLACE_LOCK_WAIT_S:-1800}   # tests shorten it
 replace_lock="$state/replace.lock"
 holder_alive() {
