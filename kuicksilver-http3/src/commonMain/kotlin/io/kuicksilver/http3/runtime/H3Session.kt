@@ -1035,21 +1035,26 @@ internal class H3Session(
      * for HTTP Datagrams, the receiver MUST terminate the request. If HTTP/3 is in use, the request stream MUST be aborted
      * with H3_DATAGRAM_ERROR". Requests other than CONNECT have none (GET and POST are the RFC's examples). Section 2.1
      * comes first once the request's direction is over ("MUST be silently dropped"): only a stream still receiving is
-     * aborted. Returns whether [id] was such a request.
+     * aborted. A direction is over once every byte and the FIN arrived (RFC 9000 "Data Recvd", [receivedAll]), also while
+     * the application has not read them yet, so a message that came whole is never aborted by a stray datagram (review
+     * 2026-10-28 H3R-6). Returns whether [id] was such a request.
      */
     suspend fun abortRequestWithoutDatagrams(id: Long): Boolean {
         if (isServer) {
             val req = activeServerRequests[id] ?: return false
-            if (req.method == "CONNECT" || req.stream.input.isClosedForRead) return false
+            if (req.method == "CONNECT" || receiveOver(req.stream)) return false
             abort(req.stream, Http3ErrorCode.DATAGRAM_ERROR)
             req.done()
         } else {
             val st = clientRequestsWithoutDatagrams[id] ?: return false
-            if (st.input.isClosedForRead) return false
+            if (receiveOver(st)) return false
             abort(st, Http3ErrorCode.DATAGRAM_ERROR)
         }
         return true
     }
+
+    /** Whether the peer's direction of [st] is over: all of it arrived, or it was read to its end or failed. */
+    private fun receiveOver(st: QuicStream): Boolean = st.receivedAll || st.input.isClosedForRead
 
     /**
      * Client bidirectional stream [id] lies beyond the stream limit: the one we granted on a server, the one the server

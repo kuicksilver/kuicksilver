@@ -26,6 +26,7 @@ import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -490,6 +491,54 @@ class H3DatagramTest {
                 st.output.flushAndClose()
                 val req = withTimeout(5.seconds) { server.acceptRequest() }
                 withTimeout(5.seconds) { req.body.readAllBytes() } // the request's direction ended
+                val seen = withContext(server.session.dispatcher) { server.session.datagrams.receivedCount }
+                c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                withTimeout(5.seconds) {
+                    while (withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } == seen) delay(5)
+                }
+                req.respond(204).output.flushAndClose()
+                val answer = withTimeout(5.seconds) { st.input.readAllBytes() }
+                assertTrue(answer.isNotEmpty(), "the response arrived, the stream was not reset")
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * A request that came whole (every byte and the FIN received, RFC 9000 "Data Recvd") is not aborted for a datagram while
+     * its body still waits to be read (review 2026-10-28 h3.md H3R-6): its receive side is over, so section 2.1 drops the
+     * datagram, as for a request read to its end. Here a POST body larger than the body channel holds (1 MiB), which no handler reads.
+     */
+    @Test fun datagramForAWholeUnreadPostIsDropped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                val st = c.openBidi()
+                val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+                st.output.writeFully(raw.headers(st.id, post) + raw.data(ByteArray(1280 * 1024)))
+                st.output.flushAndClose()
+                val req = withTimeout(5.seconds) { server.acceptRequest() }
+                withTimeout(5.seconds) {
+                    while (withContext(server.session.dispatcher) {
+                            server.session.activeServerRequests[st.id]
+                                ?.stream
+                                ?.receivedAll
+                        } !=
+                        true
+                    ) {
+                        delay(5)
+                    }
+                }
+                assertFalse(
+                    withContext(server.session.dispatcher) {
+                        server.session.activeServerRequests[st.id]!!
+                            .stream.input.isClosedForRead
+                    },
+                    "the body was read to its end: the case this test is about did not arise",
+                )
                 val seen = withContext(server.session.dispatcher) { server.session.datagrams.receivedCount }
                 c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
                 withTimeout(5.seconds) {
