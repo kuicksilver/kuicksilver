@@ -73,6 +73,22 @@ internal suspend fun peerMayHaveClosed(write: suspend () -> Unit) {
     }
 }
 
+/**
+ * [peerMayHaveClosed] for a write the peer may answer with STOP_SENDING [code] before it returns: only that STOP_SENDING
+ * is tolerated (stricter: a connection close or another code propagates).
+ */
+internal suspend fun peerStopped(
+    code: Long,
+    write: suspend () -> Unit,
+) {
+    try {
+        write()
+    } catch (e: Throwable) {
+        val stopped = generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Stopped>().firstOrNull() ?: throw e
+        kotlin.test.assertEquals(code, stopped.code, "STOP_SENDING code")
+    }
+}
+
 internal suspend fun QuicStream.readVarInt(): Long {
     val first = input.readByte()
     val n = VarInt.encodedLength(first)

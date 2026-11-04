@@ -19,6 +19,7 @@ import io.kuicksilver.http3.runtime.RawPeer
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.runtime.peerMayHaveClosed
 import io.kuicksilver.http3.runtime.peerSawClose
+import io.kuicksilver.http3.runtime.peerStopped
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
@@ -375,14 +376,9 @@ class WtStreamRoutingTest {
                 val get = c.openBidi()
                 // the abort follows the HEADERS at once, so it can reach us while the flush still waits: then our side
                 // sees the STOP_SENDING, which must carry the same code as the RESET_STREAM
-                try {
+                peerStopped(Http3ErrorCode.DATAGRAM_ERROR) {
                     get.output.writeFully(raw.headers(get.id, GET))
                     get.output.flush()
-                } catch (e: Throwable) {
-                    val stopped =
-                        generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Stopped>().firstOrNull()
-                            ?: throw e
-                    assertEquals(Http3ErrorCode.DATAGRAM_ERROR, stopped.code)
                 }
                 assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(get))
                 assertEquals(0, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount })
