@@ -28,6 +28,28 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 state="${KSL_FUZZ_STATE:-$root/build/fuzz-campaign}"
 stats="$state/stats.tsv"
 mkdir -p "$state"
+shopt -s nullglob   # a glob that matches nothing expands to nothing, never to itself
+
+# A prune or minimize killed while it replaced a corpus (replace_dir) left the old one as <dir>.old: put it back, and drop a
+# half-copied <dir>.new, so an interruption never loses what had grown.
+for old in "$state"/corpus/*.old "$root"/tools/fuzz/corpus/*.old; do
+  [ -d "$old" ] || continue
+  if [ -e "${old%.old}" ]; then rm -rf "$old"; else mv "$old" "${old%.old}"; fi
+done
+for new in "$state"/corpus/*.new "$root"/tools/fuzz/corpus/*.new; do rm -rf "$new"; done
+
+# Replaces directory [dest] by a copy of the files in [from]: copied next to it first, then two renames (dest -> dest.old,
+# dest.new -> dest) and the old one removed. A step killed at any point leaves either the old directory whole, or both
+# (the start-up check above restores the old one when dest is missing).
+replace_dir() {
+  local from=$1 dest=$2 files
+  rm -rf "$dest.new" "$dest.old"; mkdir -p "$dest.new"
+  files=("$from"/*)
+  [ ${#files[@]} -eq 0 ] || cp "${files[@]}" "$dest.new"/
+  [ ! -e "$dest" ] || mv "$dest" "$dest.old"
+  mv "$dest.new" "$dest"
+  rm -rf "$dest.old"
+}
 
 # id kind module class method (kind: jvm = Jazzer @FuzzTest, c = tools/fuzz/ksl harness)
 targets_table() {
@@ -263,11 +285,9 @@ if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
     fi
     rm -f "$out/min"/seed-baseline-*
     before=$(find "$corpus" -type f | wc -l | tr -d ' ')
-    # the result is copied next to the corpus and then moved over it: a step killed while copying (fuzz.yml's prune timeout)
-    # leaves the old corpus whole, never a partial one that the cache would keep
+    # a step killed meanwhile (fuzz.yml's prune timeout) leaves the old corpus whole, never a partial one the cache would keep
     dest=$committed; [ "$cmd" = prune ] && dest=$corpus
-    rm -rf "$dest.new"; mkdir -p "$dest.new"; cp "$out/min"/* "$dest.new"/ 2>/dev/null || true
-    rm -rf "$dest"; mv "$dest.new" "$dest"
+    replace_dir "$out/min" "$dest"
     if [ "$cmd" = prune ]; then
       echo "$id: $before grown inputs -> $(find "$corpus" -type f | wc -l | tr -d ' ') beyond tools/fuzz/corpus/$id and the seeds"
     else

@@ -70,6 +70,19 @@ SH
 check "a prune that succeeds exits 0" 0 "2 grown inputs -> 1" -- campaign prune --no-build quic.frameDecode
 check "  and the corpus is the merge's result" 0 "" -- test "$(cd "$corpus" && echo *)" = in-a
 check "  with no staging directory left" 1 "" -- test -e "$corpus.new"
+check "  and no previous corpus is left beside it" 1 "" -- test -e "$corpus.old"
+# a prune killed between its two moves: the old corpus is set aside, the new one not in place yet; the next run puts the old
+# one back (and drops a half-copied .new), so nothing grown is lost
+rm -rf "$corpus" "$corpus.old" "$corpus.new"; mkdir -p "$corpus.old" "$corpus.new"; echo a > "$corpus.old/in-a"; echo x > "$corpus.new/in-x"
+check "an interrupted replacement is undone by the next run" 0 "" -- campaign status
+check "  the old corpus is back" 0 "" -- test -f "$corpus/in-a"
+check "  and neither staging directory is left" 1 "" -- test -e "$corpus.old" -o -e "$corpus.new"
+# a merge that keeps nothing leaves an empty corpus, not an error
+cat > "$tmp/bin/java" <<'SH'
+#!/bin/bash
+exit 0
+SH
+check "a prune whose merge keeps nothing empties the corpus" 0 "1 grown inputs -> 0" -- campaign prune --no-build quic.frameDecode
 
 [ $fails -eq 0 ] && echo "all cases passed"
 [ $fails -eq 0 ]
