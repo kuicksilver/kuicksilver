@@ -102,6 +102,16 @@ class StreamStateTest {
     }
 
     @Test
+    fun negative_noResetOnIdleStream() {
+        // section 6.4: RST_STREAM MUST NOT be sent for an idle stream, whatever the driver asks
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        c.core.reset(1, Http2ErrorCode.CANCEL, 0) // never opened
+        c.core.reset(2, Http2ErrorCode.CANCEL, 0) // a server's identifier
+        assertEquals(emptyList(), c.read().filterIsInstance<Frame.RstStream>())
+    }
+
+    @Test
     fun negative_evenStreamFromClientIsProtocolError() {
         val peer = RawH2Peer(Role.SERVER)
         peer.handshake()

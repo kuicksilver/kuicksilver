@@ -701,7 +701,7 @@ internal class H2ConnectionCore(
         code: Http2ErrorCode,
         now: Long,
     ) {
-        if (closed) return
+        if (closed || (isIdle(streamId) && streams[streamId] == null)) return // section 6.4: never on an idle stream
         resetStream(streamId, code, now, causedByPeer = false)
     }
 
