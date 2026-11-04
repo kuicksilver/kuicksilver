@@ -513,6 +513,9 @@ check "rebind-port: a KSL_INTEROP_START_GATE that is no number is ignored" 0 "" 
 sim "rebind --first-rebind=1s --rebind-freq=5s --rebind-addr" '-1' > "$tmp/rebind6.log"
 check "rebind-addr: a negative KSL_INTEROP_START_GATE is ignored"   0 "" -- opened "$tmp/rebind6.log" 1.3
 check "run-local.sh refuses a KSL_INTEROP_START_GATE that is no number" 2 "must be a number of seconds" -- env KSL_INTEROP_START_GATE='1"; x' bash "$here/run-local.sh" --results "$tmp/none"
+check "run-local.sh refuses an option it does not know (no peer named --outdir)" 2 "unknown option --outdir" -- bash "$here/run-local.sh" --outdir x quic-go
+check "run-local.sh refuses an option without its value"            2 "--out needs a value" -- bash "$here/run-local.sh" quic-go --out
+check "run-local.sh refuses an image it does not build"             2 "--image takes native" -- bash "$here/run-local.sh" --image natve quic-go
 sim "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25" > "$tmp/p2p.log"
 check "other scenarios: the port is never touched"                0 "" -- bash -c "! grep -q INPUT '$tmp/p2p.log'"
 
