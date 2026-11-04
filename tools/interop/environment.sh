@@ -29,7 +29,10 @@ truncated_captures() {
 # very data, but that 1-RTT packet goes out before anyone can decrypt it, and RFC 9000 section 13.3 has every repeat carry new data.
 # The runner then reports the challenge unanswered or, when no ServerHello of ours precedes it in the capture, missing (0.2.0 gate:
 # kuicksilver->quiche:rebind-addr; quiche drops the datagram, picoquic buffers it and answers behind a Handshake packet where the
-# runner does not look). tools/interop/handshake-challenge.py proves it from both captures. Prints "<server>_<client> <case>" per cell.
+# runner does not look). Since 0.3.0 the first packet on the new path can also be a retransmission of our handshake flight there,
+# when the client rebound before our ServerHello reached it (the server mirrors the flight to the address its Initials come from):
+# a long-header packet the runner rejects the same way. tools/interop/handshake-challenge.py proves all three from both captures.
+# Prints "<server>_<client> <case>" per cell.
 handshake_rebind() {
   local o cell
   while IFS= read -r o; do

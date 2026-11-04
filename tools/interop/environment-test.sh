@@ -52,9 +52,25 @@ check "no PATH_CHALLENGE in it even after the handshake"     1 "" -- python3 "$h
 check "the first packet on the new path is not 1-RTT"         1 "" -- python3 "$hc" --decoded "$(variant2 long "(.server_side[] | select(.n == 48)).short = false")"
 hello='(.server_side[] | select(.n == 48)) |= (.short = false | .long = ["0", "2"] | .crypto = true | del(.late_challenges))'
 check "it is our ServerHello (no probe since the 0.2.0 fix)"  0 "is our ServerHello" -- python3 "$hc" --decoded "$(variant2 sh "$hello")"
-check "  but a ServerHello of ours went out before it"        1 "" -- python3 "$hc" --decoded "$(variant2 shlate "$hello | .server_side[0].crypto = true")"
+# with a ServerHello of ours out before it (to the old binding) the second signature does not hold; since 0.3.0 that is the third
+# one (the mirrored flight), as long as no Handshake packet of ours had reached the client
+check "  but a ServerHello of ours went out before it"        0 "retransmits our handshake flight" -- python3 "$hc" --decoded "$(variant2 shlate "$hello | .server_side[0].crypto = true")"
+keyed='.client_side = [{"t": 0, "dst": "x", "short": false, "long": ["2"], "challenges": [], "crypto": true, "done": false}] + .client_side'
+check "  and a Handshake packet of ours reached the client before it" 1 "" -- python3 "$hc" --decoded "$(variant2 shlatekeyed "$hello | .server_side[0].crypto = true | $keyed")"
 check "  but it carries no CRYPTO (a lone ACK)"               1 "" -- python3 "$hc" --decoded "$(variant2 shack "$hello | (.server_side[] | select(.n == 48)).crypto = false")"
 check "another path than the one the runner named"            1 "" -- python3 "$hc" --decoded "$(variant2 other '.missing_on = "193.167.0.71:39968"')"
+
+# the third way (0.3.0): our first datagram on the new path retransmits the handshake flight there (the client rebound before our
+# ServerHello reached it), synthetic from the cell above
+fm="$td/handshake-challenge-mirrored-flight.json"
+variant3() { jq "$2" "$fm" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
+m48='(.server_side[] | select(.n == 48))'
+check "mirrored flight first on the new path"                 0 "retransmits our handshake flight" -- python3 "$hc" --decoded "$fm"
+check "  but a Handshake packet of ours reached the client before it" 1 "" -- python3 "$hc" --decoded "$(variant3 mkeyed '.client_side = [{"t": 0, "dst": "x", "short": false, "long": ["2"], "challenges": [], "crypto": true, "done": false}] + .client_side')"
+check "  but it carries no CRYPTO (a lone ACK)"               1 "" -- python3 "$hc" --decoded "$(variant3 mack "$m48.crypto = false")"
+check "  but it carries HANDSHAKE_DONE"                       1 "" -- python3 "$hc" --decoded "$(variant3 mdone "$m48.done = true")"
+check "  but it is 1-RTT"                                     1 "" -- python3 "$hc" --decoded "$(variant3 mshort "$m48.short = true | $m48.long = []")"
+check "  but on another path than the one the runner named"   1 "" -- python3 "$hc" --decoded "$(variant3 mother '.missing_on = "193.167.0.71:39968"')"
 
 # closing-rebind.py: the rebind landed between the client's last packet and its CONNECTION_CLOSE (0.2.0 gate 6,
 # msquic->kuicksilver-native:rebind-port; and the JVM image's msquic->kuicksilver:rebind-addr of 2026-10-08, three paths)
