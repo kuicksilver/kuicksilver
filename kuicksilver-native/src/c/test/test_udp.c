@@ -34,6 +34,10 @@ static ksl_udp *open_lo(int flags, uint8_t local[KSL_UDP_ADDR_LEN]) {
     ksl_udp *u = ksl_udp_open(a, flags, &err, msg, sizeof msg); if (!u) { printf("open: %u %s\n", err, msg); return NULL; }
     size_t n = 0; CHECK(ksl_udp_get(u, KSL_UDP_GET_LOCAL, local, KSL_UDP_ADDR_LEN, &n) == KSL_OK && n == KSL_UDP_ADDR_LEN, "local address"); return u;
 }
+/* Lets a burst sent to u's port reach its receive queue. No portable call counts the datagrams queued (FIONREAD sizes the first
+   one on Linux and counts buffer bytes, address records included, on Darwin), so this is a pause: 200 ms, four times what a
+   loaded ASan runner was seen to need (50 ms failed under load), and the reads after it retry for seconds */
+static void burst_queued(ksl_udp *u) { (void)u; usleep(200000); }
 static uint32_t caps_of(ksl_udp *u, uint16_t *gso_max) { uint8_t c[8]; size_t n = 0; CHECK(ksl_udp_get(u, KSL_UDP_GET_CAPS, c, 8, &n) == KSL_OK && n == 8, "caps"); if (gso_max) *gso_max = (uint16_t)((c[4] << 8) | c[5]); return ((uint32_t)c[0] << 24) | ((uint32_t)c[1] << 16) | ((uint32_t)c[2] << 8) | c[3]; }
 /* sends n datagrams of [len] bytes from a to b's address and receives them on b; returns received count */
 static uint32_t ping(ksl_udp *a, ksl_udp *b, const uint8_t to[KSL_UDP_ADDR_LEN], uint32_t n, uint32_t len, uint8_t ecn, uint8_t *recv_ecn, uint8_t *recv_addr, uint32_t *recv_lens) {
@@ -428,9 +432,10 @@ void run_udp(void) {
 #endif
             for (int i = 0; i < 100; i++) (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to);
             (void)sendto(s, "q", 1, 0, (struct sockaddr *)&to, sizeof to);
+            burst_queued(r);
             uint8_t buf[64]; uint8_t *bufs[1] = { buf }; uint32_t caps[1] = { sizeof buf }, lens[1], got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
             CHECK(ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0) == KSL_WANT_READ && got == 0, "timeout 0: a run of 64 dropped datagrams ends the call");
-            int calls = 1; while (got == 0 && calls < 4) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 100); calls++; }
+            int calls = 1; while (got == 0 && calls < 50) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 100); calls++; }
             CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q', "the datagram behind the dropped run is received by a later call");
             /* the bound never costs a datagram it already took (review): 63 empty ones and a real one, then 64 and 127 empty ones
                and a real one, each read only with timeout 0 as BatchReceiver starts every batch */
@@ -438,8 +443,8 @@ void run_udp(void) {
             for (int k = 0; k < 3; k++) {
               for (int i = 0; i < runs[k]; i++) (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to);
               (void)sendto(s, "q", 1, 0, (struct sockaddr *)&to, sizeof to);
-              usleep(50000);   /* the whole burst in the receive queue first: a slow runner (ASan, CI) delivers loopback late */
-              got = 0; buf[0] = 0; int tries = 0; while (got == 0 && tries < 4) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0); tries++; }
+              burst_queued(r);   /* the whole burst in the receive queue first: a loaded runner (ASan, CI) delivers loopback late */
+              got = 0; buf[0] = 0; int tries = 0; while (got == 0 && tries < 200) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0); tries++; }
               CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q', "timeout 0: the real datagram behind a dropped run is never lost");
               if (runs[k] == 63) CHECK(tries == 1, "63 dropped datagrams and a real one: the first call delivers it");
               if (got != 1 || buf[0] != 'q') printf("    lost the datagram behind %d empty ones\n", runs[k]);
