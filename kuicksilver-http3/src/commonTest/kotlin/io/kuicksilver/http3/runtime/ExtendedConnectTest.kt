@@ -475,6 +475,65 @@ class H3DatagramTest {
         }
 
     /**
+     * Extended CONNECT protocols without datagram semantics are no exception to section 2's MUST (review 2026-10-28 h3.md
+     * H3R-4): RFC 9220's `websocket` and a classic CONNECT tunnel (RFC 9110 section 9.3.6) define none, so a datagram for
+     * such a stream aborts it with H3_DATAGRAM_ERROR, as for a GET. Other protocols (WebTransport, an application's own)
+     * keep their datagrams ([datagramsPerStream]).
+     */
+    @Test fun negative_datagramForAWebSocketStreamAbortsItOnTheServer() =
+        h3Test {
+            for (protocol in listOf("websocket", null)) {
+                QuicPair.open().useScoped { q ->
+                    val (c, s) = q.connect()
+                    val server = Http3Connection.server(s, connectOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                    withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                    val st = c.openBidi()
+                    val fields =
+                        if (protocol == null) {
+                            listOf(":method" to "CONNECT", ":authority" to "server.test:443")
+                        } else {
+                            listOf(
+                                ":method" to "CONNECT",
+                                ":protocol" to protocol,
+                                ":scheme" to "https",
+                                ":authority" to "server.test",
+                                ":path" to "/",
+                            )
+                        }
+                    st.output.writeFully(raw.headers(st.id, fields))
+                    st.output.flush()
+                    withTimeout(5.seconds) { server.acceptRequest() }
+                    c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                    assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(st), "CONNECT ${protocol ?: "(classic)"}")
+                    assertFalse(server.closed.isCompleted)
+                }
+            }
+        }
+
+    /** The client side: a datagram for its WebSocket stream aborts it, and it sends none on it (no datagram semantics). */
+    @Test fun negative_datagramForAWebSocketStreamAbortsItOnTheClient() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, SettingsId.ENABLE_CONNECT_PROTOCOL to 1L))
+                val client = Http3Connection.client(c)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                val ws = async { client.connect(connectReq(), "websocket") }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                st.output.flush()
+                val stream = withTimeout(5.seconds) { ws.await() }
+                assertEquals(DatagramSendResult.Closed, stream.trySendDatagram(byteArrayOf(1)), "a datagram was sent on a WebSocket stream")
+                s.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(st))
+                assertFalse(client.closed.isCompleted)
+            }
+        }
+
+    /**
      * Section 2.1 takes precedence once the request's direction is over: "If a datagram is received after the
      * corresponding stream's receive side is closed, the received datagrams MUST be silently dropped". The GET is answered.
      */

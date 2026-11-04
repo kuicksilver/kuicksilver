@@ -1033,7 +1033,8 @@ internal class H3Session(
     /**
      * RFC 9297 section 2: "If an HTTP Datagram is received and it is associated with a request that has no known semantics
      * for HTTP Datagrams, the receiver MUST terminate the request. If HTTP/3 is in use, the request stream MUST be aborted
-     * with H3_DATAGRAM_ERROR". Requests other than CONNECT have none (GET and POST are the RFC's examples). Section 2.1
+     * with H3_DATAGRAM_ERROR". Only an Extended CONNECT whose protocol is not `websocket` has them ([hasDatagramSemantics]):
+     * GET and POST are the RFC's examples of requests without, and a classic CONNECT and RFC 9220 define none. Section 2.1
      * comes first once the request's direction is over ("MUST be silently dropped"): only a stream still receiving is
      * aborted. A direction is over once every byte and the FIN arrived (RFC 9000 "Data Recvd", [receivedAll]), also while
      * the application has not read them yet, so a message that came whole is never aborted by a stray datagram (review
@@ -1042,7 +1043,7 @@ internal class H3Session(
     suspend fun abortRequestWithoutDatagrams(id: Long): Boolean {
         if (isServer) {
             val req = activeServerRequests[id] ?: return false
-            if (req.method == "CONNECT" || receiveOver(req.stream)) return false
+            if (hasDatagramSemantics(req.method, req.protocol) || receiveOver(req.stream)) return false
             abort(req.stream, Http3ErrorCode.DATAGRAM_ERROR)
             req.done()
         } else {

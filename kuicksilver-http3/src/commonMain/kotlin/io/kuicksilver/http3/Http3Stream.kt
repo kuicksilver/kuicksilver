@@ -32,20 +32,23 @@ public interface Http3Stream {
     /**
      * HTTP datagrams received for this stream (newest 32 kept when nobody collects). The flow ends once [input]'s side of
      * the stream closed (the peer's FIN or reset, or our STOP_SENDING): datagrams arriving after that are dropped (RFC 9297
-     * section 2.1); those received before are still delivered.
+     * section 2.1); those received before are still delivered. A stream whose protocol has no datagram semantics (`websocket`,
+     * RFC 9220; a classic CONNECT) gets none: a datagram for it aborts it with H3_DATAGRAM_ERROR (RFC 9297 section 2).
      */
     public val datagrams: Flow<ByteArray>
 
     /**
      * Sends an HTTP datagram on this stream; `Unsupported` until both sides sent `SETTINGS_H3_DATAGRAM=1` (RFC 9297 section
      * 2.1.1), `Closed` once our send side is closed — [output] closed (FIN) or failed, or [reset] — since datagrams must
-     * not be sent then (RFC 9297 section 2.1).
+     * not be sent then (RFC 9297 section 2.1), and always `Closed` on a stream whose protocol has no datagram semantics
+     * (`websocket`, a classic CONNECT; RFC 9297 section 2: "HTTP Datagrams MUST only be sent with an association to an HTTP
+     * request that explicitly supports them").
      */
     public fun trySendDatagram(payload: ByteArray): DatagramSendResult
 
     /**
      * [trySendDatagram] that waits for room in the transport's queue and throws on unsupported or oversized payloads, and
-     * IllegalStateException once our send side is closed.
+     * IllegalStateException once our send side is closed or on a stream without datagram semantics.
      */
     public suspend fun sendDatagram(payload: ByteArray)
 

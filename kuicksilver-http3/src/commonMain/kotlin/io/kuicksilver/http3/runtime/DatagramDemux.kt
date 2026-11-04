@@ -258,6 +258,18 @@ internal class DatagramDemux(
 }
 
 /**
+ * Whether a request with [method] and `:protocol` [protocol] has HTTP datagram semantics (RFC 9297 section 2: "HTTP Datagrams
+ * MUST only be sent with an association to an HTTP request that explicitly supports them"; one received for a request
+ * without them aborts it). Only an Extended CONNECT does: a classic CONNECT is a TCP tunnel (RFC 9110 section 9.3.6) and
+ * RFC 9220's `websocket` defines none, so neither does; other protocols (WebTransport, `connect-udp`, an application's own,
+ * which the application serves through [Http3Stream]) do (review 2026-10-28 h3.md H3R-4).
+ */
+internal fun hasDatagramSemantics(
+    method: String,
+    protocol: String?,
+): Boolean = method == "CONNECT" && protocol != null && !protocol.equals("websocket", ignoreCase = true)
+
+/**
  * An Extended CONNECT stream: the request stream's data in both directions plus its datagrams.
  *
  * [status] is the 2xx that established it (the peer's on the client, ours on the server); [localHeaders] are the fields
@@ -275,6 +287,8 @@ internal class Http3StreamImpl(
     internal val localHeaders: Http3Headers,
     internal val isClient: Boolean,
     private val onReset: () -> Unit = {},
+    /** False for a CONNECT whose protocol has no datagram semantics ([hasDatagramSemantics]): none are sent on it. */
+    internal val datagramsAllowed: Boolean = true,
 ) : Http3Stream {
     /** The connection's scope, on its dispatcher: the capsule reader and writer run there. */
     internal val scope: CoroutineScope get() = session.scope
@@ -318,9 +332,12 @@ internal class Http3StreamImpl(
     internal val sendOpen: Boolean get() = !resetSent && !writer.output.isClosedForWrite && !st.output.isClosedForWrite
 
     override fun trySendDatagram(payload: ByteArray): DatagramSendResult =
-        if (!sendOpen) DatagramSendResult.Closed else session.datagrams.trySend(st.id, payload)
+        if (!datagramsAllowed || !sendOpen) DatagramSendResult.Closed else session.datagrams.trySend(st.id, payload)
 
     override suspend fun sendDatagram(payload: ByteArray) {
+        check(datagramsAllowed) {
+            "stream ${st.id} is a CONNECT whose protocol has no HTTP datagrams (classic CONNECT, websocket): none are sent (RFC 9297 section 2)"
+        }
         check(sendOpen) { "the send side of stream ${st.id} is closed: HTTP datagrams are no longer sent (RFC 9297 section 2.1)" }
         session.datagrams.send(st.id, payload)
     }

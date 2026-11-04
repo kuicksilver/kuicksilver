@@ -40,6 +40,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -156,8 +157,8 @@ internal suspend fun handleRequestStream(
         pendingHeaders.remove(st.id)
         bidiSettled(st.id)
         // datagrams kept while the HEADERS were on the way belong to a request without datagram semantics: RFC 9297 section
-        // 2 has it aborted with H3_DATAGRAM_ERROR (a CONNECT takes them when its channel registers)
-        if (parsed.method != "CONNECT" && datagrams.dropPending(st.id)) {
+        // 2 has it aborted with H3_DATAGRAM_ERROR (an Extended CONNECT with them takes them when its channel registers)
+        if (!hasDatagramSemantics(parsed.method, parsed.protocol) && datagrams.dropPending(st.id)) {
             abort(st, Http3ErrorCode.DATAGRAM_ERROR)
             return@with
         }
@@ -322,7 +323,7 @@ internal class ServerRequestImpl(
         }
     }
 
-    private val datagramChannel = if (method == "CONNECT") session.datagrams.register(st.id) else null
+    private val datagramChannel = if (hasDatagramSemantics(method, protocol)) session.datagrams.register(st.id) else null
 
     /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did; only DATA may arrive (RFC 9114 section 4.4). */
     var tunnel = false
@@ -351,12 +352,14 @@ internal class ServerRequestImpl(
             st,
             body,
             writer,
-            datagramChannel!!,
+            datagramChannel ?: Channel<ByteArray>(0).also { it.close() },
             this.headers,
             status = 200,
             localHeaders = headers,
             isClient = false,
-        ) { session.scope.launch { done() } }
+            onReset = { session.scope.launch { done() } },
+            datagramsAllowed = datagramChannel != null,
+        )
     }
 
     /** `acceptWebTransport` (draft-ietf-webtrans-http3-16 sections 3.2, 3.3, 7.1). */

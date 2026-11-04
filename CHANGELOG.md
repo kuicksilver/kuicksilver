@@ -136,6 +136,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/3: only an Extended CONNECT whose protocol is not `websocket` has HTTP datagrams (RFC 9297 section 2). A datagram for
+  a classic CONNECT or a WebSocket (RFC 9220) stream whose direction is still open now aborts that stream with
+  `H3_DATAGRAM_ERROR`, as one for a GET does, and `Http3Stream.trySendDatagram` answers `Closed` on such a stream
+  (`sendDatagram` throws `IllegalStateException`); before, every CONNECT took and sent them.
 - TLS: a client session cache keeps 384 sessions by default instead of 256, so that the six tickets a TCP origin keeps
   (one per parallel connection) cover 64 origins, as the bound did before tickets came six at a time; 256 covered 42.
 - Ktor server: with `port = 0`, a TLS connector whose HTTP/3 endpoint refuses its configuration (an argument or state it
