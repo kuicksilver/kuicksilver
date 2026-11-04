@@ -105,7 +105,10 @@ class QpackDynamicTest {
                     runCatching { p.client.session.cancelSections(st) }
                 }.join()
                 assertEquals(1L, withContext(p.client.session.dispatcher) { p.client.session.qpack.streamCancellationsMade }, "made")
-                withTimeout(5.seconds) { while (p.server.session.qpack.peerStreamCancellations < 1L) delay(5) }
+                awaitCondition("the server's encoder receiving the Stream Cancellation") {
+                    p.server.session.qpack.peerStreamCancellations >=
+                        1L
+                }
             }
         }
 
@@ -135,7 +138,9 @@ class QpackDynamicTest {
                     }
                 }.join()
                 withContext(p.client.session.dispatcher) { qpack.cancelStream(12) }
-                withTimeout(5.seconds) { while (p.server.session.qpack.peerStreamCancellations < 3L) delay(5) }
+                awaitCondition("the server's encoder receiving all three Stream Cancellations") {
+                    p.server.session.qpack.peerStreamCancellations >= 3L
+                }
                 assertEquals(3L, p.server.session.qpack.peerStreamCancellations)
             }
         }
@@ -301,23 +306,16 @@ class QpackDynamicTest {
                 val ins = dc.enc.drainEncoderStream()
                 st.output.writeFully(FrameHeaders.frame(FrameType.HEADERS, block))
                 st.output.flushAndClose()
-                withTimeout(5.seconds) {
-                    while (withContext(server.session.dispatcher) {
-                            server.session.pendingHeaders[st.id]
-                                ?.first
-                                ?.receivedAll
-                        } != true
-                    ) {
-                        yield()
-                    }
+                awaitCondition("the GET's HEADERS and FIN all arriving while its HEADERS are blocked") {
+                    withContext(server.session.dispatcher) {
+                        server.session.pendingHeaders[st.id]
+                            ?.first
+                            ?.receivedAll
+                    } == true
                 }
                 c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
-                withTimeout(5.seconds) {
-                    while (withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } ==
-                        0
-                    ) {
-                        yield()
-                    }
+                awaitCondition("the server receiving the datagram") {
+                    withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } > 0
                 }
                 assertEquals(0, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount }, "the datagram was kept")
                 val served = async { server.acceptRequest().respond(204).finish() }

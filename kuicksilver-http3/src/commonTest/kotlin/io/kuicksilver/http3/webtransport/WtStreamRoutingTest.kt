@@ -443,8 +443,8 @@ class WtStreamRoutingTest {
                 val connect = raw.wtConnect(st)
                 st.output.writeFully(connect, 0, connect.size / 2)
                 st.output.flush()
-                withTimeout(5.seconds) {
-                    while (!withContext(server.session.dispatcher) { server.session.requestOpenWithoutHeaders(st.id) }) yield()
+                io.kuicksilver.http3.runtime.awaitCondition("the server taking the stream whose HEADERS are half in") {
+                    withContext(server.session.dispatcher) { server.session.requestOpenWithoutHeaders(st.id) }
                 }
                 c.sendDatagram(VarInt.encode(st.id / 4) + "early".encodeToByteArray())
                 server.awaitDatagrams(1)

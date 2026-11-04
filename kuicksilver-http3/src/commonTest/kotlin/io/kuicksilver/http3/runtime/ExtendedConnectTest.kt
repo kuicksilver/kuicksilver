@@ -592,16 +592,12 @@ class H3DatagramTest {
                 st.output.writeFully(raw.headers(st.id, post) + raw.data(ByteArray(1280 * 1024)))
                 st.output.flushAndClose()
                 val req = withTimeout(5.seconds) { server.acceptRequest() }
-                withTimeout(5.seconds) {
-                    while (withContext(server.session.dispatcher) {
-                            server.session.activeServerRequests[st.id]
-                                ?.stream
-                                ?.receivedAll
-                        } !=
-                        true
-                    ) {
-                        delay(5)
-                    }
+                awaitCondition("all of the POST arriving at the server") {
+                    withContext(server.session.dispatcher) {
+                        server.session.activeServerRequests[st.id]
+                            ?.stream
+                            ?.receivedAll
+                    } == true
                 }
                 assertFalse(
                     withContext(server.session.dispatcher) {
@@ -612,8 +608,8 @@ class H3DatagramTest {
                 )
                 val seen = withContext(server.session.dispatcher) { server.session.datagrams.receivedCount }
                 c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
-                withTimeout(5.seconds) {
-                    while (withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } == seen) delay(5)
+                awaitCondition("the server receiving the datagram") {
+                    withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } != seen
                 }
                 req.respond(204).output.flushAndClose()
                 val answer = withTimeout(5.seconds) { st.input.readAllBytes() }

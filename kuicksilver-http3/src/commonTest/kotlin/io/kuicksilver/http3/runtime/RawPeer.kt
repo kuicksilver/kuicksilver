@@ -109,3 +109,16 @@ internal suspend fun QuicConnection.acceptBidi(): QuicStream {
 internal val GET = listOf(":method" to "GET", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
 
 internal val POST = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+
+/**
+ * Waits until [check] holds, looking again after each yield (no delay), and fails with "[what] did not happen within
+ * [timeout]" when it does not: a test's wait names what it waited for.
+ */
+internal suspend fun awaitCondition(
+    what: String,
+    timeout: kotlin.time.Duration = kotlin.time.Duration.parse("5s"),
+    check: suspend () -> Boolean,
+) {
+    kotlinx.coroutines.withTimeoutOrNull(timeout) { while (!check()) kotlinx.coroutines.yield() }
+        ?: kotlin.test.fail("$what did not happen within $timeout")
+}
