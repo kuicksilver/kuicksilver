@@ -42,6 +42,56 @@ class SipHashTest {
         }
     }
 
+    /** SipHash-2-4 written out as the paper does (Aumasson and Bernstein, 2012): the model the shared body must match. */
+    private fun textbook(
+        k0: Long,
+        k1: Long,
+        m: ByteArray,
+    ): Long {
+        val v = longArrayOf(k0 xor 0x736f6d6570736575L, k1 xor 0x646f72616e646f6dL, k0 xor 0x6c7967656e657261L, k1 xor 0x7465646279746573L)
+
+        fun rotl(
+            x: Long,
+            b: Int,
+        ) = (x shl b) or (x ushr (64 - b))
+
+        fun sipRound() {
+            v[0] += v[1]
+            v[1] = rotl(v[1], 13) xor v[0]
+            v[0] = rotl(v[0], 32)
+            v[2] += v[3]
+            v[3] = rotl(v[3], 16) xor v[2]
+            v[0] += v[3]
+            v[3] = rotl(v[3], 21) xor v[0]
+            v[2] += v[1]
+            v[1] = rotl(v[1], 17) xor v[2]
+            v[2] = rotl(v[2], 32)
+        }
+        val padded = m.copyOf((m.size / 8 + 1) * 8)
+        padded[padded.size - 1] = m.size.toByte()
+        for (b in 0 until padded.size / 8) {
+            var w = 0L
+            for (i in 0 until 8) w = w or ((padded[b * 8 + i].toLong() and 0xff) shl (8 * i))
+            v[3] = v[3] xor w
+            sipRound()
+            sipRound()
+            v[0] = v[0] xor w
+        }
+        v[2] = v[2] xor 0xff
+        repeat(4) { sipRound() }
+        return v[0] xor v[1] xor v[2] xor v[3]
+    }
+
+    @Test fun bothVariantsMatchTheTextbookForEveryLength() {
+        val all = ByteArray(80) { (it * 53 + 7).toByte() }
+        for (len in 0..64) {
+            val m = all.copyOfRange(3, 3 + len)
+            val want = textbook(0x0706050403020100L, 0x0f0e0d0c0b0a0908L, m)
+            assertEquals(want, hash(0x0706050403020100L, 0x0f0e0d0c0b0a0908L, m), "buffer, $len bytes")
+            assertEquals(want, SipHash.hash24(0x0706050403020100L, 0x0f0e0d0c0b0a0908L, all, 3, len), "array slice, $len bytes")
+        }
+    }
+
     @Test fun differentKeysDifferentHashes() {
         val m = ByteArray(8) { 5 }
         assertNotEquals(hash(1, 2, m), hash(3, 4, m))
