@@ -589,7 +589,8 @@ internal class H3Session(
     /**
      * Opens the control and QPACK streams and sends SETTINGS (RFC 9114 section 6.2: the critical streams first, then
      * others, GREASE, as the peer allows): true once done, false when a rejected 0-RTT took them first (generation [gen]
-     * passed), null when the connection failed for want of stream credit.
+     * passed), null when the connection failed: for want of stream credit, or because the peer closed a critical stream of
+     * ours while it was being opened (H3_CLOSED_CRITICAL_STREAM).
      */
     private suspend fun openCriticalStreams(
         deadline: Duration,

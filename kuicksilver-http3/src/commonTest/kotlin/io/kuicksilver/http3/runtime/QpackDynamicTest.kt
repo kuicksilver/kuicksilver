@@ -280,6 +280,48 @@ class QpackDynamicTest {
             }
         }
 
+    /**
+     * A stop met while the critical streams are being opened ends the connection with H3_CLOSED_CRITICAL_STREAM and ends
+     * the attempts too: no second one starts on a connection already closing. (When the attempt answered "open them
+     * again", the closing session's cancellation still ended the loop in its wait for the handshake, so this passed then
+     * too; it guards the end of the loop, whichever way it comes.)
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aStopWhileOpeningStartsNoSecondAttempt() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                RawPeer(s).openControl()
+                val starts = kotlin.concurrent.atomics.AtomicInt(0)
+                val made = CompletableDeferred<H3Session>()
+                H3Session.createdForTest = { session ->
+                    if (!session.isServer && made.complete(session)) {
+                        session.criticalAttemptHookForTest = { step, _ ->
+                            if (step == H3Session.AttemptStep.Started && starts.addAndFetch(1) == 1) {
+                                // what a write on a stream the peer stopped throws
+                                throw io.kuicksilver.quic.QuicException.StreamError
+                                    .Stopped(2, 0x3ff, io.kuicksilver.quic.Initiator.Peer)
+                            }
+                        }
+                    }
+                }
+                try {
+                    // the start fails with the connection
+                    val start = runCatching { Http3Connection.client(c, dyn) }.exceptionOrNull() as? Http3Exception.Protocol
+                    assertEquals(Http3ErrorCode.CLOSED_CRITICAL_STREAM, start?.h3Code, "the start: $start")
+                    val session = made.await()
+                    val end = session.closed.await() as Http3Exception.Protocol
+                    assertEquals(Http3ErrorCode.CLOSED_CRITICAL_STREAM, end.h3Code, "$end")
+                    // the attempts run on the session's one thread: whatever followed the failure there has run by now
+                    withContext(session.dispatcher) {}
+                    assertEquals(1, starts.load(), "no second attempt after the connection failed")
+                } finally {
+                    H3Session.createdForTest = null
+                }
+            }
+        }
+
     @Test fun defaultIsStaticOnly() =
         h3Test {
             H3Pair.open().useScoped { p ->
