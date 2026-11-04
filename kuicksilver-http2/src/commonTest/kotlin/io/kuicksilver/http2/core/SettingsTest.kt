@@ -17,6 +17,13 @@ class SettingsTest {
         FrameEncoder.settings(kv.map { it.first }.toIntArray(), kv.map { it.second }.toLongArray())
 
     @Test
+    fun negative_headerListSizeThatWouldOverflowIsRejected() {
+        // twice the limit is buffered for a field block: a limit whose double overflows an Int is refused up front
+        kotlin.test.assertFailsWith<IllegalArgumentException> { Http2Settings(maxHeaderListSize = Int.MAX_VALUE) }
+        Http2Settings(maxHeaderListSize = Int.MAX_VALUE / 2)
+    }
+
+    @Test
     fun ackSent() {
         val peer = RawH2Peer(Role.SERVER)
         val out = peer.handshake(settings(SettingId.MAX_CONCURRENT_STREAMS to 7, 0x99 to 1)) // an unknown setting is ignored

@@ -92,11 +92,47 @@ class HpackDecodeFuzzTest {
 
 /**
  * Fuzz target `connectionServer`: input = [split byte][bytes after the client preface]. A server core fed the input in
- * pieces of 1 + (split byte) bytes, one virtual millisecond apart, driven like an engine: every request is answered and
- * released, reset streams are released, content is consumed, output is drained. Nothing may escape the core, and its
- * state stays within the limits of its settings.
+ * pieces of 1 + (split byte) bytes, one virtual millisecond apart, driven like an engine: every request gets response
+ * headers and a body sent as the windows allow, streams are released when done or reset, content is consumed, output is
+ * drained and decoded as the client would, with its own HPACK decoder. Nothing may escape the core; its state stays within
+ * its settings; the connection send window is conserved (credit = window left + DATA queued + DATA written: dropped DATA
+ * gives its window back); every field block on the wire decodes to the response the driver sent on that stream.
  */
 class H2ConnectionFuzzTest {
+    private class Wire {
+        val frames = FrameDecoder(16_777_215)
+        val hpack = HpackDecoder(maxTableSize = 4_096, maxHeaderListSize = 1 shl 20)
+        var block = ByteArray(0)
+        var blockStream = 0
+
+        /** Decodes the core's output; every field block must be one the driver sent on that stream. */
+        fun read(
+            bytes: ByteArray,
+            n: Int,
+            expected: Map<Int, List<Pair<String, String>>>,
+        ) {
+            var p = 0
+            while (p < n) {
+                p += frames.feed(bytes, p, n - p)
+                val f = frames.next() ?: continue
+                if (f is Frame.Headers) {
+                    blockStream = f.streamId
+                    block = f.fragment
+                    if (f.endHeaders) check(expected)
+                } else if (f is Frame.Continuation) {
+                    block += f.fragment
+                    if (f.endHeaders) check(expected)
+                }
+            }
+        }
+
+        private fun check(expected: Map<Int, List<Pair<String, String>>>) {
+            val got = mutableListOf<Pair<String, String>>()
+            hpack.decode(block) { n, v -> got += n to v } // an HpackError here is a finding: the encoder drifted
+            assertTrue(got == expected[blockStream], "stream $blockStream decoded $got, sent ${expected[blockStream]}")
+        }
+    }
+
     @FuzzTest(maxDuration = "60s")
     fun connectionServer(data: ByteArray) {
         if (data.isEmpty()) return
@@ -105,6 +141,9 @@ class H2ConnectionFuzzTest {
             io.kuicksilver.http2.core
                 .H2ConnectionCore(io.kuicksilver.http2.core.Role.SERVER, settings, 0)
         val out = ByteArray(4_096)
+        val wire = Wire()
+        val sent = HashMap<Int, List<Pair<String, String>>>()
+        val bodyLeft = HashMap<Int, Int>()
         val piece = 1 + (data[0].toInt() and 0xff)
         var now = 0L
         core.receive(io.kuicksilver.http2.frame.H2.PREFACE, 0, 24, now)
@@ -114,11 +153,16 @@ class H2ConnectionFuzzTest {
             now += 1_000_000
             core.receive(data, p, n, now)
             p += n
-            drive(core, now)
+            drive(core, now, sent, bodyLeft, (data[p - 1].toInt() and 0xff) * 64)
             assertTrue(core.activeStreams <= 8, "streams ${core.activeStreams}")
             assertTrue(core.controlQueued <= 64, "control frames ${core.controlQueued}")
             assertTrue(core.blockBufferCapacity <= 2 * 4_096, "field block buffer ${core.blockBufferCapacity}")
-            while (core.poll(out, 0, now) > 0) Unit
+            if (!core.isClosed) assertTrue(core.sendWindowConserved, "connection send window not conserved")
+            while (true) {
+                val k = core.poll(out, 0, now)
+                if (k == 0) break
+                wire.read(out, k, sent)
+            }
             core.nextTimeout()?.let { if (it <= now + 10_000_000_000) core.onTimeout(it) }
         }
     }
@@ -126,19 +170,51 @@ class H2ConnectionFuzzTest {
     private fun drive(
         core: io.kuicksilver.http2.core.H2ConnectionCore,
         now: Long,
+        sent: MutableMap<Int, List<Pair<String, String>>>,
+        bodyLeft: MutableMap<Int, Int>,
+        bodySize: Int,
     ) {
+        val body = ByteArray(16_384)
+
+        fun pump(id: Int) {
+            val left = bodyLeft[id] ?: return
+            val n =
+                try {
+                    core.sendData(id, body, 0, minOf(left, body.size), endStream = true)
+                } catch (_: IllegalStateException) {
+                    bodyLeft.remove(id) // closed meanwhile
+                    core.release(id)
+                    return
+                }
+            if (n == left) {
+                bodyLeft.remove(id)
+                core.release(id)
+            } else {
+                bodyLeft[id] = left - n
+            }
+        }
         while (true) {
             when (val e = core.nextEvent() ?: return) {
                 is io.kuicksilver.http2.core.H2Event.HeadersReceived -> {
+                    if (sent.containsKey(e.streamId)) continue // trailers of a request we answered already
+                    val fields = listOf(":status" to (if (e.tooLarge) "431" else "200"))
                     try {
-                        core.sendHeaders(e.streamId, listOf(":status" to (if (e.tooLarge) "431" else "200")), endStream = true)
+                        core.sendHeaders(e.streamId, fields, endStream = false)
+                        sent[e.streamId] = fields
+                        bodyLeft[e.streamId] = bodySize
+                        pump(e.streamId)
                     } catch (_: IllegalStateException) {
                         // the stream was closed meanwhile: the driver's call is refused, nothing else happens
+                        core.release(e.streamId)
                     } catch (_: io.kuicksilver.http2.core.H2HeaderListTooLarge) {
                         // the peer's SETTINGS_MAX_HEADER_LIST_SIZE refuses even this response: an engine resets the stream
                         core.reset(e.streamId, io.kuicksilver.http2.Http2ErrorCode.INTERNAL_ERROR, now)
+                        core.release(e.streamId)
                     }
-                    core.release(e.streamId)
+                }
+
+                is io.kuicksilver.http2.core.H2Event.WindowAvailable -> {
+                    pump(e.streamId)
                 }
 
                 is io.kuicksilver.http2.core.H2Event.Data -> {
@@ -146,6 +222,7 @@ class H2ConnectionFuzzTest {
                 }
 
                 is io.kuicksilver.http2.core.H2Event.StreamReset -> {
+                    bodyLeft.remove(e.streamId)
                     core.release(e.streamId)
                 }
 
@@ -156,9 +233,10 @@ class H2ConnectionFuzzTest {
 }
 
 /**
- * Fuzz target `hpackRoundTrip` (differential): the input is cut into field lists and peer table size changes; each list is
- * encoded by our encoder and decoded by an independent decoder that learns the table size the way the peer would. The
- * decoded list must equal the encoded one, block after block.
+ * Fuzz target `hpackRoundTrip` (differential, at the HPACK level; the connection-level check of the same property is in
+ * `connectionServer`): the input is cut into field lists and peer table size changes; each list is encoded by our encoder
+ * and decoded by a separate decoder that learns the table size as the peer would. The decoded list must equal the encoded
+ * one, block after block.
  */
 class HpackRoundTripFuzzTest {
     @FuzzTest(maxDuration = "60s")

@@ -105,6 +105,32 @@ class FloodTest {
     }
 
     @Test
+    fun pingsBetweenOurDataAreFree() {
+        // a gRPC client measures bandwidth with a PING per burst of DATA it receives (grpc-go bdp_estimator.go): PINGs
+        // that follow DATA or HEADERS we wrote cost nothing, as grpc-go's own server resets its ping strikes then
+        val s = server()
+        s.send(s.headers(1, endStream = true))
+        s.core.sendHeaders(1, OK, endStream = false)
+        repeat(20_000) {
+            assertEquals(10, s.core.sendData(1, ByteArray(10), 0, 10, endStream = false))
+            s.read()
+            s.send(FrameEncoder.windowUpdate(0, 10), FrameEncoder.windowUpdate(1, 10), FrameEncoder.ping(false, it.toLong()))
+            s.read()
+        }
+        assertEquals(false, s.core.isClosed)
+        // PINGs with nothing of ours in between are glitches
+        repeat(11_000) { if (!s.core.isClosed) s.send(FrameEncoder.ping(false, 1)).also { s.read() } }
+        s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+    }
+
+    @Test
+    fun pingAnswersKeepTheirOrder() {
+        val s = server()
+        s.send(FrameEncoder.ping(false, 1), FrameEncoder.ping(false, 2), FrameEncoder.ping(false, 3))
+        assertEquals(listOf(1L, 2L, 3L), s.read().filterIsInstance<Frame.Ping>().map { it.payload })
+    }
+
+    @Test
     fun negative_emptyDataFlood() {
         // CVE-2019-9518: DATA frames with no content and no END_STREAM
         val s = server()

@@ -198,6 +198,55 @@ class FlowControlTest {
     }
 
     @Test
+    fun negative_droppedDataReturnsConnectionWindow() {
+        // DATA we queued but never wrote (the client cancelled) gives its connection window back: 48 cancelled 16 KiB
+        // responses must not exhaust a 768 KiB connection window
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake(
+            settings(SettingId.INITIAL_WINDOW_SIZE to 1_000_000) + FrameEncoder.windowUpdate(0, 786_432 - 65_535),
+        )
+        val chunk = ByteArray(16_384)
+        for (i in 0 until 60) {
+            val id = 1 + 2 * i
+            s.send(s.headers(id, endStream = true))
+            s.core.sendHeaders(id, OK, endStream = false)
+            assertEquals(16_384, s.core.sendData(id, chunk, 0, chunk.size, endStream = true), "response $i")
+            s.send(FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code)) // before anything was written
+            s.events()
+            s.core.release(id)
+        }
+        s.read()
+        // also when the stream was ended by us (half-closed both ways) and the reset arrives while the DATA waits
+        s.send(s.headers(201, endStream = true))
+        s.core.sendHeaders(201, OK, endStream = false)
+        assertEquals(16_384, s.core.sendData(201, chunk, 0, chunk.size, endStream = true))
+        s.send(FrameEncoder.rstStream(201, Http2ErrorCode.CANCEL.code))
+        assertEquals(emptyList(), s.read().filterIsInstance<Frame.Data>())
+        s.send(s.headers(203, endStream = true))
+        s.core.sendHeaders(203, OK, endStream = false)
+        assertEquals(16_384, s.core.sendData(203, chunk, 0, chunk.size, endStream = true))
+        assertEquals(786_432L, s.core.connectionSendWindowAccounted)
+    }
+
+    @Test
+    fun windowUpdatesOnClosedStreamsAreFree() {
+        // Go's client sends a WINDOW_UPDATE per 4 KiB it reads, also while it still reads a body whose stream is already closed on our side (transport.go:2261-2265):
+        // thousands a second on closed streams on a busy connection, which must not be counted as glitches
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake()
+        for (i in 0 until 100) {
+            val id = 1 + 2 * i
+            s.now = i * 10 * MS // 100 responses in one second
+            s.send(s.headers(id, endStream = true))
+            s.core.sendHeaders(id, OK, endStream = true)
+            s.read()
+            s.core.release(id)
+            repeat(250) { s.send(FrameEncoder.windowUpdate(id, 4_096)) } // 25 000 in that second
+        }
+        assertEquals(false, s.core.isClosed)
+    }
+
+    @Test
     fun zeroWindowSenderBlocksWithoutBuffering() {
         val c = RawH2Peer(Role.CLIENT)
         c.handshake(settings(SettingId.INITIAL_WINDOW_SIZE to 0))

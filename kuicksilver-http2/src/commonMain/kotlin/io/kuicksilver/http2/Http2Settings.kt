@@ -32,7 +32,8 @@ public class Http2Settings(
     /** SETTINGS_MAX_FRAME_SIZE: the largest frame payload we accept, 16 384..16 777 215; default 16 384. */
     public val maxFrameSize: Int = 16_384,
     /**
-     * SETTINGS_MAX_HEADER_LIST_SIZE: the largest field section we decode (name + value + 32 per field); default 64 KiB. A
+     * SETTINGS_MAX_HEADER_LIST_SIZE: the largest field section we decode (name + value + 32 per field), 1..2^30 - 1;
+     * default 64 KiB. A
      * field block above it fails only its stream; its compressed form (HEADERS plus CONTINUATION) is buffered up to twice
      * this before decoding, and beyond that the connection ends.
      */
@@ -52,9 +53,9 @@ public class Http2Settings(
     /** How long one field block (HEADERS and its CONTINUATION frames) may take to arrive; default 10 s. */
     public val maxHeaderBlockTime: Duration = 10.seconds,
     /**
-     * The burst of the glitch budget: frames that are legal but useless or suspicious when frequent (PRIORITY, unknown
-     * types, SETTINGS, PING, empty DATA, WINDOW_UPDATE on a closed stream) and stream errors the peer causes; default
-     * 10 000, as nghttp2.
+     * The burst of the glitch budget; default 10 000 (the numbers are nghttp2's). Counted events: PRIORITY, unknown frame
+     * types, SETTINGS, empty DATA without END_STREAM, a PING with no DATA or HEADERS of ours since the previous PING (a
+     * bandwidth probe that follows our data is free, as grpc-go's ping strikes), and every stream error the peer causes.
      */
     public val glitchBurst: Int = 10_000,
     /** The refill rate of the glitch budget per second; default 330, as nghttp2. */
@@ -68,7 +69,8 @@ public class Http2Settings(
         require(initialConnectionWindow >= 65_535) { "initialConnectionWindow must be at least 65535" }
         require(maxConnectionWindow >= initialConnectionWindow) { "maxConnectionWindow must be at least initialConnectionWindow" }
         require(maxFrameSize in 16_384..16_777_215) { "maxFrameSize must be 16384..16777215, got $maxFrameSize" }
-        require(maxHeaderListSize >= 1) { "maxHeaderListSize must be positive" }
+        // twice this is buffered for one field block: it must fit an Int
+        require(maxHeaderListSize in 1..Int.MAX_VALUE / 2) { "maxHeaderListSize must be 1..${Int.MAX_VALUE / 2}, got $maxHeaderListSize" }
         require(settingsAckTimeout.isPositive()) { "settingsAckTimeout must be positive" }
         require(maxContinuationFrames >= 0) { "maxContinuationFrames must not be negative" }
         require(maxControlFramesQueued >= 1) { "maxControlFramesQueued must be positive" }

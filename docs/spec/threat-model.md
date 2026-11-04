@@ -369,9 +369,10 @@ Status: the sans-IO core of `kuicksilver-http2` (ADR-0017); the engines do not u
   `Http2Settings`: a field block is collected to at most twice SETTINGS_MAX_HEADER_LIST_SIZE compressed bytes, 8
   CONTINUATION frames and 10 s before HPACK sees it (else ENHANCE_YOUR_CALM; between once and twice the limit only its
   stream fails); at most 10 000 control frames (PING and SETTINGS acknowledgements, RST_STREAM, WINDOW_UPDATE) wait for the
-  peer to read them; at most 100 empty DATA frames in a row; a glitch budget (10 000, 330 per second, as nghttp2) for
-  PRIORITY (which creates no state), unknown frame types, SETTINGS, PING, empty DATA, WINDOW_UPDATE on a closed stream and
-  every stream error the peer causes (WINDOW_UPDATE of 0, DATA on a closed stream: MadeYouReset), one reset per stream; on a
+  peer to read them; at most 100 empty DATA frames in a row; a glitch budget (10 000, 330 per second: nghttp2's numbers;
+  counted events: PRIORITY, which creates no state, unknown frame types, empty DATA, SETTINGS, a PING with no DATA or
+  HEADERS of ours since the previous PING, and every stream error the peer causes: WINDOW_UPDATE of 0, DATA on a closed
+  stream, MadeYouReset), one reset per stream; DATA dropped before it was written gives its window back; on a
   server, the client's RST_STREAM frames take from a reset budget (1000, 33 per second, as nghttp2; a client keeps none,
   since a server may legitimately end a response with RST_STREAM NO_ERROR); a stream the peer reset counts toward
   SETTINGS_MAX_CONCURRENT_STREAMS until its handler returns (`release`), and more than 4 x that limit refused in a row ends

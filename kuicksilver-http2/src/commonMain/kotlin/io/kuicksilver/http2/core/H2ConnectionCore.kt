@@ -77,7 +77,9 @@ internal class H2ConnectionCore(
     /** The preface and our first SETTINGS: they go out before anything, even before the GOAWAY of an early error. */
     private val initial = ArrayDeque<ByteArray>()
     private var ourSettingsFrame: ByteArray? = null
+    private val pingAnswers = ArrayDeque<ByteArray>() // section 6.7: ahead of every other control frame
     private val control = ArrayDeque<ByteArray>()
+    private var wroteSincePing = true
     private val creditReady = ArrayDeque<H2Stream>()
     private val headerReady = ArrayDeque<H2Stream>()
     private val dataReady = ArrayDeque<H2Stream>()
@@ -101,6 +103,9 @@ internal class H2ConnectionCore(
     val peerMaxConcurrentStreams: Long get() = peerMaxConcurrent
 
     private var connSendWindow = H2.DEFAULT_WINDOW.toLong()
+    private var sendCredited = H2.DEFAULT_WINDOW.toLong() // the protocol's initial window plus the peer's connection credit
+    private var queuedDataBytes = 0L // DATA payload taken by sendData, not yet written
+    private var dataWritten = 0L
     private val connRecv = RecvWindow(settings.initialConnectionWindow.toLong(), settings.maxConnectionWindow.toLong())
 
     /** The receive window streams start with: the protocol's 65 535 until our SETTINGS are acknowledged, if ours is smaller. */
@@ -519,8 +524,7 @@ internal class H2ConnectionCore(
         val s = streams[id] ?: return
         if (s.state == StreamState.CLOSED) {
             // closed on our side by an END_STREAM still in the queue: nothing more goes out on a reset stream (section 6.4)
-            s.out.clear()
-            s.dataQueued = false
+            dropQueued(s)
             rememberClosed(id, weReset = false)
             if (s.released) removeStream(s)
             return
@@ -625,10 +629,16 @@ internal class H2ConnectionCore(
         now: Long,
     ) {
         if (!f.ack) {
-            glitch(now, "PING")
-            // section 6.7: the same payload back, ahead of any other frame
-            if (control.size >= settings.maxControlFramesQueued) calm("more than ${settings.maxControlFramesQueued} control frames queued")
-            control.addFirst(FrameEncoder.ping(true, f.payload))
+            // a PING after DATA or HEADERS of ours is free (a gRPC client's bandwidth probe follows our DATA; grpc-go's server
+            // resets its ping strikes when it writes them, http2_server.go:279-281, :906-910); PINGs with nothing of ours
+            // in between are glitches
+            if (!wroteSincePing) glitch(now, "PING")
+            wroteSincePing = false
+            // section 6.7: the same payload back, ahead of any other frame, the answers in the order of their PINGs
+            if (control.size + pingAnswers.size >= settings.maxControlFramesQueued) {
+                calm("more than ${settings.maxControlFramesQueued} control frames queued")
+            }
+            pingAnswers.addLast(FrameEncoder.ping(true, f.payload))
             return
         }
         val sent = pingsOut.remove(f.payload) ?: return
@@ -658,6 +668,7 @@ internal class H2ConnectionCore(
         if (id == 0) {
             if (f.increment == 0) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0 on the connection")
             connSendWindow += f.increment
+            sendCredited += f.increment
             if (connSendWindow >
                 H2.MAX_WINDOW
             ) {
@@ -669,10 +680,12 @@ internal class H2ConnectionCore(
         val s = streams[id]
         if (s == null) {
             if (isIdle(id)) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE on idle stream $id")
-            return glitch(now, "WINDOW_UPDATE on a closed stream") // allowed (section 5.1), useless
+            // allowed (section 5.1) and common: Go's client credits every 4 KiB it reads, also while it still reads a body whose stream is already closed on our side
+            // (transport.go:2261-2265); not a glitch (nghttp2 does not count it either)
+            return
         }
         if (f.increment == 0) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0", now) // section 6.9
-        if (s.state == StreamState.CLOSED) return glitch(now, "WINDOW_UPDATE on a closed stream")
+        if (s.state == StreamState.CLOSED) return
         s.sendWindow += f.increment
         if (s.sendWindow > H2.MAX_WINDOW) return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "stream window above 2^31 - 1", now)
         tryWake(s)
@@ -751,7 +764,8 @@ internal class H2ConnectionCore(
         val end = endStream && n == len
         connSendWindow -= n
         s.sendWindow -= n
-        enqueue(s, OutItem.Data(FrameEncoder.data(streamId, buf, off, n, end)))
+        queuedDataBytes += n
+        enqueue(s, OutItem.Data(FrameEncoder.data(streamId, buf, off, n, end), n))
         s.dataQueued = true
         if (n < len) want(s)
         if (end) localEnded(s)
@@ -873,7 +887,8 @@ internal class H2ConnectionCore(
     /** True when [poll] has something to write. */
     val wantsWrite: Boolean
         get() =
-            partial != null || initial.isNotEmpty() || control.isNotEmpty() || creditReady.isNotEmpty() || headerReady.isNotEmpty() ||
+            partial != null || initial.isNotEmpty() || pingAnswers.isNotEmpty() || control.isNotEmpty() || creditReady.isNotEmpty() ||
+                headerReady.isNotEmpty() ||
                 dataReady.isNotEmpty()
 
     /** The next deadline (nanoseconds) for [onTimeout], or null. */
@@ -907,8 +922,14 @@ internal class H2ConnectionCore(
     /** Bytes of the field block being collected (a test hook for the CONTINUATION limits). */
     internal val blockBufferCapacity: Int get() = block.capacity
 
+    /** The connection send window plus the DATA queued but not written (a test hook: dropped DATA must give its window back). */
+    internal val connectionSendWindowAccounted: Long get() = connSendWindow + queuedDataBytes
+
+    /** Send-window conservation (a fuzz invariant): credit granted = window left + DATA queued + DATA written. */
+    internal val sendWindowConserved: Boolean get() = sendCredited == connSendWindow + queuedDataBytes + dataWritten
+
     /** Control frames waiting for [poll] (a test hook for the queue limit). */
-    internal val controlQueued: Int get() = control.size
+    internal val controlQueued: Int get() = control.size + pingAnswers.size
 
     // ---------------------------------------------------------------------------------------------------------------
     // internals
@@ -945,6 +966,7 @@ internal class H2ConnectionCore(
             if (it === ourSettingsFrame) settingsSentAt = now // the acknowledgement deadline and the RTT count from here
             return it
         }
+        pingAnswers.removeFirstOrNull()?.let { return it }
         control.removeFirstOrNull()?.let { return it }
         if (closed) return null
         while (true) {
@@ -965,10 +987,18 @@ internal class H2ConnectionCore(
         }
         val frame =
             when (val item = s.out.removeFirst()) {
-                is OutItem.Fields -> encodeBlock(s.id, item)
-                is OutItem.Data -> item.frame
+                is OutItem.Fields -> {
+                    encodeBlock(s.id, item)
+                }
+
+                is OutItem.Data -> {
+                    queuedDataBytes -= item.length
+                    dataWritten += item.length
+                    item.frame
+                }
             }
-        if (frame.size > 0 && frame[3].toInt() == 0x1) s.headersSent = true // HEADERS: the stream left the idle state for the peer
+        if (frame[3].toInt() == 0x1) s.headersSent = true // HEADERS: the stream left the idle state for the peer
+        if (frame[3].toInt() <= 0x1) wroteSincePing = true // DATA or HEADERS
         if (frame[3].toInt() == 0x0) {
             s.dataQueued = false
             tryWake(s)
@@ -999,7 +1029,7 @@ internal class H2ConnectionCore(
         if (closed) return
         // CVE-2019-9512/9515: a peer that makes us answer without reading our answers must not grow this queue; called from the
         // driver's actions too, so this ends the connection instead of throwing
-        if (control.size >= settings.maxControlFramesQueued) {
+        if (control.size + pingAnswers.size >= settings.maxControlFramesQueued) {
             return connectionError(Http2ErrorCode.ENHANCE_YOUR_CALM, "more than ${settings.maxControlFramesQueued} control frames queued")
         }
         control.addLast(frame)
@@ -1032,6 +1062,18 @@ internal class H2ConnectionCore(
         val n = s.unconsumed
         s.unconsumed = 0
         if (n > 0 && !closed) creditConnection(n, lastNow)
+    }
+
+    /** Drops what [s] still had to send; DATA that was never written gives its window back to the connection. */
+    private fun dropQueued(s: H2Stream) {
+        var refund = 0L
+        for (item in s.out) if (item is OutItem.Data) refund += item.length
+        s.out.clear()
+        s.dataQueued = false
+        if (refund == 0L) return
+        queuedDataBytes -= refund
+        connSendWindow += refund
+        for (w in blockedOnConnection.toList()) tryWake(w)
     }
 
     private fun want(s: H2Stream) {
@@ -1087,8 +1129,7 @@ internal class H2ConnectionCore(
         s.state = StreamState.CLOSED
         s.pendingCredit = 0
         if (!flush) {
-            s.out.clear()
-            s.dataQueued = false
+            dropQueued(s)
             dropUnconsumed(s) // a reset stream's content will not be read
         }
         s.wantsWindow = false
@@ -1171,6 +1212,7 @@ internal class H2ConnectionCore(
         if (closed) return
         // a frame already partly written is finished first (the peer must still parse the stream), then only the GOAWAY
         control.clear()
+        pingAnswers.clear()
         creditReady.clear()
         headerReady.clear()
         dataReady.clear()

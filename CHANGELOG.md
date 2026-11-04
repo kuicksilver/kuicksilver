@@ -28,8 +28,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   The connection core (RFC 9113 sections 3.4, 5, 6) runs the preface, stream states, SETTINGS with an acknowledgement
   deadline, flow control that returns credit only as the application reads (with window auto-tuning), PING and a two-phase
   GOAWAY, and bounds every flood per connection: CONTINUATION frames and field-block bytes before decoding, queued control
-  frames, empty DATA frames, a glitch budget for PRIORITY, SETTINGS, PING, unknown frames and the stream errors the peer
-  causes (MadeYouReset), a server's budget for the client's RST_STREAM frames (Rapid Reset), with reset streams counted
+  frames, empty DATA frames, a glitch budget for PRIORITY, SETTINGS, unknown frames, PINGs with nothing of ours in between
+  and the stream errors the peer causes (MadeYouReset), a server's budget for the client's RST_STREAM frames (Rapid Reset), with reset streams counted
   until their handler returns. Field lists are HPACK-encoded in wire order. New experimental `Http2Settings`.
   New fuzz targets `http2.frames`, `http2.hpackDecode`, `http2.connectionServer` and `http2.hpackRoundTrip` (differential),
   with seeds from `tools/http/gen-fuzz-seeds.py`.

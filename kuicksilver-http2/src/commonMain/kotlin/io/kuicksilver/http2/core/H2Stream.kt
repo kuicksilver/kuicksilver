@@ -14,6 +14,8 @@ internal sealed interface OutItem {
 
     class Data(
         val frame: ByteArray,
+        /** The payload length, taken from both send windows when queued and given back if the frame is dropped. */
+        val length: Int,
     ) : OutItem
 }
 
