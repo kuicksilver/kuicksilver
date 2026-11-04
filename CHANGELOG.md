@@ -288,6 +288,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor engines: closing a TCP or TLS socket while the application's write waits for room (a peer reading slower than
+  we write) ends that write as the close does: it returns, and later writes fail with `ClosedWriteChannelException`.
+  The close flushed the channel with a suspending `flushAndClose`, which took the channel's single write slot, and
+  ktor-io resumed the waiting write with `ConcurrentIOException` ("Concurrent write attempts") instead.
 - Ktor server: an HTTP/3 request whose call fails after Ktor committed its response but before any answer went out (an
   upgrade that fails before its `:status 200`) is reset with H3_INTERNAL_ERROR; before, the request stream stayed open
   and the client waited for an answer that never came.
