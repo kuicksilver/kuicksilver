@@ -114,8 +114,12 @@ internal class DatagramDemux(
     /** How the hold of a kept datagram is measured; a test replaces it to move time by hand. Session dispatcher only. */
     var clock: TimeSource = TimeSource.Monotonic
 
+    /** Replaces [pendingHold] when set (tests: holds that differ without moving the RTT). Session dispatcher only. */
+    var pendingHoldForTest: Duration? = null
+
     /** How long a datagram kept now may wait for its stream's HEADERS: [pendingHold] of the connection's RTT estimate. */
     fun pendingHold(): Duration {
+        pendingHoldForTest?.let { return it }
         val stats = session.quic.stats
         return pendingHold(stats.smoothedRtt, stats.rttVar)
     }
@@ -132,11 +136,21 @@ internal class DatagramDemux(
         return ch
     }
 
-    /** Stream [streamId] will not become a session: its waiting datagrams go. Returns whether there were any. */
-    fun dropPending(streamId: Long): Boolean = pending.isNotEmpty() && pending.removeAll { it.streamId == streamId }
+    /**
+     * Stream [streamId] will not become a session: its waiting datagrams go. Returns whether there were any still within their
+     * hold (one past it was dropped already, as far as the peer can tell).
+     */
+    fun dropPending(streamId: Long): Boolean {
+        prunePending()
+        return pending.isNotEmpty() && pending.removeAll { it.streamId == streamId }
+    }
 
+    /**
+     * Drops the datagrams whose hold ended. Holds follow the RTT estimate when each datagram arrives, so the queue is not in
+     * expiry order: every entry is looked at (at most [MAX_PENDING]), not only the head (review 2026-10-28 H3R-3).
+     */
     private fun prunePending() {
-        while (pending.isNotEmpty() && pending.first().expires.hasPassedNow()) pending.removeFirst()
+        if (pending.isNotEmpty()) pending.removeAll { it.expires.hasPassedNow() }
     }
 
     /** Datagrams waiting for their stream's CONNECT (test hook; session dispatcher only). */
