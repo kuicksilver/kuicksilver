@@ -84,6 +84,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getEarlyData ()Z
 	public final fun getEndpoint ()Lio/kuicksilver/quic/QuicEndpointConfig;
 	public final fun getHardDelay-FghU774 ()Lkotlin/time/Duration;
+	public final fun getHttp3Allowed ()Lkotlin/jvm/functions/Function0;
 	public final fun getMaxWebTransportSessions ()I
 	public final fun getNetworkId ()Lkotlin/jvm/functions/Function0;
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
@@ -98,6 +99,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setEarlyData (Z)V
 	public final fun setEndpoint (Lio/kuicksilver/quic/QuicEndpointConfig;)V
 	public final fun setHardDelay-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setHttp3Allowed (Lkotlin/jvm/functions/Function0;)V
 	public final fun setMaxWebTransportSessions (I)V
 	public final fun setNetworkId (Lkotlin/jvm/functions/Function0;)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
@@ -114,6 +116,10 @@ public final class io/kuicksilver/ktor/client/Http3DiscoveryMode : java/lang/Enu
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
 	public static fun values ()[Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+}
+
+public final class io/kuicksilver/ktor/client/Http3SwitchKt {
+	public static final fun closeHttp3Connections (Lio/ktor/client/HttpClient;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/ktor/client/InMemoryAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
@@ -220,6 +226,7 @@ public final class io/kuicksilver/ktor/client/ProtocolReason : java/lang/Enum {
 	public static final field Configuration Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field ExistingConnection Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Fallback Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field Http3Disabled Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NoAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NotSecure Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Proxy Lio/kuicksilver/ktor/client/ProtocolReason;

@@ -139,6 +139,20 @@ public class Http3ClientConfig {
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var diagnosticsLogLevel: LogLevel? = LogLevel.Info
+
+    /**
+     * A kill switch for HTTP/3 (docs/guide/ktor.md, "Turning HTTP/3 off remotely"), called once per `https://` request
+     * (not with [Http3DiscoveryMode.H1Only]) on the call's coroutine before anything connects: it must be quick and must not
+     * block, such as reading an `AtomicBoolean` or a `StateFlow.value` that your remote configuration updates. While it
+     * returns false, requests go over HTTP/1.1 as with `H1Only` (`ProtocolReason.Http3Disabled`), open HTTP/3 connections
+     * take no new requests (calls running on them finish; idle ones close after `idleTimeout`, or at once with
+     * `HttpClient.closeHttp3Connections()`), and `Alt-Svc` is still learned, so switching back needs no warm-up. With
+     * [Http3DiscoveryMode.H3Only] a request fails with UnsupportedOperationException instead, before any connection:
+     * that mode never uses TCP. A switch that throws counts as true (HTTP/3 allowed), so a broken configuration cannot
+     * break traffic; the engine logs that once per 5 minutes at most. WebTransport sessions do not consult it.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var http3Allowed: () -> Boolean = { true }
 }
 
 /** Configuration of `HttpClient(Kuicksilver)`. */

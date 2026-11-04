@@ -366,6 +366,35 @@ internal class H3Pool(
 
     private fun Http3Connection.usable(): Boolean = !closed.isCompleted && goAwayReceived.value == null
 
+    /**
+     * `HttpClient.closeHttp3Connections()`: every pooled connection leaves the pool, gets our GOAWAY (RFC 9114 section 5.2;
+     * a client announces 0, it accepts no pushes) and is retired, so it closes once its last request is done ([H3Entry.retire],
+     * [evictExpired]). A connection still being set up is retired too: the request waiting for it still uses it, then it closes.
+     */
+    suspend fun goAwayAll() {
+        val entries =
+            lock.withLock {
+                val l = connections.values.toList()
+                connections.clear()
+                retired += l
+                l
+            }
+        for (e in entries) {
+            e.deferred.getCompletedOrNull()?.let { c ->
+                if (!c.closed.isCompleted) {
+                    try {
+                        c.goAway()
+                    } catch (x: CancellationException) {
+                        throw x
+                    } catch (_: Throwable) {
+                        // closed meanwhile: nothing left to announce
+                    }
+                }
+            }
+            e.retire()
+        }
+    }
+
     private fun H3Entry.pastLifetime(now: Long): Boolean = now - createdAt >= maxLifetimeMillis
 
     /** An open connection to [t], connecting (once, shared by concurrent callers) when needed. */

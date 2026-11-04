@@ -403,6 +403,44 @@ back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC tran
 single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
 network. Broken alternatives are skipped (straight to HTTP/1.1).
 
+### Turning HTTP/3 off remotely
+
+`http3 { http3Allowed = { ... } }` (experimental) is a kill switch an application can flip from its remote
+configuration (Firebase Remote Config, LaunchDarkly, its own config endpoint) when QUIC misbehaves on some network or
+release, in the manner of Chrome's `QuicAllowed` policy or Cronet's `enableQuic(false)`, but per request and without a
+restart. The engine calls it once per `https://` request, on the call's coroutine, before anything connects; it must
+answer at once without blocking, so read a value your configuration keeps up to date:
+
+```kotlin
+val remoteConfig = MutableStateFlow(true)
+// guide:ktor:http3-switch
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val quicAllowed: StateFlow<Boolean> = remoteConfig // updated by your remote configuration
+val client =
+    HttpClient(Kuicksilver) {
+        engine { http3 { http3Allowed = { quicAllowed.value } } }
+    }
+// to take HTTP/3 off at once, not only for the next requests:
+client.closeHttp3Connections()
+```
+
+What it does while it returns false:
+
+- requests go over HTTP/1.1, as with `H1Only`; `protocolSelected` and the response's diagnostics say
+  `Http3Disabled` ([Why did this request not use HTTP/3?](#why-did-this-request-not-use-http3));
+- with `discovery = H3Only` a request fails with `UnsupportedOperationException` before it opens any TCP or UDP
+  connection: that mode promises never to use TCP;
+- open HTTP/3 connections take no new requests; calls already running on them finish, and idle connections close after
+  `idleTimeout`. `HttpClient.closeHttp3Connections()` sends GOAWAY on all of them at once and closes each when its last
+  call is done;
+- `Alt-Svc` is still learned in `Auto` mode, so when the switch returns true again the next request goes to the known
+  alternative without a warm-up.
+
+What it does not do: it does not affect `http://` requests or `H1Only` (it is not called for them), and WebTransport
+sessions (`HttpClient.webTransport`), which have no TCP fallback, neither consult it nor are closed by
+`closeHttp3Connections()`. A switch that throws counts as true (HTTP/3 allowed), so a broken configuration cannot take
+down traffic; the engine logs that at `Warn`, at most once per 5 minutes.
+
 ### Proxies
 
 Where a request's proxy comes from:
@@ -658,7 +696,7 @@ embeddedServer(Kuicksilver, configure = {
 **Client.** `engine { eventListener = ... }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
 `protocolSelected` with a `ProtocolReason` (`Configuration`, `NotSecure`, `ExistingConnection`, `Race`, `NoAlternative`,
-`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
+`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
 `altSvcMarkedBroken`; `fallback` from HTTP/3 to HTTP/1.1; `retry` (a request the server did not process after GOAWAY, a
 stale pooled HTTP/1.1 connection); `connectionAcquired` (reused or new) and `connectionReleased` (kept for the next request
 or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
@@ -707,6 +745,7 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `NotSecure` | an `http://` or `ws://` URL | HTTP/3 needs `https` |
 | `Proxy` | a proxy applies to the URL | `proxy` and `proxyResolver` ([Proxies](#proxies)) |
 | `Configuration` | `discovery = H1Only` | the discovery mode |
+| `Http3Disabled` | `http3 { http3Allowed }` returned false | your remote configuration ([Turning HTTP/3 off remotely](#turning-http3-off-remotely)) |
 | `NoAlternative` | `Auto` and no `Alt-Svc` from the origin yet: the first call always goes over HTTP/1.1 | the server's `Alt-Svc`; `quicHints`, `FileAltSvcStore` |
 | `BrokenAlternative` | HTTP/3 to this alternative failed recently on this network | the log line's `broken since:` names why |
 | `WebSocket` | a WebSocket without an HTTP/3 connection that allows Extended CONNECT | expected for the first WebSocket |

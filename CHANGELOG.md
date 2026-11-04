@@ -197,6 +197,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   default; HTTP/3 calls at `Debug`; `null` for none), without the URL's query or user info. A broken alternative now
   remembers why it broke, and when both the HTTP/3 and the HTTP/1.1 setups fail the HTTP/1.1 failure carries the HTTP/3
   one in `suppressed`.
+- Ktor client: an HTTP/3 kill switch (experimental `http3 { http3Allowed = { ... } }`; `docs/guide/ktor.md`, "Turning
+  HTTP/3 off remotely"), read once per `https://` request from the application's remote configuration. While it returns
+  false requests go over HTTP/1.1 (`ProtocolReason.Http3Disabled`, `FallbackReason.Http3Disabled`), open HTTP/3
+  connections take no new requests, `Alt-Svc` is still learned, and `H3Only` requests fail with
+  `UnsupportedOperationException` without any connection; a switch that throws allows HTTP/3 and is logged at most once
+  per 5 minutes. `HttpClient.closeHttp3Connections()` sends GOAWAY on every pooled HTTP/3 connection and closes each
+  once its calls are done.
 
 ### Changed
 

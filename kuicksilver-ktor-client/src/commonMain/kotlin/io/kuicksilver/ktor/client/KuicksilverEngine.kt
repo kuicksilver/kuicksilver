@@ -43,6 +43,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.minutes
 
 /** `HttpClient(Kuicksilver)`: HTTP/3 and HTTP/1.1 over TLS 1.3 (docs/guide/ktor.md). */
 @OptIn(InternalAPI::class, DelicateCoroutinesApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -200,6 +201,8 @@ internal class KuicksilverEngine(
 
                     ProtocolReason.WebSocket -> FallbackReason.WebSocket
 
+                    ProtocolReason.Http3Disabled -> FallbackReason.Http3Disabled
+
                     // set by the caller from the HTTP/3 failure, if any
                     ProtocolReason.Race, ProtocolReason.Fallback, ProtocolReason.ExistingConnection -> d.fallback
                 }
@@ -223,6 +226,12 @@ internal class KuicksilverEngine(
                     "use https or another discovery mode",
             )
         }
+        // the kill switch, read once per request before anything connects; H3Only cannot fall back, so it fails
+        val disabled =
+            url.protocol.isSecure() && config.http3.discovery != Http3DiscoveryMode.H1Only && !http3Allowed()
+        if (disabled && config.http3.discovery == Http3DiscoveryMode.H3Only) {
+            throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed; Http3DiscoveryMode.H3Only never uses TCP")
+        }
         val proxy = proxyFor(url) // explicit, else the resolver's: a proxy the engine cannot use fails here, never bypassed
         if (proxy != null && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
             throw UnsupportedOperationException(
@@ -232,7 +241,7 @@ internal class KuicksilverEngine(
         }
         // HTTP/3 needs TLS and no proxy (through a proxy only HTTP/1.1)
         if (!url.protocol.isSecure() || proxy != null ||
-            config.http3.discovery == Http3DiscoveryMode.H1Only
+            config.http3.discovery == Http3DiscoveryMode.H1Only || disabled
         ) {
             selected(
                 data,
@@ -240,11 +249,19 @@ internal class KuicksilverEngine(
                 when {
                     proxy != null -> ProtocolReason.Proxy
                     config.http3.discovery == Http3DiscoveryMode.H1Only && url.protocol.isSecure() -> ProtocolReason.Configuration
+                    disabled -> ProtocolReason.Http3Disabled
                     else -> ProtocolReason.NotSecure
                 },
                 d,
             )
-            return h1.execute(data, callContext, proxy = proxy) // no Alt-Svc is used or learned through a proxy
+            val r = h1.execute(data, callContext, proxy = proxy) // no Alt-Svc is used or learned through a proxy
+            // switched off, Auto keeps learning Alt-Svc, so switching back needs no warm-up
+            if (disabled && proxy == null && config.http3.discovery == Http3DiscoveryMode.Auto) {
+                altSvcUpdate {
+                    altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
+                }
+            }
+            return r
         }
         val target = H3Target(url.host, url.host, url.port)
         val webSocket = data.attributes.contains(WEBSOCKETS_KEY)
@@ -282,6 +299,31 @@ internal class KuicksilverEngine(
             }
         }
     }
+
+    /** Warns about a throwing `http3Allowed` at most once per 5 minutes; internal for tests (its clock). */
+    internal val http3SwitchWarning =
+        RateLimitedWarning(
+            5.minutes,
+            io.kuicksilver.ktor.client.h1
+                .monotonicMillis(),
+        )
+
+    /** `http3Allowed`, failing open: a switch that throws allows HTTP/3 (a broken remote configuration must not break traffic). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun http3Allowed(): Boolean =
+        try {
+            config.http3.http3Allowed()
+        } catch (e: Throwable) {
+            if (http3SwitchWarning.tryAcquire()) {
+                runCatching {
+                    val logger = events.logger
+                    if (logger.isEnabled(LogLevel.Warn)) {
+                        logger.log(LogLevel.Warn, "http3Allowed threw; HTTP/3 stays allowed (reported at most once per 5 minutes)", e)
+                    }
+                }
+            }
+            true
+        }
 
     /** A new network (`networkId`) forgets broken marks, QUIC confirmation and, if asked, non-persistent alternatives. */
     private suspend fun checkNetwork(): String? =

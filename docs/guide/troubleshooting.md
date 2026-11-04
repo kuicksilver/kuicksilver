@@ -362,12 +362,22 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 | `Configuration` | `discovery` is `H1Only` |
 | `NotSecure` | the URL is not `https` (or `wss`): HTTP/3 needs TLS |
 | `Proxy` | a proxy applies to the URL: HTTP/3 never goes through one (QUIC is UDP); exempt the host from the proxy for HTTP/3 |
+| `Http3Disabled` | `http3 { http3Allowed }` returned false: check the remote configuration behind it |
 | `NoAlternative` | `Auto` mode and the origin has not announced `h3` in `Alt-Svc` yet, or the entry expired; the first request always goes over HTTP/1.1. Use `quicHints` or `Preferred` for origins you know speak HTTP/3, and `FileAltSvcStore` to keep alternatives across restarts |
 | `BrokenAlternative` | HTTP/3 to this origin failed while HTTP/1.1 worked (UDP blocked, a QUIC error), so the alternative is skipped for 5 minutes, doubling per repeat up to 2 days; `altSvcMarkedBroken` reported it. Set `networkId` so a network change forgets the marks |
 | `Race` | the race went to HTTP/1.1: QUIC did not finish within its head start (1.5 x the origin's smoothed RTT, 250 ms without history, 100 ms..2 s; `hardDelay` overrides it), and on a network where QUIC was never seen working HTTP/1.1 starts after 10 ms. The QUIC setup goes on and serves the next requests |
 
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
 alternatives over verified TLS count ([Ktor: Discovery and Alt-Svc](ktor.md#discovery-and-alt-svc)).
+
+### QUIC misbehaves in production
+
+When HTTP/3 causes trouble on some networks or after a release and you need it off before a fix ships, flip
+`http3 { http3Allowed }` from your remote configuration and, to drop the open connections at once, call
+`client.closeHttp3Connections()`: requests go over HTTP/1.1 from the next one on, calls in flight finish, and switching
+back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)). Clients in
+`H3Only` mode fail instead of using TCP. Before that, `response.kuicksilverDiagnostics` and a qlog trace
+([Getting more information](#getting-more-information)) usually tell what goes wrong.
 
 ### Requests go through a proxy, or not, unexpectedly
 

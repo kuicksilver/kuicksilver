@@ -64,6 +64,7 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
     enum entry Configuration // io.kuicksilver.ktor.client/ProtocolReason.Configuration|null[0]
     enum entry ExistingConnection // io.kuicksilver.ktor.client/ProtocolReason.ExistingConnection|null[0]
     enum entry Fallback // io.kuicksilver.ktor.client/ProtocolReason.Fallback|null[0]
+    enum entry Http3Disabled // io.kuicksilver.ktor.client/ProtocolReason.Http3Disabled|null[0]
     enum entry NoAlternative // io.kuicksilver.ktor.client/ProtocolReason.NoAlternative|null[0]
     enum entry NotSecure // io.kuicksilver.ktor.client/ProtocolReason.NotSecure|null[0]
     enum entry Proxy // io.kuicksilver.ktor.client/ProtocolReason.Proxy|null[0]
@@ -176,6 +177,9 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
     final var hardDelay // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay|{}hardDelay[0]
         final fun <get-hardDelay>(): kotlin.time/Duration? // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay.<get-hardDelay>|<get-hardDelay>(){}[0]
         final fun <set-hardDelay>(kotlin.time/Duration?) // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay.<set-hardDelay>|<set-hardDelay>(kotlin.time.Duration?){}[0]
+    final var http3Allowed // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed|{}http3Allowed[0]
+        final fun <get-http3Allowed>(): kotlin/Function0<kotlin/Boolean> // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed.<get-http3Allowed>|<get-http3Allowed>(){}[0]
+        final fun <set-http3Allowed>(kotlin/Function0<kotlin/Boolean>) // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed.<set-http3Allowed>|<set-http3Allowed>(kotlin.Function0<kotlin.Boolean>){}[0]
     final var maxWebTransportSessions // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions|{}maxWebTransportSessions[0]
         final fun <get-maxWebTransportSessions>(): kotlin/Int // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions.<get-maxWebTransportSessions>|<get-maxWebTransportSessions>(){}[0]
         final fun <set-maxWebTransportSessions>(kotlin/Int) // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions.<set-maxWebTransportSessions>|<set-maxWebTransportSessions>(kotlin.Int){}[0]
@@ -351,4 +355,5 @@ final val io.kuicksilver.ktor.client/priority // io.kuicksilver.ktor.client/prio
 
 final fun (io.ktor.client.request/HttpRequestBuilder).io.kuicksilver.ktor.client/priority(kotlin/Int = ..., kotlin/Boolean = ...) // io.kuicksilver.ktor.client/priority|priority@io.ktor.client.request.HttpRequestBuilder(kotlin.Int;kotlin.Boolean){}[0]
 final suspend fun (io.ktor.client.statement/HttpResponse).io.kuicksilver.ktor.client/updatePriority(kotlin/Int, kotlin/Boolean): kotlin/Boolean // io.kuicksilver.ktor.client/updatePriority|updatePriority@io.ktor.client.statement.HttpResponse(kotlin.Int;kotlin.Boolean){}[0]
+final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/closeHttp3Connections() // io.kuicksilver.ktor.client/closeHttp3Connections|closeHttp3Connections@io.ktor.client.HttpClient(){}[0]
 final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/webTransport(kotlin/String, kotlin.collections/List<kotlin/String> = ..., io.kuicksilver.http3/Http3Headers = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.ktor.client/webTransport|webTransport@io.ktor.client.HttpClient(kotlin.String;kotlin.collections.List<kotlin.String>;io.kuicksilver.http3.Http3Headers){}[0]
