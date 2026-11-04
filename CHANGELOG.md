@@ -27,7 +27,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   key `kuicksilver.tls.reloadInterval` (experimental `identityReloadInterval`; off by default, at least 1 s): a changed
   chain is applied once two reads a second apart agree and the key matches; a failure keeps the identity in use, is
   logged once (never with key material) and retried after 1 s, then twice as long each time up to the interval.
-  `EngineMain` now reads the key file without making a `String` of it, and refuses PEM files above 1 MiB.
+  `EngineMain` now reads the key file without making a `String` of it or leaving it in kotlinx-io's pooled buffers
+  (a buffer of its own, wiped), refuses PEM files above 1 MiB, and closes the identity it made when the server stops. The
+  watcher reads the files again a second after a reload and refuses a chain file that also holds a private key.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,

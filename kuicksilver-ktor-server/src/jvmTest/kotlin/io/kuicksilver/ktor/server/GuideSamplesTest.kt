@@ -117,15 +117,16 @@ class GuideSamplesTest {
     @Test fun certificateRotationSample() {
         val renewedChainPem =
             TestCerts.toPem("CERTIFICATE", TestCerts.serverViaIntermediate) + TestCerts.toPem("CERTIFICATE", TestCerts.intermediate)
-        val renewedKeyPem = TestCerts.toPem("PRIVATE KEY", TestCerts.serverViaIntermediateKey)
+        val keyChars = keyPem.toCharArray() // the guide's arrays come from a file read without a String (readPemKey does that)
+        val renewedKeyChars = TestCerts.toPem("PRIVATE KEY", TestCerts.serverViaIntermediateKey).toCharArray()
         // guide:ktor:certificate-rotation
-        val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainPem, keyPem.toCharArray()))
+        val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainPem, keyChars)) // the key array is zeroed after import
         val server =
             embeddedServer(Kuicksilver, configure = {
                 tlsConnector(identity) { port = 0 }
             }, module = Application::module)
         // later, when the renewed files are in place: new TCP and QUIC handshakes present them, open connections keep theirs
-        identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyPem.toCharArray()))
+        identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyChars))
         assertTrue(
             server.engine.configuration.connectors
                 .single() is KuicksilverTlsConnector,

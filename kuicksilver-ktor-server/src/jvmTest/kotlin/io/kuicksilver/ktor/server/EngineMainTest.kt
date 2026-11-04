@@ -2,14 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.application.Application
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsIdentity
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import java.io.File
 import java.nio.file.Files
@@ -173,21 +177,46 @@ class EngineMainTest {
             key.writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverViaIntermediateKey))
             server.startSuspend(false)
             try {
-                withTimeout(20.seconds) {
-                    while (identity.current.chain[0] != Certificate(TestCerts.serverViaIntermediate)) yield()
+                val applied =
+                    withTimeoutOrNull(20.seconds) {
+                        while (identity.current.chain[0] != Certificate(TestCerts.serverViaIntermediate)) yield()
+                        true
+                    }
+                assertTrue(applied == true, "the watcher did not apply the renewed files within 20 s")
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                val selector = SelectorManager(Dispatchers.IO)
+                try {
+                    val socket =
+                        io.kuicksilver.ktor.network
+                            .connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                            .tls(ServerFixtures.clientTls())
+                    try {
+                        assertEquals(
+                            Certificate(TestCerts.serverViaIntermediate),
+                            socket.peerCertificates[0],
+                            "the renewed leaf on the wire",
+                        )
+                    } finally {
+                        socket.close()
+                    }
+                } finally {
+                    selector.close()
                 }
-                val resp =
-                    rawHttp(
-                        server.engine
-                            .resolvedConnectors()
-                            .first()
-                            .port,
-                        get,
-                    )
-                assertTrue(resp.endsWith("engine main"), resp)
+                assertTrue(rawHttp(port, get).endsWith("engine main"))
             } finally {
                 server.stop(100, 500)
             }
-            assertTrue(server.engine.identityWatcherForTest!!.isCancelled, "the watcher stops with the server")
+            assertTrue(server.engine.identityWatcherForTest!!.isCompleted, "the watcher ends with the server")
+            val probe =
+                TlsIdentity.fromPem(
+                    TestCerts.toPem("CERTIFICATE", TestCerts.server),
+                    TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey).toCharArray(),
+                )
+            assertFailsWith<IllegalStateException>("the identity EngineMain made is closed with the server") { identity.reload(probe) }
+            probe.close()
         }
 }

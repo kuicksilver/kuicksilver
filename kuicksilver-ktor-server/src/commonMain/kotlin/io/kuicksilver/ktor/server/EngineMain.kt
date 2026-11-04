@@ -55,8 +55,20 @@ public object EngineMain {
         if (chain != null && key != null) {
             val loaded = TlsIdentity.fromPem(readPemText(chain), readPemKey(key))
             @OptIn(ExperimentalKuicksilverApi::class)
-            identity = if (reload != null) TlsIdentity.reloadable(loaded) else loaded
+            identity =
+                if (reload == null) {
+                    loaded
+                } else {
+                    // refuses an expired or not yet valid leaf at startup, as every later reload would
+                    try {
+                        TlsIdentity.reloadable(loaded)
+                    } catch (e: Throwable) {
+                        loaded.close()
+                        throw e
+                    }
+                }
             identityFiles = chain to key
+            closeIdentityOnStop = true
             @OptIn(ExperimentalKuicksilverApi::class)
             identityReloadInterval = reload
         }

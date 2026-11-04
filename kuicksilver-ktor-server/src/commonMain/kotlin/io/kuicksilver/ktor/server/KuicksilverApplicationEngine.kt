@@ -35,6 +35,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -114,6 +115,9 @@ public class KuicksilverApplicationEngine(
 
         /** The PEM files [identity] was read from, set by `EngineMain`; the files [identityReloadInterval] watches. */
         internal var identityFiles: Pair<String, String>? = null
+
+        /** Set by `EngineMain`, which made [identity] from its files: the engine closes it when it stops. */
+        internal var closeIdentityOnStop: Boolean = false
 
         /** Tests shorten the watcher's settle time (two equal reads of a changed chain) with this; null keeps 1 s. */
         internal var identitySettleForTest: Duration? = null
@@ -360,7 +364,7 @@ public class KuicksilverApplicationEngine(
                 startupJob.complete(Unit)
                 val watcher = startIdentityWatcher(this)
                 stopRequest.join()
-                watcher?.cancel()
+                watcher?.cancelAndJoin()
                 // graceful stop (RFC 9114 5.2): no new connections or requests, GOAWAY to every live HTTP/3 connection, then wait for the
                 // in-flight calls; `stopSuspend` cancels this job at the grace deadline, which closes what is left
                 servers.forEach {
@@ -396,6 +400,10 @@ public class KuicksilverApplicationEngine(
                         l.endpoint.close()
                         l.connections.cancel()
                     }
+                    identityWatcherForTest?.cancelAndJoin()
+                    // an identity EngineMain made from its files is the engine's: its native key goes with the engine (connections
+                    // still closing keep their own reference in their contexts)
+                    if (configuration.closeIdentityOnStop) (configuration.identity as? AutoCloseable)?.close()
                 }
             }
         }

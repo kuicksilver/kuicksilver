@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 
 package io.kuicksilver.ktor.server
 
@@ -219,6 +219,43 @@ class IdentityFileWatcherTest {
      * The loop on virtual time: one read per interval while nothing changes (no busy polling), a change applied one settle
      * period after the tick that saw it, and failures retried after 1 s, 2 s, 4 s, ... up to the interval.
      */
+
+    /** A chain file that also holds a private key (a combined PEM) is refused, and its text is not kept for a second read. */
+    @Test fun negative_chainFileWithPrivateKeyRefused() =
+        runTest {
+            val r = servingA()
+            val log = AllLines()
+            val w = watcher(r, log)
+            files["chain.pem"] = chainB + keyB
+            files["key.pem"] = keyB
+            repeat(3) { assertFalse(w.checkOnce()) }
+            assertEquals(IdentityFileWatcher.Outcome.Failed, w.lastOutcome)
+            assertEquals(leafA, r.current.chain[0])
+            assertTrue("contains a private key" in log.lines.first { it.first == "WARN" }.second)
+            files["chain.pem"] = chainB
+            assertFalse(w.checkOnce())
+            assertTrue(w.checkOnce(), "the chain alone is applied")
+            r.close()
+        }
+
+    /** After a reload the file is read again one settle period later: a chain cut while its writer paused is corrected then. */
+    @Test fun chainCompletedAfterReloadIsAppliedOneSettleLater() =
+        runTest {
+            val r = servingA()
+            val w = watcher(r, AllLines())
+            val job = backgroundScope.launch { w.run(1.hours) }
+            runCurrent()
+            files["key.pem"] = keyB
+            files["chain.pem"] = TestCerts.toPem("CERTIFICATE", TestCerts.serverViaIntermediate) // the writer paused after the leaf
+            advanceTimeBy(1.hours + 1.seconds + 1.milliseconds)
+            assertEquals(1, r.current.chain.size, "two equal reads: the cut chain was applied")
+            files["chain.pem"] = chainB
+            advanceTimeBy(2.seconds)
+            assertEquals(2, r.current.chain.size, "corrected two settle periods later, not an interval later")
+            job.cancel()
+            r.close()
+        }
+
     @Test fun pollingOnVirtualTime() =
         runTest {
             val r = servingA()
@@ -235,15 +272,20 @@ class IdentityFileWatcherTest {
             assertEquals(leafA, r.current.chain[0])
             advanceTimeBy(1.seconds)
             assertEquals(leafB, r.current.chain[0], "applied one settle period after the change was seen")
+            val applied = reads
+            advanceTimeBy(1.seconds)
+            assertEquals(applied + 1, reads, "read once more one settle period after the reload")
+            assertEquals(IdentityFileWatcher.Outcome.Unchanged, w.lastOutcome)
             // a broken chain from now on: retried quickly at first, then less and less often, never more than the interval
             files["chain.pem"] = "-----BEGIN CERTIFICATE-----\n@@@\n-----END CERTIFICATE-----\n"
             advanceTimeBy(1.hours)
+            assertEquals(IdentityFileWatcher.Outcome.Failed, w.lastOutcome)
             val first = reads
             advanceTimeBy(1.seconds)
             assertEquals(first + 1, reads, "first retry after 1 s")
             advanceTimeBy(10.hours)
-            // 2, 4, ..., 2048 s (11 retries, 4094 s), then one an hour
-            assertTrue(reads - first in 12..22, "retries in 10 h: ${reads - first}")
+            // after the first retry: 2, 4, ..., 2048 s (11 retries, 4095 s after the failure), then one an hour (8 in the rest)
+            assertEquals(20, reads - first, "reads in the 10 h after the failure")
             assertEquals(leafB, r.current.chain[0])
             job.cancel()
             r.close()

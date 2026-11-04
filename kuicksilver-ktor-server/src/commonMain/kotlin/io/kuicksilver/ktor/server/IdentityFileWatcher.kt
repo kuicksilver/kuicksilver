@@ -14,7 +14,6 @@ import kotlinx.io.IOException
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.readByteArray
 import kotlinx.io.readString
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -27,10 +26,12 @@ import kotlin.time.Duration.Companion.seconds
  *   key is read only to build the new identity, never kept or compared in Kotlin. Comparing content rather than a
  *   modification time also sees an atomic swap of a symlinked directory (Kubernetes secrets, as Envoy's file watch does).
  * - **Partial writes:** a new chain is applied only once two reads [settle] apart return the same text, so a chain cut
- *   between two certificates is not served; a key that is not there yet (certbot writes the chain before the key) fails
+ *   between two certificates is not served (and the file is read again [settle] after a reload, so a write that paused
+ *   longer is corrected then, not an interval later); a key that is not there yet (certbot writes the chain before the key) fails
  *   the pair check of `TlsIdentity.fromPem` and the old identity stays. Every failure is retried, after 1 s and then twice
  *   as long each time up to the polling interval, so a half-written pair is picked up within seconds and a broken one is
  *   not read in a tight loop.
+ * - **A chain file holding a private key** (a combined PEM) is refused: the key belongs in its own file.
  * - **Errors** are logged as warnings, a repeated one at debug level only; messages name the file and the reason, never
  *   key material.
  */
@@ -70,6 +71,12 @@ internal class IdentityFileWatcher(
 
     private fun check(): Outcome {
         val text = readText(chainPath)
+        if ("PRIVATE KEY" in text) {
+            // a key in the chain file (a combined PEM): refused, and its text is not kept for the next read
+            pending = null
+            failed("$chainPath contains a private key; it must hold the certificate chain only")
+            return Outcome.Failed
+        }
         val chain = Certificate.parsePem(text) // TlsException.Config for a damaged file or one without a certificate
         if (chain == target.current.chain) {
             pending = null
@@ -100,8 +107,8 @@ internal class IdentityFileWatcher(
     }
 
     /**
-     * Checks every [interval] until cancelled; a changed chain is read again after [settle], a failure retried after 1 s,
-     * then twice as long each time, up to [interval].
+     * Checks every [interval] until cancelled; a changed chain is read again after [settle] (and once more [settle] after it
+     * was applied), a failure retried after 1 s, then twice as long each time, up to [interval].
      */
     suspend fun run(interval: Duration) {
         val firstRetry = minOf(1.seconds, interval)
@@ -114,7 +121,9 @@ internal class IdentityFileWatcher(
                         retry.also { retry = minOf(retry * 2, interval) }
                     }
 
-                    Outcome.Settling -> {
+                    // after a reload too: a chain file still being written when two reads agreed is seen and fixed one settle later
+                    Outcome.Settling, Outcome.Reloaded -> {
+                        retry = firstRetry
                         minOf(settle, interval)
                     }
 
@@ -143,12 +152,14 @@ private fun <T> readBounded(
 
 internal fun readPemText(path: String): String = readBounded(path) { it.readString() }
 
-/** The key file as characters, without a `String` of it; the byte copy is wiped. PEM is ASCII. */
-internal fun readPemKey(path: String): CharArray {
-    val bytes = readBounded(path) { it.readByteArray() }
-    try {
-        return CharArray(bytes.size) { (bytes[it].toInt() and 0xff).toChar() }
-    } finally {
-        bytes.fill(0)
-    }
-}
+/**
+ * The key file as characters, without a `String` of it and without kotlinx-io's pooled segments (never wiped): read by
+ * [readSecretFile] into a buffer of its own that is wiped. PEM is ASCII.
+ */
+internal fun readPemKey(path: String): CharArray = readSecretFile(path, MAX_PEM_FILE_BYTES)
+
+/** The bytes of [path] (at most [maxBytes], else [IOException]) as characters, every intermediate copy wiped. */
+internal expect fun readSecretFile(
+    path: String,
+    maxBytes: Long,
+): CharArray
