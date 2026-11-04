@@ -12,8 +12,13 @@ kotlin {
             api(libs.ktor.network)
             api(libs.ktor.websockets) // PerMessageDeflate is a WebSocketExtension (RFC 7692)
         }
+        jvmTest.dependencies {
+            implementation(kotlin("test-junit5"))
+            implementation(libs.jazzer.junit) // the permessage-deflate fuzz targets (fuzz/WebSocketFuzzTest.kt)
+        }
     }
 }
+tasks.named<Test>("jvmTest") { useJUnitPlatform() }
 
 
 // Linux and Apple share the POSIX system calls of the native TCP sockets (TcpSys.posix.kt); Windows has its own (mingwMain).
