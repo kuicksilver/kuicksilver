@@ -161,7 +161,9 @@ class EngineMainTest {
         val e = assertFailsWith<kotlinx.io.IOException> { EngineMain.createServer(args(reload = true)).engine }
         assertTrue("contains a private key" in e.message.orEmpty(), e.message)
         val plain = EngineMain.createServer(args(reload = false))
-        assertTrue(plain.engine.configuration.identity is TlsIdentity.InMemory, "control: without reloading the file is served as before")
+        val id = plain.engine.configuration.identity
+        assertTrue(id is TlsIdentity.InMemory, "control: without reloading the file is served as before")
+        id.close() // the server never started: nothing else closes it
     }
 
     /**

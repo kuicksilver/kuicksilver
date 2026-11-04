@@ -425,10 +425,16 @@ public class KuicksilverApplicationEngine(
         val (chain, key) = configuration.identityFiles ?: return
         val target = configuration.identity as? TlsIdentity.Reloadable ?: return
         val settle = configuration.identitySettleForTest ?: 1.seconds
-        val readText = configuration.identityReadTextForTest ?: { path: String -> readPemText(path, refusePrivateKey = true) }
+        val readText = configuration.identityReadTextForTest
         identityWatcher =
             CoroutineScope(engineDispatcher).launch {
-                IdentityFileWatcher(chain, key, target, environment.log, readText = readText, settle = settle).run(interval)
+                val watcher =
+                    if (readText == null) {
+                        IdentityFileWatcher(chain, key, target, environment.log, settle = settle)
+                    } else {
+                        IdentityFileWatcher(chain, key, target, environment.log, readText = readText, settle = settle)
+                    }
+                watcher.run(interval)
             }
     }
 
