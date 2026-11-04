@@ -203,6 +203,31 @@ internal fun ConnectionCore.sameIp(
     b: InetSocketAddress,
 ): Boolean = AddressClass.ipBytes(a).contentEquals(AddressClass.ipBytes(b))
 
+/**
+ * RFC 9000 section 9.4: "On confirming a peer's ownership of its new address, an endpoint MUST immediately reset the congestion
+ * controller and round-trip time estimator for the new path to initial values ... unless the only change in the peer's address is
+ * its port number". A handshake-time change of the active path's address from [old] to another IP (a move, a return, the
+ * candidate's adoption) starts [p] over: a fresh congestion controller and pacer, the initial RTT of a new path, and 1200 bytes with
+ * DPLPMTUD started again ([initServerPath] does the same for a path the client opens; a port-only change keeps everything, as
+ * [Path.inheritFrom]). What is in flight stays with the controller that counted it.
+ */
+private fun ConnectionCore.resetForNewIp(
+    p: Path,
+    old: InetSocketAddress,
+) {
+    if (sameIp(old, p.remote)) return
+    p.cc = config.congestionController()
+    p.pacer =
+        io.kuicksilver.quic.recovery
+            .Pacer()
+    p.rtt =
+        io.kuicksilver.quic.recovery
+            .RttEstimator(config.newPathInitialRtt)
+    if (p === paths.active) loss.rtt = p.rtt
+    setMtu(p, 1200)
+    if (p.pmtud != null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = 1200)
+}
+
 /** A 1-RTT packet authenticated from [from] on [socket]: a new address becomes a path under validation; its highest-numbered non-probing packet moves the connection there (RFC 9000 section 9.3). */
 internal fun ConnectionCore.onPathPacket(
     socket: PathId,
@@ -583,7 +608,13 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
                 return
             }
             if (p.handshakeCandidate) {
-                adoptHandshakeCandidate(p)
+                // decided once the packet's frames are all in (finishPathResponses): when it also answers the active address's
+                // challenge, the active address keeps the path
+                p.state = PathState.Validated
+                p.challengePending = false
+                p.challengeDeadline = TimeMark.NEVER
+                p.nextChallengeAt = TimeMark.NEVER
+                candidateAnswered = true
                 return
             }
             p.state = PathState.Validated
@@ -774,6 +805,7 @@ internal fun ConnectionCore.applyHandshakeMove(
         // one that was never challenged is now, as a new address would be (or, with the ClientHello's completion, left to the
         // client's Handshake packet)
         if (p.state != PathState.Validating && p.state != PathState.Validated && !completesClientHello) startValidation(p)
+        resetForNewIp(p, old)
         lastReceivedOnActivePath = now
         onRemoteChanged?.invoke(old, from)
         qlog?.metricsUpdated(stats, now)
@@ -781,6 +813,7 @@ internal fun ConnectionCore.applyHandshakeMove(
     }
     openHandshakeCandidate(p, from)
     p.remote = from
+    resetForNewIp(p, old)
     p.validatedAt = TimeMark.NEVER
     p.amplification.reset()
     p.amplification.onReceived((handshakeCredit?.takeIf { it.from == from }?.bytes ?: 0L).toInt())
@@ -981,11 +1014,13 @@ internal fun ConnectionCore.restoreHandshakeAddress(
     if (k != null) {
         // the candidate holds this address with what came from it and was sent to it since the move, its PATH_CHALLENGEs included
         swapWithHandshakeCandidate(p, k)
+        resetForNewIp(p, old)
         if (reverting) dropHandshakeCandidate() // its validation started with the move: it had the same period
         reached = fallback.addressValidated || fallback.reached || p.amplification.validated
         if (reached) p.amplification.validated = true
     } else {
         p.remote = fallback.remote
+        resetForNewIp(p, old)
         reached = fallback.addressValidated || fallback.reached
         p.amplification.restore(fallback.received + fallback.receivedSince, fallback.sent, reached)
     }
@@ -1106,6 +1141,8 @@ private fun ConnectionCore.challengeLeftAddress(k: Path) {
  */
 private fun ConnectionCore.openHandshakeMirror(from: InetSocketAddress) {
     if (handshakeRebindFrom != null || clientHandshakeKeysSeen || state != io.kuicksilver.quic.ConnectionState.Handshaking) return
+    // never a flight toward a DNS, NTP or other reflector port (RFC 9000 section 21.5.6), however its Initial claims to come from there
+    if (AddressClass.isReflectivePort(from.port)) return
     val p = paths.active
     val k = paths.add(p.socket, from, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
     handshakeRebindFrom = p.remote
@@ -1164,6 +1201,7 @@ internal fun ConnectionCore.adoptHandshakeCandidate(k: Path) {
     }
     val old = p.remote
     p.swapAddressWith(k)
+    resetForNewIp(p, old)
     p.amplification.validated = true
     clearValidation(p)
     p.state = PathState.Validated
@@ -1182,6 +1220,17 @@ internal fun ConnectionCore.adoptHandshakeCandidate(k: Path) {
     issueNewToken(p.remote)
     onRemoteChanged?.invoke(old, p.remote)
     qlog?.metricsUpdated(stats, now)
+}
+
+/**
+ * End of a packet's frames: a candidate that answered its own PATH_CHALLENGE in it is adopted ([adoptHandshakeCandidate]) unless the
+ * same packet also validated the active address, which then keeps the path (its answer dropped the candidate already).
+ */
+internal fun ConnectionCore.finishPathResponses() {
+    if (!candidateAnswered) return
+    candidateAnswered = false
+    val k = handshakeCandidate ?: return
+    if (k.state == PathState.Validated) adoptHandshakeCandidate(k)
 }
 
 /**

@@ -77,6 +77,23 @@ internal class SendStream(
 
     val hasRetransmit: Boolean get() = lostCount > 0
 
+    /** Bytes written but never sent are waiting. */
+    val hasUnsent: Boolean get() = sentEnd < written
+
+    /** A copy of the bytes queued for retransmission, for [restoreRetransmit]. */
+    fun saveRetransmit(): LongArray = lost.copyOf(2 * lostCount)
+
+    /**
+     * Puts the retransmission queue back as [saved] had it: what was queued and sent in between to another address (the server's
+     * mirrored handshake flight) is not resent on the active path because of that. Only valid while nothing was acknowledged or
+     * declared lost in between.
+     */
+    fun restoreRetransmit(saved: LongArray) {
+        if (saved.size > lost.size) lost = saved.copyOf(maxOf(8, saved.size))
+        saved.copyInto(lost)
+        lostCount = saved.size / 2
+    }
+
     /** Offset of the next range [nextRange] would pick (for sizing the frame header). */
     val nextOffset: Long get() = if (lostCount > 0) lost[0] else sentEnd
 

@@ -38,6 +38,7 @@ import io.kuicksilver.quic.core.ecnPathFailed
 import io.kuicksilver.quic.core.enableServerEarlyData
 import io.kuicksilver.quic.core.enterClosing
 import io.kuicksilver.quic.core.fail
+import io.kuicksilver.quic.core.finishPathResponses
 import io.kuicksilver.quic.core.glitch
 import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
@@ -524,6 +525,9 @@ public class ConnectionCore internal constructor(
 
     /** Server: a PTO of the Initial or Handshake space fired: the next poll retransmits the flight to the mirrored address too. */
     internal var handshakeMirrorDue = false
+
+    /** Server: the handshake candidate answered its own PATH_CHALLENGE in the packet being processed (`finishPathResponses`). */
+    internal var candidateAnswered = false
     internal var closeFrame: CloseFrame? = null
 
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
@@ -712,10 +716,7 @@ public class ConnectionCore internal constructor(
 
     init {
         paths.onEvicted = {
-            if (it === handshakeCandidate) {
-                handshakeCandidate = null
-                it.handshakeCandidate = false
-            }
+            if (it === handshakeCandidate) dropHandshakeCandidate() // already out of the paths: the rest of the drop still applies
             releasePathCid(it)
         }
         if (role == TlsRole.Server) {
@@ -854,6 +855,7 @@ public class ConnectionCore internal constructor(
             pendingHandshakeMove = null
             onHandshakeDatagramDone(it)
         }
+        finishPathResponses()
         if (discardHandshakeKeysAfterPacket) {
             discardHandshakeKeysAfterPacket = false
             discardSpace(SpaceId.Handshake)

@@ -458,6 +458,7 @@ internal class PacketReceiver(
             if (!c.spaceDiscarded[0]) c.discardInitialPending = true
         }
         if (type == PacketType.OneRtt) {
+            c.finishPathResponses()
             c.onPathPacket(socket, from, pn, !reader.probingOnly, datagramLength)
             c.onFirstOneRttFromClient()
         }

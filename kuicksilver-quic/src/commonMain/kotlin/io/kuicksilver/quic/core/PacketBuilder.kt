@@ -206,36 +206,51 @@ internal class PacketBuilder(
         val k = c.handshakeCandidate ?: return 0
         val to = c.handshakeRebindTo ?: return 0
         if (!c.handshakeMirror || !k.isRemote(to) || c.state != ConnectionState.Handshaking) return 0
-        for (space in arrayOf(SpaceId.Initial, SpaceId.Handshake)) {
-            if (c.spaceDiscarded[space.ordinal] || c.loss.space(space).ackElicitingInFlight <= 0) continue
-            c.requeueForProbe(space, Int.MAX_VALUE)
+        // room first: nothing is queued unless at least one full datagram can go there now
+        if (first >= out.capacity || !(k.amplification.validated || k.amplification.budget() >= 1200)) return 0
+        val levels = intArrayOf(0, 2)
+        // data the active path has not sent yet goes there first (it would be pulled behind the retransmitted ranges)
+        for (l in levels) if (c.cryptoStreams.send[l].hasUnsent) return 0
+        val saved = Array(2) { c.cryptoStreams.send[levels[it]].saveRetransmit() }
+        try {
+            // what the flight has outstanding, queued again for this address only: the active path's own probes are not affected
+            // (no packet is marked as taken by a probe) and the queue is put back as it was afterwards
+            for (space in arrayOf(SpaceId.Initial, SpaceId.Handshake)) {
+                if (c.spaceDiscarded[space.ordinal]) continue
+                for (sent in c.loss.space(space).sent) {
+                    val f = sent.frames
+                    for (i in 0 until f.cryptoCount) c.cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
+                }
+            }
+            initialAckOnly = false
+            var count = first
+            while (count < out.capacity) {
+                val budget = if (k.amplification.validated) Long.MAX_VALUE else k.amplification.budget()
+                if (budget < 1200) break
+                val limit = minOf(out.segmentSize.toLong(), k.mtu.toLong(), budget).toInt()
+                val buf = out.buffer(count)
+                val hs = !c.spaceDiscarded[SpaceId.Handshake.ordinal] && c.cryptoStreams.send[2].hasRetransmit
+                val init = !c.spaceDiscarded[SpaceId.Initial.ordinal] && c.cryptoStreams.send[0].hasRetransmit
+                if (!hs && !init) break
+                var pos = 0
+                if (init) pos += buildPacket(buf, 0, limit, SpaceId.Initial, now, padToEnd = !hs, target = k, padIfNoRoomAfter = hs)
+                if (pnExhausted) return count - first
+                if (hs) pos += buildPacket(buf, pos, limit, SpaceId.Handshake, now, padToEnd = true, target = k)
+                if (pnExhausted) return count - first
+                if (pos == 0) break
+                out.setLength(count, pos)
+                out.setAddress(count, k.remote)
+                out.setPath(count, k.socket)
+                out.setEcn(count, io.kuicksilver.quic.Ecn.NotEct)
+                count++
+                c.bytesSent += pos
+                k.amplification.onSent(pos)
+                c.handshakeMirrorSent = true
+            }
+            return count - first
+        } finally {
+            for (i in levels.indices) c.cryptoStreams.send[levels[i]].restoreRetransmit(saved[i])
         }
-        initialAckOnly = false
-        var count = first
-        while (count < out.capacity) {
-            val budget = if (k.amplification.validated) Long.MAX_VALUE else k.amplification.budget()
-            if (budget < 1200) break
-            val limit = minOf(out.segmentSize.toLong(), k.mtu.toLong(), budget).toInt()
-            val buf = out.buffer(count)
-            val hs = !c.spaceDiscarded[SpaceId.Handshake.ordinal] && c.cryptoStreams.send[2].hasPending
-            val init = !c.spaceDiscarded[SpaceId.Initial.ordinal] && c.cryptoStreams.send[0].hasPending
-            if (!hs && !init) break
-            var pos = 0
-            if (init) pos += buildPacket(buf, 0, limit, SpaceId.Initial, now, padToEnd = !hs, target = k, padIfNoRoomAfter = hs)
-            if (pnExhausted) return count - first
-            if (hs) pos += buildPacket(buf, pos, limit, SpaceId.Handshake, now, padToEnd = true, target = k)
-            if (pnExhausted) return count - first
-            if (pos == 0) break
-            out.setLength(count, pos)
-            out.setAddress(count, k.remote)
-            out.setPath(count, k.socket)
-            out.setEcn(count, io.kuicksilver.quic.Ecn.NotEct)
-            count++
-            c.bytesSent += pos
-            k.amplification.onSent(pos)
-            c.handshakeMirrorSent = true
-        }
-        return count - first
     }
 
     /** Set when a packet number space has no number left to send (RFC 9000 section 12.3). */

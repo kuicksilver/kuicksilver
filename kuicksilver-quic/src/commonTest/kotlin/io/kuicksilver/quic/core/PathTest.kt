@@ -2276,7 +2276,12 @@ class PathTest {
             assertEquals(newAddr, s.remoteAddressForTest)
             r.run(s.validationTimeout(), atLeast = s.validationTimeout())
             assertEquals(newAddr, s.remoteAddressForTest)
-            assertTrue(s.paths.active.amplification.validated, "S is validated without the lost challenge: ${s.paths.all}")
+            assertEquals(PathState.Validated, s.paths.active.state, "S is validated without the lost challenge: ${s.paths.all}")
+            assertNull(s.handshakeCandidate)
+            assertTrue(
+                p.events[s]!!.any { it is ConnectionEvent.PathValidated && it.path == PathId.Initial },
+                "a PATH_RESPONSE (or the settled handshake validation) validated the connection's path: ${p.events[s]}",
+            )
         } finally {
             p.close()
         }
@@ -2368,14 +2373,15 @@ class PathTest {
      * padding with a chosen packet number, under the Null cipher), delivered by hand from any address. The client itself completed its
      * side and answers what it is handed.
      */
-    private inner class HeldHandshake {
+    private inner class HeldHandshake(
+        val newAddr: InetSocketAddress = InetSocketAddress("10.0.0.1", 40002),
+    ) {
         val p = EndpointPair()
         val c: ConnectionCore
         val s: ConnectionCore
         private val d: ByteArray
         private val bounds: IntArray
         val attacker = InetSocketAddress("10.9.9.9", 4444)
-        val newAddr = InetSocketAddress("10.0.0.1", 40002)
         val received = HashMap<InetSocketAddress, Long>()
         val sent = HashMap<InetSocketAddress, Long>()
 
@@ -2731,5 +2737,172 @@ class PathTest {
         } finally {
             p.close()
         }
+    }
+
+    /** Hands the challenges in [sent] to [targets] to the client and returns its answers (see [HeldHandshake.clientAnswers]). */
+    private fun HeldHandshake.answer(
+        sent: List<Pair<InetSocketAddress, ByteArray>>,
+        vararg targets: InetSocketAddress,
+    ): List<ByteArray> = clientAnswers(sent.filter { it.first in targets && isProbe(it.second) }.map { it.second })
+
+    /**
+     * RFC 9000 section 9.4: a handshake-time change of the active path to another IP starts its congestion controller, RTT estimate and
+     * MTU over (a move, and the candidate's adoption back across IPs); a port-only change keeps them, as for a NAT rebinding.
+     */
+    @Test fun handshakeTimeAddressChangeAcrossIpsStartsCongestionRttAndMtuOver() {
+        for (otherIp in listOf(true, false)) {
+            val h = HeldHandshake(if (otherIp) InetSocketAddress("10.0.0.9", 40002) else InetSocketAddress("10.0.0.1", 40002))
+            try {
+                h.deliver(h.forged(5), h.p.clientAddr)
+                val a = h.s.paths.active
+                h.s.setMtu(a, 1452)
+                val cc = a.cc
+                val rtt = a.rtt
+                val sent = h.deliver(h.forged(10, padTo = 1200), h.newAddr)
+                assertEquals(h.newAddr, h.s.remoteAddressForTest)
+                if (otherIp) {
+                    assertNotSame(cc, a.cc, "a fresh congestion controller on the new IP")
+                    assertNotSame(rtt, a.rtt, "a fresh RTT estimate on the new IP")
+                    assertSame(a.rtt, h.s.loss.rtt, "loss recovery uses it")
+                    assertEquals(h.s.config.newPathInitialRtt, a.rtt.smoothed)
+                    assertEquals(1200, a.mtu)
+                } else {
+                    assertSame(cc, a.cc, "a port-only change keeps the controller")
+                    assertSame(rtt, a.rtt)
+                    assertEquals(1452, a.mtu)
+                }
+                // the client answers the candidate C's challenge: the path is adopted back there, across IPs again or not
+                val ccAtNew = a.cc
+                h.setMtuOfActive(1452)
+                for (b in h.answer(sent, h.p.clientAddr)) h.deliver(b, h.p.clientAddr)
+                h.deliver(h.finished(), h.p.clientAddr)
+                val initial = assertNotNull(h.s.paths.byId(PathId.Initial))
+                assertTrue(initial.isRemote(h.p.clientAddr), "adopted: ${h.s.paths.all}")
+                if (otherIp) {
+                    assertNotSame(ccAtNew, initial.cc, "the adoption across IPs starts the controller over")
+                    assertEquals(1200, initial.mtu)
+                } else {
+                    assertSame(ccAtNew, initial.cc, "a port-only adoption keeps it")
+                    assertEquals(1452, initial.mtu)
+                }
+            } finally {
+                h.close()
+            }
+        }
+    }
+
+    private fun HeldHandshake.setMtuOfActive(mtu: Int) = s.setMtu(s.paths.active, mtu)
+
+    /**
+     * The candidate's and the active address's challenges are answered in one packet: the decision waits for the packet's end and
+     * the active address keeps the path; the candidate is dropped without ever being adopted.
+     */
+    @Test fun bothAnswersInOnePacketKeepTheActiveAddress() {
+        val h = HeldHandshake()
+        try {
+            h.deliver(h.forged(5), h.p.clientAddr)
+            val sent = h.deliver(h.forged(10, padTo = 1200), h.newAddr)
+            // the candidate's challenge reaches the client first, so its PATH_RESPONSE comes first in the client's packet
+            val probes =
+                sent.filter { it.first == h.p.clientAddr && isProbe(it.second) } +
+                    sent.filter { it.first == h.newAddr && isProbe(it.second) }
+            val answer = h.clientAnswers(probes.map { it.second })
+            assertEquals(1, answer.size, "both PATH_RESPONSEs in one datagram")
+            for (b in answer) h.deliver(b, h.newAddr)
+            h.deliver(h.finished(), h.newAddr)
+            val initial = assertNotNull(h.s.paths.byId(PathId.Initial))
+            assertTrue(initial.isRemote(h.newAddr), "the active address keeps the path: ${h.s.paths.all}")
+            assertEquals(PathState.Validated, initial.state)
+            assertNull(h.s.handshakeCandidate)
+            assertEquals(1, h.s.paths.all.size, "${h.s.paths.all}")
+        } finally {
+            h.close()
+        }
+    }
+
+    /**
+     * Review of the mirrored flight: one forged Initial from a third address, before the client read anything of ours, makes the
+     * server retransmit the flight there at its PTO, within that address's budget, and adds nothing on the client's own address: the
+     * PTO sends no more there than without the forged Initial, and nothing queued again for the mirror is resent there afterwards as
+     * fresh data (spending that unvalidated address's own 3x budget).
+     */
+    @Test fun negative_forgedInitialChangesNothingSentToTheClientsAddress() {
+        val x = InetSocketAddress("10.0.0.66", 6666)
+
+        /** Datagrams to the client's address at the server's first three PTOs and right after each, and bytes to [x]. */
+        fun run(forge: Boolean): Triple<Int, Int, Long> {
+            val p = EndpointPair()
+            try {
+                val c = p.connect()
+                p.batch.clear()
+                assertEquals(1, c.poll(p.batch, p.now))
+                val first = p.batch.buffer(0).toByteArray(p.batch.length(0))
+                val s = assertNotNull(p.feed(p.server, first, p.clientAddr))
+                var toX = 0L
+
+                fun serverSends(): Int {
+                    var toClient = 0
+                    while (true) {
+                        p.batch.clear()
+                        val n = s.poll(p.batch, p.now)
+                        if (n == 0) break
+                        for (i in 0 until n) {
+                            if (p.batch.address(i) == p.clientAddr) {
+                                toClient++
+                            } else if (p.batch.address(i) == x) {
+                                toX += p.batch.length(i)
+                            }
+                        }
+                    }
+                    return toClient
+                }
+                serverSends() // the server's first flight is lost
+                if (forge) {
+                    // the client's first Initial with a fresh packet number, from a third address (Null crypto: the header is plaintext
+                    // and the 8-byte tag at the end of the packet is the packet number)
+                    val forged =
+                        first.copyOf().also { f ->
+                            val off = 1 + 4 + 1 + (f[5].toInt() and 0xff)
+                            val pnOff = off + 1 + (f[off].toInt() and 0xff) + 1 + 2
+                            val pnLen = (f[0].toInt() and 0x03) + 1
+                            val length = ((f[pnOff - 2].toInt() and 0x3f) shl 8) or (f[pnOff - 1].toInt() and 0xff)
+                            f[pnOff + pnLen - 1] = 0x33
+                            var pn = 0L
+                            for (i in 0 until pnLen) pn = (pn shl 8) or (f[pnOff + i].toLong() and 0xff)
+                            val end = pnOff + length
+                            for (i in 0 until 8) f[end - 8 + i] = ((pn ushr (8 * (7 - i))) and 0xff).toByte()
+                        }
+                    p.feedNoAdmit(p.server, forged, x)
+                    assertNotNull(s.handshakeCandidate, "the forged address is mirrored")
+                    serverSends()
+                }
+                // copies of the client's first datagram from its own address: duplicates, but counted toward that address's budget, so
+                // the budget does not hide what would go there
+                repeat(4) { p.feedNoAdmit(p.server, first, p.clientAddr) }
+                var atPto = 0
+                var after = 0
+                repeat(3) {
+                    // three PTOs of the handshake flight: the mirror runs out of budget on the way
+                    p.now = s.nextTimeoutOrNever()
+                    s.onTimeout(p.now)
+                    atPto += serverSends()
+                    after += serverSends()
+                }
+                if (forge) {
+                    assertTrue(s.handshakeMirrorSent, "the flight was retransmitted to the forged address")
+                    assertTrue(toX in 1L..3L * first.size, "$toX bytes to the forged address")
+                }
+                assertEquals(0, after, "nothing more goes to the client's address after a PTO's probe (forged=$forge)")
+                return Triple(atPto, after, toX)
+            } finally {
+                p.close()
+            }
+        }
+        val baseline = run(forge = false)
+        val withForged = run(forge = true)
+        // the forged Initial's own ACK already went to the client's address (its budget allows one probe datagram less there); the
+        // mirror adds nothing to what the PTO sends there
+        assertTrue(withForged.first <= baseline.first, "datagrams to the client's address at the PTO: $withForged, baseline $baseline")
+        assertEquals(0L, baseline.third)
     }
 }

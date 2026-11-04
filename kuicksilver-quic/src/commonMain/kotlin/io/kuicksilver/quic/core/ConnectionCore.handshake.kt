@@ -210,7 +210,10 @@ internal fun ConnectionCore.confirmHandshake() {
         // client's Handshake packet carries its Finished too (RFC 9000 section 9.3.3); its HandshakeFallback decides, and while a
         // handshake-time candidate is open the two addresses' own validations do (dropHandshakeCandidate settles what is left)
         if (handshakeCandidate != null) {
-            if (it.state == PathState.Validating) it.handshakeValidated = true
+            // an address a move took the path to and nothing validated yet is the fallback's to decide (revert), not settled
+            if (it.state == PathState.Validating && (it.amplification.validated || handshakeFallback?.path !== it)) {
+                it.handshakeValidated = true
+            }
         } else if (handshakeFallback?.path !== it &&
             it.state != PathState.Validated &&
             !(it.state == PathState.Validating && it.handshakeValidated)

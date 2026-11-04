@@ -183,7 +183,8 @@ internal class Path(
     /**
      * Exchanges the peer address with [other], together with everything bound to that address rather than to the path: its
      * anti-amplification accounting (RFC 9000 section 8.1 counts per address), its validation (state, challenges sent and their
-     * schedule, section 8.2) and when it was validated. Congestion state, RTT, MTU, ECN and connection IDs stay with the path. Used
+     * schedule and pace, section 8.2) and when it was validated. Congestion state, RTT, MTU, DPLPMTUD, ECN and connection IDs stay
+     * with the path; the caller starts them over when the active path's IP changes (`ConnectionCore.resetForNewIp`, section 9.4). Used
      * by a handshake-time rebind between the active path and the candidate: each address keeps its own validation.
      */
     fun swapAddressWith(other: Path) {
@@ -230,6 +231,12 @@ internal class Path(
         val retries = challengeRetries
         challengeRetries = other.challengeRetries
         other.challengeRetries = retries
+        val lastAt = lastChallengeAt
+        lastChallengeAt = other.lastChallengeAt
+        other.lastChallengeAt = lastAt
+        val revalidate = revalidateAt
+        revalidateAt = other.revalidateAt
+        other.revalidateAt = revalidate
     }
 
     override fun toString(): String = "Path(${id.value}, $remote, $state)"
