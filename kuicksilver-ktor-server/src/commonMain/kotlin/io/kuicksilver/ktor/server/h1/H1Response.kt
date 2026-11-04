@@ -40,7 +40,8 @@ internal class H1Response(
     private val engineDispatcher: CoroutineContext,
     private val userDispatcher: CoroutineContext,
     private val upgraded: CompletableDeferred<Boolean>?,
-    private val altSvc: String?,
+    /** The engine's `Alt-Svc` value, read as the head goes out (the HTTP/3 switch may change between responses); null for none. */
+    private val altSvc: () -> String?,
     /** True once the connection ends after this response (the server is stopping): it then says `Connection: close`. */
     private val closing: () -> Boolean = { false },
     /**
@@ -169,8 +170,9 @@ internal class H1Response(
 
     private suspend fun sendResponseMessage(contentReady: Boolean) {
         if (call.request.local.method.value == "CONNECT" && statusCode.value in 200..299) refuseTunnel()
-        // HTTP/3 on the same port is announced on every response that does not carry its own Alt-Svc (RFC 7838)
-        if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
+        // HTTP/3 on the same port is announced (or withdrawn with `clear`, RFC 7838 section 3) on every response that does not
+        // carry its own Alt-Svc (RFC 7838)
+        if (headersBuilder["Alt-Svc"] == null && statusCode.value != 421) altSvc()?.let { headersBuilder.append("Alt-Svc", it) }
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
         if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) announceClose()
         // a request that ends the connection: the server SHOULD send "close" in its final response (RFC 9112 section 9.6);

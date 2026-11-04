@@ -14,6 +14,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor server: HTTP/3 can be stopped from advertising, or drained, at run time without a restart (experimental
+  `KuicksilverApplicationEngine.http3Advertising` and `Http3Advertising`; `docs/guide/ktor.md`, "Turning HTTP/3 off
+  remotely"). `On` (the default) advertises `Alt-Svc: h3=":<port>"; ma=86400` as before; `Clear` sends `Alt-Svc: clear`
+  (RFC 7838 section 3) on HTTP/1.1 responses while HTTP/3 keeps serving; `Drain` also sends GOAWAY to every live HTTP/3
+  connection (RFC 9114 section 5.2: requests in flight complete) and refuses new QUIC connections at their first Initial
+  with CONNECTION_REFUSED, keeping the UDP socket bound. Each HTTP/1.1 response and each new client Initial reads the
+  current value, so a keep-alive connection follows a change at its next response. With `altSvc = false` no `Alt-Svc` is
+  sent in any mode; an application's own `Alt-Svc` is never replaced. HTTP/1.1 responses read the engine's `Alt-Svc`
+  per response now instead of once per connection.
 - TLS: certificate rotation without a restart (experimental `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`;
   `docs/guide/tls.md`, "Rotating the server certificate"). `reload(next)` makes `next` the identity of every handshake
   that starts afterwards, over TCP and QUIC; each handshake takes chain and key from one snapshot, and running

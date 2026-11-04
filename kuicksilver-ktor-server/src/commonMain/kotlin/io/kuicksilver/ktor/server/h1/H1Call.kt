@@ -20,7 +20,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlin.coroutines.CoroutineContext
 
-/** One HTTP/1.1 exchange on a (TLS) TCP connection; [altSvc] is added to responses that do not set their own. */
+/** One HTTP/1.1 exchange on a (TLS) TCP connection; [altSvc]'s value as the head goes out is added to responses that do not set their own. */
 internal class H1Call(
     application: Application,
     _request: Request,
@@ -34,7 +34,7 @@ internal class H1Call(
     override val coroutineContext: CoroutineContext,
     scheme: String,
     peerCertificates: List<Certificate>,
-    altSvc: String?,
+    altSvc: () -> String?,
     closing: () -> Boolean = { false },
     endsConnection: CompletableDeferred<Boolean>? = null,
     fields: Headers = CIOHeaders(_request.headers),

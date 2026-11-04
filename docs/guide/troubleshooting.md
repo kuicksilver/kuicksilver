@@ -423,7 +423,9 @@ The server logs why:
 - A fixed port whose UDP side is taken fails the start instead.
 
 Without HTTP/3 the server sends no `Alt-Svc`. Also check `http3 = true`, that a firewall passes UDP to the port, and
-that `altSvc` is on so clients learn about HTTP/3.
+that `altSvc` is on so clients learn about HTTP/3. `Alt-Svc: clear` instead of `h3=…`, or new QUIC clients refused with
+CONNECTION_REFUSED (0x2) while HTTP/1.1 answers, mean `engine.http3Advertising` is `Clear` or `Drain`
+([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)).
 
 ## Key logging is refused
 

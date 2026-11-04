@@ -265,7 +265,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     sock = client
                                     peer = emptyList()
                                 }
-                                val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else null
+                                val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else NO_ALT_SVC
                                 events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
                                 val connection =
                                     H1Connection(
@@ -309,15 +309,28 @@ internal fun KuicksilverApplicationEngine.startTcp(
     }
 }
 
-/** HTTP/3 is announced only where it is served (turned on together with the UDP listener). */
-private fun KuicksilverApplicationEngine.http3AltSvc(port: Int): String? = if (port in h3Ports) "h3=\":$port\"; ma=86400" else null
+/**
+ * HTTP/3 is announced only where it is served (turned on together with the UDP listener), and as [http3Advertising] says at
+ * the moment each response head goes out: `h3` under [Http3Advertising.On], `clear` (RFC 7838 section 3) otherwise.
+ */
+private fun KuicksilverApplicationEngine.http3AltSvc(port: Int): () -> String? {
+    if (port !in h3Ports) return NO_ALT_SVC
+    val h3 = "h3=\":$port\"; ma=86400"
+    return { if (advertising == Http3Advertising.On) h3 else ALT_SVC_CLEAR }
+}
+
+/** No `Alt-Svc` from the engine: plain HTTP, `altSvc = false`, or a port without HTTP/3. */
+private val NO_ALT_SVC: () -> String? = { null }
+
+/** RFC 7838 section 3: every alternative cached for the origin is invalidated. */
+private const val ALT_SVC_CLEAR = "clear"
 
 private suspend fun KuicksilverApplicationEngine.handleRequest(
     scope: H1RequestScope,
     request: Request,
     scheme: String,
     peer: List<Certificate>,
-    altSvc: String?,
+    altSvc: () -> String?,
 ) {
     with(scope) {
         withContext(userDispatcher) requestContext@{

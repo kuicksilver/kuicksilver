@@ -98,6 +98,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9114 | §7.2.4, §6.2.1 — SETTINGS | ✅ | 0.2.0 | SETTINGS must come first on the control stream and only once. | [details](rfc/9114.md#s7-2-4-settings) |
 | RFC 9114 | §3.1 — engine client | ✅ | 0.2.0 | The Ktor client uses h3 by prior knowledge with one connection per origin and an HTTP/1.1 fallback. | [details](rfc/9114.md#s3-1-engine-client) |
 | RFC 9114 | §5.2 — engine server | ✅ | 0.2.0 | The Ktor server's stop sends a two-phase GOAWAY to all HTTP/3 connections at once. | [details](rfc/9114.md#s5-2-engine-server) |
+| RFC 9114 | §5.2; RFC 9000 §10.2.3 — engine drain without a stop | ✅ | 0.3.0 | The Ktor server's `Drain` switch sends GOAWAY to every live HTTP/3 connection and refuses new QUIC connections with CONNECTION_REFUSED while it keeps running. | [details](rfc/9114.md#s5-2-engine-drain) |
 | RFC 9114 | §3.1–3.2 — ALPN `h3` | ✅ | 0.2.0 | Endpoints negotiate ALPN `h3` only and close connections with another protocol. | [details](rfc/9114.md#s3-1-alpn-h3) |
 | RFC 9114 | §4.1, §4.1.2 — request/response | ✅ | 0.2.1 | Requests and responses run on bidirectional streams with DATA frames, trailers and interim responses. | [details](rfc/9114.md#s4-1-request-response) |
 | RFC 9114 | §4.2.2; RFC 9204 §7.4 — field section size | ✅ | 0.2.0 | Field sections above 64 KiB decoded size are refused on both sides. | [details](rfc/9114.md#s4-2-2-field-section-size) |
@@ -136,6 +137,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 8470 | §4; RFC 7838 §2.4; RFC 8305 §5 — client 0-RTT, race and fallback | ✅ | 0.2.0 | A 0-RTT connection wins the h3/h1 race before its handshake only where QUIC was confirmed. | [details](rfc/8470.md#s4-client-0-rtt-race-and-fallback) |
 | RFC 7838 | §3, §3.1 (Alt-Svc on HTTP/3 responses, quoted-string, `ma`) — Alt-Svc on HTTP/3 responses | ✅ | 0.2.1 | The client processes Alt-Svc on every verified response, HTTP/3 ones included. | [details](rfc/7838.md#s3-alt-svc-on-http-3-responses) |
 | RFC 7838 | §2.2 — network change | ✅ | 0.2.1 | A network change drops every alternative without `persist`. | [details](rfc/7838.md#s2-2-network-change) |
+| RFC 7838 | §3 — server `clear` at run time | ✅ | 0.3.0 | The Ktor server can switch at run time from advertising h3 to `Alt-Svc: clear`, read for each HTTP/1.1 response. | [details](rfc/7838.md#s3-server-clear) |
 | RFC 8305 | §4–§6 (TCP) — TCP address race | 🔶 | 0.3.0 | The TCP connection race interleaves address families with a 250 ms attempt delay. | [details](rfc/8305.md#s4-tcp-address-race) |
 | RFC 8305 | Happy Eyeballs | 🔶 | 0.2.1 | The h3/h1 race is a feature subset of Happy Eyeballs; the TCP race is its own row. | [details](rfc/8305.md#happy-eyeballs) |
 | RFC 9460 | HTTPS RR as a source of h3 | ⬜ | 0.3.0 | HTTPS resource records as a source of h3 are planned for 0.3.0, off by default. | [details](rfc/9460.md#https-rr-as-a-source-of) |

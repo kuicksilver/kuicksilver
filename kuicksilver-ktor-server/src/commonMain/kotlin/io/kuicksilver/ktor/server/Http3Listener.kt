@@ -13,9 +13,12 @@ import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.ktor.server.h3.H3Call
 import io.kuicksilver.ktor.server.h3.WebSocketOverH3
+import io.kuicksilver.quic.AdmissionDecision
+import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.Certificate
@@ -107,11 +110,19 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
                     }.build()
             connectionIdLength = quic.connectionIdLength
             loops = configuration.udpSocketCount
-            configuration.quicAdmission?.let { admission = it }
+            // the HTTP/3 switch first: under Drain every new client is refused statelessly (RFC 9000 section 10.2.3), whatever the policy
+            val policy = configuration.quicAdmission ?: admission
+            admission =
+                ConnectionAdmission { attempt ->
+                    if (advertising == Http3Advertising.Drain) REFUSED else policy.admit(attempt)
+                }
             configuration.logger?.let { logger = it }
             listener = configuration.connectionListener
         }.build()
 }
+
+/** The admission answer to every new client while [Http3Advertising.Drain] is set. */
+private val REFUSED = AdmissionDecision.Close(TransportError.CONNECTION_REFUSED)
 
 /** Serves HTTP/3 on [endpoint], already bound on [port] next to the TCP socket of [tls]. */
 internal suspend fun KuicksilverApplicationEngine.startHttp3(
@@ -143,8 +154,9 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                         }
                     afterH3AcceptForTest?.invoke()
                     listener.add(conn)
-                    // after add(): a stop that began meanwhile either saw this connection in live() or is seen here (RFC 9114 5.2)
-                    if (listener.stopping) launch { runCatching { conn.goAway() } }
+                    // after add(): a stop or a switch to Drain that began meanwhile either saw this connection in live() or is seen
+                    // here (RFC 9114 5.2)
+                    if (listener.stopping || advertising == Http3Advertising.Drain) launch { runCatching { conn.goAway() } }
                     // the peer's address now (a NAT rebinding right after the handshake moves it to another path)
                     val remote = (conn.quic.activePath ?: conn.quic.paths.firstOrNull())?.remoteAddress
                     events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_3_0, remote) }
