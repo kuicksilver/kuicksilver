@@ -119,36 +119,48 @@ class ReloadIdentityQuicTest {
             .ticket
     }
 
-    /**
-     * Sans-IO endpoints on virtual time: a ticket issued under identity A still carries 0-RTT that the server accepts after the
-     * reload to B (tickets are not bound to the certificate), and a replay of that first flight is still refused, so the
-     * reload did not reset the process-wide replay register (RFC 9846 section 8).
-     */
-    @Test fun earlyDataStillAcceptedAfterReload() {
-        val r = TlsIdentity.reloadable(identityA())
-        val p = pairServing(r)
-        val t = ticket(p)
-        r.reload(identityB())
-        val flight = ArrayList<ByteArray>()
+    private fun earlyFlight(
+        p: EndpointPair,
+        t: QuicSessionTicket,
+        flight: MutableList<ByteArray>? = null,
+    ): ConnectionCore {
         p.filterToServer = { _, b ->
-            flight += b
+            flight?.add(b)
             true
         }
         val c = p.client.connect(earlyCfg, p.serverAddr, p.now, t)
         val id = c.openStream(bidi = true)
-        val req = "GET /after-reload".encodeToByteArray()
+        val req = "GET /early".encodeToByteArray()
         assertEquals(req.size, c.writeStream(id, req, 0, req.size, fin = true))
         var server: ConnectionCore? = null
         p.onServerCreated = { server = it }
         p.step()
-        assertEquals(true, server!!.earlyDataAccepted, "0-RTT of a ticket issued before the reload is accepted")
-        assertTrue(server!!.streamReceivedEarly(id))
-        // the same first flight from an attacker on the path, to a second endpoint of this process with the same identity
+        p.filterToServer = { _, _ -> true }
+        assertTrue(p.confirmed(c))
+        return server!!
+    }
+
+    /**
+     * Sans-IO endpoints on virtual time: a ticket is bound to the leaf it was issued under, so after a reload its 0-RTT is refused
+     * and the connection runs a full handshake with the new identity (RFC 9846 section 4.7.1); a ticket issued after the reload
+     * carries 0-RTT again, and a replay of that flight to a second endpoint is still refused (the reload did not touch the
+     * process-wide replay register, RFC 9846 section 8).
+     */
+    @Test fun negative_earlyDataOfTicketFromBeforeReloadRefused() {
+        val r = TlsIdentity.reloadable(identityA())
+        val p = pairServing(r)
+        val before = ticket(p)
+        r.reload(identityB())
+        val refused = earlyFlight(p, before)
+        assertEquals(false, refused.earlyDataAccepted, "0-RTT of a ticket issued under the old leaf is refused")
+        val after = ticket(p)
+        val flight = ArrayList<ByteArray>()
+        val accepted = earlyFlight(p, after, flight)
+        assertEquals(true, accepted.earlyDataAccepted, "control: a ticket issued under the new leaf carries 0-RTT")
         val q = pairServing(r)
         var replayed: ConnectionCore? = null
         for (b in flight) q.feed(q.server, b, q.clientAddr)?.let { if (replayed == null) replayed = it }
         assertEquals(false, replayed!!.earlyDataAccepted, "the replay register survives the reload")
-        // a full handshake now presents the new identity
         val fresh = p.client.connect(QuicClientConfig.Builder(CoreFixtures.client()).build(), p.serverAddr, p.now)
         assertTrue(p.confirmed(fresh))
         assertEquals(leafB, fresh.peerCertificates[0])

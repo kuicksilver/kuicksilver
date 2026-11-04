@@ -23,6 +23,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -109,7 +110,7 @@ class ReloadableIdentityTest {
             r.close()
         }
 
-    @Test fun negative_reloadRejectsMismatchedPairKeepsOld(): Unit =
+    @Test fun negative_mismatchedPairFailsBeforeReloadClosedIdentityRefused(): Unit =
         runBlocking {
             val a = identityA()
             val r = TlsIdentity.reloadable(a)
@@ -144,7 +145,7 @@ class ReloadableIdentityTest {
 
     /** The expiry check uses the reloadable identity's clock: a leaf that expired by then is refused, on a virtual clock. */
     @Test fun negative_reloadRejectsLeafExpiredOnTheClock() {
-        var now = 0L
+        var now = nowSeconds()
         val r = TlsIdentity.Reloadable(identityA()) { now }
         val b = identityB()
         now = b.chain[0].notAfterEpochSeconds // still valid at notAfter (RFC 5280 section 4.1.2.5)
@@ -156,6 +157,97 @@ class ReloadableIdentityTest {
         b2.close()
         r.close()
     }
+
+    /** The checks read the clock once and name no time: a repeated failure reads the same (a watcher warns once). */
+    @Test fun negative_expiredMessageIsStable() {
+        var now = nowSeconds()
+        val r = TlsIdentity.Reloadable(identityA()) { now }
+        val b = identityB()
+        now = b.chain[0].notAfterEpochSeconds + 1
+        val m1 = assertFailsWith<TlsException.Config> { r.reload(b) }.message
+        now += 1000
+        val m2 = assertFailsWith<TlsException.Config> { r.reload(b) }.message
+        assertEquals(m1, m2)
+        b.close()
+        r.close()
+    }
+
+    /** A certificate staged for later (notBefore ahead of the clock beyond 5 minutes of skew) is never served early. */
+    @Test fun negative_reloadRejectsLeafNotYetValid() {
+        val r = TlsIdentity.reloadable(identityA())
+        val future = TlsIdentity.fromDer(listOf(TestCerts.notYetValid), TestCerts.notYetValidKey.copyOf())
+        val e = assertFailsWith<TlsException.Config> { r.reload(future) }
+        assertTrue("not valid yet" in e.message.orEmpty(), e.message)
+        assertTrue(!future.isClosed)
+        future.close()
+        r.close()
+        var now = nowSeconds()
+        val clocked = TlsIdentity.Reloadable(identityA()) { now }
+        val b = identityB()
+        now = b.chain[0].notBeforeEpochSeconds - 301
+        assertFailsWith<TlsException.Config>("notBefore 301 s ahead") { clocked.reload(b) }
+        now = b.chain[0].notBeforeEpochSeconds - 299
+        clocked.reload(b) // within the 5-minute skew allowance
+        assertSame(b, clocked.current)
+        clocked.close()
+    }
+
+    /** An identity closed by someone else while [TlsIdentity.Reloadable.reload] swaps it in is refused; the old one stays current and open. */
+    @Test fun negative_identityClosedDuringReloadNeverBecomesCurrent() {
+        val a = identityA()
+        val r = TlsIdentity.reloadable(a)
+        val b = identityB()
+        r.afterExchangeForTest = { b.close() }
+        assertFailsWith<TlsException.Config> { r.reload(b) }
+        r.afterExchangeForTest = null
+        assertSame(a, r.current)
+        assertTrue(!a.isClosed)
+        r.close()
+    }
+
+    /** The retry of `withCurrentKey`: a snapshot replaced and closed between its load and its use is retried with the new one. */
+    @Test fun snapshotReplacedBeforeUseIsRetried() {
+        val r = TlsIdentity.reloadable(identityA())
+        val b = identityB()
+        var loads = 0
+        r.beforeAcquireForTest = { cur -> if (loads++ == 0) r.reload(b) } // closes `cur` (A) before it is used
+        val used = r.withCurrentKey { cur, _ -> cur }
+        r.beforeAcquireForTest = null
+        assertSame(b, used, "the retry took the identity that replaced the closed snapshot")
+        assertEquals(2, loads)
+        r.close()
+    }
+
+    /**
+     * A client's ticket remembers the client identity it was authenticated with: one that reached the cache key of another
+     * identity (a reload between computing the key and building the context) is not resumed under it.
+     */
+    @Test fun negative_clientTicketOfAnotherClientIdentityNotResumed(): Unit =
+        runBlocking {
+            val x = TlsIdentity.reloadable(TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf()))
+            val server =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("x1")
+                    identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                    clientAuth = ClientAuth.Required
+                    trust = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
+                }
+            val client = TcpFixtures.client { identity = x }
+            val cache = SessionCache()
+            val keyX = SessionCache.key(client.serverName, "server.test", client.trust, x)
+            val (c1, s1) = connect(client, server, clientCache = cache).let { (c, s) -> withTimeout(20.seconds) { c.await() to s.await() } }
+            exchange(c1, s1)
+            closeAll(c1, s1)
+            val entry = assertNotNull(cache.take(keyX), "ticket cached under the client identity X")
+            x.reload(TlsIdentity.fromDer(listOf(TestCerts.clientNoEku), TestCerts.clientNoEkuKey.copyOf()))
+            // as if the key was computed after the reload
+            cache.put(SessionCache.key(client.serverName, "server.test", client.trust, x), entry)
+            val (c2, s2) = connect(client, server, clientCache = cache).let { (c, s) -> withTimeout(20.seconds) { c.await() to s.await() } }
+            assertTrue(!c2.sessionReused, "a session authenticated as X is not resumed with the identity Y")
+            assertEquals(Certificate(TestCerts.clientNoEku), s2.peerCertificates[0], "the server sees the new client certificate")
+            closeAll(c2, s2)
+            x.close()
+        }
 
     @Test fun reloadOfCurrentDoesNothing() {
         val a = identityA()
@@ -180,8 +272,9 @@ class ReloadableIdentityTest {
 
     /**
      * 200 handshakes race 200 reloads between A and B: each handshake presents one whole identity. A chain from one and a key
-     * from the other would fail the client's CertificateVerify check (RFC 9846 section 4.5.2), so every handshake succeeding
-     * with a leaf of A or B shows no pair was torn.
+     * from the other is refused when the context is built (`SSL_CTX_check_private_key` in `ksl_ctx_set_identity_key`), which
+     * fails that handshake, so every handshake succeeding with a leaf of A or B shows no pair was torn (RFC 9846 section 4.5.2:
+     * CertificateVerify is signed with the key of the Certificate's leaf).
      */
     @Test fun reloadDuringHandshakesNeverTearsThePair(): Unit =
         runBlocking(Dispatchers.Default) {
@@ -198,24 +291,34 @@ class ReloadableIdentityTest {
             r.close()
         }
 
-    /** Tickets are not bound to the certificate: one issued before a reload resumes after it (RFC 9846 section 4.7.1). */
-    @Test fun sessionTicketIssuedBeforeReloadResumes(): Unit =
+    /**
+     * A ticket is bound to the leaf certificate it was issued under (RFC 9846 section 4.7.1: resumption keying material is limited
+     * by the certificate's lifetime): after a reload it resumes nothing, the client runs a full handshake and sees the new leaf,
+     * and the ticket of that handshake resumes under the new identity.
+     */
+    @Test fun negative_ticketIssuedBeforeReloadIsNotResumed(): Unit =
         runBlocking {
             val r = TlsIdentity.reloadable(identityA())
             val cache = SessionCache()
-            val (c1, s1) = open(r, cache)
-            exchange(c1, s1) // the server's tickets travel before its data, so they are cached once the data arrived
             val client = TcpFixtures.client()
-            assertTrue(cache.peek(SessionCache.key(client.serverName, "server.test", client.trust, null)), "ticket cached")
+            val key = SessionCache.key(client.serverName, "server.test", client.trust, null)
+            val (c0, s0) = open(r, cache)
+            exchange(c0, s0) // the server's tickets travel before its data, so they are cached once the data arrived
+            closeAll(c0, s0)
+            val (c1, s1) = open(r, cache)
+            assertTrue(c1.sessionReused && s1.sessionReused, "control: before the reload the ticket resumes")
+            exchange(c1, s1)
             closeAll(c1, s1)
+            assertTrue(cache.peek(key), "a renewed ticket cached")
             r.reload(identityB())
             val (c2, s2) = open(r, cache)
-            assertTrue(c2.sessionReused && s2.sessionReused, "the ticket from before the reload resumed")
-            assertEquals(leafA, c2.peerCertificates[0], "a resumed session keeps the identity it was established with")
+            assertTrue(!c2.sessionReused && !s2.sessionReused, "a ticket from before the reload is not resumed")
+            assertEquals(leafB, c2.peerCertificates[0], "the full handshake presents the new identity")
             exchange(c2, s2)
             closeAll(c2, s2)
-            val (c3, s3) = open(r)
-            assertEquals(leafB, c3.peerCertificates[0], "a full handshake presents the new identity")
+            val (c3, s3) = open(r, cache)
+            assertTrue(c3.sessionReused && s3.sessionReused, "the ticket issued under the new identity resumes")
+            assertEquals(leafB, c3.peerCertificates[0])
             closeAll(c3, s3)
             r.close()
         }

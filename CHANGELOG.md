@@ -17,9 +17,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS: certificate rotation without a restart (experimental `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`;
   `docs/guide/tls.md`, "Rotating the server certificate"). `reload(next)` makes `next` the identity of every handshake
   that starts afterwards, over TCP and QUIC; each handshake takes chain and key from one snapshot, and running
-  connections keep theirs. A closed identity or an expired leaf is refused and the old identity stays; the replaced one
-  is closed and its native key freed once no connection uses it. Session tickets issued before a reload still resume
-  (and their 0-RTT is still accepted): they do not depend on the certificate.
+  connections keep theirs. A closed identity, an expired leaf and a leaf not valid yet (beyond 5 minutes of clock skew)
+  are refused and the old identity stays; the replaced one is closed and its native key freed once no connection uses it.
+  Tickets are bound to the leaf they were issued under, so a ticket from before a reload is not resumed (a full
+  handshake with the new certificate; its 0-RTT refused).
 - Ktor server: certificate rotation without a restart (`docs/guide/ktor.md`, "Certificate rotation"). A connector's
   identity (or the configuration's `identity`) may be a `TlsIdentity.Reloadable`: HTTP/1.1 and HTTP/3 handshakes after a
   `reload` present the new certificate, open connections keep theirs. `EngineMain` watches its PEM files with the new
@@ -150,7 +151,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Changed
 
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
-  a `when` over it without an `else` branch no longer compiles.
+  a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
+  `NoWhenBranchMatchedException` when it meets a `Reloadable`.
+- TLS: resumption is bounded on every server (RFC 9846 section 4.7.1). A ticket resumes only under the leaf certificate it
+  was issued under, at most 7 days after the full handshake that authenticated the session (renewed tickets keep that
+  time, as BoringSSL's `auth_timeout`) and not past the leaf's notAfter; otherwise the client runs a full handshake.
+  Before, every resumption renewed the ticket with a fresh lifetime, so a client reconnecting within the ticket lifetime
+  resumed without bound, also under a replaced or expired certificate. Tickets issued by earlier versions are not resumed.
 - HTTP/3: stricter towards peers (each also under "Fixed"); a peer that got away with these before now fails a request or
   the connection. An HTTP/3 datagram for a stream beyond the client-initiated bidirectional stream limit closes the
   connection with `H3_ID_ERROR` (RFC 9297 section 2.1, SHOULD); one for a request other than CONNECT whose stream is

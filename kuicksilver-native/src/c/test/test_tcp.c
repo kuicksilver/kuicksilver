@@ -898,4 +898,41 @@ static void test_default_versions_and_tls12_profile(void) {
     END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
+
+/* RFC 9846 section 4.7.1: every resumption renews the ticket, so the chain of renewals is bounded by the full handshake it started from
+   (7 days), by the leaf's notAfter, and by the leaf itself: a ticket issued under another certificate (a reloaded identity) resumes
+   nothing. The ticket clock is moved forward instead of waiting; OpenSSL's own ticket-age checks keep the real clock. */
+static int resumed_with(ksl_ctx *cc, ksl_ctx *sc, ksl_session **sess) {
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); uint8_t reused = 0; size_t n;
+    if (*sess) ksl_ssl_set_session(c, *sess);
+    int ok = tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK;
+    ksl_session *next = client_session_after(c); if (*sess) ksl_session_free(*sess); *sess = next;
+    ksl_ssl_free(c); ksl_ssl_free(s); return ok ? reused : -1;
+}
+static void test_resumption_bounded(void) {
+    SECTION("tcp_resumption_bounded_by_authentication_time_notafter_and_leaf");
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 11 + 5);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"), *reloaded = server_ctx("server-other-key");
+    ksl_ctx *sets[2] = {sc, reloaded}; for (int i = 0; i < 2; i++) { ksl_ctx_set_option(sets[i], KSL_OPT_NUM_TICKETS, 1); ksl_ctx_set_ticket_keys(sets[i], keys, 1); }
+    ksl_session *sess = NULL; const int64_t day = 24 * 3600;
+    ksl_test_ticket_clock_skew = 0;
+    CHECK(resumed_with(cc, sc, &sess) == 0 && sess, "full handshake, ticket received");
+    int chain = 1; for (int d = 2; d <= 6; d += 2) { ksl_test_ticket_clock_skew = d * day; chain &= resumed_with(cc, sc, &sess) == 1; }
+    CHECK(chain, "renewed tickets resume within 7 days of the full handshake");
+    ksl_test_ticket_clock_skew = 7 * day + 60;
+    CHECK(resumed_with(cc, sc, &sess) == 0, "negative: past 7 days from the full handshake a renewed ticket is refused: full handshake");
+    ksl_test_ticket_clock_skew = 8 * day;
+    CHECK(resumed_with(cc, sc, &sess) == 1, "control: the ticket of that new full handshake resumes");
+    /* a ticket under the old leaf meets a reloaded identity (another certificate, same ticket keys) */
+    CHECK(resumed_with(cc, reloaded, &sess) == 0, "negative: a ticket issued under another leaf certificate is not resumed");
+    CHECK(resumed_with(cc, reloaded, &sess) == 1, "control: a ticket of the new identity resumes under it");
+    /* notAfter (2126 for the test certificates): with the 7-day bound out of the way, a ticket past the leaf's notAfter is refused */
+    reloaded->auth_timeout = INT64_MAX / 4; ksl_test_ticket_clock_skew = 8 * day + 1;
+    CHECK(resumed_with(cc, reloaded, &sess) == 1, "control: resumes before notAfter");
+    ksl_test_ticket_clock_skew = (int64_t)101 * 366 * day;
+    CHECK(resumed_with(cc, reloaded, &sess) == 0, "negative: past the leaf's notAfter a ticket is refused");
+    ksl_test_ticket_clock_skew = 0;
+    if (sess) ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); ksl_ctx_free(reloaded); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_resumption_bounded(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }

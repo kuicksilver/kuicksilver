@@ -64,15 +64,21 @@ key; handshakes in progress and established connections keep the identity they s
 freed under them.
 
 - **Bad input never replaces the identity in use.** A key that does not match the leaf already fails in `fromPem` or
-  `fromDer`; `reload` refuses a closed identity and a leaf certificate that has expired (`TlsException.Config`), and the
-  old identity goes on serving.
+  `fromDer`; `reload` refuses a closed identity, a leaf certificate that has expired, and one that is not valid yet
+  (notBefore more than 5 minutes ahead: a certificate staged for later is never served early), all with
+  `TlsException.Config`, and the old identity goes on serving.
 - **Ownership.** The reloadable identity owns what it serves: `reload` closes the identity it replaces, `close()` the
   current one. An identity `reload` refused is still yours to close.
-- **Resumption.** Session tickets do not depend on the certificate, so tickets issued before a reload still resume after
-  it (and their 0-RTT is still accepted; replays are still refused). A resumed connection carries no certificate and keeps
-  the one of the session it resumes (RFC 9846 section 4.7.1), until the ticket's lifetime
-  (`SessionTicketConfig.ticketLifetime`) ends. After a key compromise a reload is not enough: restart with new
-  `SessionTicketConfig.keys` too, so the old sessions cannot be resumed.
+- **Resumption.** Every server binds its session tickets to the leaf certificate they were issued under, so after a
+  reload to another certificate a ticket from before it resumes nothing: the client runs a full handshake and sees the new
+  certificate, and that ticket's 0-RTT is refused. A resumed connection carries no certificate (RFC 9846 section 2.2) and
+  keeps the identity of its session, which is therefore the current one. After a key compromise, a reload stops both new
+  handshakes and resumptions with the old key; connections already established run until they close.
+
+Independently of reloads, resumption is bounded on every server (RFC 9846 section 4.7.1 recommends limiting the total
+lifetime of resumption keying material and taking the certificate's lifetime into account): each resumption renews the
+ticket, but a chain of renewals ends 7 days after the full handshake that authenticated it (BoringSSL's
+`SSL_DEFAULT_SESSION_AUTH_TIMEOUT`) and at the leaf's notAfter; then the client runs a full handshake.
 
 The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](ktor.md#certificate-rotation).
 

@@ -297,6 +297,11 @@ internal class KslQuicTlsSession(
             ticket.close()
             return false
         }
+        // a client identity reloaded since the ticket was issued: that session speaks for the old certificate
+        if (ticket.entry.identityTag != ctx.identityTag) {
+            ticket.close()
+            return false
+        }
         return try {
             Ksl.sslSetSession(s(), ticket.entry.session)
             resumed?.close()
@@ -385,7 +390,10 @@ internal class KslQuicTlsSession(
         val chain = resumed?.entry?.chain ?: presented
         val validated =
             resumed?.entry?.validated ?: if (ctx.verifyMode == KslConst.VERIFY_OPENSSL) validatedChain() else presented
-        Ksl.sslGet1Session(s()).let { pendingTickets += QuicSessionTicket(SessionCache.Entry(it, chain, validated)) }
+        Ksl.sslGet1Session(s()).let {
+            pendingTickets +=
+                QuicSessionTicket(SessionCache.Entry(it, chain, validated, identityTag = ctx.identityTag))
+        }
     }
 
     override fun drive(): DriveResult {

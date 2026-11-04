@@ -95,15 +95,18 @@ public sealed interface TlsIdentity {
      * last context built from it is gone, so replacing an identity never pulls the key out from under a running connection.
      * Do not close [current] yourself. An identity [reload] refused stays the caller's to close.
      *
-     * **Resumption and 0-RTT.** Session tickets are not tied to the certificate (their keys are separate, see
-     * `SessionTicketConfig`), so a ticket issued before a [reload] still resumes after it, and its 0-RTT is still accepted;
-     * the replay register is not reset. A resumed connection presents no certificate: it inherits the identity of the
-     * session it resumes (RFC 9846 section 4.7.1), so a client keeps seeing the old certificate on resumed connections until
-     * its tickets expire (`SessionTicketConfig.ticketLifetime`, at most 7 days) or its cached chain stops verifying. After a
-     * key compromise, reloading is not enough to end those sessions: restart with new `SessionTicketConfig.keys` as well.
+     * **Resumption and 0-RTT.** Every server binds its session tickets to the leaf certificate they were issued under (RFC
+     * 9846 section 4.7.1): after a [reload] to another certificate, a ticket from before it resumes nothing, the client runs
+     * a full handshake and sees the new certificate, and 0-RTT of such a ticket is refused (the replay register is not
+     * reset). Independently of reloads, a chain of renewed tickets ends 7 days after the full handshake that authenticated
+     * it, and at the leaf's notAfter. A resumed connection presents no certificate (RFC 9846 section 2.2): it keeps the
+     * identity of the session it resumes, which is the current one. After a key compromise, a reload is enough to stop new
+     * handshakes and resumptions with the old key; connections already established run on until they close.
      *
-     * **Checks.** [reload] refuses a closed identity and one whose leaf certificate has expired; the pairing of key and
-     * chain was already checked when the [InMemory] was built ([fromPem], [fromDer]), so a mismatched pair never gets here.
+     * **Checks.** [reload] refuses a closed identity, one whose leaf certificate has expired, and one whose leaf is not valid
+     * yet (notBefore more than 5 minutes ahead of the clock: a certificate staged for later is never served early); the
+     * pairing of key and chain was already checked when the [InMemory] was built ([fromPem], [fromDer]), so a mismatched
+     * pair never gets here. [next] must not be closed by anyone else: an identity closed during the reload is refused.
      */
     @ExperimentalKuicksilverApi
     public class Reloadable internal constructor(
@@ -131,8 +134,8 @@ public sealed interface TlsIdentity {
          * Makes [next] the identity of every handshake that starts from now on, and closes the one it replaces (connections
          * built from that one keep working). Reloading [current] itself does nothing.
          *
-         * @throws TlsException.Config when [next] is closed or its leaf certificate expired (or its validity cannot be
-         *   read); [current] stays and [next] stays the caller's.
+         * @throws TlsException.Config when [next] is closed (also when closed during the reload), its leaf certificate
+         *   expired or is not valid yet, or its validity cannot be read; [current] stays and [next] stays the caller's.
          * @throws IllegalStateException when this identity was closed; [next] stays the caller's.
          */
         public fun reload(next: InMemory) {
@@ -140,6 +143,13 @@ public sealed interface TlsIdentity {
             validate(next)
             val old = ref.exchange(next)
             if (old === next) return
+            afterExchangeForTest?.invoke()
+            if (next.isClosed) {
+                // closed by someone else meanwhile (it is ours now): never leave a closed identity current
+                if (ref.compareAndSet(next, old)) throw TlsException.Config("the new identity was closed during reload; the old one stays")
+                old.close() // a concurrent reload replaced `next` already, so `old` is no longer served
+                throw TlsException.Config("the new identity was closed during reload")
+            }
             old.close()
             // a close() that ran meanwhile may have closed `old` instead of `next`: close `next` too (close is idempotent)
             if (closed.load() != 0) next.close()
@@ -159,6 +169,7 @@ public sealed interface TlsIdentity {
             while (true) {
                 if (closed.load() != 0) throw IllegalStateException("identity closed")
                 val cur = ref.load()
+                beforeAcquireForTest?.invoke(cur)
                 if (cur.tryAcquire()) {
                     try {
                         return block(cur, cur.keyHandle)
@@ -171,12 +182,27 @@ public sealed interface TlsIdentity {
             }
         }
 
+        /** Test seam: runs in [reload] right after the swap, before the new identity is checked again. */
+        internal var afterExchangeForTest: (() -> Unit)? = null
+
+        /** Test seam: runs in [withCurrentKey] between loading the snapshot and taking its key. */
+        internal var beforeAcquireForTest: ((InMemory) -> Unit)? = null
+
         private fun validate(id: InMemory) {
             if (id.isClosed) throw TlsException.Config("the new identity is closed")
             val leaf = id.chain[0]
-            if (leaf.notAfterEpochSeconds < now()) {
-                throw TlsException.Config("the leaf certificate expired (notAfter ${leaf.notAfterEpochSeconds}, now ${now()})")
+            val t = now() // read once; the messages carry no time, so a watcher's repeated failure reads the same
+            if (leaf.notAfterEpochSeconds < t) {
+                throw TlsException.Config("the leaf certificate expired (notAfter ${leaf.notAfterEpochSeconds})")
             }
+            if (leaf.notBeforeEpochSeconds > t + NOT_BEFORE_SKEW_SECONDS) {
+                throw TlsException.Config("the leaf certificate is not valid yet (notBefore ${leaf.notBeforeEpochSeconds})")
+            }
+        }
+
+        private companion object {
+            /** How far a leaf's notBefore may lie ahead of our clock (a CA's clock running ahead): 5 minutes. */
+            const val NOT_BEFORE_SKEW_SECONDS: Long = 300
         }
     }
 
@@ -189,7 +215,8 @@ public sealed interface TlsIdentity {
          * A [Reloadable] identity that starts with [initial] and owns it from now on (see [Reloadable] for ownership,
          * resumption and the checks).
          *
-         * @throws TlsException.Config when [initial] is closed or its leaf certificate expired; [initial] stays the caller's.
+         * @throws TlsException.Config when [initial] is closed or its leaf certificate expired or is not valid yet; [initial]
+         *   stays the caller's.
          */
         @ExperimentalKuicksilverApi
         public fun reloadable(initial: InMemory): Reloadable = Reloadable(initial)
