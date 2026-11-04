@@ -85,4 +85,17 @@ class WebSocketConnectingTest {
         assertTrue(v4 != compatible && v4 != nat64 && compatible != nat64, "$v4 / $compatible / $nat64")
         assertTrue(WebSocketConnecting.nameKey("example.com") != WebSocketConnecting.nameKey("example.org"))
     }
+
+    /** tryAcquire takes free keys at once, and gives nothing (and holds nothing) when any of them is held. */
+    @Test fun tryAcquireTakesFreeKeysOnly() =
+        runTest {
+            val c = WebSocketConnecting()
+            val first = c.tryAcquire(listOf("address 127.0.0.1"))!!
+            assertEquals(null, c.tryAcquire(listOf("address 127.0.0.2", "address 127.0.0.1")))
+            assertEquals(1, c.size(), "a refused tryAcquire left an entry")
+            val other = c.tryAcquire(listOf("address 127.0.0.2"))!!
+            first.release()
+            other.release()
+            assertEquals(0, c.size())
+        }
 }

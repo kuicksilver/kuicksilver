@@ -3,8 +3,10 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.plugins.plugin
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.url
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.aSocket
@@ -28,6 +30,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -198,6 +201,50 @@ class ClientWebSocketConnectingTest {
                         assertTrue(opened, "the WebSocket did not open once the address was free")
                     }
                     assertEquals(0, connecting.size(), "an entry outlived its WebSocket")
+                }
+            }
+        }
+
+    /**
+     * A WebSocket whose connection the h3/h1 race already opened does not wait for its keys holding it (review S2 of
+     * 7de616bf): with the address held by another WebSocket, the race's connection goes back to the pool (idle, not held)
+     * and the WebSocket waits for the address through the pool path, holding nothing; once the address is free it takes the
+     * pooled connection.
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    @Test
+    fun aRaceOpenedConnectionIsNotHeldWhileItsWebSocketWaitsForTheAddress() =
+        clientTest {
+            rawServer({ _, input, output ->
+                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                output.writeStringUtf8(SWITCHING)
+                input.discard()
+            }) { port ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val data =
+                        io.ktor.client.request
+                            .HttpRequestBuilder()
+                            .apply {
+                                url("ws://127.0.0.1:$port/")
+                                attributes.put(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY, c.plugin(WebSockets))
+                            }.build()
+                    val opened = engine.h1.open(data)
+                    val other = engine.h1.webSocketConnecting.acquire(listOf("address 127.0.0.1"))
+                    coroutineScope {
+                        val exchange = async { engine.h1.execute(data, coroutineContext, opened) }
+                        withTimeout(10.seconds) {
+                            engine.h1.webSocketConnecting.waitsForTest
+                                .first { it >= 1 }
+                        }
+                        assertEquals(1, engine.h1.raceConnectionsReturnedForTest, "the race's connection was kept while waiting")
+                        assertEquals(1, engine.h1.pool.idleCount, "the race's connection is not idle in the pool")
+                        other.release()
+                        // the WebSocket then takes the address and the pooled connection: the race's connection, reused
+                        withTimeoutOrNull(10.seconds) { while (engine.h1.pool.idleCount != 0) kotlinx.coroutines.yield() }
+                            ?: error("the WebSocket did not take the pooled connection once the address was free")
+                        exchange.cancel()
+                    }
                 }
             }
         }

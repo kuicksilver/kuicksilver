@@ -84,6 +84,26 @@ internal class WebSocketConnecting {
         return Held(sorted, taken)
     }
 
+    /**
+     * [acquire] without waiting: the keys when no other WebSocket holds any of them, else null and nothing held. For a
+     * connection that is open already (the h3/h1 race opened it), which must not wait for the keys while it holds its pool
+     * slot.
+     */
+    fun tryAcquire(keys: Collection<String>): Held? {
+        val sorted = keys.distinct().sorted()
+        val taken = lock.withLock { sorted.map { k -> entries.getOrPut(k) { Entry() }.also { it.users++ } } }
+        val held = ArrayList<Mutex>(taken.size)
+        for (e in taken) {
+            if (!e.mutex.tryLock()) {
+                for (m in held.asReversed()) m.unlock()
+                forget(sorted, taken)
+                return null
+            }
+            held += e.mutex
+        }
+        return Held(sorted, taken)
+    }
+
     private fun forget(
         keys: List<String>,
         taken: List<Entry>,

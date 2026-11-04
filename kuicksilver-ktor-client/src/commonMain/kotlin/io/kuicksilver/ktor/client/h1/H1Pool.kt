@@ -222,6 +222,10 @@ internal class H1Pool(
         return exchange(data, callContext, preopened, dns, proxy, if (webSocket) remoteHosts(data, dns, proxy) else null)
     }
 
+    /** Race-opened connections a WebSocket gave back because its keys were taken (tests). */
+    @kotlin.concurrent.Volatile
+    internal var raceConnectionsReturnedForTest = 0
+
     /** One WebSocket at a time in the CONNECTING state per remote host (RFC 6455 section 4.1, step 2). */
     internal val webSocketConnecting = WebSocketConnecting()
 
@@ -284,17 +288,29 @@ internal class H1Pool(
         var first = true
         var given = preopened
         while (true) {
-            // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does
-            val obtained = given?.let { Obtained(it.connection, it.reused, null) } ?: obtain(data, key, dns, proxy, webSocketKeys)
+            // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does.
+            // A WebSocket takes its keys before it holds a connection (RFC 6455 section 4.1): a connection the race opened is
+            // used only when the keys are free now; otherwise it goes back to the pool and the WebSocket waits for the keys in
+            // obtain, holding nothing (review S2 of 7de616bf)
+            val pre = given
             given = null
+            val preHeld = if (pre != null && webSocketKeys != null) webSocketConnecting.tryAcquire(webSocketKeys) else null
+            if (pre != null && webSocketKeys != null && preHeld == null) {
+                pool.release(pre.connection)
+                raceConnectionsReturnedForTest++
+            }
+            val obtained =
+                if (pre != null && (webSocketKeys == null || preHeld != null)) {
+                    Obtained(pre.connection, pre.reused, preHeld)
+                } else {
+                    obtain(data, key, dns, proxy, webSocketKeys)
+                }
             val conn = obtained.connection
             val reused = obtained.reused
             var held = obtained.held
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
             try {
-                // a connection the race opened: its keys are waited for as in obtain, without a deadline of their own
-                if (webSocketKeys != null && held == null) held = webSocketConnecting.acquire(webSocketKeys)
                 val requestTime = GMTDate()
                 // the socket timeout measures inactivity in both directions (Ktor: "maximum time of inactivity between two
                 // data packets"): sending the request and waiting for the response head share one timer, which every
