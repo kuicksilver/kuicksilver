@@ -571,6 +571,24 @@ class H3DatagramTest {
             }
         }
 
+    /**
+     * A transport limit of 1 is DATAGRAM support (RFC 9221 section 3) that no frame fits: the SETTINGS are taken, the session
+     * works, and an HTTP/3 datagram is too large rather than unsupported.
+     */
+    @Test fun h3DatagramOverAOneByteTransportLimitIsTooLarge() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn, serverQuic = quicConfig { maxDatagramFrameSize = 1 }).useScoped { p ->
+                val ps =
+                    p.client.peerSettings
+                        .filterNotNull()
+                        .first()
+                assertEquals(true, ps.h3Datagram, "the client took the server's H3_DATAGRAM=1")
+                launch { p.server.acceptRequest().acceptConnect() }
+                val s = p.client.connect(connectReq(), "echo")
+                assertIs<DatagramSendResult.TooLarge>(s.trySendDatagram(byteArrayOf(1)))
+            }
+        }
+
     @Test fun unsupportedUntilBothSettings() =
         h3Test {
             H3Pair

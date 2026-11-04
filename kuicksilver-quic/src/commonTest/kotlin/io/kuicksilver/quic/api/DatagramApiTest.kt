@@ -317,18 +317,16 @@ class DatagramApiTest {
             }
         }
 
-    /** A peer limit of 1 admits no frame this endpoint writes: no support, consistently in the signal and in sendDatagram. */
-    @Test fun aPeerLimitOfOneIsNoSupport() =
+    /** A peer limit of 1 is support (RFC 9221 section 3) that no frame this endpoint writes fits: TooLarge(-1), not Unsupported. */
+    @Test fun aPeerLimitOfOneIsSupportThatNothingFits() =
         runBlocking {
             ApiPair.open(serverQuic = quicConfig { maxDatagramFrameSize = 1 }).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
-                    assertEquals(false, c.peerSupportsDatagrams)
+                    assertEquals(true, c.peerSupportsDatagrams)
                     assertEquals(0, c.maxDatagramSize.value)
-                    assertEquals(
-                        DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport),
-                        c.trySendDatagram(ByteArray(0)),
-                    )
+                    assertEquals(DatagramSendResult.TooLarge(-1), c.trySendDatagram(ByteArray(0)))
+                    assertEquals(-1, assertFailsWith<QuicException.DatagramTooLarge> { c.sendDatagram(ByteArray(0)) }.max)
                     c.close()
                     s.close()
                 }

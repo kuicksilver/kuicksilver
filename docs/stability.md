@@ -222,7 +222,7 @@ type is experimental, so are its members.
 | `PathFailureReason`, `PathValidationException`, the `reason` of `PathEvent.Failed` and `ConnectionEvent.PathFailed` | why a path failed (`NoSpareConnectionId`, …) |
 | `PathEvent.SocketLost`, `SocketDefunctException` | sockets the system took away (suspended iOS apps) |
 | `DatagramIo` (to implement), `DatagramSender`, `DatagramPacketWriter`, `ConnectionStats.datagramsDroppedSocket` | custom socket and datagram plumbing |
-| `QuicConnection.peerSupportsDatagrams` | whether the peer takes DATAGRAM frames, however small its limit (RFC 9221 section 3) |
+| `QuicConnection.peerSupportsDatagrams` | whether the peer advertised `max_datagram_frame_size` above 0 (RFC 9221 section 3) |
 | 24 `EndpointStats` counters from `connectionsActive` to `listenerFailures`, `KuicksilverLogger`, `LogLevel`, `ConnectionListener`, `ConnectionInfo`, `QuicEndpointConfig.logger` / `listener`, `AsyncQlogSink` | observability (`QlogSink`, `DirectoryQlogSink`, `QuicConfig.qlog`, `QuicConnection.stats`, `QuicEndpoint.stats` and the first `EndpointStats` counters, `initialsDropped` to `connectionsCreated`, are stable) |
 | `QuicEndpoint.shutdown(grace, code, reason)` | graceful shutdown |
 | `ConnectionCore.glitchByFrameType` (delicate) | glitch accounting per frame type |
