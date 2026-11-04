@@ -226,7 +226,8 @@ class QpackDynamicTest {
                         runCatching {
                             when (target) {
                                 StreamType.CONTROL -> {
-                                    client.goAway()
+                                    // a GOAWAY each time (an equal identifier is allowed, RFC 9114 section 5.2): goAway() writes once
+                                    client.session.sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(0))
                                 }
 
                                 StreamType.QPACK_DECODER -> {
