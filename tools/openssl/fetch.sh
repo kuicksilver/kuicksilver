@@ -46,7 +46,9 @@ status=$(gpg --batch --status-fd 1 --verify "$tarball.asc" "$tarball" 2>/dev/nul
 grep -Eq "VALIDSIG .* $fpr\$" <<< "$status" \
   || { echo "FAILED: PGP signature is not from $fpr" >&2; exit 1; }
 
-echo "$sha256  $tarball" | shasum -a 256 -c - || { echo "FAILED: sha256 mismatch" >&2; exit 1; }
+# sha256sum (coreutils, the Linux build images) or shasum (macOS); the Docker steps run this script in a Linux image without perl
+if command -v sha256sum >/dev/null 2>&1; then sum=(sha256sum -c -); else sum=(shasum -a 256 -c -); fi
+echo "$sha256  $tarball" | "${sum[@]}" || { echo "FAILED: sha256 mismatch" >&2; exit 1; }
 
 rm -rf "openssl-$version"
 tar xzf "$tarball"
