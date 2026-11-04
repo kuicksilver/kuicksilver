@@ -154,16 +154,26 @@ class QpackDynamicTest {
      * so a request could no longer be cancelled. With 64 bytes of stream credit and a 1 KiB send buffer, a thousand
      * cancellations each return at once and the connection lives.
      */
-    @Test fun qpackCancellationsDoNotWaitForDecoderStreamCredit() =
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun qpackCancellationsDoNotWaitForDecoderStreamCredit() =
         h3Test {
             QuicPair.open(serverQuic = quicConfig { initialStreamWindow = 64 }).use { q ->
                 val (c, s) = q.connect(quicConfig { maxSendBuffer = 1024 })
                 RawPeer(s).openControl() // and never reads the client's streams
                 val client = Http3Connection.client(c, dyn)
-                for (i in 0 until 1000) {
-                    withTimeoutOrNull(5.seconds) { withContext(client.session.dispatcher) { client.session.qpack.cancelStream(4L * i) } }
-                        ?: error("QPACK cancellation $i waited 5 s for credit on the decoder stream")
-                }
+                // outside the test's scope: a regression that blocks in a NonCancellable section cannot be cancelled, and the
+                // test must fail with its message, not hang waiting for it
+                val done = kotlin.concurrent.atomics.AtomicInt(0)
+                val cancels =
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+                        for (i in 0 until 1000) {
+                            withContext(client.session.dispatcher) { client.session.qpack.cancelStream(4L * i) }
+                            done.addAndFetch(1)
+                        }
+                    }
+                withTimeoutOrNull(10.seconds) { cancels.join() }
+                    ?: error("QPACK cancellations waited for credit on the decoder stream: ${done.load()} of 1000 returned in 10 s")
                 assertFalse(client.closed.isCompleted, "the connection ended")
             }
         }
