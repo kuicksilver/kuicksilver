@@ -62,7 +62,7 @@ check "the checkout is another line (0.3.0 for 0.2.1)"       1 'not 0.2.1-SNAPSH
 check "  a prerelease of the line is fine"                   0 '^latest=false$' -- 0.3.0-beta1 refs/heads/main false
 
 # the registry query itself, against a stub curl (no KSL_GHCR_TAGS_DIR): two pages of tags linked by a relative or an absolute
-# Link (OCI distribution spec)
+# Link (OCI distribution spec), and neither the GitHub token nor the registry's bearer token on curl's command line
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/curl" <<'SH'
 #!/bin/bash
@@ -98,4 +98,12 @@ net() {   # name expected-exit pattern link -- version ref force: the gate with 
 tree 0.2.1-SNAPSHOT
 net "registry: a relative Link is followed to the second page"  0 'older than the published 0.3.0' relative -- 0.2.1 refs/tags/v0.2.1 false
 net "registry: an absolute Link is followed as well"            0 'older than the published 0.3.0' absolute -- 0.2.1 refs/tags/v0.2.1 false
+holds() {   # name -- command: the command succeeds
+  local name=$1; shift 2
+  if "$@"; then echo "ok   $name"; else echo "FAIL $name"; fails=$((fails + 1)); fi
+}
+holds "registry: no token on curl's command line" -- bash -c "! grep -qE 'gh-secret-4567|bearer-0123' '$tmp/net/argv'"
+holds "registry: the tokens reach curl on its standard input" -- bash -c "grep -qF 'user = \"bot:gh-secret-4567\"' '$tmp/net/config' && grep -qF 'Authorization: Bearer bearer-0123' '$tmp/net/config'"
+net "registry: the bearer token is masked in the job's log"     0 '::add-mask::bearer-0123' relative -- 0.2.1 refs/tags/v0.2.1 false
+
 if [ "$fails" -eq 0 ]; then echo "all cases passed"; else echo "$fails case(s) failed"; exit 1; fi
