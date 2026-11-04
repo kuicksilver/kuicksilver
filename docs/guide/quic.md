@@ -123,7 +123,7 @@ own `ByteChannel` reports a cancelled channel as closed and answers -1 from `rea
 val stream = connection.openBidi()
 stream.output.writeStringUtf8("ping\n")
 stream.output.flushAndClose()
-val reply = stream.input.readUTF8Line()
+val reply = stream.input.readLine(LineEnding.Lenient)
 connection.close(code = 0, reason = "done")
 ```
 
@@ -139,7 +139,7 @@ val server = QuicEndpoint.bind(
 )
 val incoming = server.accept()
 val echoed = incoming.acceptStream()
-echoed.output.writeStringUtf8(echoed.input.readUTF8Line() ?: "")
+echoed.output.writeStringUtf8(echoed.input.readLine(LineEnding.Lenient) ?: "")
 echoed.output.flushAndClose()
 ```
 
@@ -240,7 +240,7 @@ supervisorScope {                                     // one failing connection 
                 launch {
                     try {
                         if (stream.isUnidirectional) { stream.input.discard(); return@launch }   // a peer's uni stream: input only
-                        val line = stream.input.readUTF8Line() ?: return@launch
+                        val line = stream.input.readLine(LineEnding.Lenient) ?: return@launch
                         stream.output.writeStringUtf8(line + "\n")
                         stream.output.flushAndClose()
                     } catch (e: IOException) { /* the peer reset the stream or left */ }

@@ -172,7 +172,7 @@ val socket = aSocket(selector).tcp().connect("server.test", 443).tls(client)
 val write = socket.openWriteChannel(autoFlush = true)
 val read = socket.openReadChannel()
 write.writeStringUtf8("GET / HTTP/1.1\r\nHost: server.test\r\n\r\n")
-val status = withTimeout(10.seconds) { read.readUTF8Line() }   // the status line
+val status = withTimeout(10.seconds) { read.readLine(LineEnding.Lenient) }   // the status line
 socket.close()   // sends close_notify, then closes the TCP socket
 ```
 
