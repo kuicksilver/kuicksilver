@@ -203,10 +203,15 @@ internal fun ConnectionCore.confirmHandshake() {
     state = ConnectionState.Confirmed
     loss.handshakeConfirmed = true
     loss.peerAddressValidated = true
+    // a candidate nothing is validating decides nothing: the handshake settles the active address as without one
+    handshakeCandidate?.let { if (it.state != PathState.Validating) dropHandshakeCandidate() }
     paths.all[0].let {
         // an address a handshake-time move took the path to is not validated by the handshake completing: a raced copy of the
-        // client's Handshake packet carries its Finished too (RFC 9000 section 9.3.3); its HandshakeFallback decides
-        if (handshakeFallback?.path !== it &&
+        // client's Handshake packet carries its Finished too (RFC 9000 section 9.3.3); its HandshakeFallback decides, and while a
+        // handshake-time candidate is open the two addresses' own validations do (dropHandshakeCandidate settles what is left)
+        if (handshakeCandidate != null) {
+            if (it.state == PathState.Validating) it.handshakeValidated = true
+        } else if (handshakeFallback?.path !== it &&
             it.state != PathState.Validated &&
             !(it.state == PathState.Validating && it.handshakeValidated)
         ) {

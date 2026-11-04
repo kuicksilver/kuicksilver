@@ -212,6 +212,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC server: a client that really rebinds during the handshake while an off-path observer races copies of its datagrams
+  from the old address now completes the handshake on its new address. Each copy from the old address used to take the
+  path back there and forget the PATH_CHALLENGE sent to the new one, so the client never got HANDSHAKE_DONE and the
+  handshake timed out. The server now keeps the address its first handshake-time move left as a second, internal
+  candidate path with its own anti-amplification budget and its own validation (RFC 9000 sections 8.1, 8.2 and 9.3.3); the
+  two addresses keep their validations whichever of them the connection uses, the first to answer its own challenge data
+  is kept, wherever the answer came from, and the candidate is never reported as a path. A third address never becomes a
+  candidate.
 - QUIC on Kotlin/Native: an `EndpointCore` whose construction fails (a refused key, a loop group's keys already
   released) frees the stateless buffer, the reset key, the address-token keys and the admission queue it had made
   instead of leaking them, and `EndpointCore.close` runs every release even when one of them throws.

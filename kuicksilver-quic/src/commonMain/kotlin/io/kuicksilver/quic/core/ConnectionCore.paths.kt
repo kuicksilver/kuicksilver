@@ -222,6 +222,13 @@ internal fun ConnectionCore.onPathPacket(
     }
     if (role == TlsRole.Client) return // servers do not migrate (preferred_address is not supported)
     var p = paths.byRemote(socket, from)
+    if (p != null && p.handshakeCandidate) {
+        // the handshake-time candidate's address: the server does not move there on a packet's source (an off-path copy carries the
+        // same packets, RFC 9000 section 9.3.3), only once the address answers its own PATH_CHALLENGE (adoptHandshakeCandidate)
+        p.lastReceivedAt = now
+        if (nonProbing && pn > largestNonProbingPn) largestNonProbingPn = pn
+        return
+    }
     if (p == null) {
         // four paths already: a migration (the newest non-probing packet) may abandon the oldest validation (RFC 9000 section 8.2.4),
         // a probe only one that has been silent for max(3 x PTO, 5 s) (quic-go's pathTimeout); otherwise the address is ignored
@@ -399,6 +406,7 @@ internal fun ConnectionCore.switchPath(
 ) {
     val old = paths.active
     if (old === p) return
+    dropHandshakeCandidate() // a migration after the handshake supersedes a handshake-time rebind still being decided
     val oldPeer = cids.currentPeer
     paths.active = p
     p.peerProbed = false
@@ -443,6 +451,9 @@ internal fun ConnectionCore.switchPath(
  */
 internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
     if (p === paths.active || remoteCid.length == 0) return remoteCid
+    // the handshake-time candidate: the client did not choose this address change (a NAT rebinding), so the current ID may go there
+    // too (section 9.5: "it MAY continue to use the current connection ID"); the client has no spare IDs to give before the handshake
+    if (p.handshakeCandidate) return remoteCid
     p.peerCid?.let {
         if (cids.isActive(it)) return it.cid
         p.peerCid = null
@@ -537,6 +548,10 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
                 startValidation(p)
                 return
             }
+            if (p.handshakeCandidate) {
+                adoptHandshakeCandidate(p)
+                return
+            }
             p.state = PathState.Validated
             p.challengePending = false
             p.challengeRetries = 0
@@ -545,7 +560,15 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             p.nextChallengeAt = TimeMark.NEVER
             p.validatedAt = now
             paths.lastValidated = p
-            if (p === paths.active) handshakeFallback = null
+            if (p === paths.active) {
+                handshakeFallback = null
+                // the client answered on the active address: a handshake-time rebind is decided, the other address is dropped and the
+                // path stays here for the rest of the handshake
+                if (handshakeCandidate != null) {
+                    dropHandshakeCandidate()
+                    handshakeMovesFrozen = true
+                }
+            }
             // a client gives back the ID of a path it only probed; a server keeps the one it answers a client's probe with, since the
             // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
             val preferredMove = role == TlsRole.Server && p.preferredMovePending && p !== paths.active
@@ -586,6 +609,18 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
  * went ([onInitialPathValidated]); an acknowledgement of a Handshake or 1-RTT packet sent to the current address proves it too
  * ([onHandshakePathAcked]), and so does a PATH_RESPONSE. Every move is therefore provisional: the address it left is kept in a
  * [HandshakeFallback], and [revertHandshakeMove] returns there when nothing validated the new one within a validation period.
+ *
+ * Two candidates (0.3.0): the first move also keeps the address it left as a path of its own, the candidate
+ * ([ConnectionCore.handshakeCandidate], [openHandshakeCandidate]), with that address's budget and a validation of its own (section
+ * 9.3.3: the previously active path is validated). From then on the two addresses of that rebind each keep their validation,
+ * whichever of them the active path has: a newer packet from the candidate's address swaps them ([swapWithHandshakeCandidate]), so a
+ * challenge sent to one address stays answerable however often copies move the path. The first address to answer its own
+ * challenge data decides, wherever the answer came from: the active one keeps the path ([onPathResponse]), the candidate's takes it
+ * ([adoptHandshakeCandidate]). A server reads no 1-RTT packet before its handshake completes (RFC 9001 section 5.7), so the
+ * candidate outlives the completion until it is decided, fails its validation, or a 1-RTT migration supersedes it ([switchPath]). A
+ * third address moves the active path by the rules above but never becomes the candidate. Before, an off-path observer that raced
+ * copies of a really rebound client's datagrams from its old address kept taking the path back there, the challenge sent to the
+ * new address was forgotten each time, and the handshake failed at its timeout.
  *
  * When the move happens:
  *  * a Handshake packet: at once, led by a PATH_CHALLENGE (the client that sends it can soon answer one: it reads our Finished);
@@ -677,6 +712,7 @@ internal fun ConnectionCore.applyHandshakeMove(
         return
     }
     val old = p.remote
+    val k = handshakeCandidate?.takeIf { it.isRemote(from) }
     if (fallback == null) {
         // a further move before the first is validated keeps the first one's address and deadline
         handshakeFallback =
@@ -693,6 +729,19 @@ internal fun ConnectionCore.applyHandshakeMove(
                 deadline = now + validationTimeout(),
             )
     }
+    if (k != null) {
+        // back to the candidate's address: it brings its own budget and validation, and the address left becomes the candidate
+        handshakeCredit = null
+        swapWithHandshakeCandidate(p, k)
+        // one that was never challenged is now, as a new address would be (or, with the ClientHello's completion, left to the
+        // client's Handshake packet)
+        if (p.state != PathState.Validating && p.state != PathState.Validated && !completesClientHello) startValidation(p)
+        lastReceivedOnActivePath = now
+        onRemoteChanged?.invoke(old, from)
+        qlog?.metricsUpdated(stats, now)
+        return
+    }
+    openHandshakeCandidate(p, from)
     p.remote = from
     p.validatedAt = TimeMark.NEVER
     p.amplification.reset()
@@ -769,10 +818,25 @@ internal fun ConnectionCore.validateHandshakeAddress(p: Path) {
         p.handshakeValidated = true
         p.challengeDeadline = now + validationTimeout()
     } else if (p.state != PathState.Validated) {
-        p.state = PathState.Validated
-        p.validatedAt = now
-        paths.lastValidated = p
+        if (handshakeCandidate != null) {
+            confirmStillThere(p)
+        } else {
+            p.state = PathState.Validated
+            p.validatedAt = now
+            paths.lastValidated = p
+        }
     }
+}
+
+/**
+ * [p], the active path, has an address the client was reached at, while the other address of a handshake-time rebind is still under
+ * validation: having been reached proves the address, not that the client is still there (an off-path copy of a later datagram
+ * carries the same proof, RFC 9000 section 9.3.3). It answers a PATH_CHALLENGE of its own too, and is settled as validated if no
+ * answer comes within the period ([settleHandshakeValidated]); the first address to answer its own challenge decides.
+ */
+private fun ConnectionCore.confirmStillThere(p: Path) {
+    startValidation(p)
+    p.handshakeValidated = true
 }
 
 /** The handshake validated the address but no PATH_RESPONSE ever came: the path counts as validated at its deadline. */
@@ -786,6 +850,7 @@ internal fun ConnectionCore.settleHandshakeValidated(p: Path) {
     p.validatedAt = now
     paths.lastValidated = p
     events += ConnectionEvent.PathValidated(p.id)
+    if (p === paths.active) dropHandshakeCandidate()
 }
 
 /**
@@ -853,7 +918,8 @@ internal fun ConnectionCore.revertHandshakeMove(fallback: HandshakeFallback) {
     handshakeMovesFrozen = true
     // the handshake completed and, when the path moved, the whole flight had gone to the old address only: the client read it there
     if (state != io.kuicksilver.quic.ConnectionState.Handshaking && fallback.flightOnlyThere) fallback.reached = true
-    restoreHandshakeAddress(fallback, resendAtOnce = true)
+    restoreHandshakeAddress(fallback, resendAtOnce = true, reverting = true)
+    dropHandshakeCandidate()
 }
 
 /**
@@ -865,26 +931,39 @@ internal fun ConnectionCore.revertHandshakeMove(fallback: HandshakeFallback) {
 internal fun ConnectionCore.restoreHandshakeAddress(
     fallback: HandshakeFallback,
     resendAtOnce: Boolean,
+    reverting: Boolean = false,
 ) {
     handshakeFallback = null
     pendingHandshakeMove = null
     handshakeCredit = null
     val p = fallback.path
     val old = p.remote
-    p.remote = fallback.remote
-    val reached = fallback.addressValidated || fallback.reached
-    p.amplification.restore(fallback.received + fallback.receivedSince, fallback.sent, reached)
-    p.forgetChallenges()
-    p.challengePending = false
-    p.handshakeValidated = false
-    p.challengeDeadline = TimeMark.NEVER
-    p.nextChallengeAt = TimeMark.NEVER
-    p.challengeRetries = 0
-    if (fallback.validated || reached) {
+    val k = handshakeCandidate?.takeIf { fallback.isAddress(it.remote) }
+    val reached: Boolean
+    if (k != null) {
+        // the candidate holds this address with what came from it and was sent to it since the move, its PATH_CHALLENGEs included
+        swapWithHandshakeCandidate(p, k)
+        if (reverting) dropHandshakeCandidate() // its validation started with the move: it had the same period
+        reached = fallback.addressValidated || fallback.reached || p.amplification.validated
+        if (reached) p.amplification.validated = true
+    } else {
+        p.remote = fallback.remote
+        reached = fallback.addressValidated || fallback.reached
+        p.amplification.restore(fallback.received + fallback.receivedSince, fallback.sent, reached)
+    }
+    if (p.state == PathState.Validating && p.challengeDeadline > now) {
+        // the candidate's challenge to this address is still outstanding: its answer validates the address; one reached before
+        // settles at the deadline rather than failing (as validateHandshakeAddress)
+        if (fallback.validated || reached) p.handshakeValidated = true
+    } else if ((fallback.validated || reached) && handshakeCandidate != null && !reverting) {
+        confirmStillThere(p)
+    } else if (fallback.validated || reached) {
+        clearValidation(p)
         p.state = PathState.Validated
         p.validatedAt = if (fallback.validated) fallback.validatedAt else now
         paths.lastValidated = p
     } else {
+        clearValidation(p)
         p.state = PathState.Unknown // validated by the client's Handshake packet or acknowledgements from here on
         p.validatedAt = TimeMark.NEVER
     }
@@ -894,14 +973,148 @@ internal fun ConnectionCore.restoreHandshakeAddress(
     lastReceivedOnActivePath = now
     handshakeRestores++
     if (!resendAtOnce) return onRestored(old, fallback)
+    resendInFlightAtOnce()
+    onRestored(old, fallback)
+}
+
+/** No PATH_CHALLENGE of [p]'s current validation is pending, repeated or awaited any more. */
+private fun clearValidation(p: Path) {
+    p.forgetChallenges()
+    p.challengePending = false
+    p.handshakeValidated = false
+    p.challengeDeadline = TimeMark.NEVER
+    p.nextChallengeAt = TimeMark.NEVER
+    p.challengeRetries = 0
+}
+
+/** The active address changed back to where the client is: what went to the other address goes here now, not after the PTO backoff (RFC 9002 section 6.2.4 probes). */
+private fun ConnectionCore.resendInFlightAtOnce() {
     handshakeResendsAtOnceForTest++
-    // what went to the abandoned address goes here now, not after the PTO backoff (RFC 9002 section 6.2.4 probes)
     for (space in SpaceId.entries) {
         if (spaceDiscarded[space.ordinal] || loss.space(space).ackElicitingInFlight <= 0) continue
         if (probePending[space.ordinal] < 1) probePending[space.ordinal] = 1
         requeueForProbe(space, Int.MAX_VALUE)
     }
-    onRestored(old, fallback)
+}
+
+/** True for one of the two client addresses of the first handshake-time rebind: no other address becomes the candidate. */
+private fun ConnectionCore.isRebindAddress(a: InetSocketAddress): Boolean {
+    val from = handshakeRebindFrom ?: return false
+    val to = handshakeRebindTo ?: return false
+    return sameAddress(a, from) || sameAddress(a, to)
+}
+
+private fun sameAddress(
+    a: InetSocketAddress,
+    b: InetSocketAddress,
+): Boolean = a == b || (a.port == b.port && AddressClass.ipKey(a) == AddressClass.ipKey(b))
+
+/**
+ * Server, the first handshake-time move of the connection, before the active path [p] leaves its address for [to]: the address left
+ * becomes the candidate, a path of its own under validation (RFC 9000 section 9.3.3: "In response to an apparent migration, endpoints
+ * MUST validate the previously active path using a PATH_CHALLENGE frame"). It takes that address's anti-amplification accounting
+ * with it (section 8.1 counts per address; what arrives from the address later is credited to it) and sends nothing but 1-RTT
+ * PATH_CHALLENGEs of 1200 bytes there. From then on the two addresses keep a validation each, whichever the active path has
+ * ([swapWithHandshakeCandidate]); the first to answer its own challenge data decides ([adoptHandshakeCandidate], [onPathResponse]).
+ * Once per connection: a later rebind follows the rules of 0.2.1 alone.
+ *
+ * None of quic-go, quiche, msquic and ngtcp2 has a counterpart: msquic drops packets from another address until the handshake is
+ * confirmed (src/core/path.c:420-427); ngtcp2 and quic-go consider a new client address only for 1-RTT packets, so they keep
+ * sending the handshake to the first one (ngtcp2 lib/ngtcp2_conn.c:9969-9985, quic-go connection.go:1249), and ngtcp2 then keeps a
+ * single validation with one fallback path (lib/ngtcp2_conn.c:9037-9052).
+ */
+private fun ConnectionCore.openHandshakeCandidate(
+    p: Path,
+    to: InetSocketAddress,
+) {
+    if (handshakeRebindFrom != null) return
+    handshakeRebindFrom = p.remote
+    handshakeRebindTo = to
+    val k = paths.add(p.socket, p.remote, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
+    k.handshakeCandidate = true
+    k.amplification.restore(p.amplification.received, p.amplification.sent, p.amplification.validated)
+    k.state = p.state
+    k.validatedAt = p.validatedAt
+    handshakeCandidate = k
+    challengeLeftAddress(k)
+}
+
+/**
+ * The candidate [k] holds the address the active path just left: a validated one is validated again (section 9.3.3, as [switchPath]
+ * does for a validated previous path), a validation under way goes on. An address nothing was validated on stays as it is until the
+ * active path returns there: the client could not read a 1-RTT PATH_CHALLENGE there anyway (no ServerHello reached it), and
+ * challenging every address a copied datagram came from would only spend budget.
+ */
+private fun ConnectionCore.challengeLeftAddress(k: Path) {
+    k.handshakeValidated = false
+    if (k.state == PathState.Validated || (k.state != PathState.Validating && k.amplification.validated)) startValidation(k)
+}
+
+/**
+ * The active path [p] takes the candidate [k]'s address and [k] the address [p] leaves, each with its own budget and validation
+ * ([Path.swapAddressWith]). An address that is not one of the first rebind's two never becomes the candidate: it is dropped. The
+ * address left is validated if it is not already being validated (section 9.3.3).
+ */
+private fun ConnectionCore.swapWithHandshakeCandidate(
+    p: Path,
+    k: Path,
+) {
+    p.swapAddressWith(k)
+    if (isRebindAddress(k.remote)) challengeLeftAddress(k) else dropHandshakeCandidate()
+}
+
+/**
+ * The candidate [k] answered its own PATH_CHALLENGE (the data matched; where the PATH_RESPONSE came from proves nothing, section
+ * 8.2.3): the client is at that address now. Unless the active address already answered its own, the active path takes [k]'s
+ * address, validated; nothing a handshake-time packet carries moves it again before the handshake completes, everything in flight
+ * is resent there at once, and the other address is dropped. This is the fallback of section 9.3.2 taken as soon as the address
+ * is known to work, rather than at the move's deadline.
+ */
+internal fun ConnectionCore.adoptHandshakeCandidate(k: Path) {
+    val p = paths.active
+    if (p.state == PathState.Validated || p.id != PathId.Initial) {
+        dropHandshakeCandidate()
+        return
+    }
+    val old = p.remote
+    p.swapAddressWith(k)
+    p.amplification.validated = true
+    clearValidation(p)
+    p.state = PathState.Validated
+    p.validatedAt = now
+    paths.lastValidated = p
+    handshakeFallback = null
+    pendingHandshakeMove = null
+    handshakeCredit = null
+    handshakeMovesFrozen = true
+    handshakeFlightTo = p.remote
+    handshakeFlightElsewhere = false
+    lastReceivedOnActivePath = now
+    dropHandshakeCandidate()
+    resendInFlightAtOnce()
+    events += ConnectionEvent.PathValidated(p.id)
+    issueNewToken(p.remote)
+    onRemoteChanged?.invoke(old, p.remote)
+    qlog?.metricsUpdated(stats, now)
+}
+
+/**
+ * Ends the handshake-time candidate, if any: its path is removed (no event: the application never saw it). A handshake that
+ * completed while it was still open left the active address to it (confirmHandshake): one still unvalidated then counts as
+ * validated by the handshake, as it would have at completion.
+ */
+internal fun ConnectionCore.dropHandshakeCandidate() {
+    val k = handshakeCandidate ?: return
+    handshakeCandidate = null
+    k.handshakeCandidate = false
+    if (k.state != PathState.Closed) paths.remove(k)
+    releasePathCid(k)
+    val a = paths.active
+    if (handshakeConfirmedAt != null && a.id == PathId.Initial && handshakeFallback?.path !== a && a.state == PathState.Unknown) {
+        a.state = PathState.Validated
+        a.validatedAt = now
+        paths.lastValidated = a
+    }
 }
 
 private fun ConnectionCore.onRestored(
