@@ -121,6 +121,50 @@ class ClientWebSocketConnectingTest {
         }
 
     /**
+     * Two distinct addresses do not wait for each other (review 2026-10-28 N6: the key is the address, so a regression to
+     * one lock for every WebSocket would show here): the second handshake reaches its server while the first is unanswered.
+     */
+    @Test fun handshakesToTwoAddressesDoNotWait() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.Default)
+            val v6 = runCatching { aSocket(selector).tcp().bind("::1", 0).close() }
+            selector.close()
+            v6.onFailure {
+                println("handshakesToTwoAddressesDoNotWait skipped: needs an IPv6 loopback ($it)")
+                return@clientTest
+            }
+            val firstHead = CompletableDeferred<Unit>()
+            val secondHead = CompletableDeferred<Unit>()
+            rawServer({ _, input, output ->
+                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                firstHead.complete(Unit)
+                secondHead.await()
+                answer(input, output)
+            }) { first ->
+                // the IPv6 loopback: on every host the tests run on, unlike 127.0.0.2 (not routed on macOS by default)
+                rawServer({ _, input, output ->
+                    while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                    secondHead.complete(Unit)
+                    answer(input, output)
+                }, host = "::1") { second ->
+                    testClient(block = { install(WebSockets) }).use { c ->
+                        coroutineScope {
+                            launch { c.webSocket("ws://127.0.0.1:$first/") {} }
+                            firstHead.await()
+                            launch { c.webSocket("ws://[::1]:$second/") {} }
+                        }
+                        assertEquals(
+                            0,
+                            (c.engine as KuicksilverEngine)
+                                .h1.webSocketConnecting.waitsForTest.value,
+                            "a WebSocket waited",
+                        )
+                    }
+                }
+            }
+        }
+
+    /**
      * A server that accepts the connection and never answers the handshake: the WebSocket fails with a connect timeout
      * (its opening handshake is part of connecting), and the next WebSocket to that address then proceeds. Before,
      * nothing bounded the wait for the 101, and every later WebSocket to the address waited behind it for ever.
@@ -217,14 +261,15 @@ class ClientWebSocketConnectingTest {
             }
         }
 
-    /** A listener on 127.0.0.1 that runs [handler] per connection, [onAccept] first. */
+    /** A listener on [host] (127.0.0.1) that runs [handler] per connection, [onAccept] first. */
     private suspend fun rawServer(
         handler: suspend (index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
         onAccept: (Int) -> Unit = {},
+        host: String = "127.0.0.1",
         block: suspend (Int) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.Default)
-        val listener = aSocket(selector).tcp().bind(InetSocketAddress("127.0.0.1", 0))
+        val listener = aSocket(selector).tcp().bind(InetSocketAddress(host, 0))
         try {
             coroutineScope {
                 val server =
