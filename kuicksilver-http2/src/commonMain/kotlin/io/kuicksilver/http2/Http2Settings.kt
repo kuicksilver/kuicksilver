@@ -32,8 +32,9 @@ public class Http2Settings(
     /** SETTINGS_MAX_FRAME_SIZE: the largest frame payload we accept, 16 384..16 777 215; default 16 384. */
     public val maxFrameSize: Int = 16_384,
     /**
-     * SETTINGS_MAX_HEADER_LIST_SIZE: the largest field section we decode (name + value + 32 per field), and the largest
-     * compressed field block (HEADERS plus CONTINUATION) we buffer before decoding; default 64 KiB.
+     * SETTINGS_MAX_HEADER_LIST_SIZE: the largest field section we decode (name + value + 32 per field); default 64 KiB. A
+     * field block above it fails only its stream; its compressed form (HEADERS plus CONTINUATION) is buffered up to twice
+     * this before decoding, and beyond that the connection ends.
      */
     public val maxHeaderListSize: Int = 65_536,
     /** How long our SETTINGS may go unacknowledged before the connection ends with SETTINGS_TIMEOUT; default 10 s. */
@@ -44,12 +45,20 @@ public class Http2Settings(
     public val maxControlFramesQueued: Int = 10_000,
     /** DATA frames in a row with no content and no END_STREAM; more ends the connection; default 100. */
     public val maxEmptyFrames: Int = 100,
-    /** The burst of the stream-reset budget (the peer's RST_STREAM frames and ours caused by its errors); default 1000. */
+    /** A server's budget for the client's RST_STREAM frames (Rapid Reset), burst; default 1000, as nghttp2. */
     public val resetBurst: Int = 1_000,
-    /** The refill rate of the stream-reset budget per second; default 33. */
+    /** The refill rate of that budget per second; default 33, as nghttp2. */
     public val resetsPerSecond: Int = 33,
     /** How long one field block (HEADERS and its CONTINUATION frames) may take to arrive; default 10 s. */
     public val maxHeaderBlockTime: Duration = 10.seconds,
+    /**
+     * The burst of the glitch budget: frames that are legal but useless or suspicious when frequent (PRIORITY, unknown
+     * types, SETTINGS, PING, empty DATA, WINDOW_UPDATE on a closed stream) and stream errors the peer causes; default
+     * 10 000, as nghttp2.
+     */
+    public val glitchBurst: Int = 10_000,
+    /** The refill rate of the glitch budget per second; default 330, as nghttp2. */
+    public val glitchesPerSecond: Int = 330,
 ) {
     init {
         require(headerTableSize in 0..65_536) { "headerTableSize must be 0..65536, got $headerTableSize" }
@@ -66,6 +75,7 @@ public class Http2Settings(
         require(maxEmptyFrames >= 0) { "maxEmptyFrames must not be negative" }
         require(resetBurst >= 1 && resetsPerSecond >= 0) { "resetBurst must be positive and resetsPerSecond not negative" }
         require(maxHeaderBlockTime.isPositive()) { "maxHeaderBlockTime must be positive" }
+        require(glitchBurst >= 1 && glitchesPerSecond >= 0) { "glitchBurst must be positive and glitchesPerSecond not negative" }
     }
 
     override fun toString(): String =
@@ -75,5 +85,6 @@ public class Http2Settings(
             "maxConnectionWindow=$maxConnectionWindow, maxFrameSize=$maxFrameSize, maxHeaderListSize=$maxHeaderListSize, " +
             "settingsAckTimeout=$settingsAckTimeout, maxContinuationFrames=$maxContinuationFrames, " +
             "maxControlFramesQueued=$maxControlFramesQueued, maxEmptyFrames=$maxEmptyFrames, resetBurst=$resetBurst, " +
-            "resetsPerSecond=$resetsPerSecond, maxHeaderBlockTime=$maxHeaderBlockTime)"
+            "resetsPerSecond=$resetsPerSecond, maxHeaderBlockTime=$maxHeaderBlockTime, glitchBurst=$glitchBurst, " +
+            "glitchesPerSecond=$glitchesPerSecond)"
 }

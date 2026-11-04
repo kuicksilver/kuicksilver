@@ -29,6 +29,8 @@ class SettingsTest {
     fun negative_settingsAckTimeoutIsSettingsTimeout() {
         val peer = RawH2Peer(Role.SERVER)
         peer.send(io.kuicksilver.http2.frame.H2.PREFACE, settings()) // the client never acknowledges ours
+        assertEquals(null, peer.core.nextTimeout()) // the deadline counts from when our SETTINGS were written
+        peer.read()
         assertEquals(10 * SECOND, peer.core.nextTimeout())
         peer.core.onTimeout(10 * SECOND - 1)
         assertEquals(false, peer.core.isClosed)

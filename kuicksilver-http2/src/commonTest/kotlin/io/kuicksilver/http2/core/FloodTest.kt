@@ -32,12 +32,26 @@ class FloodTest {
 
     @Test
     fun negative_continuationBytesAboveListSize() {
+        // up to twice the list limit is buffered and decoded (HPACK stays in step), and fails only its stream; beyond it the
+        // connection ends (Go's frame.go readMetaFrame does the same at twice the remaining budget)
         val s = server(Http2Settings(maxHeaderListSize = 20_000))
-        s.send(FrameEncoder.headers(1, ByteArray(16_000), endStream = true, endHeaders = false))
+        val big = s.hpackOut.encode(GET + (1..5).map { "x-h$it" to "v".repeat(5_000) })
+        assertTrue(big.size in 20_001..40_000)
+        s.send(
+            FrameEncoder.headers(1, big.copyOfRange(0, 16_000), endStream = true, endHeaders = false),
+            FrameEncoder.continuation(1, big.copyOfRange(16_000, big.size), true),
+        )
+        val h = s.events().only<H2Event.HeadersReceived>()
+        assertTrue(h.tooLarge)
         assertEquals(false, s.core.isClosed)
-        s.send(FrameEncoder.continuation(1, ByteArray(4_001), false)) // 20 001 compressed bytes
+        s.send(s.headers(3, GET, endStream = true)) // the table is in step: the next request decodes
+        assertEquals(GET, s.events().only<H2Event.HeadersReceived>().fields)
+        // past twice the limit: the connection ends, the buffer never held more than that
+        s.send(FrameEncoder.headers(5, ByteArray(16_000), endStream = true, endHeaders = false))
+        s.send(FrameEncoder.continuation(5, ByteArray(16_000), false))
+        s.send(FrameEncoder.continuation(5, ByteArray(8_001), false)) // 40 001 compressed bytes
         s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
-        assertTrue(s.core.blockBufferCapacity <= 20_000) // never buffered past the limit
+        assertTrue(s.core.blockBufferCapacity <= 40_000)
     }
 
     @Test
@@ -62,9 +76,9 @@ class FloodTest {
         }
         assertTrue(maxQueued <= 10_000, "queued $maxQueued")
         s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
-        // a peer that reads its answers is not punished
+        // a peer that reads its answers is not punished for a burst within the glitch budget
         val ok = server()
-        repeat(100) {
+        repeat(5) {
             ok.send(batch)
             ok.read()
         }
@@ -79,6 +93,15 @@ class FloodTest {
         repeat(20_000) { if (!s.core.isClosed) s.send(settings) }
         assertTrue(s.core.controlQueued <= 10_000)
         s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+    }
+
+    @Test
+    fun nothingIsReportedAfterClosed() {
+        val s = server()
+        val settings = FrameEncoder.settings(intArrayOf(0x3), longArrayOf(100))
+        repeat(11_000) { if (!s.core.isClosed) s.send(settings) }
+        s.events()
+        assertTrue(s.allEvents.last() is H2Event.Closed) // the frame that tripped the limit reported nothing after it
     }
 
     @Test
@@ -142,10 +165,27 @@ class FloodTest {
     }
 
     @Test
+    fun clientIsNotPunishedForServerResets() {
+        // section 8.1: a server may answer early and reset the request stream with NO_ERROR; a client counts no reset budget
+        // (nghttp2 applies its reset limit on servers only)
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        for (i in 0 until 2_000) {
+            c.now = i * 500_000L // 2000 in one second
+            val id = c.core.openStream(GET, endStream = false)
+            c.read()
+            c.send(c.headers(id, OK, endStream = true), FrameEncoder.rstStream(id, Http2ErrorCode.NO_ERROR.code))
+            c.events()
+            c.core.release(id)
+        }
+        assertEquals(false, c.core.isClosed)
+    }
+
+    @Test
     fun negative_madeYouResetCountsOurResets() {
         // CVE-2025-8671: frames that make *us* reset streams (WINDOW_UPDATE of 0), never a RST_STREAM from the peer
         val s = server()
-        for (i in 0 until 2_000) {
+        for (i in 0 until 12_000) {
             if (s.core.isClosed) break
             val id = 1 + 2 * i
             s.send(s.headers(id, endStream = true), FrameEncoder.windowUpdate(id, 0))
@@ -153,7 +193,8 @@ class FloodTest {
             s.read()
         }
         s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
-        assertTrue(s.resets().size in 1_000..1_010, "our resets before GOAWAY: ${s.resets().size}")
+        // they take from the glitch budget (10 000, as nghttp2), not from the client's own reset budget
+        assertTrue(s.resets().size in 9_990..10_010, "our resets before GOAWAY: ${s.resets().size}")
     }
 
     @Test
@@ -206,11 +247,20 @@ class FloodTest {
 
     @Test
     fun negative_priorityFloodCreatesNoState() {
-        // CVE-2019-9513: PRIORITY frames build no tree here (section 5.3.2): no state, no output
+        // CVE-2019-9513: PRIORITY frames build no tree here (section 5.3.2): no state, no output; each is a glitch, so a
+        // flood ends with ENHANCE_YOUR_CALM after the budget (10 000) while a steady 300 a second goes on
         val s = server()
-        repeat(50_000) { s.send(FrameEncoder.priority(1 + 2 * it, 1 + 2 * ((it + 1) % 50_000))) }
+        repeat(9_000) { s.send(FrameEncoder.priority(1 + 2 * it, 1 + 2 * ((it + 1) % 9_000))) }
         assertEquals(0, s.core.activeStreams)
         assertEquals(emptyList(), s.read())
         assertEquals(false, s.core.isClosed)
+        repeat(2_000) { if (!s.core.isClosed) s.send(FrameEncoder.priority(3, 1)) }
+        s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+        val steady = server()
+        for (i in 0 until 30_000) {
+            steady.now = i * (SECOND / 300)
+            steady.send(FrameEncoder.priority(3, 1))
+        }
+        assertEquals(false, steady.core.isClosed)
     }
 }

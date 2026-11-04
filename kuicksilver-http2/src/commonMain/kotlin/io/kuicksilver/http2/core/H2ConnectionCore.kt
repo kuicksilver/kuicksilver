@@ -25,17 +25,25 @@ internal enum class Role { CLIENT, SERVER }
  * is a parameter. No coroutines, sockets or clocks.
  *
  * - Preface and SETTINGS (sections 3.4, 6.5): queued at construction; the peer's first frame must be SETTINGS; ours must
- *   be acknowledged within [Http2Settings.settingsAckTimeout] or the connection ends with SETTINGS_TIMEOUT.
+ *   be acknowledged within [Http2Settings.settingsAckTimeout] of being written or the connection ends with
+ *   SETTINGS_TIMEOUT.
  * - Streams (section 5.1): the client opens odd streams with [openStream], the server answers with [sendHeaders]. Server
  *   push is never used: a client sends SETTINGS_ENABLE_PUSH = 0 and refuses PUSH_PROMISE.
+ * - Field compression (section 4.3.1): a field list is HPACK-encoded when [poll] writes it, never when it is queued, so
+ *   the encoder's state always follows the order on the wire; a list never written is dropped without touching it.
  * - Flow control (sections 5.2, 6.9): WINDOW_UPDATE goes out only when the driver reports with [consumed] that the
  *   application read the data, so memory per connection stays within the connection window; [sendData] takes at most
  *   one frame's worth within both windows and never buffers beyond it.
- * - Floods (threat model 3.23): field blocks are bounded in bytes, CONTINUATION frames and time before decoding; queued
- *   control frames, empty DATA frames and stream resets (the peer's and the ones its errors cause) are bounded per
- *   connection; a stream the peer reset still counts toward our SETTINGS_MAX_CONCURRENT_STREAMS until [release].
- * - Order of output: control frames first, then field blocks, then DATA round-robin between streams. RFC 7540
- *   priorities are parsed and ignored (section 5.3.2).
+ * - Floods (section 10.5, threat model 3.23): field blocks are bounded in bytes, CONTINUATION frames and time before
+ *   decoding; queued control frames, empty DATA frames, glitches and (on a server) the client's stream resets are bounded
+ *   per connection; a stream the peer reset still counts toward our SETTINGS_MAX_CONCURRENT_STREAMS until [release].
+ * - Order of output: control frames (PING answers first), stream credit, then field blocks, then DATA round-robin between
+ *   streams. RFC 7540 priorities are parsed and ignored (section 5.3.2).
+ *
+ * The driver's contract: drain [nextEvent] after every call; call [consumed] as the application reads; call [release]
+ * for every stream once the application is done with it (both roles; unread content of a dropped stream is credited to
+ * the connection then, or at once when the stream is reset); a server answers a [H2Event.HeadersReceived] with
+ * `tooLarge` with 431 and a client fails that request; call [onTimeout] at [nextTimeout].
  */
 internal class H2ConnectionCore(
     val role: Role,
@@ -44,22 +52,37 @@ internal class H2ConnectionCore(
 ) {
     private val client = role == Role.CLIENT
     private val decoder = FrameDecoder(settings.maxFrameSize)
-    private val hpackIn = HpackDecoder(maxOf(H2.DEFAULT_HEADER_TABLE_SIZE, settings.headerTableSize), settings.maxHeaderListSize)
+
+    // section 4.3.1: both tables start at 4096; our own value holds once the peer acknowledged it
+    private val hpackIn =
+        HpackDecoder(
+            H2.DEFAULT_HEADER_TABLE_SIZE,
+            settings.maxHeaderListSize,
+            maxStringLength =
+                2 * settings.maxHeaderListSize,
+        )
     private val hpackOut = HpackEncoder(maxTableSize = H2.DEFAULT_HEADER_TABLE_SIZE)
-    private val block = HeaderBlockCollector(settings.maxHeaderListSize, settings.maxContinuationFrames)
+    private val block = HeaderBlockCollector(2 * settings.maxHeaderListSize, settings.maxContinuationFrames)
     private val resets = TokenBucket(settings.resetBurst, settings.resetsPerSecond, now)
+    private val glitches = TokenBucket(settings.glitchBurst, settings.glitchesPerSecond, now)
 
     private val streams = HashMap<Int, H2Stream>()
+    private var peerStreams = 0 // peer-initiated streams in [streams]: their handlers count toward our limit
+    private var localOpen = 0 // our streams not closed: they count toward the peer's limit
 
-    /** Recently closed streams: true when we reset them (late frames are then ignored), false otherwise (STREAM_CLOSED). */
+    /** Recently closed streams: true when we reset or discarded them (late frames are ignored), false otherwise (STREAM_CLOSED). */
     private val recentlyClosed = LinkedHashMap<Int, Boolean>()
     private val recentlyClosedMax = maxOf(256, minOf(settings.maxConcurrentStreams, 4_096) * 2)
 
     /** The preface and our first SETTINGS: they go out before anything, even before the GOAWAY of an early error. */
     private val initial = ArrayDeque<ByteArray>()
+    private var ourSettingsFrame: ByteArray? = null
     private val control = ArrayDeque<ByteArray>()
+    private val creditReady = ArrayDeque<H2Stream>()
     private val headerReady = ArrayDeque<H2Stream>()
     private val dataReady = ArrayDeque<H2Stream>()
+    private val writers = LinkedHashSet<H2Stream>() // streams waiting for window
+    private val blockedOnConnection = LinkedHashSet<H2Stream>() // ... of which only the connection window holds back
     private var partial: ByteArray? = null
     private var partialPos = 0
     private val events = ArrayDeque<H2Event>()
@@ -85,13 +108,14 @@ internal class H2ConnectionCore(
 
     private var prefaceLeft = if (client) 0 else H2.PREFACE.size
     private var peerSettingsSeen = false
-    private var settingsSentAt = now
+    private var settingsSentAt = -1L // when [poll] wrote our SETTINGS; -1 before
     private var settingsUnacked = 1
     private var rttNanos = 100_000_000L // until the SETTINGS acknowledgement measures it
     private var nextLocalId = if (client) 1 else 2
     private var lastPeerStreamId = 0
     private var refusedInARow = 0
     private var emptyDataInARow = 0
+    private var lastNow = now // the latest time a caller gave, for work that a call without a time triggers
 
     // the field block being collected: its stream, kind and flags
     private var blockStream = 0
@@ -104,6 +128,7 @@ internal class H2ConnectionCore(
     private var pingCounter = 0L
     private val pingsOut = LinkedHashMap<Long, Long>()
     private var gracefulPing = -1L
+    private var gracefulDeadline = -1L
 
     private var goAwayReceived = false
     private var peerLastStreamId = H2.MAX_STREAM_ID
@@ -116,7 +141,7 @@ internal class H2ConnectionCore(
     /** True once the connection ended (an error, a finished GOAWAY): nothing more is read, [poll] drains what is left. */
     val isClosed: Boolean get() = closed
 
-    /** Streams open in either direction (closed ones the driver has not released yet included). */
+    /** Streams the core still holds (closed ones the driver has not released yet included). */
     val activeStreams: Int get() = streams.size
 
     init {
@@ -138,7 +163,9 @@ internal class H2ConnectionCore(
         if (settings.maxFrameSize != H2.MIN_MAX_FRAME_SIZE) put(SettingId.MAX_FRAME_SIZE, settings.maxFrameSize.toLong())
         put(SettingId.MAX_HEADER_LIST_SIZE, settings.maxHeaderListSize.toLong())
         put(SettingId.NO_RFC7540_PRIORITIES, 1)
-        initial.addLast(FrameEncoder.settings(ids.toIntArray(), values.toLongArray()))
+        val frame = FrameEncoder.settings(ids.toIntArray(), values.toLongArray())
+        ourSettingsFrame = frame
+        initial.addLast(frame)
         val raise = settings.initialConnectionWindow - H2.DEFAULT_WINDOW
         if (raise > 0) initial.addLast(FrameEncoder.windowUpdate(0, raise))
     }
@@ -153,6 +180,7 @@ internal class H2ConnectionCore(
         len: Int,
         now: Long,
     ) {
+        lastNow = now
         var p = off
         val end = off + len
         try {
@@ -176,6 +204,13 @@ internal class H2ConnectionCore(
                     try {
                         decoder.next()
                     } catch (e: H2StreamError) {
+                        // a frame of another kind inside a field block (sections 6.2, 6.10) or before the peer's SETTINGS (section
+                        // 3.4) is a connection error whatever is wrong with it
+                        if (inBlock ||
+                            !peerSettingsSeen
+                        ) {
+                            throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "invalid frame: ${e.message}")
+                        }
                         streamError(e.streamId, e.code, e.message ?: "", now)
                         null
                     } ?: continue
@@ -211,9 +246,9 @@ internal class H2ConnectionCore(
             is Frame.RstStream -> onRstStream(f, now)
             is Frame.Settings -> onSettings(f, now)
             is Frame.Ping -> onPing(f, now)
-            is Frame.GoAway -> onGoAway(f, now)
+            is Frame.GoAway -> onGoAway(f)
             is Frame.WindowUpdate -> onWindowUpdate(f, now)
-            is Frame.Unknown -> Unit // section 5.5
+            is Frame.Unknown -> glitch(now, "unknown frame type ${f.type}") // section 5.5: ignored, but not for free
         }
     }
 
@@ -222,6 +257,19 @@ internal class H2ConnectionCore(
     /** Idle (section 5.1): never used by its initiator yet. */
     private fun isIdle(id: Int): Boolean = if (peerInitiated(id)) id > lastPeerStreamId else id >= nextLocalId
 
+    /** Section 10.5: legal but suspicious when frequent; an empty glitch budget ends the connection (nghttp2's glitch limit). */
+    private fun glitch(
+        now: Long,
+        what: String,
+    ) {
+        if (!glitches.take(
+                now,
+            )
+        ) {
+            calm("too many glitches (last: $what): above ${settings.glitchesPerSecond}/s, burst ${settings.glitchBurst}")
+        }
+    }
+
     private fun onData(
         f: Frame.Data,
         now: Long,
@@ -229,6 +277,7 @@ internal class H2ConnectionCore(
         val id = f.streamId
         if (f.data.isEmpty() && !f.endStream) {
             if (++emptyDataInARow > settings.maxEmptyFrames) calm("more than ${settings.maxEmptyFrames} empty DATA frames in a row")
+            glitch(now, "empty DATA")
         } else {
             emptyDataInARow = 0
         }
@@ -254,8 +303,9 @@ internal class H2ConnectionCore(
             return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "DATA beyond the stream window", now)
         }
         val padding = f.flowLength - f.data.size
-        if (padding > 0) consumed(id, padding.toLong(), now) // padding is never read by the application
-        events.addLast(H2Event.Data(id, f.data, f.endStream))
+        if (padding > 0) credit(s, padding.toLong(), now) // padding is never read by the application
+        s.unconsumed += f.data.size
+        emit(H2Event.Data(id, f.data, f.endStream))
         if (f.endStream) remoteEnded(s)
     }
 
@@ -269,7 +319,7 @@ internal class H2ConnectionCore(
         now: Long,
     ) {
         block.reset()
-        if (!block.add(fragment, continuation = false)) calm("field block above ${settings.maxHeaderListSize} bytes")
+        if (!block.add(fragment, continuation = false)) calm("field block above ${2 * settings.maxHeaderListSize} bytes")
         blockStream = id
         blockPromised = promised
         blockEndStream = endStream
@@ -285,7 +335,7 @@ internal class H2ConnectionCore(
     ) {
         if (!inBlock) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "CONTINUATION without a field block")
         if (!block.add(f.fragment, continuation = true)) {
-            calm("field block above ${settings.maxHeaderListSize} bytes or ${settings.maxContinuationFrames} CONTINUATION frames")
+            calm("field block above ${2 * settings.maxHeaderListSize} bytes or ${settings.maxContinuationFrames} CONTINUATION frames")
         }
         if (f.endHeaders) endBlock(now)
     }
@@ -293,14 +343,27 @@ internal class H2ConnectionCore(
     private fun endBlock(now: Long) {
         inBlock = false
         val fields = ArrayList<Pair<String, String>>()
+        // a compressed block above the list limit (but within twice it) fails its stream only: it is still decoded for HPACK
+        val compressedFits = block.size <= settings.maxHeaderListSize
         val fits =
             try {
-                hpackIn.decode(block.block()) { n, v -> fields += n to v }
+                hpackIn.decode(block.block()) { n, v -> if (compressedFits) fields += n to v }
             } catch (e: HpackError) {
                 throw H2ConnectionError(Http2ErrorCode.COMPRESSION_ERROR, e.message ?: "HPACK decoding error") // section 4.3
             }
         block.reset()
-        if (blockPromised != 0) onPushPromiseBlock(blockStream, blockPromised, now) else onHeaders(blockStream, fields, fits, now)
+        if (blockPromised !=
+            0
+        ) {
+            onPushPromiseBlock(blockPromised, now)
+        } else {
+            onHeaders(
+                blockStream,
+                if (compressedFits) fields else emptyList(),
+                fits && compressedFits,
+                now,
+            )
+        }
     }
 
     private fun onHeaders(
@@ -337,20 +400,15 @@ internal class H2ConnectionCore(
                 rememberClosed(id, weReset = true) // after our GOAWAY: discarded, its frames too; the block fed HPACK (section 6.8)
                 return
             }
-            if (blockDependency ==
-                id
-            ) {
-                return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself (section 5.3.1)", now)
-            }
-            val running = streams.values.count { !it.local }
-            if (running >= settings.maxConcurrentStreams) {
-                // section 5.1.2: REFUSED_STREAM; a peer that keeps opening past the limit is flooding (golang/go#63417)
-                if (++refusedInARow >
-                    4 * maxOf(settings.maxConcurrentStreams, 1)
-                ) {
+            // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability; RFC 9113 section 5.3.2)
+            if (blockDependency == id) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+            if (peerStreams >= settings.maxConcurrentStreams) {
+                // section 5.1.2: REFUSED_STREAM; a peer that keeps opening past the limit is flooding (golang/go#63417: Go's
+                // server.go scheduleHandler allows 4 x the limit of unstarted handlers)
+                if (++refusedInARow > 4 * maxOf(settings.maxConcurrentStreams, 1)) {
                     calm("more than ${4 * settings.maxConcurrentStreams} refused streams in a row")
                 }
-                return streamError(id, Http2ErrorCode.REFUSED_STREAM, "SETTINGS_MAX_CONCURRENT_STREAMS reached", now)
+                return resetStream(id, Http2ErrorCode.REFUSED_STREAM, now, causedByPeer = false)
             }
             val ns =
                 H2Stream(
@@ -362,21 +420,29 @@ internal class H2ConnectionCore(
                 )
             ns.finalHeadersReceived = true
             streams[id] = ns
-            events.addLast(H2Event.HeadersReceived(id, fields, endStream, !fits))
+            peerStreams++
+            emit(H2Event.HeadersReceived(id, fields, endStream, !fits))
             return
         }
         if (s.state == StreamState.CLOSED) {
             if (recentlyClosed[id] != true) streamError(id, Http2ErrorCode.STREAM_CLOSED, "HEADERS on a closed stream", now)
             return
         }
-        if (blockDependency == id) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself (section 5.3.1)", now)
+        if (blockDependency ==
+            id
+        ) {
+            return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself (RFC 7540 section 5.3.1)", now)
+        }
         if (s.state == StreamState.HALF_CLOSED_REMOTE) return streamError(id, Http2ErrorCode.STREAM_CLOSED, "HEADERS after END_STREAM", now)
         if (s.finalHeadersReceived) {
             // trailers (section 8.1): they end the stream
             if (!endStream) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "a second field section without END_STREAM", now)
-        } else {
+        } else if (client) {
             val status = fields.firstOrNull()?.takeIf { it.first == ":status" }?.second
-            val informational = client && status != null && status.length == 3 && status[0] == '1'
+            // section 8.6: HTTP/2 does not support 101 (Switching Protocols); a response carrying it is malformed
+            if (status == "101") return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "status 101 over HTTP/2 (section 8.6)", now)
+            val informational = status != null && status.length == 3 && status[0] == '1'
+            // section 8.1: an interim response with END_STREAM is malformed
             if (informational &&
                 endStream
             ) {
@@ -386,12 +452,12 @@ internal class H2ConnectionCore(
                 // any number of interim responses (RFC 9110 section 15.2), but not unbounded: all of them together within
                 // our field section limit, as kuicksilver-http3 does; past it the response is discarded (section 8.2)
                 s.interimBytes += fields.sumOf { entrySize(it.first, it.second).toLong() }
-                if (s.interimBytes > settings.maxHeaderListSize) return resetStream(id, Http2ErrorCode.CANCEL, now, causedByPeer = true)
+                if (s.interimBytes > settings.maxHeaderListSize) return resetStream(id, Http2ErrorCode.CANCEL, now, causedByPeer = false)
             } else {
                 s.finalHeadersReceived = true
             }
         }
-        events.addLast(H2Event.HeadersReceived(id, fields, endStream, !fits))
+        emit(H2Event.HeadersReceived(id, fields, endStream, !fits))
         if (endStream) remoteEnded(s)
     }
 
@@ -414,6 +480,7 @@ internal class H2ConnectionCore(
         }
         val s = streams[f.streamId]
         val valid = s != null && (s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_LOCAL)
+        // section 6.6: on a stream neither open nor half-closed (local) it is a connection error, unless we reset that stream
         if (!valid &&
             recentlyClosed[f.streamId] != true
         ) {
@@ -424,19 +491,19 @@ internal class H2ConnectionCore(
     }
 
     private fun onPushPromiseBlock(
-        id: Int,
         promised: Int,
         now: Long,
     ) {
         // the push our SETTINGS had not yet forbidden: the block was decoded for HPACK, the stream is cancelled
-        resetStream(promised, Http2ErrorCode.CANCEL, now, causedByPeer = true)
+        resetStream(promised, Http2ErrorCode.CANCEL, now, causedByPeer = false)
     }
 
     private fun onPriority(
         f: Frame.Priority,
         now: Long,
     ) {
-        // deprecated signal (section 5.3.2): no state; a stream may not depend on itself (section 5.3.1)
+        glitch(now, "PRIORITY") // deprecated (section 5.3.2): no state, but not for free (nghttp2 does the same)
+        // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability)
         if (f.dependency == f.streamId) streamError(f.streamId, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
     }
 
@@ -446,12 +513,21 @@ internal class H2ConnectionCore(
     ) {
         val id = f.streamId
         if (isIdle(id) && streams[id] == null) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "RST_STREAM on idle stream $id")
-        if (!resets.take(now)) calm("stream resets above ${settings.resetsPerSecond}/s (burst ${settings.resetBurst})")
+        // Rapid Reset: a server counts every RST_STREAM of the client (nghttp2_session.c session_update_stream_reset_ratelim);
+        // a client does not (a server may answer early and reset with NO_ERROR, section 8.1)
+        if (!client && !resets.take(now)) calm("stream resets above ${settings.resetsPerSecond}/s (burst ${settings.resetBurst})")
         val s = streams[id] ?: return
-        if (s.state == StreamState.CLOSED) return
+        if (s.state == StreamState.CLOSED) {
+            // closed on our side by an END_STREAM still in the queue: nothing more goes out on a reset stream (section 6.4)
+            s.out.clear()
+            s.dataQueued = false
+            rememberClosed(id, weReset = false)
+            if (s.released) removeStream(s)
+            return
+        }
         val code = Http2ErrorCode.of(f.errorCode)
         closeStream(s, weReset = false)
-        events.addLast(H2Event.StreamReset(id, code, byPeer = true, notProcessed = code == Http2ErrorCode.REFUSED_STREAM))
+        emit(H2Event.StreamReset(id, code, byPeer = true, notProcessed = code == Http2ErrorCode.REFUSED_STREAM))
     }
 
     private fun onSettings(
@@ -461,10 +537,11 @@ internal class H2ConnectionCore(
         if (f.ack) {
             if (settingsUnacked == 0) return
             settingsUnacked--
-            rttNanos = maxOf(1, now - settingsSentAt)
+            if (settingsSentAt >= 0) rttNanos = maxOf(1, now - settingsSentAt)
             ourSettingsAcknowledged()
             return
         }
+        glitch(now, "SETTINGS")
         for (i in f.ids.indices) {
             val v = f.values[i]
             when (f.ids[i]) {
@@ -472,6 +549,7 @@ internal class H2ConnectionCore(
                     hpackOut.setPeerMaxTableSize(v)
                 }
 
+                // applied to the next block written, after our ACK
                 SettingId.ENABLE_PUSH -> {
                     if (v > 1) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH = $v")
                     // section 6.5.2: a server never sends 1
@@ -486,8 +564,10 @@ internal class H2ConnectionCore(
                     if (v > H2.MAX_WINDOW) throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE = $v")
                     val delta = v - peerInitialWindow
                     peerInitialWindow = v
-                    // section 6.9.2: every stream window moves by the difference, possibly below zero
+                    // section 6.9.2: the windows of streams we can still send on (open, half-closed (remote)) move by the
+                    // difference, possibly below zero
                     for (s in streams.values) {
+                        if (!canSend(s)) continue
                         s.sendWindow += delta
                         if (s.sendWindow >
                             H2.MAX_WINDOW
@@ -495,10 +575,13 @@ internal class H2ConnectionCore(
                             throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "stream ${s.id} window above 2^31 - 1")
                         }
                     }
+                    if (delta > 0) for (s in writers.toList()) tryWake(s)
                 }
 
                 SettingId.MAX_FRAME_SIZE -> {
-                    if (v < H2.MIN_MAX_FRAME_SIZE || v > H2.MAX_MAX_FRAME_SIZE) {
+                    if (v < H2.MIN_MAX_FRAME_SIZE ||
+                        v > H2.MAX_MAX_FRAME_SIZE
+                    ) {
                         throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE = $v")
                     }
                     peerMaxFrameSize = v.toInt()
@@ -523,13 +606,12 @@ internal class H2ConnectionCore(
             }
         }
         queueControl(FrameEncoder.settingsAck()) // section 6.5.3: immediately
-        events.addLast(H2Event.SettingsChanged)
-        wakeWriters()
+        emit(H2Event.SettingsChanged)
     }
 
     /** Section 6.5.3: our values hold once acknowledged; a smaller value than the protocol's initial one tightens only now. */
     private fun ourSettingsAcknowledged() {
-        hpackIn.setMaxTableSize(settings.headerTableSize)
+        hpackIn.setMaxTableSize(settings.headerTableSize) // section 4.3.1
         val ours = settings.initialStreamWindow.toLong()
         if (ours != recvInitialWindow) {
             val delta = ours - recvInitialWindow
@@ -542,29 +624,28 @@ internal class H2ConnectionCore(
         f: Frame.Ping,
         now: Long,
     ) {
-        if (!f.ack) return queueControl(FrameEncoder.ping(true, f.payload)) // section 6.7, ahead of other frames
+        if (!f.ack) {
+            glitch(now, "PING")
+            // section 6.7: the same payload back, ahead of any other frame
+            if (control.size >= settings.maxControlFramesQueued) calm("more than ${settings.maxControlFramesQueued} control frames queued")
+            control.addFirst(FrameEncoder.ping(true, f.payload))
+            return
+        }
         val sent = pingsOut.remove(f.payload) ?: return
         rttNanos = maxOf(1, now - sent)
-        events.addLast(H2Event.PingAck(f.payload, now - sent))
-        if (f.payload == gracefulPing) {
-            gracefulPing = -1
-            sendGoAway(lastPeerStreamId, Http2ErrorCode.NO_ERROR, ByteArray(0)) // the second phase of a graceful GOAWAY
-            maybeFinished()
-        }
+        emit(H2Event.PingAck(f.payload, now - sent))
+        if (f.payload == gracefulPing) finishGracefulGoAway()
     }
 
-    private fun onGoAway(
-        f: Frame.GoAway,
-        now: Long,
-    ) {
+    private fun onGoAway(f: Frame.GoAway) {
         goAwayReceived = true
         // section 6.8: the last stream ID never grows; streams above it were not processed and may be retried
         peerLastStreamId = minOf(peerLastStreamId, f.lastStreamId)
         val code = Http2ErrorCode.of(f.errorCode)
-        events.addLast(H2Event.GoAway(peerLastStreamId, code, f.debug.copyOf(minOf(f.debug.size, 1_024))))
+        emit(H2Event.GoAway(peerLastStreamId, code, f.debug.copyOf(minOf(f.debug.size, 1_024))))
         for (s in streams.values.filter { it.local && it.id > peerLastStreamId && it.state != StreamState.CLOSED }) {
             closeStream(s, weReset = false)
-            events.addLast(H2Event.StreamReset(s.id, Http2ErrorCode.REFUSED_STREAM, byPeer = true, notProcessed = true))
+            emit(H2Event.StreamReset(s.id, Http2ErrorCode.REFUSED_STREAM, byPeer = true, notProcessed = true))
         }
         maybeFinished()
     }
@@ -582,18 +663,19 @@ internal class H2ConnectionCore(
             ) {
                 throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "connection window above 2^31 - 1")
             }
-            return wakeWriters()
+            for (s in blockedOnConnection.toList()) tryWake(s)
+            return
         }
         val s = streams[id]
         if (s == null) {
             if (isIdle(id)) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE on idle stream $id")
-            return // a closed stream: allowed (section 5.1)
+            return glitch(now, "WINDOW_UPDATE on a closed stream") // allowed (section 5.1), useless
         }
         if (f.increment == 0) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0", now) // section 6.9
-        if (s.state == StreamState.CLOSED) return
+        if (s.state == StreamState.CLOSED) return glitch(now, "WINDOW_UPDATE on a closed stream")
         s.sendWindow += f.increment
         if (s.sendWindow > H2.MAX_WINDOW) return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "stream window above 2^31 - 1", now)
-        wakeWriters()
+        tryWake(s)
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -611,8 +693,7 @@ internal class H2ConnectionCore(
         check(client) { "only a client opens streams" }
         if (closed || goAwayReceived || goAwaySentLastId >= 0) throw H2ConnectionUnusable("the connection is going away")
         if (nextLocalId > H2.MAX_STREAM_ID || nextLocalId < 0) throw H2ConnectionUnusable("stream identifiers exhausted (section 5.1.1)")
-        val open = streams.values.count { it.local && it.state != StreamState.CLOSED }
-        if (open >= peerMaxConcurrent) throw H2StreamLimit("the peer allows $peerMaxConcurrent concurrent streams")
+        if (localOpen >= peerMaxConcurrent) throw H2StreamLimit("the peer allows $peerMaxConcurrent concurrent streams")
         checkListSize(fields)
         val id = nextLocalId
         nextLocalId += 2
@@ -625,7 +706,8 @@ internal class H2ConnectionCore(
                 recv = RecvWindow(recvInitialWindow, settings.maxStreamWindow.toLong()),
             )
         streams[id] = s
-        queueBlock(s, fields, endStream)
+        localOpen++
+        enqueue(s, OutItem.Fields(fields, endStream))
         return id
     }
 
@@ -636,9 +718,9 @@ internal class H2ConnectionCore(
         endStream: Boolean,
     ) {
         val s = streams[streamId] ?: throw IllegalStateException("stream $streamId is closed")
-        check(s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE) { "stream $streamId cannot send" }
+        check(canSend(s)) { "stream $streamId cannot send" }
         checkListSize(fields)
-        queueBlock(s, fields, endStream)
+        enqueue(s, OutItem.Fields(fields, endStream))
         if (endStream) localEnded(s)
     }
 
@@ -655,28 +737,23 @@ internal class H2ConnectionCore(
         endStream: Boolean,
     ): Int {
         val s = streams[streamId] ?: throw IllegalStateException("stream $streamId is closed")
-        check(s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE) { "stream $streamId cannot send" }
+        check(canSend(s)) { "stream $streamId cannot send" }
         if (s.dataQueued) {
-            s.wantsWindow = true
+            want(s)
             return 0
         }
-        val n =
-            minOf(
-                len.toLong(),
-                connSendWindow,
-                s.sendWindow,
-                minOf(peerMaxFrameSize, H2.MIN_MAX_FRAME_SIZE).toLong(),
-            ).toInt().coerceAtLeast(0)
+        val n = minOf(len.toLong(), connSendWindow, s.sendWindow, H2.MIN_MAX_FRAME_SIZE.toLong()).toInt().coerceAtLeast(0)
         if (n == 0 && len > 0) {
-            s.wantsWindow = true
+            want(s)
+            tryWake(s) // file it as blocked on its own or on the connection window
             return 0
         }
         val end = endStream && n == len
         connSendWindow -= n
         s.sendWindow -= n
-        enqueue(s, FrameEncoder.data(streamId, buf, off, n, end), headers = false)
+        enqueue(s, OutItem.Data(FrameEncoder.data(streamId, buf, off, n, end)))
         s.dataQueued = true
-        if (n < len) s.wantsWindow = true
+        if (n < len) want(s)
         if (end) localEnded(s)
         return n
     }
@@ -687,37 +764,56 @@ internal class H2ConnectionCore(
         n: Long,
         now: Long,
     ) {
+        lastNow = now
         if (n <= 0 || closed) return
-        creditConnection(n, now)
-        val s = streams[streamId] ?: return
-        if (s.state == StreamState.HALF_CLOSED_REMOTE || s.state == StreamState.CLOSED) return // no more data will come
-        val inc = s.recv.onConsumed(n, now, rttNanos)
-        if (inc > 0) queueControl(FrameEncoder.windowUpdate(streamId, inc))
+        val s = streams[streamId] ?: return // a dropped stream's content was credited when it was dropped
+        val k = minOf(n, s.unconsumed)
+        if (k <= 0) return
+        s.unconsumed -= k
+        credit(s, k, now)
     }
 
-    /** Resets [streamId] with [code] (the application cancelled it); not counted against the peer's reset budget. */
+    /**
+     * Resets [streamId] with [code] (the application cancelled it). A stream whose field section was never written is idle
+     * to the peer: it is dropped without a RST_STREAM (section 6.4; a later stream closes it, section 5.1.1) and reported
+     * as not processed.
+     */
     fun reset(
         streamId: Int,
         code: Http2ErrorCode,
         now: Long,
     ) {
-        if (closed || (isIdle(streamId) && streams[streamId] == null)) return // section 6.4: never on an idle stream
+        if (closed) return
+        val s = streams[streamId]
+        if (s != null && s.local && !s.headersSent) {
+            if (s.state == StreamState.CLOSED) return
+            closeStream(s, weReset = true)
+            emit(H2Event.StreamReset(streamId, code, byPeer = false, notProcessed = true))
+            return
+        }
+        if (isIdle(streamId) && s == null) return // section 6.4: never on an idle stream
         resetStream(streamId, code, now, causedByPeer = false)
     }
 
-    /** The driver finished with [streamId] (its handler returned): it stops counting toward our concurrency limit. */
+    /**
+     * The driver is done with [streamId] (a server's handler returned; a client read or abandoned the response): it stops
+     * counting toward our concurrency limit, and content the application never read is credited to the connection.
+     */
     fun release(streamId: Int) {
         val s = streams[streamId] ?: return
         s.released = true
-        refusedInARow = 0
-        if (s.state == StreamState.CLOSED && s.out.isEmpty()) streams.remove(streamId) // else once its last frame is written
-        maybeFinished()
+        if (!s.local) refusedInARow = 0
+        dropUnconsumed(s)
+        if (s.state == StreamState.CLOSED && s.out.isEmpty()) removeStream(s) // else once its last frame is written
     }
 
     /** Sends a PING (section 6.7) and returns its payload; [H2Event.PingAck] reports the answer. */
     fun ping(now: Long): Long {
         val payload = ++pingCounter
-        if (pingsOut.size >= MAX_PINGS_OUT) pingsOut.remove(pingsOut.keys.first())
+        if (pingsOut.size >= MAX_PINGS_OUT) {
+            // the oldest unanswered PING is forgotten, never the one of a graceful GOAWAY
+            pingsOut.keys.firstOrNull { it != gracefulPing }?.let { pingsOut.remove(it) }
+        }
         pingsOut[payload] = now
         queueControl(FrameEncoder.ping(false, payload))
         return payload
@@ -725,8 +821,9 @@ internal class H2ConnectionCore(
 
     /**
      * Sends GOAWAY (section 6.8). [graceful]: first with the largest stream identifier and a PING, then, when the PING is
-     * answered (a round trip later, so streams the peer opened meanwhile are counted), with the last stream we accepted.
-     * Otherwise at once with the last stream we accepted; an error [code] also closes the connection.
+     * answered (a round trip later, so streams the peer opened meanwhile are counted) or after
+     * [Http2Settings.settingsAckTimeout] at the latest, with the last stream we accepted. Otherwise at once with the last
+     * stream we accepted; an error [code] also closes the connection.
      */
     fun goAway(
         code: Http2ErrorCode,
@@ -739,6 +836,7 @@ internal class H2ConnectionCore(
         if (graceful && goAwaySentLastId < 0) {
             sendGoAway(H2.MAX_STREAM_ID, code, debug)
             gracefulPing = ping(now)
+            gracefulDeadline = now + settings.settingsAckTimeout.inWholeNanoseconds
         } else {
             sendGoAway(lastPeerStreamId, code, debug)
             maybeFinished()
@@ -748,15 +846,16 @@ internal class H2ConnectionCore(
     // ---------------------------------------------------------------------------------------------------------------
     // output, time, events
 
-    /** Writes pending bytes into [out] from [off]; returns how many. Field blocks are never interleaved with other frames. */
+    /** Writes pending bytes into [out] from [off] at [now]; returns how many. A field block is never interleaved with other frames. */
     fun poll(
         out: ByteArray,
-        off: Int = 0,
-        now: Long = 0,
+        off: Int,
+        now: Long,
     ): Int {
+        lastNow = now
         var p = off
         while (p < out.size) {
-            val cur = partial ?: nextFrame() ?: break
+            val cur = partial ?: nextFrame(now) ?: break
             val n = minOf(cur.size - partialPos, out.size - p)
             cur.copyInto(out, p, partialPos, partialPos + n)
             p += n
@@ -768,35 +867,39 @@ internal class H2ConnectionCore(
                 partial = cur
             }
         }
-        if (!closed) wakeWriters()
         return p - off
     }
 
     /** True when [poll] has something to write. */
-    val wantsWrite: Boolean get() =
-        partial != null || initial.isNotEmpty() || control.isNotEmpty() || headerReady.isNotEmpty() ||
-            dataReady.isNotEmpty()
+    val wantsWrite: Boolean
+        get() =
+            partial != null || initial.isNotEmpty() || control.isNotEmpty() || creditReady.isNotEmpty() || headerReady.isNotEmpty() ||
+                dataReady.isNotEmpty()
 
     /** The next deadline (nanoseconds) for [onTimeout], or null. */
     fun nextTimeout(): Long? {
         if (closed) return null
         var t: Long? = null
-        if (settingsUnacked > 0) t = settingsSentAt + settings.settingsAckTimeout.inWholeNanoseconds
-        if (inBlock) {
-            val b = blockStartedAt + settings.maxHeaderBlockTime.inWholeNanoseconds
-            t = if (t == null) b else minOf(t, b)
+
+        fun at(v: Long) {
+            t = t?.let { minOf(it, v) } ?: v
         }
+        if (settingsUnacked > 0 && settingsSentAt >= 0) at(settingsSentAt + settings.settingsAckTimeout.inWholeNanoseconds)
+        if (inBlock) at(blockStartedAt + settings.maxHeaderBlockTime.inWholeNanoseconds)
+        if (gracefulPing >= 0) at(gracefulDeadline)
         return t
     }
 
     fun onTimeout(now: Long) {
+        lastNow = now
         if (closed) return
-        if (settingsUnacked > 0 && now - settingsSentAt >= settings.settingsAckTimeout.inWholeNanoseconds) {
+        if (settingsUnacked > 0 && settingsSentAt >= 0 && now - settingsSentAt >= settings.settingsAckTimeout.inWholeNanoseconds) {
             return connectionError(Http2ErrorCode.SETTINGS_TIMEOUT, "SETTINGS not acknowledged within ${settings.settingsAckTimeout}")
         }
         if (inBlock && now - blockStartedAt >= settings.maxHeaderBlockTime.inWholeNanoseconds) {
-            connectionError(Http2ErrorCode.ENHANCE_YOUR_CALM, "field block not finished within ${settings.maxHeaderBlockTime}")
+            return connectionError(Http2ErrorCode.ENHANCE_YOUR_CALM, "field block not finished within ${settings.maxHeaderBlockTime}")
         }
+        if (gracefulPing >= 0 && now >= gracefulDeadline) finishGracefulGoAway()
     }
 
     fun nextEvent(): H2Event? = events.removeFirstOrNull()
@@ -810,56 +913,86 @@ internal class H2ConnectionCore(
     // ---------------------------------------------------------------------------------------------------------------
     // internals
 
+    private fun emit(e: H2Event) {
+        if (!closedReported) events.addLast(e) // nothing after Closed
+    }
+
+    private fun canSend(s: H2Stream): Boolean = s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE
+
     private fun checkListSize(fields: List<Pair<String, String>>) {
         var size = 0L
         for ((n, v) in fields) size += entrySize(n, v)
         if (size > peerMaxHeaderListSize) throw H2HeaderListTooLarge("field section of $size bytes above the peer's $peerMaxHeaderListSize")
     }
 
-    private fun queueBlock(
+    private fun enqueue(
         s: H2Stream,
-        fields: List<Pair<String, String>>,
-        endStream: Boolean,
+        item: OutItem,
     ) {
-        val encoded = hpackOut.encode(fields)
+        s.out.addLast(item)
+        schedule(s)
+    }
+
+    private fun schedule(s: H2Stream) {
+        if (s.scheduled || s.out.isEmpty()) return
+        s.scheduled = true
+        (if (s.out.first() is OutItem.Fields) headerReady else dataReady).addLast(s)
+    }
+
+    /** The next whole frame (or field block) to write; field lists are HPACK-encoded here, in wire order (section 4.3.1). */
+    private fun nextFrame(now: Long): ByteArray? {
+        initial.removeFirstOrNull()?.let {
+            if (it === ourSettingsFrame) settingsSentAt = now // the acknowledgement deadline and the RTT count from here
+            return it
+        }
+        control.removeFirstOrNull()?.let { return it }
+        if (closed) return null
+        while (true) {
+            val s = creditReady.removeFirstOrNull() ?: break
+            val inc = s.pendingCredit
+            s.pendingCredit = 0
+            if (inc > 0 && s.state != StreamState.CLOSED &&
+                s.state != StreamState.HALF_CLOSED_REMOTE
+            ) {
+                return FrameEncoder.windowUpdate(s.id, inc.toInt())
+            }
+        }
+        var s: H2Stream
+        while (true) {
+            s = headerReady.removeFirstOrNull() ?: dataReady.removeFirstOrNull() ?: return null
+            s.scheduled = false
+            if (s.out.isNotEmpty()) break // a stream whose queue was dropped (a reset) leaves its slot empty
+        }
+        val frame =
+            when (val item = s.out.removeFirst()) {
+                is OutItem.Fields -> encodeBlock(s.id, item)
+                is OutItem.Data -> item.frame
+            }
+        if (frame.size > 0 && frame[3].toInt() == 0x1) s.headersSent = true // HEADERS: the stream left the idle state for the peer
+        if (frame[3].toInt() == 0x0) {
+            s.dataQueued = false
+            tryWake(s)
+        }
+        schedule(s)
+        if (s.state == StreamState.CLOSED && s.out.isEmpty() && s.released) removeStream(s)
+        return frame
+    }
+
+    /** HEADERS and CONTINUATION frames of one field block in one array, so they are written back to back (section 4.3). */
+    private fun encodeBlock(
+        id: Int,
+        item: OutItem.Fields,
+    ): ByteArray {
+        val encoded = hpackOut.encode(item.fields)
         val max = minOf(peerMaxFrameSize, H2.MIN_MAX_FRAME_SIZE)
-        // one array for the whole block, so poll writes HEADERS and its CONTINUATION frames back to back (section 4.3)
-        var out = FrameEncoder.headers(s.id, encoded.copyOfRange(0, minOf(max, encoded.size)), endStream, encoded.size <= max)
+        var out = FrameEncoder.headers(id, encoded.copyOfRange(0, minOf(max, encoded.size)), item.endStream, encoded.size <= max)
         var at = max
         while (at < encoded.size) {
             val end = minOf(at + max, encoded.size)
-            out += FrameEncoder.continuation(s.id, encoded.copyOfRange(at, end), end == encoded.size)
+            out += FrameEncoder.continuation(id, encoded.copyOfRange(at, end), end == encoded.size)
             at = end
         }
-        s.headersSent = true
-        enqueue(s, out, headers = true)
-    }
-
-    private fun enqueue(
-        s: H2Stream,
-        frame: ByteArray,
-        headers: Boolean,
-    ) {
-        val wasEmpty = s.out.isEmpty()
-        s.out.addLast(frame)
-        s.outHeads.addLast(headers)
-        if (wasEmpty) (if (headers) headerReady else dataReady).addLast(s)
-    }
-
-    private fun nextFrame(): ByteArray? {
-        initial.removeFirstOrNull()?.let { return it }
-        control.removeFirstOrNull()?.let { return it }
-        if (closed) return null
-        val s = headerReady.removeFirstOrNull() ?: dataReady.removeFirstOrNull() ?: return null
-        val frame = s.out.removeFirst()
-        val wasHeaders = s.outHeads.removeFirst()
-        if (!wasHeaders) s.dataQueued = false
-        if (s.out.isNotEmpty()) (if (s.outHeads.first()) headerReady else dataReady).addLast(s)
-        if (s.state == StreamState.CLOSED && s.out.isEmpty() && (s.local || s.released)) {
-            streams.remove(s.id)
-            maybeFinished()
-        }
-        return frame
+        return out
     }
 
     private fun queueControl(frame: ByteArray) {
@@ -872,6 +1005,20 @@ internal class H2ConnectionCore(
         control.addLast(frame)
     }
 
+    /** Credit [n] bytes of [s] back to the peer: the connection at once when due, the stream as one coalesced WINDOW_UPDATE. */
+    private fun credit(
+        s: H2Stream,
+        n: Long,
+        now: Long,
+    ) {
+        creditConnection(n, now)
+        if (s.state == StreamState.HALF_CLOSED_REMOTE || s.state == StreamState.CLOSED) return // no more data will come
+        val inc = s.recv.onConsumed(n, now, rttNanos)
+        if (inc <= 0) return
+        s.pendingCredit += inc
+        if (s.pendingCredit == inc.toLong()) creditReady.addLast(s)
+    }
+
     private fun creditConnection(
         n: Long,
         now: Long,
@@ -880,20 +1027,44 @@ internal class H2ConnectionCore(
         if (inc > 0) queueControl(FrameEncoder.windowUpdate(0, inc))
     }
 
-    private fun wakeWriters() {
-        if (connSendWindow <= 0) return
-        for (s in streams.values) {
-            if (s.wantsWindow && !s.dataQueued && s.sendWindow > 0 &&
-                (s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE)
-            ) {
-                s.wantsWindow = false
-                events.addLast(H2Event.WindowAvailable(s.id))
-            }
+    /** Content of [s] that will never be read goes back to the connection window. */
+    private fun dropUnconsumed(s: H2Stream) {
+        val n = s.unconsumed
+        s.unconsumed = 0
+        if (n > 0 && !closed) creditConnection(n, lastNow)
+    }
+
+    private fun want(s: H2Stream) {
+        s.wantsWindow = true
+        writers.add(s)
+    }
+
+    /** Reports [H2Event.WindowAvailable] for [s] if it waits for window and has some now; otherwise files where it waits. */
+    private fun tryWake(s: H2Stream) {
+        if (!s.wantsWindow) return
+        if (!canSend(s)) {
+            s.wantsWindow = false
+            writers.remove(s)
+            blockedOnConnection.remove(s)
+            return
         }
+        if (s.dataQueued || s.sendWindow <= 0) {
+            blockedOnConnection.remove(s)
+            return
+        }
+        if (connSendWindow <= 0) {
+            blockedOnConnection.add(s)
+            return
+        }
+        s.wantsWindow = false
+        writers.remove(s)
+        blockedOnConnection.remove(s)
+        emit(H2Event.WindowAvailable(s.id))
     }
 
     private fun remoteEnded(s: H2Stream) {
         s.state = if (s.state == StreamState.HALF_CLOSED_LOCAL) StreamState.CLOSED else StreamState.HALF_CLOSED_REMOTE
+        s.pendingCredit = 0
         if (s.state == StreamState.CLOSED) closeStream(s, weReset = false, flush = true)
     }
 
@@ -902,23 +1073,36 @@ internal class H2ConnectionCore(
         if (s.state == StreamState.CLOSED) closeStream(s, weReset = false, flush = true)
     }
 
-    /** Closes [s]; queued frames are dropped unless [flush] (a normal end: they still go out). */
+    /**
+     * Closes [s]. A normal end ([flush]) still writes what is queued; otherwise queued field lists (never encoded) and DATA
+     * are dropped, and so is pending stream credit (section 6.4: nothing more on a reset stream).
+     */
     private fun closeStream(
         s: H2Stream,
         weReset: Boolean,
         flush: Boolean = false,
     ) {
+        // a normal end comes here with the state already CLOSED; a reset or GOAWAY with the stream still open
+        if (s.local && (flush || s.state != StreamState.CLOSED)) localOpen--
         s.state = StreamState.CLOSED
+        s.pendingCredit = 0
         if (!flush) {
             s.out.clear()
-            s.outHeads.clear()
             s.dataQueued = false
-            headerReady.remove(s)
-            dataReady.remove(s)
+            dropUnconsumed(s) // a reset stream's content will not be read
         }
         s.wantsWindow = false
+        writers.remove(s)
+        blockedOnConnection.remove(s)
         rememberClosed(s.id, weReset)
-        if (s.out.isEmpty() && (s.local || s.released)) streams.remove(s.id)
+        if (s.out.isEmpty() && s.released) removeStream(s)
+        maybeFinished()
+    }
+
+    private fun removeStream(s: H2Stream) {
+        if (streams.remove(s.id) == null) return
+        if (!s.local) peerStreams--
+        dropUnconsumed(s)
         maybeFinished()
     }
 
@@ -931,7 +1115,7 @@ internal class H2ConnectionCore(
         if (recentlyClosed.size > recentlyClosedMax) recentlyClosed.remove(recentlyClosed.keys.first())
     }
 
-    /** Our RST_STREAM for [id]; [causedByPeer] resets take from the reset budget (MadeYouReset, CVE-2025-8671). */
+    /** Our RST_STREAM for [id]; [causedByPeer] (an error of the peer) also takes from the glitch budget (MadeYouReset, CVE-2025-8671). */
     private fun resetStream(
         id: Int,
         code: Http2ErrorCode,
@@ -941,11 +1125,11 @@ internal class H2ConnectionCore(
         val s = streams[id]
         val active = s != null && s.state != StreamState.CLOSED
         if (!active && recentlyClosed[id] == true) return // reset by us already: one RST_STREAM per stream
-        if (causedByPeer && !resets.take(now)) calm("stream errors above ${settings.resetsPerSecond}/s (burst ${settings.resetBurst})")
+        if (causedByPeer) glitch(now, "stream error ${code.name}")
         // later frames on this stream are discarded (section 5.1), so a peer cannot make us answer them again
         if (active) closeStream(s, weReset = true) else rememberClosed(id, weReset = true)
         queueControl(FrameEncoder.rstStream(id, code.code))
-        if (active) events.addLast(H2Event.StreamReset(id, code, byPeer = false, notProcessed = code == Http2ErrorCode.REFUSED_STREAM))
+        if (active) emit(H2Event.StreamReset(id, code, byPeer = false, notProcessed = code == Http2ErrorCode.REFUSED_STREAM))
     }
 
     /** A stream error (section 5.4.2); on an idle stream (no RST_STREAM allowed there, section 6.4) a connection error. */
@@ -972,6 +1156,13 @@ internal class H2ConnectionCore(
         control.addLast(FrameEncoder.goAway(last, code.code, debug))
     }
 
+    private fun finishGracefulGoAway() {
+        pingsOut.remove(gracefulPing)
+        gracefulPing = -1
+        sendGoAway(lastPeerStreamId, Http2ErrorCode.NO_ERROR, ByteArray(0)) // the second phase
+        maybeFinished()
+    }
+
     /** A connection error (section 5.4.1): only our GOAWAY goes out after it, then the transport closes. */
     private fun connectionError(
         code: Http2ErrorCode,
@@ -980,15 +1171,17 @@ internal class H2ConnectionCore(
         if (closed) return
         // a frame already partly written is finished first (the peer must still parse the stream), then only the GOAWAY
         control.clear()
+        creditReady.clear()
         headerReady.clear()
         dataReady.clear()
-        sendGoAway(lastPeerStreamId, code, message.encodeToByteArray().copyOf(minOf(message.length, 256)))
+        val debug = message.encodeToByteArray()
+        sendGoAway(lastPeerStreamId, code, debug.copyOf(minOf(debug.size, 256)))
         closed = true
         for (s in streams.values) {
             if (s.state !=
                 StreamState.CLOSED
             ) {
-                events.addLast(H2Event.StreamReset(s.id, code, byPeer = false, notProcessed = s.local && !s.headersSent))
+                emit(H2Event.StreamReset(s.id, code, byPeer = false, notProcessed = s.local && !s.headersSent))
             }
         }
         streams.clear()
@@ -1011,8 +1204,8 @@ internal class H2ConnectionCore(
         reason: String,
     ) {
         if (closedReported) return
-        closedReported = true
         events.addLast(H2Event.Closed(code, byPeer, reason))
+        closedReported = true
     }
 
     private companion object {

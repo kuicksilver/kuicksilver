@@ -3,10 +3,10 @@
 package io.kuicksilver.http2.core
 
 /**
- * A token bucket on virtual time: [burst] tokens, refilled at [perSecond] per second. The stream-reset budget of a
- * connection (Rapid Reset, CVE-2023-44487; MadeYouReset, CVE-2025-8671): the peer's RST_STREAM frames and the resets we
- * send because of its errors take from it, and an empty bucket ends the connection. Tokens are kept in billionths so
- * the refill needs no division per call.
+ * A token bucket on virtual time: [burst] tokens, refilled at [perSecond] per second, like nghttp2's `nghttp2_ratelim`.
+ * A connection has two: a server's budget for the client's RST_STREAM frames (Rapid Reset, CVE-2023-44487) and the glitch
+ * budget for suspicious frames and the stream errors the peer causes (MadeYouReset, CVE-2025-8671); an empty bucket ends
+ * the connection. Tokens are kept in billionths so the refill needs no division per call.
  */
 internal class TokenBucket(
     private val burst: Int,
@@ -37,7 +37,8 @@ internal class TokenBucket(
 
 /**
  * Collects one field block (HEADERS or PUSH_PROMISE and its CONTINUATION frames, RFC 9113 section 4.3) within the
- * limits of section 3.23 of the threat model, before HPACK sees any of it: at most [maxBytes] compressed bytes and
+ * limits of section 3.23 of the threat model, before HPACK sees any of it: at most [maxBytes] compressed bytes (the core
+ * passes twice SETTINGS_MAX_HEADER_LIST_SIZE, as Go's frame.go readMetaFrame) and
  * [maxContinuations] CONTINUATION frames (CVE-2023-45288, CVE-2024-27316). Over a limit, [add] returns false and the
  * connection ends; the buffer never holds more than [maxBytes].
  */

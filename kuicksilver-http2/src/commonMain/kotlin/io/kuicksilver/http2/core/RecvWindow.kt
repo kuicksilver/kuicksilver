@@ -51,7 +51,7 @@ internal class RecvWindow(
             epochStart = now
             epochStartOffset = consumed
         }
-        consumed += n
+        consumed += minOf(n, received - consumed) // never more than arrived: a driver error cannot open the window further
         if (limit - consumed > window - window / 4) return 0
         val inEpoch = consumed - epochStartOffset
         if (inEpoch > window / 2) {

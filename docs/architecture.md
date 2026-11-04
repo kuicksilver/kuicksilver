@@ -147,8 +147,9 @@ and decoder with the dynamic table and the generated static and Huffman tables (
 the connection (`H2ConnectionCore`: the preface, SETTINGS and their acknowledgement deadline, stream states, flow control
 with WINDOW_UPDATE only after the application consumed the data and window auto-tuning, PING, two-phase GOAWAY) and every
 per-connection limit against floods (`H2Limits.kt`: CONTINUATION frames and bytes, queued control frames, empty DATA
-frames, a token bucket shared by the peer's and our own stream resets). Bytes go in through `receive` and out through
-`poll`; time is a parameter. The public API is `Http2Settings` and `Http2ErrorCode`.
+frames, a glitch budget, a server's budget for the client's stream resets). Field lists are HPACK-encoded when `poll`
+writes them, so the encoder follows the wire order. Bytes go in through `receive` and out through `poll`; time is a
+parameter. The public API is `Http2Settings` and `Http2ErrorCode`.
 
 ### `kuicksilver-ktor-client`, `kuicksilver-ktor-server`
 

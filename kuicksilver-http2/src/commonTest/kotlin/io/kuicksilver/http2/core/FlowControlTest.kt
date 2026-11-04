@@ -123,7 +123,11 @@ class FlowControlTest {
         c.send(FrameEncoder.windowUpdate(0, Int.MAX_VALUE))
         c.assertConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR) // section 6.9.1
         // SETTINGS_INITIAL_WINDOW_SIZE that pushes an open stream's window past the maximum (section 6.9.2)
-        val (c2, id2) = clientWithResponse()
+        // (only streams we can still send on have a window that moves: an open one here)
+        val c2 = RawH2Peer(Role.CLIENT)
+        c2.handshake()
+        val id2 = c2.core.openStream(GET, endStream = false)
+        c2.read()
         c2.send(FrameEncoder.windowUpdate(id2, Int.MAX_VALUE - 65_535))
         c2.send(settings(SettingId.INITIAL_WINDOW_SIZE to 65_536))
         c2.assertConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR)
@@ -155,6 +159,42 @@ class FlowControlTest {
         // raising it again opens every stream (and a new stream starts with the new value)
         c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000))
         assertEquals(50, c.core.sendData(id, ByteArray(50), 0, 50, endStream = false))
+    }
+
+    @Test
+    fun initialWindowChangeLeavesStreamsWeCannotSendOn() {
+        // section 6.9.2: only streams with an active send window (open, half-closed (remote)) move
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = true) // half-closed (local): we send nothing more on it
+        c.read()
+        c.send(FrameEncoder.windowUpdate(id, Int.MAX_VALUE - 65_535))
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 65_536))
+        assertEquals(false, c.core.isClosed)
+    }
+
+    @Test
+    fun aPeerResetPurgesQueuedStreamCreditAndReturnsUnreadContent() {
+        val (c, id) = clientWithResponse()
+        repeat(32) { c.send(c.data(id, 16_384)) } // 512 KiB delivered
+        c.core.consumed(id, 130_000, 1 * MS) // stream credit is due (a quarter of the window) but not written
+        c.send(FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code))
+        val out = c.read()
+        assertEquals(emptyList(), out.filterIsInstance<Frame.WindowUpdate>().filter { it.streamId == id }) // section 6.4
+        // the connection got back everything delivered, the unread part included
+        // (at least all 512 KiB come back; auto-tuning may add more)
+        assertTrue(out.filterIsInstance<Frame.WindowUpdate>().filter { it.streamId == 0 }.sumOf { it.increment.toLong() } >= 524_288L)
+    }
+
+    @Test
+    fun releaseReturnsUnreadContentToTheConnection() {
+        val (c, id) = clientWithResponse()
+        repeat(16) { c.send(c.data(id, 16_384, endStream = it == 15)) }
+        assertEquals(emptyList(), c.read().filterIsInstance<Frame.WindowUpdate>())
+        c.core.release(id) // the application dropped the response unread
+        assertEquals(262_144L, c.read().filterIsInstance<Frame.WindowUpdate>().sumOf { it.increment.toLong() })
+        c.core.consumed(id, 100_000, 2 * MS) // a late report changes nothing
+        assertEquals(emptyList(), c.read())
     }
 
     @Test

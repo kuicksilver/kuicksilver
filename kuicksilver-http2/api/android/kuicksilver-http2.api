@@ -26,8 +26,10 @@ public final class io/kuicksilver/http2/Http2ErrorCode$Companion {
 
 public final class io/kuicksilver/http2/Http2Settings {
 	public fun <init> ()V
-	public synthetic fun <init> (IIIIIIIIJIIIIIJILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (IIIIIIIIJIIIIIJLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (IIIIIIIIJIIIIIJIIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (IIIIIIIIJIIIIIJIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getGlitchBurst ()I
+	public final fun getGlitchesPerSecond ()I
 	public final fun getHeaderTableSize ()I
 	public final fun getInitialConnectionWindow ()I
 	public final fun getInitialStreamWindow ()I

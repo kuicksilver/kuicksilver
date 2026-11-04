@@ -26,9 +26,11 @@ class GoAwayTest {
         val unprocessed = ev.filterIsInstance<H2Event.StreamReset>()
         assertEquals(listOf(3, 5), unprocessed.map { it.streamId })
         assertTrue(unprocessed.all { it.notProcessed && it.byPeer })
+        ids.drop(1).forEach { c.core.release(it) }
         assertFailsWith<H2ConnectionUnusable> { c.core.openStream(GET, endStream = true) } // section 6.8: no new streams
         // stream 1 goes on to its end, then the connection is over
         c.send(c.headers(ids[0], OK, endStream = true))
+        c.core.release(ids[0])
         val end = c.events()
         assertEquals(ids[0], end.only<H2Event.HeadersReceived>().streamId)
         assertEquals(Http2ErrorCode.NO_ERROR, end.only<H2Event.Closed>().code)
@@ -45,7 +47,7 @@ class GoAwayTest {
         p.server.goAway(Http2ErrorCode.NO_ERROR, ByteArray(0), graceful = true, now = p.now)
         // the first GOAWAY carries 2^31 - 1 and a PING follows; a request that crosses it is still accepted
         val out = ByteArray(1024)
-        val n = p.server.poll(out)
+        val n = p.server.poll(out, 0, p.now)
         val dec =
             io.kuicksilver.http2.frame
                 .FrameDecoder()
@@ -60,7 +62,7 @@ class GoAwayTest {
         // a request on the wire before the client read the GOAWAY
         val crossing = p.client.openStream(GET, endStream = true)
         val wire = ByteArray(1024)
-        val m = p.client.poll(wire)
+        val m = p.client.poll(wire, 0, p.now)
         p.server.receive(wire, 0, m, p.now)
         // and one still in the client's queue when the GOAWAY and PING arrive: the PING answer goes out first (section
         // 6.7), so the second GOAWAY does not cover it
@@ -81,9 +83,32 @@ class GoAwayTest {
             p.server.release(id)
         }
         p.pump()
+        for (id in listOf(first, crossing, late)) p.client.release(id)
+        p.pump()
         assertEquals(Http2ErrorCode.NO_ERROR, p.serverGot<H2Event.Closed>().single().code)
         assertEquals(2, p.clientGot<H2Event.HeadersReceived>().size)
         assertTrue(p.client.isClosed)
+    }
+
+    @Test
+    fun gracefulGoAwayFinishesWithoutAPingAnswer() {
+        // the client never answers the PING of a graceful GOAWAY: the final GOAWAY goes out at the deadline anyway
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake()
+        s.send(s.headers(1, endStream = false))
+        s.core.goAway(Http2ErrorCode.NO_ERROR, ByteArray(0), graceful = true, now = 0)
+        assertEquals(listOf(H2.MAX_STREAM_ID), s.read().filterIsInstance<Frame.GoAway>().map { it.lastStreamId })
+        repeat(20) { s.core.ping(0) } // our own PINGs do not push the graceful one out
+        assertEquals(10 * SECOND, s.core.nextTimeout())
+        s.core.onTimeout(10 * SECOND)
+        assertEquals(
+            1,
+            s
+                .read()
+                .filterIsInstance<Frame.GoAway>()
+                .single()
+                .lastStreamId,
+        )
     }
 
     @Test

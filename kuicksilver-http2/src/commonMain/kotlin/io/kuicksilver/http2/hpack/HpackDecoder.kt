@@ -6,7 +6,7 @@ package io.kuicksilver.http2.hpack
  * HPACK decoder (RFC 7541 sections 2-6) for one direction of a connection. [maxTableSize] is our
  * SETTINGS_HEADER_TABLE_SIZE (the protocol's initial 4096 by default), the ceiling of every dynamic table size update.
  *
- * Limits (threat model 3.21): the decoded field list is counted as RFC 9113 section 6.5.2 counts it (name + value + 32 per
+ * Limits (threat model 3.23): the decoded field list is counted as RFC 9113 section 6.5.2 counts it (name + value + 32 per
  * field); once it passes [maxHeaderListSize] the sink gets no more fields, but the block is still decoded to its end so
  * the dynamic table stays in step with the peer's encoder (RFC 9113 section 8.2: the field block MUST be processed
  * unless the connection is closed). An index into the table is a reference, not a copy, so a block of indexed fields

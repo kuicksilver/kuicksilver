@@ -17,7 +17,8 @@ internal sealed interface Frame {
 
     /**
      * HEADERS (section 6.2). The RFC 7540 priority fields are parsed (a stream that depends on itself is a stream error,
-     * section 5.3.1) and otherwise ignored (section 5.3.2); [dependency] is -1 without the PRIORITY flag.
+     * RFC 7540 section 5.3.1, kept for interoperability) and otherwise ignored (RFC 9113 section 5.3.2); [dependency] is -1
+     * without the PRIORITY flag.
      */
     class Headers(
         override val streamId: Int,

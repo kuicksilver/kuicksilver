@@ -36,6 +36,8 @@ class StreamStateTest {
         val d = p.clientGot<H2Event.Data>().single()
         assertContentEquals("hi".encodeToByteArray(), d.data)
         assertTrue(d.endStream) // client: half-closed (local) -> closed
+        assertEquals(1, p.client.activeStreams) // until the driver is done with it
+        p.client.release(id)
         assertEquals(0, p.client.activeStreams)
         assertEquals(1, p.server.activeStreams) // its handler still runs
         p.server.release(id)
@@ -57,6 +59,7 @@ class StreamStateTest {
         assertEquals(listOf("103", "200"), h.take(2).map { it.fields[0].second })
         assertEquals(listOf("x-checksum" to "1"), h[2].fields)
         assertTrue(h[2].endStream)
+        p.client.release(id)
         assertEquals(0, p.client.activeStreams)
     }
 
@@ -109,6 +112,89 @@ class StreamStateTest {
         c.core.reset(1, Http2ErrorCode.CANCEL, 0) // never opened
         c.core.reset(2, Http2ErrorCode.CANCEL, 0) // a server's identifier
         assertEquals(emptyList(), c.read().filterIsInstance<Frame.RstStream>())
+    }
+
+    @Test
+    fun negative_resetBeforeTheHeadersAreWrittenSendsNothing() {
+        // section 6.4: a stream whose HEADERS never left is idle to the peer: no RST_STREAM, and the request is retry-safe
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val a = c.core.openStream(GET, endStream = true)
+        c.core.reset(a, Http2ErrorCode.CANCEL, 0)
+        val r = c.events().only<H2Event.StreamReset>()
+        assertEquals(a, r.streamId)
+        assertTrue(r.notProcessed)
+        val b = c.core.openStream(GET, endStream = true)
+        val out = c.read()
+        assertEquals(emptyList(), out.filterIsInstance<Frame.RstStream>())
+        assertEquals(listOf(b), out.filterIsInstance<Frame.Headers>().map { it.streamId }) // b implicitly closes a (section 5.1.1)
+        // after the HEADERS are written, a reset is a RST_STREAM
+        c.core.reset(b, Http2ErrorCode.CANCEL, 0)
+        assertEquals(listOf(b), c.read().filterIsInstance<Frame.RstStream>().map { it.streamId })
+        // a connection error reports a request whose HEADERS were never written as not processed, a written one as maybe
+        // processed
+        val d = RawH2Peer(Role.CLIENT)
+        d.handshake()
+        val sent = d.core.openStream(GET, endStream = true)
+        d.read()
+        val queued = d.core.openStream(GET, endStream = true)
+        d.send(FrameEncoder.raw(0x4, 0, 1, ByteArray(0))) // SETTINGS on a stream: PROTOCOL_ERROR
+        val resets = d.events().filterIsInstance<H2Event.StreamReset>().associateBy { it.streamId }
+        assertEquals(false, resets.getValue(sent).notProcessed)
+        assertEquals(true, resets.getValue(queued).notProcessed)
+    }
+
+    @Test
+    fun negative_streamErrorInsideAFieldBlockIsAConnectionError() {
+        // sections 6.2, 6.10: HEADERS on 3 without END_HEADERS, then a PRIORITY of the wrong length on 1 (a stream error on
+        // its own): inside a field block it is a connection PROTOCOL_ERROR
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake()
+        s.send(s.headers(1, endStream = false))
+        val b = s.hpackOut.encode(GET)
+        s.send(FrameEncoder.headers(3, b.copyOfRange(0, 2), endStream = true, endHeaders = false))
+        s.send(FrameEncoder.raw(0x2, 0, 1, ByteArray(4)))
+        s.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+    }
+
+    @Test
+    fun negative_status101IsMalformed() {
+        // section 8.6: HTTP/2 does not support 101 (Switching Protocols)
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = true)
+        c.read()
+        c.send(c.headers(id, listOf(":status" to "101"), endStream = false))
+        c.assertStreamError(id, Http2ErrorCode.PROTOCOL_ERROR)
+        assertEquals(emptyList(), c.allEvents.filterIsInstance<H2Event.HeadersReceived>())
+    }
+
+    @Test
+    fun negative_decoderTableStartsAt4096UntilOurSettingsAreAcknowledged() {
+        // section 4.3.1: both tables start at 4096; our larger SETTINGS_HEADER_TABLE_SIZE holds only once acknowledged
+        val s = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(headerTableSize = 65_536))
+        s.send(io.kuicksilver.http2.frame.H2.PREFACE, FrameEncoder.settings(IntArray(0), LongArray(0)))
+        val update8192 = byteArrayOf(0x3f, 0xe1.toByte(), 0x3f, 0x82.toByte()) // a table size update to 8192, then :method GET
+        s.send(FrameEncoder.headers(1, update8192, endStream = true, endHeaders = true))
+        s.assertConnectionError(Http2ErrorCode.COMPRESSION_ERROR)
+        val ok = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(headerTableSize = 65_536))
+        ok.handshake() // includes our ACK
+        ok.send(FrameEncoder.headers(1, update8192, endStream = true, endHeaders = true))
+        assertEquals(1, ok.events().filterIsInstance<H2Event.HeadersReceived>().size)
+    }
+
+    @Test
+    fun pingAnswerGoesFirst() {
+        // section 6.7: PING responses SHOULD be given higher priority than any other frame
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake()
+        s.core.ping(0)
+        s.send(s.headers(1, endStream = false), FrameEncoder.ping(false, 42))
+        s.core.reset(1, Http2ErrorCode.CANCEL, 0)
+        val out = s.read()
+        val first = out.first() as Frame.Ping
+        assertTrue(first.ack)
+        assertEquals(42L, first.payload)
     }
 
     @Test
@@ -244,7 +330,7 @@ class StreamStateTest {
         val peer = RawH2Peer(Role.SERVER)
         val c = H2ConnectionCore(Role.CLIENT, io.kuicksilver.http2.Http2Settings(), 0)
         val out = ByteArray(1024)
-        val n = c.poll(out)
+        val n = c.poll(out, 0, 0)
         assertContentEquals(H2.PREFACE, out.copyOf(24)) // section 3.4
         peer.send(out.copyOf(n))
         val s = peer.events()

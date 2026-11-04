@@ -36,8 +36,12 @@ final enum class io.kuicksilver.http2/Http2ErrorCode : kotlin/Enum<io.kuicksilve
 }
 
 final class io.kuicksilver.http2/Http2Settings { // io.kuicksilver.http2/Http2Settings|null[0]
-    constructor <init>(kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.time/Duration = ...) // io.kuicksilver.http2/Http2Settings.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.time.Duration;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.time.Duration){}[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ...) // io.kuicksilver.http2/Http2Settings.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.time.Duration;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.time.Duration;kotlin.Int;kotlin.Int){}[0]
 
+    final val glitchBurst // io.kuicksilver.http2/Http2Settings.glitchBurst|{}glitchBurst[0]
+        final fun <get-glitchBurst>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.glitchBurst.<get-glitchBurst>|<get-glitchBurst>(){}[0]
+    final val glitchesPerSecond // io.kuicksilver.http2/Http2Settings.glitchesPerSecond|{}glitchesPerSecond[0]
+        final fun <get-glitchesPerSecond>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.glitchesPerSecond.<get-glitchesPerSecond>|<get-glitchesPerSecond>(){}[0]
     final val headerTableSize // io.kuicksilver.http2/Http2Settings.headerTableSize|{}headerTableSize[0]
         final fun <get-headerTableSize>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.headerTableSize.<get-headerTableSize>|<get-headerTableSize>(){}[0]
     final val initialConnectionWindow // io.kuicksilver.http2/Http2Settings.initialConnectionWindow|{}initialConnectionWindow[0]
