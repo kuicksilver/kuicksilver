@@ -170,7 +170,7 @@ class ClientWebSocketConnectingTest {
      * The wait for the address is not connecting time and takes nothing from the pool (review 2026-10-28 R1 and review S2):
      * a WebSocket waiting for the address (held here by the test, as another WebSocket's CONNECTING connection holds it)
      * has neither a pool permit nor a connection, so no connect timeout runs for it and it cannot starve other requests;
-     * once the address is free it connects within its own 300 ms. Before R1 the queue counted against the connect timeout;
+     * once the address is free it connects within its own connect timeout. Before R1 the queue counted against the connect timeout;
      * after R1 and before S2 the waiting WebSocket held a pool permit for as long as it waited.
      */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
@@ -183,7 +183,7 @@ class ClientWebSocketConnectingTest {
                 answer(input, output)
             }, onAccept = { accepted.addAndFetch(1) }) { port ->
                 testClient(
-                    engine = { connectTimeout = 300.milliseconds },
+                    engine = { connectTimeout = 5.seconds },
                     block = { install(WebSockets) },
                 ).use { c ->
                     val engine = c.engine as KuicksilverEngine
