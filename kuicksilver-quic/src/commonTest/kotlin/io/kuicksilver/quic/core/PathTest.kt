@@ -2252,7 +2252,7 @@ class PathTest {
         }
     }
 
-    /** The same race with the first PATH_CHALLENGE to S lost: a repeat (one PTO later) decides, within the same bound. */
+    /** The same race with the first PATH_CHALLENGE to S lost: the handshake completes within the same bound, and S is validated after it. */
     @Test fun handshakeRebindUnderCopyRaceSurvivesALostCandidateChallenge() {
         val p = EndpointPair(crypto = KslQuicCrypto)
         try {
@@ -2274,7 +2274,9 @@ class PathTest {
             val moved = assertNotNull(r.movedAt)
             assertTrue(p.now <= moved + s.validationTimeout() * 2 + s.pto(), "confirmed ${p.now - moved} after the move")
             assertEquals(newAddr, s.remoteAddressForTest)
-            assertTrue(s.challengedAddressesForTest.count { it == newAddr } >= 2, "S was challenged again: ${s.challengedAddressesForTest}")
+            r.run(s.validationTimeout(), atLeast = s.validationTimeout())
+            assertEquals(newAddr, s.remoteAddressForTest)
+            assertTrue(s.paths.active.amplification.validated, "S is validated without the lost challenge: ${s.paths.all}")
         } finally {
             p.close()
         }
@@ -2648,6 +2650,84 @@ class PathTest {
             val challenges = s.challengedAddressesForTest.size - challengesBefore
             // at most one challenge per path per PTO (two addresses), plus the repeats of the validations under way
             assertTrue(challenges <= 2 * 40 + 8, "$challenges PATH_CHALLENGEs over 40 PTOs")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The client rebinds from C to S right after the server's first datagram (an Initial ACK) reached it, before any ServerHello did;
+     * C is dead and an observer races copies of its repeated ClientHello from C, winning every other race. The server does not move
+     * on an Initial while the current address keeps sending (anyone can forge one), so before 0.3.0 its whole flight kept going to
+     * the dead C and the handshake timed out. The address the client's Initials also come from is now mirrored: at each PTO the
+     * flight is retransmitted there too, within that address's own budget, and the client completes from S.
+     */
+    @Test fun handshakeRebindBeforeAnyServerHelloUnderCopyRaceCompletes() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val newAddr = InetSocketAddress("10.0.0.1", 40002)
+            val r = CopyRace(p, newAddr, rebindAfter = 1) { i -> i % 2 == 1 }
+            val start = p.now
+            r.run(QuicConfig.Default.handshakeTimeout)
+            val s = r.s
+            assertTrue(r.confirmed(), "both confirm the handshake (client ${r.h.c.state}, server ${s.state}, ${p.closed(r.h.c)})")
+            assertTrue(s.handshakeMirrorSent, "the flight was retransmitted to S")
+            assertEquals(newAddr, s.remoteAddressForTest)
+            assertTrue(r.toOld <= 3 * r.fromOld, "${r.toOld} bytes to C for ${r.fromOld} received from it")
+            assertTrue(p.now - start < QuicConfig.Default.handshakeTimeout / 2, "confirmed after ${p.now - start}")
+            assertEquals(1L, p.server.stats.connectionsCreated)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The other side of [handshakeRebindBeforeAnyServerHelloUnderCopyRaceCompletes]: the client stays at C and an observer races
+     * copies of its datagrams from X while the server's first flight is lost (so its PTO fires). X gets the flight's retransmission
+     * within 3x what came from X and nothing more; the path never leaves C and the handshake completes there.
+     */
+    @Test fun negative_mirroredFlightToARacedAddressStaysWithinItsBudget() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val h = HandPump(p, p.connect())
+            val x = InetSocketAddress("10.9.9.9", 4444)
+            var index = 0
+            var fromX = 0L
+            var toX = 0L
+            var lostFirst = false
+            val end = p.now + QuicConfig.Default.handshakeTimeout
+            while (p.now < end &&
+                !(h.c.state == io.kuicksilver.quic.ConnectionState.Confirmed && h.s?.state == io.kuicksilver.quic.ConnectionState.Confirmed)
+            ) {
+                val sent =
+                    h.clientSends { d ->
+                        val copyFirst = index++ % 2 == 1
+                        if (copyFirst) {
+                            fromX += d.size
+                            p.feedNoAdmit(p.server, d, x)
+                        }
+                        p.feedNoAdmit(p.server, d, p.clientAddr)
+                        if (!copyFirst) {
+                            fromX += d.size
+                            p.feedNoAdmit(p.server, d, x)
+                        }
+                    }
+                h.serverSends { to, bytes ->
+                    if (to == x) toX += bytes.size
+                    if (to == p.clientAddr && !lostFirst) {
+                        lostFirst = true
+                        false
+                    } else {
+                        to == p.clientAddr
+                    }
+                }
+                if (sent == 0) h.advance()
+            }
+            val s = assertNotNull(h.s)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, h.c.state, "the handshake completes (server ${s.state})")
+            assertEquals(p.clientAddr, s.remoteAddressForTest)
+            assertTrue(toX <= 3 * fromX, "$toX bytes to X for $fromX received from it")
+            assertTrue(s.paths.all.none { it.isRemote(x) && it.amplification.validated }, "X is never validated")
         } finally {
             p.close()
         }

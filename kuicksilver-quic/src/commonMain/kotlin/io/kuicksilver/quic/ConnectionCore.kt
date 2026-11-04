@@ -510,6 +510,20 @@ public class ConnectionCore internal constructor(
     internal var handshakeRebindFrom: InetSocketAddress? = null
     internal var handshakeRebindTo: InetSocketAddress? = null
 
+    /**
+     * Server: the candidate is an address the client's Initials come from while it has shown no handshake keys yet, and the
+     * handshake flight is retransmitted there too at each Initial or Handshake PTO (`ConnectionCore.openHandshakeMirror`).
+     */
+    internal var handshakeMirror = false
+
+    /** Server: a Handshake packet from the client was decrypted (it holds handshake keys). */
+    internal var clientHandshakeKeysSeen = false
+
+    /** Server: some of the flight went to the mirrored address. */
+    internal var handshakeMirrorSent = false
+
+    /** Server: a PTO of the Initial or Handshake space fired: the next poll retransmits the flight to the mirrored address too. */
+    internal var handshakeMirrorDue = false
     internal var closeFrame: CloseFrame? = null
 
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
@@ -1046,6 +1060,7 @@ public class ConnectionCore internal constructor(
             ) {
                 probePending[probe.space.ordinal] = probe.packets
                 requeueForProbe(probe.space, probe.packets)
+                if (probe.space != SpaceId.Application && handshakeMirror) handshakeMirrorDue = true
                 probeOtherHandshakeSpace(probe.space)
                 if (probe.space ==
                     SpaceId.Application

@@ -694,8 +694,12 @@ internal fun ConnectionCore.onHandshakeAddressChange(
     }
     if (!newest) return
     val haveKeys = writeKeys[3] != null
-    // with the keys already there, an Initial completes nothing: it moves the path only once the current address went quiet for a PTO
-    if (initial && haveKeys && now - lastReceivedOnActivePath < pto()) return
+    // with the keys already there, an Initial completes nothing: it moves the path only once the current address went quiet for a PTO;
+    // until then a client that never got our ServerHello may be there: it gets the flight's retransmissions too (openHandshakeMirror)
+    if (initial && haveKeys && now - lastReceivedOnActivePath < pto()) {
+        openHandshakeMirror(from)
+        return
+    }
     if (!initial || haveKeys) {
         pendingHandshakeMove = null
         applyHandshakeMove(from, completesClientHello = false)
@@ -1085,6 +1089,54 @@ private fun ConnectionCore.challengeLeftAddress(k: Path) {
 }
 
 /**
+ * Server, an Initial from [from] that the path does not follow (the current address sent something within a PTO), before the client
+ * showed any handshake keys (no Handshake packet came from it yet): the client may have rebound before our ServerHello reached it,
+ * while an off-path observer keeps the old address fresh with copies of its datagrams (RFC 9000 section 9.3.3). It cannot answer a
+ * PATH_CHALLENGE there (no 1-RTT keys); only the flight itself gets it going. [from] becomes the candidate without moving the path,
+ * and at every PTO of the Initial or Handshake space the flight is retransmitted there as well as to the active address, within
+ * [from]'s own 3x budget (section 8.1: "MUST NOT send more than three times as many bytes as the number of bytes it has received"
+ * counts per address; section 9: the client sent a non-probing packet from it). The active path does not move, so an Initial forged
+ * from any address, which anyone who saw the client's first one can make (Initial keys are public), costs no more than a fresh
+ * Initial would (3x what it carried) and takes nothing away from the client's own address. Once a Handshake packet shows the client
+ * has its keys ([onClientHandshakeKeys]) the retransmissions stop: a candidate that got some is validated like any other (its
+ * PATH_CHALLENGE answered by its own data decides after the handshake), one that got none is dropped.
+ *
+ * None of the references follows a client address during the handshake at all (see [openHandshakeCandidate]); they lose this
+ * handshake even without an observer.
+ */
+private fun ConnectionCore.openHandshakeMirror(from: InetSocketAddress) {
+    if (handshakeRebindFrom != null || clientHandshakeKeysSeen || state != io.kuicksilver.quic.ConnectionState.Handshaking) return
+    val p = paths.active
+    val k = paths.add(p.socket, from, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
+    handshakeRebindFrom = p.remote
+    handshakeRebindTo = from
+    k.handshakeCandidate = true
+    k.amplification.onReceived((handshakeCredit?.takeIf { it.from == from }?.bytes ?: 0L).toInt())
+    handshakeCredit = null
+    handshakeCandidate = k
+    handshakeMirror = true
+}
+
+/** Server: a Handshake packet was decrypted, so the client holds handshake keys: the flight is no longer retransmitted to a second address. */
+internal fun ConnectionCore.onClientHandshakeKeys() {
+    clientHandshakeKeysSeen = true
+    if (!handshakeMirror) return
+    handshakeMirror = false
+    handshakeMirrorDue = false
+    val k = handshakeCandidate ?: return
+    val to = handshakeRebindTo
+    if (to == null || !k.isRemote(to)) return // the path moved there already: the candidate holds the other address
+    if (!handshakeMirrorSent) {
+        // the client got the flight where the path is: nothing came of the second address
+        dropHandshakeCandidate()
+        handshakeRebindFrom = null
+        handshakeRebindTo = null
+    } else if (k.state != PathState.Validating) {
+        startValidation(k) // the client may have read the flight there: it answers a challenge of its own from there
+    }
+}
+
+/**
  * The active path [p] takes the candidate [k]'s address and [k] the address [p] leaves, each with its own budget and validation
  * ([Path.swapAddressWith]). An address that is not one of the first rebind's two never becomes the candidate: it is dropped. The
  * address left is validated if it is not already being validated (section 9.3.3).
@@ -1140,6 +1192,8 @@ internal fun ConnectionCore.adoptHandshakeCandidate(k: Path) {
 internal fun ConnectionCore.dropHandshakeCandidate() {
     val k = handshakeCandidate ?: return
     handshakeCandidate = null
+    handshakeMirror = false
+    handshakeMirrorDue = false
     k.handshakeCandidate = false
     if (k.state != PathState.Closed) paths.remove(k)
     releasePathCid(k)

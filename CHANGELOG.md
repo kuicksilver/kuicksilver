@@ -219,7 +219,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   candidate path with its own anti-amplification budget and its own validation (RFC 9000 sections 8.1, 8.2 and 9.3.3); the
   two addresses keep their validations whichever of them the connection uses, the first to answer its own challenge data
   is kept, wherever the answer came from, and the candidate is never reported as a path. A third address never becomes a
-  candidate.
+  candidate. A client that rebinds before any ServerHello reached it gets the flight's retransmissions at its new address
+  too, within that address's own budget, so that handshake completes as well.
 - QUIC server: an observer racing copies of a client's datagrams from a second live address after the handshake could
   keep the server switching paths without end: every switch validated the previous path at once and retired its
   connection ID, and the client's answer and replacement ID were the next apparent migration, until the AEAD

@@ -174,6 +174,8 @@ internal class PacketBuilder(
             c.amplification.onSent(n)
             if (c.closeFrame != null && c.closeSent) break
         }
+        if (c.handshakeMirrorDue && count < out.capacity && c.closeFrame == null) count += mirrorFlight(out, count, now)
+        if (pnExhausted) return exhausted(count)
         // one send quantum went out with window and data left: ask for the next poll when the pacer allows the next datagram (at
         // once without pacing), or the rest would wait for the peer's next packet and the sender would look application-limited
         if (!congested && bytes >= c.cc.sendQuantum && c.closeFrame == null && c.cc.bytesInFlight < c.cc.cwnd &&
@@ -187,6 +189,53 @@ internal class PacketBuilder(
             (c.cc as? io.kuicksilver.quic.Bbr)?.onAppLimited()
         }
         return count
+    }
+
+    /**
+     * Server, a PTO of the Initial or Handshake space fired while the handshake candidate is mirrored
+     * ([io.kuicksilver.quic.core.openHandshakeMirror]): what the flight has in flight is retransmitted to the candidate's address
+     * too, in new packets (RFC 9002 section 6.2.4 probes carry data again, never the same packet), each datagram a full 1200 bytes
+     * (RFC 9000 section 14.1) and within that address's 3x budget (section 8.1). Returns the datagrams added at [first].
+     */
+    private fun mirrorFlight(
+        out: PacketBatch,
+        first: Int,
+        now: TimeMark,
+    ): Int {
+        c.handshakeMirrorDue = false
+        val k = c.handshakeCandidate ?: return 0
+        val to = c.handshakeRebindTo ?: return 0
+        if (!c.handshakeMirror || !k.isRemote(to) || c.state != ConnectionState.Handshaking) return 0
+        for (space in arrayOf(SpaceId.Initial, SpaceId.Handshake)) {
+            if (c.spaceDiscarded[space.ordinal] || c.loss.space(space).ackElicitingInFlight <= 0) continue
+            c.requeueForProbe(space, Int.MAX_VALUE)
+        }
+        initialAckOnly = false
+        var count = first
+        while (count < out.capacity) {
+            val budget = if (k.amplification.validated) Long.MAX_VALUE else k.amplification.budget()
+            if (budget < 1200) break
+            val limit = minOf(out.segmentSize.toLong(), k.mtu.toLong(), budget).toInt()
+            val buf = out.buffer(count)
+            val hs = !c.spaceDiscarded[SpaceId.Handshake.ordinal] && c.cryptoStreams.send[2].hasPending
+            val init = !c.spaceDiscarded[SpaceId.Initial.ordinal] && c.cryptoStreams.send[0].hasPending
+            if (!hs && !init) break
+            var pos = 0
+            if (init) pos += buildPacket(buf, 0, limit, SpaceId.Initial, now, padToEnd = !hs, target = k, padIfNoRoomAfter = hs)
+            if (pnExhausted) return count - first
+            if (hs) pos += buildPacket(buf, pos, limit, SpaceId.Handshake, now, padToEnd = true, target = k)
+            if (pnExhausted) return count - first
+            if (pos == 0) break
+            out.setLength(count, pos)
+            out.setAddress(count, k.remote)
+            out.setPath(count, k.socket)
+            out.setEcn(count, io.kuicksilver.quic.Ecn.NotEct)
+            count++
+            c.bytesSent += pos
+            k.amplification.onSent(pos)
+            c.handshakeMirrorSent = true
+        }
+        return count - first
     }
 
     /** Set when a packet number space has no number left to send (RFC 9000 section 12.3). */
