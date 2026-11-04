@@ -19,6 +19,7 @@ import platform.posix.AF_INET
 import platform.posix.INVALID_SOCKET
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
+import platform.posix.SO_EXCLUSIVEADDRUSE
 import platform.posix.SO_REUSEADDR
 import platform.posix.bind
 import platform.posix.closesocket
@@ -70,10 +71,19 @@ class WindowsTcpSocketTest {
             val selector =
                 io.ktor.network.selector
                     .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            // the port stays ours for the whole test: a socket bound with SO_EXCLUSIVEADDRUSE that never listens, so no
+            // other process can take it between the probe and the connect, and a connect to it is refused
+            tcpStartup()
+            val holder = tcpOpen(AF_INET)
             try {
-                val probe = bindTcp(selector, "127.0.0.1", 0)
-                val port = (probe.localAddress as io.ktor.network.sockets.InetSocketAddress).port
-                probe.close()
+                memScoped {
+                    val one = alloc<IntVar>()
+                    one.value = 1
+                    setsockopt(holder.convert(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, one.ptr.reinterpret(), sizeOf<IntVar>().toInt())
+                }
+                val at = loopback(0).bytes
+                assertEquals(0, at.usePinned { bind(holder.convert(), it.addressOf(0).reinterpret(), at.size) }, "bind the held port")
+                val port = tcpAddressOf(holder, peer = false).port
                 val outcome =
                     kotlinx.coroutines.withTimeoutOrNull(kotlin.time.Duration.parse("20s")) {
                         runCatching {
@@ -86,6 +96,7 @@ class WindowsTcpSocketTest {
                     } ?: kotlin.test.fail("a refused connect was still waiting after 20 s")
                 assertTrue(outcome.isFailure, "a connect to a port nobody listens on succeeded")
             } finally {
+                tcpClose(holder)
                 selector.close()
             }
         }
