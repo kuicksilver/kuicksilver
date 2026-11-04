@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class)
+@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.tls
 
@@ -109,7 +109,14 @@ internal class KslContext private constructor(
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             config.identity?.let { id ->
                 when (id) {
-                    is TlsIdentity.InMemory -> id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
+                    is TlsIdentity.InMemory -> {
+                        id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
+                    }
+
+                    // chain and key from one snapshot: a reload between them would pair one identity's chain with another's key
+                    is TlsIdentity.Reloadable -> {
+                        id.withCurrentKey { cur, k -> Ksl.ctxSetIdentityKey(h, cur.chain.map { it.encoded }, k) }
+                    }
                 }
             }
             if (config.role ==

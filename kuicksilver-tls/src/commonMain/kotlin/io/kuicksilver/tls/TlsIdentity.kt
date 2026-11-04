@@ -4,18 +4,21 @@
 
 package io.kuicksilver.tls
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslException
 import io.kuicksilver.native.KslLoader
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.io.encoding.Base64
 
 /**
- * A certificate chain (leaf first, RFC 9846 section 4.5.1) and the matching private key. Sealed: the one kind in 0.2.0 is
- * [InMemory]; identities whose key stays in a keystore or HSM may be added later, so do not match on it exhaustively.
+ * A certificate chain (leaf first, RFC 9846 section 4.5.1) and the matching private key. Sealed: the kinds are [InMemory] and,
+ * since 0.3.0, [Reloadable] (an [InMemory] that can be replaced at run time); identities whose key stays in a keystore or HSM
+ * may be added later, so do not match on it exhaustively.
  */
 public sealed interface TlsIdentity {
     /** The certificates sent to the peer, leaf first; the leaf's public key matches the private key. */
@@ -42,11 +45,7 @@ public sealed interface TlsIdentity {
 
         /** Runs [block] with the native key handle; the key cannot be freed by a concurrent [close] meanwhile. */
         internal fun <T> withKey(block: (Long) -> T): T {
-            while (true) {
-                val r = refs.load()
-                if (r == 0) throw IllegalStateException("identity closed")
-                if (refs.compareAndSet(r, r + 1)) break
-            }
+            if (!tryAcquire()) throw IllegalStateException("identity closed")
             try {
                 return block(pkey)
             } finally {
@@ -54,7 +53,22 @@ public sealed interface TlsIdentity {
             }
         }
 
-        private fun release() {
+        /**
+         * Takes a use of the native key unless the last reference is already gone (then false, and nothing to release).
+         * A true result is paired with one [release]; meanwhile [keyHandle] stays valid.
+         */
+        internal fun tryAcquire(): Boolean {
+            while (true) {
+                val r = refs.load()
+                if (r == 0) return false
+                if (refs.compareAndSet(r, r + 1)) return true
+            }
+        }
+
+        /** The native key handle; valid only between a successful [tryAcquire] and its [release]. */
+        internal val keyHandle: Long get() = pkey
+
+        internal fun release() {
             if (refs.addAndFetch(-1) == 0) Ksl.pkeyFree(pkey)
         }
 
@@ -66,8 +80,120 @@ public sealed interface TlsIdentity {
         }
     }
 
-    /** Factories: [fromPem], [fromDer], and on the JVM `fromKeyStore` and `fromPkcs12`. Each throws [TlsException.Config] on bad input. */
+    /**
+     * A server (or client) identity that can be replaced while the process runs: certificate rotation without a restart.
+     * Made by [TlsIdentity.reloadable]; use it as `TlsConfig.identity` (or a connector's identity) like an [InMemory].
+     *
+     * **One identity per handshake.** Every TLS handshake builds its own OpenSSL context (TCP connections and QUIC sessions
+     * alike) and takes the chain and key from one [current] snapshot, so a handshake presents a consistent pair (RFC 9846
+     * section 4.5.1, Certificate, and 4.5.2, CertificateVerify, are made from the same identity) whatever [reload] does
+     * meanwhile. Handshakes in progress and established connections keep the identity they started with; [reload] affects
+     * only handshakes that start after it returns.
+     *
+     * **Ownership.** The reloadable identity owns the [InMemory] it was made with and each one [reload] accepted: [reload]
+     * closes the identity it replaces, and [close] closes [current]. A closed [InMemory] frees its native key only when the
+     * last context built from it is gone, so replacing an identity never pulls the key out from under a running connection.
+     * Do not close [current] yourself. An identity [reload] refused stays the caller's to close.
+     *
+     * **Resumption and 0-RTT.** Session tickets are not tied to the certificate (their keys are separate, see
+     * `SessionTicketConfig`), so a ticket issued before a [reload] still resumes after it, and its 0-RTT is still accepted;
+     * the replay register is not reset. A resumed connection presents no certificate: it inherits the identity of the
+     * session it resumes (RFC 9846 section 4.7.1), so a client keeps seeing the old certificate on resumed connections until
+     * its tickets expire (`SessionTicketConfig.ticketLifetime`, at most 7 days) or its cached chain stops verifying. After a
+     * key compromise, reloading is not enough to end those sessions: restart with new `SessionTicketConfig.keys` as well.
+     *
+     * **Checks.** [reload] refuses a closed identity and one whose leaf certificate has expired; the pairing of key and
+     * chain was already checked when the [InMemory] was built ([fromPem], [fromDer]), so a mismatched pair never gets here.
+     */
+    @ExperimentalKuicksilverApi
+    public class Reloadable internal constructor(
+        initial: InMemory,
+        private val now: () -> Long = ::nowSeconds,
+    ) : TlsIdentity,
+        AutoCloseable {
+        init {
+            validate(initial)
+        }
+
+        private val ref = AtomicReference(initial)
+        private val closed = AtomicInt(0)
+
+        /**
+         * The identity new handshakes use now, a snapshot: a later [reload] does not change the value already read. Owned by
+         * this object; do not close it.
+         */
+        public val current: InMemory get() = ref.load()
+
+        /** The chain of [current]. */
+        override val chain: List<Certificate> get() = ref.load().chain
+
+        /**
+         * Makes [next] the identity of every handshake that starts from now on, and closes the one it replaces (connections
+         * built from that one keep working). Reloading [current] itself does nothing.
+         *
+         * @throws TlsException.Config when [next] is closed or its leaf certificate expired (or its validity cannot be
+         *   read); [current] stays and [next] stays the caller's.
+         * @throws IllegalStateException when this identity was closed; [next] stays the caller's.
+         */
+        public fun reload(next: InMemory) {
+            if (closed.load() != 0) throw IllegalStateException("identity closed")
+            validate(next)
+            val old = ref.exchange(next)
+            if (old === next) return
+            old.close()
+            // a close() that ran meanwhile may have closed `old` instead of `next`: close `next` too (close is idempotent)
+            if (closed.load() != 0) next.close()
+        }
+
+        /** Closes [current]: handshakes that start afterwards fail with [IllegalStateException]; running connections are not affected. */
+        override fun close() {
+            if (closed.compareAndSet(0, 1)) ref.load().close()
+        }
+
+        /**
+         * Runs [block] with one snapshot of the identity and its native key, held for the duration: chain and key always
+         * come from the same [InMemory]. A snapshot replaced (and closed) between the load and the use is retried with the
+         * new [current].
+         */
+        internal fun <T> withCurrentKey(block: (InMemory, Long) -> T): T {
+            while (true) {
+                if (closed.load() != 0) throw IllegalStateException("identity closed")
+                val cur = ref.load()
+                if (cur.tryAcquire()) {
+                    try {
+                        return block(cur, cur.keyHandle)
+                    } finally {
+                        cur.release()
+                    }
+                }
+                // closed while still current: closed from outside (or by close() of this object); nothing newer to retry with
+                if (ref.load() === cur) throw IllegalStateException("identity closed")
+            }
+        }
+
+        private fun validate(id: InMemory) {
+            if (id.isClosed) throw TlsException.Config("the new identity is closed")
+            val leaf = id.chain[0]
+            if (leaf.notAfterEpochSeconds < now()) {
+                throw TlsException.Config("the leaf certificate expired (notAfter ${leaf.notAfterEpochSeconds}, now ${now()})")
+            }
+        }
+    }
+
+    /**
+     * Factories: [fromPem], [fromDer], and on the JVM `fromKeyStore` and `fromPkcs12`. Each throws [TlsException.Config] on bad
+     * input. [reloadable] wraps one for certificate rotation.
+     */
     public companion object {
+        /**
+         * A [Reloadable] identity that starts with [initial] and owns it from now on (see [Reloadable] for ownership,
+         * resumption and the checks).
+         *
+         * @throws TlsException.Config when [initial] is closed or its leaf certificate expired; [initial] stays the caller's.
+         */
+        @ExperimentalKuicksilverApi
+        public fun reloadable(initial: InMemory): Reloadable = Reloadable(initial)
+
         /**
          * PEM chain (leaf first) + PKCS#8 PEM key as a `CharArray`, zeroed after import; encrypted keys are not supported in
          * v1. The key is decoded straight from the array (no `String` of it is made) and every decoded block is wiped, on

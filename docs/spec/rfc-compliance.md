@@ -76,6 +76,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 5705 | (updated by RFC 9846 §7.5) — keying material exporter | ✅ | 0.2.0 | Both sessions export keying material. | [details](rfc/5705.md#keying-material-exporter) |
 | RFC 9266 | `tls-exporter` channel binding | ✅ | 0.2.0 | TCP connections expose the `tls-exporter` channel binding. | [details](rfc/9266.md#tls-exporter-channel-binding) |
 | RFC 9846 | §4.7.1; RFC 5077 (obsoleted by RFC 9846) — session tickets (TCP server), key rotation | ✅ | 0.2.0 | The TCP server issues session tickets with rotating keys. | [details](rfc/9846.md#s4-7-1-session-tickets-tcp-server-key-rotation) |
+| RFC 9846 | §4.5.1, §4.5.2, §4.7.1 — server identity replaced at run time, resumption across it | ✅ | 0.3.0 | A reloadable identity gives each new handshake one whole chain and key, and tickets issued before a reload still resume. | [details](rfc/9846.md#s4-5-1-server-identity-replaced-at-run-time) |
 | RFC 9525 | (obsoletes RFC 6125) — hostname verification | ✅ | 0.2.0 | One native matcher checks DNS-IDs and IP-IDs on every platform, and it cannot be disabled. | [details](rfc/9525.md#hostname-verification) |
 | RFC 9852 | (BCP 195) — TLS 1.3 as every protocol's default | ✅ | 0.2.0 | TLS 1.3 is the default, and QUIC accepts nothing else. | [details](rfc/9852.md#tls-1-3-as-every-protocols) |
 | RFC 10015 | TLS 1.2 key exchange | ✅ | 0.3.0 | TLS 1.2 offers only ECDHE suites with AEAD: no static RSA, no FFDH(E), no static ECDH. | [details](rfc/10015.md#tls-1-2-key-exchange) |

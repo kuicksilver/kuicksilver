@@ -252,7 +252,9 @@ public class TlsConfig private constructor(
 
         /**
          * The chain and private key this side presents: required for a server unless [sniSelector] supplies one per connection,
-         * optional for a client (sent when the server asks for a certificate). Default null. v1 accepts [TlsIdentity.InMemory].
+         * optional for a client (sent when the server asks for a certificate). Default null. A [TlsIdentity.InMemory], or a
+         * [TlsIdentity.Reloadable] to replace the certificate at run time: each handshake then takes the identity current
+         * when it starts.
          */
         public var identity: TlsIdentity? = null
 

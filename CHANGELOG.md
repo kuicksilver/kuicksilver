@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- TLS: certificate rotation without a restart (experimental `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`;
+  `docs/guide/tls.md`, "Rotating the server certificate"). `reload(next)` makes `next` the identity of every handshake
+  that starts afterwards, over TCP and QUIC; each handshake takes chain and key from one snapshot, and running
+  connections keep theirs. A closed identity or an expired leaf is refused and the old identity stays; the replaced one
+  is closed and its native key freed once no connection uses it. Session tickets issued before a reload still resume
+  (and their 0-RTT is still accepted): they do not depend on the certificate.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,
@@ -136,6 +142,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
+  a `when` over it without an `else` branch no longer compiles.
 - HTTP/3: stricter towards peers (each also under "Fixed"); a peer that got away with these before now fails a request or
   the connection. An HTTP/3 datagram for a stream beyond the client-initiated bidirectional stream limit closes the
   connection with `H3_ID_ERROR` (RFC 9297 section 2.1, SHOULD); one for a request other than CONNECT whose stream is

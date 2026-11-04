@@ -55,6 +55,25 @@ val server = tlsConfig(TlsRole.Server) {
 }
 ```
 
+### Rotating the server certificate
+
+A server identity can be replaced while the server runs (experimental, 0.3.0): wrap it with
+`TlsIdentity.reloadable(identity)`, use the result as the `identity`, and call `reload(TlsIdentity.fromPem(...))` when a
+renewed certificate arrives. Every handshake that starts afterwards, over TCP and QUIC alike, presents the new chain and
+key; handshakes in progress and established connections keep the identity they started with, and nothing they hold is
+freed under them.
+
+- **Bad input never replaces the identity in use.** A key that does not match the leaf already fails in `fromPem` or
+  `fromDer`; `reload` refuses a closed identity and a leaf certificate that has expired (`TlsException.Config`), and the
+  old identity goes on serving.
+- **Ownership.** The reloadable identity owns what it serves: `reload` closes the identity it replaces, `close()` the
+  current one. An identity `reload` refused is still yours to close.
+- **Resumption.** Session tickets do not depend on the certificate, so tickets issued before a reload still resume after
+  it (and their 0-RTT is still accepted; replays are still refused). A resumed connection carries no certificate and keeps
+  the one of the session it resumes (RFC 9846 section 4.7.1), until the ticket's lifetime
+  (`SessionTicketConfig.ticketLifetime`) ends. After a key compromise a reload is not enough: restart with new
+  `SessionTicketConfig.keys` too, so the old sessions cannot be resumed.
+
 ## Trust
 
 Host names are always checked (RFC 9525) and the check cannot be disabled; it can be redirected with `ExpectedName`
