@@ -148,7 +148,9 @@ jobs:
           for n in kuicksilver-interop kuicksilver-interop-native; do docker push "$REGISTRY/$n:$VERSION"; done
           if [ "$latest" = true ]; then
             for n in kuicksilver-interop kuicksilver-interop-native; do
-              docker tag "$REGISTRY/$n:$VERSION" "$REGISTRY/$n:latest" && docker push "$REGISTRY/$n:latest"
+              # two statements: in an && list a failed tag would not stop the step (bash -e), and :latest would be skipped silently
+              docker tag "$REGISTRY/$n:$VERSION" "$REGISTRY/$n:latest"
+              docker push "$REGISTRY/$n:latest"
             done
           fi
           for n in kuicksilver-interop kuicksilver-interop-native; do
