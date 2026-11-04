@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   The module's frame codec (RFC 9113 sections 4 and 6) checks every declared frame length against the frame's type and
   the local SETTINGS_MAX_FRAME_SIZE before buffering anything and streams frames of unknown types past unbuffered;
   `Http2ErrorCode` (experimental) lists the section 7 error codes.
+  HPACK (RFC 7541) matches appendix C byte for byte; the decoder bounds the decoded field list (an "HPACK bomb" of
+  references stops at the limit and allocates nothing per reference) while keeping its table in step, rejects integers
+  above 31 bits, oversized strings before allocating them and invalid Huffman padding; the encoder never indexes
+  credentials and follows the peer's table size.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,

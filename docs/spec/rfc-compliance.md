@@ -143,6 +143,10 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | draft-ietf-webtrans-http3 | Ktor client | 🔶 | 0.3.0 | The Ktor client opens WebTransport sessions over https with the Kuicksilver engine. | [details](rfc/draft-ietf-webtrans-http3.md#ktor-client) |
 | RFC 9113 | HTTP/2 | 🔶 | 0.3.0 | HTTP/2 is in progress for 0.3.0 in the sans-IO module `kuicksilver-http2`; the engines do not use it yet. | [details](rfc/9113.md#http-2) |
 | RFC 9113 | §4.1–4.2, §5.5, §6 — frame codec | ✅ | 0.3.0 | Frames are decoded incrementally, and every declared length is checked against the frame type and our maximum before any payload is buffered. | [details](rfc/9113.md#s4-frame-codec) |
+| RFC 7541 | HPACK | ✅ | 0.3.0 | HPACK encoder and decoder are implemented section by section and match appendix C byte for byte. | [details](rfc/7541.md#hpack) |
+| RFC 7541 | §2.3, §4, §6.3 — dynamic table and size updates | ✅ | 0.3.0 | The dynamic table follows both sides' limits, and a size update is accepted only at the start of a block and within the setting. | [details](rfc/7541.md#s4-dynamic-table-and-size-updates) |
+| RFC 7541 | §5.1–5.2, app. B — integers, strings, Huffman | ✅ | 0.3.0 | Integers above 31 bits, oversized strings and invalid Huffman padding or EOS are decoding errors before memory is allocated. | [details](rfc/7541.md#s5-integers-strings-huffman) |
+| RFC 7541 | §7 — security | ✅ | 0.3.0 | Credentials are never indexed, and a decoded field list is bounded by the local limit while the table stays in step. | [details](rfc/7541.md#s7-security) |
 | RFC 9112 | HTTP/1.1 | ✅ | 0.2.1 | HTTP/1.1 is served and spoken by the Ktor engines. | [details](rfc/9112.md#http-1-1) |
 | RFC 9110 | §9.2.2; RFC 9112 §9.2, §9.3.1 — client retry | ✅ | 0.2.1 | An idle pooled HTTP/1.1 connection the server closed is replaced once, for idempotent requests only. | [details](rfc/9110.md#s9-2-2-client-retry) |
 | RFC 1928/1929 | §3–§6 (client) — SOCKS5 client | 🔶 | 0.3.0 | The client speaks SOCKS5 CONNECT only, with no authentication or username/password. | [details](rfc/1928-1929.md#s3-socks5-client) |
