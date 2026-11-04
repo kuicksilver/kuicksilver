@@ -278,6 +278,11 @@ static int server_hello_has_ems(const uint8_t *m, size_t len) {
      protocol_version (a TLS 1.2 ServerHello's legacy_version is its version, which OpenSSL checks itself). */
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
     ksl_ssl *s = arg; const uint8_t *m = buf;
+    /* RFC 9846 section 5.5 counts records, not application data: every record written once the handshake is done counts toward
+       the sending keys' limit (ksl_tcp.c), alerts and handshake messages included (a TLS 1.2 peer's HelloRequests draw one
+       no_renegotiation alert each). OpenSSL 3.5 calls this with SSL3_RT_HEADER once per record it writes (tls_common.c,
+       tls_post_encryption_processing_default), before the message callback of what the record carried. */
+    if (s->mode == KSL_MODE_TCP && write_p && content_type == SSL3_RT_HEADER && s->done) s->records_sent++;
     /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed
        2^48-1"; "If a sending implementation receives a KeyUpdate with request_update set to update_requested, it MUST NOT send its
        own KeyUpdate if that would cause it to exceed these limits and SHOULD instead ignore the update_requested flag. This may result
@@ -298,6 +303,9 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
         if (write_p) {
             if (m[4] == SSL_KEY_UPDATE_REQUESTED) s->update_requested_at = s->fed;
             if (++s->key_updates_sent >= bound) s->key_updates_exhausted = 1;
+            /* the KeyUpdate's own record went out under the old keys (its header was counted just before this message
+               callback, ssl3_do_write); every record from here on is under the new ones */
+            s->records_sent = 0;
         } else {
             uint64_t record_end = s->fed - (uint64_t)BIO_ctrl_pending(SSL_get_rbio(ssl));
             if (record_end > s->update_requested_at) s->update_requested_pending = 0;

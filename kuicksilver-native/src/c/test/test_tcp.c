@@ -772,6 +772,29 @@ static void test_record_limits_per_cipher(void) {
         else CHECK(ksl_tcp_drain(w, out, sizeof out, &n) == KSL_OK && n == 0 && ksl_tcp_shutdown(w) == KSL_ERROR, "the server sends nothing more, no close_notify");
         ksl_ssl_free(c); ksl_ssl_free(s);
     }
+    ksl_ctx_free(cc); ksl_ctx_free(sc);
+    /* every record counts toward the limit, not only the application data ksl_tcp_write sends (review: NIT-7, RFC 9846 section
+       5.5): a TLS 1.2 server that asks for renegotiation again and again, ignoring the answers (here they are dropped), makes the
+       client answer each HelloRequest with a no_renegotiation alert, under the same keys. With a limit of 6 records the client's
+       session ends before its keys reach it; before, those alerts went uncounted for ever. */
+    cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server");
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        ksl_tcp_set_record_limit_for_test(c, 6);
+        SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
+        int rounds = 0, ended = 0;
+        for (; rounds < 50 && !ended; rounds++) {
+            if (SSL_renegotiate(s->ssl) != 1) ERR_clear_error();
+            (void)SSL_do_handshake(s->ssl); ERR_clear_error();
+            shuttle(s, c);
+            if (ksl_tcp_read(c, r, sizeof r, &n) == KSL_ERROR) ended = 1;
+            { uint8_t sink[4096]; size_t k; while (ksl_tcp_drain(c, sink, sizeof sink, &k) == KSL_OK && k) {} }   /* the alerts go nowhere */
+        }
+        CHECK(ended && last_message_has(c, "record limit"), "negative: the client's no_renegotiation alerts count: the session ends at the limit");
+        CHECK(rounds <= 6, "the session ended within the limit's records");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
     ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 

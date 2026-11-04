@@ -59,14 +59,16 @@ static uint64_t key_update_records(ksl_ssl *s) {
 }
 /* The plaintext size of a full record: 16 KiB, or the negotiated max_fragment_length (RFC 6066 section 4) */
 static size_t record_size(ksl_ssl *s) { uint8_t mfl = SSL_SESSION_get_max_fragment_length(SSL_get_session(s->ssl)); return mfl >= 1 && mfl <= 4 ? (size_t)256 << mfl : 16384; }
-static void count_records(ksl_ssl *s, size_t n) {
-    size_t frag = record_size(s);
-    s->records_sent += (n + frag - 1) / frag;
+/* After a write: the records are counted where they are written (ksl_msg_cb); at the KeyUpdate point an update is scheduled, and
+   the count starts over when its message goes out (ksl_msg_cb). */
+static void count_records(ksl_ssl *s) {
     if (s->records_sent < key_update_records(s) || s->key_updates_exhausted) return;   /* past the epoch bound: the record limit ends the session */
-    /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for): tried after the next
-       write. Called directly: the write succeeded, and the session's last error stays the last failure's */
-    if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) == 1) s->records_sent = 0; else ERR_clear_error();
+    /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for, or ours already
+       scheduled): tried after the next write. Called directly: the write succeeded, and the session's last error stays the last failure's */
+    if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) != 1) ERR_clear_error();
 }
+/* One more record under the sending keys would reach their limit (records ksl_tcp_write did not ask for count too) */
+static int at_record_limit(ksl_ssl *s) { return record_limit(s) != KSL_NO_RECORD_LIMIT && s->records_sent + 1 >= record_limit(s); }
 static int abort_session(ksl_ssl *s, const char *why);
 static void drop_pending_write(ksl_ssl *s) {
     s->pending_write_unkept = 0;
@@ -83,10 +85,10 @@ int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *cons
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
     size_t frag = record_size(s); if (len > frag) len = frag;
     /* one more record would reach the keys' limit: the session ends, with internal_error where an alert can be sent */
-    if (len && !s->pending_write && record_limit(s) != KSL_NO_RECORD_LIMIT && s->records_sent + 1 >= record_limit(s))
+    if (len && !s->pending_write && at_record_limit(s))
         { (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)"); return KSL_ERROR; }
     ERR_clear_error(); size_t n = 0; int r = SSL_write_ex(s->ssl, plaintext, len, &n);
-    if (r == 1) { drop_pending_write(s); *consumed = n; count_records(s, n); return KSL_OK; }
+    if (r == 1) { drop_pending_write(s); *consumed = n; count_records(s); return KSL_OK; }
     if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && len && (!s->pending_write || s->pending_write_len != len)) {
         drop_pending_write(s);
         s->pending_write = malloc(len);
@@ -97,6 +99,8 @@ int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *cons
 int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
     ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
+    /* reading can make OpenSSL write records too (an alert, a handshake answer): past the limit the session ends here */
+    if (at_record_limit(s)) { (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)"); return KSL_ERROR; }
     if (r == 1) { *read = n; return KSL_OK; }
     return map_error(s, r);
 }
