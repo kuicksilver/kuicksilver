@@ -344,6 +344,8 @@ public class Bbr(
         declaredAt: TimeMark,
         now: TimeMark,
     ) {
+        // by time: a loss declared at the very instant of the congestion but after it (another packet number space in the same
+        // processing) counts as one of its own; that can only end the recovery a little early, never hold it
         if (!rtoRecovery || declaredAt > recoveryStart || rtoLossesLeft == 0L) return
         rtoLossesLeft--
         if (rtoLossesLeft == 0L && rtoNewAcked && inRecovery) endRecovery()
