@@ -295,6 +295,33 @@ class ProxyResolverTest {
             withTimeout(5.seconds) { while (routing.inFlightSize() != 0) yield() }
         }
 
+    /** Two lookups of one route at once make one resolver call and get the same answer (review 2026-10-28 ci-fixes.md P2). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun concurrentLookupsShareOneCall() =
+        runBlocking {
+            val calls = kotlin.concurrent.atomics.AtomicInt(0)
+            val started = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val answer = ResolvedProxy.http("proxy.test", 3128)
+            val resolver =
+                ProxyResolver { _ ->
+                    calls.addAndFetch(1)
+                    started.complete(Unit)
+                    gate.await()
+                    answer
+                }
+            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, NO_LOG)
+            val a = async { routing.lookup(Url("https://x.test/")) }
+            withTimeout(5.seconds) { started.await() }
+            val b = async { routing.lookup(Url("https://x.test/")) }
+            yield()
+            gate.complete(Unit)
+            assertEquals(answer, a.await())
+            assertEquals(answer, b.await())
+            assertEquals(1, calls.load(), "the second lookup asked the resolver too")
+        }
+
     private val NO_LOG =
         object : KuicksilverLogger {
             override fun isEnabled(level: LogLevel) = false
