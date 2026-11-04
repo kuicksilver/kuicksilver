@@ -34,6 +34,7 @@ import platform.zlib.inflate
 import platform.zlib.inflateEnd
 import platform.zlib.inflateInit2
 import platform.zlib.inflateReset
+import platform.zlib.inflateSetDictionary
 import platform.zlib.z_stream
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -200,6 +201,19 @@ internal actual class RawInflater actual constructor(
     actual val needsInput: Boolean get() = input.length == 0
 
     actual val remaining: Int get() = input.length
+
+    // zlib sets data_type after every inflate(): + 128 when it waits for the next block's header (inflate.c)
+    actual val atBlockBoundary: Boolean? get() = z.strm.data_type and 128 != 0
+
+    actual fun setDictionary(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ) {
+        if (length == 0) return
+        val rc = bytes.usePinned { inflateSetDictionary(z.strm.ptr, it.addressOf(offset).reinterpret(), length.convert()) }
+        check(rc == Z_OK) { "inflateSetDictionary failed: $rc" }
+    }
 
     actual fun reset() {
         check(inflateReset(z.strm.ptr) == Z_OK) { "inflateReset failed" }

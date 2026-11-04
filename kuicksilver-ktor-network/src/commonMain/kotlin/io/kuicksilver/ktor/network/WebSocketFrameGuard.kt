@@ -215,8 +215,9 @@ public fun guardWebSocketInput(
                         } catch (_: MessageTooBigException) {
                             out.failWith(CLOSE_MESSAGE_TOO_BIG, "Message is too big: more than ${inflater.limit} bytes inflated")
                             return@launch
-                        } catch (e: DeflateDataException) {
-                            out.failWith(CLOSE_PROTOCOL_ERROR, "Invalid permessage-deflate data: ${e.message}")
+                        } catch (_: DeflateDataException) {
+                            // zlib's own message stays here: it says nothing the peer needs
+                            out.failWith(CLOSE_PROTOCOL_ERROR, "Invalid compressed data")
                             return@launch
                         }
                         continue

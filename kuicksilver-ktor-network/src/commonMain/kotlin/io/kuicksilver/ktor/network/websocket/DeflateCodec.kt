@@ -6,6 +6,9 @@ import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 
+/** The LZ77 window an inflater keeps across a final block: 32 KiB, the most RFC 7692 allows (section 7.2.2). */
+private const val WINDOW = 32 * 1024
+
 /** The output of an inflater is produced, counted and handed on in pieces of this size, never more at once. */
 internal const val INFLATE_CHUNK: Int = 64 * 1024
 
@@ -23,8 +26,17 @@ internal class MessageTooBigException(
  * as they arrive, [endOfMessage] appends 0x00 0x00 0xff 0xff, and [read] hands the output on in pieces; [messageDone]
  * ends the message. A message that would inflate to more than [maxMessageSize] bytes fails [read] with
  * [MessageTooBigException] once at most one piece past the limit was produced: nothing is sized by what the data claims.
- * With [noContextTakeover] each message starts with an empty window; so does the one after a message that ended its
- * DEFLATE stream with a final block (section 7.2.3.4). The zlib state is made on the first compressed message only.
+ * With [noContextTakeover] each message starts with an empty window. Without it, the next message is decompressed with
+ * the window of the last one (section 7.2.2, MUST), also after a message that ended its DEFLATE stream with a final block
+ * (section 7.2.3.4): the stream is restarted and primed with the last 32 KiB of output, which is kept for that.
+ *
+ * A message is malformed (DeflateDataException) when it has no compressed data at all (the empty message is 0x00,
+ * section 7.2.3.6), when data follows a final block other than the 0x00 that pads it (section 7.2.3.4), and, where the
+ * platform's zlib tells (Kotlin/Native; the JDK's Inflater does not, nor does OkHttp's MessageInflater), when it does not
+ * end at a DEFLATE block boundary once 0x00 0x00 0xff 0xff is appended (a message cut short). A message whose compressed
+ * data passes 8 times [maxMessageSize] plus 64 KiB fails as too big as well: data that inflates to nothing (empty blocks)
+ * cannot stream on without bound, and no sender needs more (a sync-flushed one-byte fragment takes about 6 bytes).
+ * The zlib state is made on the first compressed message only.
  */
 internal class MessageInflater(
     private val noContextTakeover: Boolean,
@@ -42,6 +54,22 @@ internal class MessageInflater(
     // bytes of the message after the final block of its stream
     private var afterEnd = 0
 
+    // the message's compressed bytes, and the most it may have
+    private var compressed = 0L
+    private val maxCompressed =
+        if (maxMessageSize >
+            (Long.MAX_VALUE - (64 shl 10)) / 8
+        ) {
+            Long.MAX_VALUE
+        } else {
+            maxMessageSize * 8 + (64 shl 10)
+        }
+
+    // the last 32 KiB of output (a ring), to keep the window across a final block; with context takeover only
+    private var history: ByteArray? = null
+    private var historyEnd = 0
+    private var historyFull = false
+
     private fun raw(): RawInflater = raw ?: RawInflater().also { raw = it }
 
     /**
@@ -55,6 +83,8 @@ internal class MessageInflater(
         length: Int,
     ) {
         if (length == 0) return
+        compressed += length
+        if (compressed > maxCompressed) throw MessageTooBigException(produced, maxMessageSize)
         if (streamEnded) return trailing(bytes, offset, length)
         check(raw?.needsInput != false) { "the previous input was not read to its end" }
         raw().setInput(bytes, offset, length)
@@ -65,6 +95,7 @@ internal class MessageInflater(
     /** The message's data is complete: the removed empty block is appended (RFC 7692 section 7.2.2). */
     fun endOfMessage() {
         tail = true
+        if (compressed == 0L) throw DeflateDataException("a compressed message without compressed data")
         if (!streamEnded) {
             check(raw?.needsInput != false) { "the previous input was not read to its end" }
             raw().setInput(TAIL, 0, TAIL.size)
@@ -88,7 +119,10 @@ internal class MessageInflater(
             if (!tail) trailing(lastInput, lastEnd - r.remaining, r.remaining)
         } else if (n == 0 && !r.needsInput) {
             throw DeflateDataException("DEFLATE data the inflater cannot make progress on")
+        } else if (n == 0 && tail && r.atBlockBoundary == false) {
+            throw DeflateDataException("a compressed message that does not end at a DEFLATE block boundary")
         }
+        if (n > 0 && !noContextTakeover) remember(output, offset, n)
         produced += n
         if (produced > maxMessageSize) throw MessageTooBigException(produced, maxMessageSize)
         return n
@@ -105,9 +139,50 @@ internal class MessageInflater(
         }
     }
 
-    /** Ends the message; the next one may refer back into it unless context takeover is off or its stream ended. */
+    private fun remember(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ) {
+        val h = history ?: ByteArray(WINDOW).also { history = it }
+        var from = offset
+        var left = length
+        if (left >= WINDOW) {
+            from += left - WINDOW
+            left = WINDOW
+        }
+        while (left > 0) {
+            val n = minOf(left, WINDOW - historyEnd)
+            bytes.copyInto(h, historyEnd, from, from + n)
+            historyEnd += n
+            if (historyEnd == WINDOW) {
+                historyEnd = 0
+                historyFull = true
+            }
+            from += n
+            left -= n
+        }
+    }
+
+    /** Ends the message; the next one refers back into it unless context takeover is off (section 7.2.2). */
     fun messageDone() {
-        if (noContextTakeover || streamEnded) raw?.reset()
+        val r = raw
+        if (r != null && noContextTakeover) {
+            r.reset()
+        } else if (r != null && streamEnded) {
+            // a final block ended the stream: a new one, primed with the window the next message may refer back into
+            r.reset()
+            val h = history
+            if (h != null) {
+                if (historyFull) {
+                    val window = h.copyOfRange(historyEnd, WINDOW) + h.copyOfRange(0, historyEnd)
+                    r.setDictionary(window, 0, window.size)
+                } else {
+                    r.setDictionary(h, 0, historyEnd)
+                }
+            }
+        }
+        compressed = 0
         produced = 0
         tail = false
         streamEnded = false

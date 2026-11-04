@@ -47,6 +47,17 @@ internal actual class RawInflater actual constructor(
 
     actual val remaining: Int get() = inflater.remaining
 
+    // java.util.zip.Inflater does not expose zlib's data_type
+    actual val atBlockBoundary: Boolean? get() = null
+
+    actual fun setDictionary(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ) {
+        inflater.setDictionary(bytes, offset, length)
+    }
+
     actual fun reset() {
         inflater.reset()
     }

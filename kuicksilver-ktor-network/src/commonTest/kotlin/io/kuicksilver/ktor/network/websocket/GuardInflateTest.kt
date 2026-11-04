@@ -179,6 +179,14 @@ class GuardInflateTest {
             assertEquals(1002, out.single().closeCode)
         }
 
+    /** An RSV1 message without payload is no DEFLATE data (section 7.2.3.6: the empty message is 0x00). */
+    @Test fun negative_emptyCompressedMessageClosesWith1002() =
+        guarded(frame(0xC1, ByteArray(0)) + frame(0xC1, hello)) { out ->
+            assertEquals(1, out.size)
+            assertEquals(1002, out.single().closeCode)
+            assertEquals("Invalid compressed data", out.single().payload.decodeToString(2, out.single().payload.size))
+        }
+
     @Test fun negative_continuationWithoutMessageClosesWith1002() =
         guarded(frame(0x80, bytes(0x61))) { out ->
             assertEquals(1002, out.single().closeCode)

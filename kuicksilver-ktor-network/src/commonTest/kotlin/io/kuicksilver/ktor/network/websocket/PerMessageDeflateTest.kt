@@ -400,4 +400,55 @@ class PerMessageDeflateTest {
         val plain = Frame.Text("plain")
         assertSame(plain, c.processIncomingFrame(plain), "an uncompressed frame needs no codec")
     }
+
+    // ---- review: malformed message ends, the window after a final block, the compressed size
+
+    /** An RSV1 message with no payload is not DEFLATE data (the empty message is 0x00, section 7.2.3.6). */
+    @Test fun negative_emptyCompressedPayloadFails() {
+        val ext = client()
+        assertFailsWith<ProtocolViolationException> { ext.processIncomingFrame(compressed(ByteArray(0))) }
+        val inflater = MessageInflater(noContextTakeover = false, maxMessageSize = 1024)
+        assertFailsWith<DeflateDataException> { inflater.endOfMessage() }
+    }
+
+    /**
+     * A message that ends inside a DEFLATE block (cut short) does not end at a block boundary once the empty block is
+     * appended: Kotlin/Native's zlib reports it (data_type) and it fails; the JDK's Inflater cannot tell (as OkHttp's).
+     */
+    @Test fun negative_truncatedMessageFailsWhereZlibTellsTheBoundary() {
+        val full = client { compressionLevel = 0 }.processOutgoingFrame(Frame.Binary(true, ByteArray(300) { it.toByte() })).data
+        val cut = full.copyOf(full.size - 100) // inside the stored block
+        val result = runCatching { server().processIncomingFrame(compressed(cut)) }
+        if (RawInflater().let { r -> r.atBlockBoundary.also { r.close() } } != null) {
+            assertTrue(result.exceptionOrNull() is ProtocolViolationException, "Native: $result")
+        }
+    }
+
+    /**
+     * RFC 7692 section 7.2.2: without no_context_takeover the next message is decompressed with the window of the last
+     * one, also when that one ended its DEFLATE stream with a final block (section 7.2.3.4).
+     */
+    @Test fun windowCarriesOverAFinalBlock() {
+        val ext = client()
+        val bfinal = bytes(0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x00)
+        assertEquals("Hello", (ext.processIncomingFrame(compressed(bfinal)) as Frame.Text).readText())
+        // 7.2.3.2's second message: a back reference of 5 bytes, 5 back, into the first one's window
+        assertEquals("Hello", (ext.processIncomingFrame(compressed(bytes(0xf2, 0x00, 0x11, 0x00, 0x00))) as Frame.Text).readText())
+    }
+
+    /** Compressed data that produces nothing (empty blocks) cannot stream on without bound: it counts toward a limit. */
+    @Test fun negative_endlessEmptyBlocksStopAtTheCompressedLimit() {
+        val limit = 1000L
+        val inflater = MessageInflater(noContextTakeover = false, maxMessageSize = limit)
+        val emptyBlock = bytes(0x00, 0x00, 0x00, 0xff, 0xff)
+        val out = ByteArray(64)
+        assertFailsWith<MessageTooBigException> {
+            repeat(100_000) {
+                // 500 KB of empty blocks: past 8 times the limit plus 64 KiB
+                inflater.input(emptyBlock, 0, emptyBlock.size)
+                while (inflater.read(out, 0, out.size) > 0) continue
+            }
+        }
+        inflater.close()
+    }
 }

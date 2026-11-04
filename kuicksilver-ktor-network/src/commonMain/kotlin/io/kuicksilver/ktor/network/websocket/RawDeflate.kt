@@ -55,6 +55,19 @@ internal expect class RawInflater(
     /** Input bytes not consumed yet. */
     val remaining: Int
 
+    /**
+     * Whether the last [inflate] stopped at a DEFLATE block boundary (zlib's `data_type & 128`: waiting for the next
+     * block's header), or null where the platform does not tell (the JDK's Inflater).
+     */
+    val atBlockBoundary: Boolean?
+
+    /** Primes the window of a fresh stream with [length] bytes of [bytes] from [offset] (zlib's inflateSetDictionary). */
+    fun setDictionary(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    )
+
     /** Starts a new stream with an empty window. */
     fun reset()
 

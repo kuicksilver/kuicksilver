@@ -209,8 +209,9 @@ public class PerMessageDeflate internal constructor(
                     inflateMessage(i, frame.data)
                 } catch (e: MessageTooBigException) {
                     throw FrameTooBigException(e.size, e)
-                } catch (e: DeflateDataException) {
-                    throw ProtocolViolationException("Invalid permessage-deflate data: ${e.message}")
+                } catch (_: DeflateDataException) {
+                    // Ktor may send this message as a Close reason: zlib's own text stays out of it
+                    throw ProtocolViolationException("Invalid compressed data")
                 }
             }
         return Frame.byType(true, frame.frameType, data, false, frame.rsv2, frame.rsv3)
