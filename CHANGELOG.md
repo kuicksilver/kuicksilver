@@ -14,9 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
-- QUIC: experimental `QuicConnection.peerSupportsDatagrams`, true once the peer advertised `max_datagram_frame_size`
-  above 0 (RFC 9221 section 3). `maxDatagramSize` is 0 both without support and with a limit of 2, which leaves room for
-  an empty datagram only; this tells them apart.
+- QUIC: experimental `QuicConnection.peerSupportsDatagrams`, true once the peer's `max_datagram_frame_size` takes a
+  DATAGRAM frame this endpoint can send (2 or more, RFC 9221 section 3), exactly when `sendDatagram` does not answer
+  `PeerDoesNotSupport`. `maxDatagramSize` is 0 both without support and with a limit of 2, which leaves room for an empty
+  datagram only; this tells them apart.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,

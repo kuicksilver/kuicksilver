@@ -305,14 +305,17 @@ public class ConnectionCore internal constructor(
     public val maxDatagramPayload: Int get() = maxOf(datagramPayloadLimit, 0)
 
     /**
-     * [maxDatagramPayload], or -1 when no DATAGRAM frame can be sent: the peer did not advertise `max_datagram_frame_size`, or
-     * advertised 1, which leaves no room for the type and Length of the only frame this sender writes (type 0x31). quiche
-     * treats a limit that small the same way (`dgram_max_writable_len` returns None).
+     * The peer takes DATAGRAM frames this endpoint can send: its `max_datagram_frame_size` is 2 or more. A limit of 1 is
+     * support in RFC 9221 section 3's terms, but it admits only an empty type-0x30 frame ending its packet, which this
+     * sender never writes (it writes type 0x31 with a Length), so it counts as no support here, as quiche treats it
+     * (`dgram_max_writable_len` returns None).
      */
+    internal val peerAcceptsDatagrams: Boolean get() = datagramPayloadLimit >= 0
 
-    /** The peer advertised `max_datagram_frame_size` above 0 (RFC 9221 section 3): it accepts DATAGRAM frames. */
-    internal val peerAcceptsDatagrams: Boolean get() = (peerTp?.maxDatagramFrameSize ?: 0L) > 0L
-
+    /**
+     * [maxDatagramPayload], or -1 when no DATAGRAM frame can be sent: the peer did not advertise `max_datagram_frame_size`, or
+     * advertised 1, which leaves no room for the type and Length of the only frame this sender writes (type 0x31).
+     */
     internal val datagramPayloadLimit: Int get() {
         val peer = peerTp?.maxDatagramFrameSize ?: 0L
         if (peer < 2L) return -1

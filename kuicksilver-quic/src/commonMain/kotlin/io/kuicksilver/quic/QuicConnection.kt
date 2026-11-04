@@ -95,16 +95,15 @@ public interface QuicConnection : AutoCloseable {
     public val maxDatagramSize: StateFlow<Int>
 
     /**
-     * True once the peer's transport parameters are known and advertise `max_datagram_frame_size` above 0: the peer
-     * accepts DATAGRAM frames on this connection (RFC 9221 section 3), however small its limit. [maxDatagramSize] alone
-     * cannot tell this apart, as it is 0 both without support and with a limit that leaves room for an empty datagram
-     * only. A limit of 1 counts as support here although no frame this endpoint writes fits it ([sendDatagram] then
-     * answers [DatagramUnsupportedReason.PeerDoesNotSupport]). False before the handshake has delivered the parameters
-     * (or, for 0-RTT, the remembered ones). The default, for implementations outside this library, reads
-     * [maxDatagramSize].
+     * True once the peer's transport parameters are known and its `max_datagram_frame_size` takes a DATAGRAM frame this
+     * endpoint can send (2 or more; RFC 9221 section 3), however small: exactly when [sendDatagram] does not answer
+     * [DatagramUnsupportedReason.PeerDoesNotSupport]. [maxDatagramSize] cannot tell this apart, as it is 0 both without
+     * support and with a limit of 2, which leaves room for an empty datagram only. A limit of 1 admits only an empty
+     * frame without a Length field at the end of a packet, which this endpoint never sends, and counts as no support.
+     * False before the handshake has delivered the parameters (or, for 0-RTT, the remembered ones).
      */
     @ExperimentalKuicksilverApi
-    public val peerSupportsDatagrams: Boolean get() = maxDatagramSize.value > 0
+    public val peerSupportsDatagrams: Boolean
 
     /**
      * Starts a key update (RFC 9001 section 6); suspends until one is allowed: handshake confirmed, the current phase

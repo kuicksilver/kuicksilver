@@ -317,6 +317,24 @@ class DatagramApiTest {
             }
         }
 
+    /** A peer limit of 1 admits no frame this endpoint writes: no support, consistently in the signal and in sendDatagram. */
+    @Test fun aPeerLimitOfOneIsNoSupport() =
+        runBlocking {
+            ApiPair.open(serverQuic = quicConfig { maxDatagramFrameSize = 1 }).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    assertEquals(false, c.peerSupportsDatagrams)
+                    assertEquals(0, c.maxDatagramSize.value)
+                    assertEquals(
+                        DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport),
+                        c.trySendDatagram(ByteArray(0)),
+                    )
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
     @Test fun unsupportedWhenLocallyDisabled() =
         runBlocking {
             ApiPair.open().use { p ->
