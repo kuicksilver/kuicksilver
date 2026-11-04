@@ -61,6 +61,35 @@ class WindowsTcpSocketTest {
             }
         }
 
+    /**
+     * A real refused connect through the Winsock selector, with the bounded connect wait (FD_CONNECT may be lost): it fails
+     * within seconds instead of waiting for ever (review: the connect bound of 2a966ee4 exercised on Windows itself).
+     */
+    @Test fun aRefusedConnectFails() =
+        kotlinx.coroutines.runBlocking {
+            val selector =
+                io.ktor.network.selector
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            try {
+                val probe = bindTcp(selector, "127.0.0.1", 0)
+                val port = (probe.localAddress as io.ktor.network.sockets.InetSocketAddress).port
+                probe.close()
+                val outcome =
+                    kotlinx.coroutines.withTimeoutOrNull(kotlin.time.Duration.parse("20s")) {
+                        runCatching {
+                            connectTcp(
+                                selector,
+                                io.ktor.network.sockets
+                                    .InetSocketAddress("127.0.0.1", port),
+                            )
+                        }
+                    } ?: kotlin.test.fail("a refused connect was still waiting after 20 s")
+                assertTrue(outcome.isFailure, "a connect to a port nobody listens on succeeded")
+            } finally {
+                selector.close()
+            }
+        }
+
     @Test fun listenersAreExclusiveAndNoSocketIsInheritable() {
         tcpStartup()
         val listener = tcpOpen(AF_INET)
