@@ -296,6 +296,14 @@ The push sends both `:<version>` tags first and both `:latest` tags last, so a p
 the previous version for both images. A re-run after such a partial push finds `:<version>` published and is refused:
 dispatch it again with `force`.
 
+The first publish is not verified yet. The gate reads "no package" from an HTTP 404 at `tags/list`, which is what the
+OCI distribution spec prescribes for an unknown repository (`NAME_UNKNOWN`), but GHCR may already refuse the pull token
+for a package that does not exist (anonymously it answers HTTP 403 at `/token`; with the job's `GITHUB_TOKEN` this has not
+been observed). In that case the gate refuses the run because the tags are unknown. Dispatch it with `force`: the images
+are pushed but `:latest` does not move, because without the tags a newer published version cannot be ruled out. Then
+dispatch once more with `force`: now the tags can be read, the version is the highest one published, and `:latest` moves
+to it. Write down here what GHCR answered on the first publish.
+
 ## Checks before publishing
 
 - `-Pkuicksilver.sign=false` publishes unsigned (to count files, or on a machine without the key); a release never uses
