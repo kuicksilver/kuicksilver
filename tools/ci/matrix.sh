@@ -26,7 +26,7 @@ KSL_IOS_SIM_TESTS=$(ksl_tasks iosSimulatorArm64Test $KSL_APPLE_MODULES)
 KSL_IOS_COMPILE=$(ksl_tasks compileKotlinIosArm64 $KSL_APPLE_MODULES)
 KSL_CHECKS="checkSpdxHeaders checkLayerDependencies checkKotlinAbi"
 KSL_ARCH_CHECKS="checkQuicArchitecture checkHttp3Architecture checkHttp2Architecture"
-KSL_FUZZ_ARGS=(:kuicksilver-quic:jvmTest --tests "io.kuicksilver.quic.fuzz.*" :kuicksilver-http3:jvmTest --tests "io.kuicksilver.http3.fuzz.*")
+KSL_FUZZ_ARGS=(:kuicksilver-quic:jvmTest --tests "io.kuicksilver.quic.fuzz.*" :kuicksilver-http3:jvmTest --tests "io.kuicksilver.http3.fuzz.*" :kuicksilver-http2:jvmTest --tests "io.kuicksilver.http2.fuzz.*")
 KSL_SIM_ARGS=(:kuicksilver-testing:jvmTest -Pkuicksilver.sim.runs=200 --tests "io.kuicksilver.testing.MonteCarloTest")
 
 # Runtime image for the linuxArm64 test.kexe: the K/N arm64 sysroot needs glibc 2.25 > manylinux2014.

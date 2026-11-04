@@ -384,6 +384,13 @@ Status: the sans-IO core of `kuicksilver-http2` (ADR-0017); the engines do not u
   `.negative_priorityFloodCreatesNoState`, `.resetBudgetRefills` (30 cancellations a second for a minute are not
   punished); `core.FlowControlTest.windowUpdateOnlyAfterConsumed`, `.negative_dataBeyondWindowIsFlowControlError`,
   `.zeroWindowSenderBlocksWithoutBuffering`; `core.SettingsTest.negative_settingsAckTimeoutIsSettingsTimeout`.
+- **Fuzzing:** Jazzer targets `http2.frames` (`FrameDecoder` fed in input-chosen pieces: only its own errors escape, no
+  payload above the limit, allocation within the input plus one frame) and `http2.hpackDecode` (two blocks through one
+  decoder with input-chosen table size and list limit: only `HpackError` escapes, the list stays within the limit,
+  literals within 8/5 of the block) in `kuicksilver-http2/src/jvmTest/…/fuzz`, seeds from `tools/http/gen-fuzz-seeds.py`
+  (every frame type; the RFC 7541 appendix C blocks), listed in `tools/fuzz/campaign.sh`; `jvmTest` runs them on the
+  seeds. A first 60 s run each (2026-11-04): no findings in the code (one harness assertion was too strict and was
+  corrected). The connection-level targets come with the engines.
 
 ## 4. What we do not protect against
 

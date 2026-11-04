@@ -2,7 +2,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# ClusterFuzzLite / OSS-Fuzz build for the Jazzer targets of kuicksilver-quic and kuicksilver-http3.
+# ClusterFuzzLite / OSS-Fuzz build for the Jazzer targets of kuicksilver-quic, kuicksilver-http3 and kuicksilver-http2.
 # 1. OpenSSL: the pinned release (gradle/openssl.toml) is downloaded, its PGP signature and SHA-256 are checked
 #    (tools/openssl/fetch.sh) and it is built statically for linux-x64 (tools/openssl/build.sh). The local CI builds this
 #    target inside manylinux2014 through Docker; Docker is not available here, so the base image's compiler is used:
@@ -29,7 +29,7 @@ CC="${CC:-clang}" CFLAGS="" bash tools/build-jni.sh linux-x86_64 kuicksilver-nat
 # 3: compile the fuzz targets and resolve their classpath
 cat > /tmp/fuzz-classpath.init.gradle <<'GRADLE'
 allprojects {
-    if (name == 'kuicksilver-quic' || name == 'kuicksilver-http3') {
+    if (name == 'kuicksilver-quic' || name == 'kuicksilver-http3' || name == 'kuicksilver-http2') {
         afterEvaluate {
             tasks.register('printFuzzClasspath') {
                 def cp = configurations.getByName('jvmTestRuntimeClasspath')
@@ -44,7 +44,7 @@ allprojects {
 GRADLE
 CP=$(JAVA_HOME=/opt/jdk-21 ./gradlew --no-daemon --max-workers="$JOBS" -q -I /tmp/fuzz-classpath.init.gradle \
        -x :kuicksilver-native:buildJniHost \
-       :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath \
+       :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath \
      | sed -n 's/^FUZZ_CP=//p' | tr ':' '\n' | awk 'NF && !seen[$0]++')
 
 # 4: runtime classpath in $OUT. Jazzer itself comes from the base image (jazzer_agent_deploy.jar, $JAZZER_JUNIT_PATH),
@@ -77,6 +77,8 @@ kuicksilver-quic io.kuicksilver.quic.fuzz PacketReceiveFuzzTest postHandshake
 kuicksilver-http3 io.kuicksilver.http3.fuzz H3FrameFuzzTest h3Frames
 kuicksilver-http3 io.kuicksilver.http3.fuzz H3FrameFuzzTest capsules
 kuicksilver-http3 io.kuicksilver.http3.fuzz QpackDecodeFuzzTest qpackDecode
+kuicksilver-http2 io.kuicksilver.http2.fuzz H2FrameFuzzTest frames
+kuicksilver-http2 io.kuicksilver.http2.fuzz HpackDecodeFuzzTest hpackDecode
 "
 echo "$targets" | while read -r module pkg cls method; do
   [ -n "$module" ] || continue

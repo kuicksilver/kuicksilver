@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Local fuzzing campaigns for the Jazzer targets of kuicksilver-tls, kuicksilver-quic and kuicksilver-http3 and the libFuzzer harness of
+# Local fuzzing campaigns for the Jazzer targets of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3 and kuicksilver-http2 and the libFuzzer harness of
 # ksl (tools/fuzz/ksl/). It replaces the ClusterFuzzLite path for this project: the laptop stays usable, so by default
 # every run is a slice of at most 20 minutes at background priority (taskpolicy -b, nice 19, one fuzzing thread, the
 # serial collector), with a pause between slices so other builds get the machine. Progress is resumable: the growing
@@ -50,6 +50,8 @@ tls.zeroRttHello jvm kuicksilver-tls io.kuicksilver.tls.fuzz.ZeroRttHelloFuzzTes
 http3.h3Frames jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.H3FrameFuzzTest h3Frames
 http3.capsules jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.H3FrameFuzzTest capsules
 http3.qpackDecode jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest qpackDecode
+http2.frames jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.H2FrameFuzzTest frames
+http2.hpackDecode jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.HpackDecodeFuzzTest hpackDecode
 ksl.parsers c kuicksilver-native ksl_fuzz parsers
 EOF
 }
@@ -129,10 +131,10 @@ snapshot_classpath() {
     tmp=$(mktemp "$state/cp-print.XXXXXX")
     if [ -x "$HOME/.kuicksilver-tools/quiet-gradle" ]; then
       (cd "$root" && "$HOME/.kuicksilver-tools/quiet-gradle" -q -I tools/fuzz/classpath.init.gradle \
-        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath) > "$tmp"
+        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath) > "$tmp"
     else
       (cd "$root" && quiet ./gradlew --max-workers=2 -q -I tools/fuzz/classpath.init.gradle \
-        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath) > "$tmp"
+        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath) > "$tmp"
     fi
     rm -rf "$out.new"; mkdir -p "$out.new"
     while IFS= read -r line; do
@@ -150,7 +152,7 @@ snapshot_classpath() {
       echo "$new" > "$out.new/$module.cp"
     done < "$tmp"
     rm -f "$tmp"
-    for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3; do [ -s "$out.new/$m.cp" ] || die "Gradle printed no classpath for $m"; done
+    for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3 kuicksilver-http2; do [ -s "$out.new/$m.cp" ] || die "Gradle printed no classpath for $m"; done
     rm -rf "$out"; mv "$out.new" "$out"
     # rewrite the copied paths (they were recorded under cp.new)
     for f in "$out"/*.cp; do sed -i '' -e "s|$out.new/|$out/|g" "$f" 2>/dev/null || sed -i -e "s|$out.new/|$out/|g" "$f"; done
