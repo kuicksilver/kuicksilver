@@ -50,6 +50,8 @@ internal class H3Call(
     webSocket: Boolean = false,
     /** A WebTransport CONNECT: a CONNECT call marked for `webTransport(path)` routes. */
     webTransport: Boolean = false,
+    /** KuicksilverApplicationEngine.beforeH3UpgradeForTest. */
+    beforeUpgradeForTest: (() -> Unit)? = null,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -69,6 +71,7 @@ internal class H3Call(
                 h3,
                 engineDispatcher,
                 userDispatcher,
+                beforeUpgradeForTest,
             )
         } else {
             H3Response(this, h3)
@@ -176,6 +179,12 @@ internal open class H3Response(
     protected val headersBuilder = HeadersBuilder()
     private var writer: Http3ResponseWriter? = null
 
+    /**
+     * The request stream was given an answer (a response head, an accepted CONNECT or a WebTransport session) or ends on its
+     * own: when a call is over without one, the engine resets the stream (handleHttp3).
+     */
+    internal var answered: Boolean = false
+
     override val headers =
         object : ResponseHeaders() {
             override fun engineAppendHeader(
@@ -205,7 +214,11 @@ internal open class H3Response(
             },
         )
 
-    private suspend fun start(): Http3ResponseWriter = writer ?: h3.respond(statusCode.value, h3Headers()).also { writer = it }
+    private suspend fun start(): Http3ResponseWriter =
+        writer ?: h3.respond(statusCode.value, h3Headers()).also {
+            writer = it
+            answered = true
+        }
 
     override suspend fun responseChannel(): ByteWriteChannel = start().output
 
@@ -256,6 +269,7 @@ internal class H3WebTransportResponse(
 ) : H3Response(call, h3) {
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         if (upgrade !is WebTransportUpgrade) return super.respondUpgrade(upgrade)
+        answered = true // acceptAndRun answers every outcome it knows (the session, or 400)
         upgrade.acceptAndRun(h3, Http3Headers(h3Headers().fields.filter { it.first != "content-length" }))
     }
 

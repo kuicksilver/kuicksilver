@@ -8,6 +8,7 @@ import io.ktor.server.engine.handleFailure
 import io.ktor.util.pipeline.execute
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.ktor.server.h3.H3Call
@@ -223,6 +224,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 userDispatcher,
                 webSocket,
                 webTransport,
+                beforeH3UpgradeForTest,
             )
         events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
         var failure: Throwable? = null
@@ -232,6 +234,9 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
             failure = error
             handleFailure(call, error)
         } finally {
+            // a call that failed after Ktor committed its response (an upgrade that failed before its answer went out)
+            // cannot get the 500 any more: the stream is reset, never left waiting for an answer (RFC 9114 section 8.1)
+            if (!call.response.answered) runCatching { req.reset(Http3ErrorCode.INTERNAL_ERROR) }
             events.emit("requestEnded") { requestEnded(HttpProtocolVersion.HTTP_3_0, call, failure) }
         }
     }

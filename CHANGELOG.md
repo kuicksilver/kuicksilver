@@ -288,6 +288,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server: an HTTP/3 request whose call fails after Ktor committed its response but before any answer went out (an
+  upgrade that fails before its `:status 200`) is reset with H3_INTERNAL_ERROR; before, the request stream stayed open
+  and the client waited for an answer that never came.
 - QUIC server: a client that really rebinds during the handshake while an off-path observer races copies of its datagrams
   from the old address now completes the handshake on its new address. Each copy from the old address used to take the
   path back there and forget the PATH_CHALLENGE sent to the new one, so the client never got HANDSHAKE_DONE and the

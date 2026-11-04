@@ -49,6 +49,7 @@ internal class H3UpgradeResponse(
     h3: Http3ServerRequest,
     private val engineDispatcher: CoroutineContext,
     private val userDispatcher: CoroutineContext,
+    private val beforeUpgradeForTest: (() -> Unit)? = null,
 ) : H3Response(call, h3) {
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
         // before anything is committed, so the refusal can still be an ordinary error response
@@ -57,8 +58,10 @@ internal class H3UpgradeResponse(
     }
 
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
+        beforeUpgradeForTest?.invoke()
         val headers = Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED })
         val stream = h3.acceptConnect(headers)
+        answered = true
         // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 9220 section 3); the
         // check ends with the upgrade
         val guard = Job()
