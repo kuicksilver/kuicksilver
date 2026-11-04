@@ -540,7 +540,10 @@ internal class ProxyRouting(
      * The call in flight for [key], or a new one once one of the [MAX_ROUTES] slots is free (a caller queues for it). It
      * runs detached on [resolverDispatcher] and frees its slot when it completes, however long that takes. A completed call
      * is never shared: its entry leaves [inFlight] only once a coroutine of its own gets the lock, and until then a caller
-     * whose cached answer had expired would get that old answer again instead of asking the resolver.
+     * whose cached answer had expired would get that old answer again instead of asking the resolver. The cost is at most one
+     * extra resolver call per key per completion, never overlapping the one before: a caller that missed the cache while the
+     * previous call completed and its answer was not cached yet asks again (and gets a newer answer); a caller that took
+     * the call just before it completed still awaits it.
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     private suspend fun callFor(
