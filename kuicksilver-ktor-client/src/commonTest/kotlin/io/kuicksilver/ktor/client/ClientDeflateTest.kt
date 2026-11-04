@@ -12,6 +12,7 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.install
 import io.ktor.server.routing.routing
+import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
@@ -21,6 +22,9 @@ import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
+import io.ktor.websocket.WebSocketExtension
+import io.ktor.websocket.WebSocketExtensionFactory
+import io.ktor.websocket.WebSocketExtensionHeader
 import io.ktor.websocket.parseWebSocketExtensions
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
@@ -137,6 +141,72 @@ class ClientDeflateTest {
                 assertEquals(false, opened, answer)
             }
         }
+
+    /** RFC 7692 section 5: an answer that accepts permessage-deflate together with another RSV1 extension fails. */
+    @Test fun negative_deflateAcceptedWithAnotherRsv1ExtensionFailsHandshake() =
+        clientTest {
+            var opened = false
+            rawH1Server("permessage-deflate, x-rsv1", client = { port ->
+                testClient(block = {
+                    install(WebSockets) {
+                        extensions {
+                            install(PerMessageDeflate)
+                            install(XRsv1)
+                        }
+                    }
+                }).use { c ->
+                    val e = assertFailsWith<WebSocketException> { c.webSocket("ws://127.0.0.1:$port/ws") { opened = true } }
+                    assertTrue("RSV1" in e.message.orEmpty(), e.message)
+                }
+            }) { _, _ -> }
+            assertEquals(false, opened)
+        }
+
+    /** The other extension alone, or permessage-deflate alone, is fine. */
+    @Test fun oneRsv1ExtensionAcceptedPasses() =
+        clientTest {
+            for (answer in listOf("permessage-deflate", "x-rsv1")) {
+                var opened = false
+                rawH1Server(answer, client = { port ->
+                    testClient(block = {
+                        install(WebSockets) {
+                            extensions {
+                                install(PerMessageDeflate)
+                                install(XRsv1)
+                            }
+                        }
+                    }).use { c ->
+                        c.webSocket("ws://127.0.0.1:$port/ws") { opened = true }
+                    }
+                }) { _, _ -> }
+                assertEquals(true, opened, answer)
+            }
+        }
+
+    /** An extension of the application's that uses RSV1 too (it changes nothing). */
+    private object XRsv1 : WebSocketExtensionFactory<Unit, XRsv1Extension> {
+        override val key: AttributeKey<XRsv1Extension> = AttributeKey("x-rsv1")
+        override val rsv1: Boolean = true
+        override val rsv2: Boolean = false
+        override val rsv3: Boolean = false
+
+        override fun install(config: Unit.() -> Unit): XRsv1Extension = XRsv1Extension()
+    }
+
+    private class XRsv1Extension : WebSocketExtension<Unit> {
+        override val factory: WebSocketExtensionFactory<Unit, out WebSocketExtension<Unit>> = XRsv1
+        override val protocols: List<WebSocketExtensionHeader> = listOf(WebSocketExtensionHeader("x-rsv1", emptyList()))
+
+        override fun clientNegotiation(negotiatedProtocols: List<WebSocketExtensionHeader>): Boolean =
+            negotiatedProtocols.any { it.name == "x-rsv1" }
+
+        override fun serverNegotiation(requestedProtocols: List<WebSocketExtensionHeader>): List<WebSocketExtensionHeader> =
+            requestedProtocols.filter { it.name == "x-rsv1" }
+
+        override fun processOutgoingFrame(frame: Frame): Frame = frame
+
+        override fun processIncomingFrame(frame: Frame): Frame = frame
+    }
 
     private fun bomb(): ByteArray {
         val c = PerMessageDeflate.install { compressionLevel = 9 }

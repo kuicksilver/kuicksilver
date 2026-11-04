@@ -25,6 +25,7 @@ import io.ktor.utils.io.cancel
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.server.ServerWebSocketInput
+import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -76,6 +77,7 @@ internal class H1Response(
     }
 
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
+        val isWebSocket = call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true
         sendResponseMessage(contentReady = false)
 
         // a WebSocket's frames are checked against the extensions negotiated here (RFC 6455 section 5.2); the check
@@ -84,7 +86,7 @@ internal class H1Response(
         var webSocket: ServerWebSocketInput? = null
         try {
             val upgradedInput =
-                if (call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true) {
+                if (isWebSocket) {
                     ServerWebSocketInput(input, call.request.headers, headersBuilder, call.attributes, engineDispatcher + guard)
                         .also { webSocket = it }
                         .channel
@@ -118,6 +120,10 @@ internal class H1Response(
 
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
         if (content is OutgoingContent.ProtocolUpgrade) {
+            // before anything is committed, so the refusal can still be an ordinary error response
+            if (call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true) {
+                checkWebSocketRsvConflicts(call.attributes)
+            }
             upgraded?.complete(true) ?: throw IllegalStateException(
                 "Unable to perform upgrade as it is not requested by the client: " +
                     "request should have Upgrade and Connection headers filled properly",

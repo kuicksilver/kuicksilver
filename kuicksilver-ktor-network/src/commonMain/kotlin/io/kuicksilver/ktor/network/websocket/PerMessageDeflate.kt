@@ -340,16 +340,44 @@ public class WebSocketInflate(
 )
 
 /**
- * The [PerMessageDeflate] among the WebSocket extensions in [Attributes] (the ones Ktor's client plugin installed for a
- * request, or Ktor's server plugin negotiated for a call), or null. Ktor keeps them under an attribute of its own; this
- * looks for the extension by type, not by Ktor's key.
+ * The WebSocket extensions in [Attributes]: the ones Ktor's client plugin installed for a request, or the ones Ktor's server
+ * plugin negotiated for a call. Ktor keeps them under an attribute of its own; this looks for them by type, not by Ktor's
+ * key.
  */
 @InternalKuicksilverApi
-public fun Attributes.perMessageDeflate(): PerMessageDeflate? {
+public fun Attributes.webSocketExtensions(): List<WebSocketExtension<*>> {
+    val found = ArrayList<WebSocketExtension<*>>()
     for (key in allKeys) {
         @Suppress("UNCHECKED_CAST")
         val value = getOrNull(key as AttributeKey<Any>)
-        if (value is List<*>) value.firstOrNull { it is PerMessageDeflate }?.let { return it as PerMessageDeflate }
+        if (value is List<*>) for (e in value) if (e is WebSocketExtension<*> && found.none { it === e }) found += e
+    }
+    return found
+}
+
+/** The [PerMessageDeflate] among the WebSocket extensions in [Attributes] ([webSocketExtensions]), or null. */
+@InternalKuicksilverApi
+public fun Attributes.perMessageDeflate(): PerMessageDeflate? = webSocketExtensions().firstNotNullOfOrNull { it as? PerMessageDeflate }
+
+/**
+ * Why [extensions], all in use on one WebSocket, cannot be used together, or null: two of them claim the same RSV bit
+ * (their factories' `rsv1`, `rsv2`, `rsv3`). RFC 7692 section 5: a server MUST NOT accept a PMCE together with another
+ * extension that uses RSV1, and a client that gets such an answer MUST fail the connection.
+ */
+@InternalKuicksilverApi
+public fun webSocketRsvConflict(extensions: List<WebSocketExtension<*>>): String? {
+    val bits =
+        listOf<Pair<String, (WebSocketExtensionFactory<*, *>) -> Boolean>>(
+            "RSV1" to { it.rsv1 },
+            "RSV2" to { it.rsv2 },
+            "RSV3" to { it.rsv3 },
+        )
+    for ((bit, uses) in bits) {
+        val users = extensions.filter { uses(it.factory) }
+        if (users.size > 1) {
+            val names = users.joinToString { e -> e.protocols.joinToString("/") { it.name }.ifEmpty { e.factory.key.name } }
+            return "$names all use $bit"
+        }
     }
     return null
 }

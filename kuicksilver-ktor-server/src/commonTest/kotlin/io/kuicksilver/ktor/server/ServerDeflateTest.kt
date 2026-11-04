@@ -12,6 +12,7 @@ import io.ktor.server.application.install
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
+import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
@@ -22,9 +23,13 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
+import io.ktor.websocket.WebSocketExtension
+import io.ktor.websocket.WebSocketExtensionFactory
+import io.ktor.websocket.WebSocketExtensionHeader
 import io.ktor.websocket.parseWebSocketExtensions
 import io.ktor.websocket.readText
 import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.network.tls
@@ -36,6 +41,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -145,6 +151,85 @@ class ServerDeflateTest {
                 assertEquals("echo: plain", payload.decodeToString())
             }
         }
+
+    /** RFC 7692 section 5: a server does not accept permessage-deflate together with another RSV1 extension. */
+    @Test fun negative_twoRsv1ExtensionsAreNotBothAccepted() =
+        serverTest {
+            val (server, port) = tlsServer { conflictingExtensions() }
+            try {
+                val response =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade, close\r\n" +
+                                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n" +
+                                "Sec-WebSocket-Extensions: permessage-deflate, x-rsv1\r\n\r\n",
+                        )
+                    }
+                assertTrue(response.startsWith("HTTP/1.1 500"), response.lineSequence().first())
+                assertTrue("Sec-WebSocket-Extensions" !in response, response)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    @Test fun negative_twoRsv1ExtensionsAreNotBothAcceptedH3() =
+        h3ServerTest {
+            val (server, port) = tlsServer { conflictingExtensions() }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                try {
+                    val request =
+                        http3Request("CONNECT", "server.test", "/ws") {
+                            headers =
+                                Http3Headers.of("sec-websocket-version" to "13", "sec-websocket-extensions" to "permessage-deflate, x-rsv1")
+                        }
+                    val e = assertFailsWith<Http3Exception.ConnectRejected> { withTimeout(10.seconds) { c.connect(request, "websocket") } }
+                    assertEquals(500, e.status, "the CONNECT is refused with 500")
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
+    private fun Application.conflictingExtensions() {
+        install(WebSockets) {
+            extensions {
+                install(PerMessageDeflate)
+                install(XRsv1)
+            }
+        }
+        routing { webSocket("/ws") { send(Frame.Text("opened")) } }
+    }
+
+    /** An extension of the application's that uses RSV1 too (it changes nothing). */
+    private object XRsv1 : WebSocketExtensionFactory<Unit, XRsv1Extension> {
+        override val key: AttributeKey<XRsv1Extension> = AttributeKey("x-rsv1")
+        override val rsv1: Boolean = true
+        override val rsv2: Boolean = false
+        override val rsv3: Boolean = false
+
+        override fun install(config: Unit.() -> Unit): XRsv1Extension = XRsv1Extension()
+    }
+
+    private class XRsv1Extension : WebSocketExtension<Unit> {
+        override val factory: WebSocketExtensionFactory<Unit, out WebSocketExtension<Unit>> = XRsv1
+        override val protocols: List<WebSocketExtensionHeader> = listOf(WebSocketExtensionHeader("x-rsv1", emptyList()))
+
+        override fun clientNegotiation(negotiatedProtocols: List<WebSocketExtensionHeader>): Boolean =
+            negotiatedProtocols.any { it.name == "x-rsv1" }
+
+        override fun serverNegotiation(requestedProtocols: List<WebSocketExtensionHeader>): List<WebSocketExtensionHeader> =
+            requestedProtocols.filter { it.name.trim() == "x-rsv1" }
+
+        override fun processOutgoingFrame(frame: Frame): Frame = frame
+
+        override fun processIncomingFrame(frame: Frame): Frame = frame
+    }
 
     private suspend fun h1(
         offer: String,

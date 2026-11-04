@@ -592,7 +592,9 @@ before a session opens, other engines with the `ProtocolViolationException` the 
 accepts the first offer it can keep to and declines the others (RFC 7692 section 5.1): an offered
 `server_max_window_bits` is answered with the same value when the deflater can keep to it (9 to 15 on Kotlin/Native;
 only 15 on the JVM and Android, whose `Deflater` has a fixed 32 KiB window: a smaller one is declined, and a client that
-offered nothing else gets an uncompressed session), `client_max_window_bits` is a hint it leaves unanswered. Incoming
+offered nothing else gets an uncompressed session), `client_max_window_bits` is a hint it leaves unanswered. Install one extension per RSV bit: Kuicksilver's server engine
+refuses an upgrade that negotiated two extensions claiming the same bit (Ktor's own `WebSocketDeflateExtension` next
+to `PerMessageDeflate`, say) with 500, and its client engine fails such an answer, as RFC 7692 section 5 requires. Incoming
 messages are always inflated with a 32 KiB window, which reads every smaller one.
 
 Decompression bombs. A compressed message may inflate to at most `maxInflatedMessageSize` bytes. Kuicksilver's engines

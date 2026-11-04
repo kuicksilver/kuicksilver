@@ -14,6 +14,8 @@ import io.kuicksilver.ktor.network.negotiatedWebSocketRsv
 import io.kuicksilver.ktor.network.webSocketExtensionNames
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.network.websocket.perMessageDeflate
+import io.kuicksilver.ktor.network.websocket.webSocketExtensions
+import io.kuicksilver.ktor.network.websocket.webSocketRsvConflict
 import kotlin.coroutines.CoroutineContext
 
 /**
@@ -56,5 +58,20 @@ internal class ServerWebSocketInput(
 
     fun done() {
         deflate?.dispose()
+    }
+}
+
+/**
+ * Refuses a WebSocket upgrade whose negotiated extensions (in the call's [attributes]) claim the same RSV bit, before
+ * anything of the answer is sent: RFC 7692 section 5, a server MUST NOT accept a PMCE together with another extension
+ * that uses RSV1. Ktor's plugin accepts every installed extension that agrees on its own; the call fails with
+ * [IllegalStateException] (Ktor answers 500), which names the extensions.
+ */
+internal fun checkWebSocketRsvConflicts(attributes: Attributes) {
+    webSocketRsvConflict(attributes.webSocketExtensions())?.let {
+        throw IllegalStateException(
+            "WebSocket extensions that share an RSV bit were negotiated, which a server must not accept (RFC 7692 section 5): $it; " +
+                "install only one of them",
+        )
     }
 }

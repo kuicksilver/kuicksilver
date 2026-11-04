@@ -173,7 +173,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and server `WebSockets` plugins on any engine: java.util.zip on the JVM and Android, the platform's zlib on
   Kotlin/Native (Linux binaries now need `libz.so.1`; Windows links it statically). The negotiation follows RFC 7692
   sections 5 and 7.1 (invalid offers declined, invalid answers fail the handshake, `server_max_window_bits` honoured
-  where the deflater can keep to it); RSV1 goes on the first frame of a message only; an incoming message may inflate
+  where the deflater can keep to it; the engines refuse, as server, and fail, as client, permessage-deflate negotiated
+  next to another extension that uses RSV1); RSV1 goes on the first frame of a message only; an incoming message may inflate
   to `maxInflatedMessageSize` (16 MiB by default). Kuicksilver's engines decompress the frames as they arrive and close
   a connection whose message passes the limit with 1009, over HTTP/1.1 and HTTP/3 (threat model 3.20.2). Two Jazzer
   targets, `ktor-network.inflate` and `ktor-network.wsGuard`.

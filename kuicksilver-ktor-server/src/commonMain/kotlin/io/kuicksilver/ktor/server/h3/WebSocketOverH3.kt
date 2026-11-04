@@ -12,6 +12,7 @@ import io.ktor.utils.io.cancel
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.server.ServerWebSocketInput
+import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import kotlinx.coroutines.Job
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
@@ -49,6 +50,12 @@ internal class H3UpgradeResponse(
     private val engineDispatcher: CoroutineContext,
     private val userDispatcher: CoroutineContext,
 ) : H3Response(call, h3) {
+    override suspend fun respondOutgoingContent(content: OutgoingContent) {
+        // before anything is committed, so the refusal can still be an ordinary error response
+        if (content is OutgoingContent.ProtocolUpgrade) checkWebSocketRsvConflicts(call.attributes)
+        super.respondOutgoingContent(content)
+    }
+
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         val headers = Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED })
         val stream = h3.acceptConnect(headers)
