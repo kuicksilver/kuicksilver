@@ -60,9 +60,15 @@ tags() {   # <image>: its tags in the registry, one per line (none when the pack
       404) rm -f "$body" "$body.h"; return 0 ;;   # NAME_UNKNOWN: no such package yet
       *) echo "::error::interop-image: cannot list the tags of ghcr.io/$repo (HTTP $status)" >&2; rm -f "$body" "$body.h"; return 1 ;;
     esac
-    # pagination (OCI distribution spec): Link: </v2/<name>/tags/list?n=1000&last=<tag>>; rel="next"
+    # pagination (OCI distribution spec): Link: </v2/<name>/tags/list?n=1000&last=<tag>>; rel="next", the URL relative or
+    # absolute
     next=$(tr -d '\r' < "$body.h" | sed -nE 's/^[Ll]ink: *<([^>]*)>; *rel="next".*/\1/p' | head -1)
-    url=""; [ -z "$next" ] || url="https://ghcr.io$next"
+    case "$next" in
+      "") url="" ;;
+      https://ghcr.io/*) url=$next ;;
+      /*) url="https://ghcr.io$next" ;;
+      *) echo "::error::interop-image: ghcr.io/$repo: a next page at '$next'" >&2; rm -f "$body" "$body.h"; return 1 ;;
+    esac
   done
   rm -f "$body" "$body.h"
 }
