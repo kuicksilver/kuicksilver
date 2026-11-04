@@ -84,10 +84,11 @@ public class TlsSocket private constructor(
     /** The application protocol agreed through ALPN (RFC 7301), or null when none was negotiated. */
     public val negotiatedAlpn: String? get() = tls.negotiatedAlpn
 
-    private var attachedWriter: ReaderJob? = null
+    // written by attachForWriting, read by close(), which may run on another thread
+    @Volatile private var attachedWriter: ReaderJob? = null
 
     /** The application's side of [attachedWriter], as given to [attachForWriting] (closeFromSocketClose). */
-    private var attachedChannel: ByteChannel? = null
+    @Volatile private var attachedChannel: ByteChannel? = null
     private var closing = false
 
     /**

@@ -15,6 +15,11 @@ import io.ktor.utils.io.ByteChannel
  * the [ByteChannel] it was given in attachForWriting for this: the ReaderJob's channel is ktor-io's close-hook wrapper,
  * whose only hook joins the writer. The caller joins the writer itself where its close depends on the drain having
  * ended (the Native TCP socket cancels its read loop only after it).
+ *
+ * Limit (ktor-io's, as with flushAndClose): close() moves the channel's write buffer to the reader with
+ * flushWriteBuffer, which is not synchronized against the writing coroutine. A write that waits for room has already
+ * moved its bytes; a write running on another thread at that very moment may race the move, as it would with ktor-io's
+ * own close or flushAndClose. Closing while another coroutine writes is safe only in that sense.
  */
 internal fun ByteChannel.closeFromSocketClose() {
     close()
