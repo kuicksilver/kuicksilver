@@ -1359,7 +1359,11 @@ internal class H3Session(
     }
 
     companion object {
-        /** Test hook: sees every session as it is made, before it starts (to install the per-session hooks). */
+        /**
+         * Test hook: sees every session as it is made, before it starts (to install the per-session hooks). It is global, so
+         * it is not safe for tests that run in parallel in one process (none do: each module's tests run one after another);
+         * a test sets it right before the connection it is for and takes the first matching session only.
+         */
         @kotlin.concurrent.Volatile
         internal var createdForTest: ((H3Session) -> Unit)? = null
 
