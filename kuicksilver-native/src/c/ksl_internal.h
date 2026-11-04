@@ -59,7 +59,8 @@ struct ksl_ssl {
     /* TCP mode */
     BIO *net;                                        /* our end of the bio pair */
     int abort_alert;                                 /* ksl_tcp_abort: the next ticket (server) or ClientHello (client) fails with internal_error */
-    uint8_t *pending_write; size_t pending_write_len;   /* a copy of the record ksl_tcp_write left pending in OpenSSL (WANT_READ), for ksl_tcp_abort */
+    uint8_t *pending_write; size_t pending_write_len;   /* a copy of the bytes of the write ksl_tcp_write left pending in OpenSSL (WANT_READ), for ksl_tcp_abort */
+    int pending_write_unkept;                         /* such a write is pending but its copy could not be made (malloc failed) */
     SSL_SESSION *new_sessions[KSL_CLIENT_TICKETS]; int new_sessions_n;   /* client: tickets not yet handed out by ksl_ssl_get1_session, oldest first */
     uint64_t key_updates_sent, key_update_limit;     /* KeyUpdates written; the bound (RFC 9846 4.7.3), 0 = KSL_MAX_KEY_UPDATES */
     int key_updates_exhausted, update_requested_pending;   /* the bound was reached: no more KeyUpdates of ours; our update_requested awaits the peer's KeyUpdate */

@@ -637,6 +637,31 @@ static void test_abort_after_pending_messages(void) {
     size_t used; for (size_t off = 0; off < held_n; off += used) if (ksl_tcp_feed(c, held + off, held_n - off, &used) != KSL_OK || !used) break;
     CHECK(read_all_after_abort_from(s, c, &alert, &rc) == 2 * sizeof big && rc == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives both records, then internal_error");
     ksl_ssl_free(c); ksl_ssl_free(s);
+    /* the bytes ksl keeps for a write that is not yet a record (review 2026-10-28 NIT-3): a KeyUpdate queued while the pair is full
+       goes out first when the transport takes more, so the next write stays plaintext behind it; the abort sends the KeyUpdate,
+       that write as a record, then the alert */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); key_updates ku = {0, 0}; ksl_ssl_msg_observer_for_test(c, key_update_kind_cb, &ku);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_OK && ksl_ssl_key_update(s, 0) == KSL_OK, "a record fills the pair, a KeyUpdate is queued");
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_WANT_READ && n == 0, "the next write waits behind the KeyUpdate");
+    held_n = 0; while (held_n < sizeof held && ksl_tcp_drain(s, held + held_n, sizeof held - held_n, &k2) == KSL_OK && k2) held_n += k2;
+    CHECK(held_n > 0 && ksl_tcp_abort(s) == KSL_OK, "the KeyUpdate and the write go out, then the alert");
+    for (size_t off = 0; off < held_n; off += used) if (ksl_tcp_feed(c, held + off, held_n - off, &used) != KSL_OK || !used) break;
+    CHECK(read_all_after_abort_from(s, c, &alert, &rc) == 2 * sizeof big && rc == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100) && ku.updates == 1,
+          "the client receives the record, the KeyUpdate, the write, then internal_error");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* a retry with a longer length replaces the copy: the abort completes what OpenSSL holds, and its alert follows */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    size_t accepted = 0; int w;
+    while ((w = ksl_tcp_write(s, big, 100, &n)) == KSL_OK && accepted < (1u << 20)) accepted += n;   /* 100-byte records until the pair is full */
+    CHECK(w == KSL_WANT_READ && accepted > 0 && s->pending_write_len == 100, "a 100-byte write is pending");
+    CHECK(ksl_tcp_write(s, big, 200, &n) == KSL_WANT_READ && s->pending_write_len == 200, "its retry with 200 bytes, still no room, replaces the copy");
+    held_n = 0; while (held_n < sizeof held && ksl_tcp_drain(s, held + held_n, sizeof held - held_n, &k2) == KSL_OK && k2) held_n += k2;
+    CHECK(held_n > 0 && ksl_tcp_abort(s) == KSL_OK, "the pending write goes out, then the alert");
+    for (size_t off = 0; off < held_n; off += used) if (ksl_tcp_feed(c, held + off, held_n - off, &used) != KSL_OK || !used) break;
+    CHECK(read_all_after_abort_from(s, c, &alert, &rc) >= accepted + 100 && rc == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives the writes, then internal_error");
+    ksl_ssl_free(c); ksl_ssl_free(s);
     /* a pending write is retried from another buffer holding the same bytes (the JNI layer copies each call's bytes) */
     c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");

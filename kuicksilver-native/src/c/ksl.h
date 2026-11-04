@@ -240,7 +240,7 @@ int      ksl_quic_peek_event(ksl_ssl *, ksl_event *out);  /* same without consum
 int      ksl_tcp_feed(ksl_ssl *, const uint8_t *ciphertext, size_t len, size_t *consumed);
 int      ksl_tcp_drain(ksl_ssl *, uint8_t *out, size_t cap, size_t *written);
 /* Takes at most one record's worth (16 KiB, or the negotiated max_fragment_length) per call (ABI 7); KSL_WANT_READ when the pair has no
-   room: drain it and retry with the same bytes, from this or another buffer */
+   room: drain it and retry with the same bytes and the same length, from this or another buffer */
 int      ksl_tcp_write(ksl_ssl *, const uint8_t *plaintext, size_t len, size_t *consumed);
 int      ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);  /* KSL_EOF after close_notify */
 int      ksl_tcp_shutdown(ksl_ssl *);                                       /* sends close_notify; KSL_OK when the peer's arrived */

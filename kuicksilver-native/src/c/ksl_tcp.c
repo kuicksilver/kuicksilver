@@ -69,12 +69,16 @@ static void count_records(ksl_ssl *s, size_t n) {
 }
 static int abort_session(ksl_ssl *s, const char *why);
 static void drop_pending_write(ksl_ssl *s) {
+    s->pending_write_unkept = 0;
     if (!s->pending_write) return;
     OPENSSL_cleanse(s->pending_write, s->pending_write_len); free(s->pending_write); s->pending_write = NULL; s->pending_write_len = 0;
 }
-/* One record per call: a write the transport has no room for leaves exactly that record pending inside OpenSSL, whose bytes ksl
-   keeps (pending_write), so that ksl_tcp_abort can complete it ahead of its alert. The caller retries a KSL_WANT_READ with the same
-   bytes, from any buffer (SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER). */
+/* One record per call. A write the transport has no room for stays pending inside OpenSSL: as a record already built, or still as
+   plaintext behind a handshake message under way (a queued KeyUpdate, a NewSessionTicket), which OpenSSL writes first and then
+   reports the write as wanting to write too. ksl keeps a copy of the caller's bytes (pending_write) so that ksl_tcp_abort can
+   complete that write ahead of its alert; the bytes then go out, as the caller asked. The caller retries a KSL_WANT_READ with the same
+   bytes and length, from any buffer (SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER); a retry with another length (OpenSSL allows a longer one)
+   replaces the copy, so the abort completes what OpenSSL holds now, never an older write it would refuse with SSL_R_BAD_LENGTH. */
 int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *consumed) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
     size_t frag = record_size(s); if (len > frag) len = frag;
@@ -83,8 +87,10 @@ int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *cons
         { (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)"); return KSL_ERROR; }
     ERR_clear_error(); size_t n = 0; int r = SSL_write_ex(s->ssl, plaintext, len, &n);
     if (r == 1) { drop_pending_write(s); *consumed = n; count_records(s, n); return KSL_OK; }
-    if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && !s->pending_write && len) {
-        s->pending_write = malloc(len); if (s->pending_write) { memcpy(s->pending_write, plaintext, len); s->pending_write_len = len; }
+    if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && len && (!s->pending_write || s->pending_write_len != len)) {
+        drop_pending_write(s);
+        s->pending_write = malloc(len);
+        if (s->pending_write) { memcpy(s->pending_write, plaintext, len); s->pending_write_len = len; } else s->pending_write_unkept = 1;
     }
     return map_error(s, r);
 }
@@ -112,7 +118,9 @@ static int abort_session(ksl_ssl *s, const char *why) {
     if (!s->done) { ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); return KSL_ERROR; }
     ERR_clear_error(); int started = 0, client = s->owner->role == KSL_CLIENT; const char *stuck = NULL;
     s->abort_alert = 1; s->last_alert = 0;
-    if (s->pending_write) {
+    if (s->pending_write_unkept)
+        stuck = "ksl: session aborted without an alert: a record write is pending and its bytes could not be kept (out of memory)";
+    else if (s->pending_write) {
         size_t n = 0;
         if (SSL_write_ex(s->ssl, s->pending_write, s->pending_write_len, &n) == 1) drop_pending_write(s);
         else stuck = "ksl: session aborted without an alert: a record write is pending and the transport takes no more";
