@@ -285,7 +285,13 @@ internal class H1Pool(
                                     !found.client.checkHealth(healthTimeoutMillis(data))
                                 ) {
                                     found.client.unreserve()
-                                    found.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                                    // calls still running on it (a long poll, an upload) are not cut: GOAWAY, no new streams,
+                                    // closed when they are done; a connection without any is closed at once
+                                    if (found.client.reservedStreams > 0) {
+                                        found.client.shutdown()
+                                    } else {
+                                        found.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                                    }
                                     continue
                                 }
                                 stream = found

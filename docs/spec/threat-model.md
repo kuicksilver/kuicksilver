@@ -398,8 +398,9 @@ HTTP/2 since 0.3.0 (client side below), the server engine does not yet.
 - **Client side (the Ktor engine, a hostile or broken server):** HTTP/2 only over TLS 1.3 after ALPN `h2` (no h2c), with
   the same trust and pins as HTTP/1.1 and HTTP/3 (a client that allows TLS 1.2 offers only http/1.1, since a TLS 1.2
   renegotiation could not be refused as RFC 9113 §9.2.1 requires). Waits on the server: its preface within the connect
-  timeout, our SETTINGS acknowledged within `settingsAckTimeout`, a health PING (bounded) before a connection quiet for
-  10 s takes a request, idle connections closed after `idleTimeout`; within an exchange, a response or a shut send
+  timeout, our SETTINGS acknowledged within `settingsAckTimeout`, a health PING (bounded, one per connection at a time) before a
+  connection quiet for 10 s takes a request (a failed one stops new requests there: GOAWAY while calls still run on it,
+  closed when none do), idle connections closed after `idleTimeout`; within an exchange, a response or a shut send
   window is bounded by the request's socket timeout or the optional PING interval, and without either by TCP alone, as
   over HTTP/1.1. Memory per stream follows the application's reading (credit only for what the application pulled; a
   response it does not read stops the server at the stream window); a response field section above

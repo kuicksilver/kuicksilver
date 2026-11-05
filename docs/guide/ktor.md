@@ -386,8 +386,9 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   keeps up) instead of filling memory.
 - **Deadlines.** The server's SETTINGS (its preface) must arrive within the connect timeout; ours must be acknowledged
   within `settings.settingsAckTimeout` (10 s). A connection quiet for 10 s is checked with a PING before it takes a
-  request (half the connect timeout at most, 5 s); one that does not answer is closed and the request goes to a new
-  connection. Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
+  request (half the connect timeout at most, 5 s; one PING per connection, shared by the requests that wait); one that
+  does not answer takes no new request and the request goes to a new connection. Calls still running on it are not cut:
+  the connection gets GOAWAY and closes once they are done (or closes at once when none run). Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
   (`HttpTimeout`), and with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its
   calls fail; with neither, a connection that dies mid-exchange holds the call until TCP gives up, as over HTTP/1.1.
 - **TLS 1.3 only.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers only `http/1.1`:

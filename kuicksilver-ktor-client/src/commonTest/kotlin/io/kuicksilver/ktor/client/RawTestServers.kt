@@ -29,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 /** Reads a request head and its Content-Length body; returns the request line ("" at end of stream). */
 internal suspend fun readRequest(input: ByteReadChannel): String {
@@ -379,7 +380,11 @@ internal suspend fun rawH2Server(
     input: ByteReadChannel,
     output: ByteWriteChannel,
     answerOnce: Boolean = false,
-) {
+    // the first answer leaves its stream open (a long poll); completing this sends its last DATA ("done", END_STREAM)
+    finishFirst: kotlinx.coroutines.Deferred<Unit>? = null,
+) = coroutineScope {
+    val writeLock = kotlinx.coroutines.sync.Mutex()
+
     fun frame(
         type: Int,
         flags: Int,
@@ -414,21 +419,35 @@ internal suspend fun rawH2Server(
             val live = !answerOnce || answered == 0
             when {
                 type == 4 && flags and 1 == 0 -> {
-                    output.writeFully(frame(4, 1, 0))
+                    writeLock.withLock { output.writeFully(frame(4, 1, 0)) }
+                }
+
+                type == 1 && live && answered == 0 && finishFirst != null -> {
+                    answered++
+                    writeLock.withLock { output.writeFully(frame(1, 0x4, stream, byteArrayOf(0x88.toByte()))) } // stays open
+                    launch {
+                        finishFirst.await()
+                        writeLock.withLock {
+                            output.writeFully(frame(0, 0x1, stream, "done".encodeToByteArray()))
+                            output.flush()
+                        }
+                    }
                 }
 
                 type == 1 && live -> {
-                    output.writeFully(frame(1, 0x5, stream, byteArrayOf(0x88.toByte()))) // :status 200, END_HEADERS | END_STREAM
+                    // :status 200, END_HEADERS | END_STREAM
+                    writeLock.withLock { output.writeFully(frame(1, 0x5, stream, byteArrayOf(0x88.toByte()))) }
                     answered++
                 }
 
                 type == 6 && flags and 1 == 0 && live -> {
-                    output.writeFully(frame(6, 1, 0, payload))
+                    writeLock.withLock { output.writeFully(frame(6, 1, 0, payload)) }
                 }
             }
-            output.flush()
+            writeLock.withLock { output.flush() }
         }
     } catch (_: Throwable) {
         // the client closed the connection
     }
+    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
 }

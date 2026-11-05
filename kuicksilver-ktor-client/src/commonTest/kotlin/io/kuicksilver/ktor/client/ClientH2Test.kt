@@ -221,6 +221,30 @@ class ClientH2Test {
         }
 
     /**
+     * A failed health PING on a connection that still carries a call (a long poll) does not cut that call: the connection
+     * gets GOAWAY (no new streams) and the new request goes to a new connection, while the running stream finishes.
+     */
+    @Test fun failedHealthPingSparesStreamsInFlight() =
+        clientTest {
+            val finishFirst = CompletableDeferred<Unit>()
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
+                rawH2Server(input, output, answerOnce = index == 0, finishFirst = finishFirst.takeIf { index == 0 })
+            }) { port ->
+                testClient(engine = { connectTimeout = 2.seconds }).use { c ->
+                    engine(c).h1.h2HealthAfterIdleMillis = 0
+                    c.prepareGet("https://127.0.0.1:$port/poll").execute { poll ->
+                        assertEquals(200, poll.status.value)
+                        // connection 0 answers no PING now: the next request goes elsewhere...
+                        assertEquals(200, c.get("https://127.0.0.1:$port/").status.value)
+                        // ...and the long poll on connection 0 still ends normally
+                        finishFirst.complete(Unit)
+                        assertEquals("done", poll.bodyAsText())
+                    }
+                }
+            }
+        }
+
+    /**
      * A burst of requests onto a connection that is due for a health check shares one PING: forty checks of their own
      * overflowed the core's sixteen outstanding PINGs, the dropped ones never got an answer, and a healthy connection was
      * aborted under the burst.
