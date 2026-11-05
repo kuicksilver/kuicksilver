@@ -33,6 +33,7 @@ import io.kuicksilver.ktor.client.h3.H3Pool.Companion.h3Path
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.headersOf
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.unwrap
+import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
@@ -57,15 +58,17 @@ internal class H2Http11Required(
     override val cause: Http2Exception,
     /** As [H2NotProcessed.bodyConsumed]. */
     val bodyConsumed: Boolean,
+    /**
+     * The request may go again over HTTP/1.1: the server refused this stream itself (RST_STREAM HTTP_1_1_REQUIRED), or it
+     * provably did not process the request, or the request is idempotent with a body that can be sent again (RFC 9110
+     * section 9.2.2). Otherwise the call fails; the route is marked either way.
+     */
+    val mayRepeat: Boolean,
 ) : Exception(cause.message, cause)
 
-/** Whether [e] is the server's HTTP_1_1_REQUIRED, on the stream or for the whole connection. */
-internal fun isHttp11Required(e: Http2Exception): Boolean =
-    when (e) {
-        is Http2Exception.StreamReset -> e.byPeer && e.code == Http2ErrorCode.HTTP_1_1_REQUIRED
-        is Http2Exception.ConnectionClosed -> e.byPeer && e.code == Http2ErrorCode.HTTP_1_1_REQUIRED
-        else -> false
-    }
+/** The server refused this stream with RST_STREAM HTTP_1_1_REQUIRED: the request was rejected, not processed. */
+private fun isStreamHttp11Required(e: Http2Exception): Boolean =
+    e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.HTTP_1_1_REQUIRED
 
 /**
  * The request's regular fields for HTTP/2 (RFC 9113 section 8.2): lowercase names, no connection-specific fields and no
@@ -184,8 +187,17 @@ internal suspend fun h2Exchange(
         if (e !is Http2Exception) throw e
         val consumed = bodyStarted && !body.isReplayable()
         // on the stream, or for the whole connection: a GOAWAY with HTTP_1_1_REQUIRED reports the streams above its last
-        // one as refused (not processed), and those below it as lost with the connection
-        if (isHttp11Required(e) || conn.client.goAwayCode == Http2ErrorCode.HTTP_1_1_REQUIRED) throw H2Http11Required(e, consumed)
+        // one as refused (not processed), and those up to it as lost with the connection: those may have been processed
+        // (RFC 9113 section 8.7) and go again only when that is safe anyway. Only a reset or a lost connection counts: a
+        // malformed or too large response on such a connection is the response's failure.
+        val onStream = isStreamHttp11Required(e)
+        val onConnection =
+            (e is Http2Exception.StreamReset || e is Http2Exception.ConnectionClosed) &&
+                conn.client.goAwayCode == Http2ErrorCode.HTTP_1_1_REQUIRED
+        if (onStream || onConnection) {
+            val mayRepeat = onStream || e.notProcessed || (data.method.isIdempotent() && body.isReplayable())
+            throw H2Http11Required(e, consumed, mayRepeat)
+        }
         // REFUSED_STREAM twice on one connection retires it (OkHttp RealConnection.trackFailure)
         if (e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.REFUSED_STREAM && ++conn.refusedStreams >= 2) {
             conn.client.shutdown()

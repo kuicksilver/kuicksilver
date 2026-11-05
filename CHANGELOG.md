@@ -20,8 +20,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   route while it has a free stream under its SETTINGS_MAX_CONCURRENT_STREAMS, a second one when it is full, within
   `maxConnectionsPerRoute`. Requests that start together toward a new origin collapse into one connection. A request the
   server did not process (GOAWAY above its stream, REFUSED_STREAM; RFC 9113 section 8.7) goes again, at most twice, for
-  any method; HTTP_1_1_REQUIRED repeats it over HTTP/1.1 and makes the route offer only `http/1.1` for 5 minutes,
-  doubling up to 2 days (new `FallbackReason.H2Refused`); any other HTTP/2 failure fails the call with the new
+  any method; HTTP_1_1_REQUIRED makes the route offer only `http/1.1` for 5 minutes, doubling up to 2 days (new
+  `FallbackReason.H2Refused`), and repeats the request over HTTP/1.1 when that is safe (the stream was refused, the request
+  not processed, or idempotent with a body that can be sent again; otherwise the call fails); any other HTTP/2 failure fails the call with the new
   `Http2Exception` (experimental, in `kuicksilver-http2`). Responses are checked against RFC 9113 section 8 (a malformed
   one fails the call); flow control follows the application's reading; the server's preface must arrive within the
   connect timeout, and an optional PING interval closes a silent connection. Configuration: experimental

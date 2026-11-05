@@ -354,6 +354,41 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * A GOAWAY with HTTP_1_1_REQUIRED whose last stream is this POST's: the server may have processed it (RFC 9113 section
+     * 8.7, RFC 9110 section 9.2.2), so it is not sent again; the call fails and the route is marked (the next request goes
+     * over HTTP/1.1).
+     */
+    @Test fun negative_http11RequiredGoAwayDoesNotRepeatAProcessedPost() =
+        clientTest {
+            val h2Posts = AtomicInt(0)
+            val h1Requests = AtomicInt(0)
+            val conns =
+                kotlinx.coroutines.channels.Channel<io.kuicksilver.http2.runtime.H2ServerConnection>(
+                    kotlinx.coroutines.channels.Channel.UNLIMITED,
+                )
+            tlsH2WithSilentUdp(onConnection = { _, c -> conns.send(c) }, onRequest = { _, r ->
+                h2Posts.addAndFetch(1) // processed
+                conns.receive().goAway(Http2ErrorCode.HTTP_1_1_REQUIRED)
+                kotlinx.coroutines.awaitCancellation()
+            }, h1 = { _, input, output ->
+                while (true) {
+                    if (readRequest(input).isEmpty()) break
+                    h1Requests.addAndFetch(1)
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh1")
+                }
+            }) { port, _ ->
+                testClient().use { c ->
+                    assertFailsWith<Http2Exception> { c.post("https://127.0.0.1:$port/") { setBody("once") } }
+                    assertEquals(1, h2Posts.load())
+                    assertEquals(0, h1Requests.load(), "the POST must not be repeated over HTTP/1.1")
+                    val r = c.get("https://127.0.0.1:$port/")
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                    assertEquals(FallbackReason.H2Refused, r.kuicksilverDiagnostics!!.fallback)
+                }
+            }
+        }
+
     /** A GOAWAY with HTTP_1_1_REQUIRED before any request: the connection is unusable at once, and HTTP/1.1 serves the call. */
     @Test fun http11RequiredBeforeTheFirstRequest() =
         clientTest {

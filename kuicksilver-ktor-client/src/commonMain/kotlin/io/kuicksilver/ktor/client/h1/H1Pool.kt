@@ -456,6 +456,7 @@ internal class H1Pool(
         var given = preopened
         var announced: HttpProtocolVersion? = null
         var h2Repeats = 0
+        var attempt = 1 // this call's attempts on the TCP path, for the retry event
 
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val diagnostics = data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)
@@ -510,11 +511,14 @@ internal class H1Pool(
                     if (++h2Repeats > 2) throw e.cause
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     diagnostics?.let { it.attempts++ }
-                    events.emit("retry") { retry(data, h2Repeats + 1, e.cause) }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, e.cause) }
                     continue
                 } catch (e: H2Http11Required) {
                     // RFC 9113 section 7: the server wants this request over HTTP/1.1; the route offers only http/1.1 for a while
                     h2Refused.mark(key)
+                    // a request the server may have processed is not sent again (RFC 9110 section 9.2.2, RFC 9113 section 8.7)
+                    if (!e.mayRepeat) throw e.cause
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     diagnostics?.let {
                         it.h2Refused = true
@@ -526,7 +530,8 @@ internal class H1Pool(
                             e.cause,
                         )
                     }
-                    events.emit("retry") { retry(data, 2, e.cause) }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, e.cause) }
                     continue
                 }
             }
@@ -641,7 +646,8 @@ internal class H1Pool(
                     data.attributes.put(ExpectationFailedKey, Unit)
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
-                    events.emit("retry") { retry(data, 2, IllegalStateException("417 Expectation Failed to Expect: 100-continue")) }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, IllegalStateException("417 Expectation Failed to Expect: 100-continue")) }
                     continue
                 }
                 return response
@@ -669,7 +675,8 @@ internal class H1Pool(
                     first = false
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
-                    events.emit("retry") { retry(data, 2, e) }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, e) }
                     continue
                 }
                 throw e
