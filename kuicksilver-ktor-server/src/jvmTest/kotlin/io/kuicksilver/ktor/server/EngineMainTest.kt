@@ -141,6 +141,21 @@ class EngineMainTest {
         assertFailsWith<IllegalArgumentException> { penalty("-P:kuicksilver.http2RepeatOffenderPenalty=soon") }
     }
 
+    /** `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` is off) set the TCP connection limits. */
+    @Test fun tcpConnectionLimitKeys() {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        fun limits(vararg extra: String): Pair<Int, Int?> {
+            val c = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra)).engine.configuration
+            return c.maxTcpConnections to c.maxTcpConnectionsPerIp
+        }
+        assertEquals(10_000 to 256, limits(), "the defaults")
+        assertEquals(500 to 16, limits("-P:kuicksilver.maxTcpConnections=500", "-P:kuicksilver.maxTcpConnectionsPerIp=16"))
+        assertEquals(10_000 to null, limits("-P:kuicksilver.maxTcpConnectionsPerIp=0"))
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.maxTcpConnections=0") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.maxTcpConnections=many") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.maxTcpConnectionsPerIp=-1") }
+    }
+
     @Test fun reloadIntervalKeyParsed() {
         assertEquals(30.seconds, EngineMain.parseReloadInterval("30s"))
         assertEquals(1.hours, EngineMain.parseReloadInterval("1h"))

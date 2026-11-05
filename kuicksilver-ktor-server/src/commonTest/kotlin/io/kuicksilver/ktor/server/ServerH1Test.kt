@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
@@ -21,6 +22,7 @@ import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLineStrict
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.ClientAuth
@@ -33,6 +35,9 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -373,5 +378,110 @@ class ServerH1Test {
                 }) { }
             assertFailsWith<TlsException.Config> { server.startSuspend(false) }
             runCatching { server.stop(10, 10) }
+        }
+
+    /** Connection events in the order they came, from any thread. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private class Recorder : KuicksilverServerEventListener() {
+        val events = MutableStateFlow<List<String>>(emptyList())
+
+        fun note(e: String) = events.update { it + e }
+
+        override fun connectionOpened(
+            protocol: HttpProtocolVersion,
+            remote: io.ktor.network.sockets.InetSocketAddress?,
+        ) = note("opened $protocol")
+
+        override fun tlsHandshakeFailed(
+            remote: io.ktor.network.sockets.InetSocketAddress?,
+            cause: Throwable,
+        ) = note("handshake failed")
+
+        override fun connectionRefused(
+            protocol: HttpProtocolVersion,
+            remote: io.ktor.network.sockets.InetSocketAddress?,
+            reason: String,
+        ) {
+            // the address's bytes, not `hostname`: that may look the name up on the JVM
+            note("refused $protocol $reason ${remote?.let { peerAddressBytes(it) }?.let { describeIp(it) }}")
+        }
+    }
+
+    /**
+     * With `maxTcpConnections = 2` and two connections held (accepted, no TLS handshake yet), the connector stops accepting:
+     * a third client's connect completes in the OS backlog, and it is answered only once the first connection is closed.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun connectionLimitHoldsTheThirdClientInTheBacklog() =
+        serverTest {
+            val rec = Recorder()
+            val (server, port) =
+                tlsServer({
+                    maxTcpConnections = 2
+                    eventListener = rec
+                }) { routing { get("/") { call.respondText("ok") } } }
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                val held =
+                    List(2) {
+                        connectTcp(
+                            selector,
+                            io.ktor.network.sockets
+                                .InetSocketAddress("127.0.0.1", port),
+                        )
+                    }
+                withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 2 } }
+                assertEquals(2L, KuicksilverServerProbe.snapshot(server.engine)["server.tcpConnections"])
+                coroutineScope {
+                    val third = async { rawHttp(port, get) }
+                    rec.note("first closed")
+                    held[0].close()
+                    val response = withTimeout(30.seconds) { third.await() }
+                    assertTrue(response.startsWith("HTTP/1.1 200"), response)
+                }
+                assertEquals(listOf("first closed", "opened HTTP/1.1"), rec.events.value.filter { it != "handshake failed" })
+                held[1].close()
+            } finally {
+                selector.close()
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * With `maxTcpConnectionsPerIp = 1`, a second connection from 127.0.0.1 while one is held is closed at accept, before
+     * any TLS work (no handshake failure is reported for it), and reported as refused for the per-IP limit; once the
+     * first is gone the address is served again.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun negative_perIpLimitRefusesAtAcceptBeforeTls() =
+        serverTest {
+            val rec = Recorder()
+            val (server, port) =
+                tlsServer({
+                    maxTcpConnectionsPerIp = 1
+                    eventListener = rec
+                }) { routing { get("/") { call.respondText("ok") } } }
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                val held =
+                    connectTcp(
+                        selector,
+                        io.ktor.network.sockets
+                            .InetSocketAddress("127.0.0.1", port),
+                    )
+                withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
+                assertTrue(runCatching { rawHttp(port, get) }.isFailure, "the second connection from 127.0.0.1 was served")
+                withTimeout(10.seconds) { server.engine.refusedPerIp.first { it == 1L } }
+                assertEquals(listOf("refused HTTP/1.1 per-IP limit 127.0.0.1"), rec.events.value)
+                assertEquals(1L, KuicksilverServerProbe.snapshot(server.engine)["server.tcpRefusedPerIp"])
+                held.close()
+                withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                assertTrue(rawHttp(port, get).startsWith("HTTP/1.1 200"))
+            } finally {
+                selector.close()
+                server.stop(100, 500)
+            }
         }
 }

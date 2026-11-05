@@ -50,6 +50,8 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getIdentityReloadInterval-FghU774 ()Lkotlin/time/Duration;
 	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
+	public final fun getMaxTcpConnections ()I
+	public final fun getMaxTcpConnectionsPerIp ()Ljava/lang/Integer;
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getQuicAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
@@ -71,6 +73,8 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
 	public final fun setIdentityReloadInterval-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
+	public final fun setMaxTcpConnections (I)V
+	public final fun setMaxTcpConnectionsPerIp (Ljava/lang/Integer;)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setQuicAdmission (Lio/kuicksilver/quic/ConnectionAdmission;)V
@@ -88,6 +92,7 @@ public abstract class io/kuicksilver/ktor/server/KuicksilverServerEventListener 
 	public fun <init> ()V
 	public fun connectionClosed (Lio/ktor/http/HttpProtocolVersion;Lio/ktor/network/sockets/InetSocketAddress;)V
 	public fun connectionOpened (Lio/ktor/http/HttpProtocolVersion;Lio/ktor/network/sockets/InetSocketAddress;)V
+	public fun connectionRefused (Lio/ktor/http/HttpProtocolVersion;Lio/ktor/network/sockets/InetSocketAddress;Ljava/lang/String;)V
 	public fun requestEnded (Lio/ktor/http/HttpProtocolVersion;Lio/ktor/server/application/ApplicationCall;Ljava/lang/Throwable;)V
 	public fun requestStarted (Lio/ktor/http/HttpProtocolVersion;Lio/ktor/server/application/ApplicationCall;)V
 	public fun tlsHandshakeFailed (Lio/ktor/network/sockets/InetSocketAddress;Ljava/lang/Throwable;)V

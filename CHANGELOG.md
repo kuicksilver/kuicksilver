@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   raise the Linux limits), GSO/GRO and `udpSocketCount`, certificates and their rotation, the run-time HTTP/3 switches,
   security limits, observability, and a checklist from symptom to cause. Linked from the README, `llms.txt` and the
   Ktor, QUIC and troubleshooting guides.
+- Ktor server: TCP connection limits (`docs/guide/ktor.md`, "Connection limits"; threat model 3.2), experimental:
+  `maxTcpConnections` (10,000 per connector, HTTP/1.1 and HTTP/2 alike, TLS handshakes included) is taken before
+  `accept()`, so at the limit a connector stops accepting and the OS backlog holds new clients, as Go's
+  `netutil.LimitListener`, Jetty and nginx do; `maxTcpConnectionsPerIp` (256 per client address; `null` is off) closes
+  one more connection from that address right after `accept()`, before its TLS handshake. An address is its bytes (no
+  reverse lookup), IPv4-mapped peers count as IPv4 and IPv6 peers by their whole address, as QUIC
+  `maxConnectionsPerIp`. `KuicksilverServerEventListener.connectionRefused(protocol, remote, reason)` reports a client
+  closed at accept (`per-IP limit`, or `HTTP/2 repeat offender` for `http2RepeatOffenderPenalty`), the application log
+  gets at most one warning per 10 s, and the soak probe counts `server.tcpConnections` and `server.tcpRefusedPerIp`.
+  `EngineMain` keys `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` is off).
 - TLS: experimental `VerifyReason.WeakKey` and `VerifyReason.WeakSignature` (alert `bad_certificate`) name a peer chain
   refused for a key or a certificate signature below 112 security bits (see "Changed").
 - Ktor server: HTTP/2 over TLS (RFC 9113; `docs/guide/ktor.md`, "HTTP/2 on the server"), opt-in and experimental:
@@ -279,6 +289,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor server: a TCP connector holds at most 10,000 connections and 256 from one client address by default (see
+  "Added"); before, it accepted without a bound. A server behind a NAT, a proxy or a load balancer that hides client
+  addresses sees every client under one address: raise `maxTcpConnectionsPerIp` or set it to `null` there.
 - TLS (breaking): a peer's certificate chain below OpenSSL security level 2 (RFC 9325 section 4.5) is refused under
   every trust configuration, not only where OpenSSL verifies the chain (`docs/guide/tls.md`, "Platform trust"). Before
   the platform verifier, a `Custom` verifier or `Tofu` is asked, `ksl` checks the certificates the peer sent: every key on

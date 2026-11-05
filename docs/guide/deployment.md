@@ -158,7 +158,8 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   requests to local endpoints, and does not forward traffic to other nodes. This approach preserves the original source
   IP address" ([Kubernetes: Using Source IP](https://kubernetes.io/docs/tutorials/services/source-ip/)). This matters more
   for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`maxConnectionsPerIp`, 256), and
-  that limit cannot be changed from the Ktor engine yet ([Security limits](#security-limits)). Behind a source NAT, every
+  that limit cannot be changed from the Ktor engine yet ([Security limits](#security-limits)); the TCP connectors have
+  the same default per address, `maxTcpConnectionsPerIp`, which can (raise it or set `null` behind a source NAT). Behind a source NAT, every
   client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
   packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
   tokens are also bound to the address the server sees.
@@ -362,6 +363,10 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
   total; what goes beyond is dropped, and such clients see a handshake timeout. The engine does not let you change these
   yet ([configuration](configuration.md#ktor-server-engine)). This is why a source NAT in front of the server matters
   ([Kubernetes](#kubernetes)): every client behind it shares both limits.
+- **TCP connection limits.** `maxTcpConnections` (10 000 per connector: at the limit the connector stops accepting and
+  the OS backlog holds new clients) and `maxTcpConnectionsPerIp` (256: one more from that address is closed at accept,
+  before TLS), HTTP/1.1 and HTTP/2 alike; keep the first below `ulimit -n`
+  ([Connection limits](ktor.md#connection-limits)).
 - **Transport and HTTP/3 settings.** `quic` (a `QuicConfig`: idle timeout, windows, congestion control), `http3Settings`,
   and on TCP `requestHeaderTimeoutSeconds` and `connectionIdleTimeoutSeconds` against slow clients
   ([Ktor: Server](ktor.md#server)).
