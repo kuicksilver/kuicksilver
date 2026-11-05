@@ -160,12 +160,13 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`maxConnectionsPerIp`, 256), and
   that limit cannot be changed from the Ktor engine yet ([Security limits](#security-limits)). Behind a source NAT, every
   client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
-packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
-tokens are also bound to the address the server sees.
+  packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
+  tokens are also bound to the address the server sees.
 - **Rolling updates.** A graceful stop already does what an HTTP/3 client needs ([Ktor: Graceful stop](ktor.md#graceful-stop)):
   GOAWAY to every live HTTP/3 connection, and new QUIC clients refused with CONNECTION_REFUSED (under the stateless rate
-  limit) instead of timing out. Stop the server with Ktor's `shutdownGracePeriod` and `shutdownTimeout`; the timeout is
-  the bound, so keep the `preStop` delay plus `shutdownTimeout` below the pod's `terminationGracePeriodSeconds`.
+  limit) instead of timing out. Stop the server with Ktor's `shutdownGracePeriod` and `shutdownTimeout`; the larger of the
+  two bounds the stop (keep the timeout ≥ the grace period), so keep the `preStop` delay plus `shutdownTimeout` below
+  the pod's `terminationGracePeriodSeconds`.
   Switching a pod to `Http3Advertising.Drain` before it stops has a cost: its responses send `Alt-Svc: clear` for the
   whole origin, not just that pod, and the Kuicksilver client counts a refused QUIC setup as a failure that marks the
   alternative broken for 5 minutes, doubling up to 2 days ([Ktor: Racing and fallback](ktor.md#racing-and-fallback)).
