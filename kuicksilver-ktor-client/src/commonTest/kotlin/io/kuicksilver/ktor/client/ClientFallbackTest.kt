@@ -200,7 +200,10 @@ class ClientFallbackTest {
     /**
      * A raw HTTP/3 server on a free UDP port that answers 200 to every request, except that while [refuseWith] holds a
      * code, its admission refuses each new client statelessly with an Initial CONNECTION_CLOSE carrying that code (as
-     * `Drain`, a full accept queue or a stop do with CONNECTION_REFUSED, RFC 9000 section 5.2.2).
+     * `Drain`, a full accept queue or a stop do with CONNECTION_REFUSED, RFC 9000 section 5.2.2). Paths with their own
+     * behaviour:
+     * - `/reject`: the server starts refusing new clients, then resets the request with H3_REQUEST_REJECTED (not
+     *   processed: the client repeats it on a new connection, which is refused)
      */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     private suspend fun CoroutineScope.refusingH3(refuseWith: kotlin.concurrent.atomics.AtomicReference<Long?>): Http3Endpoint {
@@ -212,7 +215,23 @@ class ClientFallbackTest {
             runCatching {
                 while (true) {
                     val conn = ep.accept()
-                    launch { runCatching { while (true) conn.acceptRequest().respond(200).finish() } }
+                    launch {
+                        runCatching {
+                            while (true) {
+                                val r = conn.acceptRequest()
+                                when (r.path) {
+                                    "/reject" -> {
+                                        refuseWith.store(TransportError.CONNECTION_REFUSED)
+                                        r.reset(Http3ErrorCode.REQUEST_REJECTED)
+                                    }
+
+                                    else -> {
+                                        r.respond(200).finish()
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -224,7 +243,7 @@ class ClientFallbackTest {
     private suspend fun CoroutineScope.originWithRefusingH3(refuseWith: kotlin.concurrent.atomics.AtomicReference<Long?>) =
         h1AndH3({
             routing {
-                get("/") {
+                get("/{path?}") {
                     call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
                     call.respondText("h1")
                 }
@@ -257,12 +276,15 @@ class ClientFallbackTest {
                         }
                     }
                 val origin = "https://127.0.0.1:$port"
+                // the losing HTTP/3 setup is settled (marked or not) in the background: each call waits for it
+                val settled = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
                 try {
                     testClient(Http3DiscoveryMode.Auto, engine = {
                         eventListener = listener
                         http3 { hardDelay = Duration.INFINITE }
                     }).use { c ->
                         val engine = c.engine as KuicksilverEngine
+                        engine.raceLoserSettledForTest = { settled.trySend(Unit) }
                         assertEquals(FallbackReason.NoAlternative, c.get("$origin/").kuicksilverDiagnostics?.fallback) // learns h3
                         refuseWith.store(TransportError.CONNECTION_REFUSED)
                         // repeated refusals: every call tries HTTP/3 again and falls back once; nothing escalates
@@ -277,6 +299,7 @@ class ClientFallbackTest {
                                 "call $i: ${d.h3Failure}",
                             )
                             assertEquals("h1", r.bodyAsText())
+                            kotlinx.coroutines.withTimeout(30.seconds) { settled.receive() }
                             assertFalse(engine.brokenAltSvc.isBroken(origin, "127.0.0.1:$port"), "call $i marked the alternative broken")
                             assertEquals(listOf(port), engine.altSvcSnapshot(io.ktor.http.Url("$origin/")).map { it.port })
                         }
@@ -286,6 +309,53 @@ class ClientFallbackTest {
                         assertEquals(HttpProtocolVersion.HTTP_3_0, back.version, "${back.kuicksilverDiagnostics}")
                         assertNull(back.kuicksilverDiagnostics?.fallback)
                         assertEquals(emptyList(), marked, "altSvcMarkedBroken")
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /** A client on [port]'s alternative, with an HTTP/3 connection open: learns `Alt-Svc`, then one call goes over HTTP/3. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun h3Client(port: Int): io.ktor.client.HttpClient {
+        val c = testClient(Http3DiscoveryMode.Auto, engine = { http3 { hardDelay = Duration.INFINITE } })
+        c.get("https://127.0.0.1:$port/") // learns h3
+        val r = c.get("https://127.0.0.1:$port/")
+        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version, "${r.kuicksilverDiagnostics}")
+        return c
+    }
+
+    /**
+     * The request's own fallback path: the server rejects the request unprocessed (H3_REQUEST_REJECTED, as for a GOAWAY,
+     * RFC 9114 section 5.2), the engine repeats it on a new connection, and the server refuses that one with
+     * CONNECTION_REFUSED. The call falls back with `fallback = Refused`, the alternative is not marked broken, and once
+     * the server takes clients again the next call goes over HTTP/3.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun refusedRetryAfterRejectionDoesNotMarkBroken() =
+        h3Test {
+            kotlinx.coroutines.coroutineScope {
+                val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
+                val (server, ep, port) = originWithRefusingH3(refuseWith)
+                val origin = "https://127.0.0.1:$port"
+                try {
+                    h3Client(port).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        val r = c.get("$origin/reject")
+                        val d = assertNotNull(r.kuicksilverDiagnostics)
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, r.version, "$d")
+                        assertEquals(FallbackReason.Refused, d.fallback, "${d.h3Failure}")
+                        assertFalse(d.raced, "the open connection served the call, the fallback came after it: $d")
+                        assertEquals(2, d.attempts, "the rejected attempt and the HTTP/1.1 one: $d")
+                        assertFalse(d.markedBroken, "$d")
+                        assertFalse(engine.brokenAltSvc.isBroken(origin, "127.0.0.1:$port"))
+                        refuseWith.store(null)
+                        val next = c.get("$origin/")
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, next.version, "${next.kuicksilverDiagnostics}")
                     }
                 } finally {
                     ep.close()

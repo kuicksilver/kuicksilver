@@ -256,7 +256,8 @@ public enum class FallbackReason {
 
     /**
      * The server closed the connection during setup without a TLS alert, or version negotiation failed. CONNECTION_REFUSED
-     * (a server in `Drain`, stopping, or with a full accept queue: RFC 9000 section 5.2.2) is transient: the call falls
+     * (a server in `Drain`, stopping, or with a full accept queue: RFC 9000 section 5.2.2), at the first Initial or on a
+     * connection whose handshake completed into a full accept queue, is transient: the call falls
      * back to HTTP/1.1 once, the alternative is not marked broken and the next call tries HTTP/3 again. Any other code
      * marks the alternative broken.
      */

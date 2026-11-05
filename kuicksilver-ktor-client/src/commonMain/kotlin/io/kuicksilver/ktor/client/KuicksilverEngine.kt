@@ -483,6 +483,7 @@ internal class KuicksilverEngine(
                                 events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
                             }
                         }
+                        raceLoserSettledForTest?.invoke()
                     }
                 }
                 tcp(data, callContext, ProtocolReason.Race, d, result.value as H1Pool.Opened, dns)
@@ -501,6 +502,9 @@ internal class KuicksilverEngine(
         brokenAltSvc.markWorking(origin, alt)
         rememberSrtt(origin, conn.quic.stats.smoothedRtt)
     }
+
+    /** Called once the HTTP/3 setup that lost a race is settled: QUIC confirmed, the alternative marked broken, or neither (tests). */
+    internal var raceLoserSettledForTest: (() -> Unit)? = null
 
     /** The cached alternatives for the origin of [url] (tests). */
     internal suspend fun altSvcSnapshot(url: io.ktor.http.Url): List<AltSvcEntry> =
@@ -695,7 +699,9 @@ internal fun marksAlternativeBroken(e: Throwable): Boolean =
 /**
  * Whether an HTTP/3 failure is the server refusing a new connection for now: a CONNECTION_CLOSE from the peer with
  * CONNECTION_REFUSED (RFC 9000 section 20.1), which a server sends when it cannot take the client (section 5.2.2: a full
- * accept queue, `Drain`, a stop; also quic-go's `sendConnectionRefused` and quinn's `refuse`). That says nothing against
+ * accept queue, `Drain`, a stop; also quic-go's `sendConnectionRefused` and quinn's `refuse`), at the client's first
+ * Initial or on an established connection (a Kuicksilver server whose handshake completed into a full accept queue
+ * closes it so, "accept queue full"; quic-go's `handleNewConn` too). That says nothing against
  * the alternative, which stays valid (RFC 7838 sections 2.2 and 3): the call falls back to HTTP/1.1 like one HTTP/3 was
  * not ready for ([FallbackReason.H3NotReady]), and the alternative is not marked broken, so the next call tries HTTP/3
  * again (another instance behind the same address may take it) instead of waiting out 5 minutes to 2 days.
