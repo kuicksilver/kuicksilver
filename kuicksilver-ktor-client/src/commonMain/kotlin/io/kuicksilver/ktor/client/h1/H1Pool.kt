@@ -128,6 +128,9 @@ internal class H1Pool(
      */
     internal var h2HealthAfterIdleMillis: Long = 10_000
 
+    /** Runs after a request got a pool permit and before it may become its route's dialer (tests: widens that gap). */
+    internal var beforeDialForTest: (suspend () -> Unit)? = null
+
     /** Routes that answered HTTP_1_1_REQUIRED; internal for tests. */
     internal val h2Refused = H2RefusedRoutes(clock)
 
@@ -301,7 +304,8 @@ internal class H1Pool(
                         val offerH2 = h2Ok && !h2Refused.isRefused(key)
                         // one HTTP/2 connect at a time per route (RFC 9113 section 9.1): the others wait for its outcome
                         // without a permit, within the connect timeout
-                        if (offerH2 && signal != null && !h2.tryStartDial(key)) {
+                        beforeDialForTest?.invoke()
+                        if (offerH2 && signal != null && !h2.tryStartDial(key, seen!!)) {
                             pool.releasePermit(key)
                             signal.first { it != seen }
                             continue

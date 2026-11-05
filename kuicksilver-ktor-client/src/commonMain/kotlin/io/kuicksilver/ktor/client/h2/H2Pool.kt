@@ -69,15 +69,29 @@ internal class H2Pool(
      * connection, or connect in parallel when it turned out HTTP/1.1. A route known to speak HTTP/1.1 never waits. True
      * means the caller is now the route's dialer and must call [endDial].
      */
-    fun tryStartDial(route: String): Boolean =
+    fun tryStartDial(
+        route: String,
+        seen: Long,
+    ): Boolean =
         lock.withLock {
             if (route in speaksH1) return@withLock true
             val r = routes.getOrPut(route) { Route() }
-            if (r.dialing) {
-                false
-            } else {
-                r.dialing = true
-                true
+            when {
+                r.dialing -> {
+                    false
+                }
+
+                // the route changed since the caller found no stream (a connection registered, a stream freed, new
+                // SETTINGS): it looks again before anything is dialled; checked under the lock that register and endDial
+                // bump under, so no change slips between the look and this decision
+                r.signal.value != seen -> {
+                    false
+                }
+
+                else -> {
+                    r.dialing = true
+                    true
+                }
             }
         }
 
@@ -124,8 +138,11 @@ internal class H2Pool(
 
     /** Adds [c], adopted by the TCP pool already, to its route. */
     fun register(c: H2Conn) {
-        lock.withLock { routes.getOrPut(c.route) { Route() }.conns += c }
-        bump(c.route)
+        lock.withLock {
+            val r = routes.getOrPut(c.route) { Route() }
+            r.conns += c
+            r.signal.update { it + 1 } // in the same section: a dial decision sees the connection or the change
+        }
     }
 
     /** Drops [c] from its route (closed, or retired: its streams finish but it takes no new ones). */
@@ -140,7 +157,7 @@ internal class H2Pool(
 
     /** Something changed on [route]: its watchers look again. */
     fun bump(route: String) {
-        lock.withLock { routes[route] }?.signal?.update { it + 1 }
+        lock.withLock { routes[route]?.signal?.update { it + 1 } }
     }
 
     /** The change signal of [route], held until [unwatch]. */

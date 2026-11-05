@@ -97,6 +97,28 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * The gap between "no HTTP/2 connection to reuse" and "may I dial": a connection that another request registered in
+     * that gap must be used, not a second one dialled. The hook holds the second request there until the first call is
+     * done (its connection is in the pool by then).
+     */
+    @Test fun aConnectionRegisteredWhileWaitingForAPermitIsUsed() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, log ->
+                testClient().use { c ->
+                    val firstDone = CompletableDeferred<Unit>()
+                    val arrivals = AtomicInt(0)
+                    engine(c).h1.beforeDialForTest = { if (arrivals.addAndFetch(1) > 1) firstDone.await() }
+                    coroutineScope {
+                        val a = async { c.get("https://127.0.0.1:$port/").bodyAsText().also { firstDone.complete(Unit) } }
+                        val b = async { c.get("https://127.0.0.1:$port/").bodyAsText().also { firstDone.complete(Unit) } }
+                        assertEquals(listOf("h2", "h2"), listOf(a.await(), b.await()))
+                    }
+                    assertEquals(1, log.acceptCount)
+                }
+            }
+        }
+
     /** The wait is for HTTP/2 only: once the first connect turned out HTTP/1.1, the others connect in parallel as before. */
     @Test fun concurrentFirstRequestsToAnH1ServerStillComplete() =
         clientTest {
