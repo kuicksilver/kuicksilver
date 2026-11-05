@@ -419,7 +419,7 @@ echo '{"required": ["ngtcp2->kuicksilver:rebind-addr", "kuicksilver->ngtcp2:rebi
   environment_yellow_keys "$yd/run" > "$yd/keys-run.txt"
   environment_yellow_keys "$yd/both" > "$yd/keys-both.txt"
   environment_cells "$yd/run/ngtcp2-client" > "$yd/cells-client.txt"
-  environment_warn "r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr" "why" > "$yd/warn-local.txt"
+  GITHUB_ACTIONS= environment_warn "r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr" "why" > "$yd/warn-local.txt"
   GITHUB_ACTIONS=true environment_warn "r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr" "why" > "$yd/warn-ci.txt"
 ) 2>/dev/null
 # the memo: each role directory is classified once however often run-local.sh asks, with the same answers
