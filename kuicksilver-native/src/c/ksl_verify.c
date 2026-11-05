@@ -13,22 +13,23 @@ static STACK_OF(X509) *capture_presented(X509_STORE_CTX *xctx) {
 }
 /* Whether the leaf matches the reference identifier: an IP literal (ip) or a DNS name (host, matched under the X509_CHECK_FLAG_*
    flags), the same matcher OpenSSL's own verifier applies (x509_vfy.c check_id). The one place that names OpenSSL's matching API:
-   OpenSSL 4.1 deprecates X509_check_host and X509_check_ip_asc (CHANGES.md, PR 30403), and a build with no-deprecated, as ours,
-   has neither. There the identifier goes into a verification of the leaf alone, trusted as its own anchor (partial chain, no time
+   OpenSSL 4.1 deprecates X509_check_host and X509_check_ip_asc (CHANGES.md, PR 30403; a build with no-deprecated, as ours, has
+   neither), so from 4.1 on, whatever the build's options, the identifier goes into a verification of the leaf alone, trusted as its own anchor (partial chain, no time
    check), whose callback lets every result but the name mismatch pass: X509_verify_cert then runs that same check_id, so the match
    is OpenSSL's on both. */
-#if OPENSSL_VERSION_NUMBER >= 0x40100000L && defined(OPENSSL_NO_DEPRECATED_4_1)
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
 static int name_only_cb(int ok, X509_STORE_CTX *x) {
     int e = X509_STORE_CTX_get_error(x);
     return ok || (e != X509_V_ERR_HOSTNAME_MISMATCH && e != X509_V_ERR_IP_ADDRESS_MISMATCH);
 }
 #endif
 static int ksl_match_name(X509 *leaf, const char *host, const char *ip, unsigned flags) {
-#if OPENSSL_VERSION_NUMBER < 0x40100000L || !defined(OPENSSL_NO_DEPRECATED_4_1)
+#if OPENSSL_VERSION_NUMBER < 0x40100000L
     if (ip) return X509_check_ip_asc(leaf, ip, 0) == 1;
     return host && X509_check_host(leaf, host, 0, flags, NULL) == 1;
 #else
     if (!ip && !host) return 0;
+    ERR_set_mark();
     X509_STORE *st = X509_STORE_new(); X509_STORE_CTX *x = X509_STORE_CTX_new(); int r = 0;
     if (st && x && X509_STORE_add_cert(st, leaf) == 1 && X509_STORE_CTX_init(x, st, leaf, NULL) == 1) {
         X509_VERIFY_PARAM *p = X509_STORE_CTX_get0_param(x);
@@ -37,7 +38,7 @@ static int ksl_match_name(X509 *leaf, const char *host, const char *ip, unsigned
             X509_STORE_CTX_set_verify_cb(x, name_only_cb); r = X509_verify_cert(x) == 1;
         }
     }
-    X509_STORE_CTX_free(x); X509_STORE_free(st); ERR_clear_error(); return r;
+    X509_STORE_CTX_free(x); X509_STORE_free(st); ERR_pop_to_mark(); return r;
 #endif
 }
 /* Name and purpose checks that the platform verifier may have skipped (JDK/Android never check the name). */

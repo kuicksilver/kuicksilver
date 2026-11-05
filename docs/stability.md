@@ -144,6 +144,9 @@ operating system.
 - **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is out of scope for now. The pin, **3.5.9** today, is in
   `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL release signing key; the
   build verifies both before compiling (`tools/openssl/fetch.sh`).
+  `ksl` has a code path for OpenSSL 4.1, where `X509_check_host` and `X509_check_ip_asc` are deprecated
+  (`ksl_match_name` in `kuicksilver-native/src/c/ksl_verify.c`). It was compiled and its C tests run against 4.1.0 on a
+  developer machine only, not in CI; no artifact is built with it.
 - **Updates** follow the commitments in [SECURITY.md, OpenSSL](../SECURITY.md#openssl): a Kuicksilver release with the
   fixed OpenSSL within 72 hours of an OpenSSL advisory for a Critical or High issue reachable through Kuicksilver,
   within 7 days for a reachable Moderate or Low one, in the next planned release for issues that are not reachable, and
