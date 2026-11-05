@@ -183,11 +183,15 @@ class KslDatagramIoTest {
         }
 
     /**
-     * A second IPv4 address of this host besides 127.0.0.1: 127.0.0.2 where the whole 127/8 is local (Linux, Windows), else the first
-     * up, non-loopback interface address a socket can bind (macOS has 127.0.0.1 alone on lo0 unless an alias was added); null when
-     * there is none.
+     * A second IPv4 address of this host besides 127.0.0.1 that a client on 127.0.0.1 reaches and a reply can leave from: 127.0.0.2
+     * where the whole 127/8 is local (Linux), else the first up, non-loopback interface address a socket can bind (macOS has 127.0.0.1
+     * alone on lo0 unless an alias was added); null when there is none. Never on Windows: it answers all of 127/8 but assigns 127.0.0.1
+     * alone, so WSASendMsg refuses 127.0.0.2 as a source, and as a strong-host system it does not let a loopback client reach an
+     * interface address (verified in the Windows 11 VM; test_udp_win.c covers its destinations and named sources).
      */
     private fun secondAddress(): String? {
+        if (windows) return null
+
         fun bindable(ip: String) = runCatching { java.net.DatagramSocket(java.net.InetSocketAddress(ip, 0)).close() }.isSuccess
         if (bindable("127.0.0.2")) return "127.0.0.2"
         return java.net.NetworkInterface
@@ -208,8 +212,11 @@ class KslDatagramIoTest {
     @Test fun wildcardSocketReportsTheDestinationAndRepliesFromIt() =
         runBlocking {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
+            // without a second address (Windows, or none here) the 127.0.0.1 and ::1 cases still run
             val second = secondAddress()
-            assumeTrue(second != null, "needs a second local IPv4 address (127.0.0.2 not bindable and no up interface address)")
+            if (second == null) {
+                println("wildcardSocketReportsTheDestinationAndRepliesFromIt: SKIP second-address case (none usable on this host)")
+            }
             val w = assertNotNull(KslDatagramIo.open(InetSocketAddress("0.0.0.0", 0)))
             val c4 = assertNotNull(KslDatagramIo.open(lo))
             val c6 = runCatching { KslDatagramIo.open(InetSocketAddress("::1", 0)) }.getOrNull()
@@ -217,7 +224,7 @@ class KslDatagramIoTest {
             val out = PacketBatch(1)
             val inb = PacketBatch(1)
             try {
-                for (to in listOfNotNull("127.0.0.1", second!!, if (c6 != null) "::1" else null)) {
+                for (to in listOfNotNull("127.0.0.1", second, if (c6 != null) "::1" else null)) {
                     val c = if (to == "::1") c6!! else c4
                     out.clear()
                     out.buffer(0).copyFrom(ByteArray(60) { 3 }, 0, 0, 60)
@@ -262,7 +269,7 @@ class KslDatagramIoTest {
         runBlocking {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
             val second = secondAddress()
-            assumeTrue(second != null, "needs a second local IPv4 address (127.0.0.2 not bindable and no up interface address)")
+            assumeTrue(second != null, "needs a second local IPv4 address a loopback client reaches (none on Windows: see secondAddress)")
             val server =
                 QuicEndpoint.bind(
                     InetSocketAddress("0.0.0.0", 0),
