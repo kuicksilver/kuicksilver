@@ -346,7 +346,7 @@ internal class KslContext private constructor(
  * (the identity's close, which a reload does to the snapshot it replaces) drops them, so a context goes when the identity is
  * closed and its last session is gone, never while a session uses it. At most [MAX] contexts are kept: the least recently used
  * one goes first (a process that keeps building new configurations around one identity holds no more), and still serves its
- * sessions. A hit moves its context to the young end of the list (best effort: a concurrent change wins).
+ * sessions. A hit in the older half moves its context to the young end of the list (best effort: a concurrent change wins).
  */
 internal class SharedServerContexts {
     // null once closed: nothing is kept any more
@@ -399,12 +399,17 @@ internal class SharedServerContexts {
         return null
     }
 
-    /** Moves [c] to the young end of [list] when it is not there yet; the references do not change. */
+    /**
+     * Moves [c] to the young end of [list] when it is in the older half; the references do not change. A context in the younger
+     * half stays put: a server alternating between its configurations then costs no list copy and no CAS per handshake, and
+     * eviction still takes one that was not used lately.
+     */
     private fun touch(
         list: List<KslContext>,
         c: KslContext,
     ) {
-        if (list.lastOrNull() !== c) entries.compareAndSet(list, list.filter { it !== c } + c)
+        val i = list.indexOfFirst { it === c }
+        if (i >= 0 && i < list.size / 2) entries.compareAndSet(list, list.filter { it !== c } + c)
     }
 
     /** Drops the registry's references; contexts still in use go with their last session. */

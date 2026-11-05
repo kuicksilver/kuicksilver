@@ -18,8 +18,9 @@ import kotlin.test.assertTrue
 
 /**
  * The shared server contexts under concurrency (P.3): sessions of ten configurations (more than the eight an identity keeps,
- * so the cache evicts all the time) are built and closed on four threads while a fifth reloads the identity. No handshake
- * may fail while the identity is open, and once everything is closed every context seen is freed and `ksl.ctx` / `ksl.pkey`
+ * so the cache evicts all the time) are built and closed on four threads (sessions only, no handshakes: what is under test is
+ * acquiring and releasing the shared contexts) while a fifth reloads the identity 60 times, spread over the workers' run. No
+ * session may fail to build while the identity is open, and once everything is closed every context seen is freed and `ksl.ctx` / `ksl.pkey`
  * are back where they were.
  */
 class SharedServerContextStressJvmTest {
@@ -43,6 +44,12 @@ class SharedServerContextStressJvmTest {
         val seen = Collections.synchronizedSet(Collections.newSetFromMap(IdentityHashMap<KslContext, Boolean>()))
         val failures = Collections.synchronizedList(ArrayList<Throwable>())
         val start = CountDownLatch(1)
+        val built =
+            java.util.concurrent.atomic
+                .AtomicInteger()
+        val reloads =
+            java.util.concurrent.atomic
+                .AtomicInteger()
         val workers =
             List(4) { w ->
                 Thread {
@@ -56,6 +63,7 @@ class SharedServerContextStressJvmTest {
                                     earlyData = i % 2 == 0,
                                 ) as KslQuicTlsSession
                             seen += s.context
+                            built.incrementAndGet()
                             open += s
                             if (open.size > 12) repeat(6) { open.removeFirst().close() }
                         }
@@ -70,7 +78,16 @@ class SharedServerContextStressJvmTest {
             Thread {
                 start.await()
                 try {
-                    repeat(60) { i -> r.reload(if (i % 2 == 0) identityB() else identityA()) }
+                    // one reload per 25 sessions built (1600 in all): the reloads land throughout the workers' run, not at its start
+                    var done = 0
+                    while (done < 60 && workers.any { it.isAlive }) {
+                        if (built.get() >= (done + 1) * 25) {
+                            r.reload(if (done++ % 2 == 0) identityB() else identityA())
+                            reloads.incrementAndGet()
+                        } else {
+                            Thread.onSpinWait()
+                        }
+                    }
                 } catch (t: Throwable) {
                     failures += t
                 }
@@ -82,6 +99,7 @@ class SharedServerContextStressJvmTest {
             assertTrue(!it.isAlive, "a thread did not finish within 60 s")
         }
         assertEquals(emptyList(), failures.toList(), "no failure while the identity is open")
+        assertEquals(60, reloads.get(), "all 60 reloads ran while the workers built sessions")
         r.close()
         assertTrue(seen.size > 10, "contexts were rebuilt by reloads and evictions (${seen.size})")
         assertEquals(emptyList(), seen.filter { !it.isFreed }, "every context is freed once its sessions and the identity are closed")
