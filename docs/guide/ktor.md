@@ -101,6 +101,9 @@ ADR-0006); `udpSocketCount > 1` needs Linux or Android. Where a QUIC server cann
 HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
 identity per SNI name (not supported for QUIC yet), so that connector skips HTTP/3 with a warning instead of failing to start.
 
+Running it in production (UDP in firewalls, Docker and Kubernetes, load balancers, kernel buffers, checking that clients
+arrive over HTTP/3): [Deploying the HTTP/3 server](deployment.md).
+
 ### Turning HTTP/3 off on the server
 
 A running server can stop advertising HTTP/3, or take it out of service, without a restart: set

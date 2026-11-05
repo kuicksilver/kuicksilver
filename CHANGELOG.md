@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Docs: a deployment guide for the HTTP/3 server (`docs/guide/deployment.md`): TCP and UDP on one port number and what
+  the engine's `Alt-Svc` names (with a sample for a public port that differs from the bound one), firewalls and
+  security groups, Docker and Kubernetes (mixed-protocol `LoadBalancer` Services, the client address and the per-IP
+  connection limit), L4 load balancers versus proxies that terminate HTTP/3 (AWS NLB, Cloudflare, nginx; checked against
+  their documentation), connection IDs without QUIC-LB, UDP socket buffers per OS (what Kuicksilver asks for and how to
+  raise the Linux limits), GSO/GRO and `udpSocketCount`, certificates and their rotation, the run-time HTTP/3 switches,
+  security limits, observability, and a checklist from symptom to cause. Linked from the README, `llms.txt` and the
+  Ktor, QUIC and troubleshooting guides.
 - Ktor server: HTTP/3 can be stopped from advertising, or drained, at run time without a restart (experimental
   `KuicksilverApplicationEngine.http3Advertising` and `Http3Advertising`; `docs/guide/ktor.md`, "Turning HTTP/3 off on
   the server"). `On` (the default) advertises `Alt-Svc: h3=":<port>"; ma=86400` as before; `Clear` sends `Alt-Svc: clear`

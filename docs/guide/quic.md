@@ -94,7 +94,8 @@ USO/URO and ECN where the Windows version grants them (`io.capabilities` tells),
 With `IoPreference.Portable`, or where `ksl` cannot open its socket, the portable socket is used (NIO on the JVM,
 `ktor-network` on Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per
 path. A QUIC server on Kotlin/Native needs the accelerated socket (Linux, Apple, Windows): without it `bind` with a `server` throws
-`UnsupportedOperationException`, since the portable Native socket is client-only (ADR-0006).
+`UnsupportedOperationException`, since the portable Native socket is client-only (ADR-0006). Socket buffer sizes, GSO
+and GRO on a server host: [Deploying the HTTP/3 server: The host](deployment.md#the-host).
 
 ```kotlin
 // guide:quic:client-connect
@@ -395,7 +396,8 @@ AES-GCM key the core updates keys on its own, and a connection that cannot updat
 
 ## Stateless reset
 
-When a peer loses its state (a restart, a crash) it answers our packets with a Stateless Reset (RFC 9000 section 10.3).
+When a peer that keeps its reset key loses its state (a restart, a crash) it answers our packets with a Stateless Reset
+(RFC 9000 section 10.3).
 The connection then completes `closed` with `QuicException.ConnectionLost.StatelessReset`, every stream fails with the
 same cause, and nothing more is sent. Tokens are derived from a per-endpoint key that lives inside the native layer, so
 a server that restarts cannot reset connections of its previous life; a client has no way to learn the key from the
