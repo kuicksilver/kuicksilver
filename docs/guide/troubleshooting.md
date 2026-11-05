@@ -130,8 +130,8 @@ unused connections on the client side.
   prove it was the endpoint that issued the connection ID (RFC 9000 section 10.3), for example a peer that keeps its
   reset key across a restart. Reconnect. A Kuicksilver peer cannot do that after a restart, and neither can another
   instance behind a load balancer: reset tokens come from a key of the endpoint that issued the connection
-  ([QUIC: Stateless reset](quic.md#stateless-reset)). Such an endpoint does answer with a Stateless Reset, but its token
-  does not match, so the client ignores it (counted in `ConnectionStats.invalidResets`), and the connection ends with
+  ([QUIC: Stateless reset](quic.md#stateless-reset)). Such an endpoint may answer with a Stateless Reset (only to a short-header packet whose
+  connection ID has its format and loop index, and within its stateless rate limit), but its token does not match, so the client ignores it (counted in `ConnectionStats.invalidResets`), and the connection ends with
   "Idle timeout" instead ([above](#idle-timeout-after-30s)). Behind a load balancer, keep each client on one instance
   ([Deploying the HTTP/3 server: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)).
 - `ConnectionLost.ApplicationClosed` ("application closed by <Local|Peer>: code <n> (<reason>)"): an application

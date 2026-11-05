@@ -396,7 +396,8 @@ AES-GCM key the core updates keys on its own, and a connection that cannot updat
 
 ## Stateless reset
 
-When a peer loses its state (a restart, a crash) it answers our packets with a Stateless Reset (RFC 9000 section 10.3).
+When a peer that keeps its reset key loses its state (a restart, a crash) it answers our packets with a Stateless Reset
+(RFC 9000 section 10.3).
 The connection then completes `closed` with `QuicException.ConnectionLost.StatelessReset`, every stream fails with the
 same cause, and nothing more is sent. Tokens are derived from a per-endpoint key that lives inside the native layer, so
 a server that restarts cannot reset connections of its previous life; a client has no way to learn the key from the
