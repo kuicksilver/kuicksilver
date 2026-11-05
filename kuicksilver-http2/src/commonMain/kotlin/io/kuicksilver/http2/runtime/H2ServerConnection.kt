@@ -148,6 +148,9 @@ public class H2ServerStream internal constructor(
      */
     public val body: ByteReadChannel get() = s.body
 
+    /** The stream failed ([invokeOnFailure] has run or runs now): nothing more can be sent on it. */
+    public val failed: Boolean get() = s.failed.isCompleted
+
     /**
      * Runs [handler] with the stream's failure once the stream fails: the client reset it (RST_STREAM), the request was
      * malformed after its head (content that does not match content-length), or the connection ended. At once when it

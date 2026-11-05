@@ -465,7 +465,8 @@ internal class H2Runtime(
         val ended = lock.withLock { core.isClosed }
         // RFC 9113 section 8.1: a server may answer before the whole request and then reset with NO_ERROR: the client stops
         // sending and keeps the response
-        if (e.byPeer && e.code == Http2ErrorCode.NO_ERROR && lock.withLock { s.remoteEnded }) {
+        // (a client's NO_ERROR reset has no such meaning: on a server it fails the stream like any reset)
+        if (client && e.byPeer && e.code == Http2ErrorCode.NO_ERROR && lock.withLock { s.remoteEnded }) {
             lock.withLock { s.localEnded = true }
             s.writable.trySend(Unit)
             return
