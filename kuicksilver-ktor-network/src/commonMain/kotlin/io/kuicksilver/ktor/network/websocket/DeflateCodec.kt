@@ -189,7 +189,9 @@ internal class MessageInflater(
             val h = history
             if (h != null) {
                 if (historyFull) {
-                    val window = h.copyOfRange(historyEnd, WINDOW) + h.copyOfRange(0, historyEnd)
+                    val window = ByteArray(WINDOW)
+                    h.copyInto(window, 0, historyEnd, WINDOW)
+                    h.copyInto(window, WINDOW - historyEnd, 0, historyEnd)
                     r.setDictionary(window, 0, window.size)
                 } else {
                     r.setDictionary(h, 0, historyEnd)

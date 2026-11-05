@@ -439,7 +439,7 @@ class TcpSocketsNativeTest {
             val deaf = NoConnectWakeUpSelector(selector)
             try {
                 // a VPN in TUN mode (and Docker Desktop behind it) completes any TCP handshake itself: then nothing stays undecided
-                val faked = withTimeoutOrNull(2.seconds) { runCatching { connectTcpAddressWith(selector, testNet1Discard, null) } }
+                val faked = withTimeoutOrNull(500.milliseconds) { runCatching { connectTcpAddressWith(selector, testNet1Discard, null) } }
                 if (faked?.isSuccess == true) {
                     faked.getOrThrow().close()
                     println("skipped: this network answers TCP connects to TEST-NET-1 (a VPN or proxy in TUN mode)")

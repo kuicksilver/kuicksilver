@@ -436,6 +436,64 @@ class PerMessageDeflateTest {
         assertEquals("Hello", (ext.processIncomingFrame(compressed(bytes(0xf2, 0x00, 0x11, 0x00, 0x00))) as Frame.Text).readText())
     }
 
+    /**
+     * The history ring that survives a final block wraps and rotates in order: more than 32 KiB of output over several
+     * context-takeover messages, a message ending with BFINAL, then a message whose back reference reaches the oldest
+     * byte of the window (32768 back). The data is hand-made DEFLATE (stored blocks and one fixed-Huffman match).
+     */
+    @Test fun windowRingWrapsAndRotatesAfterAFinalBlock() {
+        val ext = client()
+        val plain = ByteArray(20_000 * 3 + 5000) { ((it * 31 + it / 256) % 256).toByte() }
+
+        fun stored(
+            final: Boolean,
+            from: Int,
+            to: Int,
+        ): ByteArray {
+            val len = to - from
+            val header = bytes(if (final) 1 else 0, len and 0xff, len ushr 8, len.inv() and 0xff, (len.inv() ushr 8) and 0xff)
+            // the 0x00 is the header of the empty stored block whose 00 00 ff ff the receiver appends (section 7.2.1)
+            return header + plain.copyOfRange(from, to) + bytes(0)
+        }
+
+        fun message(deflate: ByteArray) = Frame.Binary(true, deflate, true, false, false)
+
+        var end = 0
+        repeat(3) {
+            // 60000 bytes in messages of 20000: the 32 KiB ring wraps
+            val out = ext.processIncomingFrame(message(stored(false, end, end + 20_000))).data
+            assertContentEquals(plain.copyOfRange(end, end + 20_000), out)
+            end += 20_000
+        }
+        assertContentEquals(plain.copyOfRange(end, plain.size), ext.processIncomingFrame(message(stored(true, end, plain.size))).data)
+
+        // a fixed-Huffman block (BFINAL 0): length 10 (code 264), distance 32768 (code 29 + 13 extra bits, all ones), end of block
+        var bits = 0L
+        var count = 0
+
+        fun put(
+            value: Int,
+            n: Int,
+            huffman: Boolean,
+        ) {
+            for (i in 0 until n) {
+                val bit = if (huffman) (value ushr (n - 1 - i)) and 1 else (value ushr i) and 1
+                bits = bits or (bit.toLong() shl count)
+                count++
+            }
+        }
+        put(0, 1, false) // BFINAL
+        put(1, 2, false) // BTYPE 01
+        put(8, 7, true) // length symbol 264
+        put(29, 5, true) // distance symbol 29
+        put(8191, 13, false)
+        put(0, 7, true) // end of block
+        put(0, 3, false) // the empty stored block the receiver completes
+        val match = ByteArray((count + 7) / 8) { ((bits ushr (8 * it)) and 0xff).toByte() }
+        val expected = plain.copyOfRange(plain.size - 32768, plain.size - 32768 + 10)
+        assertContentEquals(expected, ext.processIncomingFrame(message(match)).data)
+    }
+
     /** Compressed data that produces nothing (empty blocks) cannot stream on without bound: it counts toward a limit. */
     @Test fun negative_endlessEmptyBlocksStopAtTheCompressedLimit() {
         val limit = 1000L
