@@ -25,6 +25,7 @@ import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsRole
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -246,7 +247,7 @@ class ClientEventListenerTest {
         clientTest {
             val selector =
                 io.ktor.network.selector
-                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.IO)
             val listener =
                 io.ktor.network.sockets
                     .aSocket(selector)

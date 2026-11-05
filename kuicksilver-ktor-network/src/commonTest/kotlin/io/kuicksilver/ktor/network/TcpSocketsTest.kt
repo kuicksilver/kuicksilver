@@ -11,6 +11,7 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
@@ -26,6 +27,10 @@ import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
+// Every test selector of this module runs on Dispatchers.IO, as ktor-network wants it: an ActorSelectorManager blocks its
+// thread in select() (up to 500 ms) while a read is pending, and on Dispatchers.Default (two threads on a two-core device,
+// the CI emulators) a few of them starve the TLS pumps and the other coroutines that run there.
+
 /**
  * The engines' TCP sockets ([connectTcp], [bindTcp]) bind and connect the exact address: a listener on `::1` listens on
  * `::1` only, and a connect goes to exactly the address asked for.
@@ -33,7 +38,7 @@ import kotlin.time.Duration.Companion.seconds
 class TcpSocketsTest {
     private fun tcpTest(block: suspend (SelectorManager) -> Unit) =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) { block(selector) }
             } finally {

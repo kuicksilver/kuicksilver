@@ -26,6 +26,7 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -85,7 +86,7 @@ class ServerWebSocketGuardTest {
     private suspend fun h1Violation(frame: ByteArray): Unit =
         run {
             val (server, port) = tlsServer { webSocketEcho() }
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 val socket = aSocket(selector).tcp().connect("127.0.0.1", port).tls(ServerFixtures.clientTls())
                 try {

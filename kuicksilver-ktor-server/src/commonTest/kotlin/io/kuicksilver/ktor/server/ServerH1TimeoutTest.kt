@@ -28,6 +28,7 @@ import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
@@ -138,7 +139,7 @@ class ServerH1TimeoutTest {
                                 .first()
                                 .port
                     }
-                val selector = SelectorManager(Dispatchers.Default)
+                val selector = SelectorManager(Dispatchers.IO)
                 try {
                     val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
                     val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls()) else tcp
@@ -191,7 +192,7 @@ class ServerH1TimeoutTest {
                         sendStallTimeoutForTest = 1.seconds
                         eventListener = events
                     }
-                val selector = SelectorManager(Dispatchers.Default)
+                val selector = SelectorManager(Dispatchers.IO)
                 val sockets = ArrayList<Socket>()
                 try {
                     repeat(clients) {

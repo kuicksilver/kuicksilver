@@ -18,6 +18,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -71,7 +72,7 @@ class TlsFailedStreamTest {
      */
     @Test fun negative_aResetBeforeTheReaderOpensIsNotACleanEnd() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
@@ -99,7 +100,7 @@ class TlsFailedStreamTest {
      */
     @Test fun aFailedSessionReachesTheReaderAsItsTlsException() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
@@ -126,7 +127,7 @@ class TlsFailedStreamTest {
     /** What the client saw reading to the end: "a clean end after N bytes", or null when the read failed. */
     private fun exchange(fail: Boolean): String? =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)

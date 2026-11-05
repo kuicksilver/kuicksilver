@@ -37,6 +37,7 @@ import io.ktor.websocket.readText
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -101,7 +102,7 @@ class ClientSocksProxyTest {
         reply: Int = 0,
         block: suspend (Int, Seen) -> Unit,
     ) {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
         val seen = Seen()
         try {
@@ -229,7 +230,7 @@ class ClientSocksProxyTest {
     fun socks5LocalDnsTriesNextAddressOnUnreachable() =
         clientTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("second address") } } }
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
             val destinations = ArrayList<List<Byte>>()
             try {
@@ -394,7 +395,7 @@ class ClientSocksProxyTest {
 
     /** The request head a plain HTTP proxy receives for a GET of [url]; the proxy answers 200 "ok". */
     private suspend fun proxiedHead(url: String): List<String> {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
         try {
             return coroutineScope {
@@ -428,7 +429,7 @@ class ClientSocksProxyTest {
     /** Plain http through an HTTP proxy: the absolute form, with the configured credentials as `Basic`. */
     @Test fun absoluteFormCarriesProxyCredentials() =
         clientTest {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
             try {
                 coroutineScope {

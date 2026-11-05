@@ -27,6 +27,7 @@ import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -35,6 +36,9 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
+// Every test selector of this module runs on Dispatchers.IO, as ktor-network wants it: an ActorSelectorManager blocks its
+// thread in select() (up to 500 ms) while a read is pending, and on Dispatchers.Default (two threads on a two-core device,
+// the CI emulators) a few of them starve the QUIC loops and TLS pumps that run there.
 internal object ServerFixtures {
     val testCa = Certificate(TestCerts.testCa)
 
@@ -100,7 +104,7 @@ internal suspend fun rawHttp(
     request: String,
     tls: TlsConfig? = ServerFixtures.clientTls(),
 ): String {
-    val selector = SelectorManager(Dispatchers.Default)
+    val selector = SelectorManager(Dispatchers.IO)
     try {
         // Kuicksilver's own connect, not ktor-network's: on mingwX64 ktor-network's connect and write lose socket errors
         // (POSIX error 0), so a server refusing a request could look like a hang; this way the test exercises our sockets only
@@ -146,7 +150,7 @@ internal suspend fun slowHttp(
     tls: TlsConfig? = ServerFixtures.clientTls(),
     bytesPerSecond: Long = 1024L * 1024,
 ): String {
-    val selector = SelectorManager(Dispatchers.Default)
+    val selector = SelectorManager(Dispatchers.IO)
     try {
         // ktor-network's mingwX64 connect sometimes fails at once with "POSIX error 0: No error" against a listening server
         // (the GitHub Windows runner, 2026-10-26): a client-side glitch, so the connect is retried a few times

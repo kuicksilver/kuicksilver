@@ -10,6 +10,7 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -29,7 +30,7 @@ import kotlin.time.Duration.Companion.seconds
 class NativeCloseOrderTest {
     @Test fun closeEndsTheReadLoopOnlyAfterTheWriteLoopDrained() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val server = bindTcp(selector, "127.0.0.1", 0)
             try {
                 val accepted = async { server.accept() }

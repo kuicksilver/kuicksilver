@@ -26,6 +26,9 @@ import kotlinx.coroutines.withTimeout
 import kotlin.time.Duration.Companion.seconds
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 
+// Every test selector of this module runs on Dispatchers.IO, as ktor-network wants it: an ActorSelectorManager blocks its
+// thread in select() (up to 500 ms) while a read is pending, and on Dispatchers.Default (two threads on a two-core device,
+// the CI emulators) a few of them starve the QUIC loops and TLS pumps that run there.
 internal object ClientFixtures {
     val testCa = Certificate(TestCerts.testCa)
     val trust: TrustConfig = TrustConfig.AnchoredCa(listOf(testCa))

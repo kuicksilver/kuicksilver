@@ -23,6 +23,7 @@ import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
@@ -128,7 +129,7 @@ class ClientWebSocketConnectingTest {
      */
     @Test fun handshakesToTwoAddressesDoNotWait() =
         clientTest {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val v6 = runCatching { aSocket(selector).tcp().bind("::1", 0).close() }
             selector.close()
             v6.onFailure {
@@ -357,7 +358,7 @@ class ClientWebSocketConnectingTest {
         host: String = "127.0.0.1",
         block: suspend (Int) -> Unit,
     ) {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind(InetSocketAddress(host, 0))
         try {
             coroutineScope {

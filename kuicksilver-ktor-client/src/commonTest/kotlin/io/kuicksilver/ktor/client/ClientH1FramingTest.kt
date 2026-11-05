@@ -29,6 +29,7 @@ import io.kuicksilver.ktor.client.h1.writeBody
 import io.kuicksilver.ktor.client.h1.writeHeaders
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -400,7 +401,7 @@ class ClientH1FramingTest {
         handler: suspend (index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
         block: suspend (Int) -> Unit,
     ) {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
         try {
             coroutineScope {

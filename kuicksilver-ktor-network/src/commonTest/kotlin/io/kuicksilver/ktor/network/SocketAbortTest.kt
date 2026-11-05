@@ -11,6 +11,7 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
@@ -46,7 +47,7 @@ class SocketAbortTest {
      */
     @Test fun negative_aWriterWaitingForRoomFailsWhenThePeerResets() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
@@ -84,7 +85,7 @@ class SocketAbortTest {
 
     private fun abortTest(tls: Boolean) =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
