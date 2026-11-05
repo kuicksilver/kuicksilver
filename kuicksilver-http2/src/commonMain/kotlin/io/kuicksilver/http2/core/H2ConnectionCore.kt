@@ -483,8 +483,7 @@ internal class H2ConnectionCore(
      * peer may still send after our END_STREAM or reset (WINDOW_UPDATE, RST_STREAM; anything on a stream we reset) are not
      * this.
      */
-    private fun headersOnClosed(id: Int): Nothing =
-        throw H2ConnectionError(Http2ErrorCode.STREAM_CLOSED, "HEADERS on closed stream $id")
+    private fun headersOnClosed(id: Int): Nothing = throw H2ConnectionError(Http2ErrorCode.STREAM_CLOSED, "HEADERS on closed stream $id")
 
     private fun onPushPromise(
         f: Frame.PushPromise,
