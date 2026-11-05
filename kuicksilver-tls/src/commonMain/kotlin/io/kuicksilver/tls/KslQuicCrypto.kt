@@ -207,18 +207,18 @@ internal class KslPacketProtector(
 }
 
 internal class KslQuicTlsSession(
-    private val ctx: KslContext,
+    // the session's reference to its context (often shared with the configuration's other sessions), given back by close
+    private val lease: KslContext.Lease,
     private val earlyDataSession: Boolean = false,
 ) : QuicTlsSession {
-    // the session owns one reference to ctx (often shared with the configuration's other sessions), given back once by close
+    private val ctx = lease.ctx
     private var ssl: Long =
         try {
             Ksl.sslNew(ctx.handle, KslConst.MODE_QUIC)
         } catch (t: Throwable) {
-            ctx.close() // nobody can close a session that was never built
+            lease.close() // nobody can close a session that was never built
             throw t
         }
-    private var ctxReleased = false
     private val event = KslEvent()
     private var presented: List<Certificate> = emptyList()
     private var alpn: String? = null
@@ -241,8 +241,7 @@ internal class KslQuicTlsSession(
                 // a session that failed to build is nobody's to close: its SSL and context go now (close() would read fields not set yet)
                 Ksl.sslFree(ssl)
                 ssl = 0L
-                ctxReleased = true
-                ctx.close()
+                lease.close()
                 throw t
             }
         }
@@ -592,10 +591,7 @@ internal class KslQuicTlsSession(
         pendingTickets.clear()
         if (lastSession != 0L) Ksl.sessionFree(lastSession)
         lastSession = 0L
-        if (!ctxReleased) {
-            ctxReleased = true
-            ctx.close()
-        }
+        lease.close()
     }
 }
 

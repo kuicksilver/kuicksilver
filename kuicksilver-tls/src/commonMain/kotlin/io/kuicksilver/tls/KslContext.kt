@@ -20,9 +20,10 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
- * Translates a [TlsConfig] into a frozen `ksl_ctx`; shared by the QUIC and TCP sessions. Reference-counted: whoever got it from
- * [create] or [acquire] holds one reference and gives it back with [close]; the native context is freed with the last one. A
- * server's sessions share one per configuration and identity snapshot ([acquire], [SharedServerContexts]).
+ * Translates a [TlsConfig] into a frozen `ksl_ctx`; shared by the QUIC and TCP sessions. Reference-counted: [create] and
+ * [acquire] hand out a [Lease] (one reference, given back once by [Lease.close], however often it is called); the native
+ * context is freed with the last reference. A server's sessions share one per configuration and identity snapshot ([acquire],
+ * [SharedServerContexts]).
  */
 internal class KslContext private constructor(
     val handle: Long,
@@ -37,7 +38,18 @@ internal class KslContext private constructor(
     val identityTag: String?,
     private val quicTickets: Boolean,
     private val earlyData: Boolean,
-) : AutoCloseable {
+) {
+    /** One holder's reference to [ctx]: [close] gives it back once, so a second close cannot take another holder's reference. */
+    class Lease internal constructor(
+        val ctx: KslContext,
+    ) : AutoCloseable {
+        private val closed = AtomicInt(0)
+
+        override fun close() {
+            if (closed.compareAndSet(0, 1)) ctx.release()
+        }
+    }
+
     /** The verifier `ksl` runs itself (AnchoredCa) or the pause for Kotlin-side trust. */
     val verifyMode: Int = verifyModeFor(config)
 
@@ -47,7 +59,7 @@ internal class KslContext private constructor(
     /** True once the native context was freed (tests). */
     internal val isFreed: Boolean get() = refs.load() == 0
 
-    /** Takes one more reference unless the context is already freed (then false, and nothing to [close]). */
+    /** Takes one more reference unless the context is already freed (then false, and nothing to [release]). */
     fun tryRetain(): Boolean {
         while (true) {
             val r = refs.load()
@@ -56,8 +68,8 @@ internal class KslContext private constructor(
         }
     }
 
-    /** Gives one reference back; the last one frees the native context. Each holder closes exactly once. */
-    override fun close() {
+    /** Gives one reference back; the last one frees the native context. Holders outside this file go through a [Lease]. */
+    fun release() {
         val r = refs.addAndFetch(-1)
         check(r >= 0) { "KslContext closed more often than retained" }
         if (r == 0) Ksl.ctxFree(handle)
@@ -110,7 +122,7 @@ internal class KslContext private constructor(
             }
 
         /**
-         * A context of its own for one session, the caller's to [close]. [quicTickets]: a QUIC server issues session tickets (two
+         * A context of its own for one session, the caller's to close (its [Lease]). [quicTickets]: a QUIC server issues session tickets (two
          * per full handshake, one per resumption) and, with [earlyData], ones that allow 0-RTT (ADR-0015); a QUIC server without
          * it issues none. Servers use [acquire].
          */
@@ -119,10 +131,10 @@ internal class KslContext private constructor(
             quic: Boolean,
             quicTickets: Boolean = false,
             earlyData: Boolean = false,
-        ): KslContext = build(config, quic, quicTickets, earlyData, null)!!
+        ): Lease = Lease(build(config, quic, quicTickets, earlyData, null)!!)
 
         /**
-         * The context for one more session of [config], the caller's to [close] (one reference). A server configuration with an
+         * The context for one more session of [config], the caller's to close (one reference, its [Lease]). A server configuration with an
          * identity shares one context per identity snapshot between all its sessions (P.3: `SSL_CTX_new` and the identity's
          * set-up were a twelfth of a handshake's CPU), kept by that snapshot until it is closed ([SharedServerContexts]); a
          * `TlsIdentity.Reloadable` takes its [TlsIdentity.Reloadable.current] snapshot per handshake, as before, so a reload makes
@@ -138,29 +150,31 @@ internal class KslContext private constructor(
             quic: Boolean,
             quicTickets: Boolean = false,
             earlyData: Boolean = false,
-        ): KslContext {
+        ): Lease {
             if (config.role != TlsRole.Server) return create(config, quic, quicTickets, earlyData)
-            return when (val id = config.identity) {
-                is TlsIdentity.InMemory -> {
-                    id.serverContexts.acquire(config, quic, quicTickets, earlyData) { build(config, quic, quicTickets, earlyData, id) }
-                        ?: throw IllegalStateException("identity closed")
-                }
+            val ctx =
+                when (val id = config.identity) {
+                    is TlsIdentity.InMemory -> {
+                        id.serverContexts.acquire(config, quic, quicTickets, earlyData) { build(config, quic, quicTickets, earlyData, id) }
+                            ?: throw IllegalStateException("identity closed")
+                    }
 
-                is TlsIdentity.Reloadable -> {
-                    id.withCurrentSnapshot { cur ->
-                        cur.serverContexts.acquire(
-                            config,
-                            quic,
-                            quicTickets,
-                            earlyData,
-                        ) { build(config, quic, quicTickets, earlyData, cur) }
+                    is TlsIdentity.Reloadable -> {
+                        id.withCurrentSnapshot { cur ->
+                            cur.serverContexts.acquire(
+                                config,
+                                quic,
+                                quicTickets,
+                                earlyData,
+                            ) { build(config, quic, quicTickets, earlyData, cur) }
+                        }
+                    }
+
+                    null -> {
+                        return create(config, quic, quicTickets, earlyData)
                     }
                 }
-
-                null -> {
-                    create(config, quic, quicTickets, earlyData)
-                }
-            }
+            return Lease(ctx)
         }
 
         /**
@@ -330,8 +344,9 @@ internal class KslContext private constructor(
  * The server contexts built from one identity snapshot ([TlsIdentity.InMemory.serverContexts]), one per configuration and kind
  * ([KslContext.serves]), each shared by every session of its configuration. The registry holds one reference to each; [close]
  * (the identity's close, which a reload does to the snapshot it replaces) drops them, so a context goes when the identity is
- * closed and its last session is gone, never while a session uses it. At most [MAX] contexts are kept: the oldest goes first
- * (a process that keeps building new configurations around one identity holds no more), and still serves its sessions.
+ * closed and its last session is gone, never while a session uses it. At most [MAX] contexts are kept: the least recently used
+ * one goes first (a process that keeps building new configurations around one identity holds no more), and still serves its
+ * sessions. A hit moves its context to the young end of the list (best effort: a concurrent change wins).
  */
 internal class SharedServerContexts {
     // null once closed: nothing is kept any more
@@ -348,23 +363,28 @@ internal class SharedServerContexts {
         earlyData: Boolean,
         build: () -> KslContext?,
     ): KslContext? {
-        find(entries.load() ?: return null, config, quic, quicTickets, earlyData)?.let { return it }
+        val first = entries.load() ?: return null
+        find(first, config, quic, quicTickets, earlyData)?.let {
+            touch(first, it)
+            return it
+        }
         val made = build() ?: return null
         while (true) {
             // closed meanwhile: the context was built from a key still held, so this handshake goes on with it, unshared
             val list = entries.load() ?: return made
             find(list, config, quic, quicTickets, earlyData)?.let {
-                made.close() // another session built one first: share that one
+                made.release() // another session built one first: share that one
+                touch(list, it)
                 return it
             }
             check(made.tryRetain()) // the registry's reference
             val grown = list + made
             val evicted = if (grown.size > MAX) grown[0] else null
             if (entries.compareAndSet(list, if (evicted != null) grown.drop(1) else grown)) {
-                evicted?.close()
+                evicted?.release()
                 return made
             }
-            made.close() // the list changed: give the registry's reference back and look again
+            made.release() // the list changed: give the registry's reference back and look again
         }
     }
 
@@ -379,9 +399,17 @@ internal class SharedServerContexts {
         return null
     }
 
+    /** Moves [c] to the young end of [list] when it is not there yet; the references do not change. */
+    private fun touch(
+        list: List<KslContext>,
+        c: KslContext,
+    ) {
+        if (list.lastOrNull() !== c) entries.compareAndSet(list, list.filter { it !== c } + c)
+    }
+
     /** Drops the registry's references; contexts still in use go with their last session. */
     fun close() {
-        entries.exchange(null)?.forEach { it.close() }
+        entries.exchange(null)?.forEach { it.release() }
     }
 
     private companion object {

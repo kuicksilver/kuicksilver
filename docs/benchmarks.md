@@ -361,8 +361,10 @@ Where the Native endpoint benchmark's busy CPU went (`sample`, 10 s, about 7 000
 | building exception objects | 0.3 % | 0.1 % |
 
 - **One `SSL_CTX` per server configuration.** The handshakes of a server configuration share one context per identity
-  snapshot (a `TlsIdentity.Reloadable` reload builds one more; the old one goes after its last connection). The client
-  still builds one per connection: it is a client-side cost here, and in the handshake table the load generator's.
+  snapshot (a `TlsIdentity.Reloadable` reload builds one more; the old one goes after its last connection). A TCP server
+  whose `sniSelector` returns an override still builds the override's context per connection (only the base context is
+  shared). The client still builds one per connection: it is a client-side cost here, and in the handshake table the load
+  generator's.
 - **No exceptions on the normal path** but the close reasons: a runtime that finished no longer builds an unused
   `ConnectionLost.Internal`, and a connection that never sent a DATAGRAM has no drainer job to cancel.
 - **Packet keys:** HKDF and the AEAD and header-protection ciphers are fetched from OpenSSL's provider store once per

@@ -32,7 +32,9 @@ public sealed interface TlsIdentity {
      *
      * Since 0.3.0 the handshakes of one server configuration share one context built from this identity (an OpenSSL
      * `SSL_CTX`: built once instead of per connection); the identity keeps it, and at most seven more of other server
-     * configurations, until [close]. A context in use stays until its last connection is gone.
+     * configurations, until [close]. A context in use stays until its last connection is gone. An identity that is never closed
+     * keeps those contexts (up to eight `SSL_CTX`s) and the [TlsConfig]s they were built for for the life of the process, as it
+     * keeps its key.
      */
     public class InMemory internal constructor(
         chain: List<Certificate>,
