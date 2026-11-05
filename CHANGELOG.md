@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Documentation: `docs/process.md`, how every change is checked before it reaches a release (a test that fails
+  first, code review and a check against the RFC text, reference stacks, the compliance matrix and threat model, the
+  local gate and its coverage, hosted CI, soak and fuzzing, signed releases with SBOM and provenance, and what is
+  manual or partial today).
 - TLS: certificate rotation without a restart (experimental `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`;
   `docs/guide/tls.md`, "Rotating the server certificate"). `reload(next)` makes `next` the identity of every handshake
   that starts afterwards, over TCP and QUIC; each handshake takes chain and key from one snapshot, and running

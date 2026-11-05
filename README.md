@@ -211,6 +211,8 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.
 - [docs/verifying.md](docs/verifying.md) — verifying a release: signatures, Gradle dependency verification, SBOM and
   provenance, rebuilding the native libraries.
+- [docs/process.md](docs/process.md) — how every change is checked before it reaches a release: tests, review, the
+  local gate on every target, hosted CI, soak and fuzzing, signed releases.
 - [docs/adr/](docs/adr/README.md) — architecture decision records.
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

@@ -7,7 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 Thank you for helping. Kuicksilver is a network security component, so the bar for changes is high and the process is
 explicit: an issue first for anything that changes behaviour or API, tests that fail before the fix, and a sign-off on
-every commit. This document says how to build, test and propose changes. By participating you agree to the
+every commit. This document says how to build, test and propose changes; [docs/process.md](docs/process.md) describes
+every stage a change goes through before it reaches a release. By participating you agree to the
 [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through [SECURITY.md](SECURITY.md), never a public issue.
 
 ## Building
@@ -141,7 +142,8 @@ The floors were measured on a local host, so the thresholds file says `"blocking
 warning (exit 0) while a failed or missing cell still fails. To make the floors blocking, run `run-local.sh --perf` a
 few times on quiet hosts, fold the runs in with `check-perf.sh --update <dir>[,<dir>...]` (it keeps the best mean per
 cell), commit the new floors and set `"blocking": true` in the same commit. The weekly `perf` workflow
-(`.github/workflows/perf.yml`) does the same on GitHub-hosted runners; the release gate is `tools/ci/local-matrix.sh`.
+(`.github/workflows/perf.yml`) does the same on GitHub-hosted runners; the release gate is `tools/ci/local-matrix.sh`
+([docs/process.md](docs/process.md)).
 
 ## Style
 
