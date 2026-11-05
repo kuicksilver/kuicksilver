@@ -882,7 +882,10 @@ internal class H2ConnectionCore(
     ) {
         if (closed) return
         if (code != Http2ErrorCode.NO_ERROR) return connectionError(code, debug.decodeToString())
-        if (graceful && goAwaySentLastId < 0) {
+        // a graceful GOAWAY after one of ours changes nothing: a two-step one in progress keeps its second step for when
+        // its PING returns (a second call must not collapse it and cut the streams that crossed the first GOAWAY)
+        if (graceful && goAwaySentLastId >= 0) return
+        if (graceful) {
             sendGoAway(H2.MAX_STREAM_ID, code, debug)
             gracefulPing = ping(now)
             gracefulDeadline = now + settings.settingsAckTimeout.inWholeNanoseconds
