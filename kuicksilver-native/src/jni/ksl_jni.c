@@ -168,20 +168,25 @@ static jlong j_udp_open(JNIEnv *e, jclass c, jbyteArray addr, jint flags, jintAr
     if (!u) { jint ec = (jint)code; (*e)->SetIntArrayRegion(e, err, 0, 1, &ec); jstring js = (*e)->NewStringUTF(e, m); if (js) (*e)->SetObjectArrayElement(e, msg, 0, js); }
     return H(u);
 }
-static jint j_udp_send(JNIEnv *e, jclass c, jlong h, jobjectArray bufs, jintArray lens, jbyteArray addrs, jbyteArray ecn, jint n) {
-    (void)c; uint8_t *ptrs[KSL_UDP_MAX_BATCH]; uint32_t caps[KSL_UDP_MAX_BATCH]; jint l[KSL_UDP_MAX_BATCH]; uint8_t a[KSL_UDP_MAX_BATCH * KSL_UDP_ADDR_LEN]; uint8_t m[KSL_UDP_MAX_BATCH]; uint32_t sent = 0;
+/* srcs / dsts: null, or n KSL_UDP_ADDR_LEN entries (ksl_udp_send_src / ksl_udp_recv_dst, ABI 7) */
+static jint j_udp_send(JNIEnv *e, jclass c, jlong h, jobjectArray bufs, jintArray lens, jbyteArray addrs, jbyteArray srcs, jbyteArray ecn, jint n) {
+    (void)c; uint8_t *ptrs[KSL_UDP_MAX_BATCH]; uint32_t caps[KSL_UDP_MAX_BATCH]; jint l[KSL_UDP_MAX_BATCH]; uint8_t a[KSL_UDP_MAX_BATCH * KSL_UDP_ADDR_LEN], s[KSL_UDP_MAX_BATCH * KSL_UDP_ADDR_LEN]; uint8_t m[KSL_UDP_MAX_BATCH]; uint32_t sent = 0;
     if (udp_slots(e, bufs, n, ptrs, caps) != 0 || !lens || !addrs || !ecn || (*e)->GetArrayLength(e, lens) < n || (*e)->GetArrayLength(e, addrs) < n * KSL_UDP_ADDR_LEN || (*e)->GetArrayLength(e, ecn) < n) return -1;
+    if (srcs && (*e)->GetArrayLength(e, srcs) < n * KSL_UDP_ADDR_LEN) return -1;
     (*e)->GetIntArrayRegion(e, lens, 0, n, l); (*e)->GetByteArrayRegion(e, addrs, 0, n * KSL_UDP_ADDR_LEN, (jbyte *)a); (*e)->GetByteArrayRegion(e, ecn, 0, n, (jbyte *)m);
+    if (srcs) (*e)->GetByteArrayRegion(e, srcs, 0, n * KSL_UDP_ADDR_LEN, (jbyte *)s);
     uint32_t ul[KSL_UDP_MAX_BATCH]; for (jint i = 0; i < n; i++) { if (l[i] < 0 || (uint32_t)l[i] > caps[i]) return -1; ul[i] = (uint32_t)l[i]; }
-    int r = ksl_udp_send(P(ksl_udp, h), ptrs, ul, a, m, (uint32_t)n, &sent); return r == KSL_OK ? (jint)sent : -1;
+    int r = ksl_udp_send_src(P(ksl_udp, h), ptrs, ul, a, srcs ? s : NULL, m, (uint32_t)n, &sent); return r == KSL_OK ? (jint)sent : -1;
 }
-static jint j_udp_recv(JNIEnv *e, jclass c, jlong h, jobjectArray bufs, jintArray lens, jbyteArray addrs, jbyteArray ecn, jint n, jint timeout) {
-    (void)c; uint8_t *ptrs[KSL_UDP_MAX_BATCH]; uint32_t caps[KSL_UDP_MAX_BATCH]; uint32_t ul[KSL_UDP_MAX_BATCH]; uint8_t a[KSL_UDP_MAX_BATCH * KSL_UDP_ADDR_LEN]; uint8_t m[KSL_UDP_MAX_BATCH]; uint32_t got = 0;
+static jint j_udp_recv(JNIEnv *e, jclass c, jlong h, jobjectArray bufs, jintArray lens, jbyteArray addrs, jbyteArray dsts, jbyteArray ecn, jint n, jint timeout) {
+    (void)c; uint8_t *ptrs[KSL_UDP_MAX_BATCH]; uint32_t caps[KSL_UDP_MAX_BATCH]; uint32_t ul[KSL_UDP_MAX_BATCH]; uint8_t a[KSL_UDP_MAX_BATCH * KSL_UDP_ADDR_LEN], d[KSL_UDP_MAX_BATCH * KSL_UDP_ADDR_LEN]; uint8_t m[KSL_UDP_MAX_BATCH]; uint32_t got = 0;
     if (udp_slots(e, bufs, n, ptrs, caps) != 0 || !lens || !addrs || !ecn || (*e)->GetArrayLength(e, lens) < n || (*e)->GetArrayLength(e, addrs) < n * KSL_UDP_ADDR_LEN || (*e)->GetArrayLength(e, ecn) < n) return -1;
-    int r = ksl_udp_recv(P(ksl_udp, h), ptrs, caps, ul, a, m, (uint32_t)n, &got, timeout);
+    if (dsts && (*e)->GetArrayLength(e, dsts) < n * KSL_UDP_ADDR_LEN) return -1;
+    int r = ksl_udp_recv_dst(P(ksl_udp, h), ptrs, caps, ul, a, dsts ? d : NULL, m, (uint32_t)n, &got, timeout);
     if (r == KSL_WANT_READ) return -2; if (r != KSL_OK) return -1;
     jint l[KSL_UDP_MAX_BATCH]; for (uint32_t i = 0; i < got; i++) l[i] = (jint)ul[i];
-    if (got) { (*e)->SetIntArrayRegion(e, lens, 0, (jsize)got, l); (*e)->SetByteArrayRegion(e, addrs, 0, (jsize)(got * KSL_UDP_ADDR_LEN), (const jbyte *)a); (*e)->SetByteArrayRegion(e, ecn, 0, (jsize)got, (const jbyte *)m); }
+    if (got) { (*e)->SetIntArrayRegion(e, lens, 0, (jsize)got, l); (*e)->SetByteArrayRegion(e, addrs, 0, (jsize)(got * KSL_UDP_ADDR_LEN), (const jbyte *)a); (*e)->SetByteArrayRegion(e, ecn, 0, (jsize)got, (const jbyte *)m);
+        if (dsts) (*e)->SetByteArrayRegion(e, dsts, 0, (jsize)(got * KSL_UDP_ADDR_LEN), (const jbyte *)d); }
     return (jint)got;
 }
 static jbyteArray j_udp_get(JNIEnv *e, jclass c, jlong h, jint what) { (void)c; uint8_t out[300]; size_t n = 0; if (ksl_udp_get(P(ksl_udp, h), what, out, sizeof out, &n) != KSL_OK) return NULL; return new_bytes(e, out, n); }
@@ -227,7 +232,7 @@ static const JNINativeMethod methods[] = {
     {"keyInitial", "([BIII)J", (void *)j_key_initial}, {"keyNext", "(J)J", (void *)j_key_next}, {"keyFree", "(J)V", (void *)j_key_free}, {"keyRandom", "(I)J", (void *)j_key_random}, {"keyMac16", "(J" S_BB "II[BI)I", (void *)j_key_mac16},
     {"seal", "(JJ" S_BB "II" S_BB "III)I", (void *)j_seal}, {"open", "(JJ" S_BB "II" S_BB "II)I", (void *)j_open}, {"headerMask", "(J" S_BB "I[B)I", (void *)j_header_mask}, {"retryTag", "(I[B[B)[B", (void *)j_retry_tag},
     {"rand", "(I)[B", (void *)j_rand}, {"sha2", "(I[B)[B", (void *)j_sha2}, {"hkdfExpandLabel", "(I[B" S_STR "[BI)[B", (void *)j_hkdf}, {"sign", "(I[B[B)[B", (void *)j_sign}, {"verify", "(I[B[B[B)I", (void *)j_verify}, {"spkiSha256", "([B)[B", (void *)j_spki},
-    {"udpOpen", "([BI[I[Ljava/lang/String;)J", (void *)j_udp_open}, {"udpSend", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[BI)I", (void *)j_udp_send}, {"udpRecv", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[BII)I", (void *)j_udp_recv},
+    {"udpOpen", "([BI[I[Ljava/lang/String;)J", (void *)j_udp_open}, {"udpSend", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[B[BI)I", (void *)j_udp_send}, {"udpRecv", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[B[BII)I", (void *)j_udp_recv},
     {"udpGet", "(JI)[B", (void *)j_udp_get}, {"udpShutdown", "(J)V", (void *)j_udp_shutdown}, {"udpClose", "(J)V", (void *)j_udp_close},
     {"udpTakePtb", "(J[B[I[B)Z", (void *)j_udp_take_ptb}, {"udpEmsgsize", "(J[I)J", (void *)j_udp_emsgsize},
     {"liveObjects", "([J)I", (void *)j_live_objects},

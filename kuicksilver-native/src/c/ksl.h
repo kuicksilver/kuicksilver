@@ -278,6 +278,11 @@ int      ksl_key_mac16(ksl_key *, const uint8_t *in, size_t len, uint8_t out[16]
 #define KSL_UDP_GRO 4
 #define KSL_UDP_DF 8                /* IP_PMTUDISC_PROBE + IPV6_DONTFRAG, never _DO (quic-go CVE-2024-53259) */
 #define KSL_UDP_REUSEPORT 16
+#define KSL_UDP_PKTINFO 32          /* a wildcard bind (0.0.0.0, ::) only: each received datagram's destination address (IP_PKTINFO, IPV6_RECVPKTINFO;
+                                        IP_RECVPKTINFO on Apple; WSARecvMsg IP_PKTINFO / IPV6_PKTINFO on Windows) comes back from ksl_udp_recv_dst, and
+                                        ksl_udp_send_src sends from a named source address (IP_PKTINFO / IPV6_PKTINFO cmsg): a reply leaves from the
+                                        address the request arrived on, not the one the route picks (RFC 9000 section 9: a path is a 4-tuple).
+                                        Never granted on a specific address, where the socket's address is the source anyway. Additive in ABI 7 */
 #define KSL_UDP_ADDR_LEN 20
 #define KSL_UDP_GET_FD 1            /* 4 bytes BE */
 #define KSL_UDP_GET_CAPS 2          /* 8 bytes: granted flags:4 BE | gso max segments:2 BE | batch:2 BE */
@@ -296,6 +301,17 @@ int      ksl_udp_send(ksl_udp *, uint8_t *const *bufs, const uint32_t *lens, con
             scope id, so ksl_udp_recv drops datagrams from fe80::/10 and a send there is a lost slot */
 int      ksl_udp_recv(ksl_udp *, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecn, uint32_t n, uint32_t *received, int timeout_ms);
          /* recvmsg + UDP_GRO into a scratch buffer, segments split into consecutive slots (leftovers wait for the next call); MSG_TRUNC and oversized segments drop; KSL_WANT_READ on timeout. timeout_ms is one deadline for the call (dropped datagrams do not restart it); with timeout 0 or a slot already filled, 64 drops in a row end the call */
+int      ksl_udp_send_src(ksl_udp *, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *srcs, const uint8_t *ecn, uint32_t n, uint32_t *sent);
+         /* ksl_udp_send with a source address per slot: srcs holds n KSL_UDP_ADDR_LEN entries (NULL: none); an entry whose family byte is 0, or of
+            another family than its destination, lets the kernel choose; the port is ignored (the socket's). Acted on only with KSL_UDP_PKTINFO granted.
+            Slots with different sources never share a GSO run. A source not on this host (any more) loses that slot like a bad destination
+            (EADDRNOTAVAIL, EINVAL), never an error of the socket; Darwin checks the source only while the socket has no cached route and may
+            send it after that, so a caller names only sources ksl_udp_recv_dst reported. Additive in ABI 7 */
+int      ksl_udp_recv_dst(ksl_udp *, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *dsts, uint8_t *ecn, uint32_t n, uint32_t *received, int timeout_ms);
+         /* ksl_udp_recv that also fills dsts (n KSL_UDP_ADDR_LEN entries, NULL: not wanted) with the address each datagram was sent to, the port
+            this socket's (IPv4 through a dual-stack socket as family 4); all zero (family 0) when it is not known: KSL_UDP_PKTINFO not granted, or a
+            datagram without the control message; also for a multicast, limited-broadcast or IPv6 link-local destination, no address to answer from. GRO segments
+            share their train's. Additive in ABI 7 */
 int      ksl_udp_get(ksl_udp *, int what, uint8_t *out, size_t cap, size_t *len);
 #define KSL_UDP_PTB_QUOTE 64        /* bytes of the quoted datagram kept per Packet Too Big */
 int      ksl_udp_take_ptb(ksl_udp *, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t *mtu);

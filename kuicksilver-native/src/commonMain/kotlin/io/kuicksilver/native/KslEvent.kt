@@ -103,6 +103,9 @@ public object KslConst {
     public const val UDP_GRO: Int = 4
     public const val UDP_DF: Int = 8
     public const val UDP_REUSEPORT: Int = 16
+
+    /** `KSL_UDP_PKTINFO` (ABI 7): a wildcard socket reports each datagram's destination address and sends from a named source. */
+    public const val UDP_PKTINFO: Int = 32
     public const val UDP_ADDR_LEN: Int = 20
 
     // ksl_live_objects indices (KSL_LIVE_*)

@@ -5,11 +5,11 @@
 #include "ksl_udp_internal.h"
 
 #ifdef KSL_UDP_ACCEL
-static uint32_t hand_out(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n, uint32_t from) {
+static uint32_t hand_out(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *dsts, uint8_t *ecnv, uint32_t n, uint32_t from) {
     uint32_t filled = from;
     while (u->pend_len && filled < n) {
         uint32_t seg = u->pend_seg ? u->pend_seg : u->pend_len; if (seg > u->pend_len) seg = u->pend_len;
-        if (seg <= caps[filled]) { memcpy(bufs[filled], u->scratch + u->pend_off, seg); lens[filled] = seg; memcpy(addrs + filled * KSL_UDP_ADDR_LEN, u->pend_addr, KSL_UDP_ADDR_LEN); ecnv[filled] = u->pend_ecn; filled++; }
+        if (seg <= caps[filled]) { memcpy(bufs[filled], u->scratch + u->pend_off, seg); lens[filled] = seg; memcpy(addrs + filled * KSL_UDP_ADDR_LEN, u->pend_addr, KSL_UDP_ADDR_LEN); if (dsts) memcpy(dsts + filled * KSL_UDP_ADDR_LEN, u->pend_dst, KSL_UDP_ADDR_LEN); ecnv[filled] = u->pend_ecn; filled++; }
         u->pend_off += seg; u->pend_len -= seg;
     }
     return filled;
@@ -46,10 +46,27 @@ static int64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, 
 /* datagrams taken in a row without filling a slot (empty, link-local source, truncated, larger than the slot) between two looks
    at the clock */
 #define DROP_CHECK 64
+/* the address a datagram was sent to, from IP_PKTINFO (ipi_addr: the header's destination, as quinn-udp unix.rs decode_recv and quic-go
+   sys_conn_oob.go ReadPacket) or IPV6_PKTINFO (v4-mapped on a dual-stack socket: family 4); the port is the socket's. 0 when not one of them */
+static int pktinfo_dst(const ksl_udp *u, const struct cmsghdr *c, uint8_t dst[KSL_UDP_ADDR_LEN]) {
+    if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_PKTINFO && c->cmsg_len >= CMSG_LEN(sizeof(struct in_pktinfo))) {
+        struct in_pktinfo pi; memcpy(&pi, CMSG_DATA(c), sizeof pi); memset(dst, 0, KSL_UDP_ADDR_LEN); dst[0] = 4; memcpy(dst + 3, &pi.ipi_addr, 4);
+    } else if (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_PKTINFO && c->cmsg_len >= CMSG_LEN(sizeof(struct in6_pktinfo))) {
+        struct in6_pktinfo pi; memcpy(&pi, CMSG_DATA(c), sizeof pi); struct sockaddr_storage ss; memset(&ss, 0, sizeof ss);
+        ss.ss_family = AF_INET6; memcpy(&((struct sockaddr_in6 *)&ss)->sin6_addr, &pi.ipi6_addr, 16); from_sockaddr(&ss, dst);   /* unmaps */
+    } else return 0;
+    /* a multicast or limited-broadcast destination is no address to answer from (QUIC is unicast), a link-local one has no scope id in the
+       address format: unknown, the route picks the source */
+    if ((dst[0] == 4 && ((dst[3] & 0xf0) == 0xe0 || (dst[3] == 255 && dst[4] == 255 && dst[5] == 255 && dst[6] == 255))) || (dst[0] == 6 && (dst[3] == 0xff || (dst[3] == 0xfe && (dst[4] & 0xc0) == 0x80)))) { memset(dst, 0, KSL_UDP_ADDR_LEN); return 1; }
+    dst[1] = u->local[1]; dst[2] = u->local[2]; return 1;
+}
 int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
+    return ksl_udp_recv_dst(u, bufs, caps, lens, addrs, NULL, ecnv, n, received, timeout_ms);
+}
+int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *dsts, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
     if (!u || KSL_ALOAD(u->closed)) return KSL_ERROR; *received = 0; if (!n) return KSL_OK;
     __atomic_add_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
-    uint32_t filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, 0);
+    uint32_t filled = hand_out(u, bufs, caps, lens, addrs, dsts, ecnv, n, 0);
     int rc = KSL_OK; uint32_t dropped = 0;
     /* the timeout is one deadline for the whole call, as in ksl_udp_win.c: a datagram dropped below does not restart the wait, else
        a trickle of empty datagrams (any off-path sender, spoofed or not) keeps the call from ever answering KSL_WANT_READ */
@@ -65,8 +82,8 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
             if (filled || timeout_ms == 0 || now_ns() >= deadline) { if (!filled) rc = KSL_WANT_READ; break; }
             dropped = 0;
         }
-        struct sockaddr_storage ss; struct iovec iov = { u->scratch, GRO_MAX }; uint8_t cbuf[256];
-        struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sizeof ss; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
+        struct sockaddr_storage ss; struct iovec iov = { u->scratch, GRO_MAX }; union { struct cmsghdr align; uint8_t b[256]; } cb; uint8_t *cbuf = cb.b;   /* aligned for CMSG_DATA */
+        struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sizeof ss; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cb.b;
         ssize_t r = recvmsg(u->fd, &m, MSG_DONTWAIT); KSL_COUNT(u->recvs);
         if (r < 0 && errno == EINTR) continue;
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -88,8 +105,9 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
         if (r < 0 && icmp_errno(errno)) { drain_errqueue(u); dropped++; continue; }
         if (r < 0) { set_err(u, errno, "recvmsg"); rc = filled ? KSL_OK : KSL_ERROR; break; }
         if (m.msg_flags & MSG_TRUNC) { dropped++; continue; }   /* bigger than the scratch: dropped whole */
-        uint32_t gso = 0; uint8_t mark = 0;
+        uint32_t gso = 0; uint8_t mark = 0; uint8_t dst[KSL_UDP_ADDR_LEN] = { 0 };
         for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
+            if (u->pktinfo && pktinfo_dst(u, c, dst)) continue;
 #ifdef __linux__
             if (c->cmsg_level == SOL_UDP && c->cmsg_type == UDP_GRO) { int g; memcpy(&g, CMSG_DATA(c), sizeof g); if (g > 0) gso = (uint32_t)g; }
             else
@@ -97,10 +115,10 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
             /* Darwin labels the received TOS cmsg IP_RECVTOS (one byte), Linux IP_TOS; as in msquic datapath_kqueue.c and quic-go sys_conn_helper_darwin.go */
             if ((c->cmsg_level == IPPROTO_IP && (c->cmsg_type == IP_TOS || c->cmsg_type == IP_RECVTOS)) || (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_TCLASS)) { int tos = 0; if (c->cmsg_len >= CMSG_LEN(sizeof(int))) memcpy(&tos, CMSG_DATA(c), sizeof tos); else tos = *(uint8_t *)CMSG_DATA(c); mark = (uint8_t)(tos & 3); }
         }
-        u->pend_off = 0; u->pend_len = (uint32_t)r; u->pend_seg = gso; from_sockaddr(&ss, u->pend_addr); u->pend_ecn = mark;
+        u->pend_off = 0; u->pend_len = (uint32_t)r; u->pend_seg = gso; from_sockaddr(&ss, u->pend_addr); memcpy(u->pend_dst, dst, KSL_UDP_ADDR_LEN); u->pend_ecn = mark;
         if (r == 0) { u->pend_len = 0; dropped++; continue; }   /* an empty datagram carries nothing for QUIC */
         if (ss.ss_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(&((struct sockaddr_in6 *)&ss)->sin6_addr)) { u->pend_len = 0; dropped++; continue; }   /* the address format has no scope id: no reply could reach a link-local peer */
-        uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, filled);
+        uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, dsts, ecnv, n, filled);
         if (filled > before) dropped = 0; else dropped++;   /* a datagram whose every segment was larger than its slot: one drop */
     }
     *received = filled;
@@ -110,4 +128,5 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
 
 #elif !defined(_WIN32) /* neither Linux, Apple nor Windows (ksl_udp_win.c): the portable DatagramIo does the work */
 int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecn, uint32_t n, uint32_t *received, int timeout_ms) { (void)u; (void)bufs; (void)caps; (void)lens; (void)addrs; (void)ecn; (void)n; (void)timeout_ms; if (received) *received = 0; return KSL_ERROR; }
+int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *dsts, uint8_t *ecn, uint32_t n, uint32_t *received, int timeout_ms) { (void)dsts; return ksl_udp_recv(u, bufs, caps, lens, addrs, ecn, n, received, timeout_ms); }
 #endif

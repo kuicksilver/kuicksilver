@@ -16,13 +16,16 @@
 #include <sys/socket.h>
 #endif
 #if defined(__linux__) || defined(__APPLE__)
+#include <ifaddrs.h>       /* a second local address for the IP_PKTINFO cases */
+#include <net/if.h>
+#endif
+#if defined(__linux__) || defined(__APPLE__)
 #include <sys/resource.h> /* RLIMIT_NOFILE for udp_open_without_wake_pipe */
 #endif
 #ifdef __linux__
 #include <sched.h>        /* unshare: a user and network namespace for the ICMP injection test */
 #include <sys/wait.h>
 #include <sys/ioctl.h>
-#include <net/if.h>
 #include <netinet/ip_icmp.h>
 #endif
 
@@ -151,6 +154,107 @@ struct err_args { ksl_udp *u; int e; const char *what; };
 static void *err_writer(void *arg) { struct err_args *ea = arg; for (int i = 0; i < 100000; i++) ksl_udp_set_err_for_test(ea->u, ea->e, ea->what); return NULL; }
 #endif
 
+#if defined(__linux__) || defined(__APPLE__)
+/* A second IPv4 address of this host besides 127.0.0.1, written into a[3..6]: 127.0.0.2 where the whole 127/8 is local (Linux), else the first
+   up, non-loopback interface address a socket can bind (Darwin has 127.0.0.1 alone on lo0 without an alias); 0 when there is none */
+static int second_v4(uint8_t a[KSL_UDP_ADDR_LEN]) {
+    v4(a, 0); a[6] = 2; uint32_t err = 0; char msg[64];
+    ksl_udp *t = ksl_udp_open(a, 0, &err, msg, sizeof msg); if (t) { ksl_udp_close(t); return 1; }
+    struct ifaddrs *ifs = NULL, *i; int found = 0; if (getifaddrs(&ifs) != 0) return 0;
+    for (i = ifs; i && !found; i = i->ifa_next) {
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || !(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK)) continue;
+        memcpy(a + 3, &((struct sockaddr_in *)i->ifa_addr)->sin_addr, 4); t = ksl_udp_open(a, 0, &err, msg, sizeof msg); if (t) { ksl_udp_close(t); found = 1; }
+    }
+    freeifaddrs(ifs); return found;
+}
+static int same_ip(const uint8_t *x, const uint8_t *y) { return x[0] == y[0] && !memcmp(x + 3, y + 3, x[0] == 4 ? 4 : 16); }
+/* one datagram from c to `to`, received on the wildcard socket w: its source and the destination w saw (dst); 1 when it arrived */
+static int recv_dst(ksl_udp *c, ksl_udp *w, const uint8_t to[KSL_UDP_ADDR_LEN], uint8_t from[KSL_UDP_ADDR_LEN], uint8_t dst[KSL_UDP_ADDR_LEN]) {
+    if (send1(c, to, 64) != 1) return 0;
+    uint8_t buf[128]; uint8_t *rb[1] = { buf }; uint32_t rc[1] = { 128 }, rl[1] = { 0 }, got = 0; uint8_t re[1];
+    memset(dst, 0xee, KSL_UDP_ADDR_LEN);
+    for (int tries = 0; tries < 25 && !got; tries++) ksl_udp_recv_dst(w, rb, rc, rl, from, dst, re, 1, &got, 200);
+    return got == 1 && rl[0] == 64;
+}
+/* n datagrams of len bytes from w to `to` with sources srcs[i] (NULL: none), received on c: the sources c saw, in arrival order */
+static uint32_t reply_from(ksl_udp *w, ksl_udp *c, const uint8_t to[KSL_UDP_ADDR_LEN], const uint8_t *srcs, uint32_t n, uint32_t len, uint8_t *seen) {
+    uint8_t *bufs[8]; uint32_t lens[8]; uint8_t addrs[8 * KSL_UDP_ADDR_LEN], ecn[8]; uint32_t sent = 0;
+    for (uint32_t i = 0; i < n; i++) { bufs[i] = malloc(len); memset(bufs[i], (int)i, len); lens[i] = len; memcpy(addrs + i * KSL_UDP_ADDR_LEN, to, KSL_UDP_ADDR_LEN); ecn[i] = 0; }
+    int r = ksl_udp_send_src(w, bufs, lens, addrs, srcs, ecn, n, &sent);
+    for (uint32_t i = 0; i < n; i++) free(bufs[i]);
+    if (r != KSL_OK || sent != n) return 0;
+    uint8_t *rb[8]; uint32_t rc[8], rl[8], total = 0, got; uint8_t re[8]; for (uint32_t i = 0; i < 8; i++) { rb[i] = malloc(1500); rc[i] = 1500; }
+    for (int tries = 0; tries < 25 && total < n; tries++) { got = 0; ksl_udp_recv(c, rb + total, rc + total, rl + total, seen + total * KSL_UDP_ADDR_LEN, re + total, n - total, &got, 200); total += got; }
+    for (uint32_t i = 0; i < 8; i++) free(rb[i]);
+    return total;
+}
+/* udp_pktinfo_*: a server bound to the wildcard learns the address each datagram was sent to and replies from it (RFC 9000 section 9: a
+   path is a 4-tuple). Without it a reply to a client that reached the host's second address leaves from the address the route picks, and
+   the client, NAT or load balancer (keepalived VIP, IPVS-DR) drops it as a stranger's */
+static void udp_pktinfo_cases(void) {
+    uint8_t any4[KSL_UDP_ADDR_LEN]; v4(any4, 0); memset(any4 + 3, 0, 4); uint32_t err = 0; char msg[128] = {0};
+    ksl_udp *w = ksl_udp_open(any4, KSL_UDP_PKTINFO | KSL_UDP_GSO, &err, msg, sizeof msg); CHECK(w != NULL, "0.0.0.0:0 with PKTINFO opens");
+    if (!w) return;
+    CHECK(caps_of(w, NULL) & KSL_UDP_PKTINFO, "udp_pktinfo_granted_on_wildcard");
+    uint8_t lw[KSL_UDP_ADDR_LEN]; size_t n = 0; ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n);
+    { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *spec = open_lo(KSL_UDP_PKTINFO, lc); CHECK(spec && !(caps_of(spec, NULL) & KSL_UDP_PKTINFO), "udp_pktinfo_not_granted_on_a_specific_address"); if (spec) ksl_udp_close(spec); }
+    uint8_t lc[KSL_UDP_ADDR_LEN], from[KSL_UDP_ADDR_LEN], dst[KSL_UDP_ADDR_LEN], seen[8 * KSL_UDP_ADDR_LEN]; ksl_udp *c = open_lo(0, lc); CHECK(c != NULL, "client on 127.0.0.1");
+    uint8_t to1[KSL_UDP_ADDR_LEN]; v4(to1, port_of(lw));
+    if (c) {
+        /* udp_pktinfo_dst_v4: a datagram to 127.0.0.1 reports 127.0.0.1 and the socket's port */
+        CHECK(recv_dst(c, w, to1, from, dst) && dst[0] == 4 && same_ip(dst, to1) && port_of(dst) == port_of(lw), "udp_pktinfo_dst_v4: 127.0.0.1 reported");
+        CHECK(same_ip(from, lc) && port_of(from) == port_of(lc), "the source as before");
+        uint8_t second[KSL_UDP_ADDR_LEN];
+        if (!second_v4(second)) printf("udp_pktinfo_second_address: SKIP (no second IPv4 address: 127.0.0.2 not bindable, no up interface address)\n");
+        else {
+            uint8_t to2[KSL_UDP_ADDR_LEN]; memcpy(to2, second, KSL_UDP_ADDR_LEN); to2[1] = lw[1]; to2[2] = lw[2];
+            /* udp_pktinfo_reply_from_second_address: the client sends to the host's second address; the reply sent from the reported
+               destination arrives from that address, not from 127.0.0.1 (the route's choice back to the client) */
+            CHECK(recv_dst(c, w, to2, from, dst) && same_ip(dst, second) && port_of(dst) == port_of(lw), "udp_pktinfo_dst_second: the second address reported");
+            CHECK(reply_from(w, c, from, dst, 1, 100, seen) == 1 && same_ip(seen, second) && port_of(seen) == port_of(lw), "udp_pktinfo_reply_from_second_address");
+            /* udp_pktinfo_gso_runs_split_by_source: four equal datagrams from the second address, then four from 127.0.0.1 in one call:
+               a GSO run never mixes sources, each arrives from its own */
+            uint8_t srcs[8 * KSL_UDP_ADDR_LEN]; for (int i = 0; i < 8; i++) memcpy(srcs + i * KSL_UDP_ADDR_LEN, i < 4 ? dst : to1, KSL_UDP_ADDR_LEN);
+            uint32_t got = reply_from(w, c, from, srcs, 8, 1200, seen); int ok = got == 8, n2 = 0, n1 = 0;
+            for (uint32_t i = 0; i < got; i++) { if (same_ip(seen + i * KSL_UDP_ADDR_LEN, second)) n2++; else if (same_ip(seen + i * KSL_UDP_ADDR_LEN, to1)) n1++; }
+            CHECK(ok && n2 == 4 && n1 == 4, "udp_pktinfo_gso_runs_split_by_source: 4 from each source");
+            /* without a source the route decides: what the client saw before this fix */
+            uint8_t none[KSL_UDP_ADDR_LEN] = { 0 };
+            CHECK(reply_from(w, c, from, none, 1, 100, seen) == 1 && same_ip(seen, to1), "udp_pktinfo_no_source_route_decides (127.0.0.1)");
+        }
+        /* negative_udp_pktinfo_foreign_source: a source this host does not own (TEST-NET-1) loses that slot only; the socket stays usable */
+        { uint8_t foreign[2 * KSL_UDP_ADDR_LEN] = { 0 }; foreign[0] = 4; foreign[3] = 192; foreign[4] = 0; foreign[5] = 2; foreign[6] = 1; memcpy(foreign + KSL_UDP_ADDR_LEN, to1, KSL_UDP_ADDR_LEN);
+          uint8_t *bb[2]; uint8_t b0[100], b1[100]; memset(b0, 1, 100); memset(b1, 2, 100); bb[0] = b0; bb[1] = b1; uint32_t bl[2] = { 100, 100 }, sent = 0; uint8_t ad[2 * KSL_UDP_ADDR_LEN], be[2] = { 0, 0 };
+          memcpy(ad, from, KSL_UDP_ADDR_LEN); memcpy(ad + KSL_UDP_ADDR_LEN, from, KSL_UDP_ADDR_LEN);
+          CHECK(ksl_udp_send_src(w, bb, bl, ad, foreign, be, 2, &sent) == KSL_OK && sent == 2, "negative_udp_pktinfo_foreign_source: both slots accounted, no socket error");
+          uint8_t rbuf[128]; uint8_t *rb[1] = { rbuf }; uint32_t rc[1] = { 128 }, rl[1] = { 0 }, got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+          for (int tries = 0; tries < 10 && !got; tries++) ksl_udp_recv(c, rb, rc, rl, ra, re, 1, &got, 100);
+          uint8_t first = got ? rbuf[0] : 0;
+#ifdef __APPLE__   /* XNU validates an IP_PKTINFO source only while the socket has no cached route: after a plain send it lets it out */
+          if (first == 1) { got = 0; for (int tries = 0; tries < 10 && !got; tries++) ksl_udp_recv(c, rb, rc, rl, ra, re, 1, &got, 100); first = got ? rbuf[0] : 0; }
+          CHECK(first == 2, "the datagram with a source of this host arrived");
+#else
+          CHECK(got == 1 && first == 2, "only the datagram with a source of this host arrived");
+          got = 0; ksl_udp_recv(c, rb, rc, rl, ra, re, 1, &got, 100); CHECK(got == 0, "the foreign-source datagram never left");
+#endif
+        }
+        ksl_udp_close(c);
+    }
+    /* udp_pktinfo_dst_v6: ::1 to the dual-stack socket reports ::1; the reply from it arrives from ::1 (skipped without IPv6 loopback) */
+    { uint8_t l6[KSL_UDP_ADDR_LEN] = { 6 }; l6[18] = 1; ksl_udp *c6 = ksl_udp_open(l6, 0, &err, msg, sizeof msg);
+      if (!c6) printf("udp_pktinfo_dst_v6: SKIP (no IPv6 loopback: %s)\n", msg);
+      else { uint8_t to6[KSL_UDP_ADDR_LEN] = { 6 }; to6[18] = 1; to6[1] = lw[1]; to6[2] = lw[2];
+        CHECK(recv_dst(c6, w, to6, from, dst) && dst[0] == 6 && same_ip(dst, to6) && port_of(dst) == port_of(lw), "udp_pktinfo_dst_v6: ::1 reported");
+        CHECK(reply_from(w, c6, from, dst, 1, 100, seen) == 1 && seen[0] == 6 && same_ip(seen, to6), "udp_pktinfo_reply_v6: from ::1");
+        ksl_udp_close(c6); } }
+    ksl_udp_close(w);
+    /* udp_pktinfo_not_requested: without the flag the destinations come back zero (unknown), the sources are ignored */
+    { ksl_udp *w2 = ksl_udp_open(any4, 0, &err, msg, sizeof msg); uint8_t l2[KSL_UDP_ADDR_LEN], lc2[KSL_UDP_ADDR_LEN]; ksl_udp *c2 = open_lo(0, lc2);
+      if (w2 && c2) { ksl_udp_get(w2, KSL_UDP_GET_LOCAL, l2, KSL_UDP_ADDR_LEN, &n); uint8_t t[KSL_UDP_ADDR_LEN]; v4(t, port_of(l2)); static const uint8_t zero[KSL_UDP_ADDR_LEN];
+        CHECK(!(caps_of(w2, NULL) & KSL_UDP_PKTINFO) && recv_dst(c2, w2, t, from, dst) && !memcmp(dst, zero, KSL_UDP_ADDR_LEN), "udp_pktinfo_not_requested: destination unknown (all zero)"); }
+      if (w2) ksl_udp_close(w2); if (c2) ksl_udp_close(c2); }
+}
+#endif
 void run_udp(void) {
     SECTION("udp");
 #if defined(__linux__) || defined(__APPLE__)
@@ -524,6 +628,7 @@ void run_udp(void) {
           else { CHECK(code == 0, "udp_recverr_local_emsgsize_queued + udp_recverr_ptb_parsed (child exit = failed step)"); if (code == 0) printf("udp_recverr_ptb_parsed: OK\n"); }
           if (code != 0 && code != 77) printf("    ptb child failed at step %d\n", code); }
 #endif
+        udp_pktinfo_cases();
         ksl_udp_close(a); ksl_udp_close(b);
     }
 #elif defined(_WIN32)

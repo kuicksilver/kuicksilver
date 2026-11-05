@@ -313,22 +313,24 @@ internal object KslNative {
         msg: Array<String?>,
     ): Long
 
-    /** sent, or -1 */
+    /** sent, or -1; srcs null or n * UDP_ADDR_LEN bytes (ksl_udp_send_src) */
     @JvmStatic external fun udpSend(
         udp: Long,
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
+        srcs: ByteArray?,
         ecn: ByteArray,
         n: Int,
     ): Int
 
-    /** received, -2 on timeout, -1 on error */
+    /** received, -2 on timeout, -1 on error; dsts null or n * UDP_ADDR_LEN bytes (ksl_udp_recv_dst) */
     @JvmStatic external fun udpRecv(
         udp: Long,
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
+        dsts: ByteArray?,
         ecn: ByteArray,
         n: Int,
         timeoutMs: Int,
