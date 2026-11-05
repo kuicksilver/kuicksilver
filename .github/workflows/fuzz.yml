@@ -18,9 +18,9 @@
 # table of all targets. ClusterFuzzLite (.github/workflows/cflite_pr.yml, disabled) stays as it is.
 name: fuzz
 on:
-  # a weekly schedule comes back with the other triggers (build.yml); it would go here, e.g.
-  # schedule:
-  #   - cron: '0 2 * * 6'
+  # weekly, every target for the default hours (inputs are empty on a schedule: the defaults below apply)
+  schedule:
+    - cron: '0 2 * * 6'
   workflow_dispatch:
     inputs:
       hours_per_target:
@@ -53,8 +53,8 @@ jobs:
       - name: 'fuzz: targets and hours'
         id: targets
         env:
-          TARGETS: ${{ inputs.targets }}
-          HOURS: ${{ inputs.hours_per_target }}
+          TARGETS: ${{ inputs.targets || 'all' }}
+          HOURS: ${{ inputs.hours_per_target || '2' }}
         run: |
           # the fuzz job's 350 minutes (6 h is GitHub's maximum): at most 270 of slices, 20 for the prune step, and 60 for the
           # set-up, the build, the cache save and the uploads
