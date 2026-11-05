@@ -24,6 +24,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Ktor, QUIC and troubleshooting guides.
 - TLS: experimental `VerifyReason.WeakKey` and `VerifyReason.WeakSignature` (alert `bad_certificate`) name a peer chain
   refused for a key or a certificate signature below 112 security bits (see "Changed").
+- Ktor server: HTTP/2 over TLS (RFC 9113; `docs/guide/ktor.md`, "HTTP/2 on the server"), opt-in and experimental:
+  `http2 = true` (`EngineMain` key `kuicksilver.http2`; off by default) makes every TLS connector offer `h2` before
+  `http/1.1` in ALPN, and `http2Settings` takes the windows and limits. Each stream is a Ktor call (`httpVersion`
+  "HTTP/2"); requests are checked against RFC 9113 section 8 (a malformed one is reset with PROTOCOL_ERROR before any
+  handler runs, a field section above the limit gets 431), responses go out without connection-specific fields and with
+  the engine's `Alt-Svc`, content within the client's flow-control windows. The client's preface and field blocks are
+  bounded by `requestHeaderTimeoutSeconds`, request content and idle connections by `connectionIdleTimeoutSeconds`; a
+  client's RST_STREAM cancels its handler, and a stop sends the two-step GOAWAY (RFC 9113 section 6.8). TLS 1.3 only, no
+  h2c, no RFC 8441 (`:protocol` is refused), no server push. The event listener reports `HTTP_2_0`, and the soak probe
+  counts `server.h2Connections` and `server.h2Streams`. The engine-level flood defences of the 0.3.0 plan (a backoff for
+  repeat offenders) and the h2spec run are still to come: until then, keep it off on a public server.
 - Ktor client: HTTP/2 over TLS (RFC 9113; `docs/guide/ktor.md`, "HTTP/2 on the client"). Every `https://` connection
   over TCP offers `h2` and `http/1.1` in ALPN (also through HTTP CONNECT and SOCKS5 proxies; never for `http://`, no h2c,
   and never for WebSockets, RFC 8441 is not supported yet); a server that picks `h2` gets one multiplexed connection per

@@ -17,7 +17,7 @@ import kotlin.time.Duration.Companion.seconds
  * `ktor.security.ssl.*` with `-sslPort`). Keys of its own, on every platform:
  * `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files: the deployment port then serves TLS
  * and HTTP/3), `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate, e.g. `1h`;
- * off by default), `kuicksilver.http3`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount`.
+ * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount`.
  */
 public object EngineMain {
     /** Starts the server from command-line arguments and the configuration file, and blocks until it stops. */
@@ -78,6 +78,14 @@ public object EngineMain {
             ?.getString()
             ?.toBooleanStrict()
             ?.let { http3 = it }
+        config
+            .propertyOrNull("kuicksilver.http2")
+            ?.getString()
+            ?.toBooleanStrict()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                http2 = it
+            }
         config
             .propertyOrNull("kuicksilver.altSvc")
             ?.getString()

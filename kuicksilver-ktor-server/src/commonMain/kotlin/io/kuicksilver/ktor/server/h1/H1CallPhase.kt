@@ -21,15 +21,16 @@ import kotlinx.coroutines.ensureActive
 private val H1CallPhase = PipelinePhase("KuicksilverH1Call")
 
 /**
- * Runs the application for an HTTP/1.1 call in place of Ktor's default engine phase (`defaultEnginePipeline`), which it
- * follows with two differences; HTTP/3 calls go on to Ktor's.
+ * Runs the application for an HTTP/1.1 or HTTP/2 call in place of Ktor's default engine phase (`defaultEnginePipeline`),
+ * which it follows with two differences; HTTP/3 calls go on to Ktor's.
  *
  * - A request whose body stopped arriving ([RequestBodyTimeout] in the failure's causes) is answered `408 Request
  *   Timeout` with a fixed body and `Connection: close`, when nothing has answered it yet: the application, StatusPages
  *   included, runs first and its own answer stays. Ktor's handling maps no exception to 408 and would send a 500 with
  *   the exception's message; doing it per call also leaves any other request's 500 alone.
  * - The request body is not read to its end after the application (Ktor discards whatever is left, of any size): the
- *   connection's pipeline settles a body the handler left unread (it drains up to a cap or ends the connection).
+ *   connection's pipeline settles a body the handler left unread (it drains up to a cap or ends the connection); on
+ *   HTTP/2 the released stream is reset (CANCEL), or stopped with NO_ERROR after a complete response.
  *
  * As in Ktor's phase, a failure that is the connection's own (a `ChannelIOException`: the client went away) is only
  * logged (`logError`), and every other one goes to `handleFailure` with the routing call when there is one (logging, then
@@ -39,7 +40,7 @@ private val H1CallPhase = PipelinePhase("KuicksilverH1Call")
 internal fun EnginePipeline.installH1CallHandling() {
     insertPhaseBefore(EnginePipeline.Call, H1CallPhase)
     intercept(H1CallPhase) {
-        val call = context as? H1Call ?: return@intercept
+        val call = context as? H1Call ?: context as? io.kuicksilver.ktor.server.h2.H2Call ?: return@intercept
         try {
             call.application.execute(call)
         } catch (error: Throwable) {

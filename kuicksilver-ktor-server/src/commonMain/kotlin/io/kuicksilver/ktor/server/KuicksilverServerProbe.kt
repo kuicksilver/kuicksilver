@@ -6,7 +6,8 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlinx.coroutines.Job
 
 /**
- * The server engine's live work for the soak harness (`kuicksilver-soak`): HTTP/3 connections its listeners track, and the
+ * The server engine's live work for the soak harness (`kuicksilver-soak`): HTTP/3 and HTTP/2 connections it tracks (with
+ * the HTTP/2 requests not yet released), and the
  * coroutines still running under its HTTP/3 and TCP connection supervisors (handlers, requests and what they launched). A
  * handler that never ends shows up here before it shows up in the heap. The endpoints' own tables are in `QuicResourceProbe`.
  */
@@ -21,7 +22,14 @@ public object KuicksilverServerProbe {
             h3Jobs += activeJobs(l.connections)
         }
         val tcpJobs = engine.tcpConnectionsForProbe.toList().sumOf { activeJobs(it) }
-        return linkedMapOf("server.h3Connections" to h3, "server.h3Jobs" to h3Jobs, "server.tcpJobs" to tcpJobs)
+        val h2 = engine.h2Live.live()
+        return linkedMapOf(
+            "server.h3Connections" to h3,
+            "server.h3Jobs" to h3Jobs,
+            "server.tcpJobs" to tcpJobs,
+            "server.h2Connections" to h2.size.toLong(),
+            "server.h2Streams" to h2.sumOf { it.openRequests.value.toLong() },
+        )
     }
 
     /** Active jobs below [root], [root] itself excluded. */

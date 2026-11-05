@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
-(`kuicksilver-http3`); the client also speaks HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), the server does not yet. The code blocks below compile and run as `GuideSamplesTest`
+(`kuicksilver-http3`); both also speak HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), opt-in on the server ([HTTP/2 on the server](#http2-on-the-server)). The code blocks below compile and run as `GuideSamplesTest`
 (`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`); the engines' other tests run on every
 target (see "Compatibility"). Every engine option with its default is in the [configuration
 reference](configuration.md); common failures are in [troubleshooting](troubleshooting.md).
@@ -103,6 +103,40 @@ identity per SNI name (not supported for QUIC yet), so that connector skips HTTP
 
 Running it in production (UDP in firewalls, Docker and Kubernetes, load balancers, kernel buffers, checking that clients
 arrive over HTTP/3): [Deploying the HTTP/3 server](deployment.md).
+
+### HTTP/2 on the server
+
+`http2 = true` (experimental; off by default in 0.3.0; `EngineMain` key `kuicksilver.http2`) makes every TLS connector
+offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (RFC 9113) and one that offers only
+`http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors never serve HTTP/2: there
+is no h2c, and a client's `PRI * HTTP/2.0` preface is refused with `505 HTTP Version Not Supported`. HTTP/2 runs over
+TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
+
+Each stream is a Ktor call: `call.request.httpVersion` is `"HTTP/2"`, `call.request.local.scheme` is the request's
+`:scheme`, `:authority` appears as the `Host` header and split `cookie` fields as one (RFC 9113 section 8.2.3). Responses
+go out without connection-specific headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade` are dropped), a
+response to HEAD, a 204 or a 304 without content, and every response carries the engine's `Alt-Svc` as on HTTP/1.1, so
+a client on HTTP/2 learns HTTP/3 too. Requests are checked against RFC 9113 section 8 before the application sees them:
+a malformed one (an uppercase or invalid field name, a connection-specific field, `te` other than `trailers`, a missing,
+repeated or unknown pseudo-header field, `host` that differs from `:authority`, content that does not match
+`content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
+answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441) are not offered:
+the engine never sends SETTINGS_ENABLE_CONNECT_PROTOCOL, so a request with `:protocol` is malformed. A request with
+`Expect: 100-continue` gets an interim 100 when the handler first reads the body.
+
+`http2Settings` (`Http2Settings`) holds the windows, SETTINGS_MAX_CONCURRENT_STREAMS (100) and the field-section and
+flood limits of the core ([configuration reference](configuration.md#ktor-server-engine)). The engine's deadlines apply:
+the client's connection preface must arrive within `requestHeaderTimeoutSeconds` of the accepted connection (TLS
+included), else GOAWAY and close; each field block must arrive within it too (else GOAWAY with ENHANCE_YOUR_CALM); a
+request body that sends no byte for `connectionIdleTimeoutSeconds` fails the handler's read and is answered 408 when
+nothing else answered; a connection without requests for `connectionIdleTimeoutSeconds` gets GOAWAY and closes; a
+response that gets no window from the client for the longer of that and 5 minutes resets its stream. Request content is
+credited to the client only as the handler reads it. A client's RST_STREAM cancels the handler of that request; a
+request still arriving when its handler is done with a complete response is stopped with RST_STREAM NO_ERROR (RFC 9113
+section 8.1). `eventListener` reports these connections and calls with `HTTP_2_0`.
+
+Not in this release yet: the engine-level flood defences of the 0.3.0 plan beyond the core's limits (a backoff for
+addresses that keep getting ENHANCE_YOUR_CALM) and the h2spec run of the release gate (threat model, section 3.23).
 
 ### Turning HTTP/3 off on the server
 
@@ -285,6 +319,7 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | `kuicksilver.tls.certificateChain`, `kuicksilver.tls.privateKey` | PEM files; the deployment port then serves TLS and HTTP/3 |
 | `kuicksilver.tls.reloadInterval` | how often those PEM files are checked for a renewed certificate (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
+| `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.altSvc` | send `Alt-Svc` on HTTP/1.1 responses (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
@@ -814,8 +849,8 @@ is the one described in [QUIC: Observability](quic.md#observability): counters, 
 **Server.** In the engine configuration, `logger` receives the HTTP/3 endpoints' diagnostics (warnings on standard error by
 default; the engine's own messages keep going to the application's log), `connectionListener` hears every QUIC
 connection, `qlog` adds a trace per HTTP/3 connection to `quic`, and `eventListener` takes a
-`KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` after the TLS
-handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, and `requestStarted` / `requestEnded`
+`KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`
+after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, and `requestStarted` / `requestEnded`
 around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
 
 ```kotlin
@@ -936,7 +971,10 @@ once (RFC 9114 section 5.2) and shuts each HTTP/3 endpoint down with the same gr
 CONNECTION_REFUSED instead of waiting for a handshake timeout, a handshake already in flight still completes and its
 connection gets GOAWAY at once, and the calls in flight finish. An HTTP/1.1 connection reads no further request: one
 idle between requests (keep-alive) closes at once, one with a request in flight (or whose request head has started to
-arrive) closes after that response, which says `Connection: close`. The stop returns as soon as they have: each HTTP/3
+arrive) closes after that response, which says `Connection: close`. An HTTP/2 connection gets GOAWAY in two steps (RFC 9113
+section 6.8: first with the largest stream identifier and a PING, then with the last stream it took, once the PING comes
+back) and closes when those requests are done; streams the client opens after that are not processed. The stop returns
+as soon as they have: each HTTP/3
 connection closes with H3_NO_ERROR once its last response is acknowledged and read — the client closes it (a
 Kuicksilver client does), or the server three seconds later. At the end of the grace period the calls still
 running are cancelled and the connections left are closed with H3_NO_ERROR; the stop then waits for those calls to end,

@@ -148,7 +148,7 @@ with ALPN set. Datagrams, stream priorities, connection migration and the sans-I
 | `kuicksilver-http3` | HTTP/3 and QPACK over `kuicksilver-quic` | [http3.md](docs/guide/http3.md) |
 | `kuicksilver-http2` | HTTP/2 and HPACK: a sans-IO core over any byte stream and its coroutine runtime (experimental, for the engines) | [architecture](docs/architecture.md) |
 | `kuicksilver-ktor-client` | `HttpClient(Kuicksilver)`: HTTP/3, and HTTP/2 or HTTP/1.1 over TLS, Alt-Svc discovery, racing, fallback | [ktor.md](docs/guide/ktor.md) |
-| `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](docs/guide/ktor.md) |
+| `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 (and opt-in HTTP/2) over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](docs/guide/ktor.md) |
 
 Each module depends only on the layer directly below it (ADR-0005). `kuicksilver-testing` (network simulator and
 in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repository but are not published.
@@ -165,7 +165,7 @@ in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repos
 
 TLS over TCP (`TlsConnection`, `Socket.tls()`) works on every target above. JS and Wasm are not targets.
 
-Not in 0.2.x: HTTP/2 (ADR-0009, by decision; the 0.3.0 client speaks it, ADR-0017), HTTP/3 server push, WebTransport (planned for 0.3.0, experimental), multipath
+Not in 0.2.x: HTTP/2 (ADR-0009, by decision; in 0.3.0 the client speaks it and the server serves it opt-in, ADR-0017), HTTP/3 server push, WebTransport (planned for 0.3.0, experimental), multipath
 (later, see the [roadmap](docs/roadmap.md)), OpenSSL 4.x. 0-RTT
 is available as an opt-in, experimental API and is off by default (ADR-0015).
 

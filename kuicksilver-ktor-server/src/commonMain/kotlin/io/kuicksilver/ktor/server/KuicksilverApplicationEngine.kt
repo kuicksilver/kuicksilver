@@ -47,8 +47,8 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The Kuicksilver server engine (docs/guide/ktor.md): HTTP/1.1 over TLS on TCP through the CIO connection pipeline of Ktor, and
- * HTTP/3 on UDP on the same port. Start it with `embeddedServer(Kuicksilver, ...)`.
+ * The Kuicksilver server engine (docs/guide/ktor.md): HTTP/1.1 over TLS on TCP through the CIO connection pipeline of Ktor
+ * (HTTP/2 there too when `http2` is set), and HTTP/3 on UDP on the same port. Start it with `embeddedServer(Kuicksilver, ...)`.
  */
 public class KuicksilverApplicationEngine(
     environment: ApplicationEnvironment,
@@ -130,6 +130,24 @@ public class KuicksilverApplicationEngine(
 
         /** Serve HTTP/3 on UDP on the port of every TLS connector. */
         public var http3: Boolean = true
+
+        /**
+         * Serve HTTP/2 (RFC 9113) on TLS connectors: ALPN offers `h2` before `http/1.1`, so a client that offers both gets
+         * HTTP/2 (docs/guide/ktor.md, "HTTP/2 on the server"). Off by default in 0.3.0, so the ALPN of a TLS connector stays
+         * `http/1.1` unless this is set. Plain connectors never serve HTTP/2 (no h2c: a client's `PRI *` preface is
+         * answered 400, as before). Over TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
+         * WebSockets over HTTP/2 (RFC 8441) are not offered: a WebSocket client uses HTTP/1.1 on the same port.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var http2: Boolean = false
+
+        /**
+         * The HTTP/2 SETTINGS, windows and flood limits of every HTTP/2 connection (`Http2Settings()` until assigned). The
+         * engine bounds `maxHeaderBlockTime` by [requestHeaderTimeoutSeconds]: a field block slower than the smaller of
+         * the two ends the connection.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var http2Settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings()
 
         /**
          * QUIC transport settings of the HTTP/3 listener; [QuicConfig.Default] until assigned. With [http3] on,
@@ -519,6 +537,10 @@ public class KuicksilverApplicationEngine(
     /** Test hook: runs as an HTTP/3 WebSocket upgrade starts, after Ktor committed the response, before the answer is sent. */
     internal var beforeH3UpgradeForTest: (() -> Unit)? = null
     internal val tcpConnectionsForProbe = ArrayList<Job>()
+
+    /** Live HTTP/2 connections, for [KuicksilverServerProbe] and tests. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal val h2Live = H2LiveSet()
 
     /** Accepted TCP sockets whose descriptor is not released yet (their job completes when it is); for tests. */
     internal val openTcpSockets = kotlinx.coroutines.flow.MutableStateFlow(0)

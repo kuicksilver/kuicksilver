@@ -42,6 +42,8 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getConnectionIdleTimeoutSeconds ()I
 	public final fun getConnectionListener ()Lio/kuicksilver/quic/ConnectionListener;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/server/KuicksilverServerEventListener;
+	public final fun getHttp2 ()Z
+	public final fun getHttp2Settings ()Lio/kuicksilver/http2/Http2Settings;
 	public final fun getHttp3 ()Z
 	public final fun getHttp3Settings ()Lio/kuicksilver/http3/Http3Settings;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
@@ -60,6 +62,8 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun setConnectionIdleTimeoutSeconds (I)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/server/KuicksilverServerEventListener;)V
+	public final fun setHttp2 (Z)V
+	public final fun setHttp2Settings (Lio/kuicksilver/http2/Http2Settings;)V
 	public final fun setHttp3 (Z)V
 	public final fun setHttp3Settings (Lio/kuicksilver/http3/Http3Settings;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V

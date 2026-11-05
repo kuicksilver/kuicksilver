@@ -286,12 +286,14 @@ Guide: [Ktor: Client](ktor.md#client).
 
 | Option | Type | Default | What it does |
 |---|---|---|---|
-| `tlsConnector(identity) { … }` | | | a TLS connector: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port (below) |
+| `tlsConnector(identity) { … }` | | | a TLS connector: HTTP/1.1 (and HTTP/2 with `http2`) over TLS on TCP and HTTP/3 on UDP on the same port (below) |
 | `identity` | `TlsIdentity?` | `null` | turns every plain connector (`port = …`, `connector { }`) into a TLS connector; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](ktor.md#certificate-rotation)) |
 | `identityReloadInterval` (*experimental*) | `Duration?` | `null` | at least 1 s; how often the PEM files `EngineMain` read are checked for a renewed certificate (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](ktor.md#certificate-rotation)) |
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](ktor.md#server)) |
 | `http3` | `Boolean` | `true` | serve HTTP/3 on every TLS connector |
+| `http2` (*experimental*) | `Boolean` | `false` | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3; no h2c on plain connectors) ([HTTP/2 on the server](ktor.md#http2-on-the-server)) |
+| `http2Settings` (*experimental*) | `Http2Settings` | `Http2Settings()` | windows, SETTINGS and flood limits of every HTTP/2 connection; its `maxHeaderBlockTime` is bounded by `requestHeaderTimeoutSeconds` |
 | `altSvc` | `Boolean` | `true` | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS (not when the application set its own, not on 421); `engine.http3Advertising` changes it at run time ([Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | QUIC transport of the HTTP/3 listeners |
 | `quicMaxIdleTimeout` | `Duration?` | `null` | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
@@ -304,7 +306,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (the endpoint default, `KuicksilverLogger.Stderr`) | the HTTP/3 endpoints' diagnostics |
 | `qlog` (*experimental*) | `QlogSink?` | `null` | added to `quic` |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` | lifecycle of every QUIC connection |
-| `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | connection and request events over both protocols |
+| `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | connection and request events over every protocol |
 | `engine.http3Advertising` (*experimental*, on the running engine) | `Http3Advertising` | `On` | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1 and HTTP/3 responses, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused with CONNECTION_REFUSED); read per response and per new client ([Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)) |
 | `shutdownGracePeriod`, `shutdownTimeout` (Ktor) | | Ktor's | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](ktor.md#graceful-stop)) |
 
@@ -327,7 +329,7 @@ keep their defaults and are not configurable from the engine. Ktor's `connection
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
-`kuicksilver.http3`,
+`kuicksilver.http3`, `kuicksilver.http2`,
 `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
