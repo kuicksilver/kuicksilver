@@ -176,8 +176,10 @@ static void own_alpn(ksl_ssl *s, SSL_SESSION *sess) {
     if (!s->done || sess == s->offered_session) return;
     const unsigned char *a = NULL, *had = NULL; unsigned al = 0; size_t hl = 0;
     SSL_get0_alpn_selected(s->ssl, &a, &al); SSL_SESSION_get0_alpn_selected(sess, &had, &hl);
-    if ((al != hl || (al && memcmp(a, had, al) != 0)) && SSL_SESSION_set1_alpn_selected(sess, al ? a : NULL, al) != 1) {
-        (void)SSL_SESSION_set_max_early_data(sess, 0); ERR_clear_error();
+    if (al != hl || (al && memcmp(a, had, al) != 0)) {
+        ERR_set_mark();
+        if (SSL_SESSION_set1_alpn_selected(sess, al ? a : NULL, al) != 1) (void)SSL_SESSION_set_max_early_data(sess, 0);
+        ERR_pop_to_mark();
     }
 }
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
