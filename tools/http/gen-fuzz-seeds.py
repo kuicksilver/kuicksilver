@@ -38,6 +38,12 @@ conn = {
     "rapid-reset": bytes([31]) + frame(4, 0, 0) + b"".join(hdr(2 * i + 1, h("82848786")) + frame(3, 0, 2 * i + 1, struct.pack(">I", 8)) for i in range(20)),
     "continuation": bytes([7]) + frame(4, 0, 0) + frame(1, 0x1, 3, h("8284")) + frame(9, 0, 3, h("87")) + frame(9, 4, 3, h("86"))
     + frame(6, 0, 0, bytes(8)) + frame(7, 0, 0, struct.pack(">II", 3, 0)),
+    # bursts: about ten streams per 256-byte piece, with SETTINGS_INITIAL_WINDOW_SIZE = 0 so no response can finish (and the
+    # acknowledgement of our SETTINGS, which the harness otherwise times out a piece later): the
+    # handlers of reset streams pile up past the limit of 8 unless the core keeps counting them (Rapid Reset; MadeYouReset:
+    # WINDOW_UPDATE of 0 makes the server reset the stream itself)
+    "rapid-reset-burst": bytes([255]) + frame(4, 0, 0, struct.pack(">HI", 4, 0)) + frame(4, 1, 0) + b"".join(hdr(2 * i + 1, h("82848786")) + frame(3, 0, 2 * i + 1, struct.pack(">I", 8)) for i in range(40)),
+    "made-you-reset": bytes([255]) + frame(4, 0, 0, struct.pack(">HI", 4, 0)) + frame(4, 1, 0) + b"".join(hdr(2 * i + 1, h("82848786"), 0x4) + frame(8, 0, 2 * i + 1, struct.pack(">I", 0)) for i in range(40)),
 }
 # connectionClient: [split][streams][server bytes after its empty SETTINGS]; streams 1, 3, 5 are the client's requests
 def hdr_resp(sid, block, flags=0x4):
