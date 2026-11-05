@@ -12,6 +12,60 @@ import io.ktor.network.sockets.InetSocketAddress
 internal expect fun peerAddressBytes(remote: InetSocketAddress): ByteArray?
 
 /**
+ * The key of a client address for the per-address tables of the TCP accept loop (`maxTcpConnectionsPerIp`,
+ * [TcpLimits]; `http2RepeatOffenderPenalty`, [RepeatOffenders]): its bytes ([peerAddressBytes], never a name lookup), an
+ * IPv4-mapped IPv6 address (RFC 4291 section 2.5.5.2, as a dual-stack listener reports IPv4 peers) as its IPv4 address,
+ * and an IPv6 address by its first [ipv6PrefixBytes] bytes (all 16 by default). Null when the address is not known.
+ */
+internal fun peerIpKey(
+    remote: InetSocketAddress?,
+    ipv6PrefixBytes: Int = 16,
+): String? = remote?.let { peerAddressBytes(it) }?.let { ipKey(it, ipv6PrefixBytes) }
+
+/** [peerIpKey] of address bytes (4 or 16). */
+internal fun ipKey(
+    bytes: ByteArray,
+    ipv6PrefixBytes: Int = 16,
+): String {
+    val ip = unmappedIp(bytes)
+    val n = if (ip.size == 16) ipv6PrefixBytes else ip.size
+    val sb = StringBuilder(n * 2 + 3)
+    sb.append(ip.size).append(':')
+    for (i in 0 until n) {
+        val b = ip[i].toInt() and 0xff
+        sb.append(HEX[b shr 4]).append(HEX[b and 0xf])
+    }
+    return sb.toString()
+}
+
+/**
+ * Address bytes (4 or 16) as a log line names them, never a name: a.b.c.d (IPv4-mapped ones included), or the IPv6 groups,
+ * all eight, or with [ipv6PrefixBytes] below 16 the prefix as `2001:db8::/56`.
+ */
+internal fun describeIp(
+    bytes: ByteArray,
+    ipv6PrefixBytes: Int = 16,
+): String {
+    val ip = unmappedIp(bytes)
+    if (ip.size != 16) return ip.joinToString(".") { (it.toInt() and 0xff).toString() }
+    val prefix = ip.copyOf(ipv6PrefixBytes) + ByteArray(16 - ipv6PrefixBytes)
+    val groups = (0 until 8).map { ((prefix[2 * it].toInt() and 0xff) shl 8) or (prefix[2 * it + 1].toInt() and 0xff) }
+    if (ipv6PrefixBytes >= 16) return groups.joinToString(":") { it.toString(16) }
+    return groups.take((ipv6PrefixBytes + 1) / 2).dropLastWhile { it == 0 }.joinToString(":") { it.toString(16) } +
+        "::/${ipv6PrefixBytes * 8}"
+}
+
+/** `::ffff:a.b.c.d` (RFC 4291 section 2.5.5.2) as the 4 bytes of a.b.c.d; anything else as it is. */
+internal fun unmappedIp(bytes: ByteArray): ByteArray {
+    if (bytes.size != 16) return bytes
+    for (i in 0 until 10) if (bytes[i].toInt() != 0) return bytes
+    if (bytes[10].toInt() != -1 || bytes[11].toInt() != -1) return bytes
+    return bytes.copyOfRange(12, 16)
+}
+
+private const val HEX = "0123456789abcdef"
+
+/**
  * The bytes of a numeric IPv4 (dotted quad) or IPv6 address (RFC 4291 section 2.2 text, `::` and a trailing dotted quad
  * included; brackets and a `%zone` are ignored), or null for anything else (a name is never looked up).
  */

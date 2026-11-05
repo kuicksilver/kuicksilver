@@ -46,7 +46,7 @@ internal class RepeatOffenders(
 
     /** Records one flood-ended connection of [remote]; true when it starts a penalty (the caller logs that). */
     suspend fun strike(remote: InetSocketAddress?): Boolean {
-        val key = remote?.let { peerAddressBytes(it) }?.let { keyOf(it) } ?: return false
+        val key = keyOf(remote) ?: return false
         val now = timeSource.markNow()
         return lock.withLock {
             val e = entries.remove(key) ?: Entry()
@@ -65,7 +65,7 @@ internal class RepeatOffenders(
     /** True while [remote] serves a penalty: its connection is closed at accept. */
     suspend fun refuses(remote: InetSocketAddress?): Boolean {
         if (size == 0 || remote == null) return false
-        val key = peerAddressBytes(remote)?.let { keyOf(it) } ?: return false
+        val key = keyOf(remote) ?: return false
         return lock.withLock {
             val e = entries[key] ?: return@withLock false
             val until = e.refusedUntil ?: return@withLock false
@@ -98,38 +98,15 @@ internal class RepeatOffenders(
             remote?.let { peerAddressBytes(it) }?.let { describe(it) } ?: "an unknown address"
 
         /** [describe] of address bytes (4 or 16). */
-        fun describe(bytes: ByteArray): String {
-            val ip = unmapped(bytes)
-            if (ip.size != 16) return ip.joinToString(".") { (it.toInt() and 0xff).toString() }
-            val prefix = ip.copyOf(7) + ByteArray(9)
-            val groups = (0 until 4).map { ((prefix[2 * it].toInt() and 0xff) shl 8) or (prefix[2 * it + 1].toInt() and 0xff) }
-            return groups.dropLastWhile { it == 0 }.joinToString(":") { it.toString(16) } + "::/56"
-        }
+        fun describe(bytes: ByteArray): String = describeIp(bytes, IPV6_PREFIX_BYTES)
 
-        /** The table's key of address bytes: an IPv4 address (mapped ones included) whole, an IPv6 address by its /56. */
-        fun keyOf(bytes: ByteArray): String {
-            val ip = unmapped(bytes)
-            val n = if (ip.size == 16) IPV6_PREFIX_BYTES else ip.size
-            val sb = StringBuilder(n * 2 + 3)
-            sb.append(ip.size).append(':')
-            for (i in 0 until n) {
-                val b = ip[i].toInt() and 0xff
-                sb.append(HEX[b shr 4]).append(HEX[b and 0xf])
-            }
-            return sb.toString()
-        }
+        /** The table's key of address bytes: an IPv4 address (mapped ones included) whole, an IPv6 address by its /56 ([ipKey]). */
+        fun keyOf(bytes: ByteArray): String = ipKey(bytes, IPV6_PREFIX_BYTES)
 
-        /** `::ffff:a.b.c.d` (RFC 4291 section 2.5.5.2) as the 4 bytes of a.b.c.d; anything else as it is. */
-        private fun unmapped(bytes: ByteArray): ByteArray {
-            if (bytes.size != 16) return bytes
-            for (i in 0 until 10) if (bytes[i].toInt() != 0) return bytes
-            if (bytes[10].toInt() != -1 || bytes[11].toInt() != -1) return bytes
-            return bytes.copyOfRange(12, 16)
-        }
+        /** The table's key of [remote] ([peerIpKey]). */
+        fun keyOf(remote: InetSocketAddress?): String? = peerIpKey(remote, IPV6_PREFIX_BYTES)
 
         /** /56 */
         private const val IPV6_PREFIX_BYTES = 7
-
-        private const val HEX = "0123456789abcdef"
     }
 }
