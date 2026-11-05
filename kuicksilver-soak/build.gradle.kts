@@ -19,7 +19,7 @@ kotlin {
     jvm()
     // the h2spec server (tools/interop/h2spec.sh) as an executable: on Linux for the gate's container run, on a Mac locally
     val h2spec: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
-        binaries.executable("h2specServer") { entryPoint = "io.kuicksilver.soak.h2specServerMain"; baseName = "h2spec-server" }
+        binaries.executable("h2specServer", listOf(org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.DEBUG)) { entryPoint = "io.kuicksilver.soak.h2specServerMain"; baseName = "h2spec-server" }
     }
     linuxX64(h2spec); linuxArm64(); macosArm64(h2spec)
     applyDefaultHierarchyTemplate()

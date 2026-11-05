@@ -96,6 +96,12 @@ linux_run() { # the linuxX64 server and h2spec in one linux/amd64 container
   verdict linux-x64 "$dir/h2spec.txt"
 }
 
+# No implicit pull in the middle of a gate: the image must be there (docker pull it once; it is 32 MB).
+if ! docker image inspect "$image" > /dev/null 2>&1; then
+  echo "h2spec: the image $image is not available locally; pull it first: docker pull $image" >&2
+  exit 1
+fi
+
 failed=0
 for kind in "${kinds[@]}"; do
   if [ "$build" = 1 ]; then bash tools/interop/h2-server.sh build "$kind"; fi
