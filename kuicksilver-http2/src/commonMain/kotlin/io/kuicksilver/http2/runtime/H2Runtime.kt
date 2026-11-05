@@ -586,7 +586,7 @@ internal class H2Runtime(
     /** Not ending, not told to go away, transport alive: a new stream may be opened. */
     val usable: Boolean get() = lock.withLock { usableLocked() }
 
-    private fun usableLocked(): Boolean = !core.isClosed && !goAwayReceived && transportLost == null && !shuttingDown
+    private fun usableLocked(): Boolean = !core.isClosed && !goAwayReceived && transportLost == null && !shuttingDown && core.streamIdsLeft
 
     /** Takes a stream slot within the peer's SETTINGS_MAX_CONCURRENT_STREAMS; false when full or not [usable]. */
     fun tryReserve(): Boolean =
@@ -600,10 +600,15 @@ internal class H2Runtime(
         }
 
     fun unreserve() {
-        lock.withLock {
-            reserved--
-            if (reserved == 0) idleSince = clock()
-        }
+        val drained =
+            lock.withLock {
+                reserved--
+                if (reserved == 0) idleSince = clock()
+                reserved == 0 && !core.streamIdsLeft && !core.isClosed
+            }
+        // a connection without identifiers left has nothing more to do: GOAWAY and close, now that its streams are done
+        // (a GOAWAY earlier could reach the server before the last stream's HEADERS)
+        if (drained) shutdown()
         onChange()
     }
 
@@ -628,6 +633,9 @@ internal class H2Runtime(
                 streams[id] = rt
                 s = rt
             }
+            // the last identifier went (section 5.1.1): no new stream here (usable is false), and the connection ends once
+            // its streams are done (unreserve)
+            if (!lock.withLock { core.streamIdsLeft }) onChange()
         } catch (e: H2StreamLimit) {
             throw Http2Exception.StreamReset(
                 0,

@@ -187,6 +187,25 @@ class H2RuntimeTest {
             s.release()
         }
 
+    /**
+     * Section 5.1.1: identifiers cannot be reused. A connection whose last odd identifier was used takes no new request
+     * (it is no longer usable, so the pool moves on) and closes once its streams are done.
+     */
+    @Test fun streamIdentifiersExhaustedRetireTheConnection() =
+        runTest {
+            val (client, server, _) = pair()
+            backgroundScope.serve(server) { r -> r.respond(200, endStream = true) }
+            client.rt.lock.withLock { client.rt.core.nextStreamIdForTest(Int.MAX_VALUE) } // 2^31 - 1, the last one
+            val last = client.get()
+            assertEquals(Int.MAX_VALUE, last.id)
+            assertFalse(client.isUsable, "no identifier left: no new stream on this connection")
+            assertFalse(client.tryReserve())
+            assertEquals(200, last.response().status)
+            last.release()
+            runCurrent()
+            assertTrue(client.isClosed, "the connection closes once its last stream is done")
+        }
+
     @Test fun negative_contentLengthMismatchIsMalformed() =
         runTest {
             val (client, server, _) = pair()

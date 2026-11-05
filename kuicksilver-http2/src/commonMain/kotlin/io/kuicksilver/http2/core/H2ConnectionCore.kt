@@ -146,6 +146,14 @@ internal class H2ConnectionCore(
     /** True once the connection ended (an error, a finished GOAWAY): nothing more is read, [poll] drains what is left. */
     val isClosed: Boolean get() = closed
 
+    /** A stream we open can still get an identifier (section 5.1.1: identifiers cannot be reused). */
+    val streamIdsLeft: Boolean get() = nextLocalId in 1..H2.MAX_STREAM_ID
+
+    /** Moves the next identifier of our streams to [id] (a test hook: exhausting 2^30 identifiers takes too long). */
+    internal fun nextStreamIdForTest(id: Int) {
+        nextLocalId = id
+    }
+
     /** Streams the core still holds (closed ones the driver has not released yet included). */
     val activeStreams: Int get() = streams.size
 
