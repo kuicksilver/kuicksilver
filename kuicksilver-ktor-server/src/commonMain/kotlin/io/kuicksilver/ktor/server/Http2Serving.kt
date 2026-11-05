@@ -38,14 +38,28 @@ import kotlinx.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
+/** How long a connection that ended in an error may go without sending anything while it closes, at most. */
+internal val ERROR_CLOSE_STALL: Duration = 3.seconds
+
 /** The engine's live HTTP/2 connections (for [KuicksilverServerProbe] and tests). */
 internal class H2LiveSet {
     private val lock = Mutex()
     private val set = HashSet<H2ServerConnection>()
 
-    suspend fun add(c: H2ServerConnection) = lock.withLock { set += c }
+    /** How many there are (tests wait on it: a connection is added only after its runtime started). */
+    val count = kotlinx.coroutines.flow.MutableStateFlow(0)
 
-    suspend fun remove(c: H2ServerConnection) = lock.withLock { set -= c }
+    suspend fun add(c: H2ServerConnection) =
+        lock.withLock {
+            set += c
+            count.value = set.size
+        }
+
+    suspend fun remove(c: H2ServerConnection) =
+        lock.withLock {
+            set -= c
+            count.value = set.size
+        }
 
     suspend fun live(): List<H2ServerConnection> = lock.withLock { set.toList() }
 }
@@ -162,10 +176,22 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
             watchers.forEach { it.cancel() }
         }
     } finally {
-        conn?.let { if (it.endedByFloodDefence) strikeOffender(remote) }
+        conn?.let { c ->
+            h2BytesRead.update { it + c.bytesReceived }
+            if (c.endedByFloodDefence) strikeOffender(remote)
+        }
         // closeWithin handles a cancelled caller itself (it aborts); the probe's set is left last and without cancellation,
         // so a forced stop neither skips the close nor leaves the entry behind
-        closeWithin(sock, { sock.abort() }, if (conn?.isClosed == true) sendTimeout else Duration.ZERO)
+        // a connection that ended in an error (a flood limit, a protocol error) has only its GOAWAY left to deliver: a short
+        // stall bound, since a client that keeps sending after it (a flood that does not stop) fills the buffers in front of
+        // the socket, which then cannot finish closing by itself and would hold the descriptor for the whole send-stall time
+        val stall =
+            when {
+                conn?.isClosed != true -> Duration.ZERO
+                conn?.endedInError == true -> minOf(sendTimeout, ERROR_CLOSE_STALL)
+                else -> sendTimeout
+            }
+        closeWithin(sock, { sock.abort() }, stall)
         if (conn != null) events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_2_0, remote) }
         conn?.let { withContext(NonCancellable) { h2Live.remove(it) } }
     }
@@ -204,13 +230,17 @@ private suspend fun drainsWhileMoving(
  * are the warning, rate-limited per connector ([RefusalReporter]).
  */
 private suspend fun KuicksilverApplicationEngine.strikeOffender(remote: InetSocketAddress?) {
-    h2FloodEnds.update { it + 1 }
-    val offenders = h2Offenders ?: return // http2RepeatOffenderPenalty off (the default)
-    if (withContext(NonCancellable) { offenders.strike(remote) }) {
-        environment.log.debug(
-            "HTTP/2: connections from ${RepeatOffenders.describe(remote)} keep ending in ENHANCE_YOUR_CALM (flood limits); " +
-                "refusing its connections for a while",
-        )
+    // counted after the strike is recorded: a test that waits for the count then sees the strike's effect at accept
+    try {
+        val offenders = h2Offenders ?: return // http2RepeatOffenderPenalty off (the default)
+        if (withContext(NonCancellable) { offenders.strike(remote) }) {
+            environment.log.debug(
+                "HTTP/2: connections from ${RepeatOffenders.describe(remote)} keep ending in ENHANCE_YOUR_CALM (flood limits); " +
+                    "refusing its connections for a while",
+            )
+        }
+    } finally {
+        h2FloodEnds.update { it + 1 }
     }
 }
 

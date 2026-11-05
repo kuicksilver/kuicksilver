@@ -175,6 +175,10 @@ internal class H2Runtime(
     private val transportClosed = AtomicBoolean(false)
     private var awaitingPong = -1L // under lock
 
+    /** Bytes read from the peer and fed to the core (the reader stops when the connection ends). */
+    @Volatile var bytesRead: Long = 0
+        private set
+
     /** When bytes last arrived from the peer, on [clock]. */
     @Volatile var lastReceived: Long = clock()
         private set
@@ -575,6 +579,7 @@ internal class H2Runtime(
                     return
                 }
                 if (n == 0) continue
+                bytesRead += n // one reader coroutine writes it
                 lastReceived = clock()
                 withCore { receive(buf, 0, n, clock()) }
                 if (lock.withLock { core.isClosed }) return

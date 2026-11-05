@@ -577,6 +577,9 @@ public class KuicksilverApplicationEngine(
     internal var h2Offenders: RepeatOffenders? =
         configuration.http2RepeatOffenderPenalty.takeIf { it.isPositive() }?.let { RepeatOffenders(it) }
 
+    /** Bytes the HTTP/2 layer of ended connections read from their clients, in all; for tests. */
+    internal val h2BytesRead = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
     /** HTTP/2 connections that ended in a flood defence (we sent ENHANCE_YOUR_CALM); for tests. */
     internal val h2FloodEnds = kotlinx.coroutines.flow.MutableStateFlow(0L)
 

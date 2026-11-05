@@ -143,7 +143,8 @@ budget against Rapid Reset, the glitch budget against MadeYouReset and PING, SET
 frames per field block, 10 000 queued control frames), and a broken limit ends it with GOAWAY ENHANCE_YOUR_CALM. A
 stream the client reset cancels its handler and counts toward SETTINGS_MAX_CONCURRENT_STREAMS until the handler
 returns, so no more handlers run at once than that limit. A connection that is over gets what it still has to write
-sent for as long as the client takes it; after the send-stall deadline without progress its socket is aborted. These
+sent for as long as the client takes it; after the send-stall deadline without progress its socket is aborted (3
+seconds when it ended in an error, such as a broken flood limit: only its GOAWAY is left to deliver). These
 per-connection limits are the defence by default.
 
 `http2RepeatOffenderPenalty` (experimental, `EngineMain` key `kuicksilver.http2RepeatOffenderPenalty`, e.g. `30s`; off
