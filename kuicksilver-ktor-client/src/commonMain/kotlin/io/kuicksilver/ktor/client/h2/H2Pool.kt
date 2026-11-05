@@ -49,6 +49,16 @@ internal class H2Pool(
 ) {
     private class Route {
         val conns = ArrayList<H2Conn>()
+
+        /**
+         * Counts the route's changes, under the lock: what a dial decision compares against ([tryStartDial]). [signal]
+         * publishes it after the lock is released, never inside: a waiter on `Dispatchers.Unconfined` resumes inline in
+         * the publishing thread and takes the lock again at once ([reserve]), which would spin on a lock its own thread
+         * holds (the rule ConnectionPoolUnconfinedTest guards).
+         */
+        var version = 0L
+
+        /** [version] for waiters, published outside the lock; it only grows, and may lag the counter for a moment. */
         val signal = MutableStateFlow(0L)
         var watchers = 0
 
@@ -66,8 +76,10 @@ internal class H2Pool(
      * Whether a request that may use HTTP/2 may connect to [route] now. RFC 9113 section 9.1: clients SHOULD NOT open more
      * than one HTTP/2 connection to an origin; ALPN tells only after the handshake, so while one such connect is in flight
      * the others wait for its outcome on the route's signal (as Go's `dialCall` dedups dials per address) and then use its
-     * connection, or connect in parallel when it turned out HTTP/1.1. A route known to speak HTTP/1.1 never waits. True
-     * means the caller is now the route's dialer and must call [endDial].
+     * connection, or connect in parallel when it turned out HTTP/1.1. A route known to speak HTTP/1.1 never waits. [seen] is
+     * the route's [version] from before the caller last looked for a stream ([reserve]): a change since (a connection
+     * registered, a stream freed, new SETTINGS) refuses too, so the caller looks again. True means the caller is now the
+     * route's dialer and must call [endDial].
      */
     fun tryStartDial(
         route: String,
@@ -84,7 +96,7 @@ internal class H2Pool(
                 // the route changed since the caller found no stream (a connection registered, a stream freed, new
                 // SETTINGS): it looks again before anything is dialled; checked under the lock that register and endDial
                 // bump under, so no change slips between the look and this decision
-                r.signal.value != seen -> {
+                r.version != seen -> {
                     false
                 }
 
@@ -100,6 +112,7 @@ internal class H2Pool(
         route: String,
         h2: Boolean?,
     ) {
+        var changed: Pair<MutableStateFlow<Long>, Long>? = null
         lock.withLock {
             when (h2) {
                 true -> {
@@ -116,10 +129,12 @@ internal class H2Pool(
             }
             routes[route]?.let {
                 it.dialing = false
+                it.version++ // in the same section as the end of the dial: a decision sees both or neither
+                changed = it.signal to it.version
                 prune(route, it)
             }
         }
-        bump(route)
+        changed?.let { publish(it.first, it.second) }
     }
 
     /** A stream on a usable connection of [route], reserved; null when none has one free. */
@@ -138,11 +153,14 @@ internal class H2Pool(
 
     /** Adds [c], adopted by the TCP pool already, to its route. */
     fun register(c: H2Conn) {
-        lock.withLock {
-            val r = routes.getOrPut(c.route) { Route() }
-            r.conns += c
-            r.signal.update { it + 1 } // in the same section: a dial decision sees the connection or the change
-        }
+        val (signal, v) =
+            lock.withLock {
+                val r = routes.getOrPut(c.route) { Route() }
+                r.conns += c
+                r.version++ // in the same section: a dial decision sees the connection or the change
+                r.signal to r.version
+            }
+        publish(signal, v)
     }
 
     /** Drops [c] from its route (closed, or retired: its streams finish but it takes no new ones). */
@@ -157,8 +175,26 @@ internal class H2Pool(
 
     /** Something changed on [route]: its watchers look again. */
     fun bump(route: String) {
-        lock.withLock { routes[route]?.signal?.update { it + 1 } }
+        val changed =
+            lock.withLock {
+                routes[route]?.let {
+                    it.version++
+                    it.signal to it.version
+                }
+            } ?: return
+        publish(changed.first, changed.second)
     }
+
+    /** Outside the lock: the waiters may resume inline here (see [Route.version]). */
+    private fun publish(
+        signal: MutableStateFlow<Long>,
+        v: Long,
+    ) {
+        signal.update { maxOf(it, v) }
+    }
+
+    /** The change count of [route] (0 for a route not tracked): read it before looking for a stream ([tryStartDial]). */
+    fun version(route: String): Long = lock.withLock { routes[route]?.version ?: 0L }
 
     /** The change signal of [route], held until [unwatch]. */
     fun watch(route: String): StateFlow<Long> =

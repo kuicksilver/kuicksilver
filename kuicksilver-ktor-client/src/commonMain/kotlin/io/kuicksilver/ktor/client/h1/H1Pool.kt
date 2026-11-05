@@ -274,7 +274,9 @@ internal class H1Pool(
                 val signal = if (h2Ok) h2.watch(key) else null
                 try {
                     while (true) {
-                        val seen = signal?.value
+                        // the change count, read before looking: a dial decision refuses when it moved since, and the
+                        // waits below end when the published signal passes it
+                        val seen = if (signal != null) h2.version(key) else null
                         if (signal != null) {
                             val found = h2.reserve(key)
                             if (found != null) {
@@ -313,7 +315,7 @@ internal class H1Pool(
                         beforeDialForTest?.invoke()
                         if (offerH2 && signal != null && !h2.tryStartDial(key, seen!!)) {
                             pool.releasePermit(key)
-                            signal.first { it != seen }
+                            signal.first { it > seen }
                             continue
                         }
                         val dialer = offerH2 && signal != null
@@ -410,7 +412,7 @@ internal class H1Pool(
             if (got != null) return@coroutineScope got!!
             val watcher =
                 launch {
-                    signal.first { it != seen }
+                    signal.first { it > seen!! }
                     a.cancel()
                 }
             try {
