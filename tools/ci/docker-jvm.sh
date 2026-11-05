@@ -24,6 +24,7 @@ if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = "$march" ] && [ "${KSL_JVM_IN_
   # shellcheck disable=SC2086
   (cd "$root" && ./gradlew ${KSL_GRADLE_ARGS:-} --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS)
 else
+  # The JVM image has no C compiler; buildTestHooksJni (kuicksilver-tls test hooks) needs one, so gcc is installed first.
   # The container never sees ~/.gradle. It read and wrote the whole of it before (2026-10-23): its Gradle ran the user-home cache
   # cleanup, whose access journal is keyed by absolute path, so every file the host had used (recorded under its home directory) looked
   # unused under /root/... and was deleted, POMs first (Gradle does not mark them used when its descriptor cache answers);
@@ -44,5 +45,5 @@ else
     -e GRADLE_USER_HOME=/tmp/gh -v "$root/tools/ci/gradle-init.d:/tmp/gh/init.d:ro" -v "$dist:/opt/gradle:ro" \
     -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \
     eclipse-temurin:21@sha256:3e3c176ffed168beb42c607be9bc1639b466cf00261a0fb04425562c9d0c5c2b bash -c \
-    "/opt/gradle/bin/gradle --offline --no-daemon --no-watch-fs -q --continue -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
+    "(command -v cc >/dev/null || { apt-get -qq update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y --no-install-recommends gcc libc6-dev >/dev/null; }) && /opt/gradle/bin/gradle --offline --no-daemon --no-watch-fs -q --continue -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
 fi
