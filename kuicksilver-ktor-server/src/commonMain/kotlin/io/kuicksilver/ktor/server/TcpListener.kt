@@ -284,11 +284,11 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 }
                             if (refused) {
                                 client.abort()
-                                refusedOffenders.update { it + 1 }
                                 refusals.report(RepeatOffenders.describe(from), "its HTTP/2 connections kept ending in ENHANCE_YOUR_CALM")
                                 events.emit("connectionRefused") {
                                     connectionRefused(HttpProtocolVersion.HTTP_1_1, from, REFUSED_REPEAT_OFFENDER)
                                 }
+                                refusedOffenders.update { it + 1 } // after the event: a test that sees the count sees the event
                                 return@acceptLoop
                             }
                             // the request-head deadline of the first request counts from here, the TLS handshake included
