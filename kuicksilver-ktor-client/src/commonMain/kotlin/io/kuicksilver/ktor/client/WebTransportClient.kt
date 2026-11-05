@@ -10,6 +10,7 @@ import io.ktor.http.Url
 import io.ktor.http.fullPath
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.http3Request
@@ -39,7 +40,9 @@ import kotlinx.coroutines.withContext
  * The connection goes straight to the URL's host and port: Alt-Svc is not consulted, and it is never set up in 0-RTT.
  * The resolved addresses are tried in order within the connect timeout. Closing the client ends the sessions still open
  * with their connections, without a close capsule; `HttpClient.closeHttp3Connections()` sends each open session
- * WT_DRAIN_SESSION and its connection a GOAWAY, asking the server to wind it down.
+ * WT_DRAIN_SESSION and its connection a GOAWAY, asking the server to wind it down. A session still being set up when it
+ * runs is drained as soon as it opens, or, when its CONNECT had not gone out yet, the call fails with
+ * IllegalStateException naming `closeHttp3Connections()`.
  */
 @ExperimentalKuicksilverApi
 public suspend fun HttpClient.webTransport(
@@ -75,8 +78,18 @@ public suspend fun HttpClient.webTransport(
         engine.h3.trackSession(session, connection)
         return session
     } catch (e: Throwable) {
+        // read before the close, which drops the connection from the pool's tracking
+        @OptIn(ExperimentalKuicksilverApi::class)
+        val stoppedByClose = e is Http3Exception.RequestNotProcessed && e.neverSent && engine.h3.drainedSince(connection)
         // no session: the connection opened for it goes too
         withContext(NonCancellable) { runCatching { connection.close(Http3ErrorCode.NO_ERROR, "") } }
+        if (stoppedByClose) {
+            throw IllegalStateException(
+                "WebTransport CONNECT not sent: HttpClient.closeHttp3Connections() took HTTP/3 out of use while the " +
+                    "session was being set up; call webTransport again (or fall back) once HTTP/3 should be used",
+                e,
+            )
+        }
         throw e
     }
 }

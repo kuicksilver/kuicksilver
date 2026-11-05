@@ -444,8 +444,9 @@ waiting for it and then closes; a race's own HTTP/3 setup still serves the reque
 by that GOAWAY before anything of it went out is repeated on a new connection, a streamed body included (it was never
 read). Every WebTransport connection gets a GOAWAY and every open session `WT_DRAIN_SESSION`: the server is asked to
 wind the session down, the session's own `drainRequested` turns true so the application winds down too, and the
-session stays open until either side closes it. A `webTransport` call whose CONNECT had not gone out yet fails
-(`RequestNotProcessed`); one whose CONNECT completes after the call is drained as soon as it opens. The call returns once
+session stays open until either side closes it. A `webTransport` call whose CONNECT had not gone out yet fails with
+`IllegalStateException` naming `closeHttp3Connections()`; one whose CONNECT completes after the call is drained as soon
+as it opens. The call returns once
 those frames are written, waiting at most 5 seconds for each.
 
 The switch is not called for `http://` requests or `H1Only`. A switch that throws an exception counts as true (HTTP/3

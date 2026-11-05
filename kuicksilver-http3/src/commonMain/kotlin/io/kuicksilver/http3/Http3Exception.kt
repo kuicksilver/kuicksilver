@@ -66,12 +66,12 @@ public sealed class Http3Exception(
          * sent again whatever the body. False when the server refused a request it may have received in part.
          */
         @ExperimentalKuicksilverApi
-        public var neverSent: Boolean = false
-            private set
+        public val neverSent: Boolean get() = sentNothing
+
+        private var sentNothing = false
 
         internal constructor(retrySafe: Boolean, neverSent: Boolean, message: String) : this(retrySafe) {
-            @OptIn(ExperimentalKuicksilverApi::class)
-            this.neverSent = neverSent
+            sentNothing = neverSent
             detail = message
         }
 

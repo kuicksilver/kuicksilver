@@ -328,7 +328,8 @@ WT_CLOSE_SESSION (the reason cut to 1024 bytes of UTF-8), then FIN, and waits fo
 after five seconds without it); either side's close,
 the peer's FIN or a failure completes `closed` with the code, the reason or the cause, resets the session's streams
 with `WT_SESSION_GONE`, and frees the connection for a next session. `drain()` asks the peer to wind down;
-`drainRequested` turns true on the peer's request or an HTTP/3 GOAWAY. Writing the close waits at most five seconds
+`drainRequested` turns true on the peer's request, an HTTP/3 GOAWAY, or this side's own `drain()` (the side that asks
+winds down too, draft-ietf-webtrans-http3 section 4.7). Writing the close waits at most five seconds
 for the peer's flow-control credit; opening a stream waits for the peer's stream credit without a deadline, so bound
 it with `withTimeout`. WebTransport's own flow control (`WT_MAX_DATA` and the like) is not implemented: those capsules
 are ignored, and the QUIC limits (`maxBidiStreams`, `maxUniStreams`, the stream and connection windows) bound a

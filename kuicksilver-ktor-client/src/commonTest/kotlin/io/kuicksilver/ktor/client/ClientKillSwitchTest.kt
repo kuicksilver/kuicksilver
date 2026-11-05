@@ -586,11 +586,9 @@ class ClientKillSwitchTest {
                 testClient(Http3DiscoveryMode.Auto).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.h3.webTransportStepForTest = { step -> if (step == "dedicated") c.closeHttp3Connections() }
-                    val e = assertFailsWith<Throwable> { c.webTransport("https://127.0.0.1:$port/wt") }
-                    assertTrue(
-                        generateSequence(e) { it.cause }.any { it is io.kuicksilver.http3.Http3Exception.RequestNotProcessed },
-                        "$e",
-                    )
+                    val e = assertFailsWith<IllegalStateException> { c.webTransport("https://127.0.0.1:$port/wt") }
+                    assertTrue("closeHttp3Connections" in (e.message ?: ""), "${e.message}")
+                    assertTrue(e.cause is io.kuicksilver.http3.Http3Exception.RequestNotProcessed, "${e.cause}")
                     withTimeoutOrNull(30.seconds) { engine.h3.dedicatedCount.first { it == 0 } }
                         ?: fail("the dedicated connection did not close")
                     assertEquals(0, engine.h3.sessionCountForTest)
@@ -622,6 +620,57 @@ class ClientKillSwitchTest {
                     assertTrue(session.drainRequested.value, "drained when tracked")
                     withTimeoutOrNull(30.seconds) { drained.await() } ?: fail("the server saw no drain within 30 s")
                     session.close(0, "")
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /**
+     * The drain epoch race: closeHttp3Connections() pauses after reading the dedicated connections and before moving the
+     * epoch, while a WebTransport connection reads the (old) epoch there and registers only after the call returned. It got
+     * no GOAWAY from the call, so its session is drained (and its connection sent GOAWAY) when it is tracked.
+     */
+    @Test fun webTransportRacingTheDrainEpochIsDrained() =
+        h3Test {
+            val drained = CompletableDeferred<Unit>()
+            val (server, port) =
+                testServer(configure = { webTransport = true }) {
+                    routing {
+                        webTransport("/wt") { session ->
+                            session.drainRequested.first { it }
+                            drained.complete(Unit)
+                            session.closed.await()
+                        }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.Auto).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val closingPaused = CompletableDeferred<Unit>()
+                    val epochRead = CompletableDeferred<Unit>()
+                    val closeDone = CompletableDeferred<Unit>()
+                    engine.h3.goAwayAllBeforeEpochForTest = {
+                        closingPaused.complete(Unit)
+                        epochRead.await()
+                    }
+                    engine.h3.afterDedicatedEpochForTest = {
+                        epochRead.complete(Unit)
+                        closeDone.await()
+                    }
+                    coroutineScope {
+                        val closing =
+                            async {
+                                c.closeHttp3Connections()
+                                closeDone.complete(Unit)
+                            }
+                        closingPaused.await()
+                        val session = c.webTransport("https://127.0.0.1:$port/wt")
+                        closing.await()
+                        assertTrue(session.drainRequested.value, "drained when tracked")
+                        withTimeoutOrNull(30.seconds) { drained.await() } ?: fail("the server saw no drain within 30 s")
+                        session.close(0, "")
+                    }
                 }
             } finally {
                 server.stopSuspend(100, 1000)

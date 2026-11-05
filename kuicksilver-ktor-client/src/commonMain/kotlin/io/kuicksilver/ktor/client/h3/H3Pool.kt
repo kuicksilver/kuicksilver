@@ -309,6 +309,7 @@ internal class H3Pool(
             // tracked from now on, before its CONNECT: closeHttp3Connections() sends it GOAWAY too, and a CONNECT not sent
             // yet then fails with RequestNotProcessed instead of starting a session that escapes the drain
             val entry = c to drainEpoch.load()
+            afterDedicatedEpochForTest?.invoke()
             dedicatedConnections.update { it + entry }
             c.closed.invokeOnCompletion {
                 dedicatedCount.update { it - 1 }
@@ -415,8 +416,24 @@ internal class H3Pool(
         sessions.update { it + entry }
         session.closed.invokeOnCompletion { sessions.update { s -> s - entry } }
         val madeIn = dedicatedConnections.load().firstOrNull { it.first === connection }?.second
-        if (madeIn != null && madeIn != drainEpoch.load()) runCatching { session.drain() } // bounded by drain's own limit
+        if (madeIn != null && madeIn != drainEpoch.load()) {
+            // a goAwayAll ran since the connection was made and may not have seen it: GOAWAY and drain here
+            withTimeoutOrNull(GOAWAY_TIMEOUT) { runCatching { if (!connection.closed.isCompleted) connection.goAway() } }
+            runCatching { session.drain() } // bounded by drain's own limit
+        }
     }
+
+    /** Whether a [goAwayAll] ran since [connection] was handed out by [dedicated]. */
+    fun drainedSince(connection: Http3Connection): Boolean {
+        val madeIn = dedicatedConnections.load().firstOrNull { it.first === connection }?.second ?: return false
+        return madeIn != drainEpoch.load()
+    }
+
+    /** Test hook: runs in [dedicated] between reading the drain epoch and registering the connection. */
+    internal var afterDedicatedEpochForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: runs in [goAwayAll] between reading the dedicated connections and moving the drain epoch. */
+    internal var goAwayAllBeforeEpochForTest: (suspend () -> Unit)? = null
 
     /** Test hook: runs in `webTransport` between [dedicated] and the CONNECT, and between the CONNECT and [trackSession]. */
     internal var webTransportStepForTest: (suspend (step: String) -> Unit)? = null
@@ -449,7 +466,12 @@ internal class H3Pool(
             }
             connections.clear()
         }
-        drainEpoch.addAndFetch(1) // before the sessions are looked at (trackSession checks it after adding its session)
+        // dedicated connections are read BEFORE the epoch moves, sessions AFTER: a connection missing from this read was
+        // added after it, so it read the old epoch (and its session is drained when tracked) or started after this call
+        // began moving the epoch; a session missing from the later read sees the moved epoch in trackSession
+        val dedicatedNow = dedicatedConnections.load()
+        goAwayAllBeforeEpochForTest?.invoke()
+        drainEpoch.addAndFetch(1)
         val jobs = ArrayList<Job>()
         for ((e, c) in drained) {
             jobs +=
@@ -469,7 +491,7 @@ internal class H3Pool(
                 }
         }
         // dedicated connections whose session is not tracked yet: a CONNECT not sent yet fails (RequestNotProcessed)
-        for ((c, _) in dedicatedConnections.load()) {
+        for ((c, _) in dedicatedNow) {
             if (withSession.any { it.second === c }) continue
             jobs += scope.launch { withTimeoutOrNull(GOAWAY_TIMEOUT) { runCatching { if (!c.closed.isCompleted) c.goAway() } } }
         }
@@ -619,8 +641,9 @@ internal class H3Pool(
             val e =
                 lock.withLock {
                     (listOfNotNull(connections[t.key]) + retired)
-                        .firstOrNull { it.deferred.getCompletedOrNull() === prefer && !it.drained && !prefer.closed.isCompleted }
-                        ?.also { it.active.addAndFetch(1) }
+                        .firstOrNull {
+                            it.deferred.getCompletedOrNull() === prefer && !it.drained && prefer.usable()
+                        }?.also { it.active.addAndFetch(1) }
                 }
             if (e != null) return e to prefer
         }
