@@ -23,7 +23,10 @@ import kotlinx.coroutines.withContext
  * ([receiveNow] takes datagrams on the caller's thread instead, for the loop while datagrams keep coming); peers' addresses
  * come back as the same [InetSocketAddress] instance for the same 20 address bytes (a 64-entry cache), so the core's path lookup
  * compares by reference. [capabilities] follow the kernel: GSO or ECN the kernel refused mid-way (EIO/EINVAL, handled in C
- * without loss) drop out of the reported capabilities on the next refresh (every [REFRESH] sends or a short send).
+ * without loss) drop out of the reported capabilities on the next refresh (every [REFRESH] sends or a short send). Bound to a
+ * wildcard address, the socket reports the address each datagram arrived at ([PacketBatch.localAddress]) and sends a slot from
+ * the local address it names (IP_PKTINFO / IPV6_PKTINFO): a reply on a multi-address host, a VIP or behind IPVS-DR leaves from the
+ * address the client sent to, not from the one the route picks (RFC 9000 section 9).
  */
 internal class KslDatagramIo private constructor(
     private val socket: KslUdpSocket,
@@ -74,7 +77,13 @@ internal class KslDatagramIo private constructor(
         val lens = IntArray(n)
         val addrs = ByteArray(n * KslUdpSocket.ADDR_LEN)
         val ecn = ByteArray(n)
+
+        /** Our address per slot (KSL_UDP_PKTINFO): the destination a datagram arrived at, the source one leaves from. */
+        val locals = ByteArray(n * KslUdpSocket.ADDR_LEN)
     }
+
+    /** The socket reports each datagram's destination and sends from a named source: a wildcard bind (RFC 9000 section 9). */
+    private val pktinfo = socket.grantedFlags and KslUdpSocket.PKTINFO != 0
 
     private var rx: Slots? = null
     private var tx: Slots? = null
@@ -145,6 +154,58 @@ internal class KslDatagramIo private constructor(
         enc.copyInto(out, off)
     }
 
+    // our addresses the datagrams arrived at (receive side only): a few per host, 8 entries; the same bytes answer the same instance
+    private val localKeys = ByteArray(LOCALS * KslUdpSocket.ADDR_LEN)
+    private val localsSeen = arrayOfNulls<InetSocketAddress>(LOCALS)
+    private var localNext = 0
+
+    private fun localOf(
+        a: ByteArray,
+        off: Int,
+    ): InetSocketAddress? {
+        if (a[off].toInt() == 0) return null // unknown
+        for (k in 0 until LOCALS) {
+            val p = localsSeen[k] ?: break
+            if (same(localKeys, k * KslUdpSocket.ADDR_LEN, a, off)) return p
+        }
+        val slot = localNext
+        localNext = (localNext + 1) % LOCALS
+        a.copyInto(localKeys, slot * KslUdpSocket.ADDR_LEN, off, off + KslUdpSocket.ADDR_LEN)
+        return inetOf(a, off).also { localsSeen[slot] = it }
+    }
+
+    // sources on send (send side only; the receiver's cache above is another thread's): the last 4 instances by identity, as destKeys
+    private val srcKeys = arrayOfNulls<InetSocketAddress>(4)
+    private val srcBytes = ByteArray(4 * KslUdpSocket.ADDR_LEN)
+    private var srcNext = 0
+
+    /** [a] as a source entry at [off]; family 0 for null or a host name. */
+    private fun encodeLocalInto(
+        a: InetSocketAddress?,
+        out: ByteArray,
+        off: Int,
+    ) {
+        if (a != null) {
+            for (k in 0 until 4) {
+                if (srcKeys[k] === a) {
+                    srcBytes.copyInto(out, off, k * KslUdpSocket.ADDR_LEN, (k + 1) * KslUdpSocket.ADDR_LEN)
+                    return
+                }
+            }
+            val ip = a.ipBytesNoDns()
+            if (ip != null) {
+                val enc = KslUdpSocket.encodeAddress(ip, a.port)
+                val slot = srcNext
+                srcNext = (srcNext + 1) % 4
+                enc.copyInto(srcBytes, slot * KslUdpSocket.ADDR_LEN)
+                srcKeys[slot] = a
+                enc.copyInto(out, off)
+                return
+            }
+        }
+        out.fill(0, off, off + KslUdpSocket.ADDR_LEN)
+    }
+
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
         val s = rxSlots(into)
@@ -152,7 +213,7 @@ internal class KslDatagramIo private constructor(
             receiveInSlices(
                 Dispatchers.IO,
                 { socket.isClosed },
-            ) { defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 100) } }
+            ) { defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 100, if (pktinfo) s.locals else null) } }
         return handOut(into, s, n)
     }
 
@@ -163,7 +224,11 @@ internal class KslDatagramIo private constructor(
     ): Int {
         if (into.count >= into.capacity) return 0
         val s = rxSlots(into)
-        return handOut(into, s, defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, waitMs) })
+        return handOut(
+            into,
+            s,
+            defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, waitMs, if (pktinfo) s.locals else null) },
+        )
     }
 
     private fun handOut(
@@ -175,6 +240,7 @@ internal class KslDatagramIo private constructor(
         for (i in 0 until n) {
             into.setLength(from + i, s.lens[i])
             into.setAddress(from + i, peerOf(s.addrs, i * KslUdpSocket.ADDR_LEN))
+            if (pktinfo) into.setLocalAddress(from + i, localOf(s.locals, i * KslUdpSocket.ADDR_LEN))
             into.setEcn(from + i, ecnOf(s.ecn[i].toInt()))
         }
         return n
@@ -218,13 +284,20 @@ internal class KslDatagramIo private constructor(
         val n = batch.count
         if (n == 0) return 0
         val s = txSlots(batch)
+        var anyLocal = false
         for (i in 0 until n) {
             s.lens[i] = batch.length(i)
             encodeInto(batch.address(i) ?: throw IllegalArgumentException("slot $i has no address"), s.addrs, i * KslUdpSocket.ADDR_LEN)
             s.ecn[i] =
                 batch.ecn(i).ordinalCode().toByte()
+            if (pktinfo) {
+                val l = batch.localAddress(i)
+                if (l != null) anyLocal = true
+                encodeLocalInto(l, s.locals, i * KslUdpSocket.ADDR_LEN)
+            }
         }
-        val sent = defunctAware { socket.send(s.bufs, s.lens, s.addrs, s.ecn, n) }
+        // no source named (a client, a batch of the socket's own choice): the plain send, no array crosses to C
+        val sent = defunctAware { socket.send(s.bufs, s.lens, s.addrs, s.ecn, n, if (anyLocal) s.locals else null) }
         if (++sends and (REFRESH - 1) == 0 || sent < n) refreshCaps()
         return sent
     }
@@ -264,6 +337,7 @@ internal class KslDatagramIo private constructor(
 
     companion object {
         private const val PEERS = 64
+        private const val LOCALS = 8
         private const val REFRESH = 256
 
         /** Packet Too Big messages taken per [drainPacketTooBig]: the ring in ksl holds 16. */
@@ -290,7 +364,7 @@ internal class KslDatagramIo private constructor(
             }
             val ip = local.resolveAddress() ?: return null
             val flags =
-                KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF or
+                KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF or KslUdpSocket.PKTINFO or
                     (if (reusePort) KslUdpSocket.REUSEPORT else 0)
             val addr = KslUdpSocket.encodeAddress(ip, local.port)
             val socket =

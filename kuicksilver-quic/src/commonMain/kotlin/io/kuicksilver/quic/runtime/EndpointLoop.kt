@@ -160,6 +160,8 @@ internal class EndpointLoop private constructor(
         val asReceived: Boolean,
         /** The socket kind it arrived on: the main one, or a preferred-address socket ([PREFERRED_SOCKET]). */
         val socket: PathId = PathId.Initial,
+        /** Our address it was sent to, when the receiving socket reports it ([PacketBatch.localAddress]). */
+        val local: InetSocketAddress? = null,
     )
 
     internal val forwarded = Channel<Forwarded>(FORWARD_QUEUE)
@@ -296,6 +298,7 @@ internal class EndpointLoop private constructor(
                             batch.ecn(i),
                             now,
                             path,
+                            batch.localAddress(i),
                         )
                     }
                     drainPacketTooBig(io, path, now)
@@ -383,7 +386,15 @@ internal class EndpointLoop private constructor(
                 observer.datagramsReceived += batch.count
                 val now = now()
                 for (i in 0 until batch.count) {
-                    onDatagram(batch.buffer(i), batch.length(i), batch.address(i)!!, batch.ecn(i), now, PREFERRED_SOCKET)
+                    onDatagram(
+                        batch.buffer(i),
+                        batch.length(i),
+                        batch.address(i)!!,
+                        batch.ecn(i),
+                        now,
+                        PREFERRED_SOCKET,
+                        batch.localAddress(i),
+                    )
                 }
                 drainPacketTooBig(p, PREFERRED_SOCKET, now)
                 flush()
@@ -461,6 +472,7 @@ internal class EndpointLoop private constructor(
             single.buffer(0).copyFrom(copy, 0, 0, n)
             single.setLength(0, n)
             single.setAddress(0, out.address(i)!!)
+            single.setLocalAddress(0, out.localAddress(i))
             single.setEcn(0, out.ecn(i))
             val target = ioFor(rt, out.path(i), out.address(i))
             if (target == null) {
@@ -535,6 +547,7 @@ internal class EndpointLoop private constructor(
         ecn: Ecn,
         now: TimeMark,
         socket: PathId = PathId.Initial,
+        local: InetSocketAddress? = null,
     ) {
         if (socket == PREFERRED_SOCKET && preferredIos.isEmpty()) {
             core.droppedPreferredDown++ // the preferred address went down; another loop forwarded this before it knew
@@ -542,12 +555,16 @@ internal class EndpointLoop private constructor(
         }
         val misroute = testMisrouteTo
         if (misroute >= 0 && group != null) {
-            if (!group.forward(misroute, buf, length, from, ecn, asReceived = true, socket)) core.droppedQueue++
+            if (!group.forward(misroute, buf, length, from, ecn, asReceived = true, socket, local)) core.droppedQueue++
             return
         }
-        if (core.handleDatagram(buf, length, from, ecn, now, socket) != null || group == null) return
+        if (core.handleDatagram(buf, length, from, ecn, now, socket, local) != null || group == null) return
         val owner = core.ownerLoop(buf, length)
-        if (owner >= 0 && owner != index && !group.forward(owner, buf, length, from, ecn, asReceived = false, socket)) core.droppedQueue++
+        if (owner >= 0 && owner != index &&
+            !group.forward(owner, buf, length, from, ecn, asReceived = false, socket, local)
+        ) {
+            core.droppedQueue++
+        }
     }
 
     /**
@@ -578,7 +595,16 @@ internal class EndpointLoop private constructor(
                 receiver.receive(inBatch, untilTimer)
                 observer.datagramsReceived += inBatch.count
                 val now = now()
-                for (i in 0 until inBatch.count) onDatagram(inBatch.buffer(i), inBatch.length(i), inBatch.address(i)!!, inBatch.ecn(i), now)
+                for (i in 0 until inBatch.count) {
+                    onDatagram(
+                        inBatch.buffer(i),
+                        inBatch.length(i),
+                        inBatch.address(i)!!,
+                        inBatch.ecn(i),
+                        now,
+                        local = inBatch.localAddress(i),
+                    )
+                }
                 afterReceive(now)
                 // a socket that never runs dry (a flood) must not starve the timer coroutine and the queued application commands
                 if (limiter.shouldYield(now)) {
@@ -681,11 +707,12 @@ internal class EndpointLoop private constructor(
                         f.ecn,
                         now,
                         f.socket,
+                        f.local,
                     )
                 } else if (f.socket == PREFERRED_SOCKET && preferredIos.isEmpty()) {
                     core.droppedPreferredDown++
                 } else {
-                    core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now, f.socket)
+                    core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now, f.socket, f.local)
                 }
                 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
                 val drained = forwarded.isEmpty

@@ -166,7 +166,7 @@ private fun EndpointCore.admitValidated(
                 }
             val n = RetryPacket.write(vnBuffer, profile, clientScid, ourScid, token, clientDcid, config.crypto, random.nextInt(16))
             stateless +=
-                Stateless(ByteArray(n).also { vnBuffer.copyTo(it, 0, 0, n) }, from)
+                Stateless(ByteArray(n).also { vnBuffer.copyTo(it, 0, 0, n) }, from, rxLocal)
             retriesSent++
             return false
         }
@@ -201,6 +201,9 @@ private fun EndpointCore.admitValidated(
             tokenValidated = check is TokenCheck.NewTokenValid,
         )
             ?: return false
+    // the address the client's Initial reached: every reply leaves from it. Unknown (a socket that does not report destinations, or one
+    // that is no address to answer from, such as a broadcast) leaves the connection on the route's choice of source, as before 0.3.0
+    core.paths.active.local = core.serverLocal(rxLocal)
     if (tokens.newTokenLifetime != null) {
         core.newTokenMinter = { client ->
             newTokensIssued++
@@ -256,7 +259,7 @@ internal fun EndpointCore.statelessInitialClose(
     val clientScid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
     val n = StatelessClose.writeInitialClose(vnBuffer, profile, clientDcid, clientScid, code, config.crypto)
     stateless +=
-        Stateless(ByteArray(n).also { vnBuffer.copyTo(it, 0, 0, n) }, from)
+        Stateless(ByteArray(n).also { vnBuffer.copyTo(it, 0, 0, n) }, from, rxLocal)
 }
 
 internal fun EndpointCore.queueVersionNegotiation(
@@ -287,6 +290,6 @@ internal fun EndpointCore.queueVersionNegotiation(
         )
     val bytes = ByteArray(n)
     vnBuffer.copyTo(bytes, 0, 0, n)
-    stateless += Stateless(bytes, from)
+    stateless += Stateless(bytes, from, rxLocal)
     versionNegotiations++
 }

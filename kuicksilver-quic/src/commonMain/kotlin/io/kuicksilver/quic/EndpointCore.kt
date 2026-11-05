@@ -70,7 +70,15 @@ public class EndpointCore internal constructor(
     internal class Stateless(
         val bytes: ByteArray,
         val to: InetSocketAddress,
+        /** Our address the answered datagram was sent to: the answer leaves from it (RFC 9000 section 9); null for the socket's choice. */
+        val from: InetSocketAddress?,
     )
+
+    /**
+     * Our address the datagram being handled was sent to ([handleDatagram]'s `local`, or that of a queued Initial or early datagram
+     * being replayed): connections created from it and the stateless answers to it use it as their local end. Loop thread only.
+     */
+    internal var rxLocal: InetSocketAddress? = null
 
     internal val stateless = ArrayDeque<Stateless>()
     internal val vnBuffer: PacketBuffer
@@ -128,6 +136,7 @@ public class EndpointCore internal constructor(
     private class EarlyDatagram(
         val bytes: ByteArray,
         val from: InetSocketAddress,
+        val local: InetSocketAddress?,
         val ecn: Ecn,
         val at: TimeMark,
     )
@@ -162,7 +171,7 @@ public class EndpointCore internal constructor(
             earlyPending[key]
                 ?: if (earlyPending.size >= EARLY_PENDING_IDS) return else ArrayList<EarlyDatagram>().also { earlyPending[key] = it }
         if (l.size >= EARLY_PENDING_PER_ID) return
-        l += EarlyDatagram(ByteArray(length).also { data.copyTo(it, 0, 0, length) }, from, ecn, now)
+        l += EarlyDatagram(ByteArray(length).also { data.copyTo(it, 0, 0, length) }, from, rxLocal, ecn, now)
     }
 
     /** Feeds [core] the 0-RTT datagrams that waited for it under [dcid] (the DCID of the client's first Initial). */
@@ -178,7 +187,7 @@ public class EndpointCore internal constructor(
             if (now - e.at > EARLY_PENDING_TTL) continue
             val buf = PacketBuffer.of(e.bytes)
             try {
-                deliver(core, buf, e.bytes.size, e.from, e.ecn, now)
+                deliver(core, buf, e.bytes.size, e.from, e.ecn, now, local = e.local)
             } finally {
                 buf.close()
             }
@@ -480,7 +489,25 @@ public class EndpointCore internal constructor(
         ecn: Ecn,
         now: TimeMark,
         socket: PathId,
+    ): ConnectionCore? = handleDatagram(data, length, from, ecn, now, socket, null)
+
+    /**
+     * [handleDatagram] with [local], the address of ours the datagram was sent to ([PacketBatch.localAddress]; null when the socket
+     * cannot tell). A server keeps it as the local end of the path the datagram opens or belongs to (RFC 9000 section 9: a path is
+     * the 4-tuple) and sends that path's datagrams, and any stateless answer to this one, from it: on a wildcard bind of a
+     * multi-address host, a VIP or behind IPVS-DR the client hears back from the address it sent to.
+     */
+    @ExperimentalKuicksilverApi
+    public fun handleDatagram(
+        data: PacketBuffer,
+        length: Int,
+        from: InetSocketAddress,
+        ecn: Ecn,
+        now: TimeMark,
+        socket: PathId,
+        local: InetSocketAddress?,
     ): ConnectionCore? {
+        rxLocal = local
         if (!PacketHeaderCodec.parse(data, 0, length, cidLength, hv)) {
             // RFC 9000 section 10.3: a reset may come in another version's long header that v1 cannot parse
             statelessResetFor(data, length, from, now)?.let { return it }
@@ -531,7 +558,7 @@ public class EndpointCore internal constructor(
                 ) {
                     val bytes = ByteArray(n)
                     vnBuffer.copyTo(bytes, 0, 0, n)
-                    stateless += Stateless(bytes, from)
+                    stateless += Stateless(bytes, from, rxLocal)
                     statelessResets++
                     return null
                 }
@@ -577,7 +604,7 @@ public class EndpointCore internal constructor(
             droppedStateless++
             return null
         } // threat-model 3.1: silence to a reflection source
-        if (!queue!!.offer(data, length, from, ecn, now)) {
+        if (!queue!!.offer(data, length, from, ecn, now, rxLocal)) {
             initialsDropped++
             droppedQueue++
         } // the queue is bounded; overflow is a drop
@@ -611,17 +638,23 @@ public class EndpointCore internal constructor(
         }
         var created = 0
         var n = 0
-        while (n < max) {
-            val e = q.poll() ?: break
-            n++
-            try {
-                if (admitOne(e, now, inflight, handshakeBuffer)) {
-                    created++
-                    inflight++
+        val saved = rxLocal // the datagram being handled, if any, keeps its own local address after the drain
+        try {
+            while (n < max) {
+                val e = q.poll() ?: break
+                n++
+                try {
+                    rxLocal = e.local
+                    if (admitOne(e, now, inflight, handshakeBuffer)) {
+                        created++
+                        inflight++
+                    }
+                } finally {
+                    q.recycle(e)
                 }
-            } finally {
-                q.recycle(e)
             }
+        } finally {
+            rxLocal = saved
         }
         return created
     }
@@ -640,10 +673,11 @@ public class EndpointCore internal constructor(
         ecn: Ecn,
         now: TimeMark,
         socket: PathId = PathId.Initial,
+        local: InetSocketAddress? = rxLocal,
     ) {
         markDirty(core)
         try {
-            core.handleDatagram(data, length, from, ecn, now, socket)
+            core.handleDatagram(data, length, from, ecn, now, socket, local)
         } catch (
             e: Throwable,
         ) {
@@ -707,6 +741,7 @@ public class EndpointCore internal constructor(
             out.buffer(i).copyFrom(s.bytes, 0, 0, s.bytes.size)
             out.setLength(i, s.bytes.size)
             out.setAddress(i, s.to)
+            out.setLocalAddress(i, s.from)
             i++
         }
         return i

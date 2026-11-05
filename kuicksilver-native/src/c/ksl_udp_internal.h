@@ -7,6 +7,9 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1   /* pipe2, recvmmsg-era socket flags, clock_gettime */
 #endif
+#ifndef __APPLE_USE_RFC_3542
+#define __APPLE_USE_RFC_3542 1   /* Darwin: IPV6_RECVPKTINFO and the RFC 3542 IPV6_PKTINFO (not RFC 2292's), as msquic datapath_kqueue.c */
+#endif
 #include "ksl_internal.h"
 #include <errno.h>
 #include <stdio.h>
@@ -20,6 +23,10 @@
 #include <netinet/udp.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#ifdef __APPLE__
+#include <ifaddrs.h>
+#include <net/if.h>
+#endif
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -55,11 +62,17 @@ struct ksl_udp {
     int fd; int family; int dual; int wake[2];   /* dual: AF_INET6 on :: with IPV6_V6ONLY off, IPv4 peers as v4-mapped addresses */
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, tos_cmsg_on, eperm_retried;
+    int pktinfo;   /* KSL_UDP_PKTINFO granted: destinations read from IP_PKTINFO / IPV6_PKTINFO (IP_RECVDSTADDR), sources written the same way */
+    /* receiver thread only, telling an IPv4 destination that is an address of this host from a subnet-directed broadcast one: Linux
+       reads ipi_spec_dst next to ipi_addr (the IP_PKTINFO cmsg arrives on a dual-stack socket too, v4_spec); Darwin, whose
+       ipi_spec_dst is not filled on receive, checks against the interfaces' IPv4 addresses and broadcast addresses, read at most once a
+       second and kept for 10 s (16 of each) */
+    int v4_spec; uint8_t if_addr[16][4], if_bcast[16][4]; int if_n_addr, if_n_bcast; int64_t ifs_at;
     uint32_t last_errno; char last_msg[KSL_MSG]; pthread_mutex_t err_mu;   /* err_mu guards the pair; initialised in ksl_udp_open */
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* GRO scratch: one received message and the segments of it not yet handed out */
     /* two scratch buffers: the receiver thread owns scratch (GRO train), the sender thread owns tx (joined GSO run) — they never share */
-    uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
+    uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_dst[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
     int closed, in_recv;   /* atomics: closed with KSL_ALOAD and the exchange in ksl_udp_shutdown, in_recv with __atomic_* */
     uint32_t sends, recvs, gso_fallbacks, polls;   /* KSL_COUNT / KSL_RELAXED */
     /* ICMP hints (ADR-0006): recverr is on with DF on Linux; the receiver fills the Packet Too Big ring, ksl_udp_take_ptb empties it

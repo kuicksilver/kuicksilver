@@ -21,6 +21,9 @@ internal class AdmissionQueue(
     ) {
         var length: Int = 0
         lateinit var from: InetSocketAddress
+
+        /** Our address the Initial was sent to, when the socket reports it: the new connection's local end. */
+        var local: InetSocketAddress? = null
         var ecn: Ecn = Ecn.NotEct
         var receivedAt: TimeMark = TimeMark(0)
     }
@@ -39,6 +42,7 @@ internal class AdmissionQueue(
         from: InetSocketAddress,
         ecn: Ecn,
         now: TimeMark,
+        local: InetSocketAddress? = null,
     ): Boolean {
         if (length > segmentSize || pending.size >= capacity) return false
         val e =
@@ -53,6 +57,7 @@ internal class AdmissionQueue(
         e.buffer.copyFrom(scratch, 0, 0, length)
         e.length = length
         e.from = from
+        e.local = local
         e.ecn = ecn
         e.receivedAt = now
         pending.addLast(e)

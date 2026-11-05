@@ -130,6 +130,15 @@ internal class EndpointPair(
     /** The source of every server datagram, in the order of [serverSent]. */
     val serverSentFrom: MutableList<InetSocketAddress> = ArrayList()
 
+    /**
+     * The local address the server's socket reports for each client datagram ([PacketBatch.localAddress]): a wildcard socket on a
+     * multi-address host; null models a socket that cannot tell.
+     */
+    var serverLocal: InetSocketAddress? = null
+
+    /** The local address every server datagram names as its source ([PacketBatch.localAddress]), in the order of [serverSent]. */
+    val serverSentLocal: MutableList<InetSocketAddress?> = ArrayList()
+
     /** Every server datagram with its destination, delivered or not. */
     val serverSent: MutableList<Pair<InetSocketAddress, ByteArray>> = ArrayList()
 
@@ -167,6 +176,7 @@ internal class EndpointPair(
     ) {
         val pending = ArrayList<Pair<InetSocketAddress, ByteArray>>()
         val sockets = ArrayList<PathId>()
+        val locals = ArrayList<InetSocketAddress?>()
         val ecns = ArrayList<Ecn>()
         for (c in from.connections().toList()) {
             batch.clear()
@@ -175,6 +185,7 @@ internal class EndpointPair(
                 pending +=
                     batch.address(i)!! to batch.buffer(i).toByteArray(batch.length(i))
                 sockets += batch.path(i)
+                locals += batch.localAddress(i)
                 ecns += batch.ecn(i)
             }
         }
@@ -184,6 +195,7 @@ internal class EndpointPair(
             pending +=
                 batch.address(i)!! to batch.buffer(i).toByteArray(batch.length(i))
             sockets += PathId.Initial
+            locals += batch.localAddress(i)
             ecns += batch.ecn(i)
         }
         if (toServer) {
@@ -191,7 +203,7 @@ internal class EndpointPair(
             for ((_, b) in pending) clientDatagramSizes += b.size
         }
         if (toServer && !serverStalled && stalledToServer.isNotEmpty()) {
-            for ((bytes, src, ecn) in stalledToServer) deliver(to, bytes, src, ecn, PathId.Initial)
+            for ((bytes, src, ecn) in stalledToServer) deliver(to, bytes, src, ecn, PathId.Initial, serverLocal)
             stalledToServer.clear()
         }
         for (k in pending.indices) {
@@ -215,6 +227,7 @@ internal class EndpointPair(
                     src = serverPreferred?.ipv4 ?: serverPreferred!!.ipv6!!
                 }
                 serverSentFrom += src
+                serverSentLocal += locals[k]
                 serverSent += dest to bytes
                 socket = clientSocketSources.entries.firstOrNull { it.value == dest }?.key ?: PathId.Initial
                 if (socket ==
@@ -244,7 +257,7 @@ internal class EndpointPair(
                 stalledToServer += Triple(bytes, src, ecn)
                 continue
             }
-            deliver(to, bytes, src, ecn, socket)
+            deliver(to, bytes, src, ecn, socket, if (toServer) serverLocal else null)
         }
         if (toServer && serverStalled) return
         to.processPending(now)
@@ -257,10 +270,11 @@ internal class EndpointPair(
         src: InetSocketAddress,
         ecn: Ecn,
         socket: PathId,
+        local: InetSocketAddress? = null,
     ) {
         val b = PacketBuffer.of(bytes)
         try {
-            to.handleDatagram(b, bytes.size, src, ecn, now, socket)
+            to.handleDatagram(b, bytes.size, src, ecn, now, socket, local)
         } finally {
             b.close()
         }

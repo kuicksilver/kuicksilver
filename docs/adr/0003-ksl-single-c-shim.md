@@ -63,4 +63,6 @@ process and record who started it (ADR-0006, Windows); they are additive. 70 fun
 alone would be additive, but the receive behaviour changes and the 0.3.0 plan bumps once for every `ksl.h` change of the
 release: `KSL_ABI_VERSION 7`, and later 0.3.0 additions go under 7. 72 functions. Under 7 as well: the error code `KSL_E_BIND`
 (0xff000c: `ksl_udp_open` whose bind was refused; other steps keep their codes), and `ksl_tcp_read` answering `KSL_OK`
-with nothing read when it must write first and the pair is full (it answered `KSL_WANT_READ`).
+with nothing read when it must write first and the pair is full (it answered `KSL_WANT_READ`), and the local-address calls of a
+wildcard UDP socket: `KSL_UDP_PKTINFO`, `ksl_udp_send_src` (a source per slot) and `ksl_udp_recv_dst` (each datagram's
+destination), additive (ADR-0006, "Local addresses on a wildcard bind"); 74 functions.

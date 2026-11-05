@@ -146,6 +146,22 @@ on the requested port (`udp_win_wildcard_explicit_port_kept`) and reports `0.0.0
 servers; without IPv6 it falls back to `AF_INET` (before the 0.2.0 Windows fixes, `0.0.0.0` gave an IPv4-only socket
 there).
 
+### Local addresses on a wildcard bind (0.3.0)
+
+A path is the 4-tuple (RFC 9000 section 9), and a client drops packets from an address it did not send to. A socket bound to
+`0.0.0.0` or `::` asks for `KSL_UDP_PKTINFO` (granted on a wildcard bind only, as quic-go asks for packet info only on an
+unspecified address): `ksl_udp_recv_dst` reports each datagram's destination (`IP_PKTINFO` on `AF_INET`, `IPV6_RECVPKTINFO` on
+`AF_INET6` and dual-stack sockets, whose IPv4 traffic comes v4-mapped; `IP_PKTINFO` and `IPV6_PKTINFO` on Windows) and
+`ksl_udp_send_src` sends a slot from a named source (`IP_PKTINFO` with `ipi_spec_dst` for IPv4, also on a dual-stack socket,
+`IPV6_PKTINFO` for IPv6; `IN_PKTINFO` / `IN6_PKTINFO` through `WSASendMsg`). No interface index travels: the 20-byte address
+has no room for it, and with index 0 the kernel routes from the named source. Slots with different sources never share a GSO
+run. Multicast, broadcast (subnet-directed: Linux `ipi_spec_dst`, Darwin a check against the interface addresses, read at most once a second and limited to the first 16 IPv4 addresses, so a datagram to a later one is answered from the route's choice, Windows `MSG_BCAST`) and IPv6
+link-local destinations are reported as unknown. `KslDatagramIo` carries the address as `PacketBatch.localAddress`; the core fixes
+it per server path when the path is made (as quinn-proto and quic-go) and names it on every datagram of that path ([RFC 9000 details](../spec/rfc/9000.md#s9-local-address-of-a-server-path)). The portable sockets (NIO,
+ktor-network) have no such call: on a multi-address host a server there binds the address clients use. Tests: `test_udp.c`
+`udp_pktinfo_*`, `test_udp_win.c` `udp_win_pktinfo_*`, `KslDatagramIoTest.wildcardSocketReportsTheDestinationAndRepliesFromIt`,
+`wildcardServerHandshakesOnTheSecondAddress`.
+
 ### `SO_REUSEPORT` grant and `loops > 1`
 
 Several endpoint loops on one port (`LoopGroup`) need kernel flow hashing over `SO_REUSEPORT` sockets. `ksl_udp` sets

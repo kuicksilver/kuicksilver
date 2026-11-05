@@ -41,6 +41,17 @@ internal class Path(
     /** True when [a] is this path's peer: equal as ktor sees it, or the same port and the same IP once host names are resolved. */
     fun isRemote(a: InetSocketAddress): Boolean = remote == a || (remote.port == a.port && remoteKey == AddressClass.ipKey(a))
 
+    /**
+     * Server: our address on this path, the one the client sent to, learned from the datagram that opened the path on a wildcard
+     * socket that reports destinations ([io.kuicksilver.quic.PacketBatch.localAddress]); every datagram of the path leaves from it,
+     * so a reply on a multi-address host or a VIP comes from the address the client knows. Fixed when the path is made, as
+     * quinn-proto's `FourTuple::local_ip` and quic-go's `sendConn` packet info: only a client migrates (RFC 9000 section 9), so a
+     * datagram from the path's client address that reached another of our addresses (the client's own, or an attacker's copy) is
+     * processed on this path and changes nothing here. Null where the socket cannot tell (the portable sockets, a specific bind) and
+     * on a client, whose source the kernel picks (quinn-proto's `local_ip` is `None` for clients).
+     */
+    var local: InetSocketAddress? = null
+
     var state: PathState = PathState.Unknown
     val amplification = AmplificationLimit()
 

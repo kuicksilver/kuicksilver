@@ -111,11 +111,12 @@ internal class LoopGroup private constructor(
         ecn: Ecn,
         asReceived: Boolean,
         socket: io.kuicksilver.quic.PathId = io.kuicksilver.quic.PathId.Initial,
+        local: InetSocketAddress? = null,
     ): Boolean {
         if (to >= loops.size || length > EndpointLoop.FORWARD_MAX) return true // not a queue drop: no loop takes it
         val bytes = ByteArray(length)
         buf.copyTo(bytes, 0, 0, length)
-        return loops[to].forwarded.trySend(EndpointLoop.Forwarded(bytes, from, ecn, asReceived, socket)).isSuccess
+        return loops[to].forwarded.trySend(EndpointLoop.Forwarded(bytes, from, ecn, asReceived, socket, local)).isSuccess
     }
 
     private val preferredFailed = AtomicInt(0)

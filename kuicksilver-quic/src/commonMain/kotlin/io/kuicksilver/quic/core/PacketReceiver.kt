@@ -67,6 +67,7 @@ internal class PacketReceiver(
         val bytes: ByteArray,
         val from: InetSocketAddress,
         val socket: PathId,
+        val local: InetSocketAddress?,
         val ecn: io.kuicksilver.quic.Ecn,
         val datagramLength: Int,
     )
@@ -82,6 +83,9 @@ internal class PacketReceiver(
     }
 
     internal var socket: PathId = PathId.Initial
+
+    /** Our address the current datagram was sent to, when the socket reports it ([io.kuicksilver.quic.PacketBatch.localAddress]). */
+    internal var local: InetSocketAddress? = null
     internal var from: InetSocketAddress? = null
     internal var datagramLength = 0
 
@@ -109,9 +113,11 @@ internal class PacketReceiver(
         socket: PathId,
         ecn: io.kuicksilver.quic.Ecn,
         now: TimeMark,
+        local: InetSocketAddress? = null,
     ) {
         this.now = now
         this.socket = socket
+        this.local = local
         this.from = from
         datagramLength = length
         datagramSeq++
@@ -296,7 +302,7 @@ internal class PacketReceiver(
             val bytes = ByteArray(hv.packetEnd - hv.pnOffset + (hv.pnOffset - headerStart()))
             val start = headerStart()
             data.copyTo(bytes, start, 0, bytes.size)
-            buffered += Buffered(level, bytes, from, socket, datagramEcn, datagramLength)
+            buffered += Buffered(level, bytes, from, socket, local, datagramEcn, datagramLength)
             // a 1-RTT packet held for the handshake's end counts as handled: its datagram is no Stateless Reset candidate (RFC 9000
             // section 10.3.1; the client's reset tokens come in 1-RTT frames the server has not processed yet)
             return beforeFinished
@@ -545,6 +551,7 @@ internal class PacketReceiver(
         val again = buffered.filter { it.level == level }
         buffered.removeAll { it.level == level }
         val savedSocket = socket
+        val savedLocal = local
         val savedFrom = from
         val savedLength = datagramLength
         val savedEcn = datagramEcn
@@ -554,6 +561,7 @@ internal class PacketReceiver(
                 try {
                     buf.copyFrom(b.bytes, 0, 0, b.bytes.size)
                     socket = b.socket
+                    local = b.local
                     from = b.from
                     datagramLength = b.datagramLength
                     datagramEcn = b.ecn
@@ -576,6 +584,7 @@ internal class PacketReceiver(
             }
         } finally {
             socket = savedSocket
+            local = savedLocal
             from = savedFrom
             datagramLength = savedLength
             datagramEcn = savedEcn

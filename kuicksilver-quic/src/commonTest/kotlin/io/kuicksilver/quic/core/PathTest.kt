@@ -177,6 +177,155 @@ class PathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 9: a path is the 4-tuple. A server on a wildcard socket learns which of its addresses the client sent to
+     * ([io.kuicksilver.quic.PacketBatch.localAddress]) and every datagram of the connection, from the first flight on, names that
+     * address as its source: on a multi-address host or a VIP the client hears back from the address it chose.
+     */
+    @Test fun serverRepliesFromTheLocalAddressTheClientUsed() {
+        val vip = InetSocketAddress("192.0.2.10", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = vip
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            send(c, 3000)
+            p.settle(10)
+            assertTrue(p.serverSentLocal.isNotEmpty())
+            assertTrue(p.serverSentLocal.all { it == vip }, "every server datagram leaves from $vip: ${p.serverSentLocal.toSet()}")
+            assertEquals(
+                vip,
+                p
+                    .server()
+                    .paths.active.local,
+            )
+            assertTrue(p.changes(p.server()).isEmpty(), "the same 4-tuple: no path change")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Where the socket cannot tell (the portable sockets, a specific bind) nothing names a source: the socket's own address is used. */
+    @Test fun noLocalAddressWithoutTheSocketReportingIt() {
+        val (p, c) = connected()
+        try {
+            send(c, 3000)
+            p.settle(10)
+            assertTrue(p.serverSentLocal.all { it == null }, "no source named: ${p.serverSentLocal.toSet()}")
+            assertNull(
+                p
+                    .server()
+                    .paths.active.local,
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Only a client migrates, and a client discards packets from a server address it did not send to (RFC 9000 section 9), so datagrams of the same client address reaching another of the server's addresses are no reason to answer from there:
+     * an off-path attacker's copy sent to that address would otherwise move the server to an address the client drops, stalling the
+     * connection. The local end of a path is fixed when the path is made (as quinn-proto's `FourTuple::local_ip` and quic-go's
+     * `sendConn` packet info): such datagrams are processed on the existing path and every answer keeps leaving from its address,
+     * whether migration is allowed or not.
+     */
+    @Test fun negative_datagramsToAnotherLocalAddressDoNotMoveTheServer() {
+        for (allow in listOf(true, false)) {
+            val a = InetSocketAddress("192.0.2.10", 443)
+            val b = InetSocketAddress("192.0.2.11", 443)
+            val p = EndpointPair(serverQuic = io.kuicksilver.quic.quicConfig { allowMigration = allow })
+            try {
+                p.serverLocal = a
+                val c = p.connect()
+                assertTrue(p.confirmed(c))
+                p.settle()
+                val s = p.server()
+                val sentBefore = p.serverSentLocal.size
+                p.serverLocal = b // the client's own packets, or an attacker's copies of them, now reach address b
+                send(c, 3000)
+                p.settle(10)
+                assertTrue(p.changes(s).isEmpty(), "allowMigration=$allow: no path change: ${p.changes(s).map { it.reason }}")
+                assertEquals(1, s.paths.all.size, "allowMigration=$allow: no second path")
+                assertEquals(a, s.paths.active.local)
+                val after = p.serverSentLocal.drop(sentBefore)
+                assertTrue(
+                    after.isNotEmpty() && after.all { it == a },
+                    "allowMigration=$allow: every answer still from $a: ${after.toSet()}",
+                )
+                assertTrue(s.stats.bytesReceived > 3000, "the data was processed on the existing path")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /**
+     * A real move of the client (here a NAT rebinding: a new port) opens a path whose local end is the address its first datagram
+     * reached; when that is another address of ours, the path never gets the connection ID the old address used (RFC 9000 section
+     * 9.5: "MUST NOT reuse a connection ID when sending from more than one local address").
+     */
+    @Test fun aNewClientAddressTakesTheLocalAddressItsDatagramReached() {
+        val a = InetSocketAddress("192.0.2.10", 443)
+        val b = InetSocketAddress("192.0.2.11", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = a
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.settle()
+            val s = p.server()
+            val sentBefore = p.serverSent.size
+            p.serverLocal = b
+            p.clientSource = InetSocketAddress("10.0.0.1", 40001)
+            p.clientListens += p.clientSource
+            send(c)
+            p.settle(10)
+            assertEquals(listOf(PathChangeReason.NatRebinding), p.changes(s).map { it.reason })
+            assertEquals(p.clientSource, s.paths.active.remote)
+            assertEquals(b, s.paths.active.local)
+            assertEquals(b, p.serverSentLocal.last())
+            val len = c.localCid.length
+
+            fun dcid(i: Int) =
+                p.serverSent[i]
+                    .second
+                    .copyOfRange(1, 1 + len)
+                    .toList()
+
+            fun shortFrom(l: InetSocketAddress) =
+                p.serverSentLocal.indices.filter { p.serverSentLocal[it] == l && p.serverSent[it].second[0].toInt() and 0x80 == 0 }
+            val fromA = shortFrom(a).map { dcid(it) }.toSet()
+            val fromB = shortFrom(b).filter { it >= sentBefore }.map { dcid(it) }.toSet()
+            assertTrue(fromA.isNotEmpty() && fromB.isNotEmpty())
+            assertTrue(fromA.intersect(fromB).isEmpty(), "no connection ID from both local addresses")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A new client address whose datagram's destination the socket could not tell (family 0) keeps the server's current source. */
+    @Test fun aNewClientAddressWithAnUnknownDestinationKeepsTheServersSource() {
+        val a = InetSocketAddress("192.0.2.10", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = a
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.settle()
+            val s = p.server()
+            p.serverLocal = null
+            p.clientSource = InetSocketAddress("10.0.0.1", 40001)
+            p.clientListens += p.clientSource
+            send(c)
+            p.settle(10)
+            assertEquals(listOf(PathChangeReason.NatRebinding), p.changes(s).map { it.reason })
+            assertEquals(a, s.paths.active.local)
+            assertEquals(a, p.serverSentLocal.last())
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun natRebindKeepsCongestionAndRtt() {
         val (p, c) = connected()
         try {

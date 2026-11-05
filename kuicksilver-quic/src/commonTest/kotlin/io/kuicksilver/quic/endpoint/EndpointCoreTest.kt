@@ -255,6 +255,29 @@ class EndpointCoreTest {
         assertEquals(0, srv.connectionCount)
     }
 
+    /** A stateless answer leaves from the address the datagram it answers was sent to (RFC 9000 section 9), here Version Negotiation. */
+    @Test fun statelessAnswerLeavesFromTheLocalAddress() {
+        val srv = server()
+        val c = clientEndpoint().connect(clientConfig(), a2, now)
+        val d = firstInitial(c)
+        for (i in 1..4) d[i] = 0x0a
+        val vip = InetSocketAddress("192.0.2.10", 443)
+        val buf = PacketBuffer.of(d)
+        try {
+            assertNull(srv.handleDatagram(buf, d.size, a1, Ecn.NotEct, now, io.kuicksilver.quic.PathId.Initial, vip))
+        } finally {
+            buf.close()
+        }
+        val b = PacketBatch(4)
+        try {
+            assertEquals(1, srv.pollStateless(b))
+            assertEquals(a1, b.address(0))
+            assertEquals(vip, b.localAddress(0), "Version Negotiation leaves from $vip")
+        } finally {
+            b.close()
+        }
+    }
+
     @Test fun unknownVersionGetsVersionNegotiation() {
         val srv = server()
         val c = clientEndpoint().connect(clientConfig(), a2, now)

@@ -46,7 +46,7 @@ public class KslUdpSocket private constructor(
         }
     }
 
-    /** Flags in effect now ([ECN], [GSO], [GRO], [DF], [REUSEPORT]); GSO and ECN can drop out after a send the kernel refused (EIO/EINVAL), so re-read after a short send. */
+    /** Flags in effect now ([ECN], [GSO], [GRO], [DF], [REUSEPORT], [PKTINFO]); GSO and ECN can drop out after a send the kernel refused (EIO/EINVAL), so re-read after a short send. */
     public val grantedFlags: Int get() = be32(caps(), 0)
 
     /** Segments one GSO send may carry (0 when GSO is off). */
@@ -90,6 +90,8 @@ public class KslUdpSocket private constructor(
      * datagrams handed to the kernel; a datagram the path refuses as too large (EMSGSIZE) is skipped and counted, the caller's PMTUD
      * learns from its loss; so is one the destination makes unsendable (port 0, a link-local IPv6 address: the address format has no
      * scope id, and datagrams from link-local peers are dropped on receive). 0 after [shutdown]. Throws [KslException.Internal] on a socket error.
+     * [srcs] (null: none) names each slot's source address at `srcs[i * ADDR_LEN, +ADDR_LEN)`, family 0 for the kernel's choice; it
+     * is acted on only with [PKTINFO] granted (a wildcard socket), and slots with different sources never share a GSO send.
      */
     public fun send(
         bufs: Array<PacketBuffer>,
@@ -97,10 +99,11 @@ public class KslUdpSocket private constructor(
         addrs: ByteArray,
         ecn: ByteArray,
         n: Int,
+        srcs: ByteArray? = null,
     ): Int {
         if (!enter()) return 0
         try {
-            return Ksl.udpSend(handle, bufs, lens, addrs, ecn, n)
+            return Ksl.udpSend(handle, bufs, lens, addrs, srcs, ecn, n)
         } catch (
             e: KslException.Internal,
         ) {
@@ -118,7 +121,8 @@ public class KslUdpSocket private constructor(
      * whatever the peer sends. A datagram larger than its slot, or than the receive scratch, is dropped whole, never truncated;
      * empty datagrams and (with the address format having no scope id) IPv6 link-local sources are dropped too. Throws [KslException.Internal]
      * (errno in [KslException.Internal.alert]) when `poll`/`recvmsg` fails on a socket that was not shut down: a broken socket is
-     * never reported as an endless run of timeouts.
+     * never reported as an endless run of timeouts. [dsts] (null: not wanted) receives the address each datagram was sent to, the
+     * port this socket's; all zero (family 0) without [PKTINFO] granted.
      */
     public fun receive(
         bufs: Array<PacketBuffer>,
@@ -127,10 +131,11 @@ public class KslUdpSocket private constructor(
         ecn: ByteArray,
         n: Int,
         timeoutMs: Int,
+        dsts: ByteArray? = null,
     ): Int {
         if (!enter()) return 0
         try {
-            val r = Ksl.udpRecv(handle, bufs, lens, addrs, ecn, n, timeoutMs)
+            val r = Ksl.udpRecv(handle, bufs, lens, addrs, dsts, ecn, n, timeoutMs)
             if (r >= 0 || isClosed) return r.coerceAtLeast(0)
             val e = Ksl.udpGet(handle, KslConst.UDP_GET_ERROR)
             throw KslException.Internal(KslConst.E_BAD_ARG, be32(e, 0), if (e.size > 4) e.decodeToString(4) else "ksl_udp_recv failed")
@@ -216,6 +221,9 @@ public class KslUdpSocket private constructor(
         public const val GRO: Int = KslConst.UDP_GRO
         public const val DF: Int = KslConst.UDP_DF
         public const val REUSEPORT: Int = KslConst.UDP_REUSEPORT
+
+        /** Granted on a wildcard bind only: [receive] reports each datagram's destination and [send] sends from a named source (RFC 9000 section 9). */
+        public const val PKTINFO: Int = KslConst.UDP_PKTINFO
         public const val ADDR_LEN: Int = KslConst.UDP_ADDR_LEN
         public const val MAX_BATCH: Int = KslConst.UDP_MAX_BATCH
         public const val PTB_QUOTE: Int = KslConst.UDP_PTB_QUOTE

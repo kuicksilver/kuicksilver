@@ -106,6 +106,7 @@ public final class io/kuicksilver/quic/ConnectionCore {
 	public final fun getState ()Lio/kuicksilver/quic/ConnectionState;
 	public final fun getStats ()Lio/kuicksilver/quic/ConnectionStats;
 	public final fun getVersion ()Lio/kuicksilver/quic/VersionProfile;
+	public final fun handleDatagram-JESea_4 (Lio/kuicksilver/native/PacketBuffer;ILio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/Ecn;JILio/ktor/network/sockets/InetSocketAddress;)V
 	public final fun handleDatagram-JxQw6Qo (Lio/kuicksilver/native/PacketBuffer;ILio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/Ecn;JI)V
 	public final fun handleDatagram-hO8ycN4 (Lio/kuicksilver/native/PacketBuffer;ILio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/Ecn;J)V
 	public final fun initiateKeyUpdate-pTXYmRQ (J)Z
@@ -457,6 +458,7 @@ public final class io/kuicksilver/quic/EndpointCore {
 	public final fun getLoopIndex ()I
 	public final fun getPendingInitials ()I
 	public final fun getStats ()Lio/kuicksilver/quic/EndpointStats;
+	public final fun handleDatagram-JESea_4 (Lio/kuicksilver/native/PacketBuffer;ILio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/Ecn;JILio/ktor/network/sockets/InetSocketAddress;)Lio/kuicksilver/quic/ConnectionCore;
 	public final fun handleDatagram-JxQw6Qo (Lio/kuicksilver/native/PacketBuffer;ILio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/Ecn;JI)Lio/kuicksilver/quic/ConnectionCore;
 	public final fun handleDatagram-hO8ycN4 (Lio/kuicksilver/native/PacketBuffer;ILio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/Ecn;J)Lio/kuicksilver/quic/ConnectionCore;
 	public final fun markDirty (Lio/kuicksilver/quic/ConnectionCore;)V
@@ -647,11 +649,13 @@ public final class io/kuicksilver/quic/PacketBatch : java/lang/AutoCloseable {
 	public final fun getCount ()I
 	public final fun getSegmentSize ()I
 	public final fun length (I)I
+	public final fun localAddress (I)Lio/ktor/network/sockets/InetSocketAddress;
 	public final fun path-xZqIypw (I)I
 	public final fun setAddress (ILio/ktor/network/sockets/InetSocketAddress;)V
 	public final fun setCount (I)V
 	public final fun setEcn (ILio/kuicksilver/quic/Ecn;)V
 	public final fun setLength (II)V
+	public final fun setLocalAddress (ILio/ktor/network/sockets/InetSocketAddress;)V
 	public final fun setPath-UiEotyc (II)V
 }
 

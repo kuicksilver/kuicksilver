@@ -55,6 +55,12 @@
 #ifndef SIO_UDP_NETRESET
 #define SIO_UDP_NETRESET _WSAIOW(IOC_VENDOR, 15)
 #endif
+#ifndef MSG_BCAST
+#define MSG_BCAST 0x400
+#endif
+#ifndef MSG_MCAST
+#define MSG_MCAST 0x800
+#endif
 #ifndef WSA_FLAG_NO_HANDLE_INHERIT
 #define WSA_FLAG_NO_HANDLE_INHERIT 0x80
 #endif
@@ -72,11 +78,12 @@ struct ksl_udp {
     LPFN_WSARECVMSG recv_msg; LPFN_WSASENDMSG send_msg;
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, ecn_cmsg_on, df_probe, dual;   /* df_probe: IP_MTU_DISCOVER = PROBE taken; dual: AF_INET6 on :: for a 0.0.0.0 bind */
+    int pktinfo;   /* KSL_UDP_PKTINFO granted: destinations from the IP_PKTINFO / IPV6_PKTINFO cmsg, sources sent the same way */
     int ce_refused;   /* Windows refused the CE codepoint in the IP_ECN / IPV6_ECN cmsg (WSAEINVAL): CE leaves unmarked, ECT stays on */
     uint32_t last_errno; char last_msg[KSL_MSG]; SRWLOCK err_mu;   /* err_mu guards the pair; initialised in ksl_udp_open */
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* the receiver thread owns scratch (a URO train and its segments not yet handed out), the sender thread owns tx (a joined USO run) */
-    uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
+    uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_dst[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
     int closed, in_recv;   /* atomics: closed with KSL_ALOAD and the exchange in ksl_udp_shutdown, in_recv with __atomic_* */
     uint32_t sends, recvs, gso_fallbacks;
     volatile LONG64 emsgsize; volatile LONG emsgsize_last;   /* sends lost to WSAEMSGSIZE (ksl_udp_emsgsize) */
@@ -211,6 +218,13 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     }
     if (flags & KSL_UDP_GSO) { DWORD v = 0; int l = (int)sizeof v; if (getsockopt(u->fd, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (char *)&v, &l) == 0) { u->granted |= KSL_UDP_GSO; u->gso_on = 1; u->gso_max = GSO_SEGMENTS; } }
     if (flags & KSL_UDP_GRO) { DWORD v = URO_MAX; if (setsockopt(u->fd, IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *)&v, sizeof v) == 0) u->granted |= KSL_UDP_GRO; }
+    /* destinations on a wildcard bind (RFC 9000 section 9: replies leave from the address a datagram arrived on): IP_PKTINFO and, on an
+       IPv6 (dual-stack) socket, IPV6_PKTINFO as well, as msquic datapath_winuser.c (CxPlatSocketCreateUdp) sets both */
+    if ((flags & KSL_UDP_PKTINFO) && is_wildcard(addr)) {
+        int ok = u->family == AF_INET6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_PKTINFO, (const char *)&yes, sizeof yes) : setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, (const char *)&yes, sizeof yes);
+        if (ok == 0 && u->dual) ok = setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, (const char *)&yes, sizeof yes);   /* the v4-mapped half reports IN_PKTINFO */
+        if (ok == 0) { u->granted |= KSL_UDP_PKTINFO; u->pktinfo = 1; }
+    }
     u->batch = 16;
     u->wake = open_wake(&u->wake_sa);   /* INVALID_SOCKET: the receive waits in slices instead */
     u->scratch = malloc(GRO_MAX); u->tx = malloc(GRO_MAX);
@@ -239,17 +253,31 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
 }
 
 /* ---- sending ---- */
-static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t *addr, uint8_t ecn, uint32_t seg, int *e) {
+/* the source of a slot: its srcs entry when PKTINFO is granted and the entry names an address of the destination's family */
+static const uint8_t *source_of(const ksl_udp *u, const uint8_t *srcs, uint32_t i, const uint8_t *addr) {
+    if (!srcs || !u->pktinfo) return NULL;
+    const uint8_t *s = srcs + i * KSL_UDP_ADDR_LEN; return s[0] == addr[0] ? s : NULL;
+}
+static int same_source(const uint8_t *a, const uint8_t *b) { return a == b || (a && b && !memcmp(a + 3, b + 3, 16)) || (!a && !b); }
+static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t *addr, const uint8_t *src, uint8_t ecn, uint32_t seg, int *e) {
     struct sockaddr_storage ss; int sl = to_sockaddr(u, addr, &ss); if (sl < 0) { *e = WSAEAFNOSUPPORT; return -1; }
     WSABUF wb; wb.len = len; wb.buf = (CHAR *)buf;
-    union { WSACMSGHDR align; char b[WSA_CMSG_SPACE(sizeof(INT)) + WSA_CMSG_SPACE(sizeof(DWORD))]; } cb; memset(&cb, 0, sizeof cb);   /* zeroed: NXTHDR reads the next header's length */
+    union { WSACMSGHDR align; char b[WSA_CMSG_SPACE(sizeof(INT)) + WSA_CMSG_SPACE(sizeof(DWORD)) + WSA_CMSG_SPACE(sizeof(IN6_PKTINFO))]; } cb; memset(&cb, 0, sizeof cb);   /* zeroed: NXTHDR reads the next header's length */
     WSAMSG m; memset(&m, 0, sizeof m); m.name = (LPSOCKADDR)&ss; m.namelen = sl; m.lpBuffers = &wb; m.dwBufferCount = 1; m.Control.buf = cb.b; m.Control.len = sizeof cb.b;
     WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&m); ULONG used = 0;
     if (ecn && u->ecn_cmsg_on && !(ecn == 3 && u->ce_refused) && c) {   /* the level follows the destination: a v4-mapped peer of a dual-stack socket takes IP_ECN (as msquic) */
         INT v = ecn & 3; c->cmsg_level = addr[0] == 4 ? IPPROTO_IP : IPPROTO_IPV6; c->cmsg_type = addr[0] == 4 ? IP_ECN : IPV6_ECN; c->cmsg_len = WSA_CMSG_LEN(sizeof(INT));
         memcpy(WSA_CMSG_DATA(c), &v, sizeof v); used += WSA_CMSG_SPACE(sizeof(INT)); c = WSA_CMSG_NXTHDR(&m, c);
     }
-    if (seg && c) { DWORD s = seg; c->cmsg_level = IPPROTO_UDP; c->cmsg_type = UDP_SEND_MSG_SIZE; c->cmsg_len = WSA_CMSG_LEN(sizeof(DWORD)); memcpy(WSA_CMSG_DATA(c), &s, sizeof s); used += WSA_CMSG_SPACE(sizeof(DWORD)); }
+    if (seg && c) { DWORD s = seg; c->cmsg_level = IPPROTO_UDP; c->cmsg_type = UDP_SEND_MSG_SIZE; c->cmsg_len = WSA_CMSG_LEN(sizeof(DWORD)); memcpy(WSA_CMSG_DATA(c), &s, sizeof s); used += WSA_CMSG_SPACE(sizeof(DWORD)); c = WSA_CMSG_NXTHDR(&m, c); }
+    /* the source (KSL_UDP_PKTINFO): IN_PKTINFO for an IPv4 destination (dual-stack too), IN6_PKTINFO for IPv6, no interface: as msquic
+       datapath_winuser.c CxPlatSocketSendInline, which passes the receive's interface index where we pass 0 (the stack routes) */
+    if (src && c) {
+        if (addr[0] == 4) { IN_PKTINFO pi; memset(&pi, 0, sizeof pi); memcpy(&pi.ipi_addr, src + 3, 4);
+            c->cmsg_level = IPPROTO_IP; c->cmsg_type = IP_PKTINFO; c->cmsg_len = WSA_CMSG_LEN(sizeof pi); memcpy(WSA_CMSG_DATA(c), &pi, sizeof pi); used += WSA_CMSG_SPACE(sizeof pi); }
+        else { IN6_PKTINFO pi; memset(&pi, 0, sizeof pi); memcpy(&pi.ipi6_addr, src + 3, 16);
+            c->cmsg_level = IPPROTO_IPV6; c->cmsg_type = IPV6_PKTINFO; c->cmsg_len = WSA_CMSG_LEN(sizeof pi); memcpy(WSA_CMSG_DATA(c), &pi, sizeof pi); used += WSA_CMSG_SPACE(sizeof pi); }
+    }
     m.Control.len = used; if (!used) m.Control.buf = NULL;   /* Winsock refuses a non-NULL control buffer of length 0 */
     KSL_COUNT(u->sends);
 #ifdef KSL_TEST
@@ -265,17 +293,21 @@ static int dest_error(int e) { return e == WSAEINVAL || e == WSAEAFNOSUPPORT || 
 static int slot_lost(int e) { return dest_error(e) || e == WSAEMSGSIZE || e == WSAEACCES || e == WSAENETUNREACH || e == WSAEHOSTUNREACH || e == WSAENOBUFS || e == WSAECONNRESET || e == WSAENETRESET || e == WSAECONNREFUSED || e == WSAENETDOWN; }
 
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
+    return ksl_udp_send_src(u, bufs, lens, addrs, NULL, ecn, n, sent);
+}
+int ksl_udp_send_src(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *srcs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
     if (!u || KSL_ALOAD(u->closed)) { if (sent) *sent = 0; return KSL_ERROR; } *sent = 0; uint32_t i = 0;
     int gso_probe = 0;   /* a USO send failed with WSAEINVAL: the first datagram of that run, sent alone, tells USO's fault from the destination's */
     uint32_t solo = 0;   /* datagrams of a refused USO run still to send one by one; USO itself stays on */
     while (i < n) {
         /* the same run rule as Linux: two equal lengths start it, the last segment may be shorter, one address, one mark */
         uint32_t run = 1;
-        if (u->gso_on && !gso_probe && !solo && i + 1 < n && lens[i + 1] == lens[i]) while (i + run < n && run < u->gso_max && lens[i + run] <= lens[i] && !memcmp(addrs + (i + run) * KSL_UDP_ADDR_LEN, addrs + i * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN) && ecn[i + run] == ecn[i]) { run++; if (lens[i + run - 1] < lens[i]) break; }
+        if (u->gso_on && !gso_probe && !solo && i + 1 < n && lens[i + 1] == lens[i]) while (i + run < n && run < u->gso_max && lens[i + run] <= lens[i] && !memcmp(addrs + (i + run) * KSL_UDP_ADDR_LEN, addrs + i * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN) && ecn[i + run] == ecn[i] && same_source(source_of(u, srcs, i + run, addrs + (i + run) * KSL_UDP_ADDR_LEN), source_of(u, srcs, i, addrs + i * KSL_UDP_ADDR_LEN))) { run++; if (lens[i + run - 1] < lens[i]) break; }
+        const uint8_t *src = source_of(u, srcs, i, addrs + i * KSL_UDP_ADDR_LEN);
         if (run > 1 && lens[i] > 0) {
             size_t total = 0, cap = GSO_JOIN_MAX(addrs + i * KSL_UDP_ADDR_LEN); for (uint32_t k = 0; k < run; k++) { if (total + lens[i + k] > cap) { run = k; break; } memcpy(u->tx + total, bufs[i + k], lens[i + k]); total += lens[i + k]; }
             int e = 0;
-            if (run > 1 && send_one(u, u->tx, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, ecn[i], lens[i], &e) == 0) { i += run; *sent += run; continue; }
+            if (run > 1 && send_one(u, u->tx, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, src, ecn[i], lens[i], &e) == 0) { i += run; *sent += run; continue; }
             if (run > 1) {
                 if (e == WSAEWOULDBLOCK) return KSL_OK;
                 if ((e == WSAEINVAL || e == WSAEMSGSIZE) && lens[i] > 1200) solo = run;   /* the segment size, not USO, was refused: this run one by one, USO stays */
@@ -286,10 +318,10 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
         }
         if (solo) solo--;
         int e = 0;
-        if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; continue; }
+        if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, src, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; continue; }
         if (e == WSAEWOULDBLOCK) return KSL_OK;
         if (e == WSAEINVAL && u->ecn_cmsg_on && ecn[i] && !(ecn[i] == 3 && u->ce_refused)) {   /* the ECN cmsg or the destination: the same datagram without the mark decides */
-            if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, 0, 0, &e) == 0) {
+            if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, src, 0, 0, &e) == 0) {
                 /* Windows 11 refuses CE in the cmsg (a sender never sets it, RFC 9000 section 13.4.1; msquic and quic-go never send it): only
                    CE goes unmarked from now on. Before, this refusal turned ECN off for the whole socket, so every later ECT(0) left Not-ECT */
                 if (ecn[i] == 3) u->ce_refused = 1; else { u->ecn_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; }
@@ -306,10 +338,10 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
 }
 
 /* ---- receiving ---- */
-static uint32_t hand_out(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n, uint32_t filled) {
+static uint32_t hand_out(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *dsts, uint8_t *ecnv, uint32_t n, uint32_t filled) {
     while (u->pend_len && filled < n) {
         uint32_t seg = u->pend_seg ? u->pend_seg : u->pend_len; if (seg > u->pend_len) seg = u->pend_len;
-        if (seg <= caps[filled]) { memcpy(bufs[filled], u->scratch + u->pend_off, seg); lens[filled] = seg; memcpy(addrs + filled * KSL_UDP_ADDR_LEN, u->pend_addr, KSL_UDP_ADDR_LEN); ecnv[filled] = u->pend_ecn; filled++; }
+        if (seg <= caps[filled]) { memcpy(bufs[filled], u->scratch + u->pend_off, seg); lens[filled] = seg; memcpy(addrs + filled * KSL_UDP_ADDR_LEN, u->pend_addr, KSL_UDP_ADDR_LEN); if (dsts) memcpy(dsts + filled * KSL_UDP_ADDR_LEN, u->pend_dst, KSL_UDP_ADDR_LEN); ecnv[filled] = u->pend_ecn; filled++; }
         u->pend_off += seg; u->pend_len -= seg;
     }
     return filled;
@@ -317,14 +349,27 @@ static uint32_t hand_out(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps,
 /* one received datagram (or URO train) of r bytes in scratch: the segment size from UDP_COALESCED_INFO, the ECN mark, the source;
    0 when it carries nothing for QUIC (empty, or link-local: no scope id in the address, no reply could reach it) */
 static int take_datagram(ksl_udp *u, WSAMSG *m, uint32_t r, const struct sockaddr_storage *ss) {
-    uint32_t seg = 0; uint8_t mark = 0;
+    uint32_t seg = 0; uint8_t mark = 0, dst[KSL_UDP_ADDR_LEN] = { 0 };
     for (WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(m); c; c = WSA_CMSG_NXTHDR(m, c)) {
+        /* the destination (KSL_UDP_PKTINFO), as msquic datapath_winuser.c CxPlatDataPathUdpRecvComplete: IN_PKTINFO, or IN6_PKTINFO unmapped */
+        if (u->pktinfo && c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_PKTINFO && c->cmsg_len >= WSA_CMSG_LEN(sizeof(IN_PKTINFO))) {
+            IN_PKTINFO pi; memcpy(&pi, WSA_CMSG_DATA(c), sizeof pi); memset(dst, 0, sizeof dst); dst[0] = 4; memcpy(dst + 3, &pi.ipi_addr, 4); continue;
+        }
+        if (u->pktinfo && c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_PKTINFO && c->cmsg_len >= WSA_CMSG_LEN(sizeof(IN6_PKTINFO))) {
+            IN6_PKTINFO pi; memcpy(&pi, WSA_CMSG_DATA(c), sizeof pi); struct sockaddr_storage d6; memset(&d6, 0, sizeof d6); d6.ss_family = AF_INET6;
+            memcpy(&((struct sockaddr_in6 *)&d6)->sin6_addr, &pi.ipi6_addr, 16); from_sockaddr(&d6, dst); continue;
+        }
         if (c->cmsg_level == IPPROTO_UDP && c->cmsg_type == UDP_COALESCED_INFO) { DWORD g; memcpy(&g, WSA_CMSG_DATA(c), sizeof g); if (g > 0) seg = (uint32_t)g; }
         else if ((c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_ECN) || (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_ECN)) { INT v = 0; memcpy(&v, WSA_CMSG_DATA(c), sizeof v); mark = (uint8_t)(v & 3); }
     }
     if (r == 0) return 0;
     if (ss->ss_family == AF_INET6) { const uint8_t *p = (const uint8_t *)&((const struct sockaddr_in6 *)ss)->sin6_addr; if (p[0] == 0xfe && (p[1] & 0xc0) == 0x80) return 0; }
-    u->pend_off = 0; u->pend_len = r; u->pend_seg = seg; from_sockaddr(ss, u->pend_addr); u->pend_ecn = mark;
+    if (dst[0]) {   /* a multicast, broadcast (limited or subnet-directed: WSARecvMsg flags it MSG_BCAST) or IPv6 link-local destination is no
+                       address to answer from: unknown, the route picks the source */
+        if ((m->dwFlags & (MSG_BCAST | MSG_MCAST)) || (dst[0] == 4 && ((dst[3] & 0xf0) == 0xe0 || (dst[3] == 255 && dst[4] == 255 && dst[5] == 255 && dst[6] == 255))) || (dst[0] == 6 && (dst[3] == 0xff || (dst[3] == 0xfe && (dst[4] & 0xc0) == 0x80)))) memset(dst, 0, sizeof dst);
+        else { dst[1] = u->local[1]; dst[2] = u->local[2]; }
+    }
+    u->pend_off = 0; u->pend_len = r; u->pend_seg = seg; from_sockaddr(ss, u->pend_addr); memcpy(u->pend_dst, dst, KSL_UDP_ADDR_LEN); u->pend_ecn = mark;
     return 1;
 }
 /* waits out the rest of this slice on the wake socket alone: an error condition that answers every poll must not spin */
@@ -340,9 +385,12 @@ static void idle_slice(ksl_udp *u, int timeout_ms, ULONGLONG deadline) {
 /* the network is down or out of buffers right now: nothing arrives this slice, the socket itself is fine */
 static int recv_transient(int e) { return e == WSAENETDOWN || e == WSAENOBUFS; }
 int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
+    return ksl_udp_recv_dst(u, bufs, caps, lens, addrs, NULL, ecnv, n, received, timeout_ms);
+}
+int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *dsts, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
     if (!u || KSL_ALOAD(u->closed)) { if (received) *received = 0; return KSL_ERROR; } *received = 0; if (!n) return KSL_OK;
     __atomic_add_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
-    uint32_t filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, 0);
+    uint32_t filled = hand_out(u, bufs, caps, lens, addrs, dsts, ecnv, n, 0);
     int rc = KSL_OK; ULONGLONG deadline = timeout_ms < 0 ? 0 : GetTickCount64() + (ULONGLONG)timeout_ms; uint32_t dropped = 0;
     while (filled < n) {
         if (KSL_ALOAD(u->closed)) { rc = filled ? KSL_OK : KSL_ERROR; break; }
@@ -401,7 +449,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
         }
         if (m.dwFlags & MSG_TRUNC) { dropped++; continue; }
         if (!take_datagram(u, &m, (uint32_t)r, &ss)) { dropped++; continue; }   /* empty, or from a link-local source */
-        uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, filled);
+        uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, dsts, ecnv, n, filled);
         if (filled > before) dropped = 0; else dropped++;   /* a datagram whose every segment was larger than its slot: one drop */
     }
     *received = filled;
@@ -468,7 +516,7 @@ uint32_t ksl_udp_split_for_test(ksl_udp *u, const uint8_t *train, uint32_t len, 
         m.Control.len = used;
         if (!take_datagram(u, &m, len, &ss)) return 0;
     }
-    return hand_out(u, bufs, caps, lens, addrs, ecnv, n, 0);
+    return hand_out(u, bufs, caps, lens, addrs, NULL, ecnv, n, 0);
 }
 int ksl_udp_close_wakes_for_test(ksl_udp *u) {
     HANDLE t = CreateThread(NULL, 0, blocked_recv, u, 0, NULL); if (!t) return 100000;

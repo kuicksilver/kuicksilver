@@ -246,6 +246,9 @@ public class ConnectionCore internal constructor(
 
     internal fun pathCapabilitiesForTest(id: PathId): IoCapabilities? = paths.byId(id)?.caps
 
+    /** [l], the local address a datagram arrived at, where it names a path's end: on a server; a client's source is the kernel's choice. */
+    internal fun serverLocal(l: InetSocketAddress?): InetSocketAddress? = if (role == TlsRole.Server) l else null
+
     /**
      * The socket [socket] (a path id: the endpoint's socket is [PathId.Initial]) now reports [caps]. Only losses apply to the
      * paths already on it: no ECN marking stops ECN on them, no DF ends PMTUD and drops back to 1200 bytes, fewer GSO segments
@@ -818,6 +821,21 @@ public class ConnectionCore internal constructor(
         ecn: Ecn,
         now: TimeMark,
         socket: PathId,
+    ): Unit = handleDatagram(data, length, from, ecn, now, socket, null)
+
+    /**
+     * [handleDatagram] with [local], the address of ours the datagram was sent to ([PacketBatch.localAddress]; null when the socket
+     * cannot tell): on a server it is part of the path (RFC 9000 section 9), and the path's datagrams leave from it.
+     */
+    @ExperimentalKuicksilverApi
+    public fun handleDatagram(
+        data: PacketBuffer,
+        length: Int,
+        from: InetSocketAddress,
+        ecn: Ecn,
+        now: TimeMark,
+        socket: PathId,
+        local: InetSocketAddress?,
     ) {
         if (state == ConnectionState.Closed) return
         testInjectFailure?.let {
@@ -834,7 +852,7 @@ public class ConnectionCore internal constructor(
         ) {
             receiver.countOnly(length, from, socket)
         } else {
-            receiver.onDatagram(data, length, from, socket, ecn, now)
+            receiver.onDatagram(data, length, from, socket, ecn, now, local)
         }
         if (state ==
             ConnectionState.Closing

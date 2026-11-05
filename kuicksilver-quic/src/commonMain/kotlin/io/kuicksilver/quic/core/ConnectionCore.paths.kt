@@ -198,6 +198,12 @@ internal fun ConnectionCore.migrationAllowedFrom(from: InetSocketAddress): Boole
     return !special || AddressClass.isLoopback(path.remote) || AddressClass.isLinkLocal(path.remote)
 }
 
+/** Both local ends are the same IP, or both unknown (the socket does not report destinations). */
+internal fun sameLocal(
+    a: InetSocketAddress?,
+    b: InetSocketAddress?,
+): Boolean = a === b || (a != null && b != null && AddressClass.ipBytes(a).contentEquals(AddressClass.ipBytes(b)))
+
 internal fun ConnectionCore.sameIp(
     a: InetSocketAddress,
     b: InetSocketAddress,
@@ -267,10 +273,15 @@ internal fun ConnectionCore.onPathPacket(
             now = now,
             abandonValidatingHeardBefore = if (migrating) TimeMark.NEVER else now - idle,
         ) ?: return
+        // a new client address: our end is the address its datagram reached; one the socket could not tell keeps the current source
+        p.local = serverLocal(receiver.local) ?: active.local
         p.amplification.onReceived(datagramBytes)
         // NAT rebinding keeps the congestion state (same network); the old address probes on a controller of its own. A move to our
-        // preferred address changes the server's end of the path: fresh congestion state and RTT (RFC 9000 section 9.4)
-        if (socket == active.socket && sameIp(from, active.remote)) p.inheritFrom(active, config.congestionController())
+        // preferred address changes the server's end of the path: fresh congestion state and RTT (RFC 9000 section 9.4); so does a
+        // rebinding that reached another of our addresses (conservative: the path's other end may be another network path too)
+        if (socket == active.socket && sameIp(from, active.remote) && sameLocal(p.local, active.local)) {
+            p.inheritFrom(active, config.congestionController())
+        }
         initServerPath(p, active)
         startValidation(p)
     } else if (p.state == PathState.Unknown || (p.state == PathState.Failed && p.standbyUntil <= now)) {
@@ -520,7 +531,16 @@ internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
         p.peerCid = it
         return it.cid
     }
-    return if (role == TlsRole.Server && p.socket == paths.active.socket && !p.peerChangedDcid) remoteCid else null
+    // the current ID only toward a new client address from the same local address (a NAT rebinding the client did not choose, section
+    // 9.5 MAY); "MUST NOT reuse a connection ID when sending from more than one local address": a path that took another address of
+    // ours (its first datagram reached it) waits for a spare one
+    return if (role == TlsRole.Server && p.socket == paths.active.socket && sameLocal(p.local, paths.active.local) &&
+        !p.peerChangedDcid
+    ) {
+        remoteCid
+    } else {
+        null
+    }
 }
 
 /** Fresh unpredictable data for the PATH_CHALLENGE about to go out on [p] (RFC 9000 sections 8.2.1 and 13.3). */
@@ -585,6 +605,7 @@ internal fun ConnectionCore.onPathChallenge(
             glitch(0x1a)
             return
         }
+        p.local = serverLocal(receiver.local) ?: paths.active.local // unknown destination: the current source
         p.amplification.onReceived(datagramBytes)
         if (role == TlsRole.Server) initServerPath(p, paths.active)
     }
@@ -1104,6 +1125,7 @@ private fun ConnectionCore.openHandshakeCandidate(
     handshakeRebindFrom = p.remote
     handshakeRebindTo = to
     val k = paths.add(p.socket, p.remote, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
+    k.local = p.local
     k.handshakeCandidate = true
     k.amplification.restore(p.amplification.received, p.amplification.sent, p.amplification.validated)
     k.state = p.state
@@ -1145,6 +1167,7 @@ private fun ConnectionCore.openHandshakeMirror(from: InetSocketAddress) {
     if (AddressClass.isReflectivePort(from.port)) return
     val p = paths.active
     val k = paths.add(p.socket, from, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
+    k.local = p.local // handshake-time moves follow the client's address only; our end stays the one its first Initial reached
     handshakeRebindFrom = p.remote
     handshakeRebindTo = from
     k.handshakeCandidate = true

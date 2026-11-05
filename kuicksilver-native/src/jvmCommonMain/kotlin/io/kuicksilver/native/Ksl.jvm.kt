@@ -502,9 +502,10 @@ public actual object Ksl {
         addrs: ByteArray,
         ecn: ByteArray,
         n: Int,
+        locals: ByteArray?,
     ) {
         if (n < 0 || n > KslConst.UDP_MAX_BATCH || bufs.size < n || lens.size < n || addrs.size < n * KslConst.UDP_ADDR_LEN ||
-            ecn.size < n
+            ecn.size < n || (locals != null && locals.size < n * KslConst.UDP_ADDR_LEN)
         ) {
             throw IllegalArgumentException(
                 "udp batch $n with ${bufs.size} slots, ${lens.size} lens, ${addrs.size} addr bytes, ${ecn.size} marks",
@@ -529,12 +530,13 @@ public actual object Ksl {
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
+        srcs: ByteArray?,
         ecn: ByteArray,
         n: Int,
     ): Int {
-        udpArgs(bufs, lens, addrs, ecn, n)
+        udpArgs(bufs, lens, addrs, ecn, n, srcs)
         if (n == 0) return 0
-        val r = KslNative.udpSend(udp, bufs, lens, addrs, ecn, n)
+        val r = KslNative.udpSend(udp, bufs, lens, addrs, srcs, ecn, n)
         if (r < 0) throw udpError(udp)
         return r
     }
@@ -544,13 +546,14 @@ public actual object Ksl {
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
+        dsts: ByteArray?,
         ecn: ByteArray,
         n: Int,
         timeoutMs: Int,
     ): Int {
-        udpArgs(bufs, lens, addrs, ecn, n)
+        udpArgs(bufs, lens, addrs, ecn, n, dsts)
         if (n == 0) return 0
-        return when (val r = KslNative.udpRecv(udp, bufs, lens, addrs, ecn, n, timeoutMs)) {
+        return when (val r = KslNative.udpRecv(udp, bufs, lens, addrs, dsts, ecn, n, timeoutMs)) {
             -2 -> 0
             -1 -> -1
             else -> r

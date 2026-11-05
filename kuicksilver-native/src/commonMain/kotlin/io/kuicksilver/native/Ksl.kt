@@ -340,22 +340,31 @@ public expect object Ksl {
         flags: Int,
     ): Long
 
-    /** Datagrams sent (slots skipped for EMSGSIZE or a bad destination count); `lens[i] <= bufs[i].capacity`; throws on a socket error. */
+    /**
+     * Datagrams sent (slots skipped for EMSGSIZE or a bad destination count); `lens[i] <= bufs[i].capacity`; throws on a socket error.
+     * [srcs] (`ksl_udp_send_src`, ABI 7): null, or `n * UDP_ADDR_LEN` bytes naming each slot's source address (family 0: the kernel's
+     * choice), acted on only with [KslConst.UDP_PKTINFO] granted.
+     */
     public fun udpSend(
         udp: Long,
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
+        srcs: ByteArray?,
         ecn: ByteArray,
         n: Int,
     ): Int
 
-    /** Datagrams received into the first slots, 0 on timeout; -1 once the socket was shut down. */
+    /**
+     * Datagrams received into the first slots, 0 on timeout; -1 once the socket was shut down. [dsts] (`ksl_udp_recv_dst`, ABI 7):
+     * null, or `n * UDP_ADDR_LEN` bytes that receive the address each datagram was sent to (family 0 when unknown).
+     */
     public fun udpRecv(
         udp: Long,
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
+        dsts: ByteArray?,
         ecn: ByteArray,
         n: Int,
         timeoutMs: Int,

@@ -5,11 +5,19 @@
 #include "ksl_udp_internal.h"
 
 #ifdef KSL_UDP_ACCEL
-static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t *addr, uint8_t ecn, uint16_t gso_size, int *errnum) {
+/* the source of a slot to send with: its srcs entry when PKTINFO is granted and the entry names an address of the destination's family */
+static const uint8_t *source_of(const ksl_udp *u, const uint8_t *srcs, uint32_t i, const uint8_t *addr) {
+    if (!srcs || !u->pktinfo) return NULL;
+    const uint8_t *s = srcs + i * KSL_UDP_ADDR_LEN; return s[0] == addr[0] ? s : NULL;
+}
+/* both slots leave from the same source (a GSO run must not mix them) */
+static int same_source(const uint8_t *a, const uint8_t *b) { return a == b || (a && b && !memcmp(a + 3, b + 3, 16)) || (!a && !b); }
+static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t *addr, const uint8_t *src, uint8_t ecn, uint16_t gso_size, int *errnum) {
     struct sockaddr_storage ss; socklen_t sl = dest_sockaddr(u, addr, &ss);
     struct iovec iov = { (void *)buf, len };
-    uint8_t cbuf[CMSG_SPACE(sizeof(uint16_t)) + CMSG_SPACE(sizeof(int))]; memset(cbuf, 0, sizeof cbuf);   /* CMSG_NXTHDR reads the next header's length: garbage there answers NULL and the TOS cmsg would be lost */
-    struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sl; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
+    /* CMSG_NXTHDR reads the next header's length: zeroed, or garbage there answers NULL and a later cmsg would be lost */
+    union { struct cmsghdr align; uint8_t b[CMSG_SPACE(sizeof(uint16_t)) + CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(struct in6_pktinfo))]; } cb; uint8_t *cbuf = cb.b; memset(&cb, 0, sizeof cb);
+    struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sl; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cb.b;
     struct cmsghdr *c = CMSG_FIRSTHDR(&m); size_t used = 0;
 #ifndef __linux__
     (void)gso_size;   /* no UDP_SEGMENT: callers never join a run */
@@ -17,7 +25,16 @@ static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t 
     if (gso_size) { c->cmsg_level = SOL_UDP; c->cmsg_type = UDP_SEGMENT; c->cmsg_len = CMSG_LEN(sizeof(uint16_t)); memcpy(CMSG_DATA(c), &gso_size, sizeof gso_size); used += CMSG_SPACE(sizeof(uint16_t)); c = CMSG_NXTHDR(&m, c); }
 #endif
     /* the level follows the destination: Linux ignores IPV6_TCLASS for a v4-mapped peer of a dual-stack socket, IP_TOS works on both */
-    if (ecn && u->tos_cmsg_on && c) { int tos = ecn & 3; c->cmsg_level = addr[0] == 4 ? IPPROTO_IP : IPPROTO_IPV6; c->cmsg_type = addr[0] == 4 ? IP_TOS : IPV6_TCLASS; c->cmsg_len = CMSG_LEN(sizeof(int)); memcpy(CMSG_DATA(c), &tos, sizeof tos); used += CMSG_SPACE(sizeof(int)); }
+    if (ecn && u->tos_cmsg_on && c) { int tos = ecn & 3; c->cmsg_level = addr[0] == 4 ? IPPROTO_IP : IPPROTO_IPV6; c->cmsg_type = addr[0] == 4 ? IP_TOS : IPV6_TCLASS; c->cmsg_len = CMSG_LEN(sizeof(int)); memcpy(CMSG_DATA(c), &tos, sizeof tos); used += CMSG_SPACE(sizeof(int)); c = CMSG_NXTHDR(&m, c); }
+    /* the source (KSL_UDP_PKTINFO): IPv4, on a dual-stack socket too, as IP_PKTINFO with ipi_spec_dst (and ipi_addr, which Darwin reads)
+       set and no interface (the kernel routes from that address); IPv6 as IPV6_PKTINFO. As msquic datapath_epoll.c CxPlatSocketSendInternal
+       and datapath_kqueue.c, quinn-udp unix.rs prepare_msg, quic-go sys_conn_oob.go packetInfo.OOB */
+    if (src && c) {
+        if (addr[0] == 4) { struct in_pktinfo pi; memset(&pi, 0, sizeof pi); memcpy(&pi.ipi_spec_dst, src + 3, 4); memcpy(&pi.ipi_addr, src + 3, 4);
+            c->cmsg_level = IPPROTO_IP; c->cmsg_type = IP_PKTINFO; c->cmsg_len = CMSG_LEN(sizeof pi); memcpy(CMSG_DATA(c), &pi, sizeof pi); used += CMSG_SPACE(sizeof pi); }
+        else { struct in6_pktinfo pi; memset(&pi, 0, sizeof pi); memcpy(&pi.ipi6_addr, src + 3, 16);
+            c->cmsg_level = IPPROTO_IPV6; c->cmsg_type = IPV6_PKTINFO; c->cmsg_len = CMSG_LEN(sizeof pi); memcpy(CMSG_DATA(c), &pi, sizeof pi); used += CMSG_SPACE(sizeof pi); }
+    }
     m.msg_controllen = used; if (!used) m.msg_control = NULL;
     KSL_COUNT(u->sends);
 #ifdef KSL_TEST
@@ -44,6 +61,9 @@ static void count_emsgsize(ksl_udp *u, uint32_t len) { __atomic_add_fetch(&u->em
 static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENETDOWN || e == EHOSTDOWN || e == ENOMEM || e == ECONNREFUSED; }
 
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
+    return ksl_udp_send_src(u, bufs, lens, addrs, NULL, ecn, n, sent);
+}
+int ksl_udp_send_src(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *srcs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
     if (!u || KSL_ALOAD(u->closed)) return KSL_ERROR; *sent = 0; uint32_t i = 0; int icmp_retried = 0;
     int gso_probe = 0;   /* a GSO send failed with EINVAL: the first datagram of that run, sent alone, tells GSO's fault from the destination's */
     while (i < n) {
@@ -51,11 +71,12 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
         uint32_t run = 1;
         /* a run starts only with two equal lengths: a larger first datagram (a PMTU probe) would set gso_size for every segment behind it,
            which a narrower link answers with EINVAL; the last segment of a run may be shorter (kernel rule) */
-        if (u->gso_on && !gso_probe && i + 1 < n && lens[i + 1] == lens[i]) while (i + run < n && run < u->gso_max && lens[i + run] <= lens[i] && !memcmp(addrs + (i + run) * KSL_UDP_ADDR_LEN, addrs + i * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN) && ecn[i + run] == ecn[i]) { run++; if (lens[i + run - 1] < lens[i]) break; }
+        if (u->gso_on && !gso_probe && i + 1 < n && lens[i + 1] == lens[i]) while (i + run < n && run < u->gso_max && lens[i + run] <= lens[i] && !memcmp(addrs + (i + run) * KSL_UDP_ADDR_LEN, addrs + i * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN) && ecn[i + run] == ecn[i] && same_source(source_of(u, srcs, i + run, addrs + (i + run) * KSL_UDP_ADDR_LEN), source_of(u, srcs, i, addrs + i * KSL_UDP_ADDR_LEN))) { run++; if (lens[i + run - 1] < lens[i]) break; }
+        const uint8_t *src = source_of(u, srcs, i, addrs + i * KSL_UDP_ADDR_LEN);
         if (run > 1 && lens[i] > 0) {
             uint8_t *joined = u->tx; size_t total = 0, cap = GSO_JOIN_MAX(addrs + i * KSL_UDP_ADDR_LEN); for (uint32_t k = 0; k < run; k++) { if (total + lens[i + k] > cap) { run = k; break; } memcpy(joined + total, bufs[i + k], lens[i + k]); total += lens[i + k]; }
             int e = 0;
-            if (run > 1 && send_one(u, joined, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, ecn[i], (uint16_t)lens[i], &e) == 0) { i += run; *sent += run; continue; }
+            if (run > 1 && send_one(u, joined, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, src, ecn[i], (uint16_t)lens[i], &e) == 0) { i += run; *sent += run; continue; }
             if (run > 1) {
                 if (backpressure(e)) return KSL_OK;
                 if (e == EINTR) continue;   /* the run again, unchanged */
@@ -69,11 +90,11 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
             /* fall through: the segments go one by one */
         }
         int e = 0;
-        if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; icmp_retried = 0; continue; }
+        if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, src, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; icmp_retried = 0; continue; }
         if (backpressure(e)) return KSL_OK;
         if (e == EINTR) continue;
         if (e == EINVAL && u->tos_cmsg_on && ecn[i]) {   /* the TOS cmsg or the destination: the same datagram without the mark decides */
-            if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, 0, 0, &e) == 0) { u->tos_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; icmp_retried = 0; continue; }   /* the kernel rejected the TOS cmsg: never send it again */
+            if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, src, 0, 0, &e) == 0) { u->tos_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; icmp_retried = 0; continue; }   /* the kernel rejected the TOS cmsg: never send it again */
             if (backpressure(e)) return KSL_OK;
             if (e == EINTR) continue;   /* undecided: the datagram goes again with its mark */
         }
@@ -92,4 +113,5 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
 
 #elif !defined(_WIN32) /* neither Linux, Apple nor Windows (ksl_udp_win.c): the portable DatagramIo does the work */
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) { (void)u; (void)bufs; (void)lens; (void)addrs; (void)ecn; (void)n; if (sent) *sent = 0; return KSL_ERROR; }
+int ksl_udp_send_src(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *srcs, const uint8_t *ecn, uint32_t n, uint32_t *sent) { (void)srcs; return ksl_udp_send(u, bufs, lens, addrs, ecn, n, sent); }
 #endif

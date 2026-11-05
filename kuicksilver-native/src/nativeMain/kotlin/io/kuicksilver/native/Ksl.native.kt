@@ -683,15 +683,19 @@ public actual object Ksl {
         return KslException.Internal(KslConst.E_BAD_ARG, errno, if (b.size > 4) b.decodeToString(4) else "ksl_udp: closed or bad arguments")
     }
 
+    /** Pinned in place of a null source or destination array (addressOf(0) needs an element); never passed to C. */
+    private val noAddrs = ByteArray(1)
+
     private fun udpArgs(
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
         ecn: ByteArray,
         n: Int,
+        locals: ByteArray?,
     ) {
         if (n < 0 || n > KslConst.UDP_MAX_BATCH || bufs.size < n || lens.size < n || addrs.size < n * KslConst.UDP_ADDR_LEN ||
-            ecn.size < n
+            ecn.size < n || (locals != null && locals.size < n * KslConst.UDP_ADDR_LEN)
         ) {
             throw IllegalArgumentException(
                 "udp batch $n with ${bufs.size} slots, ${lens.size} lens, ${addrs.size} addr bytes, ${ecn.size} marks",
@@ -718,10 +722,11 @@ public actual object Ksl {
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
+        srcs: ByteArray?,
         ecn: ByteArray,
         n: Int,
     ): Int {
-        udpArgs(bufs, lens, addrs, ecn, n)
+        udpArgs(bufs, lens, addrs, ecn, n, srcs)
         if (n == 0) return 0
         return memScoped {
             val ptrs = allocArray<CPointerVar<UByteVar>>(n)
@@ -740,7 +745,18 @@ public actual object Ksl {
             val rc =
                 addrs.usePinned { a ->
                     ecn.usePinned { e ->
-                        ksl_udp_send(udp(udp), ptrs, ul, a.addressOf(0).reinterpret(), e.addressOf(0).reinterpret(), n.toUInt(), sent.ptr)
+                        (srcs ?: noAddrs).usePinned { s ->
+                            ksl_udp_send_src(
+                                udp(udp),
+                                ptrs,
+                                ul,
+                                a.addressOf(0).reinterpret(),
+                                if (srcs == null) null else s.addressOf(0).reinterpret(),
+                                e.addressOf(0).reinterpret(),
+                                n.toUInt(),
+                                sent.ptr,
+                            )
+                        }
                     }
                 }
             if (rc != KSL_OK) throw udpError(udp)
@@ -753,11 +769,12 @@ public actual object Ksl {
         bufs: Array<PacketBuffer>,
         lens: IntArray,
         addrs: ByteArray,
+        dsts: ByteArray?,
         ecn: ByteArray,
         n: Int,
         timeoutMs: Int,
     ): Int {
-        udpArgs(bufs, lens, addrs, ecn, n)
+        udpArgs(bufs, lens, addrs, ecn, n, dsts)
         if (n == 0) return 0
         return memScoped {
             val ptrs = allocArray<CPointerVar<UByteVar>>(n)
@@ -771,17 +788,20 @@ public actual object Ksl {
             val rc =
                 addrs.usePinned { a ->
                     ecn.usePinned { e ->
-                        ksl_udp_recv(
-                            udp(udp),
-                            ptrs,
-                            caps,
-                            ul,
-                            a.addressOf(0).reinterpret(),
-                            e.addressOf(0).reinterpret(),
-                            n.toUInt(),
-                            got.ptr,
-                            timeoutMs,
-                        )
+                        (dsts ?: noAddrs).usePinned { d ->
+                            ksl_udp_recv_dst(
+                                udp(udp),
+                                ptrs,
+                                caps,
+                                ul,
+                                a.addressOf(0).reinterpret(),
+                                if (dsts == null) null else d.addressOf(0).reinterpret(),
+                                e.addressOf(0).reinterpret(),
+                                n.toUInt(),
+                                got.ptr,
+                                timeoutMs,
+                            )
+                        }
                     }
                 }
             when (rc) {
