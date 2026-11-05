@@ -223,8 +223,7 @@ class PathTest {
     }
 
     /**
-     * Only a client migrates (RFC 9000 section 9), and a client discards packets from a server address it did not send to (section
-     * 5.2.1), so datagrams of the same client address reaching another of the server's addresses are no reason to answer from there:
+     * Only a client migrates, and a client discards packets from a server address it did not send to (RFC 9000 section 9), so datagrams of the same client address reaching another of the server's addresses are no reason to answer from there:
      * an off-path attacker's copy sent to that address would otherwise move the server to an address the client drops, stalling the
      * connection. The local end of a path is fixed when the path is made (as quinn-proto's `FourTuple::local_ip` and quic-go's
      * `sendConn` packet info): such datagrams are processed on the existing path and every answer keeps leaving from its address,
@@ -299,6 +298,29 @@ class PathTest {
             val fromB = shortFrom(b).filter { it >= sentBefore }.map { dcid(it) }.toSet()
             assertTrue(fromA.isNotEmpty() && fromB.isNotEmpty())
             assertTrue(fromA.intersect(fromB).isEmpty(), "no connection ID from both local addresses")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A new client address whose datagram's destination the socket could not tell (family 0) keeps the server's current source. */
+    @Test fun aNewClientAddressWithAnUnknownDestinationKeepsTheServersSource() {
+        val a = InetSocketAddress("192.0.2.10", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = a
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.settle()
+            val s = p.server()
+            p.serverLocal = null
+            p.clientSource = InetSocketAddress("10.0.0.1", 40001)
+            p.clientListens += p.clientSource
+            send(c)
+            p.settle(10)
+            assertEquals(listOf(PathChangeReason.NatRebinding), p.changes(s).map { it.reason })
+            assertEquals(a, s.paths.active.local)
+            assertEquals(a, p.serverSentLocal.last())
         } finally {
             p.close()
         }

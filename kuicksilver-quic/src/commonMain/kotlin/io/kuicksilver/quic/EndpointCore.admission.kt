@@ -201,7 +201,9 @@ private fun EndpointCore.admitValidated(
             tokenValidated = check is TokenCheck.NewTokenValid,
         )
             ?: return false
-    core.paths.active.local = core.serverLocal(rxLocal) // the address the client's Initial reached: every reply leaves from it
+    // the address the client's Initial reached: every reply leaves from it. Unknown (a socket that does not report destinations, or one
+    // that is no address to answer from, such as a broadcast) leaves the connection on the route's choice of source, as before 0.3.0
+    core.paths.active.local = core.serverLocal(rxLocal)
     if (tokens.newTokenLifetime != null) {
         core.newTokenMinter = { client ->
             newTokensIssued++
