@@ -46,6 +46,9 @@ public class H2ClientConnection private constructor(
     /** Ended: nothing more is sent or received. */
     public val isClosed: Boolean get() = rt.closed.isCompleted
 
+    /** The error code of the server's GOAWAY, once one arrived (HTTP_1_1_REQUIRED asks for HTTP/1.1, RFC 9113 section 7). */
+    public val goAwayCode: Http2ErrorCode? get() = rt.goAwayCode
+
     /** Why the connection ended, when it did. */
     public val closeCause: Throwable? get() = rt.closeCause
 
@@ -194,6 +197,12 @@ public class H2ServerConnection private constructor(
 
     /** Closes the connection now. */
     public fun abort(cause: Throwable): Unit = rt.abort(cause)
+
+    /**
+     * Sends GOAWAY with [code] at once, not graceful: its last stream is the last one taken. NO_ERROR lets the streams taken
+     * finish; an error code (HTTP_1_1_REQUIRED, say) ends the connection.
+     */
+    public fun goAway(code: Http2ErrorCode): Unit = rt.goAwayNow(code)
 
     /** Suspends until the connection ended. */
     public suspend fun awaitClosed() {

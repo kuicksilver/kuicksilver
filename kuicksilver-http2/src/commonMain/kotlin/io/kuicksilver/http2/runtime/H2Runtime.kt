@@ -149,7 +149,10 @@ internal class H2Runtime(
 
     @Volatile var goAwayReceived: Boolean = false
         private set
-    private var goAwayCode: Http2ErrorCode? = null
+
+    /** The error code of the peer's GOAWAY, once one arrived. */
+    @Volatile var goAwayCode: Http2ErrorCode? = null
+        private set
 
     @Volatile private var transportLost: Throwable? = null
 
@@ -680,11 +683,12 @@ internal class H2Runtime(
             if (!end) return
             while (true) {
                 if (!sendable(s)) return
+                // read before trying: the writer may write the frame in the way between the try and the wait
+                val seen = written.value
                 if (guarded(s) { endStream(s.id) }) {
                     lock.withLock { s.localEnded = true }
                     return
                 }
-                val seen = written.value
                 waitWithin(s, stallMillis, stallError) { written.first { it != seen } }
             }
         } catch (e: CancellationException) {
@@ -830,6 +834,12 @@ internal class H2Runtime(
     fun shutdown() {
         shuttingDown = true
         withCore { goAway(Http2ErrorCode.NO_ERROR, ByteArray(0), graceful = !client, now = clock()) }
+        onChange()
+    }
+
+    /** GOAWAY with [code] at once (not graceful); an error code also ends the connection once it is written. */
+    fun goAwayNow(code: Http2ErrorCode) {
+        withCore { goAway(code, ByteArray(0), graceful = false, now = clock()) }
         onChange()
     }
 
