@@ -120,6 +120,7 @@ class RepeatOffendersTest {
                 byteArrayOf(0x20, 0x01, 0x0d, 0xb8.toByte()) + ByteArray(11) + byteArrayOf(5),
                 parseIpLiteral("[2001:db8::5%en0]"),
             )
+            assertContentEquals(ByteArray(12) + byteArrayOf(1, 2, 3, 4), parseIpLiteral("0:0:0:0:0:0:1.2.3.4"))
             for (bad in listOf(
                 "server.test",
                 "1.2.3",
@@ -128,6 +129,16 @@ class RepeatOffendersTest {
                 "",
                 "12345::",
                 "1:2:3:4:5:6:7:8:9",
+                // a sign is no hex digit
+                "+1::",
+                "-1::",
+                "::+f",
+                "1:2:3:4:5:6:7:-8",
+                // a dotted quad only as the last 32 bits
+                "1.2.3.4::",
+                "::1.2.3.4:5",
+                "1.2.3.4:1::",
+                "1:1.2.3.4::5",
             )) {
                 assertNull(parseIpLiteral(bad), bad)
             }

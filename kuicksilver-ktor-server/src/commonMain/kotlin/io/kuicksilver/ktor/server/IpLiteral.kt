@@ -24,24 +24,29 @@ internal fun parseIpLiteral(text: String): ByteArray? {
     val halves = s.split("::")
     if (halves.size > 2) return null
 
-    fun groups(part: String): List<Int>? {
+    fun groups(
+        part: String,
+        last: Boolean,
+    ): List<Int>? {
         if (part.isEmpty()) return emptyList()
         val out = ArrayList<Int>()
         val items = part.split(':')
         for ((i, g) in items.withIndex()) {
-            if (i == items.lastIndex && '.' in g) {
+            if ('.' in g) {
+                // a dotted quad only as the last 32 bits of the whole address (RFC 4291 section 2.2, form 3)
+                if (!last || i != items.lastIndex) return null
                 val v4 = parseIpv4(g) ?: return null
                 out += ((v4[0].toInt() and 0xff) shl 8) or (v4[1].toInt() and 0xff)
                 out += ((v4[2].toInt() and 0xff) shl 8) or (v4[3].toInt() and 0xff)
                 continue
             }
-            if (g.isEmpty() || g.length > 4) return null
-            out += g.toIntOrNull(16) ?: return null
+            if (g.isEmpty() || g.length > 4 || !g.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return null
+            out += g.toInt(16)
         }
         return out
     }
-    val head = groups(halves[0]) ?: return null
-    val tail = if (halves.size == 2) groups(halves[1]) ?: return null else emptyList()
+    val head = groups(halves[0], last = halves.size == 1) ?: return null
+    val tail = if (halves.size == 2) groups(halves[1], last = true) ?: return null else emptyList()
     val all =
         if (halves.size == 2) {
             if (head.size + tail.size > 7) return null

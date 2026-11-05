@@ -246,7 +246,14 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             // with http2RepeatOffenderPenalty, a client whose HTTP/2 connections keep earning ENHANCE_YOUR_CALM
                             // waits out its penalty: closed here, before the TLS handshake costs anything (threat model 3.23)
                             val from = client.remoteAddress as? InetSocketAddress
-                            if (h2Offenders?.refuses(from) == true) {
+                            val refused =
+                                try {
+                                    h2Offenders?.refuses(from) == true
+                                } catch (e: CancellationException) {
+                                    client.abort() // the loop stops while the table's lock is awaited: the accepted socket goes too
+                                    throw e
+                                }
+                            if (refused) {
                                 client.abort()
                                 refusedOffenders.update { it + 1 }
                                 refusals.report(from)
