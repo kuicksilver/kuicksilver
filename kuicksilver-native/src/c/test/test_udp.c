@@ -223,16 +223,17 @@ static void udp_pktinfo_cases(void) {
             CHECK(reply_from(w, c, from, none, 1, 100, seen) == 1 && same_ip(seen, to1), "udp_pktinfo_no_source_route_decides (127.0.0.1)");
         }
         /* negative_udp_pktinfo_broadcast_destination_unknown: a datagram to a subnet-directed broadcast address reaches the wildcard socket,
-           which reports its destination as unknown (no address to answer from: Linux refuses that source, Darwin could send it) */
-        { struct ifaddrs *ifs = NULL, *i; struct sockaddr_in bc; int have = 0;
+           which reports its destination as unknown (no address to answer from: Linux refuses that source, Darwin could send it). Its own
+           from/dst: the cases below reply to the client's address in `from` */
+        { uint8_t bfrom[KSL_UDP_ADDR_LEN], bdst[KSL_UDP_ADDR_LEN]; struct ifaddrs *ifs = NULL, *i; struct sockaddr_in bc; int have = 0;
           if (getifaddrs(&ifs) == 0) { for (i = ifs; i && !have; i = i->ifa_next) if ((i->ifa_flags & IFF_UP) && (i->ifa_flags & IFF_BROADCAST) && !(i->ifa_flags & IFF_LOOPBACK) && i->ifa_broadaddr && i->ifa_broadaddr->sa_family == AF_INET) { memcpy(&bc, i->ifa_broadaddr, sizeof bc); have = 1; } freeifaddrs(ifs); }
           int sock = have ? socket(AF_INET, SOCK_DGRAM, 0) : -1, one = 1; uint8_t buf[128]; uint8_t *rb[1] = { buf }; uint32_t rc[1] = { 128 }, rl[1] = { 0 }, got = 0; uint8_t re[1];
           if (sock >= 0 && setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &one, sizeof one) == 0) {
               bc.sin_port = htons(port_of(lw)); memset(buf, 0x5a, 64); sendto(sock, buf, 64, 0, (struct sockaddr *)&bc, sizeof bc);
-              for (int tries = 0; tries < 5 && !got; tries++) ksl_udp_recv_dst(w, rb, rc, rl, from, dst, re, 1, &got, 200);
+              for (int tries = 0; tries < 5 && !got; tries++) ksl_udp_recv_dst(w, rb, rc, rl, bfrom, bdst, re, 1, &got, 200);
           }
           if (!got) printf("udp_pktinfo_broadcast_destination_unknown: SKIP (no broadcast interface, or a broadcast to %s did not loop back: on macOS the application firewall may hold it from an unsigned test binary)\n", have ? inet_ntoa(bc.sin_addr) : "-");
-          else { static const uint8_t zero[KSL_UDP_ADDR_LEN]; CHECK(!memcmp(dst, zero, KSL_UDP_ADDR_LEN), "negative_udp_pktinfo_broadcast_destination_unknown"); }
+          else { static const uint8_t zero[KSL_UDP_ADDR_LEN]; CHECK(!memcmp(bdst, zero, KSL_UDP_ADDR_LEN), "negative_udp_pktinfo_broadcast_destination_unknown"); }
           if (sock >= 0) close(sock); }
         /* negative_udp_pktinfo_foreign_source: a source this host does not own (TEST-NET-1) loses that slot only; the socket stays usable */
         { uint8_t foreign[2 * KSL_UDP_ADDR_LEN] = { 0 }; foreign[0] = 4; foreign[3] = 192; foreign[4] = 0; foreign[5] = 2; foreign[6] = 1; memcpy(foreign + KSL_UDP_ADDR_LEN, to1, KSL_UDP_ADDR_LEN);
