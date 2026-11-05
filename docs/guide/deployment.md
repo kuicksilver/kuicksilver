@@ -167,10 +167,11 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   limit) instead of timing out. Stop the server with Ktor's `shutdownGracePeriod` and `shutdownTimeout`; the larger of the
   two bounds the stop (keep the timeout ≥ the grace period), so keep the `preStop` delay plus `shutdownTimeout` below
   the pod's `terminationGracePeriodSeconds`.
-  A client refused this way recovers quickly: the Kuicksilver client treats `CONNECTION_REFUSED` as transient, falls
-  back to TCP for that call only and tries HTTP/3 again on the next one, which another pod may take; it does not mark
-  the alternative broken ([Ktor: Racing and fallback](ktor.md#racing-and-fallback); before 0.3.0 it did, for 5 minutes
-  doubling up to 2 days). Switching a pod to `Http3Advertising.Drain` before it stops has a cost: its responses send
+  Clients like the Kuicksilver client recover quickly: it treats `CONNECTION_REFUSED` as transient, and a connection
+  the pod closes after its GOAWAY (at the end of the grace period) as an orderly end; either way the affected call falls
+  back to TCP once (when it may be repeated) and the next one tries HTTP/3 again, which another pod may take. Neither
+  marks the alternative broken ([Ktor: Racing and fallback](ktor.md#racing-and-fallback); before 0.3.0 both did, for 5
+  minutes doubling up to 2 days). Switching a pod to `Http3Advertising.Drain` before it stops has a cost: its responses send
   `Alt-Svc: clear` for the whole origin, not just that pod, so clients that get one drop the alternative until another
   response announces it again. Use `Drain` to take HTTP/3 out of service, not for routine restarts.
 

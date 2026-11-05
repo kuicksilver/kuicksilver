@@ -202,6 +202,9 @@ class ClientFallbackTest {
      * code, its admission refuses each new client statelessly with an Initial CONNECTION_CLOSE carrying that code (as
      * `Drain`, a full accept queue or a stop do with CONNECTION_REFUSED, RFC 9000 section 5.2.2). Paths with their own
      * behaviour:
+     * - `/goaway-close`: GOAWAY (both frames, RFC 9114 section 5.2), then the connection closes with H3_NO_ERROR while
+     *   the request is unanswered, as a stopping server's grace period ends
+     * - `/close-no-error`: the same close without a GOAWAY first
      * - `/reject`: the server starts refusing new clients, then resets the request with H3_REQUEST_REJECTED (not
      *   processed: the client repeats it on a new connection, which is refused)
      */
@@ -220,6 +223,17 @@ class ClientFallbackTest {
                             while (true) {
                                 val r = conn.acceptRequest()
                                 when (r.path) {
+                                    "/goaway-close" -> {
+                                        launch {
+                                            conn.goAway()
+                                            conn.close(Http3ErrorCode.NO_ERROR, "")
+                                        }
+                                    }
+
+                                    "/close-no-error" -> {
+                                        conn.close(Http3ErrorCode.NO_ERROR, "")
+                                    }
+
                                     "/reject" -> {
                                         refuseWith.store(TransportError.CONNECTION_REFUSED)
                                         r.reset(Http3ErrorCode.REQUEST_REJECTED)
@@ -327,6 +341,70 @@ class ClientFallbackTest {
         assertEquals(HttpProtocolVersion.HTTP_3_0, r.version, "${r.kuicksilverDiagnostics}")
         return c
     }
+
+    /**
+     * A stopping server sends GOAWAY and, once its grace period ends, closes what is left with H3_NO_ERROR (RFC 9114
+     * section 5.2): an orderly close, not a failure of the alternative (RFC 7838 section 2.4). The request in flight below
+     * the GOAWAY id falls back to HTTP/1.1, the alternative is not marked broken, and the next call goes over HTTP/3 on a
+     * new connection.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun closeAfterGoAwayDoesNotMarkBroken() =
+        h3Test {
+            kotlinx.coroutines.coroutineScope {
+                val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
+                val (server, ep, port) = originWithRefusingH3(refuseWith)
+                val origin = "https://127.0.0.1:$port"
+                try {
+                    h3Client(port).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        val r = c.get("$origin/goaway-close")
+                        val d = assertNotNull(r.kuicksilverDiagnostics)
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, r.version, "$d")
+                        assertEquals("h1", r.bodyAsText())
+                        assertFalse(d.markedBroken, "$d")
+                        assertFalse(engine.brokenAltSvc.isBroken(origin, "127.0.0.1:$port"))
+                        val next = c.get("$origin/")
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, next.version, "${next.kuicksilverDiagnostics}")
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /**
+     * Regression for [closeAfterGoAwayDoesNotMarkBroken]: the same H3_NO_ERROR close without a GOAWAY first is a
+     * connection that failed under its request, and marks the alternative broken: what counts is the GOAWAY, not the code
+     * (an unknown code also reads as H3_NO_ERROR, RFC 9114 section 9).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_closeWithoutGoAwayMarksBroken() =
+        h3Test {
+            kotlinx.coroutines.coroutineScope {
+                val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
+                val (server, ep, port) = originWithRefusingH3(refuseWith)
+                val origin = "https://127.0.0.1:$port"
+                try {
+                    h3Client(port).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        val r = c.get("$origin/close-no-error")
+                        val d = assertNotNull(r.kuicksilverDiagnostics)
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, r.version, "$d")
+                        assertTrue(d.markedBroken, "$d")
+                        assertTrue(engine.brokenAltSvc.isBroken(origin, "127.0.0.1:$port"))
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
 
     /**
      * The request's own fallback path: the server rejects the request unprocessed (H3_REQUEST_REJECTED, as for a GOAWAY,

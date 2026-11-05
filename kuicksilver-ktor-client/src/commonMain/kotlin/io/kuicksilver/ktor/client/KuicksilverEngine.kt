@@ -21,6 +21,7 @@ import io.ktor.util.date.getTimeMillis
 import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.ktor.client.h1.H1Pool
+import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
 import io.kuicksilver.ktor.client.h3.H3Pool
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
@@ -663,7 +664,8 @@ internal class KuicksilverEngine(
         val reason = classifyH3Failure(cause) ?: FallbackReason.Other
         d.fallback = reason
         val r = tcp(data, callContext, ProtocolReason.Fallback, d, dns = dns)
-        if (marksAlternativeBroken(h3Failure)) {
+        // a connection the server closed after its GOAWAY ended in order (RFC 9114 section 5.2): the alternative works
+        if (marksAlternativeBroken(h3Failure) && !data.attributes.contains(H3ClosedAfterGoAwayKey)) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"
             altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) }

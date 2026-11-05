@@ -81,6 +81,39 @@ class ProtocolDiagnosticsTest {
         assertTrue(marksAlternativeBroken(QuicException.ConnectionLost.VersionNegotiation(listOf(0x6b3343cf), listOf(1))))
     }
 
+    /** The closes a server ends a connection with, which count after its GOAWAY; errors and local failures do not. */
+    @Test fun peerShutdownClose() {
+        assertTrue(
+            io.kuicksilver.ktor.client.h3
+                .isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Peer, null)),
+        )
+        assertTrue(
+            io.kuicksilver.ktor.client.h3.isPeerShutdownClose(
+                QuicException.ConnectionLost.ApplicationClosed(Http3ErrorCode.NO_ERROR, "", Initiator.Peer),
+            ),
+        )
+        assertTrue(
+            io.kuicksilver.ktor.client.h3
+                .isPeerShutdownClose(closed(TransportError.NO_ERROR)),
+        )
+        assertFalse(
+            io.kuicksilver.ktor.client.h3
+                .isPeerShutdownClose(closed(TransportError.PROTOCOL_VIOLATION)),
+        )
+        assertFalse(
+            io.kuicksilver.ktor.client.h3
+                .isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Local, null)),
+        )
+        assertFalse(
+            io.kuicksilver.ktor.client.h3
+                .isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Peer, 0)),
+        )
+        assertFalse(
+            io.kuicksilver.ktor.client.h3
+                .isPeerShutdownClose(QuicException.ConnectionLost.StatelessReset()),
+        )
+    }
+
     @Test fun versionNegotiationIsRefused() {
         assertEquals(
             FallbackReason.Refused,

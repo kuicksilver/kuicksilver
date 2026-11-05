@@ -534,8 +534,12 @@ single stream reset or a malformed response falls back for that request only) â€
 network. Broken alternatives are skipped (straight to HTTP/1.1). A server that refuses the QUIC setup with
 `CONNECTION_REFUSED` (it is in `Drain`, stopping, or its accept queue is full: RFC 9000 section 5.2.2) has not shown the
 alternative broken: that call falls back to HTTP/1.1 once (`fallback = Refused`), the alternative stays cached and
-unmarked (RFC 7838 sections 2.2 and 3), and the next call tries HTTP/3 again, so a rolling restart costs one fallback per
-refused setup instead of minutes to days of HTTP/1.1. Any other close of the setup by the server still marks it broken.
+unmarked (RFC 7838 sections 2.2 and 3), and the next call tries HTTP/3 again. Any other close of the setup by the
+server still marks it broken. Likewise a connection the server closes after it sent GOAWAY (a graceful stop whose grace
+period ended with requests still open: RFC 9114 section 5.2) ended in order: a request in flight on it falls back to
+HTTP/1.1 when it may (idempotent, before its response), and the alternative is not marked broken; the same close without
+a GOAWAY first still marks it. So during a rolling restart the calls that meet a stopping instance fall back once each,
+and the next calls use HTTP/3 again, instead of minutes to days of HTTP/1.1 for the whole origin.
 
 ### Turning HTTP/3 off remotely
 

@@ -421,7 +421,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/1.1 once (`ProtocolDiagnostics.fallback = Refused`), the alternative stays cached (RFC 7838 sections 2.2 and 3),
   and the next call tries HTTP/3 again. It was marked broken for 5 minutes, doubling up to 2 days at each refusal, so a
   rolling restart of a multi-instance server put the whole origin on HTTP/1.1. Any other close of the setup by the
-  server still marks the alternative broken.
+  server still marks the alternative broken. The refusal on an established connection (a handshake completed into a
+  full accept queue) counts the same.
+- Ktor client: a connection the server closes after it sent GOAWAY (a graceful stop whose grace period ended with
+  requests open: RFC 9114 section 5.2) no longer marks the HTTP/3 alternative broken when a request in flight on it
+  falls back to HTTP/1.1. The close (H3_NO_ERROR) read as a failed connection and marked the alternative broken for 5
+  minutes up to 2 days, so a long poll, a server-sent event stream or a slow response caught by a rolling restart put
+  the origin on HTTP/1.1. The same close without a GOAWAY first still marks it.
 - Ktor server: `KuicksilverServerEventListener.connectionClosed` for an HTTP/3 connection comes after the
   `requestEnded` of every request it carried. It came as soon as the connection took no more requests, so a client
   that closed the connection as soon as it had the answer could be reported gone while its handler still ran.
