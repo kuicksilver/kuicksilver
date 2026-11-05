@@ -21,6 +21,7 @@ import io.kuicksilver.ktor.server.h2.H2Call
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
@@ -105,6 +106,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                     h2SettingsWithin(configuration.http2Settings, headerTimeout),
                     this,
                     closeTransport = { sock.close() },
+                    ownResponseFields = { listOf("date" to httpDateNow()) }, // RFC 9110 section 6.6.1, on the 431
                 )
             conn = c
             h2Live.add(c)
@@ -141,9 +143,11 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
             watchers.forEach { it.cancel() }
         }
     } finally {
-        conn?.let { h2Live.remove(it) }
+        // closeWithin handles a cancelled caller itself (it aborts); the probe's set is left last and without cancellation,
+        // so a forced stop neither skips the close nor leaves the entry behind
         closeWithin(sock, { sock.abort() }, if (conn?.isClosed == true) sendTimeout else Duration.ZERO)
         if (conn != null) events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_2_0, remote) }
+        conn?.let { withContext(NonCancellable) { h2Live.remove(it) } }
     }
 }
 
@@ -160,7 +164,10 @@ private suspend fun closeWhenIdle(
 ) {
     while (true) {
         c.openRequests.first { it == 0 }
-        if (withTimeoutOrNull(idle) { c.openRequests.first { it > 0 } } == null) break
+        // a monotonic count: a request that starts and ends within the wait restarts it too (openRequests alone would
+        // conflate 0, 1, 0 into no change)
+        val seen = c.requestsTaken.value
+        if (withTimeoutOrNull(idle) { c.requestsTaken.first { it != seen } } == null && c.openRequests.value == 0) break
     }
     c.shutdown()
     // a request that crossed the first GOAWAY runs to its end on its own deadlines; then the close is bounded

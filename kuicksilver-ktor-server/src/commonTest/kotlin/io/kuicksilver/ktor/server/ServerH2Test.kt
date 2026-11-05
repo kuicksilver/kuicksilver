@@ -278,7 +278,14 @@ class ServerH2Test {
                     val rest = raw.readToEnd()
                     assertTrue(rest.any { it.stream == 1 && it.type == RawFrame.DATA && it.endStream }, "$rest")
                     assertTrue(rest.none { it.stream == 3 }, "$rest")
+                    // the client closes, as a real one does after GOAWAY and the end of the stream: its close_notify ends
+                    // the server's TLS close at once (without it the server waits up to 3 s for it, as on HTTP/1.1)
+                    raw.close()
+                    val t =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
                     withTimeout(15.seconds) { stop.await() }
+                    assertTrue(t.elapsedNow() < 2.seconds, "the stop waited ${t.elapsedNow()} after the client closed")
                 }
             }
         }

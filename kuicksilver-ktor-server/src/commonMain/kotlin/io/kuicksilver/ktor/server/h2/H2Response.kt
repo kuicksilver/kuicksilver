@@ -16,6 +16,8 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.discard
+import io.ktor.utils.io.readAvailable
+import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import kotlinx.coroutines.CoroutineScope
@@ -66,9 +68,12 @@ internal class H2Response(
             override fun getEngineHeaderValues(name: String): List<String> = headersBuilder.getAll(name).orEmpty()
         }
 
+    /** The application's final 1xx was replaced by a 500 without content. */
+    private var interimReplaced = false
+
     private fun hasNoContent(): Boolean {
         val status = statusCode.value
-        return call.request.local.method == HttpMethod.Head || status == 204 || status == 304
+        return interimReplaced || status in 100..199 || call.request.local.method == HttpMethod.Head || status == 204 || status == 304
     }
 
     /** The head as HTTP/2 fields (RFC 9113 section 8.2): lowercase names, no connection-specific field, values without OWS. */
@@ -85,12 +90,24 @@ internal class H2Response(
     /** Sends the head; [endStream] when no content follows. */
     private fun sendHead(endStream: Boolean) {
         check(!answered) { "the response head was sent already" }
+        if (statusCode.value in 100..199) {
+            // RFC 9113 section 8.6: no 101 over HTTP/2, and a 1xx is interim, never a final response: an application that
+            // answers with one has failed, and the client gets a 500 without content instead of an interim response
+            // followed by a stream that never ends
+            call.application.environment.log.warn(
+                "HTTP/2: the application answered ${call.request.local.uri} with $statusCode as its final response; sent 500 instead",
+            )
+            statusCode = HttpStatusCode.InternalServerError
+            headersBuilder.clear()
+            interimReplaced = true
+        }
         // an alternative is authoritative for its origin and may clear it (RFC 7838 section 2.2): the engine's value on
         // every response without its own, a 421 excepted, as on HTTP/1.1
         if (headersBuilder["Alt-Svc"] == null && statusCode.value != 421) altSvc()?.let { headersBuilder.append("Alt-Svc", it) }
         // RFC 9110 section 6.6.1: an origin server with a clock MUST send Date (2xx to 4xx; MAY in 5xx)
         if (!headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
         dropFramingFieldsOfAResponseWithoutContent()
+        declaredLength = if (endStream) -1 else declaredLengthOf()
         h2.respond(statusCode.value, fields(), endStream)
         answered = true
     }
@@ -106,17 +123,47 @@ internal class H2Response(
         }
     }
 
+    /** The response's content-length, -1 without one (or with one that is not a number, which Ktor refuses earlier). */
+    private var declaredLength = -1L
+
+    /**
+     * Sends [content] within the client's windows and ends the stream. RFC 9113 section 8.1.1: content that does not
+     * match the response's content-length makes it malformed, so a response that would send more stops before the extra
+     * bytes and one that ends short is not ended: either way the stream is reset with INTERNAL_ERROR (the client sees a
+     * failed response, never a short or long one that looks complete) and the call fails with an IOException.
+     */
     private suspend fun send(content: ByteReadChannel) {
-        h2.sendBody(content, end = true, stallMillis = sendStallMillis) {
-            IOException("the client took no response content for $sendStallMillis ms")
+        val stall = { IOException("the client took no response content for $sendStallMillis ms") }
+        if (declaredLength < 0) return h2.sendBody(content, end = true, stallMillis = sendStallMillis, stallError = stall)
+        val buf = ByteArray(SEND_CHUNK)
+        var sent = 0L
+        while (true) {
+            val n = content.readAvailable(buf, 0, buf.size)
+            if (n < 0) {
+                content.closedCause?.let { throw it }
+                break
+            }
+            if (sent + n > declaredLength) mismatch("more content than its content-length $declaredLength")
+            sent += n
+            h2.sendBody(ByteReadChannel(buf.copyOf(n)), end = false, stallMillis = sendStallMillis, stallError = stall)
         }
+        if (sent != declaredLength) mismatch("$sent bytes of content, content-length $declaredLength")
+        h2.sendBody(ByteReadChannel.Empty, end = true, stallMillis = sendStallMillis, stallError = stall)
+    }
+
+    private fun mismatch(what: String): Nothing {
+        runCatching { h2.reset(Http2ErrorCode.INTERNAL_ERROR) }
+        throw IOException("HTTP/2 response of stream ${h2.id}: $what (RFC 9113 section 8.1.1); the stream was reset")
     }
 
     override suspend fun respondFromBytes(bytes: ByteArray) {
-        if (hasNoContent() || bytes.isEmpty()) return sendHead(endStream = true)
+        if (hasNoContent()) return sendHead(endStream = true)
+        if (bytes.isEmpty() && declaredLengthOf() <= 0L) return sendHead(endStream = true)
         sendHead(endStream = false)
         send(ByteReadChannel(bytes))
     }
+
+    private fun declaredLengthOf(): Long = headersBuilder[HttpHeaders.ContentLength]?.toLongOrNull() ?: -1L
 
     override suspend fun respondNoContent(content: OutgoingContent.NoContent) {
         sendHead(endStream = true)
@@ -176,3 +223,6 @@ internal class H2Response(
         this.statusCode = statusCode
     }
 }
+
+/** The largest piece of content handed to the stream at a time (one DATA frame of the default size). */
+private const val SEND_CHUNK = 16_384

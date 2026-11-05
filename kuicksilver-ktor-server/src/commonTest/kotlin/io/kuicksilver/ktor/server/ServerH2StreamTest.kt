@@ -35,7 +35,7 @@ class ServerH2StreamTest {
             while (true) {
                 val f = readFrame() ?: error("the connection ended before stream $id did; read $seen")
                 seen += f
-                if (f.stream == id && (f.endStream && f.type != RawFrame.WINDOW_UPDATE || f.type == RawFrame.RST_STREAM)) break
+                if (f.stream == id && ((f.endStream && f.type != RawFrame.WINDOW_UPDATE) || f.type == RawFrame.RST_STREAM)) break
             }
         }
         return seen

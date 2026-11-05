@@ -147,4 +147,29 @@ class ServerH2JdkClientTest {
                 server.stop(100, 500)
             }
         }
+
+    /** The 431 the connection makes itself for a field section above the limit carries Date (RFC 9110 section 6.6.1). */
+    @Test fun oversizedFieldSectionGets431WithDate() =
+        serverTest {
+            val (server, port) =
+                tlsServer(configure = {
+                    http2 = true
+                    http3 = false
+                    http2Settings = io.kuicksilver.http2.Http2Settings(maxHeaderListSize = 1024)
+                }) { routing { get("/") { call.respondText("never") } } }
+            try {
+                val r =
+                    withContext(Dispatchers.IO) {
+                        jdkClient().send(
+                            HttpRequest.newBuilder(URI("https://127.0.0.1:$port/")).header("x-big", "a".repeat(1500)).build(),
+                            HttpResponse.BodyHandlers.ofString(),
+                        )
+                    }
+                assertEquals(HttpClient.Version.HTTP_2, r.version())
+                assertEquals(431, r.statusCode())
+                kotlin.test.assertTrue(r.headers().firstValue("date").isPresent, "${r.headers().map()}")
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 }

@@ -135,7 +135,7 @@ public class KuicksilverApplicationEngine(
          * Serve HTTP/2 (RFC 9113) on TLS connectors: ALPN offers `h2` before `http/1.1`, so a client that offers both gets
          * HTTP/2 (docs/guide/ktor.md, "HTTP/2 on the server"). Off by default in 0.3.0, so the ALPN of a TLS connector stays
          * `http/1.1` unless this is set. Plain connectors never serve HTTP/2 (no h2c: a client's `PRI *` preface is
-         * answered 400, as before). Over TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
+         * answered `505 HTTP Version Not Supported`, as before). Over TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
          * WebSockets over HTTP/2 (RFC 8441) are not offered: a WebSocket client uses HTTP/1.1 on the same port.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi

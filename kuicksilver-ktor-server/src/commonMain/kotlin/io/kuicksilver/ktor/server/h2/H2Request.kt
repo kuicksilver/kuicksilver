@@ -57,8 +57,13 @@ internal class H2ConnectionPoint(
     private val remoteAddr: InetSocketAddress?,
     override val method: HttpMethod,
 ) : RequestConnectionPoint {
-    /** The request's `:scheme` (RFC 9113 section 8.3.1); `https` for a CONNECT, which has none. */
-    override val scheme: String get() = h2.scheme ?: "https"
+    /**
+     * The connection's scheme, `https` (HTTP/2 runs only on TLS connectors), whatever the request's `:scheme` says: RFC
+     * 9113 section 8.3.1 lets `:scheme` name another scheme (a gateway's request for an `http` URI, say), and Ktor's
+     * connection point describes the connection, as on HTTP/1.1, where the scheme is the connector's too. The request's
+     * own `:scheme` is not taken as proof that the request arrived secured or not.
+     */
+    override val scheme: String get() = "https"
     override val version: String get() = "HTTP/2"
     override val uri: String get() = h2.path.ifEmpty { "/" }
 
@@ -68,7 +73,7 @@ internal class H2ConnectionPoint(
     @Deprecated("Use localPort or serverPort instead")
     override val port: Int get() = serverPort
     override val localPort: Int get() = localAddr?.port ?: 0
-    override val serverPort: Int get() = h2.authority?.let(::authorityPort) ?: defaultPort(h2.scheme)
+    override val serverPort: Int get() = h2.authority?.let(::authorityPort) ?: defaultPort(scheme)
     override val localHost: String get() = localAddr?.ipLiteral() ?: "localhost"
     override val serverHost: String get() = h2.authority?.let(::authorityHost) ?: localHost
     override val localAddress: String get() = localAddr?.ipLiteral() ?: "localhost"
