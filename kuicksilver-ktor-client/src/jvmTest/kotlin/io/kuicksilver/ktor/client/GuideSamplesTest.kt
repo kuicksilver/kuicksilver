@@ -32,6 +32,8 @@ import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TrustConfig
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.io.readString
 import java.io.File
 import kotlin.test.Test
@@ -56,7 +58,61 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
         assertTrue("guide:ktor:proxy" in guide, "marker proxy")
         assertTrue("guide:ktor:websocket-deflate-client" in guide, "marker websocket-deflate-client")
+        assertTrue("guide:ktor:client-diagnostics" in guide, "marker client-diagnostics")
+        assertTrue("guide:ktor:http3-switch" in guide, "marker http3-switch")
     }
+
+    @Test fun diagnosticsSample() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            val url = "https://127.0.0.1:$port/"
+            try {
+                HttpClient(Kuicksilver) { engine { trust = ClientFixtures.trust } }.use { client ->
+                    // guide:ktor:client-diagnostics
+                    val response = client.get(url)
+                    val d = response.kuicksilverDiagnostics
+                    if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
+                        println("HTTP/3 not used: ${d.fallback} (alternative ${d.alternative} via ${d.alternativeSource})")
+                    }
+
+                    assertEquals(FallbackReason.NoAlternative, d?.fallback)
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    @Test fun http3SwitchSample() =
+        clientTest {
+            val remoteConfig = MutableStateFlow(true)
+            // guide:ktor:http3-switch
+            val quicAllowed: StateFlow<Boolean> = remoteConfig
+            val client =
+                HttpClient(Kuicksilver) {
+                    engine { http3 { http3Allowed = { quicAllowed.value } } }
+                }
+            client.closeHttp3Connections()
+
+            client.use { c ->
+                remoteConfig.value = false
+                val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+                try {
+                    // the guide's client with the test trust: switched off, a Preferred request goes over HTTP/1.1
+                    HttpClient(Kuicksilver) {
+                        engine {
+                            trust = ClientFixtures.trust
+                            http3 {
+                                discovery = Http3DiscoveryMode.Preferred
+                                http3Allowed = { quicAllowed.value }
+                            }
+                        }
+                    }.use { t -> assertEquals(HttpProtocolVersion.HTTP_1_1, t.get("https://127.0.0.1:$port/").version) }
+                } finally {
+                    server.stopSuspend(100, 1000)
+                }
+                assertTrue(c.engine is KuicksilverEngine)
+            }
+        }
 
     @Test fun webSocketDeflateSample() =
         clientTest {

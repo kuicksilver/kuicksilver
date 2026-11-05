@@ -414,6 +414,8 @@ internal class H1Pool(
                 // never sent, so it can be. The 417's connection was closed: it promised a body it never got
                 if (response.statusCode == HttpStatusCode.ExpectationFailed && !bodySent && expectsContinue(data)) {
                     data.attributes.put(ExpectationFailedKey, Unit)
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
                     events.emit("retry") { retry(data, 2, IllegalStateException("417 Expectation Failed to Expect: 100-continue")) }
                     continue
                 }
@@ -440,6 +442,8 @@ internal class H1Pool(
                     e !is SocketTimeoutException && e !is io.ktor.client.network.sockets.ConnectTimeoutException
                 ) {
                     first = false
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
                     events.emit("retry") { retry(data, 2, e) }
                     continue
                 }

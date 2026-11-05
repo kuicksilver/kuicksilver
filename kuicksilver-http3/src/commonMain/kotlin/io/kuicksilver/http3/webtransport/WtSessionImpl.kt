@@ -344,6 +344,7 @@ internal class WtSessionImpl(
 
     override suspend fun drain() {
         if (closedInfo.isCompleted) throw sessionClosed()
+        drainFlow.value = true // this side winds down too
         val sent = withTimeoutOrNull(CLOSE_TIMEOUT) { capsules.send(Capsule(WT_DRAIN_SESSION, ByteArray(0))) }
         if (sent == null) {
             val e = WebTransportException.Timeout("WT_DRAIN_SESSION not written within $CLOSE_TIMEOUT: the session was reset")

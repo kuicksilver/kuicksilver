@@ -102,6 +102,46 @@ internal object AltSvcParser {
      */
     private const val MA_OVERFLOW_SECONDS = 2_147_483_648L
 
+    /**
+     * Whether [h] is an RFC 3986 section 3.2.2 `host`: an IP-literal (`[` IPv6address `]`; IPvFuture and zone IDs are
+     * not taken), or a reg-name / IPv4address (unreserved, pct-encoded and sub-delims characters; possibly empty).
+     */
+    internal fun isUriHost(h: String): Boolean {
+        if (h.startsWith('[')) {
+            if (!h.endsWith(']') || h.length < 4) return false
+            val inner = h.substring(1, h.length - 1)
+            return ':' in inner && inner.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' || it == ':' || it == '.' }
+        }
+        var i = 0
+        while (i < h.length) {
+            val c = h[i]
+            when {
+                c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c in "-._~" || c in "!$&'()*+,;=" -> {
+                    i++
+                }
+
+                c == '%' && i + 2 < h.length && h[i + 1].isHexDigit() && h[i + 2].isHexDigit() -> {
+                    i += 3
+                }
+
+                else -> {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * Whether a uri-host can be a connection target: a bracketed IPv6 address, or a name or IPv4 address of letters, digits,
+     * `-` and `.` (or empty: the origin's host). A reg-name with sub-delims or pct-encoding is a valid URI host that no DNS
+     * name or address has; such an alternative cannot be used, and its text (`x),fallback=...`) never reaches the log.
+     */
+    internal fun isConnectionTarget(h: String): Boolean =
+        h.startsWith('[') || h.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' || it == '.' }
+
+    private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+
     /** The `h3` entries of [value] (other protocols are ignored, malformed entries skipped); null for `clear`. */
     fun parse(
         value: String,
@@ -119,9 +159,13 @@ internal object AltSvcParser {
             val colon = authority.lastIndexOf(':')
             if (colon < 0) continue
             val port = authority.substring(colon + 1).toIntOrNull()?.takeIf { it in 1..65_535 } ?: continue
+            // RFC 7838 section 3: alt-authority is uri-host ":" port, uri-host being RFC 3986's host; anything else (a
+            // space, a control character, a bare IPv6 address) makes the alternative malformed. The host reaches
+            // connection targets and the engine's diagnostics log line, so it is checked here, not trusted
+            val rawHost = authority.substring(0, colon)
+            if (!isUriHost(rawHost) || !isConnectionTarget(rawHost)) continue
             val host =
-                authority
-                    .substring(0, colon)
+                rawHost
                     .removePrefix("[")
                     .removeSuffix("]")
                     .ifEmpty { null }
@@ -233,7 +277,7 @@ internal class AltSvcCache(
     private val store: AltSvcStore,
     private val clock: () -> Long,
 ) {
-    fun originOf(url: Url): String = "${url.protocol.name}://${url.host}:${url.port}"
+    fun originOf(url: Url): String = originKeyOf(url)
 
     fun onResponse(
         url: Url,
@@ -314,4 +358,20 @@ internal fun <K, V> MutableMap<K, V>.evictEldest(max: Int) {
         it.next()
         it.remove()
     }
+}
+
+/**
+ * The origin of [url] as the client's per-origin state keys it (Alt-Svc, broken marks, RTTs): `scheme://host:port` with a
+ * WebSocket scheme read as its HTTP one. A `wss` WebSocket goes to the `https` origin (RFC 8441 section 5, which RFC 9220
+ * applies to HTTP/3: ":scheme MUST be https for wss-schemed WebSockets"), and an alternative serves all requests to its
+ * origin (RFC 7838 section 2.4), so `wss://` and `https://` to one host and port share it.
+ */
+internal fun originKeyOf(url: Url): String {
+    val scheme =
+        when (url.protocol.name) {
+            "wss" -> "https"
+            "ws" -> "http"
+            else -> url.protocol.name
+        }
+    return "$scheme://${url.host}:${url.port}"
 }

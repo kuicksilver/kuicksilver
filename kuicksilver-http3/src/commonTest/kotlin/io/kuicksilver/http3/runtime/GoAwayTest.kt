@@ -132,7 +132,26 @@ class GoAwayTest {
                 p.client.goAwayReceived
                     .filterNotNull()
                     .first()
-                assertFailsWith<Http3Exception.RequestNotProcessed> { p.client.request(get()) }
+                val e = assertFailsWith<Http3Exception.RequestNotProcessed> { p.client.request(get()) }
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                assertTrue(e.neverSent, "refused before anything went out")
+            }
+        }
+
+    /**
+     * A request after this client's own GOAWAY was never sent: it fails as retry-safe RequestNotProcessed, so a pool that
+     * handed the connection out just before its GOAWAY repeats the request on a new connection (it was an
+     * IllegalStateException, which failed the call).
+     */
+    @Test fun requestAfterOwnGoAwayNotProcessed() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                p.client.goAway()
+                val e = assertFailsWith<Http3Exception.RequestNotProcessed> { p.client.request(get()) }
+                assertTrue(e.retrySafe)
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                assertTrue(e.neverSent, "refused before anything went out")
+                assertEquals("request not sent: this client sent GOAWAY", e.message)
             }
         }
 
@@ -163,7 +182,10 @@ class GoAwayTest {
                 val st = s.acceptBidi()
                 st.reset(Http3ErrorCode.REQUEST_REJECTED)
                 st.stopSending(Http3ErrorCode.REQUEST_REJECTED)
-                assertTrue(assertIs<Http3Exception.RequestNotProcessed>(r.await().exceptionOrNull()).retrySafe)
+                val e = assertIs<Http3Exception.RequestNotProcessed>(r.await().exceptionOrNull())
+                assertTrue(e.retrySafe)
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                assertFalse(e.neverSent, "the request went out: the server rejected it")
             }
         }
 

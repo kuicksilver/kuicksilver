@@ -26,6 +26,7 @@ import io.kuicksilver.ktor.client.h3.H3Pool
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
 import io.kuicksilver.ktor.client.h3.H3Target
 import io.kuicksilver.ktor.network.engineSelector
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
@@ -42,6 +43,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.minutes
 
 /** `HttpClient(Kuicksilver)`: HTTP/3 and HTTP/1.1 over TLS 1.3 (docs/guide/ktor.md). */
 @OptIn(InternalAPI::class, DelicateCoroutinesApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -130,26 +132,89 @@ internal class KuicksilverEngine(
         // body included), so the cleanup after close() waits for the call (as CIO's) instead of closing its socket under it
         val inFlight = Job(this.coroutineContext[Job])
         callContext[Job]!!.invokeOnCompletion { inFlight.complete() }
+        // a new one per call, also when the request's attributes came with one (a redirect or a retry copies them): the
+        // pools count their retries in it, and the response hands it out
+        val diagnostics = ProtocolDiagnostics()
+        data.attributes.put(KuicksilverDiagnosticsKey, diagnostics)
         val r =
             try {
-                AbandonableBody.guard(route(data, callContext), callContext)
+                AbandonableBody.guard(route(data, callContext, diagnostics), callContext)
             } catch (e: Throwable) {
+                data.attributes.remove(KuicksilverDiagnosticsKey) // no response, no diagnostics: the exception says it
                 events.emit("callFailed") { callFailed(data, e) }
                 throw e
             }
+        diagnostics.protocol = r.version
+        if (r.version == HttpProtocolVersion.HTTP_3_0) diagnostics.fallback = null
         events.emit("callEnd") { callEnd(data, r.version, r.statusCode.value) }
+        logDiagnostics(data, diagnostics)
         return r
     }
 
+    /**
+     * One line per answered call: at `diagnosticsLogLevel` when HTTP/3 was an option, or the mode would have used it, and
+     * the call went over another protocol; at Debug otherwise (HTTP/3 served it, or it was never a candidate). Built only
+     * when the logger wants that level.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun logDiagnostics(
+        data: HttpRequestData,
+        d: ProtocolDiagnostics,
+    ) {
+        val wanted = config.http3.diagnosticsLogLevel ?: return
+        val level =
+            when (d.fallback) {
+                null, FallbackReason.NotSecure, FallbackReason.Configuration, FallbackReason.NoAlternative -> LogLevel.Debug
+                else -> wanted
+            }
+        val logger = events.logger
+        try {
+            if (logger.isEnabled(level)) logger.log(level, d.line(data.method.value, data.url))
+        } catch (_: Throwable) {
+            // a logger that fails never fails the call (as EngineEvents.emit)
+        }
+    }
+
+    /** Tells the listener and [d] that [data] goes over [protocol] for [reason]; reasons that say it all set [d]'s fallback. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun selected(
         data: HttpRequestData,
         protocol: HttpProtocolVersion,
         reason: ProtocolReason,
-    ) = events.emit("protocolSelected") { protocolSelected(data, protocol, reason) }
+        d: ProtocolDiagnostics,
+    ) {
+        d.reason = reason
+        d.fallback =
+            if (protocol == HttpProtocolVersion.HTTP_3_0) {
+                null
+            } else {
+                when (reason) {
+                    ProtocolReason.NotSecure -> FallbackReason.NotSecure
 
+                    ProtocolReason.Proxy -> FallbackReason.Proxy
+
+                    ProtocolReason.Configuration -> FallbackReason.Configuration
+
+                    ProtocolReason.NoAlternative -> FallbackReason.NoAlternative
+
+                    ProtocolReason.BrokenAlternative -> FallbackReason.BrokenAlternative
+
+                    ProtocolReason.WebSocket -> FallbackReason.WebSocket
+
+                    ProtocolReason.Http3Disabled -> FallbackReason.Http3Disabled
+
+                    // set by the caller from the HTTP/3 failure, if any
+                    ProtocolReason.Race, ProtocolReason.Fallback, ProtocolReason.ExistingConnection -> d.fallback
+                }
+            }
+        events.emit("protocolSelected") { protocolSelected(data, protocol, reason) }
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun route(
         data: HttpRequestData,
         callContext: CoroutineContext,
+        d: ProtocolDiagnostics,
     ): HttpResponseData {
         val url = data.url
         // H3Only promises HTTP/3 or a failure, never TCP: through a proxy there is no HTTP/3 (UDP would need CONNECT-UDP,
@@ -161,6 +226,12 @@ internal class KuicksilverEngine(
                     "use https or another discovery mode",
             )
         }
+        // the kill switch, read once per request before anything connects; H3Only cannot fall back, so it fails
+        val disabled =
+            url.protocol.isSecure() && config.http3.discovery != Http3DiscoveryMode.H1Only && !http3Allowed()
+        if (disabled && config.http3.discovery == Http3DiscoveryMode.H3Only) {
+            throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed; Http3DiscoveryMode.H3Only never uses TCP")
+        }
         val proxy = proxyFor(url) // explicit, else the resolver's: a proxy the engine cannot use fails here, never bypassed
         if (proxy != null && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
             throw UnsupportedOperationException(
@@ -170,7 +241,7 @@ internal class KuicksilverEngine(
         }
         // HTTP/3 needs TLS and no proxy (through a proxy only HTTP/1.1)
         if (!url.protocol.isSecure() || proxy != null ||
-            config.http3.discovery == Http3DiscoveryMode.H1Only
+            config.http3.discovery == Http3DiscoveryMode.H1Only || disabled
         ) {
             selected(
                 data,
@@ -178,17 +249,27 @@ internal class KuicksilverEngine(
                 when {
                     proxy != null -> ProtocolReason.Proxy
                     config.http3.discovery == Http3DiscoveryMode.H1Only && url.protocol.isSecure() -> ProtocolReason.Configuration
+                    disabled -> ProtocolReason.Http3Disabled
                     else -> ProtocolReason.NotSecure
                 },
+                d,
             )
-            return h1.execute(data, callContext, proxy = proxy) // no Alt-Svc is used or learned through a proxy
+            val r = h1.execute(data, callContext, proxy = proxy) // no Alt-Svc is used or learned through a proxy
+            // switched off, Auto keeps learning Alt-Svc, so switching back needs no warm-up
+            if (disabled && proxy == null && config.http3.discovery == Http3DiscoveryMode.Auto) {
+                altSvcUpdate {
+                    altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
+                }
+            }
+            return r
         }
         val target = H3Target(url.host, url.host, url.port)
         val webSocket = data.attributes.contains(WEBSOCKETS_KEY)
         val network = checkNetwork()
         return when {
             config.http3.discovery == Http3DiscoveryMode.H3Only -> {
-                selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Configuration)
+                d.alternative(target.host, target.port, AlternativeSource.H3Only)
+                selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Configuration, d)
                 try {
                     h3.execute(target, data, callContext)
                 } catch (e: H3NotSent) {
@@ -198,22 +279,61 @@ internal class KuicksilverEngine(
             }
 
             config.http3.discovery == Http3DiscoveryMode.Preferred || HostPort(url.host, url.port) in config.http3.quicHints -> {
+                d.alternative(
+                    target.host,
+                    target.port,
+                    if (config.http3.discovery == Http3DiscoveryMode.Preferred) AlternativeSource.Preferred else AlternativeSource.QuicHint,
+                )
                 // WebSockets take HTTP/3 only on a connection that already allows Extended CONNECT (RFC 9220; else h1.1 Upgrade first)
                 if (webSocket &&
                     !h3.canConnectProtocol(target)
                 ) {
-                    selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.WebSocket)
+                    selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.WebSocket, d)
                     h1.execute(data, callContext)
                 } else {
-                    raced(target, data, callContext, network, emptyList())
+                    raced(target, data, callContext, network, emptyList(), d)
                 }
             }
 
             else -> {
-                auto(data, callContext, target, webSocket, network)
+                auto(data, callContext, target, webSocket, network, d)
             }
         }
     }
+
+    /** Warns about a throwing `http3Allowed` at most once per 5 minutes; internal for tests (its clock). */
+    internal val http3SwitchWarning =
+        RateLimitedWarning(
+            5.minutes,
+            io.kuicksilver.ktor.client.h1
+                .monotonicMillis(),
+        )
+
+    /**
+     * `http3Allowed`, failing open: a switch that throws an Exception allows HTTP/3 (a broken remote configuration must not
+     * break traffic). A CancellationException and an Error go to the caller: the call is being cancelled, or the VM is in
+     * trouble, neither of which is the switch's answer. Also used by `webTransport`.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    internal fun http3Allowed(): Boolean =
+        try {
+            config.http3.http3Allowed()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (http3SwitchWarning.tryAcquire()) {
+                runCatching {
+                    val logger = events.logger
+                    if (logger.isEnabled(LogLevel.Warn)) {
+                        logger.log(LogLevel.Warn, "http3Allowed threw; HTTP/3 stays allowed (reported at most once per 5 minutes)", e)
+                    }
+                }
+            }
+            true
+        }
+
+    /** `HttpClient.closeHttp3Connections()`: GOAWAY on every HTTP/3 connection and WebTransport session ([H3Pool.goAwayAll]). */
+    internal suspend fun closeHttp3Connections() = h3.goAwayAll(engineScope)
 
     /** A new network (`networkId`) forgets broken marks, QUIC confirmation and, if asked, non-persistent alternatives. */
     private suspend fun checkNetwork(): String? =
@@ -252,6 +372,7 @@ internal class KuicksilverEngine(
         callContext: CoroutineContext,
         network: String?,
         extraHeaders: List<Pair<String, String>>,
+        d: ProtocolDiagnostics,
     ): HttpResponseData {
         val origin = originKey(data.url)
         val alt = "${t.host}:${t.port}"
@@ -259,16 +380,17 @@ internal class KuicksilverEngine(
         val dns = config.newRequestDns()
         val (broken, confirmed, rtt) =
             altSvcLock.withLock {
-                Triple(brokenAltSvc.isBroken(origin, alt), brokenAltSvc.quicConfirmedOn(network), srtt[origin])
+                Triple(brokenAltSvc.brokenReason(origin, alt), brokenAltSvc.quicConfirmedOn(network), srtt[origin])
             }
-        if (broken) {
-            selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.BrokenAlternative)
+        if (broken != null) {
+            d.brokenSince = broken
+            selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.BrokenAlternative, d)
             return h1.execute(data, callContext, dns = dns)
         }
         // an established HTTP/3 connection is used as is: the race is about setting one up
         if (h3.existing(t) != null) {
-            selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.ExistingConnection)
-            return h3WithFallback(t, data, callContext, extraHeaders, dns)
+            selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.ExistingConnection, d)
+            return h3WithFallback(t, data, callContext, d, extraHeaders, dns)
         }
         // the HTTP/3 attempt outlives a lost race: it fills the pool for the next request, or marks the alternative broken.
         // A 0-RTT connection is usable before its handshake, but on a network where QUIC was never seen working it must
@@ -283,8 +405,15 @@ internal class KuicksilverEngine(
                 (it as? H1Pool.Opened)?.let { o -> h1.recycle(o.connection) } // unused: back to the pool
             })
         val winner = if (result.winner == Protocol.H3) HttpProtocolVersion.HTTP_3_0 else HttpProtocolVersion.HTTP_1_1
-        events.emit("raceEnded") { raceEnded(data, winner, race.headStart(rtt, confirmed), result.h3Failure) }
-        selected(data, winner, ProtocolReason.Race)
+        val headStart = race.headStart(rtt, confirmed)
+        events.emit("raceEnded") { raceEnded(data, winner, headStart, result.h3Failure) }
+        d.raced(headStart)
+        if (result.winner == Protocol.H1) {
+            // HTTP/3 failed first, or had not answered yet when HTTP/1.1 was ready
+            d.h3Failure = result.h3Failure
+            d.fallback = classifyH3Failure(result.h3Failure) ?: FallbackReason.H3NotReady
+        }
+        selected(data, winner, ProtocolReason.Race, d)
         return when (result.winner) {
             Protocol.H3 -> {
                 val conn = result.value as io.kuicksilver.http3.Http3Connection
@@ -301,7 +430,7 @@ internal class KuicksilverEngine(
                         }
                     }
                 }
-                h3WithFallback(t, data, callContext, extraHeaders, dns)
+                h3WithFallback(t, data, callContext, d, extraHeaders, dns, prefer = conn)
             }
 
             Protocol.H1 -> {
@@ -321,7 +450,7 @@ internal class KuicksilverEngine(
                                         .quic.stats.smoothedRtt,
                                 )
                             } else if (outcome !is CancellationException) {
-                                brokenAltSvc.markBroken(origin, alt)
+                                brokenAltSvc.markBroken(origin, alt, classifyH3Failure(outcome) ?: FallbackReason.Other)
                                 events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
                             }
                         }
@@ -382,7 +511,7 @@ internal class KuicksilverEngine(
     /** Whether an HTTP/3 connection to the origin of [url] is open (tests). */
     internal suspend fun hasH3Connection(url: io.ktor.http.Url): Boolean = h3.existing(H3Target(url.host, url.host, url.port)) != null
 
-    private fun originKey(url: io.ktor.http.Url): String = "${url.protocol.name}://${url.host}:${url.port}"
+    private fun originKey(url: io.ktor.http.Url): String = originKeyOf(url)
 
     /**
      * `Auto` (RFC 7838): HTTP/3 to a live alternative the origin announced, with `Alt-Used`; otherwise HTTP/1.1,
@@ -396,15 +525,18 @@ internal class KuicksilverEngine(
         origin: H3Target,
         webSocket: Boolean,
         network: String?,
+        d: ProtocolDiagnostics,
     ): HttpResponseData {
         val url = data.url
         val alt = altSvcUpdate { altSvc.h3For(url) }
+        var misdirected = false
         if (alt != null) {
             val altHost = alt.host ?: url.host
             val t = H3Target(url.host, altHost, alt.port)
+            d.alternative(altHost, alt.port, AlternativeSource.AltSvc)
             if (!webSocket || h3.canConnectProtocol(t)) {
                 events.emit("altSvcUsed") { altSvcUsed(data, "${uriHost(altHost)}:${alt.port}") }
-                val r = raced(t, data, callContext, network, listOf("alt-used" to "${uriHost(altHost)}:${alt.port}"))
+                val r = raced(t, data, callContext, network, listOf("alt-used" to "${uriHost(altHost)}:${alt.port}"), d)
                 // the origin's Alt-Svc on any answer, over HTTP/3 as over HTTP/1.1 (broken alternative, lost race, fallback): a
                 // new list or `clear` replaces the cached one (RFC 7838 section 3); a 421 is not authoritative and changes
                 // nothing (RFC 9110 section 15.5.20), except that one from the alternative removes it (below, RFC 7838 section 6)
@@ -423,19 +555,18 @@ internal class KuicksilverEngine(
                         "421 Misdirected Request from the alternative, and the request body was already consumed",
                     )
                 }
+                d.attempts++ // the alternative's 421 was one; the origin over HTTP/1.1 is the next
+                misdirected = true
             }
         }
         selected(
             data,
             HttpProtocolVersion.HTTP_1_1,
-            if (alt != null &&
-                webSocket
-            ) {
-                ProtocolReason.WebSocket
-            } else {
-                ProtocolReason.NoAlternative
-            },
+            // after the alternative's 421 it is gone: no alternative, whatever the request (a WebSocket included)
+            if (alt != null && webSocket && !misdirected) ProtocolReason.WebSocket else ProtocolReason.NoAlternative,
+            d,
         )
+        if (misdirected) d.fallback = FallbackReason.MisdirectedRequest
         val r = h1.execute(data, callContext)
         altSvcUpdate {
             altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
@@ -452,11 +583,13 @@ internal class KuicksilverEngine(
         target: H3Target,
         data: HttpRequestData,
         callContext: CoroutineContext,
+        d: ProtocolDiagnostics,
         extraHeaders: List<Pair<String, String>> = emptyList(),
         dns: RequestDns = config.newRequestDns(),
+        prefer: io.kuicksilver.http3.Http3Connection? = null, // the race's connection, used even if since retired
     ): HttpResponseData =
         try {
-            h3.execute(target, data, callContext, extraHeaders, dns)
+            h3.execute(target, data, callContext, extraHeaders, dns, prefer)
         } catch (
             e: CancellationException,
         ) {
@@ -464,14 +597,14 @@ internal class KuicksilverEngine(
         } catch (
             e: H3NotSent,
         ) {
-            fallbackToH1(target, data, callContext, e, dns)
+            fallbackToH1(target, data, callContext, e, dns, d)
         } catch (
             e: Throwable,
         ) {
             if (data.method.isIdempotent() && (e is QuicException || e is Http3Exception) &&
                 data.body.isReplayable()
             ) {
-                fallbackToH1(target, data, callContext, e, dns)
+                fallbackToH1(target, data, callContext, e, dns, d)
             } else {
                 throw e
             }
@@ -483,15 +616,23 @@ internal class KuicksilverEngine(
         callContext: CoroutineContext,
         h3Failure: Throwable,
         dns: RequestDns,
+        d: ProtocolDiagnostics,
     ): HttpResponseData {
         val cause = if (h3Failure is H3NotSent) h3Failure.cause ?: h3Failure else h3Failure
         events.emit("fallback") { fallback(data, cause) }
-        selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.Fallback)
+        // HTTP/1.1 is one more attempt only when HTTP/3 tried the request (H3NotSent: it never reached a stream, except
+        // after the repeats the server did not process, which were attempts)
+        if (h3Failure !is H3NotSent || h3Failure.cause is Http3Exception.RequestNotProcessed) d.attempts++
+        d.h3Failure = cause
+        val reason = classifyH3Failure(cause) ?: FallbackReason.Other
+        d.fallback = reason
+        selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.Fallback, d)
         val r = h1.execute(data, callContext, dns = dns)
         if (marksAlternativeBroken(h3Failure)) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"
-            altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt) }
+            altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) }
+            d.markedBroken = true
             events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
         }
         return r

@@ -6,6 +6,47 @@
 // - Show declarations: true
 
 // Library unique name: <io.kuicksilver:kuicksilver-ktor-client>
+final enum class io.kuicksilver.ktor.client/AlternativeSource : kotlin/Enum<io.kuicksilver.ktor.client/AlternativeSource> { // io.kuicksilver.ktor.client/AlternativeSource|null[0]
+    enum entry AltSvc // io.kuicksilver.ktor.client/AlternativeSource.AltSvc|null[0]
+    enum entry H3Only // io.kuicksilver.ktor.client/AlternativeSource.H3Only|null[0]
+    enum entry HttpsRecord // io.kuicksilver.ktor.client/AlternativeSource.HttpsRecord|null[0]
+    enum entry Preferred // io.kuicksilver.ktor.client/AlternativeSource.Preferred|null[0]
+    enum entry QuicHint // io.kuicksilver.ktor.client/AlternativeSource.QuicHint|null[0]
+
+    final val entries // io.kuicksilver.ktor.client/AlternativeSource.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.client/AlternativeSource> // io.kuicksilver.ktor.client/AlternativeSource.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.client/AlternativeSource // io.kuicksilver.ktor.client/AlternativeSource.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.client/AlternativeSource> // io.kuicksilver.ktor.client/AlternativeSource.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.ktor.client/FallbackReason : kotlin/Enum<io.kuicksilver.ktor.client/FallbackReason> { // io.kuicksilver.ktor.client/FallbackReason|null[0]
+    enum entry BrokenAlternative // io.kuicksilver.ktor.client/FallbackReason.BrokenAlternative|null[0]
+    enum entry Configuration // io.kuicksilver.ktor.client/FallbackReason.Configuration|null[0]
+    enum entry GoAway // io.kuicksilver.ktor.client/FallbackReason.GoAway|null[0]
+    enum entry H3NotReady // io.kuicksilver.ktor.client/FallbackReason.H3NotReady|null[0]
+    enum entry HandshakeTimeout // io.kuicksilver.ktor.client/FallbackReason.HandshakeTimeout|null[0]
+    enum entry Http3Disabled // io.kuicksilver.ktor.client/FallbackReason.Http3Disabled|null[0]
+    enum entry Http3Error // io.kuicksilver.ktor.client/FallbackReason.Http3Error|null[0]
+    enum entry MisdirectedRequest // io.kuicksilver.ktor.client/FallbackReason.MisdirectedRequest|null[0]
+    enum entry NoAlternative // io.kuicksilver.ktor.client/FallbackReason.NoAlternative|null[0]
+    enum entry NotSecure // io.kuicksilver.ktor.client/FallbackReason.NotSecure|null[0]
+    enum entry Other // io.kuicksilver.ktor.client/FallbackReason.Other|null[0]
+    enum entry Proxy // io.kuicksilver.ktor.client/FallbackReason.Proxy|null[0]
+    enum entry Refused // io.kuicksilver.ktor.client/FallbackReason.Refused|null[0]
+    enum entry StreamFailed // io.kuicksilver.ktor.client/FallbackReason.StreamFailed|null[0]
+    enum entry TlsFailure // io.kuicksilver.ktor.client/FallbackReason.TlsFailure|null[0]
+    enum entry UdpUnreachable // io.kuicksilver.ktor.client/FallbackReason.UdpUnreachable|null[0]
+    enum entry WebSocket // io.kuicksilver.ktor.client/FallbackReason.WebSocket|null[0]
+    enum entry ZeroRttRejected // io.kuicksilver.ktor.client/FallbackReason.ZeroRttRejected|null[0]
+
+    final val entries // io.kuicksilver.ktor.client/FallbackReason.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.client/FallbackReason> // io.kuicksilver.ktor.client/FallbackReason.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.client/FallbackReason // io.kuicksilver.ktor.client/FallbackReason.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.client/FallbackReason> // io.kuicksilver.ktor.client/FallbackReason.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.ktor.client/Http3DiscoveryMode : kotlin/Enum<io.kuicksilver.ktor.client/Http3DiscoveryMode> { // io.kuicksilver.ktor.client/Http3DiscoveryMode|null[0]
     enum entry Auto // io.kuicksilver.ktor.client/Http3DiscoveryMode.Auto|null[0]
     enum entry H1Only // io.kuicksilver.ktor.client/Http3DiscoveryMode.H1Only|null[0]
@@ -24,6 +65,7 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
     enum entry Configuration // io.kuicksilver.ktor.client/ProtocolReason.Configuration|null[0]
     enum entry ExistingConnection // io.kuicksilver.ktor.client/ProtocolReason.ExistingConnection|null[0]
     enum entry Fallback // io.kuicksilver.ktor.client/ProtocolReason.Fallback|null[0]
+    enum entry Http3Disabled // io.kuicksilver.ktor.client/ProtocolReason.Http3Disabled|null[0]
     enum entry NoAlternative // io.kuicksilver.ktor.client/ProtocolReason.NoAlternative|null[0]
     enum entry NotSecure // io.kuicksilver.ktor.client/ProtocolReason.NotSecure|null[0]
     enum entry Proxy // io.kuicksilver.ktor.client/ProtocolReason.Proxy|null[0]
@@ -121,6 +163,9 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
     final var connectionListener // io.kuicksilver.ktor.client/Http3ClientConfig.connectionListener|{}connectionListener[0]
         final fun <get-connectionListener>(): io.kuicksilver.quic/ConnectionListener? // io.kuicksilver.ktor.client/Http3ClientConfig.connectionListener.<get-connectionListener>|<get-connectionListener>(){}[0]
         final fun <set-connectionListener>(io.kuicksilver.quic/ConnectionListener?) // io.kuicksilver.ktor.client/Http3ClientConfig.connectionListener.<set-connectionListener>|<set-connectionListener>(io.kuicksilver.quic.ConnectionListener?){}[0]
+    final var diagnosticsLogLevel // io.kuicksilver.ktor.client/Http3ClientConfig.diagnosticsLogLevel|{}diagnosticsLogLevel[0]
+        final fun <get-diagnosticsLogLevel>(): io.kuicksilver.quic/LogLevel? // io.kuicksilver.ktor.client/Http3ClientConfig.diagnosticsLogLevel.<get-diagnosticsLogLevel>|<get-diagnosticsLogLevel>(){}[0]
+        final fun <set-diagnosticsLogLevel>(io.kuicksilver.quic/LogLevel?) // io.kuicksilver.ktor.client/Http3ClientConfig.diagnosticsLogLevel.<set-diagnosticsLogLevel>|<set-diagnosticsLogLevel>(io.kuicksilver.quic.LogLevel?){}[0]
     final var discovery // io.kuicksilver.ktor.client/Http3ClientConfig.discovery|{}discovery[0]
         final fun <get-discovery>(): io.kuicksilver.ktor.client/Http3DiscoveryMode // io.kuicksilver.ktor.client/Http3ClientConfig.discovery.<get-discovery>|<get-discovery>(){}[0]
         final fun <set-discovery>(io.kuicksilver.ktor.client/Http3DiscoveryMode) // io.kuicksilver.ktor.client/Http3ClientConfig.discovery.<set-discovery>|<set-discovery>(io.kuicksilver.ktor.client.Http3DiscoveryMode){}[0]
@@ -133,6 +178,9 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
     final var hardDelay // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay|{}hardDelay[0]
         final fun <get-hardDelay>(): kotlin.time/Duration? // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay.<get-hardDelay>|<get-hardDelay>(){}[0]
         final fun <set-hardDelay>(kotlin.time/Duration?) // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay.<set-hardDelay>|<set-hardDelay>(kotlin.time.Duration?){}[0]
+    final var http3Allowed // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed|{}http3Allowed[0]
+        final fun <get-http3Allowed>(): kotlin/Function0<kotlin/Boolean> // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed.<get-http3Allowed>|<get-http3Allowed>(){}[0]
+        final fun <set-http3Allowed>(kotlin/Function0<kotlin/Boolean>) // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed.<set-http3Allowed>|<set-http3Allowed>(kotlin.Function0<kotlin.Boolean>){}[0]
     final var maxWebTransportSessions // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions|{}maxWebTransportSessions[0]
         final fun <get-maxWebTransportSessions>(): kotlin/Int // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions.<get-maxWebTransportSessions>|<get-maxWebTransportSessions>(){}[0]
         final fun <set-maxWebTransportSessions>(kotlin/Int) // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions.<set-maxWebTransportSessions>|<set-maxWebTransportSessions>(kotlin.Int){}[0]
@@ -217,6 +265,30 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
     final fun http3(kotlin/Function1<io.kuicksilver.ktor.client/Http3ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3|http3(kotlin.Function1<io.kuicksilver.ktor.client.Http3ClientConfig,kotlin.Unit>){}[0]
 }
 
+final class io.kuicksilver.ktor.client/ProtocolDiagnostics { // io.kuicksilver.ktor.client/ProtocolDiagnostics|null[0]
+    final val alternative // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternative|{}alternative[0]
+        final fun <get-alternative>(): kotlin/String? // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternative.<get-alternative>|<get-alternative>(){}[0]
+    final val headStart // io.kuicksilver.ktor.client/ProtocolDiagnostics.headStart|{}headStart[0]
+        final fun <get-headStart>(): kotlin.time/Duration? // io.kuicksilver.ktor.client/ProtocolDiagnostics.headStart.<get-headStart>|<get-headStart>(){}[0]
+
+    final var alternativeSource // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternativeSource|{}alternativeSource[0]
+        final fun <get-alternativeSource>(): io.kuicksilver.ktor.client/AlternativeSource? // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternativeSource.<get-alternativeSource>|<get-alternativeSource>(){}[0]
+    final var attempts // io.kuicksilver.ktor.client/ProtocolDiagnostics.attempts|{}attempts[0]
+        final fun <get-attempts>(): kotlin/Int // io.kuicksilver.ktor.client/ProtocolDiagnostics.attempts.<get-attempts>|<get-attempts>(){}[0]
+    final var fallback // io.kuicksilver.ktor.client/ProtocolDiagnostics.fallback|{}fallback[0]
+        final fun <get-fallback>(): io.kuicksilver.ktor.client/FallbackReason? // io.kuicksilver.ktor.client/ProtocolDiagnostics.fallback.<get-fallback>|<get-fallback>(){}[0]
+    final var h3Failure // io.kuicksilver.ktor.client/ProtocolDiagnostics.h3Failure|{}h3Failure[0]
+        final fun <get-h3Failure>(): kotlin/Throwable? // io.kuicksilver.ktor.client/ProtocolDiagnostics.h3Failure.<get-h3Failure>|<get-h3Failure>(){}[0]
+    final var protocol // io.kuicksilver.ktor.client/ProtocolDiagnostics.protocol|{}protocol[0]
+        final fun <get-protocol>(): io.ktor.http/HttpProtocolVersion // io.kuicksilver.ktor.client/ProtocolDiagnostics.protocol.<get-protocol>|<get-protocol>(){}[0]
+    final var raced // io.kuicksilver.ktor.client/ProtocolDiagnostics.raced|{}raced[0]
+        final fun <get-raced>(): kotlin/Boolean // io.kuicksilver.ktor.client/ProtocolDiagnostics.raced.<get-raced>|<get-raced>(){}[0]
+    final var reason // io.kuicksilver.ktor.client/ProtocolDiagnostics.reason|{}reason[0]
+        final fun <get-reason>(): io.kuicksilver.ktor.client/ProtocolReason // io.kuicksilver.ktor.client/ProtocolDiagnostics.reason.<get-reason>|<get-reason>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/ProtocolDiagnostics.toString|toString(){}[0]
+}
+
 final class io.kuicksilver.ktor.client/ProxyCredentials { // io.kuicksilver.ktor.client/ProxyCredentials|null[0]
     constructor <init>(kotlin/String, kotlin/String) // io.kuicksilver.ktor.client/ProxyCredentials.<init>|<init>(kotlin.String;kotlin.String){}[0]
 
@@ -275,9 +347,14 @@ final object io.kuicksilver.ktor.client/ProxyResolvers { // io.kuicksilver.ktor.
         final fun <get-System>(): io.kuicksilver.ktor.client/ProxyResolver // io.kuicksilver.ktor.client/ProxyResolvers.System.<get-System>|<get-System>(){}[0]
 }
 
+final val io.kuicksilver.ktor.client/KuicksilverDiagnosticsKey // io.kuicksilver.ktor.client/KuicksilverDiagnosticsKey|{}KuicksilverDiagnosticsKey[0]
+    final fun <get-KuicksilverDiagnosticsKey>(): io.ktor.util/AttributeKey<io.kuicksilver.ktor.client/ProtocolDiagnostics> // io.kuicksilver.ktor.client/KuicksilverDiagnosticsKey.<get-KuicksilverDiagnosticsKey>|<get-KuicksilverDiagnosticsKey>(){}[0]
+final val io.kuicksilver.ktor.client/kuicksilverDiagnostics // io.kuicksilver.ktor.client/kuicksilverDiagnostics|@io.ktor.client.statement.HttpResponse{}kuicksilverDiagnostics[0]
+    final fun (io.ktor.client.statement/HttpResponse).<get-kuicksilverDiagnostics>(): io.kuicksilver.ktor.client/ProtocolDiagnostics? // io.kuicksilver.ktor.client/kuicksilverDiagnostics.<get-kuicksilverDiagnostics>|<get-kuicksilverDiagnostics>@io.ktor.client.statement.HttpResponse(){}[0]
 final val io.kuicksilver.ktor.client/priority // io.kuicksilver.ktor.client/priority|@io.ktor.client.request.HttpRequestBuilder{}priority[0]
     final fun (io.ktor.client.request/HttpRequestBuilder).<get-priority>(): io.kuicksilver.quic/StreamPriority? // io.kuicksilver.ktor.client/priority.<get-priority>|<get-priority>@io.ktor.client.request.HttpRequestBuilder(){}[0]
 
 final fun (io.ktor.client.request/HttpRequestBuilder).io.kuicksilver.ktor.client/priority(kotlin/Int = ..., kotlin/Boolean = ...) // io.kuicksilver.ktor.client/priority|priority@io.ktor.client.request.HttpRequestBuilder(kotlin.Int;kotlin.Boolean){}[0]
 final suspend fun (io.ktor.client.statement/HttpResponse).io.kuicksilver.ktor.client/updatePriority(kotlin/Int, kotlin/Boolean): kotlin/Boolean // io.kuicksilver.ktor.client/updatePriority|updatePriority@io.ktor.client.statement.HttpResponse(kotlin.Int;kotlin.Boolean){}[0]
+final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/closeHttp3Connections() // io.kuicksilver.ktor.client/closeHttp3Connections|closeHttp3Connections@io.ktor.client.HttpClient(){}[0]
 final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/webTransport(kotlin/String, kotlin.collections/List<kotlin/String> = ..., io.kuicksilver.http3/Http3Headers = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.ktor.client/webTransport|webTransport@io.ktor.client.HttpClient(kotlin.String;kotlin.collections.List<kotlin.String>;io.kuicksilver.http3.Http3Headers){}[0]

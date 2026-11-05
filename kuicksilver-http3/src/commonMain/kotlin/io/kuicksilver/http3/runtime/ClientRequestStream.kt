@@ -186,9 +186,10 @@ private suspend fun H3Session.requestOnDispatcher(
 ): Http3Response =
     withContext(dispatcher) {
         // first: after a GOAWAY the client closes an idle connection itself, and a request then was still never sent
-        if (goAwayReceived.value != null) throw Http3Exception.RequestNotProcessed(true)
+        if (goAwayReceived.value != null) throw Http3Exception.RequestNotProcessed.peerGoAway()
         if (closed.isCompleted) throw connectionError()
-        check(goAwaySentId == null) { "this client sent GOAWAY: no new requests" }
+        // this client sent GOAWAY and issues no new requests: one handed this connection just before is provably unsent
+        if (goAwaySentId != null) throw Http3Exception.RequestNotProcessed.ownGoAway()
         // before a stream is opened: a refused section costs no stream credit (the id is not known yet: -1)
         val fields = PseudoHeaders.buildRequest(r)
         PseudoHeaders.requireValidRequest(fields)
@@ -204,7 +205,7 @@ private suspend fun H3Session.requestOnDispatcher(
                 it
             ) {
                 st.reset(Http3ErrorCode.REQUEST_CANCELLED)
-                throw Http3Exception.RequestNotProcessed(true)
+                throw Http3Exception.RequestNotProcessed.peerGoAway()
             }
         }
         clientStreams[st.id] = st

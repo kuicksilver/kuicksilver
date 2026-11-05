@@ -17,6 +17,41 @@ public abstract interface class io/kuicksilver/ktor/client/AltSvcStore {
 	public abstract fun remove (Ljava/lang/String;)V
 }
 
+public final class io/kuicksilver/ktor/client/AlternativeSource : java/lang/Enum {
+	public static final field AltSvc Lio/kuicksilver/ktor/client/AlternativeSource;
+	public static final field H3Only Lio/kuicksilver/ktor/client/AlternativeSource;
+	public static final field HttpsRecord Lio/kuicksilver/ktor/client/AlternativeSource;
+	public static final field Preferred Lio/kuicksilver/ktor/client/AlternativeSource;
+	public static final field QuicHint Lio/kuicksilver/ktor/client/AlternativeSource;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/AlternativeSource;
+	public static fun values ()[Lio/kuicksilver/ktor/client/AlternativeSource;
+}
+
+public final class io/kuicksilver/ktor/client/FallbackReason : java/lang/Enum {
+	public static final field BrokenAlternative Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field Configuration Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field GoAway Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field H3NotReady Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field HandshakeTimeout Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field Http3Disabled Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field Http3Error Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field MisdirectedRequest Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field NoAlternative Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field NotSecure Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field Other Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field Proxy Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field Refused Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field StreamFailed Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field TlsFailure Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field UdpUnreachable Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field WebSocket Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field ZeroRttRejected Lio/kuicksilver/ktor/client/FallbackReason;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/FallbackReason;
+	public static fun values ()[Lio/kuicksilver/ktor/client/FallbackReason;
+}
+
 public final class io/kuicksilver/ktor/client/FileAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
 	public fun <init> (Lkotlinx/io/files/Path;Lkotlin/jvm/functions/Function0;)V
 	public synthetic fun <init> (Lkotlinx/io/files/Path;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -45,10 +80,12 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getAltSvcStore ()Lio/kuicksilver/ktor/client/AltSvcStore;
 	public final fun getClearOnNetworkChange ()Z
 	public final fun getConnectionListener ()Lio/kuicksilver/quic/ConnectionListener;
+	public final fun getDiagnosticsLogLevel ()Lio/kuicksilver/quic/LogLevel;
 	public final fun getDiscovery ()Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
 	public final fun getEarlyData ()Z
 	public final fun getEndpoint ()Lio/kuicksilver/quic/QuicEndpointConfig;
 	public final fun getHardDelay-FghU774 ()Lkotlin/time/Duration;
+	public final fun getHttp3Allowed ()Lkotlin/jvm/functions/Function0;
 	public final fun getMaxWebTransportSessions ()I
 	public final fun getNetworkId ()Lkotlin/jvm/functions/Function0;
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
@@ -58,10 +95,12 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public final fun setClearOnNetworkChange (Z)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
+	public final fun setDiagnosticsLogLevel (Lio/kuicksilver/quic/LogLevel;)V
 	public final fun setDiscovery (Lio/kuicksilver/ktor/client/Http3DiscoveryMode;)V
 	public final fun setEarlyData (Z)V
 	public final fun setEndpoint (Lio/kuicksilver/quic/QuicEndpointConfig;)V
 	public final fun setHardDelay-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setHttp3Allowed (Lkotlin/jvm/functions/Function0;)V
 	public final fun setMaxWebTransportSessions (I)V
 	public final fun setNetworkId (Lkotlin/jvm/functions/Function0;)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
@@ -78,6 +117,10 @@ public final class io/kuicksilver/ktor/client/Http3DiscoveryMode : java/lang/Enu
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
 	public static fun values ()[Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+}
+
+public final class io/kuicksilver/ktor/client/Http3SwitchKt {
+	public static final fun closeHttp3Connections (Lio/ktor/client/HttpClient;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/ktor/client/InMemoryAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
@@ -161,11 +204,30 @@ public final class io/kuicksilver/ktor/client/PriorityKt {
 	public static final fun updatePriority (Lio/ktor/client/statement/HttpResponse;IZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public final class io/kuicksilver/ktor/client/ProtocolDiagnostics {
+	public final fun getAlternative ()Ljava/lang/String;
+	public final fun getAlternativeSource ()Lio/kuicksilver/ktor/client/AlternativeSource;
+	public final fun getAttempts ()I
+	public final fun getFallback ()Lio/kuicksilver/ktor/client/FallbackReason;
+	public final fun getH3Failure ()Ljava/lang/Throwable;
+	public final fun getHeadStart-FghU774 ()Lkotlin/time/Duration;
+	public final fun getProtocol ()Lio/ktor/http/HttpProtocolVersion;
+	public final fun getRaced ()Z
+	public final fun getReason ()Lio/kuicksilver/ktor/client/ProtocolReason;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/ProtocolDiagnosticsKt {
+	public static final fun getKuicksilverDiagnostics (Lio/ktor/client/statement/HttpResponse;)Lio/kuicksilver/ktor/client/ProtocolDiagnostics;
+	public static final fun getKuicksilverDiagnosticsKey ()Lio/ktor/util/AttributeKey;
+}
+
 public final class io/kuicksilver/ktor/client/ProtocolReason : java/lang/Enum {
 	public static final field BrokenAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Configuration Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field ExistingConnection Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Fallback Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field Http3Disabled Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NoAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NotSecure Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Proxy Lio/kuicksilver/ktor/client/ProtocolReason;

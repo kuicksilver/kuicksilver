@@ -198,9 +198,40 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `priority` field and, over HTTP/3, schedules the request's stream with it (a WebSocket over HTTP/3 included); it
   replaces a `Priority` header on the same request. `response.updatePriority(urgency, incremental)` sends a
   PRIORITY_UPDATE while the response is coming and returns false over HTTP/1.1 or once the call is over.
+- Ktor client: per-call protocol diagnostics (experimental; `docs/guide/ktor.md`, "Why did this request not use
+  HTTP/3?"). Every response carries a `ProtocolDiagnostics` (`response.kuicksilverDiagnostics`, the call attribute
+  `KuicksilverDiagnosticsKey`): the protocol that served it, the `ProtocolReason`, why it did not go over HTTP/3 as a
+  `FallbackReason` (`HandshakeTimeout`, `TlsFailure`, `BrokenAlternative`, `H3NotReady`, `MisdirectedRequest`, ...), the HTTP/3 alternative
+  and its `AlternativeSource`, the race and its head start, the HTTP/3 failure and the number of attempts. The engine's
+  logger gets one line per call HTTP/3 could have served but did not, at `http3 { diagnosticsLogLevel }` (`Info` by
+  default; HTTP/3 calls at `Debug`; `null` for none), without the URL's query or user info. A broken alternative now
+  remembers why it broke, and when both the HTTP/3 and the HTTP/1.1 setups fail the HTTP/1.1 failure carries the HTTP/3
+  one in `suppressed`.
+- Ktor client: an HTTP/3 kill switch (experimental `http3 { http3Allowed = { ... } }`; `docs/guide/ktor.md`, "Turning
+  HTTP/3 off remotely"), read once per `https://` request from the application's remote configuration. While it returns
+  false requests go over HTTP/1.1 (`ProtocolReason.Http3Disabled`, `FallbackReason.Http3Disabled`), open HTTP/3
+  connections take no new requests, `Alt-Svc` is still learned, and `H3Only` requests and `HttpClient.webTransport` fail
+  with `UnsupportedOperationException` without any connection; a switch that throws an exception allows HTTP/3 and is
+  logged at most once per 5 minutes. `HttpClient.closeHttp3Connections()` sends GOAWAY on every pooled HTTP/3 connection
+  and closes each once its calls are done (a request handed one just before goes again on a new connection), and sends
+  every open WebTransport session `WT_DRAIN_SESSION`.
 
 ### Changed
 
+- WebTransport: `drain()` also sets the session's own `drainRequested` (draft-ietf-webtrans-http3 section 4.7: the
+  side that asks winds down too); before, it reflected only the peer's drain or GOAWAY.
+- Ktor client: a `wss` WebSocket belongs to the `https` origin (RFC 8441 section 5 via RFC 9220; RFC 7838 section 2.4):
+  it uses the alternatives, broken marks and RTTs learned from `https` responses, and Alt-Svc on its HTTP/1.1 answer is
+  filed under `https`; `ws` likewise under `http`. Before, `wss` was an origin of its own and never found an alternative.
+- Ktor client: an `Alt-Svc` alternative whose host is a valid RFC 3986 host but no connection target (sub-delims,
+  pct-encoding, `_`, `~`) is skipped.
+- HTTP/3: a request on a connection after this client's own `goAway()` fails with `Http3Exception.RequestNotProcessed`
+  (retry-safe, message "request not sent: this client sent GOAWAY") instead of `IllegalStateException`: it was never
+  sent, as one above a received GOAWAY, so a pool that handed the connection out just before may repeat it on a new
+  connection. The new experimental `RequestNotProcessed.neverSent` says when nothing of the request left the client (its
+  body unread), so even a streamed body can be sent again.
+- Ktor client: an `Alt-Svc` alternative whose host is not an RFC 3986 host (RFC 7838 section 3: a space, a control
+  character, a bare IPv6 address) is malformed and skipped; before, the text was taken as it came.
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
   a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
   `NoWhenBranchMatchedException` when it meets a `Reloadable`.

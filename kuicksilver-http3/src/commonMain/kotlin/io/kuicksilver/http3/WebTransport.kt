@@ -67,10 +67,16 @@ public interface WebTransportSession {
      */
     public suspend fun receiveDatagram(): ByteArray
 
-    /** True once the peer asked to wind the session down: its WT_DRAIN_SESSION, or an HTTP/3 GOAWAY (section 4.7). */
+    /**
+     * True once the session is to be wound down (section 4.7): the peer asked (its WT_DRAIN_SESSION, or an HTTP/3
+     * GOAWAY), or this side did with [drain] (the Ktor client engine does in `closeHttp3Connections()`).
+     */
     public val drainRequested: StateFlow<Boolean>
 
-    /** Asks the peer to wind the session down (WT_DRAIN_SESSION, section 4.7); the session stays usable. */
+    /**
+     * Asks the peer to wind the session down (WT_DRAIN_SESSION, section 4.7) and sets [drainRequested] here too; the session
+     * stays usable.
+     */
     public suspend fun drain()
 
     /**

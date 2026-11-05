@@ -547,6 +547,10 @@ sealed class io.kuicksilver.http3/Http3Exception : kotlinx.coroutines/CopyableTh
     final class RequestNotProcessed : io.kuicksilver.http3/Http3Exception { // io.kuicksilver.http3/Http3Exception.RequestNotProcessed|null[0]
         constructor <init>(kotlin/Boolean = ...) // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.<init>|<init>(kotlin.Boolean){}[0]
 
+        final val message // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.message|{}message[0]
+            final fun <get-message>(): kotlin/String? // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.message.<get-message>|<get-message>(){}[0]
+        final val neverSent // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.neverSent|{}neverSent[0]
+            final fun <get-neverSent>(): kotlin/Boolean // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.neverSent.<get-neverSent>|<get-neverSent>(){}[0]
         final val retrySafe // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.retrySafe|{}retrySafe[0]
             final fun <get-retrySafe>(): kotlin/Boolean // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.retrySafe.<get-retrySafe>|<get-retrySafe>(){}[0]
 

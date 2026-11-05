@@ -4,6 +4,7 @@
 
 package io.kuicksilver.http3
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CopyableThrowable
@@ -57,7 +58,36 @@ public sealed class Http3Exception(
     public class RequestNotProcessed(
         public val retrySafe: Boolean = true,
     ) : Http3Exception("request not processed by the server") {
-        override fun createCopy(): RequestNotProcessed = RequestNotProcessed(retrySafe)
+        private var detail: String? = null
+
+        /**
+         * True when nothing of the request left this client: it was refused before its HEADERS were written (this client
+         * had sent GOAWAY, or the server's GOAWAY was already known), so its body, if any, was never read and it can be
+         * sent again whatever the body. False when the server refused a request it may have received in part.
+         */
+        @ExperimentalKuicksilverApi
+        public val neverSent: Boolean get() = sentNothing
+
+        private var sentNothing = false
+
+        internal constructor(retrySafe: Boolean, neverSent: Boolean, message: String) : this(retrySafe) {
+            sentNothing = neverSent
+            detail = message
+        }
+
+        /** "request not processed by the server", or why the request was not sent at all. */
+        override val message: String? get() = detail ?: super.message
+
+        @OptIn(ExperimentalKuicksilverApi::class)
+        override fun createCopy(): RequestNotProcessed = RequestNotProcessed(retrySafe, neverSent, message ?: "")
+
+        internal companion object {
+            /** This client sent GOAWAY: it issues no new requests (RFC 9114 section 5.2). */
+            fun ownGoAway() = RequestNotProcessed(true, true, "request not sent: this client sent GOAWAY")
+
+            /** The server's GOAWAY already excludes the request's stream. */
+            fun peerGoAway() = RequestNotProcessed(true, true, "request not sent: the server sent GOAWAY")
+        }
     }
 
     /** A setting the operation needs is missing or contradicts another (Extended CONNECT without the peer's consent, ...). */

@@ -131,6 +131,9 @@ public enum class ProtocolReason {
 
     /** A proxy applies to the request: HTTP/1.1 through it (QUIC's UDP does not go through HTTP CONNECT or SOCKS5 CONNECT). */
     Proxy,
+
+    /** `Http3ClientConfig.http3Allowed` returned false for this request: HTTP/1.1, as with `H1Only`. */
+    Http3Disabled,
 }
 
 /** The engine's [KuicksilverEventListener], never failing the call (an exception is logged); a no-op without one. */

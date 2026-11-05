@@ -183,17 +183,32 @@ class WebTransportCloseTest {
             }
         }
 
-    /** Section 4.7: the peer's WT_DRAIN_SESSION and an HTTP/3 GOAWAY both ask the application to wind the session down. */
+    /**
+     * Section 4.7: the peer's WT_DRAIN_SESSION and an HTTP/3 GOAWAY both ask the application to wind the session down, and
+     * so does this side's own drain() (the sending side's application winds down too).
+     */
     @Test fun drainCapsuleAndGoAwaySetDrainRequested() =
         h3Test {
             H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
                 val (client, server) = sessions(p)
-                assertFalse(server.drainRequested.value)
-                client.drain()
-                withTimeout(5.seconds) { server.drainRequested.first { it } }
                 assertFalse(client.drainRequested.value)
                 launch { p.server.goAway() }
                 withTimeout(5.seconds) { client.drainRequested.first { it } }
+                assertFalse(server.drainRequested.value)
+                server.drain()
+                assertTrue(server.drainRequested.value, "the side that sent WT_DRAIN_SESSION winds down too")
+                withTimeout(5.seconds) { client.drainRequested.first { it } }
+            }
+        }
+
+    /** The peer sees WT_DRAIN_SESSION; the sender's own flag is set at once. */
+    @Test fun ownDrainSetsBothFlags() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val (client, server) = sessions(p)
+                client.drain()
+                assertTrue(client.drainRequested.value)
+                withTimeout(5.seconds) { server.drainRequested.first { it } }
             }
         }
 
