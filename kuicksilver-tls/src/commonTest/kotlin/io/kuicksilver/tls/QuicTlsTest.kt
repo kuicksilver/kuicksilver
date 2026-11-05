@@ -357,6 +357,22 @@ class QuicHandshakeTest {
     @Test fun clientWithoutReferenceNameIsConfigError() {
         assertFailsWith<TlsException.Config> { KslQuicCrypto.newSession(Fixtures.client(name = null)) }
     }
+
+    /** A session that fails while it is built (here: no reference name) frees its SSL and its context: nobody else can. */
+    @Test fun aSessionThatCannotStartLeaksNoNativeObject() {
+        val before =
+            io.kuicksilver.native.Ksl
+                .liveObjects()
+        repeat(50) { assertFailsWith<TlsException.Config> { KslQuicCrypto.newSession(Fixtures.client(name = null)) } }
+        val after =
+            io.kuicksilver.native.Ksl
+                .liveObjects()
+        // other tests' connections free theirs asynchronously, so a count may drop meanwhile but never grow by 50
+        val ssl = io.kuicksilver.native.KslConst.LIVE_SSL
+        val ctx = io.kuicksilver.native.KslConst.LIVE_CTX
+        assertTrue(after[ssl] <= before[ssl], "SSL objects ${before.toList()} -> ${after.toList()}")
+        assertTrue(after[ctx] <= before[ctx], "contexts ${before.toList()} -> ${after.toList()}")
+    }
 }
 
 class PacketProtectorTest {

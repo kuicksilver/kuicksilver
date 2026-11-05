@@ -231,11 +231,20 @@ internal class KslQuicTlsSession(
     init {
         val config = ctx.config
         if (config.role == TlsRole.Client) {
-            val reference = referenceOf(config)
-            val host = HostName.normalize(reference)
-            this.reference = host
-            sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
-            Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
+            try {
+                val reference = referenceOf(config)
+                val host = HostName.normalize(reference)
+                this.reference = host
+                sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
+                Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
+            } catch (t: Throwable) {
+                // a session that failed to build is nobody's to close: its SSL and context go now (close() would read fields not set yet)
+                Ksl.sslFree(ssl)
+                ssl = 0L
+                ctxReleased = true
+                ctx.close()
+                throw t
+            }
         }
     }
 
