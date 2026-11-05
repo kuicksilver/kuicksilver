@@ -146,6 +146,40 @@ class StreamStateTest {
         many.assertStreamError(1, Http2ErrorCode.STREAM_CLOSED)
     }
 
+    /**
+     * RFC 9113 section 5.1, "closed": an endpoint MAY treat a frame on a closed stream as a connection error of type
+     * STREAM_CLOSED (RFC 7540 made it a MUST after END_STREAM both ways; h2spec http2/5.1/12 checks it). A HEADERS frame on a
+     * stream that ended both ways (released or still held by its handler) or that the peer reset ends the connection.
+     */
+    @Test
+    fun negative_headersOnAClosedStreamIsAConnectionError() {
+        for (held in listOf(false, true)) {
+            val p = RawH2Peer(Role.SERVER)
+            p.handshake()
+            p.send(p.headers(1, endStream = true))
+            p.core.sendHeaders(1, OK, endStream = true) // closed both ways
+            if (!held) p.core.release(1)
+            p.read()
+            p.send(p.headers(1, endStream = true))
+            p.assertConnectionError(Http2ErrorCode.STREAM_CLOSED)
+        }
+        val reset = RawH2Peer(Role.SERVER)
+        reset.handshake()
+        reset.send(reset.headers(1, endStream = false), FrameEncoder.rstStream(1, Http2ErrorCode.CANCEL.code))
+        reset.core.release(1)
+        reset.send(reset.headers(1, endStream = true))
+        reset.assertConnectionError(Http2ErrorCode.STREAM_CLOSED)
+        // the same rule on a client: a second response on a stream that ended both ways
+        val client = RawH2Peer(Role.CLIENT)
+        client.handshake()
+        val id = client.core.openStream(GET, endStream = true)
+        client.read()
+        client.send(client.headers(id, OK, endStream = true))
+        client.core.release(id)
+        client.send(client.headers(id, OK, endStream = true))
+        client.assertConnectionError(Http2ErrorCode.STREAM_CLOSED)
+    }
+
     @Test
     fun framesOnAStreamWeResetAreDiscarded() {
         val peer = RawH2Peer(Role.SERVER)
