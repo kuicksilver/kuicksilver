@@ -34,44 +34,62 @@ static int alert_to_x509_error(int alert) {
     default: return X509_V_ERR_CERT_REJECTED;              /* bad_certificate (42) */
     }
 }
-/* OpenSSL's security level on the chain the peer sent, for the pause path, where the platform or the application decides and the
-   JDK, Android and Windows verifiers accept 1024-bit RSA: the checks X509_verify_cert runs on its own path (x509_vfy.c
-   check_key_level, check_sig_level, check_auth_level; at the default level 2, 112 bits). The chain is walked from the leaf through
-   the presented certificates that issued it, as OpenSSL builds one from untrusted certificates: every key needs the level's bits
-   (the leaf's EE_KEY_TOO_SMALL, any other CA_KEY_TOO_SMALL), every signature too (CA_MD_TOO_WEAK: SHA-1 counts 63 bits, MD5 39)
-   but a self-signed certificate's, which is an anchor (RFC 9846 section 4.5.1.3: MD5 MUST and SHA-1 SHOULD be refused with
-   bad_certificate, except for "certificates that are self-signed or are trust anchors"). Self-signed means that the signature
-   verifies under the certificate's own key (X509_self_signed(x, 1)): OpenSSL's EXFLAG_SS alone (v3_purp.c) only compares subject
-   and issuer, the key identifiers when present and the signature's algorithm with the key's type, so a CA-issued certificate
-   whose subject repeats the issuer's name and that carries no key identifiers has it too. Certificates outside the path are not
-   looked at, as OpenSSL ignores them; an anchor the platform takes from its own store is the platform's to judge, while every
-   presented certificate on the path is checked (stricter than OpenSSL, which stops at the first certificate in its trust store:
-   an extra cross-certificate above the platform's anchor counts here). libssl maps all three errors to bad_certificate (42), as
-   on OpenSSL's path. */
+/* OpenSSL's security level on a certificate chain as it was sent (or, for our own identity, configured): the checks
+   X509_verify_cert runs on its own path (x509_vfy.c check_key_level, check_sig_level, check_auth_level; at the default level 2,
+   112 bits), for the pause path, where the platform or the application decides and the JDK, Android and Windows verifiers
+   accept 1024-bit RSA, and for ksl_ctx_set_identity_pkey, where OpenSSL checks only the keys (ssl_security_cert).
+
+   Which certificates: every one reachable from the leaf (index 0) through issuer edges that hold, an edge being a certificate
+   whose name and key identifiers fit (X509_check_issued) AND whose key verifies the signature (X509_verify). Name matching
+   alone would let a peer put a decoy before the real intermediate (same subject, no key identifiers, genuinely self-signed
+   with a strong key) and end the walk there, so the weak intermediate behind it was never looked at. Each certificate is
+   visited once; every issuer that verifies is followed, so cross-certificates (two certificates with one key) are all
+   checked. This is stricter than OpenSSL, which checks only the path it builds and stops at the first certificate in its
+   trust store (the owner's choice: a presented certificate above the platform's anchor counts here); certificates on no
+   verified path from the leaf are not looked at.
+
+   What: every key needs the level's bits (the leaf's EE_KEY_TOO_SMALL, any other CA_KEY_TOO_SMALL), every signature too
+   (CA_MD_TOO_WEAK: SHA-1 counts 63 bits, MD5 39) but the own signature of a certificate that is self-signed in fact,
+   X509_self_signed(x, 1): its signature verifies under its own key (RFC 9846 section 4.5.1.3: MD5 MUST and SHA-1 SHOULD be
+   refused with bad_certificate, except for "certificates that are self-signed or are trust anchors"; OpenSSL's EXFLAG_SS
+   alone, v3_purp.c, compares only names, key identifiers and the signature's algorithm). Nothing is followed above such a
+   certificate. libssl maps the three errors to bad_certificate (42), as on OpenSSL's path.
+
+   Cost: X509_check_issued (names, cheap) for each visited certificate against the others, X509_verify only for those that
+   pass it. At most 101 certificates are visited (OpenSSL's default verify depth, x509_vpm.c: 100 beyond the leaf) and at
+   most 2n + 2 signatures verified for n certificates sent; a chain that needs more is refused with CERT_CHAIN_TOO_LONG
+   (unknown_ca), the safe side: stopping instead would leave certificates unchecked, which is what a peer stuffing the
+   chain with decoys of one subject would want, and a real chain needs one verification per certificate, two with
+   cross-certificates. */
 static int weak_chain(int x509_err) { ERR_clear_error(); return x509_err; }
-static int presented_chain_security(SSL *ssl, STACK_OF(X509) *chain) {
+int ksl_chain_security(int level, STACK_OF(X509) *chain) {
     static const int minbits[] = {80, 112, 128, 192, 256};
-    int level = SSL_get_security_level(ssl), n = sk_X509_num(chain);
+    int n = sk_X509_num(chain);
     if (level <= 0 || n <= 0) return X509_V_OK;
     if (level > 5) level = 5;
-    int min = minbits[level - 1];
-    X509 *cur = sk_X509_value(chain, 0);
-    /* at most n steps, so a loop of issuers ends too, and at most OpenSSL's default verify depth (x509_vpm.c: 100) beyond the
-       leaf: each step searches the chain once, so a peer sending hundreds of certificates costs O(100 n), not O(n^2). A path
-       longer than that is not checked past the bound: OpenSSL's own path refuses it (X509_V_ERR_CERT_CHAIN_TOO_LONG), and a
-       platform verifier that accepts one decides alone about those certificates. */
-    for (int depth = 0; cur != NULL && depth < n && depth <= 100; depth++) {
+    int min = minbits[level - 1], head = 0, tail = 0, verifies = 0, budget = 2 * n + 2, err = X509_V_OK;
+    unsigned char *seen = calloc((size_t)n, 1); int *queue = malloc((size_t)n * sizeof *queue);
+    if (seen == NULL || queue == NULL) { free(seen); free(queue); return weak_chain(X509_V_ERR_OUT_OF_MEM); }
+    seen[0] = 1; queue[tail++] = 0;
+    while (err == X509_V_OK && head < tail) {
+        if (head >= 101) { err = X509_V_ERR_CERT_CHAIN_TOO_LONG; break; }
+        int idx = queue[head++]; X509 *cur = sk_X509_value(chain, idx);
         EVP_PKEY *pk = X509_get0_pubkey(cur);
-        if (pk == NULL || EVP_PKEY_get_security_bits(pk) < min) return weak_chain(depth == 0 ? X509_V_ERR_EE_KEY_TOO_SMALL : X509_V_ERR_CA_KEY_TOO_SMALL);
-        if (X509_self_signed(cur, 1) == 1) break;   /* its own signature verifies under its own key: an anchor, not checked */
-        ERR_clear_error();                          /* 0 (not self-signed, or a signature that does not verify) or -1 leave errors */
+        if (pk == NULL || EVP_PKEY_get_security_bits(pk) < min) { err = idx == 0 ? X509_V_ERR_EE_KEY_TOO_SMALL : X509_V_ERR_CA_KEY_TOO_SMALL; break; }
+        int self = X509_self_signed(cur, 1); ERR_clear_error();   /* 0 or -1 leave errors behind */
+        if (self == 1) continue;                                   /* its own signature verifies under its own key: an anchor */
         int bits = -1;
-        if (!X509_get_signature_info(cur, NULL, NULL, &bits, NULL) || bits < min) return weak_chain(X509_V_ERR_CA_MD_TOO_WEAK);
-        X509 *next = NULL;
-        for (int i = 1; i < n && next == NULL; i++) { X509 *x = sk_X509_value(chain, i); if (x != cur && X509_check_issued(x, cur) == X509_V_OK) next = x; }
-        cur = next;
+        if (!X509_get_signature_info(cur, NULL, NULL, &bits, NULL) || bits < min) { err = X509_V_ERR_CA_MD_TOO_WEAK; break; }
+        for (int i = 0; i < n && err == X509_V_OK; i++) {
+            X509 *x = sk_X509_value(chain, i);
+            if (seen[i] || X509_check_issued(x, cur) != X509_V_OK) continue;
+            if (++verifies > budget) { err = X509_V_ERR_CERT_CHAIN_TOO_LONG; break; }
+            int v = X509_verify(cur, X509_get0_pubkey(x)); ERR_clear_error();
+            if (v == 1) { seen[i] = 1; queue[tail++] = i; }
+        }
     }
-    ERR_clear_error(); return X509_V_OK;
+    free(seen); free(queue);
+    return weak_chain(err);
 }
 static int fail_with(ksl_ssl *s, X509_STORE_CTX *xctx, int x509_err) {
     s->verify_err = x509_err;
@@ -99,7 +117,7 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
         /* statem_clnt.c: the pause happens only when the callback returns 1 AND retry_verify is set; 0 is a plain failure. */
         if (s->verify_pending == 0) {
             /* refused before the pause: the platform or the application is never asked about a chain below the security level */
-            int weak = presented_chain_security(ssl, s->presented_chain);
+            int weak = ksl_chain_security(SSL_get_security_level(ssl), s->presented_chain);
             if (weak != X509_V_OK) { s->verify_pending = 3; return fail_with(s, xctx, weak); }
             s->verify_pending = 1; (void)SSL_set_retry_verify(ssl); return 1; }
         if (s->verify_pending == 1) { (void)SSL_set_retry_verify(ssl); return 1; }

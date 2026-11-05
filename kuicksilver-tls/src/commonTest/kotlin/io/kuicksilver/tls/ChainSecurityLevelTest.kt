@@ -17,6 +17,7 @@ import kotlin.coroutines.startCoroutine
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -278,6 +279,36 @@ class ChainSecurityLevelTest {
             )
         assertTrue(o.paused && o.done, "${(o.result as? DriveResult.Failed)?.exception}")
         assertEquals(setOf("server.test"), store.pins.keys)
+    }
+
+    /** A decoy (the intermediate's subject, no key identifiers, self-signed with a strong key) does not hide the real issuer. */
+    @Test fun negative_platformChecksTheIntermediateBehindADecoy() {
+        if (!platformPauses) return
+        refused(
+            handshake(platform(), listOf(WeakCerts.leafViaSha1, WeakCerts.decoySha1, WeakCerts.midSha1), WeakCerts.leafViaSha1Key),
+            VerifyReason.WeakSignature,
+        )
+        refused(
+            handshake(
+                platform(),
+                listOf(WeakCerts.leafViaRsa1024, WeakCerts.decoyRsa1024, WeakCerts.midRsa1024),
+                WeakCerts.leafViaRsa1024Key,
+            ),
+            VerifyReason.WeakKey,
+        )
+    }
+
+    /** RFC 9325 section 4.5: an identity signed with SHA-1 or MD5 is refused when it is made, for a server and a client alike. */
+    @Test fun negative_identitySignedWithSha1OrMd5IsRefused() {
+        for ((chain, key) in listOf(
+            listOf(WeakCerts.leafMd5) to WeakCerts.leafMd5Key,
+            listOf(WeakCerts.leafSha1) to WeakCerts.leafSha1Key,
+            listOf(WeakCerts.leafViaSha1, WeakCerts.midSha1) to WeakCerts.leafViaSha1Key,
+        )) {
+            val e = assertFailsWith<TlsException.Config> { TlsIdentity.fromDer(chain, key.copyOf()) }
+            assertTrue(e.message!!.contains("SHA-1 or MD5"), e.message)
+        }
+        TlsIdentity.fromDer(listOf(WeakCerts.leafUnderSha1Root, WeakCerts.sha1Root), WeakCerts.leafUnderSha1RootKey.copyOf()).close()
     }
 
     @Test fun weakReasonsPrintTheirName() {

@@ -317,6 +317,21 @@ int ksl_ctx_set_identity_pkey(ksl_ctx *c, const uint8_t *chain, size_t chain_len
     /* SSL_CTX_use_PrivateKey takes its own reference to the EVP_PKEY: the caller's handle stays independent */
     int ok = SSL_CTX_use_certificate(c->ctx, sk_X509_value(sk, 0)) == 1 && SSL_CTX_use_PrivateKey(c->ctx, (EVP_PKEY *)key) == 1 && SSL_CTX_check_private_key(c->ctx) == 1;
     for (int i = 1; ok && i < sk_X509_num(sk); i++) ok = SSL_CTX_add1_chain_cert(c->ctx, sk_X509_value(sk, i)) == 1;
+    /* RFC 9325 section 4.5: "servers MUST authenticate using certificates with at least a 2048-bit modulus ... SHA-1 or MD5 MUST
+       NOT be used". OpenSSL checked the keys above at the context's security level (ssl_security_cert); the signatures it does not
+       check, so the configured chain goes through the same walk as a peer's (a self-signed anchor's own signature exempt). A
+       client certificate is configured here too. */
+    if (ok) {
+        int weak = ksl_chain_security(SSL_CTX_get_security_level(c->ctx), sk);
+        if (weak != X509_V_OK) {
+            sk_X509_pop_free(sk, X509_free);
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, weak == X509_V_ERR_CA_MD_TOO_WEAK
+                ? "ksl: identity rejected: a certificate of the chain is signed with SHA-1 or MD5 (RFC 9325 section 4.5; at least SHA-256)"
+                : weak == X509_V_ERR_CERT_CHAIN_TOO_LONG ? "ksl: identity rejected: the chain is too long"
+                : "ksl: identity rejected: a key of the chain is under 112 security bits (RFC 9325 section 4.5: RSA 2048, curves 224)");
+            return KSL_ERROR;
+        }
+    }
     /* the leaf tickets are bound to (ticket_gen_cb), digested once here rather than per ticket */
     if (ok) {
         X509 *leaf = sk_X509_value(sk, 0); unsigned int dl = 0; int days = 0, secs = 0;

@@ -267,9 +267,9 @@ public sealed interface VerifyReason {
      * A key in the peer's chain is below OpenSSL security level 2, 112 bits (RSA under 2048 bits, an elliptic curve under
      * 224 bits); alert `bad_certificate` (42). Checked by `ksl` under every [TrustConfig], before the platform verifier or
      * a [CertificateVerifier] is asked, so that every platform refuses the same presented chains (the JDK, Android and
-     * Windows verifiers accept 1024-bit RSA): the leaf's key, and the key of every certificate of the chain the peer sent
-     * that issued it, a self-signed root included (stricter than OpenSSL for a certificate sent above the platform's
-     * anchor). On OpenSSL's own path ([TrustConfig.AnchoredCa], `Platform` on Linux) OpenSSL checks the chain it built,
+     * Windows verifiers accept 1024-bit RSA): the key of every certificate the peer sent that is reachable from the leaf
+     * through issuers whose key verifies the signature, a self-signed root included (stricter than OpenSSL for a
+     * certificate sent above the platform's anchor). On OpenSSL's own path ([TrustConfig.AnchoredCa], `Platform` on Linux) OpenSSL checks the chain it built,
      * its trust anchor included.
      */
     @ExperimentalKuicksilverApi

@@ -70,6 +70,15 @@ self_leaf() { # name keyspec digest: a self-signed server certificate, as a Tofu
     -addext "keyUsage=digitalSignature" -addext "extendedKeyUsage=serverAuth" -addext "subjectAltName=DNS:server.test" 2>/dev/null
   "$O" x509 -in "$1.pem" -outform DER -out "$der/$1.der"; "$O" pkcs8 -topk8 -nocrypt -in "$1.key" -outform DER -out "$der/$1.key.der"
 }
+decoy() { # name keyspec subject: genuinely self-signed, the subject of a real intermediate, no key identifiers, so that
+  # X509_check_issued takes it for that intermediate's issuer match although it signed nothing in the chain
+  key "$1" "$2"
+  "$O" req -x509 -new -key "$1.key" -out "$1.pem" -days $DAYS -sha256 -subj "$3" -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign" -addext "subjectKeyIdentifier=none" -addext "authorityKeyIdentifier=none" 2>/dev/null
+  "$O" x509 -in "$1.pem" -outform DER -out "$der/$1.der"
+}
+decoy decoy-sha1 ec:P-256 "/CN=mid-sha1"                    # sent between leaf-via-sha1 and mid-sha1
+decoy decoy-rsa1024 rsa:2048 "/CN=mid-rsa1024"              # sent between leaf-via-rsa1024 and mid-rsa1024
 self_leaf self-signed-rsa1024 rsa:1024 sha256               # Tofu: a key too small, refused at first contact
 self_leaf self-signed-sha1 ec:P-256 sha1                    # Tofu: SHA-1 on its own self-signature, accepted
 mkdir -p "$(dirname "$kt")"

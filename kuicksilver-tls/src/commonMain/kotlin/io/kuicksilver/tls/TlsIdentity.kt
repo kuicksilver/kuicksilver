@@ -308,7 +308,11 @@ public sealed interface TlsIdentity {
             }
         }
 
-        /** Lets `ksl` (OpenSSL) confirm that the key belongs to the leaf; the temporary context is freed immediately. */
+        /**
+         * Lets `ksl` (OpenSSL) confirm that the key belongs to the leaf and that the chain meets security level 2 (RFC 9325
+         * section 4.5: keys of at least 112 bits, no SHA-1 or MD5 signature but a self-signed root's own); the temporary
+         * context is freed immediately.
+         */
         private fun checkKeyMatches(
             chain: List<ByteArray>,
             pkey: Long,
@@ -319,7 +323,14 @@ public sealed interface TlsIdentity {
             } catch (
                 e: KslException.Internal,
             ) {
-                throw TlsException.Config("private key does not match chain[0] or the chain is invalid: ${e.message}")
+                val why = e.message.orEmpty()
+                throw TlsException.Config(
+                    if (why.contains("identity rejected: ")) {
+                        "the certificate chain is refused: ${why.substringAfter("identity rejected: ")}"
+                    } else {
+                        "private key does not match chain[0] or the chain is invalid: $why"
+                    },
+                )
             } finally {
                 Ksl.ctxFree(ctx)
             }

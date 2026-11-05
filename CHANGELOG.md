@@ -228,10 +228,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   own key (no SHA-1 or MD5 below it; RFC 9846 section 4.5.1.3: MD5 MUST, SHA-1 SHOULD be refused). A weaker chain ends
   the handshake with `bad_certificate` (42; `handshake_failure` with `genericAlerts`). Before, `TrustConfig.Platform` on
   the JVM, Android and Windows accepted 1024-bit RSA keys and SHA-1-signed intermediates when the platform did. The check
-  reads the presented chain, not the one the platform builds, so it is stricter than OpenSSL's own verifier for an extra
-  cross-certificate a server sends above the platform's anchor (one signed with SHA-1 refuses the chain). What breaks:
+  covers every presented certificate reachable from the leaf through issuers whose key verifies the signature (a decoy
+  with the intermediate's name cannot hide it; cross-certificates are all checked), not the chain the platform builds, so
+  it is stricter than OpenSSL's own verifier for an extra cross-certificate a server sends above the platform's anchor
+  (one signed with SHA-1 refuses the chain). This endpoint's own chain is checked the same way when the identity is made
+  (RFC 9325 section 4.5: servers MUST NOT authenticate with SHA-1 or MD5 or with RSA under 2048 bits): `TlsIdentity`
+  factories throw `TlsException.Config` for a SHA-1- or MD5-signed certificate (OpenSSL checked only the keys). What breaks:
   `Custom` and `Tofu` now refuse weak keys too, so devices with legacy 1024-bit RSA certificates no longer connect, and
-  an existing `Tofu` pin of such a key fails with `VerifyReason.WeakKey` instead of matching; and `VerifyReason` has two
+  an existing `Tofu` pin of such a key fails with `VerifyReason.WeakKey` instead of matching; a server or client
+  certificate signed with SHA-1 or MD5 now fails when the configuration is made; and `VerifyReason` has two
   new subtypes, `WeakKey` and `WeakSignature` (experimental), so an exhaustive `when` over it no longer compiles without
   them. They are reported on OpenSSL's path too (`AnchoredCa`, `Platform` on Linux, client certificates), which reported
   `VerifyReason.Custom("X509 verification error 66")` and the like.

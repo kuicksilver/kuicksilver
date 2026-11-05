@@ -316,6 +316,17 @@ static void test_chain_security_level(void) {
     weak_run(chain_of(2, W("leaf-via-self-issued-sha1"), W("mid-self-issued-sha1")), W("leaf-via-self-issued-sha1"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
     CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0, "negative: pause: a self-issued SHA-1-signed intermediate that is not self-signed -> bad_certificate");
     if (!(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0)) printf("  got done=%d alert=%d verify_err=%d pauses=%d\n", dn, al, ve, pa);
+    /* a decoy before the real intermediate: same subject, no key identifiers, genuinely self-signed with a strong key. Name
+       matching alone (X509_check_issued) takes it for the leaf's issuer; only an issuer whose key verifies the signature counts */
+    weak_run(chain_of(3, W("leaf-via-sha1"), W("decoy-sha1"), W("mid-sha1")), W("leaf-via-sha1"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0, "negative: pause: a self-signed decoy before a SHA-1 intermediate -> the intermediate is still checked");
+    if (!(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0)) printf("  got done=%d alert=%d verify_err=%d pauses=%d\n", dn, al, ve, pa);
+    weak_run(chain_of(3, W("leaf-via-rsa1024"), W("decoy-rsa1024"), W("mid-rsa1024")), W("leaf-via-rsa1024"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_KEY_TOO_SMALL && pa == 0, "negative: pause: an RSA decoy before a 1024-bit intermediate -> the intermediate is still checked");
+    if (!(!dn && al == 42 && ve == X509_V_ERR_CA_KEY_TOO_SMALL && pa == 0)) printf("  got done=%d alert=%d verify_err=%d pauses=%d\n", dn, al, ve, pa);
+    /* a decoy alone in front of nothing weak changes nothing: the decoy is not on any verified path */
+    weak_run(chain_of(2, W("leaf-p256"), W("decoy-sha1")), W("leaf-p256"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(dn && pa == 1, "pause: an unrelated certificate sent along is not on the path: accepted");
     /* a self-signed leaf (as Tofu meets one): its key counts, its own signature does not */
     weak_run(chain_of(1, W("self-signed-rsa1024")), W("self-signed-rsa1024"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
     CHECK(!dn && al == 42 && ve == X509_V_ERR_EE_KEY_TOO_SMALL && pa == 0, "negative: pause: a self-signed 1024-bit leaf -> bad_certificate");
@@ -339,4 +350,27 @@ static void test_chain_security_level(void) {
     }
     END();
 }
-void run_verify_security_level(void) { test_chain_security_level(); }
+/* RFC 9325 section 4.5: this endpoint's own certificates are held to the same level when they are configured: OpenSSL checks only
+   their keys (ssl_security_cert), not their signatures, so a SHA-1 or MD5-signed chain loaded before */
+static int identity_ok(const char *leaf, const char *mid, char *msg, size_t msg_len) {
+    ksl_ctx *c = ksl_ctx_new(KSL_SERVER); blob ch = mid ? chain_of(2, leaf, mid) : chain_of(1, leaf); size_t kl; uint8_t *k = key_of(leaf, &kl);
+    int r = ksl_ctx_set_identity(c, ch.buf, ch.len, k, kl); uint32_t e; msg[0] = 0; if (r != KSL_OK) ksl_ctx_last_error(c, &e, msg, msg_len);
+    free(ch.buf); free(k); ksl_ctx_free(c); return r == KSL_OK;
+}
+static void test_own_identity_security_level(void) {
+    SECTION("identity_security_level");
+    char m[256];
+    CHECK(!identity_ok(W("leaf-md5"), NULL, m, sizeof m) && strstr(m, "SHA-1 or MD5"), "negative: an MD5-signed leaf is refused as an identity");
+    if (!strstr(m, "SHA-1 or MD5")) printf("  message: %s\n", m);
+    CHECK(!identity_ok(W("leaf-sha1"), NULL, m, sizeof m) && strstr(m, "SHA-1 or MD5"), "negative: a SHA-1-signed leaf is refused as an identity");
+    CHECK(!identity_ok(W("leaf-via-sha1"), W("mid-sha1"), m, sizeof m) && strstr(m, "SHA-1 or MD5"), "negative: a SHA-1-signed intermediate in the identity is refused");
+    CHECK(!identity_ok(W("leaf-self-issued-md5"), NULL, m, sizeof m), "negative: a self-issued, not self-signed MD5 leaf is refused as an identity");
+    CHECK(identity_ok(W("leaf-under-sha1-root"), W("sha1-root"), m, sizeof m), "a SHA-1 self-signed root at the end of the configured chain is accepted");
+    if (m[0]) printf("  message: %s\n", m);
+    CHECK(identity_ok(W("leaf-p256"), NULL, m, sizeof m) && identity_ok("server", NULL, m, sizeof m), "SHA-256 identities load");
+    /* a client certificate goes through the same call */
+    ksl_ctx *cc = ksl_ctx_new(KSL_CLIENT); blob ch = chain_of(1, W("leaf-sha1")); size_t kl; uint8_t *k = key_of(W("leaf-sha1"), &kl);
+    CHECK(ksl_ctx_set_identity(cc, ch.buf, ch.len, k, kl) == KSL_ERROR, "negative: a SHA-1-signed client certificate is refused"); free(ch.buf); free(k); ksl_ctx_free(cc);
+    END();
+}
+void run_verify_security_level(void) { test_chain_security_level(); test_own_identity_security_level(); }
