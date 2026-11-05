@@ -129,6 +129,7 @@ step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-t
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh
 step "lint: RFC compliance summary table"      bash tools/check/rfc-table.sh
 step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py --check
+step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check
 step "lint: links (Markdown, llms.txt)"         bash tools/check/links.sh
 step "lint: guide samples (guide-sync)"          bash tools/check/guide-sync.sh
 step "lint: ktlint"                            $G lintKotlin

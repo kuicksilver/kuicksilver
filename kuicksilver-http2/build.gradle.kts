@@ -20,13 +20,13 @@ kotlin {
 }
 tasks.named<Test>("jvmTest") { useJUnitPlatform() }
 
-// Sans-IO rule (ADR-0004) for the frame codec, HPACK and the connection core; see tools/check/sans-io.sh.
+// Sans-IO rule (ADR-0004) for the frame codec, HPACK, the connection core and the message rules; see tools/check/sans-io.sh.
 val checkHttp2Architecture = tasks.register("checkHttp2Architecture") {
-    group = "verification"; description = "Runs the sans-IO rule for the HTTP/2 frame codec, HPACK and the connection core"
+    group = "verification"; description = "Runs the sans-IO rule for the HTTP/2 frame codec, HPACK, the connection core and the message rules"
     val script = rootProject.file("tools/check/sans-io.sh").path
     val module = project.name; val workDir = rootProject.projectDir
     doLast {
-        val p = ProcessBuilder("bash", script, module, "http2", "frame", "hpack", "core").directory(workDir).redirectErrorStream(true).start()
+        val p = ProcessBuilder("bash", script, module, "http2", "frame", "hpack", "core", "message").directory(workDir).redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().readText(); val rc = p.waitFor(); println(out.trim())
         if (rc != 0) throw GradleException("architecture check failed: $script")
     }
