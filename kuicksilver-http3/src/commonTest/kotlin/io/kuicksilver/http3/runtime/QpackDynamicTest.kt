@@ -218,7 +218,16 @@ class QpackDynamicTest {
                             }
                         }
                     }
-                    val client = Http3Connection.client(c, dyn)
+                    // the stop can come while the critical streams are still being opened: then client() itself fails with
+                    // H3_CLOSED_CRITICAL_STREAM (see negative_aStopWhileOpeningStartsNoSecondAttempt), the same outcome
+                    val client =
+                        try {
+                            Http3Connection.client(c, dyn)
+                        } catch (e: Http3Exception.Protocol) {
+                            assertEquals(Http3ErrorCode.CLOSED_CRITICAL_STREAM, e.h3Code, "type $target: $e")
+                            coroutineContext.cancelChildren()
+                            return@use
+                        }
                     awaitCondition("the peer stopping critical stream type $target") { stopped.isCompleted }
                     var i = 0
                     awaitCondition("the connection ending after the peer stopped critical stream type $target") {
@@ -270,10 +279,18 @@ class QpackDynamicTest {
                             }
                         }
                     }
-                    val client = Http3Connection.client(c, dyn)
+                    // the stop can also come while the critical streams are still being opened: then client() itself fails
+                    // with the same error (see negative_aStopWhileOpeningStartsNoSecondAttempt), which is the same outcome
                     val end =
-                        withTimeoutOrNull(5.seconds) { client.closed.await() }
-                            ?: error("the connection still lives 5 s after the peer stopped critical stream type $target")
+                        withTimeoutOrNull(5.seconds) {
+                            val client =
+                                try {
+                                    Http3Connection.client(c, dyn)
+                                } catch (e: Http3Exception) {
+                                    return@withTimeoutOrNull e
+                                }
+                            client.closed.await()
+                        } ?: error("the connection still lives 5 s after the peer stopped critical stream type $target")
                     assertEquals(Http3ErrorCode.CLOSED_CRITICAL_STREAM, (end as Http3Exception.Protocol).h3Code, "type $target: $end")
                     coroutineContext.cancelChildren()
                 }
