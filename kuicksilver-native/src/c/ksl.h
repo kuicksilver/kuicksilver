@@ -194,7 +194,9 @@ int      ksl_ctx_set_ticket_keys(ksl_ctx *, const uint8_t *keys, size_t n);     
 /* Session ticket keys that never leave ksl (threat model 3.7). The process-wide generated keys: the context uses the current key
    (encrypts) and the previous one (decrypts); they rotate when the current one is rotate_seconds old (wall clock). The context
    copies no key: it looks them up at every ticket, so they rotate under a context that serves a server for its whole life
-   (since 0.3.0, ABI 7; before, the context kept the keys of the moment of this call). */
+   (since 0.3.0, ABI 7; before, the context kept the keys of the moment of this call). A rotation needs fresh randomness: when it
+   fails, the ticket being encrypted fails (OpenSSL then fails the NewSessionTicket), where before this call failed. The keys are
+   process-wide: contexts with different periods share them, and the shortest period in use sets the pace. */
 int      ksl_ctx_use_default_ticket_keys(ksl_ctx *, uint32_t rotate_seconds);
 /* Explicit keys (n x 80 bytes, 1..64), copied once for the life of the process; the caller wipes its copy. Returns an id > 0 for
    ksl_ctx_use_ticket_keys (the same id for the same keys), KSL_ERROR when invalid or when 1024 distinct sets exist. */

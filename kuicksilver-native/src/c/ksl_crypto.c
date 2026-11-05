@@ -18,6 +18,7 @@ static CRYPTO_ONCE fetch_once = CRYPTO_ONCE_STATIC_INIT;
 static EVP_KDF_CTX *hkdf_tmpl[2];   /* SHA-256, SHA-384 */
 static EVP_CIPHER *ciphers[KSL_CIPHER_COUNT];
 static void fetch_all(void) {
+    ERR_set_mark();   /* a failed fetch leaves only its own errors behind, and only those are cleared (the caller's queue stays) */
     EVP_KDF *kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
     for (int i = 0; kdf && i < 2; i++) {
         EVP_KDF_CTX *t = EVP_KDF_CTX_new(kdf); OSSL_PARAM p[2];
@@ -27,7 +28,7 @@ static void fetch_all(void) {
     EVP_KDF_free(kdf);
     static const char *const names[KSL_CIPHER_COUNT] = {"AES-128-GCM", "AES-256-GCM", "ChaCha20-Poly1305", "AES-128-ECB", "AES-256-ECB", "ChaCha20", "AES-256-CBC"};
     for (int i = 0; i < KSL_CIPHER_COUNT; i++) ciphers[i] = EVP_CIPHER_fetch(NULL, names[i], NULL);
-    ERR_clear_error();
+    ERR_pop_to_mark();
 }
 const EVP_CIPHER *ksl_cipher(int which, const EVP_CIPHER *legacy) {
     if (!CRYPTO_THREAD_run_once(&fetch_once, fetch_all) || which < 0 || which >= KSL_CIPHER_COUNT || !ciphers[which]) return legacy;

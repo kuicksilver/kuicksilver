@@ -34,13 +34,17 @@ int64_t (*ksl_ticket_clock)(void) = wall_seconds;   /* the C tests move time; no
 
 static void init_lock(void) { lock = CRYPTO_THREAD_lock_new(); lock_ok = lock != NULL; }
 static int locked(void) { return CRYPTO_THREAD_run_once(&once, init_lock) && lock_ok && CRYPTO_THREAD_write_lock(lock); }
+static int read_locked(void) { return CRYPTO_THREAD_run_once(&once, init_lock) && lock_ok && CRYPTO_THREAD_read_lock(lock); }
 
 /* Rotates the generated keys when the current one is rotate_seconds old, under the lock. Wall clock, as OpenSSL's ticket ages: a step
    forward rotates early (the previous key still decrypts), a step back by more than a period rotates too, so a clock reset cannot
    freeze the current key. Every context that uses the generated keys sees the same keys at any moment: rotation happens here only. */
-static int rotate_if_due(uint32_t rotate_seconds) {
+static int rotation_due(uint32_t rotate_seconds, int64_t now) {
+    return gen_count == 0 || now - gen_rotated_at >= (int64_t)rotate_seconds || now < gen_rotated_at - (int64_t)rotate_seconds;
+}
+static int rotate_if_due(uint32_t rotate_seconds) {   /* under the write lock */
     int64_t now = ksl_ticket_clock();
-    if (gen_count != 0 && now - gen_rotated_at < (int64_t)rotate_seconds && now >= gen_rotated_at - (int64_t)rotate_seconds) return 1;
+    if (!rotation_due(rotate_seconds, now)) return 1;
     uint8_t fresh[KEY]; int ok = RAND_priv_bytes(fresh, KEY) == 1;
     if (ok) {
         if (gen_count > 0) { memcpy(gen + KEY, gen, KEY); gen_count = 2; } else gen_count = 1;
@@ -66,15 +70,21 @@ int ksl_ctx_use_default_ticket_keys(ksl_ctx *c, uint32_t rotate_seconds) {
 
 /* For ticket_cb (ksl_ctx.c) of a context on the generated keys: copies the current key (name NULL: to encrypt) or the key named
    `name` (to decrypt) into out, after rotating when due. 1 found (*current: it is the current key), 0 no such key, -1 failure. */
+static int copy_key(const uint8_t *name, uint8_t out[80], int *current) {   /* under either lock */
+    for (int i = 0; i < gen_count; i++)
+        if (!name || !memcmp(gen + i * KEY, name, 16)) { memcpy(out, gen + i * KEY, KEY); *current = i == 0; return 1; }
+    return 0;
+}
 int ksl_default_ticket_key(uint32_t rotate_seconds, const uint8_t *name, uint8_t out[80], int *current) {
+    /* the common case under the read lock: tickets of many connections at once do not queue; the write lock only to rotate */
+    if (!read_locked()) return -1;
+    if (!rotation_due(rotate_seconds, ksl_ticket_clock())) { int r = copy_key(name, out, current); CRYPTO_THREAD_unlock(lock); return r; }
+    CRYPTO_THREAD_unlock(lock);
     if (!locked()) return -1;
-    int r = rotate_if_due(rotate_seconds) ? 0 : -1;
-    for (int i = 0; r == 0 && i < gen_count; i++)
-        if (!name || !memcmp(gen + i * KEY, name, 16)) { memcpy(out, gen + i * KEY, KEY); *current = i == 0; r = 1; }
+    int r = rotate_if_due(rotate_seconds) ? copy_key(name, out, current) : -1;
     CRYPTO_THREAD_unlock(lock);
     return r;
 }
-
 #ifdef KSL_TEST
 /* The keys `c` would use now, current first (n x 80 bytes into out, at most `max`): the generated ones (rotated when due, as a
    ticket would) or its explicit copy. */
