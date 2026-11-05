@@ -11,14 +11,38 @@ static STACK_OF(X509) *capture_presented(X509_STORE_CTX *xctx) {
     for (int i = 0; un && i < sk_X509_num(un); i++) { X509 *x = sk_X509_value(un, i); if (X509_cmp(x, leaf) != 0 && X509_up_ref(x)) sk_X509_push(out, x); }
     return out;
 }
+/* Whether the leaf matches the reference identifier: an IP literal (ip) or a DNS name (host, matched under the X509_CHECK_FLAG_*
+   flags), the same matcher OpenSSL's own verifier applies (x509_vfy.c check_id). The one place that names OpenSSL's matching API:
+   OpenSSL 4.1 deprecates X509_check_host and X509_check_ip_asc (CHANGES.md, PR 30403), and a build with no-deprecated, as ours,
+   has neither. There the identifier goes into a verification of the leaf alone, trusted as its own anchor (partial chain, no time
+   check), whose callback lets every result but the name mismatch pass: X509_verify_cert then runs that same check_id, so the match
+   is OpenSSL's on both. */
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L && defined(OPENSSL_NO_DEPRECATED_4_1)
+static int name_only_cb(int ok, X509_STORE_CTX *x) {
+    int e = X509_STORE_CTX_get_error(x);
+    return ok || (e != X509_V_ERR_HOSTNAME_MISMATCH && e != X509_V_ERR_IP_ADDRESS_MISMATCH);
+}
+#endif
+static int ksl_match_name(X509 *leaf, const char *host, const char *ip, unsigned flags) {
+#if OPENSSL_VERSION_NUMBER < 0x40100000L || !defined(OPENSSL_NO_DEPRECATED_4_1)
+    if (ip) return X509_check_ip_asc(leaf, ip, 0) == 1;
+    return host && X509_check_host(leaf, host, 0, flags, NULL) == 1;
+#else
+    if (!ip && !host) return 0;
+    X509_STORE *st = X509_STORE_new(); X509_STORE_CTX *x = X509_STORE_CTX_new(); int r = 0;
+    if (st && x && X509_STORE_add_cert(st, leaf) == 1 && X509_STORE_CTX_init(x, st, leaf, NULL) == 1) {
+        X509_VERIFY_PARAM *p = X509_STORE_CTX_get0_param(x);
+        X509_VERIFY_PARAM_set_flags(p, X509_V_FLAG_PARTIAL_CHAIN | X509_V_FLAG_NO_CHECK_TIME); X509_VERIFY_PARAM_set_hostflags(p, flags);
+        if ((ip ? X509_VERIFY_PARAM_set1_ip_asc(p, ip) : X509_VERIFY_PARAM_set1_host(p, host, 0)) == 1) {
+            X509_STORE_CTX_set_verify_cb(x, name_only_cb); r = X509_verify_cert(x) == 1;
+        }
+    }
+    X509_STORE_CTX_free(x); X509_STORE_free(st); ERR_clear_error(); return r;
+#endif
+}
 /* Name and purpose checks that the platform verifier may have skipped (JDK/Android never check the name). */
 static int ksl_match_leaf(ksl_ssl *s, X509 *leaf, int role_of_peer_is_server) {
-    int ok = 1;
-    if (role_of_peer_is_server) {
-        if (s->verify_ip) ok = X509_check_ip_asc(leaf, s->verify_ip, 0) == 1;
-        else ok = s->verify_host && X509_check_host(leaf, s->verify_host, 0, s->verify_flags, NULL) == 1;
-        if (!ok) return X509_V_ERR_HOSTNAME_MISMATCH;
-    }
+    if (role_of_peer_is_server && !ksl_match_name(leaf, s->verify_host, s->verify_ip, s->verify_flags)) return X509_V_ERR_HOSTNAME_MISMATCH;
     if (X509_check_purpose(leaf, role_of_peer_is_server ? X509_PURPOSE_SSL_SERVER : X509_PURPOSE_SSL_CLIENT, 0) != 1) return X509_V_ERR_INVALID_PURPOSE;
     return X509_V_OK;
 }
