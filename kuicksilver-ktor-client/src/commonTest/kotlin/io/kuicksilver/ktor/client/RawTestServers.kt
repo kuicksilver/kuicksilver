@@ -16,6 +16,7 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
+import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
@@ -343,7 +344,6 @@ internal suspend fun tlsH2WithSilentUdp(
             io.kuicksilver.http2.runtime.H2ServerConnection.start(input, output, settings, this, closeTransport = {
                 // a clean close (the last frames are flushed, then close_notify), as a server ends a connection
                 output.close(null)
-                input.cancel(null)
             })
         onConnection(index, conn)
         val requests =
@@ -364,6 +364,10 @@ internal suspend fun tlsH2WithSilentUdp(
             }
         try {
             conn.awaitClosed()
+            // the socket closes when this returns: first let the client close its side (it does once it saw our last
+            // frames), so our close_notify is out before the socket goes; closing at once sometimes cut the TLS
+            // output and the client saw a truncation instead of our SETTINGS and GOAWAY
+            kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { input.readRemaining() } }
         } finally {
             requests.cancel()
             log.ended.trySend(index)
