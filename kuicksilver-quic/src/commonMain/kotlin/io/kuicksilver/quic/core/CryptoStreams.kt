@@ -34,7 +34,10 @@ internal class CryptoStreams(
     private val received = LongArray(4)
     private val sealed = BooleanArray(4)
     private var postHandshakeBytes = 0L
-    private val scratch = ByteArray(16384)
+
+    // grown to what a level delivers at once, at most MAX_SCRATCH (a ClientHello or a server flight is 1-3 KiB; 16 KiB up front
+    // per connection was a seventh of what a handshake allocated, P.3)
+    private var scratch = ByteArray(0)
 
     /**
      * Buffers received CRYPTO bytes; refuses before copying when they would exceed the caps. At a sealed level, data within what
@@ -107,8 +110,12 @@ internal class CryptoStreams(
         sink: (ByteArray, Int) -> Unit,
     ): Boolean {
         var any = false
+        val r = recv[level]
         while (true) {
-            val n = recv[level].read(scratch, 0, scratch.size)
+            val readable = minOf(r.readable, MAX_SCRATCH)
+            if (readable == 0) break
+            if (scratch.size < readable) scratch = ByteArray(maxOf(readable, minOf(2 * scratch.size, MAX_SCRATCH)))
+            val n = r.read(scratch, 0, scratch.size)
             if (n == 0) break
             sink(scratch, n)
             any = true
@@ -125,5 +132,10 @@ internal class CryptoStreams(
         var n = 0L
         for (r in recv) n += r.bufferedBytes
         return n
+    }
+
+    private companion object {
+        /** The most CRYPTO bytes handed to TLS in one call. */
+        const val MAX_SCRATCH = 16384
     }
 }

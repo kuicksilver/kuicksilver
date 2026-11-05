@@ -35,8 +35,13 @@ internal class SendStream(
     /** Queued in [StreamManager]'s list of streams whose last write did not fit the send buffer. */
     internal var writeRefused = false
 
-    /** Unacknowledged bytes in a ring buffer: [head] is the ring index of stream offset [releasedUpTo]; it grows to the high-water mark once and then never allocates. */
-    private var ring = ByteArray(4096)
+    /**
+     * Unacknowledged bytes in a ring buffer: [head] is the ring index of stream offset [releasedUpTo]; it grows to the high-water
+     * mark once and then never allocates. Empty until the first write: of a connection's four CRYPTO streams one is never written
+     * (0-RTT has none) and the others carry a few hundred bytes to a few KiB, and a stream that only receives sends nothing (P.3:
+     * 4 KiB per stream up front was a sixth of what a handshake allocated).
+     */
+    private var ring = EMPTY
     private var head = 0
 
     /** Total bytes handed to this stream (the next write offset). */
@@ -208,6 +213,7 @@ internal class SendStream(
         len: Int,
     ) {
         require(offset >= releasedUpTo && offset + len <= written) { "copy $offset+$len outside [$releasedUpTo, $written)" }
+        if (len == 0) return // a FIN-only frame: no bytes, and a stream never written has no ring yet
         val idx = ((head + (offset - releasedUpTo)) % ring.size).toInt()
         val first = minOf(len, ring.size - idx)
         ring.copyInto(into, intoOff, idx, idx + first)
@@ -217,7 +223,7 @@ internal class SendStream(
     private fun reserve(extra: Int) {
         val needed = buffered + extra
         if (needed <= ring.size) return
-        var size = ring.size.toLong()
+        var size = maxOf(ring.size.toLong(), MIN_RING.toLong())
         while (size < needed) size *= 2
         val grown = ByteArray(size.toInt())
         val count = buffered.toInt()
@@ -461,6 +467,13 @@ internal class SendStream(
         lostCount = 0
         state = SendState.ResetSent
         return released
+    }
+
+    private companion object {
+        val EMPTY = ByteArray(0)
+
+        /** The first ring: a power of two, so that growing it by doubling keeps it one. */
+        const val MIN_RING = 1024
     }
 }
 
