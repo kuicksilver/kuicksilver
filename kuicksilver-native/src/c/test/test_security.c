@@ -187,14 +187,15 @@ static void test_default_keys_concurrent_first_use(void) {
 /* One frozen server context shared by several threads, as a server shares it between its connections (P.3): full handshakes
    and resumptions at once while the process keys rotate under them (the write lock), and each session's keylog holds only its
    own connection's lines. The ticket clock moves one second per 50 full handshakes over all threads, so the keys (period 1 s)
-   rotate about ten times during the run, and a ticket is resumed long before a second rotation. Run under ASan/UBSan by
+   rotate about ten times during the run; a ticket is normally resumed long before a second rotation, and one that was not (its
+   thread descheduled meanwhile; the clock says so) counts as an expected expiry, not a failure. Run under ASan/UBSan by
    tools/c-test.sh. */
 #define SHARE_THREADS 8
 #define SHARE_ROUNDS 60
 static ksl_ctx *share_server, *share_client;
 static int64_t share_ticks, share_base;
 static int64_t share_clock(void) { return share_base + __atomic_load_n(&share_ticks, __ATOMIC_SEQ_CST) / 50; }
-typedef struct { int handshakes, resumed, keylog_ok, failures; } share_result;
+typedef struct { int handshakes, resumed, aged, keylog_ok, failures; } share_result;
 static int random_of(const char *log, size_t n, char out[65]) {   /* the client_random of the first line ("LABEL <random> <secret>") */
     const char *sp = memchr(log, ' ', n); if (!sp || (size_t)(sp - log) + 65 > n) return 0;
     memcpy(out, sp + 1, 64); out[64] = 0; return 1;
@@ -212,6 +213,8 @@ static int keylog_only(ksl_ssl *s, const char *random) {   /* every line of s's 
 static void *share_worker(void *arg) {
     share_result *r = arg; int done[2];
     for (int i = 0; i < SHARE_ROUNDS; i++) {
+        /* the ticket clock before the ticket can exist: if two rotations pass from here, its key may legitimately be gone */
+        int64_t issued = share_clock();
         ksl_ssl *c = tclient(share_client), *s = ksl_ssl_new(share_server, KSL_MODE_QUIC); ksl_quic_set_transport_params(s, TP, sizeof TP);
         tpump(c, s, done);
         ksl_session *sess = NULL;
@@ -226,7 +229,9 @@ static void *share_worker(void *arg) {
         c = tclient(share_client); s = ksl_ssl_new(share_server, KSL_MODE_QUIC); ksl_quic_set_transport_params(s, TP, sizeof TP);
         ksl_ssl_set_session(c, sess); tpump(c, s, done);
         uint8_t b = 0; size_t bn; ksl_ssl_get(c, KSL_GET_SESSION_REUSED, &b, 1, &bn);
-        if (done[0] && done[1] && b == 1) r->resumed++; else r->failures++;
+        if (done[0] && done[1] && b == 1) r->resumed++;
+        else if (done[0] && done[1] && share_clock() - issued >= 2) r->aged++;   /* this thread was descheduled across two rotations */
+        else r->failures++;
         ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess);
     }
     return NULL;
@@ -240,12 +245,13 @@ static void test_shared_context_concurrent_handshakes(void) {
     share_client = client_ctx("test-ca", KSL_VERIFY_OPENSSL); ksl_ctx_set_option(share_client, KSL_OPT_KEYLOG, 1); ksl_ctx_freeze(share_client);
     pthread_t t[SHARE_THREADS]; share_result res[SHARE_THREADS]; memset(res, 0, sizeof res);
     for (int i = 0; i < SHARE_THREADS; i++) pthread_create(&t[i], NULL, share_worker, &res[i]);
-    int hs = 0, resumed = 0, keylog = 0, failures = 0;
-    for (int i = 0; i < SHARE_THREADS; i++) { pthread_join(t[i], NULL); hs += res[i].handshakes; resumed += res[i].resumed; keylog += res[i].keylog_ok; failures += res[i].failures; }
+    int hs = 0, resumed = 0, aged = 0, keylog = 0, failures = 0;
+    for (int i = 0; i < SHARE_THREADS; i++) { pthread_join(t[i], NULL); hs += res[i].handshakes; resumed += res[i].resumed; aged += res[i].aged; keylog += res[i].keylog_ok; failures += res[i].failures; }
     int all = SHARE_THREADS * SHARE_ROUNDS;
-    if (failures) printf("handshakes %d, resumed %d, keylogs %d, failures %d of %d\n", hs, resumed, keylog, failures, all);
+    if (failures || aged) printf("handshakes %d, resumed %d, aged %d, keylogs %d, failures %d of %d\n", hs, resumed, aged, keylog, failures, all);
     CHECK(hs == all, "every full handshake on the shared context completes");
-    CHECK(resumed == all, "every ticket resumes on the same shared context while the keys rotate");
+    CHECK(resumed + aged == all, "every ticket resumes on the same shared context while the keys rotate, unless two rotations passed");
+    CHECK(aged <= all / 20, "tickets that aged past two rotations stay rare (a thread descheduled for 100 handshakes)");
     CHECK(keylog == all, "each session's keylog holds only its own connection's secrets");
     CHECK(share_clock() - share_base >= 5, "the keys rotated several times during the run");
     ksl_ticket_clock = saved; ksl_ctx_free(share_server); ksl_ctx_free(share_client); END();
