@@ -218,6 +218,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS: a peer's certificate chain below OpenSSL security level 2 is refused under every trust configuration, not only
+  where OpenSSL verifies the chain (`docs/guide/tls.md`, "Platform trust"). Before the platform verifier, a `Custom`
+  verifier or `Tofu` is asked, `ksl` checks the chain the peer sent as OpenSSL does on its own path: every key needs 112
+  security bits (RSA and DSA 2048 bits, elliptic curves 224 bits) and every certificate signature too, except a
+  self-signed root's own (no SHA-1 or MD5 below the anchor; RFC 9846 section 4.5.1.3: MD5 MUST, SHA-1 SHOULD be refused).
+  A weaker chain ends the handshake with `bad_certificate` (42; `handshake_failure` with `genericAlerts`). Before,
+  `TrustConfig.Platform` on the JVM, Android and Windows accepted 1024-bit RSA keys and SHA-1-signed intermediates when
+  the platform did. `TlsException.Verify` names the cause with the new experimental `VerifyReason.WeakKey` and
+  `VerifyReason.WeakSignature`, on OpenSSL's path too (`AnchoredCa`, `Platform` on Linux, client certificates), which
+  reported `VerifyReason.Custom("X509 verification error 66")` and the like.
+
 - TLS (performance): a server no longer builds an OpenSSL context (`SSL_CTX`, with its identity, suites and ticket keys)
   per connection. The handshakes of one server configuration share one context per identity snapshot, for QUIC and TCP
   alike; a `TlsIdentity.Reloadable` reload makes the next handshake build one from the new identity, and the old one is

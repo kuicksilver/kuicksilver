@@ -241,4 +241,89 @@ static void test_client_cert_option_on_client(void) {
     ksl_ctx_free(sc2); ksl_ctx_free(cc2);
     END();
 }
-void run_verify_review(void) { test_review_alerts(); test_system_store(); test_system_store_missing(); test_name_switch(); test_client_cert_option_on_client(); }
+void run_verify_security_level(void);
+void run_verify_review(void) { run_verify_security_level(); test_review_alerts(); test_system_store(); test_system_store_missing(); test_name_switch(); test_client_cert_option_on_client(); }
+
+/* ---- OpenSSL security level 2 on the peer's chain, on every path (T.5) ---- */
+/* A server whose context is at security level 0, so that it can present the weak chains of testdata/weak (at the default level 2
+   OpenSSL refuses to load a key below 112 bits as its own identity) */
+static ksl_ctx *weak_server_ctx(blob chain, const char *leaf) {
+    ksl_ctx *sc = ksl_ctx_new(KSL_SERVER); ksl_ctx_set_alpn(sc, ALPN_H3, sizeof ALPN_H3);
+    CHECK(ksl_ctx_set_ciphers(sc, NULL, "@SECLEVEL=0:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256") == KSL_OK, "test server at security level 0");
+    size_t kl; uint8_t *k = key_of(leaf, &kl);
+    if (ksl_ctx_set_identity(sc, chain.buf, chain.len, k, kl) != KSL_OK) { uint32_t e; char m[256]; ksl_ctx_last_error(sc, &e, m, sizeof m); printf("  identity %s: %s\n", leaf, m); CHECK(0, "weak identity loads at level 0"); }
+    free(k); free(chain.buf); return sc;
+}
+static int weak_pauses;
+static int weak_on_verify(ksl_ssl *s, int rc, void *a) { (void)a; if (rc != KSL_WANT_VERIFY) return 1; weak_pauses++; return ksl_ssl_verify_resume(s, 1, 0) == KSL_OK; }
+/* the client's local alert and X509 error after a handshake against chain; pause mode accepts at the pause (the platform's yes) */
+static void weak_run(blob chain, const char *leaf, const char *root, int mode, int generic, int *alert, int *verr, int *done, int *pauses) {
+    ksl_ctx *sc = weak_server_ctx(chain, leaf), *cc = client_ctx(root, mode); if (generic) ksl_ctx_set_option(cc, KSL_OPT_GENERIC_ALERTS, 1);
+    ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_QUIC), *s = ksl_ssl_new(sc, KSL_MODE_QUIC);
+    ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1); ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+    ksl_quic_set_transport_params(c, TP, sizeof TP); ksl_quic_set_transport_params(s, TP, sizeof TP);
+    side cs = {0}, ss = {0}; weak_pauses = 0; pump(c, s, &cs, &ss, 40, weak_on_verify, NULL);
+    *alert = alert_of(c); *verr = verify_err_of(c); *done = cs.done && ss.done; *pauses = weak_pauses;
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+}
+#define W(n) "weak/" n
+typedef struct { const char *what; const char *leaf, *mid; int verr; } weak_case;   /* verr 0 = accepted */
+static const weak_case WEAK_CASES[] = {
+    {"a 1024-bit RSA leaf", W("leaf-rsa1024"), NULL, X509_V_ERR_EE_KEY_TOO_SMALL},
+    {"a 1024-bit RSA intermediate", W("leaf-via-rsa1024"), W("mid-rsa1024"), X509_V_ERR_CA_KEY_TOO_SMALL},
+    {"a P-192 intermediate", W("leaf-via-p192"), W("mid-p192"), X509_V_ERR_CA_KEY_TOO_SMALL},
+    {"an intermediate signed with SHA-1", W("leaf-via-sha1"), W("mid-sha1"), X509_V_ERR_CA_MD_TOO_WEAK},
+    {"a leaf signed with SHA-1", W("leaf-sha1"), NULL, X509_V_ERR_CA_MD_TOO_WEAK},
+    {"a 2048-bit RSA leaf (112 bits, the floor)", W("leaf-rsa2048"), NULL, 0},
+    {"a P-256 leaf", W("leaf-p256"), NULL, 0},
+    {"a P-224 intermediate (112 bits, the floor)", W("leaf-via-p224"), W("mid-p224"), 0},
+};
+static blob weak_chain(const weak_case *w) { return w->mid ? chain_of(2, w->leaf, w->mid) : chain_of(1, w->leaf); }
+static void test_chain_security_level(void) {
+    SECTION("verify_peer_chain_security_level");
+    for (size_t i = 0; i < sizeof WEAK_CASES / sizeof WEAK_CASES[0]; i++) {
+        const weak_case *w = &WEAK_CASES[i]; int al, ve, dn, pa; char msg[160];
+        /* pause mode (TrustConfig.Platform off Linux, Custom, Tofu): ksl checks before the platform is asked */
+        weak_run(weak_chain(w), w->leaf, NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+        snprintf(msg, sizeof msg, "pause: %s -> %s", w->what, w->verr ? "bad_certificate before the pause" : "reaches the pause, accepted");
+        if (w->verr) CHECK(!dn && al == 42 && ve == w->verr && pa == 0, msg); else CHECK(dn && pa == 1, msg);
+        if ((w->verr && !(!dn && al == 42 && ve == w->verr && pa == 0)) || (!w->verr && !(dn && pa == 1))) printf("  got done=%d alert=%d verify_err=%d pauses=%d\n", dn, al, ve, pa);
+        /* the OpenSSL verifier (AnchoredCa, Linux Platform) under the same anchor: OpenSSL's own level 2, the same verdict */
+        weak_run(weak_chain(w), w->leaf, W("weak-root"), KSL_VERIFY_OPENSSL, 0, &al, &ve, &dn, &pa);
+        snprintf(msg, sizeof msg, "openssl: %s -> %s", w->what, w->verr ? "bad_certificate" : "accepted");
+        if (w->verr) CHECK(!dn && al == 42 && ve == w->verr, msg); else CHECK(dn, msg);
+        if ((w->verr && !(!dn && al == 42 && ve == w->verr)) || (!w->verr && !dn)) printf("  got done=%d alert=%d verify_err=%d\n", dn, al, ve);
+    }
+    int al, ve, dn, pa;
+    /* RFC 9846 section 4.5.1.3: a certificate signed with MD5 MUST be refused with bad_certificate */
+    weak_run(chain_of(1, W("leaf-md5")), W("leaf-md5"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0, "negative: pause: an MD5-signed leaf -> bad_certificate before the pause");
+    /* "endpoints can accept these algorithms for certificates that are self-signed or are trust anchors": the anchor the peer sent */
+    weak_run(chain_of(2, W("leaf-under-sha1-root"), W("sha1-root")), W("leaf-under-sha1-root"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(dn && pa == 1, "pause: a self-signed root signed with SHA-1, sent along, is an anchor: accepted");
+    weak_run(chain_of(2, W("leaf-under-sha1-root"), W("sha1-root")), W("leaf-under-sha1-root"), W("sha1-root"), KSL_VERIFY_OPENSSL, 0, &al, &ve, &dn, &pa);
+    CHECK(dn, "openssl: the same chain anchored at the SHA-1 root: accepted");
+    /* an anchor's key still counts (x509_vfy.c check_auth_level checks every key but the leaf's as a CA key) */
+    weak_run(chain_of(2, W("leaf-under-rsa1024-root"), W("rsa1024-root")), W("leaf-under-rsa1024-root"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_KEY_TOO_SMALL && pa == 0, "negative: pause: a 1024-bit root sent along -> bad_certificate");
+    weak_run(chain_of(2, W("leaf-under-rsa1024-root"), W("rsa1024-root")), W("leaf-under-rsa1024-root"), W("rsa1024-root"), KSL_VERIFY_OPENSSL, 0, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_KEY_TOO_SMALL, "negative: openssl: anchored at a 1024-bit root -> bad_certificate");
+    /* generic alerts: handshake_failure on the wire, the reason kept */
+    weak_run(chain_of(1, W("leaf-rsa1024")), W("leaf-rsa1024"), NULL, KSL_VERIFY_PAUSE, 1, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 40 && ve == X509_V_ERR_EE_KEY_TOO_SMALL && pa == 0, "pause + generic alerts: alert 40, verify_err EE_KEY_TOO_SMALL");
+    /* a client certificate (a server verifies only through OpenSSL, AnchoredCa): OpenSSL's level 2 refuses a 1024-bit key */
+    {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        CHECK(ksl_ctx_set_ciphers(cc, NULL, "@SECLEVEL=0:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256") == KSL_OK, "test client at security level 0");
+        blob ch = chain_of(1, W("client-rsa1024")); size_t kl; uint8_t *k = key_of(W("client-rsa1024"), &kl);
+        CHECK(ksl_ctx_set_identity(cc, ch.buf, ch.len, k, kl) == KSL_OK, "weak client identity loads at level 0"); free(ch.buf); free(k);
+        blob r = chain_of(1, W("weak-root")); ksl_ctx_set_roots(sc, r.buf, r.len); free(r.buf); ksl_ctx_set_option(sc, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_REQUIRED);
+        ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_QUIC), *s = ksl_ssl_new(sc, KSL_MODE_QUIC);
+        ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1); ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+        ksl_quic_set_transport_params(c, TP, sizeof TP); ksl_quic_set_transport_params(s, TP, sizeof TP); side cs = {0}, ss = {0}; pump(c, s, &cs, &ss, 40, NULL, NULL); ksl_drive(s);
+        CHECK(!ss.done && alert_of(s) == 42 && verify_err_of(s) == X509_V_ERR_EE_KEY_TOO_SMALL, "negative: a 1024-bit client certificate -> the server sends bad_certificate");
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+    }
+    END();
+}
+void run_verify_security_level(void) { test_chain_security_level(); }

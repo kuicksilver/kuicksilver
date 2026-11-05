@@ -485,6 +485,15 @@ internal fun KslException.Internal.toTlsFailure(presented: List<Certificate>): P
                 VerifyReason.BadSignature
             }
 
+            // EE_KEY_TOO_SMALL, CA_KEY_TOO_SMALL; CA_MD_TOO_WEAK: below the security level (ksl on the pause path, OpenSSL on its own)
+            66, 67 -> {
+                VerifyReason.WeakKey
+            }
+
+            68 -> {
+                VerifyReason.WeakSignature
+            }
+
             else -> {
                 when {
                     x509 != 0 -> VerifyReason.Custom("X509 verification error $x509")

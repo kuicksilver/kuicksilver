@@ -34,6 +34,34 @@ static int alert_to_x509_error(int alert) {
     default: return X509_V_ERR_CERT_REJECTED;              /* bad_certificate (42) */
     }
 }
+/* OpenSSL's security level on the chain the peer sent, for the pause path, where the platform or the application decides and the
+   JDK, Android and Windows verifiers accept 1024-bit RSA: the checks X509_verify_cert runs on its own path (x509_vfy.c
+   check_key_level, check_sig_level, check_auth_level; at the default level 2, 112 bits). The chain is walked from the leaf through
+   the presented certificates that issued it, as OpenSSL builds one from untrusted certificates: every key needs the level's bits
+   (the leaf's EE_KEY_TOO_SMALL, any other CA_KEY_TOO_SMALL), every signature too (CA_MD_TOO_WEAK: SHA-1 counts 63 bits, MD5 39)
+   but a self-signed certificate's, which is an anchor (RFC 9846 section 4.5.1.3: MD5 MUST and SHA-1 SHOULD be refused with
+   bad_certificate, except for "certificates that are self-signed or are trust anchors"). Certificates outside the path are not
+   looked at, as OpenSSL ignores them; an anchor the platform takes from its own store is the platform's to judge. libssl maps
+   all three errors to bad_certificate (42), as on OpenSSL's path. */
+static int presented_chain_security(SSL *ssl, STACK_OF(X509) *chain) {
+    static const int minbits[] = {80, 112, 128, 192, 256};
+    int level = SSL_get_security_level(ssl), n = sk_X509_num(chain);
+    if (level <= 0 || n <= 0) return X509_V_OK;
+    if (level > 5) level = 5;
+    int min = minbits[level - 1];
+    X509 *cur = sk_X509_value(chain, 0);
+    for (int depth = 0; cur != NULL && depth < n; depth++) {   /* at most n steps: a loop of issuers ends too */
+        EVP_PKEY *pk = X509_get0_pubkey(cur);
+        if (pk == NULL || EVP_PKEY_get_security_bits(pk) < min) return depth == 0 ? X509_V_ERR_EE_KEY_TOO_SMALL : X509_V_ERR_CA_KEY_TOO_SMALL;
+        if (X509_get_extension_flags(cur) & EXFLAG_SS) break;   /* self-signed: an anchor, whose own signature is not checked */
+        int bits = -1;
+        if (!X509_get_signature_info(cur, NULL, NULL, &bits, NULL) || bits < min) return X509_V_ERR_CA_MD_TOO_WEAK;
+        X509 *next = NULL;
+        for (int i = 1; i < n && next == NULL; i++) { X509 *x = sk_X509_value(chain, i); if (x != cur && X509_check_issued(x, cur) == X509_V_OK) next = x; }
+        cur = next;
+    }
+    ERR_clear_error(); return X509_V_OK;
+}
 static int fail_with(ksl_ssl *s, X509_STORE_CTX *xctx, int x509_err) {
     s->verify_err = x509_err;
     X509_STORE_CTX_set_error(xctx, s->owner->generic_alerts ? X509_V_ERR_APPLICATION_VERIFICATION : x509_err);
@@ -58,7 +86,11 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     if (client && s->verify_mode == KSL_VERIFY_NONE) return 1;   /* no verification (tests); the client's SSL is SSL_VERIFY_PEER. The session's mode: a context switched after ksl_ssl_new does not change it */
     if (client && s->verify_mode == KSL_VERIFY_PAUSE) {
         /* statem_clnt.c: the pause happens only when the callback returns 1 AND retry_verify is set; 0 is a plain failure. */
-        if (s->verify_pending == 0) { s->verify_pending = 1; (void)SSL_set_retry_verify(ssl); return 1; }
+        if (s->verify_pending == 0) {
+            /* refused before the pause: the platform or the application is never asked about a chain below the security level */
+            int weak = presented_chain_security(ssl, s->presented_chain);
+            if (weak != X509_V_OK) { s->verify_pending = 3; return fail_with(s, xctx, weak); }
+            s->verify_pending = 1; (void)SSL_set_retry_verify(ssl); return 1; }
         if (s->verify_pending == 1) { (void)SSL_set_retry_verify(ssl); return 1; }
         s->verify_pending = 3;
         if (s->verify_decision) {

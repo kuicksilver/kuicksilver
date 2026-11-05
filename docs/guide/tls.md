@@ -119,6 +119,14 @@ intermediate CA accepts the chains that reach it, without its issuers (OpenSSL `
 shared RFC 9525 matcher afterwards on every platform, so a platform matcher can only make the decision stricter; pins
 (`Pinned`) are compared against the chain the platform built, never against certificates the peer merely sent.
 
+Before the platform is asked, `ksl` holds the chain the peer sent to OpenSSL's security level 2, as OpenSSL does on its
+own path (`AnchoredCa`, `Platform` on Linux), so every platform refuses the same chains: every key needs 112 security
+bits (RSA 2048 bits, an elliptic curve 224 bits) and every certificate signature too, except a self-signed root's own (no
+SHA-1 or MD5 below the anchor; RFC 9846 section 4.5.1.3). A weaker chain ends the handshake with `bad_certificate` and
+`TlsException.Verify` with `VerifyReason.WeakKey` or `VerifyReason.WeakSignature`. The JDK, Android and Windows verifiers
+would accept 1024-bit RSA on their own. The same check runs before a `Custom` verifier and `Tofu`; there is no switch to
+turn it off.
+
 | Platform | Verifier and store | Revocation |
 |---|---|---|
 | JVM | the default `X509TrustManager`: the JDK's `cacerts` or `javax.net.ssl.trustStore`, not the OS store | as the JDK is configured (off by default) |
