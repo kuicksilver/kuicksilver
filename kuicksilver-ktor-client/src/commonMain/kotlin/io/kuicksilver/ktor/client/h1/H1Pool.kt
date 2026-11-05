@@ -263,14 +263,24 @@ internal class H1Pool(
                         }
                         // a route marked meanwhile (HTTP_1_1_REQUIRED on a connection of this loop) offers http/1.1 only
                         val offerH2 = h2Ok && !h2Refused.isRefused(key)
+                        // one HTTP/2 connect at a time per route (RFC 9113 section 9.1): the others wait for its outcome
+                        // without a permit, within the connect timeout
+                        if (offerH2 && signal != null && !h2.tryStartDial(key)) {
+                            pool.releasePermit(key)
+                            signal.first { it != seen }
+                            continue
+                        }
+                        val dialer = offerH2 && signal != null
                         val opened =
                             try {
                                 connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns, offerH2).also { pool.adopt(it) }
                             } catch (e: Throwable) {
                                 pool.releasePermit(key)
+                                if (dialer) h2.endDial(key, null)
                                 throw e
                             }
                         if (opened is H1Connection) {
+                            if (dialer) h2.endDial(key, false) // the waiting requests connect on their own now
                             conn = opened
                             return@withTimeout
                         }
@@ -281,35 +291,40 @@ internal class H1Pool(
                             h2.remove(c)
                             c.close()
                         }
-                        // concurrent first requests to a new origin each opened a connection (ALPN is known only after the
-                        // handshake): one that finds another HTTP/2 connection with room uses it and closes its own
-                        val other = h2.reserve(key)
-                        if (other != null) {
-                            c.client.shutdown()
-                            stream = other
-                            reused = true
-                            return@withTimeout
-                        }
-                        // our stream first, then the pool: another request cannot take the one stream this request opened for
-                        if (c.client.tryReserve()) {
-                            h2.register(c)
-                            stream = c
-                            return@withTimeout
-                        }
-                        // a server that sends GOAWAY with HTTP_1_1_REQUIRED at once wants HTTP/1.1 (RFC 9113 section 7): the
-                        // route is marked and the next round connects with http/1.1 only
-                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                        if (c.client.goAwayCode == io.kuicksilver.http2.Http2ErrorCode.HTTP_1_1_REQUIRED) {
-                            h2Refused.mark(key)
-                            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                            data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.h2Refused = true
-                        } else {
-                            // a new connection that takes no request (a GOAWAY at once, SETTINGS_MAX_CONCURRENT_STREAMS 0): the
-                            // call fails rather than open connection after connection to a server that refuses them
-                            c.client.shutdown()
-                            throw kotlinx.io.IOException(
-                                "the server took no request on a new HTTP/2 connection (GOAWAY or SETTINGS_MAX_CONCURRENT_STREAMS 0)",
-                            )
+                        // the waiting requests are told only once the connection is in the pool (or refused): told earlier,
+                        // they would find nothing and connect again
+                        try {
+                            // another HTTP/2 connection with room (opened while this one connected): use it, close this one
+                            val other = h2.reserve(key)
+                            if (other != null) {
+                                c.client.shutdown()
+                                stream = other
+                                reused = true
+                                return@withTimeout
+                            }
+                            // our stream first, then the pool: another request cannot take the one stream this request opened for
+                            if (c.client.tryReserve()) {
+                                h2.register(c)
+                                stream = c
+                                return@withTimeout
+                            }
+                            // a server that sends GOAWAY with HTTP_1_1_REQUIRED at once wants HTTP/1.1 (RFC 9113 section 7): the
+                            // route is marked and the next round connects with http/1.1 only
+                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                            if (c.client.goAwayCode == io.kuicksilver.http2.Http2ErrorCode.HTTP_1_1_REQUIRED) {
+                                h2Refused.mark(key)
+                                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                                data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.h2Refused = true
+                            } else {
+                                // a new connection that takes no request (a GOAWAY at once, SETTINGS_MAX_CONCURRENT_STREAMS 0):
+                                // the call fails rather than open connection after connection to a server that refuses them
+                                c.client.shutdown()
+                                throw kotlinx.io.IOException(
+                                    "the server took no request on a new HTTP/2 connection (GOAWAY or SETTINGS_MAX_CONCURRENT_STREAMS 0)",
+                                )
+                            }
+                        } finally {
+                            if (dialer) h2.endDial(key, true)
                         }
                     }
                 } finally {

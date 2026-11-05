@@ -429,8 +429,9 @@ the server closed meanwhile is detected when it is taken from the pool and repla
 - **HTTP/2.** One connection per route while it has a free stream under the server's SETTINGS_MAX_CONCURRENT_STREAMS;
   it counts once toward `maxConnectionsPerRoute` and `maxConnectionsCount` however many requests it carries. When it is
   full a second one opens, within those limits; at the limits a request waits for a free stream within the connect
-  timeout. Requests that start together toward a new origin each open a connection (ALPN is known only after the TLS
-  handshake); those that find another HTTP/2 connection with room close theirs and use it, so one stays. A connection
+  timeout. Requests that start together toward a new origin open one connection: one connects while the others wait for
+  it (ALPN is known only after the TLS handshake) and use it when it is HTTP/2, or connect on their own when it is
+  HTTP/1.1; an origin last seen on HTTP/1.1 does not make them wait. A connection
   without requests for `idleTimeout`, or past `maxConnectionLifetime`, is sent GOAWAY and closes once its requests are
   done; a server's GOAWAY moves new requests to a new connection.
 - **HTTP/3.** One QUIC connection per origin (and alternative) carries all requests. When the server's MAX_STREAMS

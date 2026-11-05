@@ -81,6 +81,38 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * RFC 9113 section 9.1: clients SHOULD NOT open more than one HTTP/2 connection to an origin. Ten requests that start
+     * together toward a new origin open one TLS connection: while one connect is in flight the others wait for it (Go's
+     * dialCall), and use it once it turned out to be HTTP/2.
+     */
+    @Test fun concurrentFirstRequestsOpenOneConnection() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, log ->
+                testClient().use { c ->
+                    val all = coroutineScope { (1..10).map { async { c.get("https://127.0.0.1:$port/").bodyAsText() } }.awaitAll() }
+                    assertEquals(List(10) { "h2" }, all)
+                    assertEquals(1, log.acceptCount)
+                }
+            }
+        }
+
+    /** The wait is for HTTP/2 only: once the first connect turned out HTTP/1.1, the others connect in parallel as before. */
+    @Test fun concurrentFirstRequestsToAnH1ServerStillComplete() =
+        clientTest {
+            tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, output ->
+                while (true) {
+                    if (readRequest(input).isEmpty()) break
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh1")
+                }
+            }) { port ->
+                testClient().use { c ->
+                    val all = coroutineScope { (1..10).map { async { c.get("https://127.0.0.1:$port/").bodyAsText() } }.awaitAll() }
+                    assertEquals(List(10) { "h1" }, all)
+                }
+            }
+        }
+
     @Test fun sequentialRequestsReuseOneConnection() =
         clientTest {
             tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, log ->

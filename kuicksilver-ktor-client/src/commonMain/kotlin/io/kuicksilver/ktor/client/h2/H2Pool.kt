@@ -50,10 +50,62 @@ internal class H2Pool(
         val conns = ArrayList<H2Conn>()
         val signal = MutableStateFlow(0L)
         var watchers = 0
+
+        /** A request that may use HTTP/2 is connecting to this route: the others wait for it (RFC 9113 section 9.1). */
+        var dialing = false
     }
 
     private val lock = SpinLock()
     private val routes = HashMap<String, Route>()
+
+    /** Routes whose last TLS connection negotiated HTTP/1.1 (no wait for a connect in flight there); at most [MAX_KNOWN]. */
+    private val speaksH1 = LinkedHashMap<String, Unit>()
+
+    /**
+     * Whether a request that may use HTTP/2 may connect to [route] now. RFC 9113 section 9.1: clients SHOULD NOT open more
+     * than one HTTP/2 connection to an origin; ALPN tells only after the handshake, so while one such connect is in flight
+     * the others wait for its outcome on the route's signal (as Go's `dialCall` dedups dials per address) and then use its
+     * connection, or connect in parallel when it turned out HTTP/1.1. A route known to speak HTTP/1.1 never waits. True
+     * means the caller is now the route's dialer and must call [endDial].
+     */
+    fun tryStartDial(route: String): Boolean =
+        lock.withLock {
+            if (route in speaksH1) return@withLock true
+            val r = routes.getOrPut(route) { Route() }
+            if (r.dialing) {
+                false
+            } else {
+                r.dialing = true
+                true
+            }
+        }
+
+    /** The connect of [tryStartDial] ended: [h2] true or false when it negotiated a protocol, null when it failed. */
+    fun endDial(
+        route: String,
+        h2: Boolean?,
+    ) {
+        lock.withLock {
+            when (h2) {
+                true -> {
+                    speaksH1.remove(route)
+                }
+
+                false -> {
+                    speaksH1.remove(route)
+                    speaksH1[route] = Unit
+                    speaksH1.evictEldest(MAX_KNOWN)
+                }
+
+                null -> {}
+            }
+            routes[route]?.let {
+                it.dialing = false
+                prune(route, it)
+            }
+        }
+        bump(route)
+    }
 
     /** A stream on a usable connection of [route], reserved; null when none has one free. */
     fun reserve(route: String): H2Conn? {
@@ -110,7 +162,7 @@ internal class H2Pool(
         route: String,
         r: Route,
     ) {
-        if (r.conns.isEmpty() && r.watchers <= 0) routes.remove(route)
+        if (r.conns.isEmpty() && r.watchers <= 0 && !r.dialing) routes.remove(route)
     }
 
     private fun pastLifetime(
@@ -173,6 +225,10 @@ internal class H2Pool(
 
     /** Routes tracked (tests: bounded by the connections and the waiters). */
     val routeCount: Int get() = lock.withLock { routes.size }
+
+    private companion object {
+        const val MAX_KNOWN = 1000
+    }
 }
 
 /**

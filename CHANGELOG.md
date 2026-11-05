@@ -18,7 +18,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   over TCP offers `h2` and `http/1.1` in ALPN (also through HTTP CONNECT and SOCKS5 proxies; never for `http://`, no h2c,
   and never for WebSockets, RFC 8441 is not supported yet); a server that picks `h2` gets one multiplexed connection per
   route while it has a free stream under its SETTINGS_MAX_CONCURRENT_STREAMS, a second one when it is full, within
-  `maxConnectionsPerRoute`. Requests that start together toward a new origin collapse into one connection. A request the
+  `maxConnectionsPerRoute`. Requests that start together toward a new origin open one connection: one connects while the others wait for it
+  (RFC 9113 section 9.1). A request the
   server did not process (GOAWAY above its stream, REFUSED_STREAM; RFC 9113 section 8.7) goes again, at most twice, for
   any method; HTTP_1_1_REQUIRED makes the route offer only `http/1.1` for 5 minutes, doubling up to 2 days (new
   `FallbackReason.H2Refused`), and repeats the request over HTTP/1.1 when that is safe (the stream was refused, the request
