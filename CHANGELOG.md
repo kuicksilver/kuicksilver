@@ -29,7 +29,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `http/1.1` in ALPN, and `http2Settings` takes the windows and limits. Each stream is a Ktor call (`httpVersion`
   "HTTP/2"); requests are checked against RFC 9113 section 8 (a malformed one is reset with PROTOCOL_ERROR before any
   handler runs, a field section above the limit gets 431), responses go out without connection-specific fields and with
-  the engine's `Alt-Svc`, content within the client's flow-control windows. The client's preface and field blocks are
+  the engine's `Alt-Svc`, content within the client's flow-control windows and never past or short of its
+  `Content-Length` (the stream is reset instead). One stream's failure (a client's reset, a handler's exception) ends
+  that stream only, and the server never answers a client's RST_STREAM with one. The client's preface and field blocks are
   bounded by `requestHeaderTimeoutSeconds`, request content and idle connections by `connectionIdleTimeoutSeconds`; a
   client's RST_STREAM cancels its handler, and a stop sends the two-step GOAWAY (RFC 9113 section 6.8). TLS 1.3 only, no
   h2c, no RFC 8441 (`:protocol` is refused), no server push. The event listener reports `HTTP_2_0`, and the soak probe

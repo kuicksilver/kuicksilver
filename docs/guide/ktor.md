@@ -112,8 +112,8 @@ offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (
 is no h2c, and a client's `PRI * HTTP/2.0` preface is refused with `505 HTTP Version Not Supported`. HTTP/2 runs over
 TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
 
-Each stream is a Ktor call: `call.request.httpVersion` is `"HTTP/2"`, `call.request.local.scheme` is the request's
-`:scheme`, `:authority` appears as the `Host` header and split `cookie` fields as one (RFC 9113 section 8.2.3). Responses
+Each stream is a Ktor call: `call.request.httpVersion` is `"HTTP/2"`, `call.request.local.scheme` is `"https"` (the
+connection's, whatever the request's `:scheme`), `:authority` appears as the `Host` header and split `cookie` fields as one (RFC 9113 section 8.2.3). Responses
 go out without connection-specific headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade` are dropped), a
 response to HEAD, a 204 or a 304 without content, and every response carries the engine's `Alt-Svc` as on HTTP/1.1, so
 a client on HTTP/2 learns HTTP/3 too. Requests are checked against RFC 9113 section 8 before the application sees them:
@@ -122,7 +122,10 @@ repeated or unknown pseudo-header field, `host` that differs from `:authority`, 
 `content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
 answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441) are not offered:
 the engine never sends SETTINGS_ENABLE_CONNECT_PROTOCOL, so a request with `:protocol` is malformed. A request with
-`Expect: 100-continue` gets an interim 100 when the handler first reads the body.
+`Expect: 100-continue` gets an interim 100 when the handler first reads the body. Content that does not match the
+response's `Content-Length` is never sent as a complete response (the stream is reset); a 1xx as the final status goes
+out as a 500. A call that ends without a response resets its stream; one stream's failure (a client's reset, a handler's
+exception) never affects the others on the connection.
 
 `http2Settings` (`Http2Settings`) holds the windows, SETTINGS_MAX_CONCURRENT_STREAMS (100) and the field-section and
 flood limits of the core ([configuration reference](configuration.md#ktor-server-engine)). The engine's deadlines apply:
