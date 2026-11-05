@@ -191,7 +191,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: per-call protocol diagnostics (experimental; `docs/guide/ktor.md`, "Why did this request not use
   HTTP/3?"). Every response carries a `ProtocolDiagnostics` (`response.kuicksilverDiagnostics`, the call attribute
   `KuicksilverDiagnosticsKey`): the protocol that served it, the `ProtocolReason`, why it did not go over HTTP/3 as a
-  `FallbackReason` (`HandshakeTimeout`, `TlsFailure`, `BrokenAlternative`, `H3NotReady`, ...), the HTTP/3 alternative
+  `FallbackReason` (`HandshakeTimeout`, `TlsFailure`, `BrokenAlternative`, `H3NotReady`, `MisdirectedRequest`, ...), the HTTP/3 alternative
   and its `AlternativeSource`, the race and its head start, the HTTP/3 failure and the number of attempts. The engine's
   logger gets one line per call HTTP/3 could have served but did not, at `http3 { diagnosticsLogLevel }` (`Info` by
   default; HTTP/3 calls at `Debug`; `null` for none), without the URL's query or user info. A broken alternative now
@@ -200,10 +200,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: an HTTP/3 kill switch (experimental `http3 { http3Allowed = { ... } }`; `docs/guide/ktor.md`, "Turning
   HTTP/3 off remotely"), read once per `https://` request from the application's remote configuration. While it returns
   false requests go over HTTP/1.1 (`ProtocolReason.Http3Disabled`, `FallbackReason.Http3Disabled`), open HTTP/3
-  connections take no new requests, `Alt-Svc` is still learned, and `H3Only` requests fail with
-  `UnsupportedOperationException` without any connection; a switch that throws allows HTTP/3 and is logged at most once
-  per 5 minutes. `HttpClient.closeHttp3Connections()` sends GOAWAY on every pooled HTTP/3 connection and closes each
-  once its calls are done.
+  connections take no new requests, `Alt-Svc` is still learned, and `H3Only` requests and `HttpClient.webTransport` fail
+  with `UnsupportedOperationException` without any connection; a switch that throws an exception allows HTTP/3 and is
+  logged at most once per 5 minutes. `HttpClient.closeHttp3Connections()` sends GOAWAY on every pooled HTTP/3 connection
+  and closes each once its calls are done (a request handed one just before goes again on a new connection), and sends
+  every open WebTransport session `WT_DRAIN_SESSION`.
 
 ### Changed
 

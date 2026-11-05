@@ -25,6 +25,13 @@ import kotlin.time.Duration.Companion.nanoseconds
  *
  * It lives as long as the response (it is one of the call's attributes) and holds the HTTP/3 failure, if any, by
  * reference; the engine keeps no copy of it.
+ *
+ * The engine puts a new one into the request's attributes when the call reaches it, fills it while the call runs (code
+ * that reads [KuicksilverDiagnosticsKey] from the request before the response, a listener say, sees it incomplete) and
+ * removes it when the call fails. Read it from the response: a request built from an earlier one (Ktor's redirect copies
+ * the attributes with `takeFrom`) carries the earlier response's diagnostics until the engine replaces them, so a plugin
+ * that runs before the engine sees stale ones; and when an interceptor sends one request builder through the engine
+ * twice, each engine call gets its own object and the attributes keep the last.
  */
 @ExperimentalKuicksilverApi
 public class ProtocolDiagnostics internal constructor() {
@@ -80,8 +87,13 @@ public class ProtocolDiagnostics internal constructor() {
             }
 
     /**
-     * How many times the request was sent: 1, plus one per retry (a request the server did not process after GOAWAY, a
-     * stale pooled connection, a 417 to `Expect: 100-continue`) and per fallback from HTTP/3 to HTTP/1.1.
+     * How many attempts the engine made for the response: the first, plus one per repeat by the engine (a request the
+     * server did not process — GOAWAY, H3_REQUEST_REJECTED — or that this client's own `closeHttp3Connections()` stopped
+     * before it went out, each repeated on a new connection; a stale pooled HTTP/1.1 connection; a 417 to
+     * `Expect: 100-continue`), plus one for the fallback to HTTP/1.1 when HTTP/3 had tried the request (not when the HTTP/3
+     * connection could not be set up or its handshake failed: then HTTP/1.1 is the first attempt). Repeats inside the
+     * HTTP/3 layer on the same connection — a 0-RTT request sent again after its early data was rejected, or after a
+     * 425 Too Early — are not counted.
      */
     public var attempts: Int = 1
         internal set
@@ -97,7 +109,7 @@ public class ProtocolDiagnostics internal constructor() {
         headStartNanos = if (headStart.isInfinite()) Long.MAX_VALUE else headStart.inWholeNanoseconds
     }
 
-    /** No string is built here: a call over HTTP/3 allocates nothing for its diagnostics beyond this object. */
+    /** No string is built here: on a call over HTTP/3 the diagnostics cost this object and its one attribute-map entry. */
     internal fun alternative(
         host: String,
         port: Int,
@@ -163,6 +175,7 @@ public class ProtocolDiagnostics internal constructor() {
  * | [Configuration] | `Http3DiscoveryMode.H1Only` | the discovery mode |
  * | [Http3Disabled] | `http3 { http3Allowed }` said false | your remote configuration |
  * | [NoAlternative] | `Auto` and the origin announced no `Alt-Svc` (yet) | the server's `Alt-Svc` header |
+ * | [MisdirectedRequest] | the alternative answered 421 and was dropped; the origin served the request over HTTP/1.1 | the alternative's certificate and virtual hosts |
  * | [BrokenAlternative] | HTTP/3 to this alternative failed recently on this network | the log line's `broken since:` |
  * | [WebSocket] | a WebSocket without an HTTP/3 connection that allows Extended CONNECT | expected for the first WebSocket |
  * | [HandshakeTimeout] | no QUIC answer within the handshake or connect timeout | UDP to the port blocked (firewall, VPN), server down |
@@ -194,6 +207,12 @@ public enum class FallbackReason {
 
     /** `Auto` mode without a known HTTP/3 alternative for the origin (no `Alt-Svc` yet, or it was dropped). */
     NoAlternative,
+
+    /**
+     * The HTTP/3 alternative answered 421 Misdirected Request: it is dropped from the origin's alternatives (RFC 7838
+     * section 6) and the request went to the origin over HTTP/1.1.
+     */
+    MisdirectedRequest,
 
     /** The alternative is marked broken on this network: HTTP/3 failed there while HTTP/1.1 worked. */
     BrokenAlternative,

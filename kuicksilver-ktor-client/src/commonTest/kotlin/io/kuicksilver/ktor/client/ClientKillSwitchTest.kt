@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
 import io.ktor.client.request.prepareGet
@@ -11,14 +12,18 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.server.application.install
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.server.websocket.webSocket
 import io.ktor.utils.io.writeStringUtf8
+import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.ktor.server.webTransport
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
@@ -254,6 +259,7 @@ class ClientKillSwitchTest {
     private suspend fun CoroutineScope.recordingH3(
         gate: CompletableDeferred<Unit>,
         accepted: AtomicReference<List<Http3Connection>>,
+        earlyData: Boolean = false,
     ): Http3Endpoint {
         val tls =
             tlsConfig(TlsRole.Server) {
@@ -263,7 +269,10 @@ class ClientKillSwitchTest {
         val ep =
             Http3Endpoint.bind(
                 InetSocketAddress("127.0.0.1", 0),
-                QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).build() }.build(),
+                QuicEndpointConfig
+                    .Builder()
+                    .apply { server = QuicServerConfig.Builder(tls).apply { this.earlyData = earlyData }.build() }
+                    .build(),
             )
         launch {
             runCatching {
@@ -337,6 +346,152 @@ class ClientKillSwitchTest {
                     ep.close()
                     coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
                 }
+            }
+        }
+
+    /**
+     * `closeHttp3Connections()` between a request getting its pooled connection and opening its stream: the request is
+     * provably unsent (this client's own GOAWAY), so it goes again on a new connection instead of failing. With
+     * [earlyData] the connection is a 0-RTT one, still handshaking when the request takes it.
+     */
+    private fun closeWhileAcquired(earlyData: Boolean) =
+        h3Test {
+            coroutineScope {
+                val gate = CompletableDeferred<Unit>().apply { complete(Unit) }
+                val accepted = AtomicReference(emptyList<Http3Connection>())
+                val ep = recordingH3(gate, accepted, earlyData)
+                val port = ep.localAddress.port
+                try {
+                    testClient(Http3DiscoveryMode.H3Only, engine = { http3 { this.earlyData = earlyData } }).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
+                        // with 0-RTT: forget the connection, so the next request resumes on a new one in 0-RTT
+                        if (earlyData) engine.h3.dropConnectionsForTest().forEach { it.close() }
+                        val fired = AtomicBoolean(false)
+                        engine.h3.afterAcquireForTest = { if (fired.compareAndSet(false, true)) c.closeHttp3Connections() }
+                        val r = c.get("https://127.0.0.1:$port/")
+                        assertTrue(fired.load(), "the hook ran")
+                        assertEquals("ok", r.bodyAsText())
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        assertEquals(2, r.kuicksilverDiagnostics?.attempts, "repeated once, on a new connection")
+                        assertEquals(if (earlyData) 3 else 2, accepted.load().size)
+                    }
+                } finally {
+                    ep.close()
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    @Test fun closeWhileAcquiredRepeatsOnANewConnection() = closeWhileAcquired(earlyData = false)
+
+    @Test fun closeWhileAcquiredRepeatsOnANewConnectionIn0Rtt() = closeWhileAcquired(earlyData = true)
+
+    /**
+     * `closeHttp3Connections()` while a connection is being set up: the request waiting for it still gets it (no second
+     * handshake), the reaper keeps the entry meanwhile, and the connection closes after that request.
+     */
+    @Test fun closeDuringSetupKeepsTheConnectionForItsRequest() =
+        h3Test {
+            coroutineScope {
+                val gate = CompletableDeferred<Unit>().apply { complete(Unit) }
+                val accepted = AtomicReference(emptyList<Http3Connection>())
+                val ep = recordingH3(gate, accepted)
+                val port = ep.localAddress.port
+                val inSetup = CompletableDeferred<Unit>()
+                val proceed = CompletableDeferred<Unit>()
+                try {
+                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        engine.h3.beforeSetupForTest = {
+                            inSetup.complete(Unit)
+                            proceed.await()
+                        }
+                        val call = async { c.get("https://127.0.0.1:$port/").bodyAsText() }
+                        inSetup.await()
+                        c.closeHttp3Connections()
+                        engine.h3.evictExpired()
+                        assertEquals(1, engine.h3.connectionsForProbe(), "the connection being set up is still tracked")
+                        proceed.complete(Unit)
+                        assertEquals("ok", call.await())
+                        assertEquals(1, accepted.load().size, "one handshake")
+                        withTimeoutOrNull(30.seconds) {
+                            accepted
+                                .load()
+                                .single()
+                                .closed
+                                .await()
+                        }
+                            ?: fail("the connection did not close within 30 s after its request")
+                    }
+                } finally {
+                    proceed.complete(Unit)
+                    ep.close()
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /** WebTransport has no TCP fallback: switched off, `webTransport` fails before any connection. */
+    @Test fun negative_webTransportWhileDisabledFails() =
+        clientTest {
+            testClient(Http3DiscoveryMode.Auto, engine = { http3 { http3Allowed = { false } } }).use { c ->
+                val e = assertFailsWith<UnsupportedOperationException> { c.webTransport("https://127.0.0.1:443/wt") }
+                assertTrue("http3Allowed" in (e.message ?: ""), "${e.message}")
+                val engine = c.engine as KuicksilverEngine
+                assertFalse(engine.h3.endpointBoundForTest)
+                assertEquals(0, engine.h3.dedicatedCount.value)
+            }
+        }
+
+    /** `closeHttp3Connections()` asks the server to wind every WebTransport session down: WT_DRAIN_SESSION. */
+    @Test fun closeHttp3ConnectionsDrainsWebTransportSessions() =
+        h3Test {
+            val drained = CompletableDeferred<Unit>()
+            val (server, port) =
+                testServer(configure = { webTransport = true }) {
+                    routing {
+                        webTransport("/wt") { session ->
+                            session.drainRequested.first { it }
+                            drained.complete(Unit)
+                            session.close(0, "drained")
+                        }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.Auto).use { c ->
+                    val session = c.webTransport("https://127.0.0.1:$port/wt")
+                    assertEquals(1, (c.engine as KuicksilverEngine).h3.sessionCountForTest)
+                    c.closeHttp3Connections()
+                    withTimeoutOrNull(30.seconds) { drained.await() } ?: fail("the server saw no drain within 30 s")
+                    val info = withTimeoutOrNull(30.seconds) { session.closed.await() } ?: fail("the session did not end")
+                    assertEquals("drained", info.reason)
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /** A WebSocket while switched off goes over HTTP/1.1 for that reason. */
+    @Test fun webSocketWhileDisabledIsHttp3Disabled() =
+        clientTest {
+            val (server, port) =
+                testServer {
+                    install(io.ktor.server.websocket.WebSockets)
+                    routing { webSocket("/ws") { close() } }
+                }
+            try {
+                testClient(Http3DiscoveryMode.Preferred, engine = { http3 { http3Allowed = { false } } }) {
+                    install(io.ktor.client.plugins.websocket.WebSockets)
+                }.use { c ->
+                    var d: ProtocolDiagnostics? = null
+                    c.webSocket("wss://127.0.0.1:$port/ws") { d = call.response.kuicksilverDiagnostics }
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, d?.protocol)
+                    assertEquals(ProtocolReason.Http3Disabled, d?.reason)
+                    assertEquals(FallbackReason.Http3Disabled, d?.fallback)
+                }
+            } finally {
+                server.stop(100, 500)
             }
         }
 }

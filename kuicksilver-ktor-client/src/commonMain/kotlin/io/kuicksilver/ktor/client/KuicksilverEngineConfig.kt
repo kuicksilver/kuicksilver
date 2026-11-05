@@ -148,8 +148,9 @@ public class Http3ClientConfig {
      * take no new requests (calls running on them finish; idle ones close after `idleTimeout`, or at once with
      * `HttpClient.closeHttp3Connections()`), and `Alt-Svc` is still learned, so switching back needs no warm-up. With
      * [Http3DiscoveryMode.H3Only] a request fails with UnsupportedOperationException instead, before any connection:
-     * that mode never uses TCP. A switch that throws counts as true (HTTP/3 allowed), so a broken configuration cannot
-     * break traffic; the engine logs that once per 5 minutes at most. WebTransport sessions do not consult it.
+     * that mode never uses TCP, and so does `HttpClient.webTransport` (WebTransport has no TCP fallback). A switch that
+     * throws an Exception counts as true (HTTP/3 allowed), so a broken configuration cannot break traffic; the engine logs
+     * that once per 5 minutes at most. `HttpClient.closeHttp3Connections()` also drains open WebTransport sessions.
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var http3Allowed: () -> Boolean = { true }

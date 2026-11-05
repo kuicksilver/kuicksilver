@@ -31,14 +31,15 @@ import kotlinx.coroutines.withContext
  * WebTransport here. Needs the Kuicksilver engine (IllegalStateException otherwise) and an open client
  * (IllegalStateException after `close()`).
  *
- * Refused with UnsupportedOperationException: under `http3 { discovery = H1Only }`, which turns HTTP/3 off, and when a
- * proxy applies to the URL (WebTransport runs over UDP, which an HTTP proxy does not carry) unless
+ * Refused with UnsupportedOperationException: under `http3 { discovery = H1Only }`, which turns HTTP/3 off, while
+ * `http3 { http3Allowed }` returns false (read once per call; one that throws allows it), and when a proxy applies to the URL (WebTransport runs over UDP, which an HTTP proxy does not carry) unless
  * `http3 { webTransportIgnoresProxy = true }` asks to connect directly. At most `http3 { maxWebTransportSessions }`
  * (64) sessions are open at once; one more fails at once with IllegalStateException.
  *
  * The connection goes straight to the URL's host and port: Alt-Svc is not consulted, and it is never set up in 0-RTT.
  * The resolved addresses are tried in order within the connect timeout. Closing the client ends the sessions still open
- * with their connections, without a close capsule.
+ * with their connections, without a close capsule; `HttpClient.closeHttp3Connections()` sends each open session
+ * WT_DRAIN_SESSION and its connection a GOAWAY, asking the server to wind it down.
  */
 @ExperimentalKuicksilverApi
 public suspend fun HttpClient.webTransport(
@@ -51,10 +52,11 @@ public suspend fun HttpClient.webTransport(
             ?: throw IllegalStateException("webTransport needs the Kuicksilver engine, not ${engine::class.simpleName}")
     val url = Url(urlString)
     require(url.protocol == URLProtocol.HTTPS) { "WebTransport needs an https URL, not ${url.protocol.name}" }
-    // NOTE(U.2a): the HTTP/3 kill switch must refuse WebTransport here the same way
     if (engine.config.http3.discovery == Http3DiscoveryMode.H1Only) {
         throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3 { discovery = H1Only } turns off")
     }
+    // the kill switch, as for H3Only requests: WebTransport has no TCP fallback, so it fails before any connection
+    if (!engine.http3Allowed()) throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3Allowed turns off")
     if (!engine.config.http3.webTransportIgnoresProxy && engine.effectiveProxyFor(url) != null) {
         throw UnsupportedOperationException(
             "WebTransport runs over UDP and cannot go through the proxy that applies to ${url.host}: exempt the host from the " +
@@ -67,7 +69,7 @@ public suspend fun HttpClient.webTransport(
         val host = if (':' in url.host && !url.host.startsWith("[")) "[${url.host}]" else url.host // an IPv6 literal
         val authority = if (url.port == URLProtocol.HTTPS.defaultPort) host else "$host:${url.port}"
         val request = http3Request("CONNECT", authority, url.fullPath.ifEmpty { "/" }) { this.headers = headers }
-        return connection.webTransportOwningConnection(request, protocols)
+        return connection.webTransportOwningConnection(request, protocols).also { engine.h3.trackSession(it, connection) }
     } catch (e: Throwable) {
         // no session: the connection opened for it goes too
         withContext(NonCancellable) { runCatching { connection.close(Http3ErrorCode.NO_ERROR, "") } }

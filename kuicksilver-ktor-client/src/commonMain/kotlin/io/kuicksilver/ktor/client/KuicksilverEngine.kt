@@ -309,12 +309,18 @@ internal class KuicksilverEngine(
                 .monotonicMillis(),
         )
 
-    /** `http3Allowed`, failing open: a switch that throws allows HTTP/3 (a broken remote configuration must not break traffic). */
+    /**
+     * `http3Allowed`, failing open: a switch that throws an Exception allows HTTP/3 (a broken remote configuration must not
+     * break traffic). A CancellationException and an Error go to the caller: the call is being cancelled, or the VM is in
+     * trouble, neither of which is the switch's answer. Also used by `webTransport`.
+     */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private fun http3Allowed(): Boolean =
+    internal fun http3Allowed(): Boolean =
         try {
             config.http3.http3Allowed()
-        } catch (e: Throwable) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             if (http3SwitchWarning.tryAcquire()) {
                 runCatching {
                     val logger = events.logger
@@ -325,6 +331,9 @@ internal class KuicksilverEngine(
             }
             true
         }
+
+    /** `HttpClient.closeHttp3Connections()`: GOAWAY on every HTTP/3 connection and WebTransport session ([H3Pool.goAwayAll]). */
+    internal suspend fun closeHttp3Connections() = h3.goAwayAll(engineScope)
 
     /** A new network (`networkId`) forgets broken marks, QUIC confirmation and, if asked, non-persistent alternatives. */
     private suspend fun checkNetwork(): String? =
@@ -520,6 +529,7 @@ internal class KuicksilverEngine(
     ): HttpResponseData {
         val url = data.url
         val alt = altSvcUpdate { altSvc.h3For(url) }
+        var misdirected = false
         if (alt != null) {
             val altHost = alt.host ?: url.host
             val t = H3Target(url.host, altHost, alt.port)
@@ -546,20 +556,17 @@ internal class KuicksilverEngine(
                     )
                 }
                 d.attempts++ // the alternative's 421 was one; the origin over HTTP/1.1 is the next
+                misdirected = true
             }
         }
         selected(
             data,
             HttpProtocolVersion.HTTP_1_1,
-            if (alt != null &&
-                webSocket
-            ) {
-                ProtocolReason.WebSocket
-            } else {
-                ProtocolReason.NoAlternative
-            },
+            // after the alternative's 421 it is gone: no alternative, whatever the request (a WebSocket included)
+            if (alt != null && webSocket && !misdirected) ProtocolReason.WebSocket else ProtocolReason.NoAlternative,
             d,
         )
+        if (misdirected) d.fallback = FallbackReason.MisdirectedRequest
         val r = h1.execute(data, callContext)
         altSvcUpdate {
             altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
@@ -612,7 +619,9 @@ internal class KuicksilverEngine(
     ): HttpResponseData {
         val cause = if (h3Failure is H3NotSent) h3Failure.cause ?: h3Failure else h3Failure
         events.emit("fallback") { fallback(data, cause) }
-        d.attempts++
+        // HTTP/1.1 is one more attempt only when HTTP/3 tried the request (H3NotSent: it never reached a stream, except
+        // after the repeats the server did not process, which were attempts)
+        if (h3Failure !is H3NotSent || h3Failure.cause is Http3Exception.RequestNotProcessed) d.attempts++
         d.h3Failure = cause
         val reason = classifyH3Failure(cause) ?: FallbackReason.Other
         d.fallback = reason

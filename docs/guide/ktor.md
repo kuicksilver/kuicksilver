@@ -430,16 +430,23 @@ What it does while it returns false:
   `Http3Disabled` ([Why did this request not use HTTP/3?](#why-did-this-request-not-use-http3));
 - with `discovery = H3Only` a request fails with `UnsupportedOperationException` before it opens any TCP or UDP
   connection: that mode promises never to use TCP;
+- `HttpClient.webTransport` fails the same way: WebTransport has no TCP fallback;
 - open HTTP/3 connections take no new requests; calls already running on them finish, and idle connections close after
-  `idleTimeout`. `HttpClient.closeHttp3Connections()` sends GOAWAY on all of them at once and closes each when its last
-  call is done;
+  `idleTimeout`;
 - `Alt-Svc` is still learned in `Auto` mode, so when the switch returns true again the next request goes to the known
   alternative without a warm-up.
 
-What it does not do: it does not affect `http://` requests or `H1Only` (it is not called for them), and WebTransport
-sessions (`HttpClient.webTransport`), which have no TCP fallback, neither consult it nor are closed by
-`closeHttp3Connections()`. A switch that throws counts as true (HTTP/3 allowed), so a broken configuration cannot take
-down traffic; the engine logs that at `Warn`, at most once per 5 minutes.
+`HttpClient.closeHttp3Connections()` takes HTTP/3 out of use at once, whatever the switch says: every established
+pooled connection gets a GOAWAY and no further request (a request that had just been handed one, before its stream
+opened, goes again on a new connection or, switched off, the next call goes over HTTP/1.1), calls running on them
+finish, and each closes when its last call is done; a connection still being set up serves the requests already
+waiting for it and then closes. Every open WebTransport session gets `WT_DRAIN_SESSION` and its connection a GOAWAY:
+the server is asked to wind the session down, and the session stays open until either side closes it. The call
+returns once those frames are written, waiting at most 5 seconds for each.
+
+The switch is not called for `http://` requests or `H1Only`. A switch that throws an exception counts as true (HTTP/3
+allowed), so a broken configuration cannot take down traffic; the engine logs that at `Warn`, at most once per 5
+minutes. A `CancellationException` or an `Error` out of it fails the call instead.
 
 ### Proxies
 
@@ -727,7 +734,11 @@ Every response of the client engine carries a `ProtocolDiagnostics` (experimenta
 `protocolSelected` heard last, and, when the call did not go over HTTP/3, why (`fallback`, a `FallbackReason`), with
 the HTTP/3 `alternative` (`host:port`) and its `alternativeSource` (`AltSvc`, `QuicHint`, `Preferred`, `H3Only`),
 whether the setups `raced` and HTTP/3's `headStart`, the HTTP/3 failure itself (`h3Failure`) when there was one, and
-the number of `attempts` (retries after GOAWAY or a stale connection, and the fallback, each count one).
+the number of `attempts`: the first, plus one per repeat by the engine (a request the server did not process after
+GOAWAY or `H3_REQUEST_REJECTED`, or that `closeHttp3Connections()` stopped before it went out; a stale pooled HTTP/1.1
+connection; a 417 to `Expect: 100-continue`; a 421 from the alternative), plus one for the fallback to HTTP/1.1 when
+HTTP/3 had tried the request. The HTTP/3 layer's own repeats of a 0-RTT request on the same connection (early data
+rejected, 425 Too Early) are not counted.
 
 ```kotlin
 val url = "https://example.com/"
@@ -747,6 +758,7 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `Configuration` | `discovery = H1Only` | the discovery mode |
 | `Http3Disabled` | `http3 { http3Allowed }` returned false | your remote configuration ([Turning HTTP/3 off remotely](#turning-http3-off-remotely)) |
 | `NoAlternative` | `Auto` and no `Alt-Svc` from the origin yet: the first call always goes over HTTP/1.1 | the server's `Alt-Svc`; `quicHints`, `FileAltSvcStore` |
+| `MisdirectedRequest` | the alternative answered 421; it was dropped and the origin answered over HTTP/1.1 | the alternative's certificate and virtual hosts |
 | `BrokenAlternative` | HTTP/3 to this alternative failed recently on this network | the log line's `broken since:` names why |
 | `WebSocket` | a WebSocket without an HTTP/3 connection that allows Extended CONNECT | expected for the first WebSocket |
 | `HandshakeTimeout` | no QUIC answer within the handshake or connect timeout | UDP to the port: a firewall, a VPN, a cloud security group open for TCP only |
@@ -778,7 +790,10 @@ from two attempts on.
 A call that fails has no response and so no diagnostics: its exception says what happened. When both the HTTP/3 and the
 HTTP/1.1 setups failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`. The diagnostics live as long
 as the response (they are one of its call's attributes); the engine keeps no copy of the HTTP/3 failure, and a broken
-mark remembers only its `FallbackReason`.
+mark remembers only its `FallbackReason`. Read them from the response: the engine puts a new object into the request's
+attributes when the call reaches it and fills it as the call goes, so code that looks at the request earlier (a listener
+during the call, a plugin running after a redirect copied the previous request's attributes) sees incomplete or stale
+ones; when an interceptor sends one request builder through the engine twice, each engine call gets its own object.
 
 ### Graceful stop
 

@@ -56,13 +56,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.update
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** Where an HTTP/3 request goes: the origin (for `:authority`, SNI and verification) and the UDP endpoint (origin or alternative). */
 internal class H3Target(
@@ -101,6 +105,21 @@ internal class H3Entry(
     /** Past its lifetime: no new requests; closed as soon as it has none (now, or at the last [release]). */
     fun retire() {
         retiredFlag.store(1)
+        if (active.load() == 0) closeConnection()
+    }
+
+    private val drainedFlag = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /** Drained by `closeHttp3Connections()`: no request is handed this connection any more, not even one that found it retired. */
+    val drained: Boolean get() = drainedFlag.load() != 0
+
+    /** Takes no new requests and closes at its last [release]; [closeIfIdle] closes it when it has none (after its GOAWAY). */
+    fun drain() {
+        drainedFlag.store(1)
+        retiredFlag.store(1)
+    }
+
+    fun closeIfIdle() {
         if (active.load() == 0) closeConnection()
     }
 
@@ -366,33 +385,67 @@ internal class H3Pool(
 
     private fun Http3Connection.usable(): Boolean = !closed.isCompleted && goAwayReceived.value == null
 
+    /** WebTransport sessions of this client and their dedicated connections ([trackSession]), for [goAwayAll]. */
+    private val sessions =
+        kotlin.concurrent.atomics.AtomicReference(emptySet<Pair<io.kuicksilver.http3.WebTransportSession, Http3Connection>>())
+
+    /** Tracks a WebTransport [session] on its dedicated [connection] until the session is over. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun trackSession(
+        session: io.kuicksilver.http3.WebTransportSession,
+        connection: Http3Connection,
+    ) {
+        val entry = session to connection
+        sessions.update { it + entry }
+        session.closed.invokeOnCompletion { sessions.update { s -> s - entry } }
+    }
+
+    /** WebTransport sessions tracked (tests). */
+    internal val sessionCountForTest: Int get() = sessions.load().size
+
     /**
-     * `HttpClient.closeHttp3Connections()`: every pooled connection leaves the pool, gets our GOAWAY (RFC 9114 section 5.2;
-     * a client announces 0, it accepts no pushes) and is retired, so it closes once its last request is done ([H3Entry.retire],
-     * [evictExpired]). A connection still being set up is retired too: the request waiting for it still uses it, then it closes.
+     * `HttpClient.closeHttp3Connections()`. First, under the lock, every pooled connection leaves the pool: an established one
+     * is drained ([H3Entry.drain]: no request is handed it any more), one still being set up is retired (the requests
+     * waiting for it use it, and it closes after the last one, or when [evictExpired] finds it unused). Then, concurrently in
+     * [scope] and each within [GOAWAY_TIMEOUT], every drained connection gets our GOAWAY (RFC 9114 section 5.2; a client
+     * announces 0, it accepts no pushes) and closes at once when idle, else at its last request; and every WebTransport
+     * session gets WT_DRAIN_SESSION (draft-ietf-webtrans-http3 section 4.7) and its dedicated connection our GOAWAY. Returns
+     * once those are sent, or timed out.
      */
-    suspend fun goAwayAll() {
-        val entries =
-            lock.withLock {
-                val l = connections.values.toList()
-                connections.clear()
-                retired += l
-                l
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    suspend fun goAwayAll(scope: CoroutineScope) {
+        val drained = ArrayList<Pair<H3Entry, Http3Connection>>()
+        lock.withLock {
+            for (e in connections.values) {
+                val c = e.deferred.getCompletedOrNull()
+                if (c != null) {
+                    e.drain()
+                    drained += e to c
+                } else if (!e.deferred.isCompleted) {
+                    e.retire()
+                }
+                retired += e
             }
-        for (e in entries) {
-            e.deferred.getCompletedOrNull()?.let { c ->
-                if (!c.closed.isCompleted) {
-                    try {
-                        c.goAway()
-                    } catch (x: CancellationException) {
-                        throw x
-                    } catch (_: Throwable) {
-                        // closed meanwhile: nothing left to announce
+            connections.clear()
+        }
+        val jobs = ArrayList<Job>()
+        for ((e, c) in drained) {
+            jobs +=
+                scope.launch {
+                    withTimeoutOrNull(GOAWAY_TIMEOUT) { runCatching { if (!c.closed.isCompleted) c.goAway() } }
+                    e.closeIfIdle()
+                }
+        }
+        for ((session, c) in sessions.load()) {
+            jobs +=
+                scope.launch {
+                    withTimeoutOrNull(GOAWAY_TIMEOUT) {
+                        runCatching { session.drain() }
+                        runCatching { if (!c.closed.isCompleted) c.goAway() }
                     }
                 }
-            }
-            e.retire()
         }
+        jobs.joinAll()
     }
 
     private fun H3Entry.pastLifetime(now: Long): Boolean = now - createdAt >= maxLifetimeMillis
@@ -418,6 +471,9 @@ internal class H3Pool(
             }
         }
     }
+
+    /** Test hook: runs in a request that holds a connection, before it waits for the handshake or opens its stream. */
+    internal var afterAcquireForTest: (suspend () -> Unit)? = null
 
     /** Test hook: runs in the caller that sets up a connection, before it connects. */
     internal var beforeSetupForTest: (suspend () -> Unit)? = null
@@ -532,7 +588,7 @@ internal class H3Pool(
             val (e, c) = connectionEntry(t, data, dns)
             val counted =
                 lock.withLock {
-                    if ((connections[t.key] === e || e in retired) && !c.closed.isCompleted) {
+                    if ((connections[t.key] === e || (e in retired && !e.drained)) && !c.closed.isCompleted) {
                         e.active.addAndFetch(1)
                         true
                     } else {
@@ -574,6 +630,11 @@ internal class H3Pool(
             retired.removeAll { e ->
                 val c = e.deferred.getCompletedOrNull()
                 when {
+                    // still being set up (retired by closeHttp3Connections): kept, so it is closed once set up and unused
+                    !e.deferred.isCompleted -> {
+                        false
+                    }
+
                     c == null || c.closed.isCompleted -> {
                         true
                     }
@@ -642,6 +703,7 @@ internal class H3Pool(
                 }
             var reported = false // connectionAcquired went out: a failure below reports the release too
             try {
+                afterAcquireForTest?.invoke()
                 // a request that cannot go in 0-RTT waits for the handshake here, before any stream is opened or its body
                 // touched: a handshake that fails leaves it provably unsent (RFC 8470 section 4 — the client starts over)
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -827,6 +889,9 @@ internal class H3Pool(
                 )
             }
         }
+
+        /** How long `closeHttp3Connections()` waits for each GOAWAY (or WT_DRAIN_SESSION) to be written. */
+        val GOAWAY_TIMEOUT = 5.seconds
 
         /** Connection-specific fields (RFC 9114 section 4.2) and HTTP/1.1 WebSocket handshake fields RFC 9220 drops. */
         val HOP_BY_HOP = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host", "te")

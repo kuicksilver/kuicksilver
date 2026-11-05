@@ -5,16 +5,23 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.engine.ProxyBuilder
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.server.application.install
+import io.ktor.server.response.header
+import io.ktor.server.response.respond
+import io.ktor.server.response.respondRedirect
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.server.websocket.webSocket
 import io.ktor.utils.io.writeStringUtf8
+import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.native.KslLoader
@@ -34,6 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.update
 import kotlin.test.BeforeTest
@@ -273,10 +281,11 @@ class ClientDiagnosticsTest {
     private suspend fun <U> h1And(
         udp: suspend () -> Pair<U, Int>,
         release: suspend (U) -> Unit,
+        module: io.ktor.server.application.Application.() -> Unit = okServer(),
     ): Triple<TestServer, U, Int> {
         val (u, server, port) =
             bindOnSamePort(first = udp, release = release) { p ->
-                testServer(configure = { http3 = false }, port = p, module = okServer()).first
+                testServer(configure = { http3 = false }, port = p, module = module).first
             }
         return Triple(server, u, port)
     }
@@ -289,10 +298,16 @@ class ClientDiagnosticsTest {
 
     /** An HTTP/1.1 server on the TCP side of a port and an HTTP/3 endpoint running [onConnection] per connection on its UDP side. */
     private suspend fun CoroutineScope.h1AndRawH3(
+        module: io.ktor.server.application.Application.() -> Unit = okServer(),
         onConnection: suspend CoroutineScope.(io.kuicksilver.http3.Http3Connection) -> Unit,
     ): Triple<TestServer, Http3Endpoint, Int> {
         val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(serverTls(Http3Endpoint.H3)).build() }.build()
-        val t = h1And({ Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0), config).let { it to it.localAddress.port } }, { it.close() })
+        val t =
+            h1And(
+                { Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0), config).let { it to it.localAddress.port } },
+                { it.close() },
+                module,
+            )
         val ep = t.second
         launch {
             runCatching {
@@ -399,10 +414,11 @@ class ClientDiagnosticsTest {
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                     val (cause, diagnostics) = assertNotNull(reasons.failed.load())
                     assertNull(diagnostics, "a failed call carries no diagnostics")
-                    assertTrue(
-                        generateSequence(cause) { it.cause }.any { it.suppressedExceptions.isNotEmpty() },
-                        "the HTTP/3 failure is suppressed in the HTTP/1.1 one: $cause (thrown: $e)",
-                    )
+                    // the HTTP/1.1 failure (a TLS one) carries the HTTP/3 one: the QUIC connection's TLS failure
+                    val suppressed = generateSequence(cause) { it.cause }.flatMap { it.suppressedExceptions }.toList()
+                    val h3Failure = assertIs<QuicException>(suppressed.singleOrNull(), "suppressed in $cause (thrown: $e): $suppressed")
+                    assertEquals(FallbackReason.TlsFailure, classifyH3Failure(h3Failure), "$h3Failure")
+                    assertFalse(generateSequence(cause) { it.cause }.any { it === h3Failure }, "the thrown failure is HTTP/1.1's")
                 }
             } finally {
                 server.stop(100, 500)
@@ -442,6 +458,160 @@ class ClientDiagnosticsTest {
                 val (level, line) = loud.lines.single()
                 assertEquals(LogLevel.Debug, level)
                 assertEquals("kuicksilver: GET https://127.0.0.1:$port/ -> HTTP/3.0 (alt=127.0.0.1:$port via H3Only)", line)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** Each engine call of a redirected or retried request gets its own diagnostics; the response has the last call's. */
+    @Test fun redirectsAndRetriesGetFreshDiagnostics() =
+        clientTest {
+            val flaky = AtomicInt(0)
+            val (server, port) =
+                testServer {
+                    routing {
+                        get("/a") { call.respondRedirect("/b") }
+                        get("/b") { call.respondText("b") }
+                        get("/flaky") {
+                            if (flaky.addAndFetch(1) == 1) {
+                                call.respond(io.ktor.http.HttpStatusCode.InternalServerError, "again")
+                            } else {
+                                call.respondText("ok")
+                            }
+                        }
+                    }
+                }
+            val seen = AtomicReference(emptyList<ProtocolDiagnostics?>())
+            val listener =
+                object : KuicksilverEventListener() {
+                    override fun callEnd(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        status: Int,
+                    ) {
+                        seen.update { it + request.attributes.getOrNull(KuicksilverDiagnosticsKey) }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.H1Only, engine = { eventListener = listener }) {
+                    install(io.ktor.client.plugins.HttpRequestRetry) {
+                        retryOnServerErrors(maxRetries = 1)
+                        delayMillis { 0L }
+                    }
+                }.use { c ->
+                    for (path in listOf("/a", "/flaky")) {
+                        seen.store(emptyList())
+                        val r = c.get("https://127.0.0.1:$port$path")
+                        val calls = seen.load()
+                        assertEquals(2, calls.size, "$path: two engine calls")
+                        assertTrue(calls[0] !== calls[1], "$path: a fresh object per engine call")
+                        assertTrue(r.kuicksilverDiagnostics === calls[1], "$path: the response has the last call's")
+                        assertEquals(1, calls[1]!!.attempts)
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** A request the server did not process (H3_REQUEST_REJECTED) is repeated on a new connection: two attempts. */
+    @Test fun requestRejectedRetryCountsAnAttempt() =
+        h3Test {
+            coroutineScope {
+                val rejected = AtomicInt(0)
+                val (server, ep, port) =
+                    h1AndRawH3 { conn ->
+                        while (true) {
+                            val r = conn.acceptRequest()
+                            if (rejected.addAndFetch(1) == 1) {
+                                r.reset(Http3ErrorCode.REQUEST_REJECTED)
+                            } else {
+                                val w = r.respond(200, io.kuicksilver.http3.Http3Headers(emptyList()))
+                                w.output.writeStringUtf8("h3")
+                                w.finish()
+                            }
+                        }
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                        val r = c.get("https://127.0.0.1:$port/")
+                        assertEquals("h3", r.bodyAsText())
+                        val d = assertNotNull(r.kuicksilverDiagnostics)
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, d.protocol)
+                        assertEquals(2, d.attempts)
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /** A 421 from the alternative drops it; the origin answers over HTTP/1.1, MisdirectedRequest, logged at Info. */
+    @Test fun misdirectedRequestFromTheAlternative() =
+        h3Test {
+            coroutineScope {
+                val log = DiagnosticLines(LogLevel.Info)
+                val (server, ep, port) =
+                    h1AndRawH3(module = {
+                        routing {
+                            get("/") {
+                                call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
+                                call.respondText("h1")
+                            }
+                        }
+                    }) { conn ->
+                        while (true) conn.acceptRequest().respond(421, io.kuicksilver.http3.Http3Headers(emptyList())).finish()
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        http3 { hardDelay = Duration.INFINITE }
+                        logger = log
+                    }).use { c ->
+                        assertEquals(FallbackReason.NoAlternative, c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.fallback)
+                        val r = c.get("https://127.0.0.1:$port/")
+                        assertEquals("h1", r.bodyAsText())
+                        val d = assertNotNull(r.kuicksilverDiagnostics)
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
+                        assertEquals(FallbackReason.MisdirectedRequest, d.fallback)
+                        assertEquals(ProtocolReason.NoAlternative, d.reason)
+                        assertEquals(2, d.attempts)
+                        val (level, line) = log.lines.last()
+                        assertEquals(LogLevel.Info, level)
+                        assertTrue("fallback=MisdirectedRequest" in line && "attempts=2" in line, line)
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /**
+     * A WebSocket where HTTP/3 is a candidate (`Preferred`) but no HTTP/3 connection allows Extended CONNECT yet: HTTP/1.1
+     * Upgrade, reason WebSocket, with the alternative it did not use.
+     */
+    @Test fun webSocketWithoutExtendedConnectIsWebSocket() =
+        h3Test {
+            val (server, port) =
+                testServer {
+                    install(io.ktor.server.websocket.WebSockets)
+                    routing {
+                        get("/") { call.respondText("ok") }
+                        webSocket("/ws") { close() }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.Preferred) { install(io.ktor.client.plugins.websocket.WebSockets) }.use { c ->
+                    var d: ProtocolDiagnostics? = null
+                    c.webSocket("wss://127.0.0.1:$port/ws") { d = call.response.kuicksilverDiagnostics }
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, d?.protocol)
+                    assertEquals(FallbackReason.WebSocket, d?.fallback)
+                    assertEquals(ProtocolReason.WebSocket, d?.reason)
+                    assertEquals("127.0.0.1:$port", d?.alternative)
+                }
             } finally {
                 server.stop(100, 500)
             }

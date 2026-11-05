@@ -28,6 +28,7 @@ final enum class io.kuicksilver.ktor.client/FallbackReason : kotlin/Enum<io.kuic
     enum entry HandshakeTimeout // io.kuicksilver.ktor.client/FallbackReason.HandshakeTimeout|null[0]
     enum entry Http3Disabled // io.kuicksilver.ktor.client/FallbackReason.Http3Disabled|null[0]
     enum entry Http3Error // io.kuicksilver.ktor.client/FallbackReason.Http3Error|null[0]
+    enum entry MisdirectedRequest // io.kuicksilver.ktor.client/FallbackReason.MisdirectedRequest|null[0]
     enum entry NoAlternative // io.kuicksilver.ktor.client/FallbackReason.NoAlternative|null[0]
     enum entry NotSecure // io.kuicksilver.ktor.client/FallbackReason.NotSecure|null[0]
     enum entry Other // io.kuicksilver.ktor.client/FallbackReason.Other|null[0]

@@ -36,6 +36,7 @@ public final class io/kuicksilver/ktor/client/FallbackReason : java/lang/Enum {
 	public static final field HandshakeTimeout Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Http3Disabled Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Http3Error Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field MisdirectedRequest Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field NoAlternative Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field NotSecure Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Other Lio/kuicksilver/ktor/client/FallbackReason;
