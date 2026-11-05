@@ -517,6 +517,26 @@ class H2RuntimeTest {
             assertTrue(checks.all { it.await() })
         }
 
+    /** The check's owner is cancelled: the callers sharing it get no verdict, so one of them checks again (no false "dead"). */
+    @Test fun cancelledHealthCheckOwnerGivesNoVerdict() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            runCurrent()
+            srv.read()
+            val owner = backgroundScope.async { client.checkHealth(1_000) }
+            runCurrent()
+            val sharer = backgroundScope.async { client.checkHealth(1_000) }
+            runCurrent()
+            owner.cancel()
+            runCurrent()
+            // the sharer sent its own PING: answer every PING written so far
+            for (p in srv.read().filterIsInstance<Frame.Ping>().filter { !it.ack }) srv.write(FrameEncoder.ping(true, p.payload))
+            runCurrent()
+            assertTrue(sharer.await(), "an answered PING, not the cancelled owner's 'no', decides")
+        }
+
     @Test fun pingAnsweredKeepsTheConnection() =
         runTest {
             val (client, server, _) = pair(pingInterval = 1.seconds)

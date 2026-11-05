@@ -877,26 +877,36 @@ internal class H2Runtime(
     }
 
     /** The health check in flight, shared by every caller that asks meanwhile (under lock). */
-    private var healthCheck: CompletableDeferred<Boolean>? = null
+    private var healthCheck: CompletableDeferred<Boolean?>? = null
 
     /**
      * Sends a PING and waits for its acknowledgement at most [timeoutMillis]; false when none came (or the connection
      * ended). One check at a time per connection: callers that ask while one is in flight share its answer, so a burst of
      * requests sends one PING, not one each (the core keeps 16 outstanding PINGs and forgets the oldest, whose answers
      * would then never be seen; a server may also take a PING burst for a flood). The caller retires a connection that
-     * fails it.
+     * fails it. A check whose caller was cancelled gives its sharers no verdict, and one of them checks again.
      */
     suspend fun checkHealth(timeoutMillis: Long): Boolean {
-        if (closed.isCompleted) return false
-        var mine = false
-        val shared =
-            lock.withLock {
-                healthCheck ?: CompletableDeferred<Boolean>().also {
-                    healthCheck = it
-                    mine = true
+        while (true) {
+            if (closed.isCompleted) return false
+            var mine = false
+            val shared =
+                lock.withLock {
+                    healthCheck ?: CompletableDeferred<Boolean?>().also {
+                        healthCheck = it
+                        mine = true
+                    }
                 }
-            }
-        if (!mine) return shared.await()
+            if (mine) return runHealthCheck(shared, timeoutMillis)
+            shared.await()?.let { return it } // null: its caller went away without a verdict
+        }
+    }
+
+    /** The PING of [checkHealth], by the caller that owns [shared]. */
+    private suspend fun runHealthCheck(
+        shared: CompletableDeferred<Boolean?>,
+        timeoutMillis: Long,
+    ): Boolean {
         val acked = CompletableDeferred<Unit>()
         val payload =
             withCore {
@@ -913,12 +923,13 @@ internal class H2Runtime(
                     }
                 } ?: false
             } catch (e: CancellationException) {
-                // the caller went away: the others still get an answer, a negative one rather than none
+                // the caller went away: the others get no verdict (null), not a "dead" that would retire a healthy
+                // connection, and one of them checks again
                 lock.withLock {
                     healthPings.remove(payload)
                     healthCheck = null
                 }
-                shared.complete(false)
+                shared.complete(null)
                 throw e
             }
         lock.withLock {
