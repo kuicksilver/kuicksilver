@@ -46,4 +46,27 @@ class H2MessagesTest {
         assertFailsWith<MalformedMessage> { H2Messages.parseRequest(f, connectProtocolEnabled = false) } // RFC 8441 section 4
         assertEquals("websocket", H2Messages.parseRequest(f, connectProtocolEnabled = true).protocol)
     }
+
+    /**
+     * RFC 9113 section 8.3.1: `host` that identifies another entity than `:authority` is malformed. RFC 9110 section 4.2.3:
+     * the host is case-insensitive and an empty or default port is the scheme's default, so these name the same entity.
+     */
+    @Test fun hostAndAuthorityCompareAsTheSameOrigin() {
+        fun req(
+            authority: String,
+            host: String,
+            scheme: String = "https",
+        ) = H2Messages.parseRequest(
+            listOf(":method" to "GET", ":scheme" to scheme, ":authority" to authority, ":path" to "/", "host" to host),
+            connectProtocolEnabled = false,
+        )
+        req("Example.COM", "example.com")
+        req("example.com:443", "example.com")
+        req("example.com", "EXAMPLE.com:443")
+        req("example.com:80", "example.com", scheme = "http")
+        req("[::1]:443", "[::1]")
+        assertFailsWith<MalformedMessage> { req("example.com", "example.net") }
+        assertFailsWith<MalformedMessage> { req("example.com:8443", "example.com") }
+        assertFailsWith<MalformedMessage> { req("example.com:80", "example.com") } // https: 80 is not the default
+    }
 }
