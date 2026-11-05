@@ -228,7 +228,12 @@ internal fun KuicksilverApplicationEngine.startTcp(
                     val connectionScope =
                         CoroutineScope(
                             coroutineContext + connections + CoroutineName("connection") +
-                                CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/1.1 connection on port $port failed: $e") },
+                                CoroutineExceptionHandler {
+                                    _,
+                                    e,
+                                    ->
+                                    environment.log.debug("TCP connection (HTTP/1.1 or HTTP/2) on port $port failed: $e")
+                                },
                         )
                     val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     try {

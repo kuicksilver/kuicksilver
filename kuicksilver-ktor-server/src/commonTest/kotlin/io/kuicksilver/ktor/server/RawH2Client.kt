@@ -95,9 +95,16 @@ internal class RawH2Client private constructor(
 
     private var prefaceSent = false
 
-    /** The client connection preface (section 3.4): the fixed octets and an empty SETTINGS frame. */
-    suspend fun preface() {
-        write(PREFACE + frame(RawFrame.SETTINGS, 0, 0))
+    /** The client connection preface (section 3.4): the fixed octets and a SETTINGS frame with [settings] (id to value). */
+    suspend fun preface(vararg settings: Pair<Int, Long>) {
+        val payload = ByteArray(settings.size * 6)
+        for ((i, kv) in settings.withIndex()) {
+            val (id, v) = kv
+            payload[i * 6] = (id shr 8).toByte()
+            payload[i * 6 + 1] = id.toByte()
+            for (k in 0 until 4) payload[i * 6 + 2 + k] = (v shr (24 - 8 * k)).toByte()
+        }
+        write(PREFACE + frame(RawFrame.SETTINGS, 0, 0, payload))
         prefaceSent = true
     }
 
@@ -252,3 +259,20 @@ internal class RawH2Client private constructor(
             listOf(":method" to "GET", ":scheme" to "https", ":authority" to "server.test", ":path" to path)
     }
 }
+
+/** A started server with one TLS connector on a free loopback port serving HTTP/2 (HTTP/3 off); returns it and the port. */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal suspend fun h2TlsServer(
+    configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
+    log: CapturedLog? = null,
+    module: io.ktor.server.application.Application.() -> Unit,
+): Pair<Server, Int> =
+    tlsServer(
+        configure = {
+            http2 = true
+            http3 = false
+            configure()
+        },
+        log = log,
+        module = module,
+    )

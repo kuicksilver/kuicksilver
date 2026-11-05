@@ -16,14 +16,17 @@ import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.runtime.H2ServerConnection
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.ktor.network.abort
+import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h2.H2Call
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -127,8 +130,11 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                     launch { closeWhenIdle(c, sock, idle, sendTimeout) },
                 )
             launch {
-                for (r in c.requests) {
-                    launch { handleH2(r, local, remote, peer, altSvc, idle, sendTimeout) }
+                // a request's failure is its own (handleH2 catches it; the supervisor is the second line)
+                supervisorScope {
+                    for (r in c.requests) {
+                        launch { handleH2(r, local, remote, peer, altSvc, idle, sendTimeout) }
+                    }
                 }
             }
             c.awaitClosed()
@@ -165,8 +171,10 @@ private suspend fun closeWhenIdle(
 /**
  * One request stream as a Ktor call, after HTTP/3's handleHttp3: a CONNECT is answered 501 (the engine has no tunnels), a
  * request a gateway forwarded from early data and not replayable 425 (RFC 8470 section 5.1). The handler is cancelled
- * when the stream fails under it (the client's RST_STREAM, the connection); a call that ends without a response resets
- * the stream (INTERNAL_ERROR), never leaving it unanswered. The stream is released at the end, always.
+ * when the stream fails under it (the client's RST_STREAM, the connection), and then nothing is sent on the stream (RFC
+ * 9113 section 5.4.2: no RST_STREAM in answer to one). A call that ends without a response on a live stream resets it
+ * (INTERNAL_ERROR), never leaving it unanswered. Whatever the call throws ends this stream only (section 5.4.2: a stream
+ * error affects the stream alone): it is logged, never passed to the connection. The stream is released at the end.
  */
 private suspend fun KuicksilverApplicationEngine.handleH2(
     r: H2ServerStream,
@@ -177,17 +185,18 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     bodyIdle: Duration,
     sendTimeout: Duration,
 ) {
-    val job = kotlinx.coroutines.currentCoroutineContext().job
+    val job = currentCoroutineContext().job
     r.invokeOnFailure { job.cancel(CancellationException("HTTP/2 stream ${r.id} ended: ${it.message}", it)) }
+    var answered = false
     try {
         if (r.method == "CONNECT") {
-            runCatching { r.respond(501, endStream = true) }
+            answered = runCatching { r.respond(501, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
             return
         }
         if (r.fields.any { it.first == EARLY_DATA_FIELD.lowercase() } &&
             r.method !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
         ) {
-            runCatching { r.respond(425, endStream = true) }
+            answered = runCatching { r.respond(425, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
             return
         }
         withContext(userDispatcher) requestContext@{
@@ -209,15 +218,32 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                 pipeline.execute(call)
             } catch (error: Throwable) {
                 failure = error
-                handleFailure(call, error)
+                // a stream that failed (reset by the client, the connection gone) takes no answer: Ktor's error response
+                // would only fail in turn
+                if (!r.failed) {
+                    try {
+                        handleFailure(call, error)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        environment.log.debug("HTTP/2 stream ${r.id}: the error response failed too: $e")
+                    }
+                }
             } finally {
                 runCatching { call.finish() }
-                // a call that failed after its response was committed cannot get the 500 any more: the stream is reset
-                if (!call.response.answered) runCatching { r.reset(Http2ErrorCode.INTERNAL_ERROR) }
+                answered = call.response.answered
                 events.emit("requestEnded") { requestEnded(HttpProtocolVersion.HTTP_2_0, call, failure) }
             }
         }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        // the call's set-up (the application provider, the call itself) or its error handling failed: this stream only
+        environment.log.debug("HTTP/2 stream ${r.id} failed: $e")
     } finally {
+        // a call that failed after its response was committed cannot get the 500 any more: the stream is reset, unless it
+        // already ended (section 5.4.2)
+        if (!answered && !r.failed) runCatching { r.reset(Http2ErrorCode.INTERNAL_ERROR) }
         r.release()
     }
 }
