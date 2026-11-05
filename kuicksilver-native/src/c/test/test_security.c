@@ -245,10 +245,10 @@ static void test_shared_context_concurrent_handshakes(void) {
     share_client = client_ctx("test-ca", KSL_VERIFY_OPENSSL); ksl_ctx_set_option(share_client, KSL_OPT_KEYLOG, 1); ksl_ctx_freeze(share_client);
     pthread_t t[SHARE_THREADS]; share_result res[SHARE_THREADS]; memset(res, 0, sizeof res);
     for (int i = 0; i < SHARE_THREADS; i++) pthread_create(&t[i], NULL, share_worker, &res[i]);
-    int hs = 0, resumed = 0, aged = 0, keylog = 0, failures = 0;
-    for (int i = 0; i < SHARE_THREADS; i++) { pthread_join(t[i], NULL); hs += res[i].handshakes; resumed += res[i].resumed; aged += res[i].aged; keylog += res[i].keylog_ok; failures += res[i].failures; }
+    int hs = 0, resumed = 0, aged = 0, keylog = 0, thread_failures = 0;
+    for (int i = 0; i < SHARE_THREADS; i++) { pthread_join(t[i], NULL); hs += res[i].handshakes; resumed += res[i].resumed; aged += res[i].aged; keylog += res[i].keylog_ok; thread_failures += res[i].failures; }
     int all = SHARE_THREADS * SHARE_ROUNDS;
-    if (failures || aged) printf("handshakes %d, resumed %d, aged %d, keylogs %d, failures %d of %d\n", hs, resumed, aged, keylog, failures, all);
+    if (thread_failures || aged) printf("handshakes %d, resumed %d, aged %d, keylogs %d, failures %d of %d\n", hs, resumed, aged, keylog, thread_failures, all);
     CHECK(hs == all, "every full handshake on the shared context completes");
     CHECK(resumed + aged == all, "every ticket resumes on the same shared context while the keys rotate, unless two rotations passed");
     CHECK(aged <= all / 20, "tickets that aged past two rotations stay rare (a thread descheduled for 100 handshakes)");
