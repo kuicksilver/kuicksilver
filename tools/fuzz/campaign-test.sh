@@ -20,7 +20,11 @@ check() {   # name expected-exit [grep pattern] -- command
 repo="$tmp/Desktop/temp last/repo"; state="$tmp/state dir"; home="$tmp/home dir"; cache="$tmp/gradle cache"
 mkdir -p "$repo/tools/fuzz" "$home/.kuicksilver-tools" "$cache" "$tmp/bin"
 cp "$here/campaign.sh" "$repo/tools/fuzz/campaign.sh"
-for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3; do
+# every module whose classpath campaign.sh asks Gradle for (and requires): read from the script, so a module added there
+# cannot leave the stub behind
+modules=$(grep -oE ':kuicksilver-[a-z0-9-]+:printFuzzClasspath' "$here/campaign.sh" | sed 's/^://; s/:.*//' | sort -u | tr '\n' ' ')
+[ -n "$modules" ] || { echo "FAIL no printFuzzClasspath module found in campaign.sh"; exit 1; }
+for m in $modules; do
   mkdir -p "$repo/$m/build/test classes"; echo "$m" > "$repo/$m/build/test classes/marker"
 done
 echo jar > "$cache/dep one.jar"
@@ -28,7 +32,7 @@ echo jar > "$cache/dep one.jar"
 # entry that does not exist (skipped)
 cat > "$home/.kuicksilver-tools/quiet-gradle" <<SH
 #!/bin/bash
-for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3; do
+for m in $modules; do
   echo "FUZZ_CP \$m=$repo/\$m/build/test classes:$cache/dep one.jar:$cache/missing jar.jar"
 done
 SH

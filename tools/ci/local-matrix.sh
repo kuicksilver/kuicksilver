@@ -125,6 +125,7 @@ aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: documentation references"          bash tools/check/doc-refs.sh
 step "lint: doc-refs negative controls"         bash tools/check/doc-refs-test.sh
+step "lint: fuzz campaign.sh (stubs)"           bash tools/fuzz/campaign-test.sh
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh
 step "lint: RFC compliance summary table"      bash tools/check/rfc-table.sh
