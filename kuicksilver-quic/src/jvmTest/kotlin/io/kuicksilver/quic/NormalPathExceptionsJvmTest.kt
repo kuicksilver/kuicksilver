@@ -5,11 +5,12 @@
 package io.kuicksilver.quic
 
 import io.kuicksilver.quic.api.ApiPair
-import io.kuicksilver.quic.runtime.QuicResourceProbe
+import io.kuicksilver.quic.runtime.EndpointLoop
 import io.kuicksilver.tls.KslQuicCrypto
 import jdk.jfr.Recording
 import jdk.jfr.consumer.RecordingFile
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import java.nio.file.Files
@@ -25,9 +26,10 @@ import kotlin.time.Duration.Companion.seconds
  * `jdk.JavaExceptionThrow`, which fires in every `Throwable` constructor.
  */
 class NormalPathExceptionsJvmTest {
-    /** Until no QUIC runtime is left in the process (this test's endpoints are the only ones open), with a deadline of the caller. */
-    private suspend fun settled() {
-        while ((QuicResourceProbe.snapshot()["quic.runtimes"] ?: 0L) > 0L) yield()
+    /** Until neither endpoint of [p] has a connection runtime left (each read on its loop's dispatcher); the caller's deadline. */
+    private suspend fun settled(p: ApiPair) {
+        val loops = listOf(p.client, p.server).map { it as EndpointLoop }
+        while (loops.sumOf { l -> withContext(l.dispatcher) { l.runtimes.size } } > 0) yield()
     }
 
     @Test fun aNormalConnectionBuildsOnlyItsCloseReasons(): Unit =
@@ -41,7 +43,7 @@ class NormalPathExceptionsJvmTest {
                         c.close()
                         s.closed.await()
                     }
-                    settled() // warm-up: classes load, lazies settle, the connection leaves both loops
+                    settled(p) // warm-up: classes load, lazies settle, the connection leaves both loops
                 }
                 val rec = Recording()
                 rec.enable("jdk.JavaExceptionThrow").withStackTrace()
@@ -53,7 +55,7 @@ class NormalPathExceptionsJvmTest {
                         s.closed.await()
                         c.closed.await()
                     }
-                    settled() // both sides drained and left their loops: their runtimes finished (ConnectionRuntime.finish)
+                    settled(p) // both sides drained and left their loops: their runtimes finished (ConnectionRuntime.finish)
                 }
                 rec.stop()
                 rec.dump(file)
@@ -61,11 +63,20 @@ class NormalPathExceptionsJvmTest {
             } finally {
                 p.close()
             }
-            // only this test's coroutines run in the window; the endpoints' loops and timers are part of what is measured
+            // the endpoints' loops and timers are part of what is measured
             // the library's and the coroutines' exceptions (the JDK's own, such as class loading, are not this path)
             val thrown =
                 RecordingFile.readAllEvents(file).mapNotNull { e ->
-                    e.getClass("thrownClass")?.name?.takeIf { it.startsWith("io.kuicksilver.") || it.startsWith("kotlin") }
+                    // built on the QUIC path (another test's leftovers would not have its frames)
+                    val quic =
+                        e.stackTrace
+                            ?.frames
+                            .orEmpty()
+                            .any {
+                                it.method.type.name
+                                    .startsWith("io.kuicksilver.quic.")
+                            }
+                    e.getClass("thrownClass")?.name?.takeIf { quic && (it.startsWith("io.kuicksilver.") || it.startsWith("kotlin")) }
                 }
             Files.deleteIfExists(file)
             val byClass = thrown.groupingBy { it }.eachCount()
