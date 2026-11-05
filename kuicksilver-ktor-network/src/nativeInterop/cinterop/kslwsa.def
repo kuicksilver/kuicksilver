@@ -91,3 +91,26 @@ static inline int ksl_wsa_so_error(unsigned long long s, int *value, int *err) {
     *err = r != 0 ? WSAGetLastError() : 0;
     return r;
 }
+
+/* where the non-blocking connect of s stands, by select() with no wait (the check Winsock documents for one: writable once
+   connected, in the exception set once failed); getpeername does not tell, it already answers while the SYN is out.
+   1 connected, 0 still pending, -1 failed (*err = its SO_ERROR, 0 when none is recorded), -2 select failed (*err) */
+static inline int ksl_wsa_connect_state(unsigned long long s, int *err) {
+    fd_set writable, failed;
+    struct timeval now = {0, 0};
+    FD_ZERO(&writable);
+    FD_ZERO(&failed);
+    FD_SET((SOCKET) s, &writable);
+    FD_SET((SOCKET) s, &failed);
+    *err = 0;
+    if (select(0, NULL, &writable, &failed, &now) == SOCKET_ERROR) {
+        *err = WSAGetLastError();
+        return -2;
+    }
+    if (FD_ISSET((SOCKET) s, &failed)) {
+        int value = 0, size = (int) sizeof value;
+        if (getsockopt((SOCKET) s, SOL_SOCKET, SO_ERROR, (char *) &value, &size) == 0) *err = value;
+        return -1;
+    }
+    return FD_ISSET((SOCKET) s, &writable) ? 1 : 0;
+}

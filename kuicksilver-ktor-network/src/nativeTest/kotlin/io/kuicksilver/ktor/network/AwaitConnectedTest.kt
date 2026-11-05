@@ -25,12 +25,12 @@ class AwaitConnectedTest {
     private suspend fun await(
         select: suspend () -> Unit,
         pendingError: () -> Int,
-        hasPeer: () -> Boolean,
+        connected: () -> Boolean,
         rechecks: (() -> Unit)? = null,
     ) = awaitConnectedWith(
         select = select,
         pendingError = pendingError,
-        hasPeer = hasPeer,
+        connected = connected,
         wouldBlock = { it == inProgress },
         failed = { throw Refused(it) },
         recheck = 20.milliseconds,

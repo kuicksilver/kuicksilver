@@ -152,6 +152,8 @@ internal actual fun tcpPendingError(fd: Int): Int =
         value.value
     }
 
+internal actual fun tcpConnectedNow(fd: Int): Boolean = runCatching { tcpAddressOf(fd, peer = true) }.isSuccess
+
 internal actual fun tcpWouldBlock(error: Int): Boolean = error == EAGAIN || error == EWOULDBLOCK || error == EINPROGRESS
 
 internal actual fun tcpBindListen(

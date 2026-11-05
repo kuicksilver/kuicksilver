@@ -508,7 +508,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   now fails the start only, as on the JVM.
 - Windows (mingwX64) TCP: a pending connect could wait for ever when the selector lost its `FD_CONNECT`, which Winsock
   posts once, like `FD_CLOSE`. The engines bound it with their connect timeout; a direct `connectTcp` had no bound. The
-  wait now looks at the socket itself every second (`SO_ERROR` and its peer address).
+  wait now looks at the socket itself every second: `SO_ERROR`, and a zero-wait `select` for whether the connect
+  completed (`getpeername`, the check on other systems, already answers on Windows while the SYN is unanswered).
 - TLS, `ksl` C ABI (not reachable from Kotlin): a session keeps the verify mode of the ssl that first handed it out.
   A TLS 1.2 resumption from a server that renews no ticket hands out the very session that was set, and
   `ksl_ssl_get1_session` stamped it again: a client without verification resuming a verified session turned it, for

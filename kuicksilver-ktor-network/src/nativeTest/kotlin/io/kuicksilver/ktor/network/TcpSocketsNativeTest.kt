@@ -33,6 +33,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -465,6 +466,41 @@ class TcpSocketsNativeTest {
                 }
             } finally {
                 selector.close()
+            }
+        }
+
+    /**
+     * A connect whose SYN is still unanswered is not connected. On Windows `getpeername` already answers then, and the
+     * connect rechecks took it for a connection: connects to a refused port or to an address that never answers
+     * "succeeded" at their first recheck.
+     */
+    @Test fun negative_aPendingConnectIsNotConnected() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            try {
+                // a VPN in TUN mode (and Docker Desktop behind it) completes any TCP handshake itself: then nothing stays pending
+                val faked = withTimeoutOrNull(500.milliseconds) { runCatching { connectTcpAddressWith(selector, testNet1Discard, null) } }
+                if (faked?.isSuccess == true) {
+                    faked.getOrThrow().close()
+                    println("skipped: this network answers TCP connects to TEST-NET-1 (a VPN or proxy in TUN mode)")
+                    return@runBlocking
+                }
+            } finally {
+                selector.close()
+            }
+            tcpStartup()
+            val to = Sockaddr.of(testNet1Discard)
+            val fd = tcpOpen(to.family)
+            try {
+                val started = runCatching { tcpConnect(fd, to) }
+                if (started.isFailure) {
+                    println("skipped: this system refuses a connect to TEST-NET-1 at once (${started.exceptionOrNull()})")
+                    return@runBlocking
+                }
+                assertFalse(started.getOrThrow(), "a connect to an address that never answers completed at once")
+                assertFalse(tcpConnectedNow(fd), "a connect still waiting for its SYN's answer counts as connected")
+            } finally {
+                tcpClose(fd)
             }
         }
 

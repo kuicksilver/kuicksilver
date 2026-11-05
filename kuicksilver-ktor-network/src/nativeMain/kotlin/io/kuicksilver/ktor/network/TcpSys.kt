@@ -65,6 +65,13 @@ internal expect fun tcpConnect(
 /** `SO_ERROR` of [fd]: 0 once a pending connect has succeeded. */
 internal expect fun tcpPendingError(fd: Int): Int
 
+/**
+ * Whether the pending connect of [fd] has completed: with POSIX sockets once the socket has a peer (`getpeername`, which
+ * fails with ENOTCONN while the SYN is out); on Windows once `select` reports it writable, since `getpeername` answers there
+ * as soon as the connect was started. A connect the system reports failed throws its error; false while undecided.
+ */
+internal expect fun tcpConnectedNow(fd: Int): Boolean
+
 /** Whether [error] means "not yet" (EAGAIN, EWOULDBLOCK, EINPROGRESS; their WSA twins). */
 internal expect fun tcpWouldBlock(error: Int): Boolean
 
