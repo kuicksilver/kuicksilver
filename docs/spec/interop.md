@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver — interop results
 
-Results of the QUIC Interop Runner matrices, the runner's http3 case and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors.
+Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors.
 
 ## Interop matrix (0.2.0, QUIC Interop Runner 740c05a, 2026-10-13)
 
@@ -145,6 +145,21 @@ The runner's `http3` case (three files of 5 KiB / 10 KiB / 500 KiB, one HTTP/3 t
 "?" — msquic does not declare `http3` in the runner's `implementations.json`. All 20 green cells are added to `required.json`.
 
 Third-party clients outside the runner: `curl --http3-only` (the `ymuski/curl-http3` build, quiche 0.18, amd64 under emulation) downloads a Ktor server response over HTTP/3 — `kuicksilver-ktor-server` `CurlHttp3Test.curlDownloadsOverHttp3Only` (enabled by the `KSL_CURL_H3_IMAGE` variable; the official `curlimages/curl` image is built without HTTP/3). h3spec has no ready image (it needs a Haskell stack build); its scenarios are covered by negative tests of `kuicksilver-http3` (threat-model 3.17); an h3spec run is deferred until such an environment exists.
+
+## h2spec: the HTTP/2 server (h2spec 2.6.0, 2026-11-06)
+
+`tools/interop/h2spec.sh` runs `summerwind/h2spec:2.6.0` (`-t -k`, TLS with ALPN `h2`, 5 s per case) against the Ktor
+server engine with `http2 = true` and default `Http2Settings` (`tools/interop/h2-server.sh`, `H2specServer.kt` in
+`kuicksilver-soak`). Every case must pass and none may be skipped; the script records the number of cases (146) so that a
+new image is noticed. The first run had one failure, http2/5.1/12 ("closed: Sends a HEADERS frame": the server answered
+with RST_STREAM STREAM_CLOSED, h2spec expects a connection error of that type, which RFC 9113 section 5.1 allows and RFC
+7540 section 5.1 required); it is fixed (`core.StreamStateTest.negative_headersOnAClosedStreamIsAConnectionError`).
+
+| server | generic | http2 (RFC 9113) | hpack (RFC 7541) | total |
+|---|---|---|---|---|
+| JVM (macOS arm64 host; h2spec in Docker Desktop, amd64 under emulation, reaching the host as `host.docker.internal`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
+| macosArm64 executable (same host) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
+| linuxX64 executable (one linux/amd64 container with the h2spec binary) | — | — | — | release gate (`tools/ci/local-matrix.sh`) |
 
 ## Interop WebTransport (browsers, 2026-10-22 and 2026-10-23)
 

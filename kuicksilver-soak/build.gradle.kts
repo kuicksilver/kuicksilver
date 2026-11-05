@@ -17,7 +17,11 @@ kotlin {
     // the expect/actual classes are Beta (KT-61573): Kotlin's documented acknowledgement, as in the kmp convention plugin
     compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes") }
     jvm()
-    linuxX64(); linuxArm64(); macosArm64()
+    // the h2spec server (tools/interop/h2spec.sh) as an executable: on Linux for the gate's container run, on a Mac locally
+    val h2spec: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
+        binaries.executable("h2specServer") { entryPoint = "io.kuicksilver.soak.h2specServerMain"; baseName = "h2spec-server" }
+    }
+    linuxX64(h2spec); linuxArm64(); macosArm64(h2spec)
     applyDefaultHierarchyTemplate()
     sourceSets {
         all { languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi"); languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi") }
@@ -55,4 +59,12 @@ tasks.matching { it.name.startsWith("link") && it.name.contains("Test") }.config
 // the exact size of the live objects instead of the default allocator's pages (CONTRIBUTING.md, "Soak and churn")
 providers.gradleProperty("kuicksilver.soak.allocator").orNull?.let { a ->
     kotlin.targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach { binaries.all { freeCompilerArgs += "-Xallocator=$a" } }
+}
+
+// The h2spec server on the JVM (tools/interop/h2spec.sh): every runtime jar under build/install/h2spec-server/lib, run with
+// java -cp over that directory and the main class io.kuicksilver.soak.H2specServerJvmKt.
+tasks.register<Sync>("installH2specServer") {
+    group = "distribution"
+    from(tasks.named("jvmJar")); from(configurations["jvmRuntimeClasspath"])
+    into(layout.buildDirectory.dir("install/h2spec-server/lib"))
 }
