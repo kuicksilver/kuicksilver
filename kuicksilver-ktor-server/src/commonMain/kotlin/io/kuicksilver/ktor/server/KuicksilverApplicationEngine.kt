@@ -35,6 +35,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -229,6 +230,52 @@ public class KuicksilverApplicationEngine(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     internal val events = ServerEvents(configuration.eventListener, environment.log)
 
+    /** The value of [http3Advertising], read by every HTTP/1.1 response head, the HTTP/3 accept loops and QUIC admission. */
+    @Volatile
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    internal var advertising: Http3Advertising = Http3Advertising.On
+        private set
+
+    /**
+     * Whether HTTP/3 is advertised and new HTTP/3 connections accepted, switched at runtime (docs/guide/ktor.md, "Turning HTTP/3
+     * off on the server"); [Http3Advertising.On] until set. Every response reads it as its head goes out (so the next
+     * response on a keep-alive connection already follows a change), and every new client Initial when the QUIC endpoint
+     * admits it. Setting [Http3Advertising.Drain] sends GOAWAY to every live HTTP/3 connection in the background and returns
+     * at once; a connection accepted while it is set gets GOAWAY too. GOAWAY cannot be taken back: going back to
+     * [Http3Advertising.On] or [Http3Advertising.Clear] lets new connections in, while the drained ones finish their requests
+     * and close. Safe to set from any thread, before or after the start.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var http3Advertising: Http3Advertising
+        get() = advertising
+        set(value) {
+            advertising = value
+            // after the write: a connection registered after this round took its list reads Drain in its accept loop
+            if (value == Http3Advertising.Drain) lastDrainRound = serverScope?.launch { goAwayAll() }
+        }
+
+    /**
+     * GOAWAY to every live HTTP/3 connection (RFC 9114 section 5.2), all at once as at a stop: each waits about two round trips
+     * between its two frames. Waits for the start first, so the listeners are all there; one that started meanwhile checks
+     * the switch for each connection it accepts.
+     */
+    private suspend fun goAwayAll() {
+        startupJob.join()
+        // switched back while the start was still running: no GOAWAY for a mode that is no longer in force
+        if (advertising != Http3Advertising.Drain) return
+        coroutineScope {
+            for (l in h3ListenersForProbe) for (c in l.live()) launch { runCatching { c.goAway() } }
+        }
+    }
+
+    /** The server job's scope while it runs (null before the start): where [http3Advertising] sends its GOAWAY round. */
+    @Volatile
+    private var serverScope: CoroutineScope? = null
+
+    /** The background GOAWAY round of the last switch to [Http3Advertising.Drain] (tests join it); null before one. */
+    @Volatile
+    internal var lastDrainRound: Job? = null
+
     /** The grace period of the stop in progress: each HTTP/3 endpoint gets it for `QuicEndpoint.shutdown`. */
     @Volatile
     private var stopGraceMillis = 0L
@@ -325,6 +372,7 @@ public class KuicksilverApplicationEngine(
         val stopRequest = stopRequest
         val startupJob = startupJob
         return CoroutineScope(applicationProvider().parentCoroutineContext + engineDispatcher).launch(start = CoroutineStart.LAZY) {
+            serverScope = this
             val servers = ArrayList<TcpServer>()
             val h3 = ArrayList<H3Listener>()
             try {

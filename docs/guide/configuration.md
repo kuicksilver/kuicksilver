@@ -282,7 +282,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](ktor.md#server)) |
 | `http3` | `Boolean` | `true` | serve HTTP/3 on every TLS connector |
-| `altSvc` | `Boolean` | `true` | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS (not when the application set its own, not on 421) |
+| `altSvc` | `Boolean` | `true` | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS (not when the application set its own, not on 421); `engine.http3Advertising` changes it at run time ([Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | QUIC transport of the HTTP/3 listeners |
 | `quicMaxIdleTimeout` | `Duration?` | `null` | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; more than 1 needs Linux or Android) |
@@ -295,6 +295,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `qlog` (*experimental*) | `QlogSink?` | `null` | added to `quic` |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` | lifecycle of every QUIC connection |
 | `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | connection and request events over both protocols |
+| `engine.http3Advertising` (*experimental*, on the running engine) | `Http3Advertising` | `On` | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1 and HTTP/3 responses, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused with CONNECTION_REFUSED); read per response and per new client ([Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)) |
 | `shutdownGracePeriod`, `shutdownTimeout` (Ktor) | | Ktor's | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](ktor.md#graceful-stop)) |
 
 The other `QuicEndpointConfig` limits of the HTTP/3 listener (`maxConnections`, `acceptQueue`, `maxConnectionsPerIp`, …)

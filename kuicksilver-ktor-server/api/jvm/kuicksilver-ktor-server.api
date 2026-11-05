@@ -8,6 +8,15 @@ public final class io/kuicksilver/ktor/server/EngineMain {
 	public static final fun main ([Ljava/lang/String;)V
 }
 
+public final class io/kuicksilver/ktor/server/Http3Advertising : java/lang/Enum {
+	public static final field Clear Lio/kuicksilver/ktor/server/Http3Advertising;
+	public static final field Drain Lio/kuicksilver/ktor/server/Http3Advertising;
+	public static final field On Lio/kuicksilver/ktor/server/Http3Advertising;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/server/Http3Advertising;
+	public static fun values ()[Lio/kuicksilver/ktor/server/Http3Advertising;
+}
+
 public final class io/kuicksilver/ktor/server/Kuicksilver : io/ktor/server/engine/ApplicationEngineFactory {
 	public static final field INSTANCE Lio/kuicksilver/ktor/server/Kuicksilver;
 	public synthetic fun configuration (Lkotlin/jvm/functions/Function1;)Lio/ktor/server/engine/ApplicationEngine$Configuration;
@@ -19,6 +28,8 @@ public final class io/kuicksilver/ktor/server/Kuicksilver : io/ktor/server/engin
 public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine : io/ktor/server/engine/BaseApplicationEngine {
 	public fun <init> (Lio/ktor/server/application/ApplicationEnvironment;Lio/ktor/events/Events;ZLio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lkotlin/jvm/functions/Function0;)V
 	public final fun getConfiguration ()Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;
+	public final fun getHttp3Advertising ()Lio/kuicksilver/ktor/server/Http3Advertising;
+	public final fun setHttp3Advertising (Lio/kuicksilver/ktor/server/Http3Advertising;)V
 	public fun start (Z)Lio/ktor/server/engine/ApplicationEngine;
 	public fun startSuspend (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun stop (JJ)V

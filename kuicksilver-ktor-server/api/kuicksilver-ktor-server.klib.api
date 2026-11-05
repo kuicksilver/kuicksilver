@@ -6,6 +6,18 @@
 // - Show declarations: true
 
 // Library unique name: <io.kuicksilver:kuicksilver-ktor-server>
+final enum class io.kuicksilver.ktor.server/Http3Advertising : kotlin/Enum<io.kuicksilver.ktor.server/Http3Advertising> { // io.kuicksilver.ktor.server/Http3Advertising|null[0]
+    enum entry Clear // io.kuicksilver.ktor.server/Http3Advertising.Clear|null[0]
+    enum entry Drain // io.kuicksilver.ktor.server/Http3Advertising.Drain|null[0]
+    enum entry On // io.kuicksilver.ktor.server/Http3Advertising.On|null[0]
+
+    final val entries // io.kuicksilver.ktor.server/Http3Advertising.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.server/Http3Advertising> // io.kuicksilver.ktor.server/Http3Advertising.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.server/Http3Advertising // io.kuicksilver.ktor.server/Http3Advertising.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.server/Http3Advertising> // io.kuicksilver.ktor.server/Http3Advertising.values|values#static(){}[0]
+}
+
 abstract class io.kuicksilver.ktor.server/KuicksilverServerEventListener { // io.kuicksilver.ktor.server/KuicksilverServerEventListener|null[0]
     constructor <init>() // io.kuicksilver.ktor.server/KuicksilverServerEventListener.<init>|<init>(){}[0]
 
@@ -21,6 +33,10 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
 
     final val configuration // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.configuration|{}configuration[0]
         final fun <get-configuration>(): io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.configuration.<get-configuration>|<get-configuration>(){}[0]
+
+    final var http3Advertising // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Advertising|{}http3Advertising[0]
+        final fun <get-http3Advertising>(): io.kuicksilver.ktor.server/Http3Advertising // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Advertising.<get-http3Advertising>|<get-http3Advertising>(){}[0]
+        final fun <set-http3Advertising>(io.kuicksilver.ktor.server/Http3Advertising) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Advertising.<set-http3Advertising>|<set-http3Advertising>(io.kuicksilver.ktor.server.Http3Advertising){}[0]
 
     final fun start(kotlin/Boolean): io.ktor.server.engine/ApplicationEngine // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.start|start(kotlin.Boolean){}[0]
     final fun stop(kotlin/Long, kotlin/Long) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.stop|stop(kotlin.Long;kotlin.Long){}[0]

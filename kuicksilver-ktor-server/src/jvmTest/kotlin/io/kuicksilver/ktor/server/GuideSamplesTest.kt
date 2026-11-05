@@ -56,6 +56,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
         assertTrue("guide:ktor:certificate-rotation" in guide, "marker certificate-rotation")
         assertTrue("guide:ktor:websocket-deflate-server" in guide, "marker websocket-deflate-server")
+        assertTrue("guide:ktor:http3-advertising" in guide, "marker http3-advertising")
     }
 
     private object Metrics {
@@ -160,6 +161,22 @@ class GuideSamplesTest {
                 .single() is KuicksilverTlsConnector,
         ) // ServerIdentityReloadTest serves it
         assertEquals(Certificate(TestCerts.serverViaIntermediate), identity.current.chain[0])
+        identity.close()
+    }
+
+    @Test fun http3AdvertisingSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:ktor:http3-advertising
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+            }, module = Application::module)
+        // later, when the remote configuration says so: clients fall back to HTTP/1.1 over TLS
+        server.engine.http3Advertising = Http3Advertising.Drain
+        // and when the incident is over
+        server.engine.http3Advertising = Http3Advertising.On
+
+        assertEquals(Http3Advertising.On, server.engine.http3Advertising) // ServerHttp3AdvertisingTest runs each mode
         identity.close()
     }
 

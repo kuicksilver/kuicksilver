@@ -52,6 +52,8 @@ internal class H3Call(
     webTransport: Boolean = false,
     /** KuicksilverApplicationEngine.beforeH3UpgradeForTest. */
     beforeUpgradeForTest: (() -> Unit)? = null,
+    /** The engine's `Alt-Svc` for a plain response, read as its head goes out (`clear` while HTTP/3 is withdrawn); null for none. */
+    altSvc: () -> String? = { null },
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -74,7 +76,7 @@ internal class H3Call(
                 beforeUpgradeForTest,
             )
         } else {
-            H3Response(this, h3)
+            H3Response(this, h3, altSvc)
         }
 
     init {
@@ -174,6 +176,8 @@ private val HOP_BY_HOP = setOf("connection", "keep-alive", "proxy-connection", "
 internal open class H3Response(
     call: PipelineCall,
     protected val h3: Http3ServerRequest,
+    /** The engine's `Alt-Svc` value, read as the head goes out; null for none. */
+    private val altSvc: () -> String? = { null },
 ) : BaseApplicationResponse(call) {
     protected var statusCode: HttpStatusCode = HttpStatusCode.OK
     protected val headersBuilder = HeadersBuilder()
@@ -215,7 +219,12 @@ internal open class H3Response(
         )
 
     private suspend fun start(): Http3ResponseWriter =
-        writer ?: h3.respond(statusCode.value, h3Headers()).also {
+        writer ?: run {
+            // an alternative is authoritative for its origin and may clear it (RFC 7838 section 2.2): the engine's `clear`
+            // on every response that does not carry its own Alt-Svc, a 421 excepted, as on HTTP/1.1
+            if (headersBuilder["Alt-Svc"] == null && statusCode.value != 421) altSvc()?.let { headersBuilder.append("Alt-Svc", it) }
+            h3.respond(statusCode.value, h3Headers())
+        }.also {
             writer = it
             answered = true
         }
