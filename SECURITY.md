@@ -27,7 +27,8 @@ Hardening suggestions that are not exploitable may be filed as ordinary issues. 
 
 Our own findings follow the same rule: a crash found by fuzzing (locally or in the weekly hosted fuzzing run, which
 never uploads reproducers or crash logs) is kept private until it is fixed, and is disclosed as below if it was
-reachable by a peer.
+reachable by a peer. That the hosted run of a fuzz target found something is visible to anyone (its job fails); the
+input and the stack trace are not published.
 
 ## What happens next
 
@@ -106,7 +107,7 @@ from us, so we commit to the following.
   planned release later.
 - **What such a release goes through.** An OpenSSL patch release runs the full local gate on its release commit, like
   every release ([docs/release.md](docs/release.md#every-release)), but not the 24–72 hour soak that precedes a planned
-  release: an OpenSSL patch release within a 3.5.x line changes no Kuicksilver code.
+  release, when nothing else changes: such a release only moves OpenSSL to a fixed 3.5.x release.
 
 - **Version strings.** The OpenSSL version stays visible in the native libraries (and in the JVM jar manifest as
   `OpenSSL-Version` and `OpenSSL-SHA256`), so scanners can see which release you ship. Update Kuicksilver promptly when

@@ -135,14 +135,15 @@ Hosted CI is not the release gate: a release needs the local gate record (stage 
 yet, so nothing requires a hosted run to be green before a change lands; the hosted results are read, not enforced. The other workflows:
 
 - [`codeql.yml`](../.github/workflows/codeql.yml): CodeQL security queries over the C shim and the Kotlin JVM code, on
-  pull requests, pushes to `main` and weekly;
+  pull requests and pushes to `main` and `release/**`, and weekly;
 - [`scorecard.yml`](../.github/workflows/scorecard.yml): OpenSSF Scorecard, weekly and on pushes to `main`;
 - [`perf.yml`](../.github/workflows/perf.yml): the interop runner's throughput measurements against the floors of
   `tools/interop/perf-thresholds.json`, by hand only (shared runners are too noisy for a weekly verdict; the workflow
   is disabled in the repository settings until the maintainer enables it again); the floors warn and do not fail yet;
 - [`fuzz.yml`](../.github/workflows/fuzz.yml): a fuzzing campaign, one runner per target, weekly (2 hours per target)
   and by hand. A finding fails the job and notifies the maintainers; its reproducer and logs are never uploaded,
-  because artifacts of a public repository are public and a finding stays private until it is fixed;
+  because artifacts of a public repository are public and a finding stays private until it is fixed (that a target
+  found something is visible in the public run, what it found is not);
 - [`release.yml`](../.github/workflows/release.yml): a hosted release, not used ([release.md](release.md#alternative-the-release-workflow-not-used));
 - [`interop-image.yml`](../.github/workflows/interop-image.yml): publishes the interop images of a released version to
   GHCR, by hand;

@@ -12,15 +12,18 @@
 # every run, crash or not, campaign.sh prune reduces it to the inputs that add coverage beyond tools/fuzz/corpus/ and the
 # seeds, and it is saved under a new key, since a cache entry cannot be replaced; the corpus-cache job, the only one with
 # actions: write, then deletes this ref's older entries, so each target keeps one entry per ref). The pruned corpus is
-# also the fuzz-corpus-<target> artifact (90 days), restored when the cache has no entry (evicted: the corpora together
-# are larger than the repository's default 10 GB cache); corpus inputs are not sensitive, and a fuzzer's reproducers
-# never go into its corpus. tools/fuzz/campaign.sh minimize locally is still how inputs reach tools/fuzz/corpus/.
+# also the fuzz-corpus-<target> artifact (90 days), restored when the cache has no entry (evicted: the repository's build
+# caches already exceed the default 10 GB, so the weekly corpora are evicted first). The fallback takes the artifact only
+# from a fuzz.yml run of this repository on main started by the schedule or by hand (never from another workflow or a
+# fork's run), and keeps only its regular files. Corpus inputs are not sensitive, and a fuzzer's reproducers never go
+# into its corpus; still, a target with a finding saves neither its cache entry nor its corpus artifact in that run. tools/fuzz/campaign.sh minimize locally is still how inputs reach tools/fuzz/corpus/.
 # Statistics and slice logs start fresh every run, so --goal is the time of this run.
 # A finding (crash-*, a reproducible timeout-*, oom-*) fails the job, which notifies the maintainers. Its reproducer and
 # the slice logs (stack traces) are NEVER uploaded: artifacts of a public repository are public, and a crash in the TLS,
 # QUIC or HTTP parsers may be remotely triggerable, so it stays private until fixed (SECURITY.md). Only stats.tsv (the
 # finding's file name, no input) is the fuzz-stats-<target> artifact; the maintainers reproduce the finding locally with
-# tools/fuzz/campaign.sh. The summary job prints the campaign.sh status table of all targets. ClusterFuzzLite
+# tools/fuzz/campaign.sh. That a target found something is visible in the public run (its job fails); what it found is
+# not. The summary job prints the campaign.sh status table of all targets. ClusterFuzzLite
 # (.github/workflows/cflite_pr.yml, disabled) stays as it is.
 name: fuzz
 on:
@@ -140,12 +143,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=fuzz-corpus-$TARGET&per_page=100" \
-            --jq '[.artifacts[] | select((.expired | not) and (.workflow_run.head_branch == "main"))] | sort_by(.created_at) | last | .id // empty')
-          [ -n "$id" ] || { echo "no fuzz-corpus-$TARGET artifact: starting from the seeds"; exit 0; }
+          # only runs of this workflow, on main, of this repository (not a fork), started by the schedule or by hand: the
+          # artifacts API is repository-wide, and a fork's pull request can upload an artifact of the same name
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/fuzz.yml/runs?branch=main&status=completed&per_page=50" \
+            --jq '.workflow_runs[] | select((.event == "schedule" or .event == "workflow_dispatch") and .head_repository.id == .repository.id) | .id')
+          id=""
+          for rid in $runs; do   # newest first
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$rid/artifacts?name=fuzz-corpus-$TARGET" \
+              --jq '[.artifacts[] | select(.expired | not)] | first | .id // empty')
+            [ -z "$id" ] || break
+          done
+          [ -n "$id" ] || { echo "no fuzz-corpus-$TARGET artifact of a main fuzz run: starting from the seeds"; exit 0; }
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/corpus.zip"
-          mkdir -p "build/fuzz-campaign/corpus/$TARGET"
-          unzip -q -o "$RUNNER_TEMP/corpus.zip" -d "build/fuzz-campaign/corpus/$TARGET"
+          # refuse names that leave the directory; extract aside and keep regular files only (no links, devices, fifos)
+          names=$(unzip -Z1 "$RUNNER_TEMP/corpus.zip")
+          if grep -Eq '(^/|(^|/)\.\.(/|$))' <<< "$names"; then echo "::warning::artifact $id has paths outside its directory; not used"; exit 0; fi
+          x="$RUNNER_TEMP/corpus-x"; rm -rf "$x"; mkdir -p "$x" "build/fuzz-campaign/corpus/$TARGET"
+          unzip -q "$RUNNER_TEMP/corpus.zip" -d "$x"
+          find "$x" ! -type f ! -type d -delete
+          find "$x" -type f -exec cp {} "build/fuzz-campaign/corpus/$TARGET/" \;
           echo "corpus artifact $id: $(find "build/fuzz-campaign/corpus/$TARGET" -type f | wc -l | tr -d ' ') inputs"
       - name: 'fuzz: ${{ matrix.target }} for ${{ needs.prepare.outputs.hours }} h'
         env:
@@ -166,19 +182,27 @@ jobs:
         timeout-minutes: 2
         # campaign.sh puts back a corpus a killed prune left between its two renames (<corpus>.old) before any command runs
         run: bash tools/fuzz/campaign.sh list > /dev/null
+      - name: 'fuzz: did ${{ matrix.target }} find something'
+        # a target with a finding keeps its corpus out of the cache and the artifacts in this run (see the header)
+        id: finding
+        if: always()
+        run: |
+          f=false
+          if [ -f "build/fuzz-campaign/crashed-$TARGET" ] || [ -n "$(find "build/fuzz-campaign/crashes/$TARGET" -type f \( -name 'crash-*' -o -name 'timeout-*' -o -name 'oom-*' -o -name 'leak-*' \) 2>/dev/null)" ]; then f=true; fi
+          echo "found=$f" >> "$GITHUB_OUTPUT"
       - name: 'fuzz: the corpus was not restored'
         if: always() && steps.restore.outcome != 'success'
         run: echo "::warning::corpus not restored; this run's corpus is not cached"
       - name: 'fuzz: save the ${{ matrix.target }} corpus'
         # a first run finds no entry and still succeeds: its corpus is saved
-        if: always() && steps.restore.outcome == 'success'
+        if: always() && steps.restore.outcome == 'success' && steps.finding.outputs.found == 'false'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/fuzz-campaign/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         # the corpus fallback for an evicted cache entry (see the header); a reproducer is never in it
-        if: always() && hashFiles(format('build/fuzz-campaign/corpus/{0}/**', matrix.target)) != ''
+        if: always() && steps.restore.outcome == 'success' && steps.finding.outputs.found == 'false' && hashFiles(format('build/fuzz-campaign/corpus/{0}/**', matrix.target)) != ''
         continue-on-error: true
         with:
           name: fuzz-corpus-${{ matrix.target }}

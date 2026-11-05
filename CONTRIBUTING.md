@@ -246,12 +246,14 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   target; default off, for a machine the campaign owns). On GitHub, `.github/workflows/fuzz.yml` (weekly, every target for 2 hours,
   and *Actions → fuzz → Run workflow*) gives every target its own runner for `hours_per_target` (`--fork` with one worker
   per CPU, `--nice 0`, `--gap 0`), keeps each grown corpus, pruned, in the Actions cache between runs (one entry per
-  target and branch: the `corpus-cache` job deletes the older ones). The corpora together take about 11.7 GB, more than
-  the repository's default 10 GB cache, so entries can be evicted; each pruned corpus is therefore also kept as the
-  `fuzz-corpus-<target>` artifact for 90 days and restored from there when the cache has no entry. A finding fails the
-  target's job, which notifies the maintainers, but its reproducer and the slice logs are never uploaded: artifacts of
-  a public repository are public, and a finding stays private until it is fixed ([SECURITY.md](SECURITY.md)); reproduce
-  it locally with `tools/fuzz/campaign.sh run --targets <target>`. Only `stats.tsv` is uploaded (`fuzz-stats-<target>`);
+  target and branch: the `corpus-cache` job deletes the older ones). The repository's build caches (Gradle, Kotlin/Native,
+  OpenSSL) already exceed the default 10 GB, so the weekly corpora are evicted first; each pruned corpus is therefore
+  also kept as the `fuzz-corpus-<target>` artifact for 90 days and restored from there when the cache has no entry (only
+  from a fuzz run of this repository on `main`, and only its regular files). A finding fails the target's job, which
+  notifies the maintainers; that target's corpus is then neither cached nor uploaded in that run, and its reproducer
+  and the slice logs are never uploaded: artifacts of a public repository are public, and a finding stays private until
+  it is fixed ([SECURITY.md](SECURITY.md)). That a target found something is visible in the public run; what it found
+  is not. Reproduce it locally with `tools/fuzz/campaign.sh run --targets <target>`. Only `stats.tsv` is uploaded (`fuzz-stats-<target>`);
   the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
   reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
