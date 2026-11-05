@@ -81,6 +81,27 @@ class StreamStateTest {
         assertTrue(p.serverGot<H2Event.Data>().single().endStream)
     }
 
+    /**
+     * RFC 9113 section 5.4.2: an endpoint MUST NOT send a RST_STREAM in response to a RST_STREAM; section 5.1: nothing but
+     * PRIORITY goes out on a closed stream. The driver's reset of a stream the peer reset, or that ended both ways, sends
+     * nothing.
+     */
+    @Test
+    fun negative_noResetOfAStreamThePeerResetOrThatEnded() {
+        val p = RawH2Peer(Role.SERVER)
+        p.handshake()
+        p.send(p.headers(1, endStream = false), p.headers(3, endStream = true))
+        p.send(FrameEncoder.rstStream(1, Http2ErrorCode.CANCEL.code))
+        p.core.sendHeaders(3, OK, endStream = true) // 3 ends both ways
+        p.read()
+        p.core.reset(1, Http2ErrorCode.INTERNAL_ERROR, p.now)
+        p.core.reset(3, Http2ErrorCode.INTERNAL_ERROR, p.now)
+        p.core.release(1)
+        p.core.release(3)
+        p.read()
+        assertEquals(emptyList(), p.resets().map { it.streamId }, "no RST_STREAM after the peer's, none on an ended stream")
+    }
+
     @Test
     fun interimResponsesThenFinalThenTrailers() {
         val p = H2Pair()

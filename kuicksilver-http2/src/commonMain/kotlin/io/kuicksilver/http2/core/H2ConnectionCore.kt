@@ -815,7 +815,7 @@ internal class H2ConnectionCore(
     /**
      * Resets [streamId] with [code] (the application cancelled it). A stream whose field section was never written is idle
      * to the peer: it is dropped without a RST_STREAM (section 6.4; a later stream closes it, section 5.1.1) and reported
-     * as not processed.
+     * as not processed. A stream already closed (the peer reset it, or it ended both ways) gets nothing (sections 5.1, 5.4.2).
      */
     fun reset(
         streamId: Int,
@@ -831,6 +831,8 @@ internal class H2ConnectionCore(
             return
         }
         if (isIdle(streamId) && s == null) return // section 6.4: never on an idle stream
+        // section 5.1: nothing but PRIORITY on a closed stream, and section 5.4.2: no RST_STREAM in answer to the peer's
+        if (s?.state == StreamState.CLOSED || (s == null && streamId in recentlyClosed)) return
         resetStream(streamId, code, now, causedByPeer = false)
     }
 
