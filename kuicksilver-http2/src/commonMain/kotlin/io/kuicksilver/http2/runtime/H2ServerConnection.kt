@@ -45,6 +45,16 @@ public class H2ServerConnection private constructor(
      */
     public val requestsTaken: StateFlow<Long> get() = taken
 
+    /**
+     * The connection ended in an error (a connection error of either side, the transport lost), not with a graceful
+     * GOAWAY NO_ERROR after its streams: nothing of value is left in flight, so the engine closes it without a long linger.
+     */
+    public val endedInError: Boolean
+        get() = (rt.closeCause as? Http2Exception.ConnectionClosed)?.let { it.code != Http2ErrorCode.NO_ERROR || it.cause != null } ?: true
+
+    /** Bytes the connection read from the client: it stops reading when the connection ends (a flood limit included). */
+    public val bytesReceived: Long get() = rt.bytesRead
+
     /** Ended: nothing more is sent or received. */
     public val isClosed: Boolean get() = rt.closed.isCompleted
 

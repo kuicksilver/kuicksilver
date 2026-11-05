@@ -432,7 +432,9 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   ENHANCE_YOUR_CALM, leaving no handler behind; a CONTINUATION flood (CVE-2023-45288, CVE-2024-27316) ends after 8 frames
   without reaching a handler; a client that reads nothing ties up no handler past the send-stall deadline, and once its
   connection is over (a flood limit, any connection error) what is left to write gets that deadline too before the
-  socket is aborted, so a flood that does not read our answers cannot hold the connection until the idle timeout. Repeat
+  socket is aborted, so a flood that does not read our answers cannot hold the connection until the idle timeout; a connection that
+  ended in an error stops reading at once (its HTTP/2 layer read 8 KiB of a 10 MB CONTINUATION flood) and its socket is
+  aborted after 3 s without sending progress, even while the client keeps its end open and the buffers full. Repeat
   offenders (opt-in, `http2RepeatOffenderPenalty`, off by default): with it, an address whose HTTP/2 connections end
   in a flood limit's ENHANCE_YOUR_CALM three times within a minute has its TCP connections closed at accept, before TLS,
   for the penalty (`RepeatOffenders`; an IPv4-mapped peer counts as its IPv4 address, an IPv6 one by its /56 since end

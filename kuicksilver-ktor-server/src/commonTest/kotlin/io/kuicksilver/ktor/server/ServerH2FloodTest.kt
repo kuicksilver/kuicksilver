@@ -161,8 +161,12 @@ class ServerH2FloodTest {
 
     /**
      * The CONTINUATION flood (CVE-2023-45288, CVE-2024-27316): a field block that never ends. The connection ends after
-     * 8 CONTINUATION frames (the core never buffers more than twice SETTINGS_MAX_HEADER_LIST_SIZE: core.FloodTest), long
-     * before the client could write a million of them: the server stops reading.
+     * 8 CONTINUATION frames (the core never buffers more than twice SETTINGS_MAX_HEADER_LIST_SIZE: core.FloodTest), its
+     * HTTP/2 layer stops reading there (at most one read buffer past the ninth frame), and the socket is released after
+     * the short close bound of a connection that ended in an error, although the client keeps its end open and the buffers
+     * in front of the server's socket full. Asserted on the server's side: how many of the client's
+     * million frames its writes got rid of depends on the socket buffers between the two (on Android they take all of
+     * them), not on the server.
      */
     @Test fun negative_continuationFloodBounded() =
         serverTest {
@@ -172,11 +176,15 @@ class ServerH2FloodTest {
                 RawH2Client.connect(port).use { raw ->
                     raw.preface()
                     raw.write(RawH2Client.frame(RawFrame.HEADERS, 0x1, 1, RawH2Client.block(RawH2Client.get("/hold"))))
-                    val sent = raw.flood(1_000_000, batch = 10_000) { RawH2Client.frame(RawFrame.CONTINUATION, 0, 1, byteArrayOf(0)) }
-                    assertTrue(sent < 1_000_000, "the server took all of a million CONTINUATION frames")
+                    raw.flood(1_000_000, batch = 10_000) { RawH2Client.frame(RawFrame.CONTINUATION, 0, 1, byteArrayOf(0)) }
+                    withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
+                    // released while the client still holds its end and keeps its frames unread: after the short close
+                    // bound of a connection that ended in an error (3 s without progress), not the send-stall time
+                    withTimeout(15.seconds) { server.engine.openTcpSockets.first { it == 0 } }
                     raw.goAwaySeen()?.let { assertEquals(calm, it.errorCode) }
                 }
-                withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
+                val read = server.engine.h2BytesRead.value
+                assertTrue(read < 64 * 1024, "the HTTP/2 layer read $read bytes of a 10 MB flood")
                 assertEquals(0L, handlers.started.value, "no request reached a handler")
             } finally {
                 server.stop(100, 500)
@@ -343,11 +351,7 @@ class ServerH2FloodTest {
                     raw.preface()
                     assertNotNull(raw.await { it.type == RawFrame.SETTINGS && it.flags and 1 == 0 }) // acknowledged on read
                     val c =
-                        withTimeout(10.seconds) {
-                            server.engine.h2Live
-                                .live()
-                                .single()
-                        }
+                        liveConnection(server)
                     var next = 1
                     for (second in 1..60) {
                         raw.flood(25, batch = 25) {
@@ -391,11 +395,7 @@ class ServerH2FloodTest {
                         // the round's requests arrived and their handlers were released (a reset stream counts toward
                         // SETTINGS_MAX_CONCURRENT_STREAMS until then, so a burst beyond 100 would be refused)
                         val c =
-                            withTimeout(10.seconds) {
-                                server.engine.h2Live
-                                    .live()
-                                    .single()
-                            }
+                            liveConnection(server)
                         withTimeout(10.seconds) { c.requestsTaken.first { it == 30L * round } }
                         withTimeout(10.seconds) { c.openRequests.first { it == 0 } }
                     }
@@ -420,6 +420,17 @@ class ServerH2FloodTest {
     private suspend fun RawH2Client.wideOpenPreface() {
         preface(0x4 to 0x7fff_ffffL)
         write(RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0x7f, 0xff.toByte(), 0, 0)))
+    }
+
+    /** The server's one HTTP/2 connection, once the engine registered it (after its runtime started). */
+    private suspend fun liveConnection(server: Server): io.kuicksilver.http2.runtime.H2ServerConnection {
+        withTimeout(10.seconds) {
+            server.engine.h2Live.count
+                .first { it == 1 }
+        }
+        return server.engine.h2Live
+            .live()
+            .single()
     }
 
     /** The server still serves a new connection from the same address. */
