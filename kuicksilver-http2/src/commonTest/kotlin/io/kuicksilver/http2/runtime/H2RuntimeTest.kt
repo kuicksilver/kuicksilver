@@ -611,6 +611,57 @@ class H2RuntimeTest {
             a.release()
             b.release()
         }
+
+    /**
+     * Only the core's own refusal of a sender's call means "the stream ended under us". An IllegalStateException out of the
+     * event dispatch that follows the call (here the engine's `onChange` callback, run by the sender's thread because the
+     * event was waiting when its call returned) is not one: taken for a refusal, the sender waited for a stream failure that
+     * never came, or sent the chunk the core had already taken a second time.
+     */
+    @Test fun negative_dispatchFailureIsNotTakenForTheCoresRefusal() =
+        runTest {
+            var armed = false
+            val w = Wire()
+            val server = H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            val client =
+                H2ClientConnection.start(
+                    w.toClient,
+                    w.toServer,
+                    Http2Settings(),
+                    backgroundScope,
+                    Duration.INFINITE,
+                    { w.close() },
+                    onChange = { if (armed) throw IllegalStateException("from onChange") },
+                    clock = clock(),
+                )
+            val got =
+                backgroundScope.async {
+                    runCatching {
+                        server.requests
+                            .receive()
+                            .body
+                            .readAll()
+                    }
+                }
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            runCurrent()
+            // a SETTINGS from the server whose event (SettingsChanged, which calls onChange) waits for the next dispatcher
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            armed = true
+            val e =
+                withTimeout(10.seconds) {
+                    assertFailsWith<IllegalStateException> {
+                        s.sendBody(ByteReadChannel("once".encodeToByteArray()), stallMillis = null) { error("stall") }
+                    }
+                }
+            assertEquals("from onChange", e.message)
+            armed = false
+            runCurrent()
+            // the chunk went out once; the stream was then reset (the sender failed), so the body is not complete
+            assertIs<Http2Exception.StreamReset>(got.await().exceptionOrNull())
+            s.release()
+        }
 }
 
 /** An RFC 7541 string literal without Huffman coding: a 7-bit prefixed length (section 5.1), then the octets. */
