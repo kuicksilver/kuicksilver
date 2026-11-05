@@ -39,10 +39,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -434,7 +437,13 @@ class ServerH1Test {
                 withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 2 } }
                 assertEquals(2L, KuicksilverServerProbe.snapshot(server.engine)["server.tcpConnections"])
                 coroutineScope {
-                    val third = async { rawHttp(port, get) }
+                    // on its own threads: under runBlocking an async would start only once this coroutine suspends
+                    val third = async(Dispatchers.IO) { rawHttp(port, get) }
+                    yield()
+                    // a negative over real sockets: the third client is given a second to be (wrongly) accepted and served
+                    assertNull(withTimeoutOrNull(1.seconds) { third.await() }, "the third client was served at the limit")
+                    assertEquals(2, server.engine.openTcpSockets.value, "the third client was accepted at the limit")
+                    assertEquals(emptyList(), rec.events.value.filter { it.startsWith("opened") }, "a handshake completed at the limit")
                     rec.note("first closed")
                     held[0].close()
                     val response = withTimeout(30.seconds) { third.await() }
