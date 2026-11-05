@@ -410,6 +410,26 @@ class H2RuntimeTest {
         }
 
     /**
+     * The core closes on a connection error at once, under the lock, while its Closed event may still wait for another
+     * thread's dispatch: a response head refused in that gap fails with the connection's end, never with a made-up
+     * stream reset (CANCEL).
+     */
+    @Test fun aResponseRefusedBeforeTheCloseIsDispatchedFailsWithTheConnectionsEnd() =
+        runTest {
+            val (client, server, _) = pair()
+            client.get("/")
+            runCurrent()
+            val r = server.requests.receive()
+            server.rt.holdDispatchForTest()
+            // PING with a 4-byte payload: FRAME_SIZE_ERROR, a connection error (RFC 9113 section 6.7)
+            server.rt.receiveWithoutDispatchForTest(byteArrayOf(0, 0, 4, 6, 0, 0, 0, 0, 0, 1, 2, 3, 4))
+            val e = assertFailsWith<Http2Exception> { r.respond(200) }
+            assertIs<Http2Exception.ConnectionClosed>(e, "the connection's end, not $e")
+            server.rt.releaseDispatchForTest()
+            runCurrent()
+        }
+
+    /**
      * RFC 9113 section 8.1: a server may answer before the whole request and then stop it with RST_STREAM NO_ERROR; the
      * client keeps the response (its content included, even when the reset arrives before the application read it) and
      * its sending stops without an error.
