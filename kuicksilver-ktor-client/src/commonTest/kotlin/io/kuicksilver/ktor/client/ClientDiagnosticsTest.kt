@@ -616,4 +616,34 @@ class ClientDiagnosticsTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * A `wss` WebSocket belongs to the `https` origin (RFC 8441 section 5 via RFC 9220; RFC 7838 section 2.4): in Auto it
+     * finds the alternative an https response announced, and the Alt-Svc of its own HTTP/1.1 answer is filed there.
+     */
+    @Test fun wssSharesTheHttpsOrigin() =
+        h3Test {
+            val (server, port) =
+                testServer {
+                    install(io.ktor.server.websocket.WebSockets)
+                    routing {
+                        get("/") { call.respondText("ok") }
+                        webSocket("/ws") { close() }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.Auto) { install(io.ktor.client.plugins.websocket.WebSockets) }.use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    // the WebSocket's own HTTP/1.1 answer carries Alt-Svc: filed under https://
+                    c.webSocket("wss://127.0.0.1:$port/ws") {}
+                    assertTrue(engine.altSvcSnapshot(io.ktor.http.Url("https://127.0.0.1:$port/")).isNotEmpty(), "filed under https")
+                    var d: ProtocolDiagnostics? = null
+                    c.webSocket("wss://127.0.0.1:$port/ws") { d = call.response.kuicksilverDiagnostics }
+                    assertEquals(AlternativeSource.AltSvc, d?.alternativeSource, "$d")
+                    assertEquals(FallbackReason.WebSocket, d?.fallback)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 }

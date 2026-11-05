@@ -511,7 +511,7 @@ internal class KuicksilverEngine(
     /** Whether an HTTP/3 connection to the origin of [url] is open (tests). */
     internal suspend fun hasH3Connection(url: io.ktor.http.Url): Boolean = h3.existing(H3Target(url.host, url.host, url.port)) != null
 
-    private fun originKey(url: io.ktor.http.Url): String = "${url.protocol.name}://${url.host}:${url.port}"
+    private fun originKey(url: io.ktor.http.Url): String = originKeyOf(url)
 
     /**
      * `Auto` (RFC 7838): HTTP/3 to a live alternative the origin announced, with `Alt-Used`; otherwise HTTP/1.1,

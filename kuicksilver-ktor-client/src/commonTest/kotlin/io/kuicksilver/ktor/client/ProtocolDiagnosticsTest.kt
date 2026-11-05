@@ -128,4 +128,11 @@ class ProtocolDiagnosticsTest {
         assertNull(d.headStart)
         assertTrue(d.toString().startsWith("HTTP/3.0"))
     }
+
+    /** A host that could end or forge a field of the line is written with `?` in place of the dangerous characters. */
+    @Test fun negative_logLineEscapesHostCharacters() {
+        val d = ProtocolDiagnostics().apply { alternative("x),fallback=Other", 443, AlternativeSource.AltSvc) }
+        val line = d.line("GET", Url("https://example.com/"))
+        assertEquals("kuicksilver: GET https://example.com/ -> HTTP/1.1 (alt=x??fallback?Other:443 via AltSvc)", line)
+    }
 }

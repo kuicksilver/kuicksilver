@@ -137,7 +137,7 @@ class AltSvcTest {
     /**
      * The alt-authority host must be an RFC 3986 host (RFC 7838 section 3): one with a space, a control character, a line
      * break or a bare IPv6 address is a malformed alternative and is skipped. The host reaches the engine's diagnostics log
-     * line (threat-model 3.18), where such text could forge lines.
+     * line (threat-model 3.18), where such text could forge lines; so is a valid one that cannot be a connection target.
      */
     @Test fun negative_altSvcHostThatIsNoUriHostIsSkipped() {
         for (bad in listOf(
@@ -156,9 +156,14 @@ class AltSvcTest {
             val header = "h3=\"$bad:443\""
             assertEquals(emptyList(), AltSvcParser.parse(header, now), header)
         }
-        val ok = listOf("alt.example.com", "[2001:db8::1]", "192.0.2.1", "a-b_c~d", "x%41y", "sub!delims\$&'()*+;=")
+        val ok = listOf("alt.example.com", "[2001:db8::1]", "192.0.2.1", "a-b.example")
         for (good in ok) {
             assertEquals(1, AltSvcParser.parse("h3=\"$good:443\"", now)!!.size, good)
+        }
+        // valid RFC 3986 hosts that no DNS name or address has: no connection target, skipped too (and so never logged)
+        for (unusable in listOf("a_b", "a~b", "x%41y", "x),fallback=Other", "sub!delims\$&'()*+;=")) {
+            assertTrue(AltSvcParser.isUriHost(unusable), unusable)
+            assertEquals(emptyList(), AltSvcParser.parse("h3=\"$unusable:443\"", now), unusable)
         }
         assertEquals("2001:db8::1", AltSvcParser.parse("h3=\"[2001:db8::1]:443\"", now)!!.single().host)
         assertEquals(null, AltSvcParser.parse("h3=\":443\"", now)!!.single().host)

@@ -138,7 +138,7 @@ public class ProtocolDiagnostics internal constructor() {
         StringBuilder()
             .apply {
                 append("kuicksilver: ").append(method).append(' ')
-                append(url.protocol.name).append("://").append(uriHost(url.host))
+                append(url.protocol.name).append("://").append(logSafe(uriHost(url.host)))
                 if (url.port != url.protocol.defaultPort) append(':').append(url.port)
                 append(url.encodedPath.ifEmpty { "/" })
                 append(" -> ")
@@ -154,7 +154,10 @@ public class ProtocolDiagnostics internal constructor() {
             first = false
         }
         fallback?.let { item("fallback=$it") }
-        alternative?.let { item(if (alternativeSource == null) "alt=$it" else "alt=$it via $alternativeSource") }
+        alternative?.let {
+            val alt = logSafe(it)
+            item(if (alternativeSource == null) "alt=$alt" else "alt=$alt via $alternativeSource")
+        }
         if (raced) item("raced")
         headStart?.let { item(if (it.isInfinite()) "headStart=until HTTP/3 failed" else "headStart=${it.inWholeMilliseconds}ms") }
         h3Failure?.let { item("h3Failure=${it::class.simpleName}") }
@@ -164,6 +167,15 @@ public class ProtocolDiagnostics internal constructor() {
         if (!first) b.append(')')
     }
 }
+
+/**
+ * [s] with every character that could end or forge a field of the log line (anything but letters, digits and `.-:[]_%~`)
+ * replaced by `?`: hosts come from URLs and `Alt-Svc` headers, and the line must stay one line of known fields.
+ */
+internal fun logSafe(s: String): String =
+    if (s.all { it.isLogSafe() }) s else buildString(s.length) { for (c in s) append(if (c.isLogSafe()) c else '?') }
+
+private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9' || this in ".-:[]_%~"
 
 /**
  * Why a call did not go over HTTP/3 ([ProtocolDiagnostics.fallback]), with what to check:

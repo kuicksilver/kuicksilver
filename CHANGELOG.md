@@ -210,6 +210,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - WebTransport: `drain()` also sets the session's own `drainRequested` (draft-ietf-webtrans-http3 section 4.7: the
   side that asks winds down too); before, it reflected only the peer's drain or GOAWAY.
+- Ktor client: a `wss` WebSocket belongs to the `https` origin (RFC 8441 section 5 via RFC 9220; RFC 7838 section 2.4):
+  it uses the alternatives, broken marks and RTTs learned from `https` responses, and Alt-Svc on its HTTP/1.1 answer is
+  filed under `https`; `ws` likewise under `http`. Before, `wss` was an origin of its own and never found an alternative.
+- Ktor client: an `Alt-Svc` alternative whose host is a valid RFC 3986 host but no connection target (sub-delims,
+  pct-encoding, `_`, `~`) is skipped.
 - HTTP/3: a request on a connection after this client's own `goAway()` fails with `Http3Exception.RequestNotProcessed`
   (retry-safe, message "request not sent: this client sent GOAWAY") instead of `IllegalStateException`: it was never
   sent, as one above a received GOAWAY, so a pool that handed the connection out just before may repeat it on a new
