@@ -428,8 +428,10 @@ class TlsConnectionTest {
                 // the bytes are decrypted and waiting in the client's input, unread (awaitContent does not consume them)
                 assertTrue(withTimeout(5.seconds) { c.input.awaitContent(6) })
                 pair.killServerToClient()
-                // the client's pump has decrypted the bytes and met the end of the transport: the input knows the failure
-                withTimeout(5.seconds) { while (c.input.closedCause == null) kotlinx.coroutines.yield() }
+                // waiting for one byte more than were sent ends when the pump met the end of the transport: then it fails
+                // with the truncation, without taking the 6 bytes, which are still to be read
+                assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.awaitContent(7) } }
+                assertTrue(c.input.closedCause != null, "the input knows the failure")
                 assertEquals("before", withTimeout(5.seconds) { c.input.readExactly(6) }.decodeToString())
                 val e = assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
                 val tls = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<TlsException>().firstOrNull()
