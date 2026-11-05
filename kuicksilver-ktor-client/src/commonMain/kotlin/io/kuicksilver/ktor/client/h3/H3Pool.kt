@@ -19,6 +19,7 @@ import io.ktor.http.content.OutgoingContent
 import io.ktor.http.fullPath
 import io.ktor.http.hostWithPort
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.util.AttributeKey
 import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
@@ -26,6 +27,7 @@ import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
@@ -48,6 +50,9 @@ import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.quic.Initiator
+import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -81,6 +86,37 @@ internal class H3Target(
 internal class H3NotSent(
     cause: Throwable,
 ) : Exception(cause.message, cause)
+
+/**
+ * Set on a request whose HTTP/3 connection the server closed with H3_NO_ERROR after it had sent GOAWAY ([H3Pool.execute]): the engine's
+ * fallback for it does not mark the alternative broken (RFC 9114 section 5.2, RFC 7838 section 2.4).
+ */
+internal val H3ClosedAfterGoAwayKey: AttributeKey<Unit> = AttributeKey("io.kuicksilver.ktor.client.H3ClosedAfterGoAway")
+
+/**
+ * Whether [e] is the peer ending the whole connection the way a graceful shutdown does (RFC 9114 section 5.2: "An
+ * endpoint that completes a graceful shutdown SHOULD use the H3_NO_ERROR error code when closing the connection"): an
+ * application close with H3_NO_ERROR, or with a code this client does not know (read as H3_NO_ERROR, section 9), or a
+ * transport close with NO_ERROR. A close with an error code, a stream error and a local failure are not.
+ */
+internal fun isPeerShutdownClose(e: Throwable): Boolean =
+    when (e) {
+        is Http3Exception.Protocol -> {
+            e.initiator == Initiator.Peer && e.streamId == null && e.h3Code == Http3ErrorCode.NO_ERROR
+        }
+
+        is QuicException.ConnectionLost.ApplicationClosed -> {
+            e.initiator == Initiator.Peer && Http3ErrorCode.normalize(e.code) == Http3ErrorCode.NO_ERROR
+        }
+
+        is QuicException.ConnectionLost.TransportClosed -> {
+            e.initiator == Initiator.Peer && e.code == TransportError.NO_ERROR
+        }
+
+        else -> {
+            false
+        }
+    }
 
 /**
  * One pooled HTTP/3 connection (or the attempt to set it up) and its use: requests in flight, and since when it has none.
@@ -756,6 +792,7 @@ internal class H3Pool(
         prefer: Http3Connection? = null,
     ): HttpResponseData {
         var attempts = 0
+        data.attributes.remove(H3ClosedAfterGoAwayKey) // a mark of an earlier execution of the same request data
         while (true) {
             val (entry, conn) =
                 try {
@@ -807,6 +844,9 @@ internal class H3Pool(
                         "connectionReleased",
                     ) { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
                 }
+                // the server sent GOAWAY, then closed the connection under this request with H3_NO_ERROR (a stopping server at
+                // the end of its grace period): an orderly close (RFC 9114 section 5.2), not a failure of the alternative
+                if (conn.goAwayReceived.value != null && isPeerShutdownClose(e)) data.attributes.put(H3ClosedAfterGoAwayKey, Unit)
                 if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
                     connections[t.key]?.let {

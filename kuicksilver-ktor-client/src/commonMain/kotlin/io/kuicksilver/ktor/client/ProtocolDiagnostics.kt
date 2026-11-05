@@ -202,7 +202,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [HandshakeTimeout] | no QUIC answer within the handshake or connect timeout | UDP to the port blocked (firewall, VPN), server down |
  * | [UdpUnreachable] | the network reported the UDP port unreachable | not reported yet: such calls show [HandshakeTimeout] |
  * | [H3NotReady] | HTTP/1.1 was ready first; HTTP/3 had not answered yet | nothing: a later call may use HTTP/3 |
- * | [Refused] | the server closed the QUIC connection (CONNECTION_REFUSED...) or offers no common QUIC version | the server's QUIC listener |
+ * | [Refused] | the server closed the QUIC connection (CONNECTION_REFUSED...) or offers no common QUIC version | CONNECTION_REFUSED: nothing, the server is draining, stopping or full and the next call tries HTTP/3 again; otherwise the server's QUIC listener |
  * | [TlsFailure] | the QUIC handshake failed in TLS (a certificate, no `h3` ALPN) | the certificate and ALPN of the UDP side |
  * | [Http3Error] | the HTTP/3 connection failed as a whole (a protocol error, a stateless reset, the path) | `h3Failure`, a qlog trace |
  * | [ZeroRttRejected] | the server rejected 0-RTT | nothing: the request went again |
@@ -254,7 +254,13 @@ public enum class FallbackReason {
     /** HTTP/1.1 won the race before HTTP/3 answered: HTTP/3 had not failed (yet), it was slower or is still connecting. */
     H3NotReady,
 
-    /** The server closed the connection during setup without a TLS alert (CONNECTION_REFUSED), or version negotiation failed. */
+    /**
+     * The server closed the connection during setup without a TLS alert, or version negotiation failed. CONNECTION_REFUSED
+     * (a server in `Drain`, stopping, or with a full accept queue: RFC 9000 section 5.2.2), at the first Initial or on a
+     * connection whose handshake completed into a full accept queue, is transient: the call falls
+     * back to HTTP/1.1 once, the alternative is not marked broken and the next call tries HTTP/3 again. Any other code
+     * marks the alternative broken.
+     */
     Refused,
 
     /** The QUIC handshake failed in TLS: a TLS alert (`0x0100 + alert`: a certificate, no `h3` ALPN) or a local verification failure. */

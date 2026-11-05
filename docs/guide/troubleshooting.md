@@ -62,7 +62,9 @@ queue is closed with the reason "accept queue full". The server counts them in `
 `connectionsRefusedShutdown`.
 
 Fix on the server: accept faster (one coroutine per connection, `incomingConnections()`), or raise `acceptQueue` for
-bursty arrivals. On the client, retry after a delay; during a shutdown, connect to another instance.
+bursty arrivals. On the client, retry after a delay; during a shutdown, connect to another instance. The Kuicksilver Ktor
+client does this by itself: the call falls back to HTTP/1.1 (`fallback = Refused`), the alternative is not marked
+broken, and the next call tries HTTP/3 again ([Ktor: Racing and fallback](ktor.md#racing-and-fallback)).
 
 ### The handshake fails with a certificate error
 
