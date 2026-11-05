@@ -374,6 +374,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS: bytes the peer sent right before closing the TCP connection without `close_notify` are delivered before the
+  input fails with the truncation; they were dropped with it (`TlsConnection.input`, so HTTP/1.1 bodies and the last frames
+  of an HTTP/2 connection, such as a GOAWAY, were cut). The truncation is still an error, never a clean end of the stream.
 - Ktor engines: closing a TCP or TLS socket while the application's write waits for room (a peer reading slower than
   we write) ends that write as the close does: it returns, and later writes fail with `ClosedWriteChannelException`.
   The close flushed the channel with a suspending `flushAndClose`, which took the channel's single write slot, and

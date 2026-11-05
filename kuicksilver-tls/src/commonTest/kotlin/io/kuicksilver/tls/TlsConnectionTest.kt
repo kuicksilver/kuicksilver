@@ -413,6 +413,34 @@ class TlsConnectionTest {
             }
         }
 
+    /**
+     * Bytes the peer sent before the transport ended without close_notify are still delivered; only then does the input
+     * fail with the truncation (an HTTP/2 GOAWAY or the last bytes of an HTTP/1.1 response written just before a peer's
+     * abortive close were lost with the failure). The truncation itself stays an error (negative_truncatedTlsStreamIsError).
+     */
+    @Test fun negative_bytesBeforeATruncationAreReadableThenItFails(): Unit =
+        runBlocking {
+            val pair = ChannelPair()
+            val (c, s) = both(pair = pair)
+            try {
+                s.output.writeFully("before".encodeToByteArray())
+                s.output.flush()
+                // the bytes are decrypted and waiting in the client's input, unread (awaitContent does not consume them)
+                assertTrue(withTimeout(5.seconds) { c.input.awaitContent(6) })
+                pair.killServerToClient()
+                // the client's pump has decrypted the bytes and met the end of the transport: the input knows the failure
+                withTimeout(5.seconds) { while (c.input.closedCause == null) kotlinx.coroutines.yield() }
+                assertEquals("before", withTimeout(5.seconds) { c.input.readExactly(6) }.decodeToString())
+                val e = assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
+                val tls = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<TlsException>().firstOrNull()
+                assertTrue(tls is TlsException.Protocol && tls.message!!.contains("truncation"), "got $e / cause ${e.cause}")
+                assertEquals(false, c.input.isClosedForRead, "a truncated stream never looks complete")
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
+
     @Test fun keyUpdateBothDirections(): Unit =
         runBlocking {
             val (c, s) = both()
