@@ -52,6 +52,7 @@ import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -145,7 +146,7 @@ class ClientH1Test {
      */
     @Test fun negative_h1ToIpv6LiteralReachesThatAddressOnly() =
         clientTest {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 runCatching { aSocket(selector).tcp().bind("::1", 0).close() }.onFailure {
                     println("negative_h1ToIpv6LiteralReachesThatAddressOnly skipped: needs an IPv6 loopback ($it)")
@@ -591,7 +592,7 @@ class ClientH1Test {
         handler: suspend (index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
         block: suspend (Int) -> Unit,
     ) {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
         try {
             coroutineScope {
@@ -619,7 +620,7 @@ class ClientH1Test {
         bodyBytes: List<Int> = responses.map { 0 },
         block: suspend (Int) -> Unit,
     ) {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
         try {
             coroutineScope {

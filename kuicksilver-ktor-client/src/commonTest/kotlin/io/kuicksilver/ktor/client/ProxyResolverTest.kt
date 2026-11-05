@@ -18,6 +18,7 @@ import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -385,7 +386,7 @@ class ProxyResolverTest {
         }
 
     private suspend fun unsupportedSchemeBody(scope: kotlinx.coroutines.CoroutineScope) {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val origin = aSocket(selector).tcp().bind("127.0.0.1", 0)
         var accepted = 0
         val acceptor = scope.launch { while (true) origin.accept().also { accepted++ }.close() }

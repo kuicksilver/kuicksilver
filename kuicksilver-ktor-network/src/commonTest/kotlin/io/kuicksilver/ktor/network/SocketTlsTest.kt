@@ -40,6 +40,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -135,7 +136,7 @@ internal class LoopbackServer private constructor(
             config: TlsConfig = serverConfig(),
             handler: suspend (TlsSocket) -> Unit,
         ): LoopbackServer {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val server = aSocket(selector).tcp().bind("127.0.0.1", 0)
             return LoopbackServer(selector, server, config, handler)
         }
@@ -280,7 +281,7 @@ class SocketTlsTest {
 
     @Test fun serverRefusesWrongClientConfig(): Unit =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 val server = aSocket(selector).tcp().bind("127.0.0.1", 0)
                 val raw = aSocket(selector).tcp().connect("127.0.0.1", (server.localAddress as InetSocketAddress).port)

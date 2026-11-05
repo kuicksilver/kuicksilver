@@ -197,7 +197,7 @@ internal class H2Runtime(
                 try {
                     core.block()
                 } finally {
-                    while (true) pending.addLast(core.nextEvent() ?: break)
+                    takeEventsLocked()
                     wantsWrite = core.wantsWrite || core.isClosed
                 }
             }
@@ -237,9 +237,40 @@ internal class H2Runtime(
     internal fun receiveWithoutDispatchForTest(bytes: ByteArray) {
         lock.withLock {
             core.receive(bytes, 0, bytes.size, clock())
-            while (true) pending.addLast(core.nextEvent() ?: break)
+            takeEventsLocked()
         }
     }
+
+    /**
+     * Queues the core's events for dispatch (under the lock). A peer's GOAWAY and the connection's end are noted here, not at
+     * their dispatch: the core has already closed or refuses streams for them, and whoever finds that out meanwhile must
+     * also find why: the GOAWAY's code (HTTP_1_1_REQUIRED, RFC 9113 section 7) and the connection's end ([closeCause],
+     * which [guarded] reports). An HTTP_1_1_REQUIRED stays: a later GOAWAY (section 6.8 allows several) does not take it back.
+     */
+    private fun takeEventsLocked() {
+        while (true) {
+            val e = core.nextEvent() ?: break
+            if (e is H2Event.GoAway) {
+                if (goAwayCode != Http2ErrorCode.HTTP_1_1_REQUIRED) goAwayCode = e.code
+                goAwayReceived = true
+            }
+            if (e is H2Event.Closed && closeCause == null) closeCause = closedCause(e)
+            pending.addLast(e)
+        }
+    }
+
+    /** Why the connection ended with [e]: the transport's loss when that came first, else the core's end. */
+    private fun closedCause(e: H2Event.Closed): Http2Exception.ConnectionClosed =
+        transportLost?.let {
+            Http2Exception.ConnectionClosed(
+                goAwayCode,
+                byPeer = true,
+                notProcessed = false,
+                "the connection was lost: ${it.message}",
+                it,
+            )
+        }
+            ?: Http2Exception.ConnectionClosed(e.code, e.byPeer, notProcessed = false, "the connection ended (${e.code}): ${e.reason}")
 
     /**
      * Wakes the writer when the core has something to write (only then: the writer's own poll would wake it forever) and
@@ -504,24 +535,13 @@ internal class H2Runtime(
     }
 
     private fun onGoAway(e: H2Event.GoAway) {
-        goAwayReceived = true
-        goAwayCode = e.code
+        // goAwayReceived and goAwayCode were set as the event was queued ([takeEventsLocked])
         onChange()
     }
 
     private fun onClosed(e: H2Event.Closed) {
-        val cause =
-            transportLost?.let {
-                Http2Exception.ConnectionClosed(
-                    goAwayCode,
-                    byPeer = true,
-                    notProcessed = false,
-                    "the connection was lost: ${it.message}",
-                    it,
-                )
-            }
-                ?: Http2Exception.ConnectionClosed(e.code, e.byPeer, notProcessed = false, "the connection ended (${e.code}): ${e.reason}")
-        closeCause = cause
+        // set as the event was queued ([takeEventsLocked])
+        val cause = closeCause ?: closedCause(e).also { closeCause = it }
         prefaceReceived.completeExceptionally(cause)
         val left = lock.withLock { streams.values.toList() }
         for (s in left) fail(s, cause) // a complete response stays complete (fail keeps it)

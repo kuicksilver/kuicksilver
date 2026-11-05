@@ -27,6 +27,7 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -344,7 +345,7 @@ class ServerH3Test {
             val tried = ArrayList<Int>()
             val bound = ArrayList<Int>()
             var heldPort = -1
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             var heldTcp: io.ktor.network.sockets.ServerSocket? = null
             val log = CapturedLog()
             val (server, port) =
@@ -395,7 +396,7 @@ class ServerH3Test {
      */
     @Test fun ephemeralPortWithSeveralUdpSocketsRetriesATakenTwin() =
         h3ServerTest {
-            val selector = SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            val selector = SelectorManager(kotlinx.coroutines.Dispatchers.IO)
             val held = ArrayList<io.ktor.network.sockets.BoundDatagramSocket>()
             val tried = ArrayList<Int>()
             val log = CapturedLog()

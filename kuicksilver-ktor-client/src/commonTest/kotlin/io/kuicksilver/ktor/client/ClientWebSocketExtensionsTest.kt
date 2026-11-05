@@ -40,6 +40,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
@@ -257,7 +258,7 @@ class ClientWebSocketExtensionsTest {
         frames: ByteArray,
         block: suspend (Int) -> Unit,
     ): Int {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind(InetSocketAddress("127.0.0.1", 0))
         try {
             return coroutineScope {

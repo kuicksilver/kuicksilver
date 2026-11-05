@@ -17,6 +17,7 @@ import io.ktor.utils.io.readByte
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -45,7 +46,7 @@ import kotlin.time.Duration.Companion.seconds
 class TcpSocketsNativeTest {
     @Test fun ipv6AddressesAreTheBoundOnes() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server =
@@ -78,7 +79,7 @@ class TcpSocketsNativeTest {
 
     @Test fun ipv4AddressesAreTheBoundOnes() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     bindTcp(selector, "127.0.0.1", 0).use { server ->
@@ -130,7 +131,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun negative_aFailedSelectFailsTheReadChannel() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val failing = FailingReadSelector(selector)
             try {
                 withTimeout(30.seconds) {
@@ -162,7 +163,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun negative_aResetFailsTheReadChannel() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
@@ -211,7 +212,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun aFailedSelectIsNotKeptForTheNextWaitForRoom() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val failing = FailOnceWriteSelector(selector)
             try {
                 withTimeout(30.seconds) {
@@ -246,7 +247,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun aClientSendingAfterTheServersCloseStillReadsTheResponse() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
@@ -302,7 +303,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun negative_dataAndEndTheSelectorMissesStillReachTheReader() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val deaf = NoReadWakeUpSelector(selector)
             try {
                 withTimeout(30.seconds) {
@@ -349,7 +350,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun idleReadRechecksKeepOneSelect() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val deaf = NoReadWakeUpSelector(selector)
             try {
                 withTimeout(30.seconds) {
@@ -382,7 +383,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun aConnectTheSelectorNeverReportsStillCompletes() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val deaf = NoConnectWakeUpSelector(selector)
             try {
                 withTimeout(30.seconds) {
@@ -410,7 +411,7 @@ class TcpSocketsNativeTest {
     /** A refused connect whose event the selector never reports fails (it neither hangs nor passes for connected). */
     @Test fun negative_aRefusedConnectTheSelectorNeverReportsFails() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val deaf = NoConnectWakeUpSelector(selector)
             try {
                 val probe = bindTcp(selector, "127.0.0.1", 0)
@@ -436,7 +437,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun negative_anUndecidedConnectEndsAtItsLimit() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val deaf = NoConnectWakeUpSelector(selector)
             try {
                 // a VPN in TUN mode (and Docker Desktop behind it) completes any TCP handshake itself: then nothing stays undecided
@@ -476,7 +477,7 @@ class TcpSocketsNativeTest {
      */
     @Test fun negative_aPendingConnectIsNotConnected() =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 // a VPN in TUN mode (and Docker Desktop behind it) completes any TCP handshake itself: then nothing stays pending
                 val faked = withTimeoutOrNull(500.milliseconds) { runCatching { connectTcpAddressWith(selector, testNet1Discard, null) } }
@@ -534,7 +535,7 @@ class TcpSocketsNativeTest {
         recheck: Duration?,
         finFirst: Boolean,
     ) = runBlocking {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val clientSelector = if (kind == SelectorKind.NoWriteWakeUp) NoWriteWakeUpSelector(selector) else selector
         try {
             withTimeout(30.seconds) {
@@ -647,7 +648,7 @@ class TcpSocketsNativeTest {
      */
     private fun resetTest(cut: suspend (Socket) -> Unit) =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)

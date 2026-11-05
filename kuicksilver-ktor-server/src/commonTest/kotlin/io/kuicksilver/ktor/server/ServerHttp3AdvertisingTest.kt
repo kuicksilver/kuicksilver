@@ -40,6 +40,7 @@ import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -73,7 +74,7 @@ class ServerHttp3AdvertisingTest {
         port: Int,
         vararg steps: suspend () -> Unit,
     ): List<String> {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         try {
             val tcp =
                 io.kuicksilver.ktor.network

@@ -5,6 +5,7 @@ package io.kuicksilver.ktor.server
 import io.ktor.server.engine.connector
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.IO
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -73,7 +74,7 @@ class ServerQuicConfigTest {
         serverTest {
             val selector =
                 io.ktor.network.selector
-                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.IO)
             try {
                 val probe =
                     io.ktor.network.sockets

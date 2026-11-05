@@ -22,6 +22,7 @@ import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -168,7 +169,7 @@ class ServerH1BodyTest {
                 module = { routing { post("/ignore") { call.respondText("ignored") } } },
             ) { port ->
                 val size = 32 * 1024 * 1024
-                val selector = SelectorManager(Dispatchers.Default)
+                val selector = SelectorManager(Dispatchers.IO)
                 try {
                     val socket = aSocket(selector).tcp().connect("127.0.0.1", port)
                     val w = socket.openWriteChannel(autoFlush = true)

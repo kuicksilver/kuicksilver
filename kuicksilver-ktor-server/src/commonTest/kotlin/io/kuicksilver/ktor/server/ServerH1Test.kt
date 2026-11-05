@@ -29,6 +29,7 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -217,7 +218,7 @@ class ServerH1Test {
     @Test fun gracefulStopClosesIdleKeepAliveConnections() =
         serverTest {
             val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 val socket = aSocket(selector).tcp().connect("127.0.0.1", port).tls(ServerFixtures.clientTls())
                 val w = socket.openWriteChannel(autoFlush = true)

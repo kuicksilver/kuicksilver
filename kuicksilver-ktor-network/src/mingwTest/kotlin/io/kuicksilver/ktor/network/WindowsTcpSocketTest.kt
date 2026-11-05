@@ -15,6 +15,7 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
+import kotlinx.coroutines.IO
 import platform.posix.AF_INET
 import platform.posix.INVALID_SOCKET
 import platform.posix.SOCK_STREAM
@@ -44,7 +45,7 @@ class WindowsTcpSocketTest {
             assertEquals(kotlin.time.Duration.parse("1s"), tcpReadRecheck)
             val selector =
                 io.ktor.network.selector
-                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.IO)
             try {
                 val server = bindTcp(selector, "127.0.0.1", 0)
                 val port = (server.localAddress as io.ktor.network.sockets.InetSocketAddress).port
@@ -70,7 +71,7 @@ class WindowsTcpSocketTest {
         kotlinx.coroutines.runBlocking {
             val selector =
                 io.ktor.network.selector
-                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.IO)
             // the port stays ours for the whole test: a socket bound with SO_EXCLUSIVEADDRUSE that never listens, so no
             // other process can take it between the probe and the connect, and a connect to it is refused
             tcpStartup()

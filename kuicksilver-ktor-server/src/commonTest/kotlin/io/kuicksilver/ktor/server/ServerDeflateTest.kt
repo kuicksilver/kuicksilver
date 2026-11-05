@@ -37,6 +37,7 @@ import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -237,7 +238,7 @@ class ServerDeflateTest {
         exchange: suspend (ByteReadChannel, ByteWriteChannel) -> Unit,
     ) {
         val (server, port) = tlsServer { deflateEcho() }
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         try {
             val socket = aSocket(selector).tcp().connect("127.0.0.1", port).tls(ServerFixtures.clientTls())
             try {

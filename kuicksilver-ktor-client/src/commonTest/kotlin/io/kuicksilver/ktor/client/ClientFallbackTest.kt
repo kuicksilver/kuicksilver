@@ -37,6 +37,7 @@ import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -573,7 +574,7 @@ class ClientFallbackTest {
             var accepts = 0
             val selector =
                 io.ktor.network.selector
-                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.IO)
             val listener =
                 io.ktor.network.sockets
                     .aSocket(selector)

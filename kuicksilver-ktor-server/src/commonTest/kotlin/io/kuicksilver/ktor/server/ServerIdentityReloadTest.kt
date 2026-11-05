@@ -24,6 +24,7 @@ import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsIdentity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.BeforeTest
@@ -81,7 +82,10 @@ class ServerIdentityReloadTest {
 
         companion object {
             suspend fun open(port: Int): H1 {
-                val selector = SelectorManager(Dispatchers.Default)
+                // on Dispatchers.IO, as ktor-network wants it: its selector blocks its thread in select() for up to 500 ms
+                // while a read is pending, and two of them on Dispatchers.Default (two threads on a two-core device, the
+                // CI emulators) left the QUIC loops, which run there, waiting for seconds
+                val selector = SelectorManager(Dispatchers.IO)
                 val tcp =
                     io.kuicksilver.ktor.network
                         .connectTcp(selector, InetSocketAddress("127.0.0.1", port))

@@ -15,6 +15,7 @@ import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.quic.KuicksilverLogger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.TestScope
 import kotlin.coroutines.CoroutineContext
@@ -63,7 +64,7 @@ internal suspend fun <T> TestScope.exchange(
     events: EngineEvents = EngineEvents(null, KuicksilverLogger.None),
     block: suspend (HttpResponseData) -> T,
 ): T {
-    val selector = SelectorManager(Dispatchers.Default)
+    val selector = SelectorManager(Dispatchers.IO)
     val pool = H1Pool(KuicksilverEngineConfig(), selector, events)
     pool.cleartextPermitted = { true }
     val call = Job()

@@ -39,6 +39,7 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeout
@@ -337,7 +338,7 @@ class ClientDeflateTest {
         client: suspend (Int) -> Unit = { port -> defaultClient(port) },
         serve: suspend (ByteReadChannel, ByteWriteChannel) -> T,
     ): Pair<Unit, T> {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind(InetSocketAddress("127.0.0.1", 0))
         try {
             return coroutineScope {

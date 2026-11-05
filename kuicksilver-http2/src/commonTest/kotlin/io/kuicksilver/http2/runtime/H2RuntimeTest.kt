@@ -411,6 +411,67 @@ class H2RuntimeTest {
         }
 
     /**
+     * A GOAWAY on a connection without streams closes the core at once, under the lock, while its event may still wait
+     * for another thread's dispatch: whoever then finds the connection unusable must also see the GOAWAY's code (the pool
+     * reads HTTP_1_1_REQUIRED from it, RFC 9113 section 7; seen too early it was null and the call failed with "the
+     * server took no request", ClientH2Test.http11RequiredBeforeTheFirstRequest on the JDK 17 job).
+     */
+    @Test fun goAwayCodeIsKnownOnceTheConnectionIsUnusable() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            runCurrent()
+            client.rt.holdDispatchForTest()
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.goAway(0, Http2ErrorCode.HTTP_1_1_REQUIRED.code, ByteArray(0)))
+            assertFalse(client.tryReserve())
+            assertEquals(Http2ErrorCode.HTTP_1_1_REQUIRED, client.goAwayCode, "the code of the GOAWAY that made it unusable")
+            client.rt.releaseDispatchForTest()
+            runCurrent()
+            assertEquals(Http2ErrorCode.HTTP_1_1_REQUIRED, client.goAwayCode)
+        }
+
+    /**
+     * A server may send more than one GOAWAY (RFC 9113 section 6.8); a later NO_ERROR one does not take back an earlier
+     * HTTP_1_1_REQUIRED (section 7): the route must still go to HTTP/1.1 only.
+     */
+    @Test fun http11RequiredStaysAfterALaterNoErrorGoAway() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            val a = client.get("/a")
+            runCurrent()
+            srv.read()
+            srv.write(FrameEncoder.goAway(a.id, Http2ErrorCode.HTTP_1_1_REQUIRED.code, ByteArray(0)))
+            runCurrent()
+            srv.write(FrameEncoder.goAway(a.id, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+            runCurrent()
+            assertEquals(Http2ErrorCode.HTTP_1_1_REQUIRED, client.goAwayCode)
+            a.release()
+        }
+
+    /**
+     * The core closes on a connection error at once, under the lock, while its Closed event may still wait for another
+     * thread's dispatch: a response head refused in that gap fails with the connection's end, never with a made-up
+     * stream reset (CANCEL).
+     */
+    @Test fun aResponseRefusedBeforeTheCloseIsDispatchedFailsWithTheConnectionsEnd() =
+        runTest {
+            val (client, server, _) = pair()
+            client.get("/")
+            runCurrent()
+            val r = server.requests.receive()
+            server.rt.holdDispatchForTest()
+            // PING with a 4-byte payload: FRAME_SIZE_ERROR, a connection error (RFC 9113 section 6.7)
+            server.rt.receiveWithoutDispatchForTest(byteArrayOf(0, 0, 4, 6, 0, 0, 0, 0, 0, 1, 2, 3, 4))
+            val e = assertFailsWith<Http2Exception> { r.respond(200) }
+            assertIs<Http2Exception.ConnectionClosed>(e, "the connection's end, not $e")
+            server.rt.releaseDispatchForTest()
+            runCurrent()
+        }
+
+    /**
      * RFC 9113 section 8.1: a server may answer before the whole request and then stop it with RST_STREAM NO_ERROR; the
      * client keeps the response (its content included, even when the reset arrives before the application read it) and
      * its sending stops without an error.

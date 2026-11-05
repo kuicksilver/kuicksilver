@@ -28,6 +28,7 @@ import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -132,7 +133,7 @@ class ClientProxyTest {
     @Test
     fun negative_noTunnelByteBeforeTheConnectAnswer() =
         clientTest {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
             try {
                 coroutineScope {
@@ -197,7 +198,7 @@ class ClientProxyTest {
      */
     @Test fun negative_hugeConnectResponseHeadFails() =
         clientTest {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
             try {
                 coroutineScope {
@@ -264,7 +265,7 @@ class ClientProxyTest {
         connectResponse: String = "HTTP/1.1 200 Connection established\r\n\r\n",
         block: suspend (Int, () -> List<String>) -> Unit,
     ) {
-        val selector = SelectorManager(Dispatchers.Default)
+        val selector = SelectorManager(Dispatchers.IO)
         val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
         val head = ArrayList<String>()
         try {

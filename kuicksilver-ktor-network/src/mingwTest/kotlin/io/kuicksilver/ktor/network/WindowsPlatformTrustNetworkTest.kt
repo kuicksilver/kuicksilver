@@ -16,6 +16,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.toKString
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import platform.posix.getenv
@@ -39,7 +40,7 @@ class WindowsPlatformTrustNetworkTest {
     private fun handshake(host: String) =
         runBlocking {
             withTimeout(60.seconds) {
-                SelectorManager(Dispatchers.Default).use { selector ->
+                SelectorManager(Dispatchers.IO).use { selector ->
                     aSocket(selector).tcp().connect(host, 443).use { socket ->
                         val tls =
                             socket.tls(

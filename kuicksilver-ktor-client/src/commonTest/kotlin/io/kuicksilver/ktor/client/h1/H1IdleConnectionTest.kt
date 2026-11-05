@@ -23,6 +23,7 @@ import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.quic.KuicksilverLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -96,7 +97,7 @@ class H1IdleConnectionTest {
     @Test fun connectionIsIdleWhenTheBodyEnds() =
         runTest {
             val wire = Wire()
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             val h1 = H1Pool(KuicksilverEngineConfig(), selector)
             h1.cleartextPermitted = { true }
             assertNull(h1.pool.acquire("r"))
@@ -177,7 +178,7 @@ class H1IdleConnectionTest {
 
     private fun TestScope.pooled(block: suspend Pooled.() -> Unit) =
         launch {
-            val selector = SelectorManager(Dispatchers.Default) // H1Pool wants one; nothing here selects on it
+            val selector = SelectorManager(Dispatchers.IO) // H1Pool wants one; nothing here selects on it
             val p = Pooled(Wire(), selector)
             try {
                 p.block()

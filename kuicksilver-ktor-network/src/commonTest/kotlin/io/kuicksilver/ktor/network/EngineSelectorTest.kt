@@ -8,6 +8,7 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -33,8 +34,8 @@ import kotlin.time.Duration.Companion.seconds
 class EngineSelectorTest {
     @Test fun socketClosedWhileTheSelectorIsIdleIsReleased() =
         runBlocking {
-            val serverSelector = SelectorManager(Dispatchers.Default)
-            val clientSelector = engineSelector(Dispatchers.Default)
+            val serverSelector = SelectorManager(Dispatchers.IO)
+            val clientSelector = engineSelector(Dispatchers.IO)
             try {
                 withTimeout(60.seconds) {
                     val listener = bindTcp(serverSelector, "127.0.0.1", 0)

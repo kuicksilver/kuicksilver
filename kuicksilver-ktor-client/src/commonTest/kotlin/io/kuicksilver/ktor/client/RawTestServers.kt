@@ -28,6 +28,7 @@ import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
@@ -79,7 +80,7 @@ internal suspend fun tlsWithSilentUdp(
             identity = ClientFixtures.identity()
             this.alpn = serverAlpn
         }
-    val selector = SelectorManager(Dispatchers.Default)
+    val selector = SelectorManager(Dispatchers.IO)
     var udp: BoundDatagramSocket? = null
     val tcp: ServerSocket
     try {
@@ -220,7 +221,7 @@ internal suspend fun udpRelay(
     tcpTwin: Boolean = false,
     block: suspend (port: Int, relay: UdpRelay) -> Unit,
 ) {
-    val selector = SelectorManager(Dispatchers.Default)
+    val selector = SelectorManager(Dispatchers.IO)
     val (front, tcp) =
         try {
             if (tcpTwin) {

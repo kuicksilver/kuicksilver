@@ -375,7 +375,7 @@ class TcpWriterTest {
      */
     @Test fun negative_aFailedStreamResetsTheConnection(): Unit =
         runBlocking {
-            val selector = SelectorManager(Dispatchers.Default)
+            val selector = SelectorManager(Dispatchers.IO)
             try {
                 withTimeout(30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
