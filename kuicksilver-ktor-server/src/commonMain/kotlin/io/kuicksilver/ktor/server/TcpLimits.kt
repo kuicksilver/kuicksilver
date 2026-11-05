@@ -16,8 +16,9 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * [acceptLoop]. A slot ([maxConnections] in all) is taken before each `accept()`, so at the limit the loop waits instead of
  * accepting and the kernel backlog holds new clients (Go `x/net/netutil.LimitListener`, Jetty `ConnectionLimit`, nginx
  * `worker_connections`); a client is counted per address ([maxPerIp], by [peerIpKey]) right after `accept()`, the earliest
- * its address is known, and refused over the limit (nginx `limit_conn`, Envoy's `connection_limit`). Each accepted client
- * holds a [TcpLease] that gives both back once, when its socket is released.
+ * its address is known, and refused over the limit (nginx stream `limit_conn`, Envoy `connection_limit`). Each accepted
+ * client holds a [TcpLease] that gives both back once, when its socket's job completes; a socket whose release hangs past
+ * the abort wait ([closeWithin]) is given up then, so its descriptor can briefly outlive its slot.
  *
  * The per-address counts belong to the accept loop's coroutine alone (no lock on the accept path); a lease released from
  * any other thread hands its address back through [left], which the loop takes in before it counts the next client.
