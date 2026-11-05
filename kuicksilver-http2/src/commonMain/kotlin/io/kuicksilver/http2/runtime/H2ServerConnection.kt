@@ -91,12 +91,10 @@ public class H2ServerConnection private constructor(
 
     /**
      * The connection ended because the client broke one of the flood limits of [Http2Settings] (we sent GOAWAY
-     * ENHANCE_YOUR_CALM, RFC 9113 section 5.4.1): the engine counts that against the client's address.
+     * ENHANCE_YOUR_CALM, RFC 9113 section 5.4.1); a field block slower than `maxHeaderBlockTime` (also ENHANCE_YOUR_CALM)
+     * is a slow client, not a flood, and does not count. The engine may count it against the client's address.
      */
-    public val endedByFloodDefence: Boolean
-        get() =
-            (rt.closeCause as? Http2Exception.ConnectionClosed)?.let { it.code == Http2ErrorCode.ENHANCE_YOUR_CALM && !it.byPeer } ==
-                true
+    public val endedByFloodDefence: Boolean get() = rt.endedByFlood
 
     internal fun released() {
         open.update { it - 1 }

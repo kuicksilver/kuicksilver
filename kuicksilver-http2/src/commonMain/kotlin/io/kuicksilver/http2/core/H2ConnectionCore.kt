@@ -145,6 +145,13 @@ internal class H2ConnectionCore(
     private var closed = false
     private var closedReported = false
 
+    /**
+     * The connection ended with ENHANCE_YOUR_CALM because a field block took longer than `maxHeaderBlockTime`: a slow
+     * peer, not a flood (the engine does not count it against the peer's address).
+     */
+    var slowFieldBlock: Boolean = false
+        private set
+
     /** True once the connection ended (an error, a finished GOAWAY): nothing more is read, [poll] drains what is left. */
     val isClosed: Boolean get() = closed
 
@@ -959,6 +966,7 @@ internal class H2ConnectionCore(
             return connectionError(Http2ErrorCode.SETTINGS_TIMEOUT, "SETTINGS not acknowledged within ${settings.settingsAckTimeout}")
         }
         if (inBlock && now - blockStartedAt >= settings.maxHeaderBlockTime.inWholeNanoseconds) {
+            slowFieldBlock = true
             return connectionError(Http2ErrorCode.ENHANCE_YOUR_CALM, "field block not finished within ${settings.maxHeaderBlockTime}")
         }
         if (gracefulPing >= 0 && now >= gracefulDeadline) finishGracefulGoAway()
