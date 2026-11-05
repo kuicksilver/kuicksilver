@@ -45,7 +45,7 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.minutes
 
-/** `HttpClient(Kuicksilver)`: HTTP/3 and HTTP/1.1 over TLS 1.3 (docs/guide/ktor.md). */
+/** `HttpClient(Kuicksilver)`: HTTP/3, HTTP/2 and HTTP/1.1 over TLS 1.3 (docs/guide/ktor.md). */
 @OptIn(InternalAPI::class, DelicateCoroutinesApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 internal class KuicksilverEngine(
     override val config: KuicksilverEngineConfig,
@@ -207,8 +207,33 @@ internal class KuicksilverEngine(
                     ProtocolReason.Race, ProtocolReason.Fallback, ProtocolReason.ExistingConnection -> d.fallback
                 }
             }
+        if (protocol == HttpProtocolVersion.HTTP_1_1 && d.h2Refused && d.fallback != FallbackReason.H2Refused) {
+            // HTTP/1.1 because the server refused HTTP/2: that is what the call needs to say; the HTTP/3 reason stays in the log
+            d.h3Fallback = d.fallback
+            d.fallback = FallbackReason.H2Refused
+        }
         events.emit("protocolSelected") { protocolSelected(data, protocol, reason) }
     }
+
+    /**
+     * The TCP path (HTTP/1.1, or HTTP/2 when the server picks it): `protocolSelected` goes out with the protocol of the
+     * connection once it is in hand ([H1Pool.execute]), for [reason]; [after] runs after it.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun tcp(
+        data: HttpRequestData,
+        callContext: CoroutineContext,
+        reason: ProtocolReason,
+        d: ProtocolDiagnostics,
+        preopened: H1Pool.Opened? = null,
+        dns: RequestDns = config.newRequestDns(),
+        proxy: ResolvedProxy? = null,
+        after: () -> Unit = {},
+    ): HttpResponseData =
+        h1.execute(data, callContext, preopened, dns, proxy) { protocol ->
+            selected(data, protocol, reason, d)
+            after()
+        }
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun route(
@@ -243,18 +268,15 @@ internal class KuicksilverEngine(
         if (!url.protocol.isSecure() || proxy != null ||
             config.http3.discovery == Http3DiscoveryMode.H1Only || disabled
         ) {
-            selected(
-                data,
-                HttpProtocolVersion.HTTP_1_1,
+            val reason =
                 when {
                     proxy != null -> ProtocolReason.Proxy
                     config.http3.discovery == Http3DiscoveryMode.H1Only && url.protocol.isSecure() -> ProtocolReason.Configuration
                     disabled -> ProtocolReason.Http3Disabled
                     else -> ProtocolReason.NotSecure
-                },
-                d,
-            )
-            val r = h1.execute(data, callContext, proxy = proxy) // no Alt-Svc is used or learned through a proxy
+                }
+            // the kill switch turns HTTP/3 off, not HTTP/2: the TCP path still offers h2
+            val r = tcp(data, callContext, reason, d, proxy = proxy) // no Alt-Svc is used or learned through a proxy
             // switched off, Auto keeps learning Alt-Svc, so switching back needs no warm-up
             if (disabled && proxy == null && config.http3.discovery == Http3DiscoveryMode.Auto) {
                 altSvcUpdate {
@@ -288,8 +310,7 @@ internal class KuicksilverEngine(
                 if (webSocket &&
                     !h3.canConnectProtocol(target)
                 ) {
-                    selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.WebSocket, d)
-                    h1.execute(data, callContext)
+                    tcp(data, callContext, ProtocolReason.WebSocket, d)
                 } else {
                     raced(target, data, callContext, network, emptyList(), d)
                 }
@@ -384,8 +405,7 @@ internal class KuicksilverEngine(
             }
         if (broken != null) {
             d.brokenSince = broken
-            selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.BrokenAlternative, d)
-            return h1.execute(data, callContext, dns = dns)
+            return tcp(data, callContext, ProtocolReason.BrokenAlternative, d, dns = dns)
         }
         // an established HTTP/3 connection is used as is: the race is about setting one up
         if (h3.existing(t) != null) {
@@ -402,9 +422,15 @@ internal class KuicksilverEngine(
             }
         val result =
             race.race<Any>({ h3Attempt.await() }, { h1.open(data, dns) }, rtt, confirmed, onLoser = {
-                (it as? H1Pool.Opened)?.let { o -> h1.recycle(o.connection) } // unused: back to the pool
+                (it as? H1Pool.Opened)?.let { o -> h1.recycle(o) } // unused: back to the pool, or its HTTP/2 stream given back
             })
-        val winner = if (result.winner == Protocol.H3) HttpProtocolVersion.HTTP_3_0 else HttpProtocolVersion.HTTP_1_1
+        // the TCP side is HTTP/2 when the server picked h2 in ALPN
+        val winner =
+            when {
+                result.winner == Protocol.H3 -> HttpProtocolVersion.HTTP_3_0
+                (result.value as H1Pool.Opened).h2 != null -> HttpProtocolVersion.HTTP_2_0
+                else -> HttpProtocolVersion.HTTP_1_1
+            }
         val headStart = race.headStart(rtt, confirmed)
         events.emit("raceEnded") { raceEnded(data, winner, headStart, result.h3Failure) }
         d.raced(headStart)
@@ -413,7 +439,7 @@ internal class KuicksilverEngine(
             d.h3Failure = result.h3Failure
             d.fallback = classifyH3Failure(result.h3Failure) ?: FallbackReason.H3NotReady
         }
-        selected(data, winner, ProtocolReason.Race, d)
+        if (result.winner == Protocol.H3) selected(data, winner, ProtocolReason.Race, d) // the TCP side: once its exchange starts
         return when (result.winner) {
             Protocol.H3 -> {
                 val conn = result.value as io.kuicksilver.http3.Http3Connection
@@ -456,7 +482,7 @@ internal class KuicksilverEngine(
                         }
                     }
                 }
-                h1.execute(data, callContext, result.value as H1Pool.Opened, dns)
+                tcp(data, callContext, ProtocolReason.Race, d, result.value as H1Pool.Opened, dns)
             }
         }
     }
@@ -498,6 +524,10 @@ internal class KuicksilverEngine(
             "client.h1Routes" to h1Pool.routeCount.toLong(),
             "client.h1Waiters" to h1Pool.waiterCount.toLong(),
             "client.h1Sessions" to h1.sessions.size().toLong(),
+            "client.h2Connections" to h1.h2.connectionCount.toLong(),
+            "client.h2Streams" to h1.h2.streamCount.toLong(),
+            "client.h2Routes" to h1.h2.routeCount.toLong(),
+            "client.h2Refused" to h1.h2Refused.size.toLong(),
             "client.h3Connections" to h3.connectionsForProbe().toLong(),
             "client.h3Dedicated" to h3.dedicatedCount.value.toLong(),
             "client.brokenAltSvc" to broken.toLong(),
@@ -559,15 +589,14 @@ internal class KuicksilverEngine(
                 misdirected = true
             }
         }
-        selected(
-            data,
-            HttpProtocolVersion.HTTP_1_1,
-            // after the alternative's 421 it is gone: no alternative, whatever the request (a WebSocket included)
-            if (alt != null && webSocket && !misdirected) ProtocolReason.WebSocket else ProtocolReason.NoAlternative,
-            d,
-        )
-        if (misdirected) d.fallback = FallbackReason.MisdirectedRequest
-        val r = h1.execute(data, callContext)
+        val r =
+            tcp(
+                data,
+                callContext,
+                // after the alternative's 421 it is gone: no alternative, whatever the request (a WebSocket included)
+                if (alt != null && webSocket && !misdirected) ProtocolReason.WebSocket else ProtocolReason.NoAlternative,
+                d,
+            ) { if (misdirected && d.fallback != FallbackReason.H2Refused) d.fallback = FallbackReason.MisdirectedRequest }
         altSvcUpdate {
             altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
         }
@@ -626,8 +655,7 @@ internal class KuicksilverEngine(
         d.h3Failure = cause
         val reason = classifyH3Failure(cause) ?: FallbackReason.Other
         d.fallback = reason
-        selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.Fallback, d)
-        val r = h1.execute(data, callContext, dns = dns)
+        val r = tcp(data, callContext, ProtocolReason.Fallback, d, dns = dns)
         if (marksAlternativeBroken(h3Failure)) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"

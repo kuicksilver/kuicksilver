@@ -38,7 +38,11 @@ public abstract class KuicksilverEventListener {
         cause: Throwable,
     ) {}
 
-    /** The engine sends [request] over [protocol] for [reason]. */
+    /**
+     * The engine sends [request] over [protocol] for [reason]. On the TCP path it comes once the connection is in hand,
+     * with the protocol the server chose (`HTTP_2_0` when it picked `h2` in ALPN, else `HTTP_1_1`); before 0.3.0 it came
+     * before connecting and always said `HTTP_1_1`. A repeat that changes the protocol (HTTP_1_1_REQUIRED) reports it again.
+     */
     public open fun protocolSelected(
         request: HttpRequestData,
         protocol: HttpProtocolVersion,
@@ -46,7 +50,8 @@ public abstract class KuicksilverEventListener {
     ) {}
 
     /**
-     * HTTP/3 and HTTP/1.1 connection setups raced (docs/guide/ktor.md, "Racing and fallback"): [winner] won after HTTP/3's
+     * HTTP/3 and TCP connection setups raced (docs/guide/ktor.md, "Racing and fallback"): [winner] (`HTTP_3_0`, or the
+     * TCP side's `HTTP_2_0` or `HTTP_1_1`) won after HTTP/3's
      * [headStart]; [h3Failure] is why HTTP/3 lost when it failed rather than being slower.
      */
     public open fun raceEnded(
@@ -68,15 +73,16 @@ public abstract class KuicksilverEventListener {
         alternative: String,
     ) {}
 
-    /** HTTP/3 failed for [request] with [cause] and the request goes again over HTTP/1.1. */
+    /** HTTP/3 failed for [request] with [cause] and the request goes again over TCP (HTTP/1.1, or HTTP/2 when the server offers it). */
     public open fun fallback(
         request: HttpRequestData,
         cause: Throwable,
     ) {}
 
     /**
-     * [request] is sent again, attempt number [attempt] (2 and up), because of [cause]: a GOAWAY, a stale pooled
-     * connection, or a 417 to its `Expect: 100-continue` (sent again without it).
+     * [request] is sent again, attempt number [attempt] (2 and up), because of [cause]: a GOAWAY or REFUSED_STREAM (the
+     * server did not process it), HTTP_1_1_REQUIRED over HTTP/2, a stale pooled connection, or a 417 to its
+     * `Expect: 100-continue` (sent again without it).
      */
     public open fun retry(
         request: HttpRequestData,
@@ -114,10 +120,10 @@ public enum class ProtocolReason {
     /** An HTTP/3 connection to the origin was already open. */
     ExistingConnection,
 
-    /** The HTTP/3 and HTTP/1.1 connection setups raced and this one won. */
+    /** The HTTP/3 and TCP connection setups raced and this one won. */
     Race,
 
-    /** `Auto` without a known HTTP/3 alternative: HTTP/1.1, learning `Alt-Svc` from the response. */
+    /** `Auto` without a known HTTP/3 alternative: TCP (HTTP/1.1 or HTTP/2), learning `Alt-Svc` from the response. */
     NoAlternative,
 
     /** The alternative is marked broken on this network. */
@@ -126,13 +132,13 @@ public enum class ProtocolReason {
     /** A WebSocket to an origin without an HTTP/3 connection that allows Extended CONNECT (RFC 9220) starts on HTTP/1.1. */
     WebSocket,
 
-    /** HTTP/3 failed for this request; it is repeated on HTTP/1.1. */
+    /** HTTP/3 failed for this request; it is repeated over TCP. */
     Fallback,
 
-    /** A proxy applies to the request: HTTP/1.1 through it (QUIC's UDP does not go through HTTP CONNECT or SOCKS5 CONNECT). */
+    /** A proxy applies to the request: TCP through it (QUIC's UDP does not go through HTTP CONNECT or SOCKS5 CONNECT). */
     Proxy,
 
-    /** `Http3ClientConfig.http3Allowed` returned false for this request: HTTP/1.1, as with `H1Only`. */
+    /** `Http3ClientConfig.http3Allowed` returned false for this request: TCP (HTTP/1.1 or HTTP/2), as with `H1Only`. */
     Http3Disabled,
 }
 

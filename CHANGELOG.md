@@ -14,6 +14,28 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: HTTP/2 over TLS (RFC 9113; `docs/guide/ktor.md`, "HTTP/2 on the client"). Every `https://` connection
+  over TCP offers `h2` and `http/1.1` in ALPN (also through HTTP CONNECT and SOCKS5 proxies; never for `http://`, no h2c,
+  and never for WebSockets, RFC 8441 is not supported yet); a server that picks `h2` gets one multiplexed connection per
+  route while it has a free stream under its SETTINGS_MAX_CONCURRENT_STREAMS, a second one when it is full, within
+  `maxConnectionsPerRoute`. Requests that start together toward a new origin collapse into one connection. A request the
+  server did not process (GOAWAY above its stream, REFUSED_STREAM; RFC 9113 section 8.7) goes again, at most twice, for
+  any method; HTTP_1_1_REQUIRED repeats it over HTTP/1.1 and makes the route offer only `http/1.1` for 5 minutes,
+  doubling up to 2 days (new `FallbackReason.H2Refused`); any other HTTP/2 failure fails the call with the new
+  `Http2Exception` (experimental, in `kuicksilver-http2`). Responses are checked against RFC 9113 section 8 (a malformed
+  one fails the call); flow control follows the application's reading; the server's preface must arrive within the
+  connect timeout, and an optional PING interval closes a silent connection. Configuration: experimental
+  `engine { http2 { enabled; settings; pingInterval } }` (`Http2ClientConfig`); `enabled = false` offers only
+  `http/1.1`, as in 0.2. The HTTP/3 kill switch (`http3Allowed`) does not turn HTTP/2 off. Responses report
+  `HttpProtocolVersion.HTTP_2_0`, as do `ProtocolDiagnostics.protocol`, `connectionAcquired` and the race's
+  `raceEnded(winner)`; the resource probe adds `client.h2Connections`, `client.h2Streams`, `client.h2Routes` and
+  `client.h2Refused`.
+- HTTP/2 module: the RFC 9113 section 8 field and message rules (`io.kuicksilver.http2.message`, a port of
+  `kuicksilver-http3`'s), with the shared cases in `tools/vectors/http-fields.json` that both modules' tests run
+  (`tools/http/gen-field-vectors.py`, checked in the local gate); a coroutine runtime over ktor-io channels that drives the
+  connection core for the engines (ktor-io and kotlinx-coroutines are now API dependencies of `kuicksilver-http2`); and
+  the fuzz target `http2.connectionClient`.
+
 - Ktor server: HTTP/3 can be stopped from advertising, or drained, at run time without a restart (experimental
   `KuicksilverApplicationEngine.http3Advertising` and `Http3Advertising`; `docs/guide/ktor.md`, "Turning HTTP/3 off on
   the server"). `On` (the default) advertises `Alt-Svc: h3=":<port>"; ma=86400` as before; `Clear` sends `Alt-Svc: clear`
@@ -217,6 +239,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   every open WebTransport session `WT_DRAIN_SESSION`.
 
 ### Changed
+
+- Ktor client: `KuicksilverEventListener.protocolSelected` for the TCP path now comes once the connection is in hand,
+  with its real protocol (`HTTP_2_0` when the server picked `h2`, else `HTTP_1_1`), still before `connectionAcquired`;
+  it came before connecting and always said `HTTP_1_1`. A call whose TCP connection cannot be set up therefore gets no
+  `protocolSelected`. TCP responses may report `HttpProtocolVersion.HTTP_2_0`: `https://` servers that offer `h2` are now
+  spoken to over HTTP/2 by default (`engine { http2 { enabled = false } }` restores HTTP/1.1), and `Http3DiscoveryMode.H1Only`
+  means "no HTTP/3" (HTTP/1.1 or HTTP/2 over TCP). `maxConnectionsCount` and `maxConnectionsPerRoute` count HTTP/2
+  connections too (once each).
 
 - TLS (performance): a server no longer builds an OpenSSL context (`SSL_CTX`, with its identity, suites and ticket keys)
   per connection. The handshakes of one server configuration share one context per identity snapshot, for QUIC and TCP

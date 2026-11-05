@@ -12,6 +12,7 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.close
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
@@ -54,12 +55,26 @@ internal suspend fun tlsH1WithSilentUdp(
     acceptAfter: kotlinx.coroutines.Deferred<Unit>? = null,
     handler: suspend CoroutineScope.(index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
     block: suspend (Int) -> Unit,
+) = tlsWithSilentUdp(listOf("http/1.1"), silentUdp, listener, acceptAfter, { i, _, input, output -> handler(i, input, output) }, block)
+
+/**
+ * [tlsH1WithSilentUdp] with the server's ALPN list [alpn] (its own order of preference picks the protocol, RFC 7301
+ * section 3.2): [handler] also gets the protocol the connection negotiated (null without one).
+ */
+internal suspend fun tlsWithSilentUdp(
+    alpn: List<String>,
+    silentUdp: Boolean = true,
+    listener: ServerSocket? = null,
+    acceptAfter: kotlinx.coroutines.Deferred<Unit>? = null,
+    handler: suspend CoroutineScope.(index: Int, negotiated: String?, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
+    block: suspend (Int) -> Unit,
 ) {
     require(listener == null || !silentUdp) { "a given listener comes with its own UDP side" }
+    val serverAlpn = alpn
     val tls =
         tlsConfig(TlsRole.Server) {
             identity = ClientFixtures.identity()
-            alpn = listOf("http/1.1")
+            this.alpn = serverAlpn
         }
     val selector = SelectorManager(Dispatchers.Default)
     var udp: BoundDatagramSocket? = null
@@ -106,7 +121,9 @@ internal suspend fun tlsH1WithSilentUdp(
                         val i = index++
                         launch {
                             runCatching {
-                                raw.tlsServer(tls).use { s -> handler(i, s.openReadChannel(), s.openWriteChannel(autoFlush = true)) }
+                                raw.tlsServer(tls).use { s ->
+                                    handler(i, s.negotiatedAlpn, s.openReadChannel(), s.openWriteChannel(autoFlush = true))
+                                }
                             }
                             raw.close()
                         }
@@ -275,4 +292,79 @@ internal suspend fun udpRelay(
         tcp?.close()
         selector.close()
     }
+}
+
+/** What a [tlsH2WithSilentUdp] server saw: connections accepted, their ALPN, and the ones that have ended. */
+internal class H2ServerLog {
+    private val lock = kotlinx.coroutines.sync.Mutex()
+    val accepted = kotlinx.coroutines.channels.Channel<String?>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    val ended = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+
+    @kotlin.concurrent.Volatile var acceptCount: Int = 0
+
+    /** The ALPN of every connection so far. */
+    val protocols = ArrayList<String?>()
+
+    suspend fun accept(alpn: String?) {
+        lock.lock()
+        try {
+            acceptCount++
+            protocols += alpn
+        } finally {
+            lock.unlock()
+        }
+        accepted.send(alpn)
+    }
+}
+
+/**
+ * An HTTP/2 server on 127.0.0.1 over TLS with ALPN [alpn] (`h2` first: picked whenever the client offers it): every
+ * connection that negotiated `h2` runs our server runtime with [settings] and hands each request to [onRequest] (which
+ * must answer it), the stream released after; a connection that negotiated anything else goes to [h1] (default: closed at
+ * once). With [silentUdp] the UDP twin port is bound and silent (QUIC blocked). [block] gets the port and the log.
+ */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal suspend fun tlsH2WithSilentUdp(
+    settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings(),
+    alpn: List<String> = listOf("h2", "http/1.1"),
+    silentUdp: Boolean = false,
+    h1: suspend CoroutineScope.(index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit = { _, _, _ -> },
+    onConnection: suspend (index: Int, connection: io.kuicksilver.http2.runtime.H2ServerConnection) -> Unit = { _, _ -> },
+    onRequest: suspend CoroutineScope.(connection: Int, request: io.kuicksilver.http2.runtime.H2ServerStream) -> Unit,
+    block: suspend (port: Int, log: H2ServerLog) -> Unit,
+) {
+    val log = H2ServerLog()
+    tlsWithSilentUdp(alpn, silentUdp, handler = { index, negotiated, input, output ->
+        log.accept(negotiated)
+        if (negotiated != "h2") return@tlsWithSilentUdp h1(index, input, output)
+        val conn =
+            io.kuicksilver.http2.runtime.H2ServerConnection.start(input, output, settings, this, closeTransport = {
+                // a clean close (the last frames are flushed, then close_notify), as a server ends a connection
+                output.close(null)
+                input.cancel(null)
+            })
+        onConnection(index, conn)
+        val requests =
+            launch {
+                for (r in conn.requests) {
+                    launch {
+                        try {
+                            onRequest(index, r)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            // the client went away mid-answer: nothing to do
+                        } finally {
+                            r.release()
+                        }
+                    }
+                }
+            }
+        try {
+            conn.awaitClosed()
+        } finally {
+            requests.cancel()
+            log.ended.trySend(index)
+        }
+    }) { port -> block(port, log) }
 }

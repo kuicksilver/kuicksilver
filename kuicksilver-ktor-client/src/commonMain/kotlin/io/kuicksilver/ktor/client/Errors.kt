@@ -78,7 +78,8 @@ internal fun ByteReadChannel.withSocketTimeout(request: HttpRequestData): ByteRe
     request.socketTimeoutMillis()?.let { SocketTimeoutChannel(this, it, request) } ?: this
 
 /**
- * The HTTP/3 attempt failed (or the alternative answered 421) after the request's streamed body was consumed, so the
+ * The HTTP/3 attempt failed (or the alternative answered 421), or the server did not process an HTTP/2 request (GOAWAY,
+ * REFUSED_STREAM) or asked for HTTP/1.1 (HTTP_1_1_REQUIRED), after the request's streamed body was consumed, so the
  * request cannot be repeated over HTTP/1.1 or on a new connection: the application decides whether to retry
  * with a body it can produce again. Bodies from bytes, from a writer or without content are replayed automatically.
  */

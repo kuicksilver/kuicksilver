@@ -32,6 +32,7 @@ public final class io/kuicksilver/ktor/client/FallbackReason : java/lang/Enum {
 	public static final field BrokenAlternative Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Configuration Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field GoAway Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field H2Refused Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field H3NotReady Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field HandshakeTimeout Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Http3Disabled Lio/kuicksilver/ktor/client/FallbackReason;
@@ -73,6 +74,16 @@ public final class io/kuicksilver/ktor/client/HostPort {
 	public final fun getPort ()I
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/Http2ClientConfig {
+	public fun <init> ()V
+	public final fun getEnabled ()Z
+	public final fun getPingInterval-UwyO8pc ()J
+	public final fun getSettings ()Lio/kuicksilver/http2/Http2Settings;
+	public final fun setEnabled (Z)V
+	public final fun setPingInterval-LRDsOJo (J)V
+	public final fun setSettings (Lio/kuicksilver/http2/Http2Settings;)V
 }
 
 public final class io/kuicksilver/ktor/client/Http3ClientConfig {
@@ -144,6 +155,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getConnectTimeout-UwyO8pc ()J
 	public final fun getConnectionAttemptDelay-UwyO8pc ()J
 	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
+	public final fun getHttp2 ()Lio/kuicksilver/ktor/client/Http2ClientConfig;
 	public final fun getHttp3 ()Lio/kuicksilver/ktor/client/Http3ClientConfig;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getIdleTimeout-UwyO8pc ()J
@@ -157,6 +169,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lkotlin/jvm/functions/Function1;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun http2 (Lkotlin/jvm/functions/Function1;)V
 	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
 	public final fun setConnectionAttemptDelay-LRDsOJo (J)V

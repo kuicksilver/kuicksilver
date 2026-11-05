@@ -236,8 +236,10 @@ type is experimental, so are its members.
 
 ### `kuicksilver-http2`
 
-The whole module is experimental in 0.3.0 (ADR-0017): `Http2Settings` and `Http2ErrorCode` are
-`@ExperimentalKuicksilverApi`; the frame codec, HPACK and the connection core are internal.
+The whole module is experimental in 0.3.0 (ADR-0017): `Http2Settings`, `Http2ErrorCode` and `Http2Exception` (what a
+call over HTTP/2 fails with) are `@ExperimentalKuicksilverApi`; the coroutine runtime (`io.kuicksilver.http2.runtime`
+connections and streams) is `@InternalKuicksilverApi`, for the engines only; the frame codec, HPACK, the message rules and
+the connection core are internal.
 
 ### `kuicksilver-ktor-client`
 
@@ -246,6 +248,7 @@ The whole module is experimental in 0.3.0 (ADR-0017): `Http2Settings` and `Http2
 | `http3 { earlyData }` | 0-RTT |
 | `maxConnectionsCount`, `maxConnectionsPerRoute`, `idleTimeout`, `maxConnectionLifetime` | connection limits and idle cleanup |
 | `logger`, `eventListener`, `KuicksilverEventListener`, `ProtocolReason`, `http3 { qlog; connectionListener }` | observability |
+| `http2 { enabled; settings; pingInterval }`, `Http2ClientConfig`, `FallbackReason.H2Refused` | HTTP/2 on the TCP path |
 
 ### `kuicksilver-ktor-server`
 

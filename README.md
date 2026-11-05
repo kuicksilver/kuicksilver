@@ -37,8 +37,8 @@ embeddedServer(Kuicksilver) { /* ... */ }      // HTTP/1.1 over TLS and HTTP/3 o
 - **One implementation, every Kotlin platform.** QUIC, HTTP/3 and QPACK are Kotlin code, not bindings to a different
   library per platform: the same sans-IO core runs on the JVM, Android, iOS, macOS, Linux and Windows, and in a
   deterministic network simulator for tests.
-- **Drop-in Ktor engines.** `HttpClient(Kuicksilver)` discovers HTTP/3 through `Alt-Svc` and falls back to HTTP/1.1;
-  `embeddedServer(Kuicksilver)` serves HTTP/1.1 over TLS and HTTP/3 on one port.
+- **Drop-in Ktor engines.** `HttpClient(Kuicksilver)` discovers HTTP/3 through `Alt-Svc` and falls back to HTTP/2 or
+  HTTP/1.1 over TLS; `embeddedServer(Kuicksilver)` serves HTTP/1.1 over TLS and HTTP/3 on one port.
 - **Connections that survive network changes.** QUIC connection migration, and `followDefaultNetwork` on Android and
   Apple moves a connection when the phone switches from Wi-Fi to cellular.
 - **The rest of modern QUIC.** Datagrams (RFC 9221), path MTU discovery, QUIC v2, stream priorities, WebSockets and
@@ -141,8 +141,8 @@ with ALPN set. Datagrams, stream priorities, connection migration and the sans-I
 | `kuicksilver-ktor-network` | `Socket.tls()` / `Socket.tlsServer()` for ktor-network sockets | [tls.md](docs/guide/tls.md) |
 | `kuicksilver-quic` | QUIC transport: streams, datagrams, migration, coroutine API and sans-IO core | [quic.md](docs/guide/quic.md) |
 | `kuicksilver-http3` | HTTP/3 and QPACK over `kuicksilver-quic` | [http3.md](docs/guide/http3.md) |
-| `kuicksilver-http2` | HTTP/2 and HPACK as a sans-IO core over any byte stream (experimental, for the engines; in progress for 0.3.0) | [architecture](docs/architecture.md) |
-| `kuicksilver-ktor-client` | `HttpClient(Kuicksilver)`: HTTP/1.1 over TLS and HTTP/3, Alt-Svc discovery, racing, fallback | [ktor.md](docs/guide/ktor.md) |
+| `kuicksilver-http2` | HTTP/2 and HPACK: a sans-IO core over any byte stream and its coroutine runtime (experimental, for the engines) | [architecture](docs/architecture.md) |
+| `kuicksilver-ktor-client` | `HttpClient(Kuicksilver)`: HTTP/3, and HTTP/2 or HTTP/1.1 over TLS, Alt-Svc discovery, racing, fallback | [ktor.md](docs/guide/ktor.md) |
 | `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](docs/guide/ktor.md) |
 
 Each module depends only on the layer directly below it (ADR-0005). `kuicksilver-testing` (network simulator and
@@ -160,7 +160,7 @@ in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repos
 
 TLS over TCP (`TlsConnection`, `Socket.tls()`) works on every target above. JS and Wasm are not targets.
 
-Not in 0.2.x: HTTP/2 (ADR-0009, by decision), HTTP/3 server push, WebTransport (planned for 0.3.0, experimental), multipath
+Not in 0.2.x: HTTP/2 (ADR-0009, by decision; the 0.3.0 client speaks it, ADR-0017), HTTP/3 server push, WebTransport (planned for 0.3.0, experimental), multipath
 (later, see the [roadmap](docs/roadmap.md)), OpenSSL 4.x. 0-RTT
 is available as an opt-in, experimental API and is off by default (ADR-0015).
 

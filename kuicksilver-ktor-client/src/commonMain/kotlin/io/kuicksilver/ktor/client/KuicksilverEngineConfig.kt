@@ -5,6 +5,7 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.engine.HttpClientEngineConfig
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
+import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.quic.ConnectionListener
 import io.kuicksilver.quic.KuicksilverLogger
@@ -31,7 +32,10 @@ public enum class Http3DiscoveryMode {
     /** HTTP/3 only, no fallback (like `curl --http3-only`). */
     H3Only,
 
-    /** HTTP/1.1 only. */
+    /**
+     * No HTTP/3: TCP only, that is HTTP/1.1, or HTTP/2 when the server offers it over TLS ([KuicksilverEngineConfig.http2]).
+     * The name predates HTTP/2 support (0.3.0).
+     */
     H1Only,
 }
 
@@ -144,7 +148,8 @@ public class Http3ClientConfig {
      * A kill switch for HTTP/3 (docs/guide/ktor.md, "Turning HTTP/3 off remotely"), called once per `https://` request
      * (not with [Http3DiscoveryMode.H1Only]) on the call's coroutine before anything connects: it must be quick and must not
      * block, such as reading an `AtomicBoolean` or a `StateFlow.value` that your remote configuration updates. While it
-     * returns false, requests go over HTTP/1.1 as with `H1Only` (`ProtocolReason.Http3Disabled`), open HTTP/3 connections
+     * returns false, requests go over TCP as with `H1Only` (`ProtocolReason.Http3Disabled`; HTTP/2 stays on: this switch is
+     * HTTP/3's only, `http2 { enabled }` is HTTP/2's), open HTTP/3 connections
      * take no new requests (calls running on them finish; idle ones close after `idleTimeout`, or at once with
      * `HttpClient.closeHttp3Connections()`), and `Alt-Svc` is still learned, so switching back needs no warm-up. With
      * [Http3DiscoveryMode.H3Only] a request fails with UnsupportedOperationException instead, before any connection:
@@ -154,6 +159,36 @@ public class Http3ClientConfig {
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var http3Allowed: () -> Boolean = { true }
+}
+
+/**
+ * HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): every `https://` connection over TCP offers `h2` and
+ * `http/1.1` in ALPN, and a server that picks `h2` gets one multiplexed connection per route instead of up to
+ * `maxConnectionsPerRoute` HTTP/1.1 connections. Never for `http://` (no cleartext HTTP/2, h2c) and never for WebSockets
+ * (RFC 8441 is not supported yet: they offer `http/1.1` only). HTTP/3 is unaffected, and so is its kill switch
+ * (`http3 { http3Allowed }` turns HTTP/3 off, not HTTP/2).
+ */
+@ExperimentalKuicksilverApi
+@KuicksilverDsl
+public class Http2ClientConfig {
+    /**
+     * Offer HTTP/2 (true by default). False offers only `http/1.1` in ALPN, as before 0.3.0: the switch for a server or
+     * middlebox whose HTTP/2 is broken.
+     */
+    public var enabled: Boolean = true
+
+    /**
+     * Our side of each HTTP/2 connection: windows, SETTINGS and the limits held against the server (threat model 3.23).
+     * Its `maxConcurrentStreams` is what we allow the server to open towards us, which a client never uses: a server's
+     * limit for our requests comes from its own SETTINGS.
+     */
+    public var settings: Http2Settings = Http2Settings()
+
+    /**
+     * Sends a PING this often on every HTTP/2 connection and closes the connection when one is still unanswered at the
+     * next (OkHttp's `pingInterval`); its calls fail. [Duration.INFINITE] (the default) sends none. At least 100 ms.
+     */
+    public var pingInterval: Duration = Duration.INFINITE
 }
 
 /** Configuration of `HttpClient(Kuicksilver)`. */
@@ -185,7 +220,7 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var maxIdleConnectionsPerRoute: Int = 4
 
     /**
-     * HTTP/1.1 connections open at once across all routes, idle ones included (CIO's `maxConnectionsCount`, the same
+     * TCP connections (HTTP/1.1 and HTTP/2) open at once across all routes, idle ones included (CIO's `maxConnectionsCount`, the same
      * default 1000). A request beyond it waits, in FIFO order, within the connect timeout; when other routes hold idle
      * connections, the oldest one is closed to make room instead. HTTP/3 multiplexes and is limited per origin instead.
      */
@@ -193,16 +228,18 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var maxConnectionsCount: Int = 1000
 
     /**
-     * HTTP/1.1 connections open at once to one route (scheme, host, port and proxy), idle ones included (CIO's
-     * `endpoint.maxConnectionsPerRoute`, the same default 100); further requests to it wait in FIFO order within the
-     * connect timeout, failing with `ConnectTimeoutException` when no connection frees up in time.
+     * TCP connections (HTTP/1.1 and HTTP/2) open at once to one route (scheme, host, port and proxy), idle ones included
+     * (CIO's `endpoint.maxConnectionsPerRoute`, the same default 100); further requests to it wait in FIFO order within the
+     * connect timeout, failing with `ConnectTimeoutException` when no connection frees up in time. An HTTP/2 connection
+     * counts once, however many requests it carries; a second one opens only when the first has no stream left under the
+     * server's SETTINGS_MAX_CONCURRENT_STREAMS.
      */
     @ExperimentalKuicksilverApi
     public var maxConnectionsPerRoute: Int = 100
 
     /**
-     * How long a connection without requests is kept: an idle HTTP/1.1 keep-alive connection, or an HTTP/3 connection
-     * with no request in flight (5 minutes, as OkHttp's keep-alive; QUIC's own idle timeout may end it earlier). A
+     * How long a connection without requests is kept: an idle HTTP/1.1 keep-alive connection, or an HTTP/2 or HTTP/3
+     * connection with no request in flight (5 minutes, as OkHttp's keep-alive; QUIC's own idle timeout may end it earlier). A
      * background task closes expired connections and drops the bookkeeping of origins without connections.
      */
     @ExperimentalKuicksilverApi
@@ -210,7 +247,7 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
 
     /**
      * Age after which a connection takes no new requests: a pooled HTTP/1.1 connection is closed instead of reused, and
-     * new HTTP/3 requests go to a new connection while the old one finishes its requests and then closes. Infinite by
+     * new HTTP/2 and HTTP/3 requests go to a new connection while the old one finishes its requests and then closes. Infinite by
      * default, as in OkHttp and CIO; a finite value spreads load after DNS or load-balancer changes.
      */
     @ExperimentalKuicksilverApi
@@ -279,6 +316,16 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     /** Hears every call: protocol choice, race, fallback, Alt-Svc, connection pool and retries; null (the default) for none. */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var eventListener: KuicksilverEventListener? = null
+
+    /** HTTP/2 on the TCP path; change it with [http2]. */
+    @ExperimentalKuicksilverApi
+    public val http2: Http2ClientConfig = Http2ClientConfig()
+
+    /** Configures [http2] in place: `engine { http2 { enabled = false } }`. */
+    @ExperimentalKuicksilverApi
+    public fun http2(block: Http2ClientConfig.() -> Unit) {
+        http2.apply(block)
+    }
 
     /** Configures [http3] in place: `engine { http3 { discovery = Http3DiscoveryMode.Preferred } }`. */
     public fun http3(block: Http3ClientConfig.() -> Unit) {

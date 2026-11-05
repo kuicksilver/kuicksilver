@@ -232,30 +232,38 @@ Guide: [Ktor: Client](ktor.md#client).
 
 | Option | Type | Default | Range | What it does |
 |---|---|---|---|---|
-| `trust` | `TrustConfig` | `TrustConfig.Platform` | | server verification for HTTP/3 and HTTP/1.1 alike |
+| `trust` | `TrustConfig` | `TrustConfig.Platform` | | server verification for HTTP/3, HTTP/2 and HTTP/1.1 alike |
 | `identity` | `TlsIdentity?` | `null` | | client certificate |
 | `tls` | `TlsConfig.Builder.() -> Unit` | `{}` | | further TLS settings, applied after `trust` and `identity` (which it can therefore replace); `alpn` and `serverName` come from the request and are set after it, so the block cannot change them (use `TrustConfig.ExpectedName` to verify another name) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | its `connectionIdLength` and `http3.endpoint.connectionIdLength` agree: the one left at 8 follows the other; two different explicit values fail the engine's creation | QUIC transport of HTTP/3 connections |
 | `maxIdleConnectionsPerRoute` | `Int` | 4 | at least 0 | idle HTTP/1.1 keep-alive connections kept per route; not a connection limit |
-| `maxConnectionsCount` (*experimental*) | `Int` | 1000 | at least 1 | HTTP/1.1 connections of the engine, idle ones included; requests beyond it wait (FIFO, within the connect timeout) |
-| `maxConnectionsPerRoute` (*experimental*) | `Int` | 100 | at least 1 | HTTP/1.1 connections to one route (scheme, host, port, proxy) |
-| `idleTimeout` (*experimental*) | `Duration` | 5 min | positive | idle HTTP/1.1 connections, and HTTP/3 connections without requests, are closed after this |
+| `maxConnectionsCount` (*experimental*) | `Int` | 1000 | at least 1 | TCP connections (HTTP/1.1 and HTTP/2) of the engine, idle ones included; requests beyond it wait (FIFO, within the connect timeout) |
+| `maxConnectionsPerRoute` (*experimental*) | `Int` | 100 | at least 1 | TCP connections to one route (scheme, host, port, proxy); an HTTP/2 connection counts once however many requests it carries |
+| `idleTimeout` (*experimental*) | `Duration` | 5 min | positive | idle HTTP/1.1 connections, and HTTP/2 and HTTP/3 connections without requests, are closed after this |
 | `maxConnectionLifetime` (*experimental*) | `Duration` | infinite | positive | age after which a connection takes no new requests |
 | `connectTimeout` | `Duration` | 10 s | | connect timeout (TCP + TLS, or the QUIC handshake) when `HttpTimeout` sets none; a WebSocket over HTTP/1.1 also waits at most this long for the answer to its opening handshake (`ConnectTimeoutException`) |
 | `connectionAttemptDelay` (*experimental*) | `Duration` | 250 ms | 10 ms..2 s, or `Duration.INFINITE`; anything else fails the engine's creation | Happy Eyeballs (RFC 8305) for HTTP/1.1's TCP connects: the delay before the next address is tried while earlier attempts are still pending; `INFINITE` tries one address after another ([Ktor: IPv6 over TCP](ktor.md#ipv6-over-tcp-on-kotlinnative)) |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (keeps `http3.endpoint.logger`) | | the engine's and its QUIC endpoint's diagnostics |
 | `eventListener` (*experimental*) | `KuicksilverEventListener?` | `null` | | call, protocol, race, Alt-Svc and pool events ([Ktor: Observability](ktor.md#observability-experimental)) |
-| `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP (`http://` only) and SOCKS5 proxies; others, an `https://` proxy URL included, fail each request with `UnsupportedOperationException` | HTTP/1.1 through the proxy (CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied |
+| `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP (`http://` only) and SOCKS5 proxies; others, an `https://` proxy URL included, fail each request with `UnsupportedOperationException` | TCP through the proxy (HTTP/1.1, or HTTP/2 inside the tunnel) (CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied |
 | `proxyResolver` (*experimental*) | `ProxyResolver` | `ProxyResolvers.System` | `System`, `Environment`, `None` or your own | the proxy for requests `proxy` does not cover, per scheme, host and port (kept 30 s); each lookup is bounded by the engine's `connectTimeout` (not a per-request `HttpTimeout`) and fails the request with `ProxyException` beyond it; loopback is always direct with the built-ins; docs/guide/ktor.md, "Proxies" |
 | `proxyCredentials` (*experimental*) | `ProxyCredentials?` | `null` | SOCKS5: user 1–255 bytes, password up to 255 (RFC 1929) | for the explicit `proxy` only (a resolver's proxy carries its own `ResolvedProxy.credentials`); SOCKS5 username/password when the proxy picks it; `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests unless the request has its own; off the JVM the proxy URL's user info wins |
 
 `pipelining` (from Ktor's `HttpClientEngineConfig`) is not used.
 
+`http2 { … }` (`Http2ClientConfig`, *experimental*; guide: [HTTP/2 on the client](ktor.md#http2-on-the-client)):
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | `Boolean` | `true` | offer `h2` and `http/1.1` in ALPN on every `https://` connection over TCP (not WebSockets); `false` offers only `http/1.1`, as in 0.2 |
+| `settings` | `Http2Settings` | `Http2Settings()` | our SETTINGS, windows (512 KiB per stream growing to 6 MiB, 768 KiB per connection growing to 15 MiB) and the limits held against the server (64 KiB field sections, 10 s for our SETTINGS to be acknowledged, the flood limits; threat model 3.23) |
+| `pingInterval` | `Duration` | `Duration.INFINITE` | a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms, else the engine's creation fails with `IllegalArgumentException` |
+
 `http3 { … }` (`Http3ClientConfig`; guide: [HTTP/3 on the client](ktor.md#http3-on-the-client)):
 
 | Option | Type | Default | What it does |
 |---|---|---|---|
-| `discovery` | `Http3DiscoveryMode` | `Auto` | `Auto` (HTTP/1.1 first, HTTP/3 after `Alt-Svc`), `Preferred` (HTTP/3 first, HTTP/1.1 fallback), `H3Only`, `H1Only` |
+| `discovery` | `Http3DiscoveryMode` | `Auto` | `Auto` (TCP first, HTTP/3 after `Alt-Svc`), `Preferred` (HTTP/3 first, TCP fallback), `H3Only`, `H1Only` (no HTTP/3; TCP is HTTP/1.1 or HTTP/2) |
 | `quicHints` | `Set<HostPort>` | empty | origins treated as `Preferred` in `Auto` mode; `HostPort(host, port)` compares the host exactly as in URLs |
 | `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
 | `clearOnNetworkChange` | `Boolean` | `true` | drop alternatives without `persist=1` when `networkId` changes (RFC 7838 section 2.2); `false` keeps them |
@@ -268,7 +276,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | lifecycle of every QUIC connection |
 | `webTransportIgnoresProxy` (*experimental*) | `Boolean` | `false` | `HttpClient.webTransport` connects directly although a proxy applies to the URL; otherwise such a call fails with `UnsupportedOperationException` ([WebTransport on the client](ktor.md#webtransport-on-the-client-experimental)) |
 | `maxWebTransportSessions` (*experimental*) | `Int` | 64 | WebTransport sessions open at once, each on its own QUIC connection; at least 1; one more fails at once with `IllegalStateException` |
-| `http3Allowed` (*experimental*) | `() -> Boolean` | `{ true }` | kill switch read once per `https://` request and `webTransport` call (not with `H1Only`): false sends a request over HTTP/1.1 (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)) |
+| `http3Allowed` (*experimental*) | `() -> Boolean` | `{ true }` | kill switch read once per `https://` request and `webTransport` call (not with `H1Only`): false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)) |
 | `diagnosticsLogLevel` (*experimental*) | `LogLevel?` | `Info` | level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)) |
 
 ## Ktor server engine

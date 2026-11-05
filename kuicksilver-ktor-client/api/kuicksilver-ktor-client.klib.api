@@ -24,6 +24,7 @@ final enum class io.kuicksilver.ktor.client/FallbackReason : kotlin/Enum<io.kuic
     enum entry BrokenAlternative // io.kuicksilver.ktor.client/FallbackReason.BrokenAlternative|null[0]
     enum entry Configuration // io.kuicksilver.ktor.client/FallbackReason.Configuration|null[0]
     enum entry GoAway // io.kuicksilver.ktor.client/FallbackReason.GoAway|null[0]
+    enum entry H2Refused // io.kuicksilver.ktor.client/FallbackReason.H2Refused|null[0]
     enum entry H3NotReady // io.kuicksilver.ktor.client/FallbackReason.H3NotReady|null[0]
     enum entry HandshakeTimeout // io.kuicksilver.ktor.client/FallbackReason.HandshakeTimeout|null[0]
     enum entry Http3Disabled // io.kuicksilver.ktor.client/FallbackReason.Http3Disabled|null[0]
@@ -151,6 +152,20 @@ final class io.kuicksilver.ktor.client/HostPort { // io.kuicksilver.ktor.client/
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/HostPort.toString|toString(){}[0]
 }
 
+final class io.kuicksilver.ktor.client/Http2ClientConfig { // io.kuicksilver.ktor.client/Http2ClientConfig|null[0]
+    constructor <init>() // io.kuicksilver.ktor.client/Http2ClientConfig.<init>|<init>(){}[0]
+
+    final var enabled // io.kuicksilver.ktor.client/Http2ClientConfig.enabled|{}enabled[0]
+        final fun <get-enabled>(): kotlin/Boolean // io.kuicksilver.ktor.client/Http2ClientConfig.enabled.<get-enabled>|<get-enabled>(){}[0]
+        final fun <set-enabled>(kotlin/Boolean) // io.kuicksilver.ktor.client/Http2ClientConfig.enabled.<set-enabled>|<set-enabled>(kotlin.Boolean){}[0]
+    final var pingInterval // io.kuicksilver.ktor.client/Http2ClientConfig.pingInterval|{}pingInterval[0]
+        final fun <get-pingInterval>(): kotlin.time/Duration // io.kuicksilver.ktor.client/Http2ClientConfig.pingInterval.<get-pingInterval>|<get-pingInterval>(){}[0]
+        final fun <set-pingInterval>(kotlin.time/Duration) // io.kuicksilver.ktor.client/Http2ClientConfig.pingInterval.<set-pingInterval>|<set-pingInterval>(kotlin.time.Duration){}[0]
+    final var settings // io.kuicksilver.ktor.client/Http2ClientConfig.settings|{}settings[0]
+        final fun <get-settings>(): io.kuicksilver.http2/Http2Settings // io.kuicksilver.ktor.client/Http2ClientConfig.settings.<get-settings>|<get-settings>(){}[0]
+        final fun <set-settings>(io.kuicksilver.http2/Http2Settings) // io.kuicksilver.ktor.client/Http2ClientConfig.settings.<set-settings>|<set-settings>(io.kuicksilver.http2.Http2Settings){}[0]
+}
+
 final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.ktor.client/Http3ClientConfig|null[0]
     constructor <init>() // io.kuicksilver.ktor.client/Http3ClientConfig.<init>|<init>(){}[0]
 
@@ -213,6 +228,8 @@ final class io.kuicksilver.ktor.client/InMemoryAltSvcStore : io.kuicksilver.ktor
 final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.engine/HttpClientEngineConfig { // io.kuicksilver.ktor.client/KuicksilverEngineConfig|null[0]
     constructor <init>() // io.kuicksilver.ktor.client/KuicksilverEngineConfig.<init>|<init>(){}[0]
 
+    final val http2 // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http2|{}http2[0]
+        final fun <get-http2>(): io.kuicksilver.ktor.client/Http2ClientConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http2.<get-http2>|<get-http2>(){}[0]
     final val http3 // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3|{}http3[0]
         final fun <get-http3>(): io.kuicksilver.ktor.client/Http3ClientConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3.<get-http3>|<get-http3>(){}[0]
 
@@ -262,6 +279,7 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
         final fun <get-trust>(): io.kuicksilver.tls/TrustConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.trust.<get-trust>|<get-trust>(){}[0]
         final fun <set-trust>(io.kuicksilver.tls/TrustConfig) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.trust.<set-trust>|<set-trust>(io.kuicksilver.tls.TrustConfig){}[0]
 
+    final fun http2(kotlin/Function1<io.kuicksilver.ktor.client/Http2ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http2|http2(kotlin.Function1<io.kuicksilver.ktor.client.Http2ClientConfig,kotlin.Unit>){}[0]
     final fun http3(kotlin/Function1<io.kuicksilver.ktor.client/Http3ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3|http3(kotlin.Function1<io.kuicksilver.ktor.client.Http3ClientConfig,kotlin.Unit>){}[0]
 }
 

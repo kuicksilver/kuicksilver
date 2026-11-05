@@ -27,6 +27,7 @@ import io.ktor.utils.io.writeFully
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
@@ -41,6 +42,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import io.ktor.server.websocket.WebSockets as ServerWebSockets
 import io.ktor.server.websocket.webSocket as serverWebSocket
 import io.kuicksilver.ktor.server.webTransport as webTransportRoute
@@ -60,6 +62,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:websocket-deflate-client" in guide, "marker websocket-deflate-client")
         assertTrue("guide:ktor:client-diagnostics" in guide, "marker client-diagnostics")
         assertTrue("guide:ktor:http3-switch" in guide, "marker http3-switch")
+        assertTrue("guide:ktor:http2-client" in guide, "marker http2-client")
     }
 
     @Test fun diagnosticsSample() =
@@ -260,10 +263,10 @@ class GuideSamplesTest {
         val client =
             HttpClient(Kuicksilver) {
                 engine {
-                    maxConnectionsCount = 1000 // HTTP/1.1 connections of the engine, idle ones included
+                    maxConnectionsCount = 1000 // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
                     maxConnectionsPerRoute = 100 // ... to one route (scheme, host, port, proxy)
                     maxIdleConnectionsPerRoute = 4 // idle keep-alive connections kept per route
-                    idleTimeout = 5.minutes // idle HTTP/1.1 and HTTP/3 connections are closed after this
+                    idleTimeout = 5.minutes // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
                     maxConnectionLifetime = Duration.INFINITE // age after which a connection takes no new requests
                 }
             }
@@ -271,6 +274,27 @@ class GuideSamplesTest {
             val config = it.engine.config as KuicksilverEngineConfig
             assertEquals(1000, config.maxConnectionsCount)
             assertEquals(5.minutes, config.idleTimeout)
+        }
+    }
+
+    @Test
+    fun http2Sample() {
+        // guide:ktor:http2-client
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    http2 {
+                        enabled = true // the default: offer h2 on every TLS connection over TCP
+                        pingInterval = 30.seconds // a keep-alive PING; Duration.INFINITE (the default): none
+                        settings = Http2Settings(initialStreamWindow = 1 shl 20) // our windows and limits (threat model 3.23)
+                    }
+                }
+            }
+        client.use {
+            val config = it.engine.config as KuicksilverEngineConfig
+            assertTrue(config.http2.enabled)
+            assertEquals(30.seconds, config.http2.pingInterval)
+            assertEquals(1 shl 20, config.http2.settings.initialStreamWindow)
         }
     }
 

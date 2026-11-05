@@ -198,8 +198,12 @@ internal class ConnectionPool<C : PooledConnection>(
         }
     }
 
-    /** Accounts [c], opened under a permit from [acquire]; from now on its [PooledConnection.close] gives the slot back. */
-    fun adopt(c: C) {
+    /**
+     * Accounts [c], opened under a permit from [acquire]; from now on its [PooledConnection.close] gives the slot back. It
+     * may be of another kind than [C] (an HTTP/2 connection in the HTTP/1.1 pool): such a one holds its slot until it is
+     * closed and is never released to the idle list.
+     */
+    fun adopt(c: PooledConnection) {
         c.pool = this
     }
 
