@@ -664,7 +664,7 @@ internal class KuicksilverEngine(
         val reason = classifyH3Failure(cause) ?: FallbackReason.Other
         d.fallback = reason
         val r = tcp(data, callContext, ProtocolReason.Fallback, d, dns = dns)
-        // a connection the server closed after its GOAWAY ended in order (RFC 9114 section 5.2): the alternative works
+        // a connection the server closed with H3_NO_ERROR after its GOAWAY ended in order (RFC 9114 section 5.2): the alternative works
         if (marksAlternativeBroken(h3Failure) && !data.attributes.contains(H3ClosedAfterGoAwayKey)) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"

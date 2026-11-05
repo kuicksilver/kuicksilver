@@ -10,6 +10,7 @@ import io.ktor.http.Url
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.ktor.client.h3.H3NotSent
+import io.kuicksilver.ktor.client.h3.isPeerShutdownClose
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeoutKind
@@ -81,37 +82,24 @@ class ProtocolDiagnosticsTest {
         assertTrue(marksAlternativeBroken(QuicException.ConnectionLost.VersionNegotiation(listOf(0x6b3343cf), listOf(1))))
     }
 
-    /** The closes a server ends a connection with, which count after its GOAWAY; errors and local failures do not. */
+    /**
+     * The closes a server ends a connection with after its GOAWAY: H3_NO_ERROR (RFC 9114 section 5.2), an unknown code
+     * (read as H3_NO_ERROR, section 9) or a transport NO_ERROR. Error codes, local failures and stream errors are not.
+     */
     @Test fun peerShutdownClose() {
-        assertTrue(
-            io.kuicksilver.ktor.client.h3
-                .isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Peer, null)),
-        )
-        assertTrue(
-            io.kuicksilver.ktor.client.h3.isPeerShutdownClose(
-                QuicException.ConnectionLost.ApplicationClosed(Http3ErrorCode.NO_ERROR, "", Initiator.Peer),
-            ),
-        )
-        assertTrue(
-            io.kuicksilver.ktor.client.h3
-                .isPeerShutdownClose(closed(TransportError.NO_ERROR)),
-        )
-        assertFalse(
-            io.kuicksilver.ktor.client.h3
-                .isPeerShutdownClose(closed(TransportError.PROTOCOL_VIOLATION)),
-        )
-        assertFalse(
-            io.kuicksilver.ktor.client.h3
-                .isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Local, null)),
-        )
-        assertFalse(
-            io.kuicksilver.ktor.client.h3
-                .isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Peer, 0)),
-        )
-        assertFalse(
-            io.kuicksilver.ktor.client.h3
-                .isPeerShutdownClose(QuicException.ConnectionLost.StatelessReset()),
-        )
+        fun app(code: Long) = QuicException.ConnectionLost.ApplicationClosed(code, "", Initiator.Peer)
+        assertTrue(isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Peer, null)))
+        assertTrue(isPeerShutdownClose(app(Http3ErrorCode.NO_ERROR)))
+        assertTrue(isPeerShutdownClose(app(0x21))) // a reserved (unknown) code
+        assertTrue(isPeerShutdownClose(closed(TransportError.NO_ERROR)))
+        assertFalse(isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.INTERNAL_ERROR, Initiator.Peer, null)))
+        assertFalse(isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, Initiator.Peer, null)))
+        assertFalse(isPeerShutdownClose(app(Http3ErrorCode.INTERNAL_ERROR)))
+        assertFalse(isPeerShutdownClose(app(Http3ErrorCode.FRAME_UNEXPECTED)))
+        assertFalse(isPeerShutdownClose(closed(TransportError.PROTOCOL_VIOLATION)))
+        assertFalse(isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Local, null)))
+        assertFalse(isPeerShutdownClose(Http3Exception.Protocol(Http3ErrorCode.NO_ERROR, Initiator.Peer, 0)))
+        assertFalse(isPeerShutdownClose(QuicException.ConnectionLost.StatelessReset()))
     }
 
     @Test fun versionNegotiationIsRefused() {

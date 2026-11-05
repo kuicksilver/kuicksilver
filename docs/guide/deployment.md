@@ -168,7 +168,7 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   two bounds the stop (keep the timeout ≥ the grace period), so keep the `preStop` delay plus `shutdownTimeout` below
   the pod's `terminationGracePeriodSeconds`.
   Clients like the Kuicksilver client recover quickly: it treats `CONNECTION_REFUSED` as transient, and a connection
-  the pod closes after its GOAWAY (at the end of the grace period) as an orderly end; either way the affected call falls
+  the pod closes with H3_NO_ERROR after its GOAWAY (at the end of the grace period) as an orderly end; either way the affected call falls
   back to TCP once (when it may be repeated) and the next one tries HTTP/3 again, which another pod may take. Neither
   marks the alternative broken ([Ktor: Racing and fallback](ktor.md#racing-and-fallback); before 0.3.0 both did, for 5
   minutes doubling up to 2 days). Switching a pod to `Http3Advertising.Drain` before it stops has a cost: its responses send

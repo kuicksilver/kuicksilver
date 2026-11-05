@@ -37,7 +37,9 @@ import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -202,14 +204,19 @@ class ClientFallbackTest {
      * code, its admission refuses each new client statelessly with an Initial CONNECTION_CLOSE carrying that code (as
      * `Drain`, a full accept queue or a stop do with CONNECTION_REFUSED, RFC 9000 section 5.2.2). Paths with their own
      * behaviour:
-     * - `/goaway-close`: GOAWAY (both frames, RFC 9114 section 5.2), then the connection closes with H3_NO_ERROR while
-     *   the request is unanswered, as a stopping server's grace period ends
+     * - `/goaway-close`: GOAWAY (both frames, RFC 9114 section 5.2), then, once [closeGate] completes (the test opens
+     *   it when the client has seen the GOAWAY), the connection closes with H3_NO_ERROR while the request is unanswered,
+     *   as a stopping server's grace period ends
+     * - `/goaway-close-error`: the same with H3_INTERNAL_ERROR
      * - `/close-no-error`: the same close without a GOAWAY first
      * - `/reject`: the server starts refusing new clients, then resets the request with H3_REQUEST_REJECTED (not
      *   processed: the client repeats it on a new connection, which is refused)
      */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    private suspend fun CoroutineScope.refusingH3(refuseWith: kotlin.concurrent.atomics.AtomicReference<Long?>): Http3Endpoint {
+    private suspend fun CoroutineScope.refusingH3(
+        refuseWith: kotlin.concurrent.atomics.AtomicReference<Long?>,
+        closeGate: CompletableDeferred<Unit>?,
+    ): Http3Endpoint {
         val ep =
             h3Endpoint(
                 ConnectionAdmission { refuseWith.load()?.let { AdmissionDecision.Close(it) } ?: AdmissionDecision.Allow },
@@ -223,10 +230,19 @@ class ClientFallbackTest {
                             while (true) {
                                 val r = conn.acceptRequest()
                                 when (r.path) {
-                                    "/goaway-close" -> {
+                                    "/goaway-close", "/goaway-close-error" -> {
                                         launch {
                                             conn.goAway()
-                                            conn.close(Http3ErrorCode.NO_ERROR, "")
+                                            closeGate?.await()
+                                            val code =
+                                                if (r.path ==
+                                                    "/goaway-close"
+                                                ) {
+                                                    Http3ErrorCode.NO_ERROR
+                                                } else {
+                                                    Http3ErrorCode.INTERNAL_ERROR
+                                                }
+                                            conn.close(code, "")
                                         }
                                     }
 
@@ -254,15 +270,17 @@ class ClientFallbackTest {
 
     /** An HTTP/1.1 origin that announces its UDP twin as `h3` (RFC 7838) on every response, and [refusingH3] on that twin. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    private suspend fun CoroutineScope.originWithRefusingH3(refuseWith: kotlin.concurrent.atomics.AtomicReference<Long?>) =
-        h1AndH3({
-            routing {
-                get("/{path?}") {
-                    call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
-                    call.respondText("h1")
-                }
+    private suspend fun CoroutineScope.originWithRefusingH3(
+        refuseWith: kotlin.concurrent.atomics.AtomicReference<Long?>,
+        closeGate: CompletableDeferred<Unit>? = null,
+    ) = h1AndH3({
+        routing {
+            get("/{path?}") {
+                call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
+                call.respondText("h1")
             }
-        }) { refusingH3(refuseWith) }
+        }
+    }) { refusingH3(refuseWith, closeGate) }
 
     /**
      * CONNECTION_REFUSED (a pod in `Drain`, with a full accept queue or stopping) is transient (RFC 9000 sections 5.2.2,
@@ -343,43 +361,81 @@ class ClientFallbackTest {
     }
 
     /**
+     * Calls [path] (`/goaway-close` or `/goaway-close-error`) over an open HTTP/3 connection: the server sends GOAWAY, the
+     * test waits until the client's connection has it, and only then lets the server close the connection under the
+     * request. Then [check] with the call's diagnostics, whether the alternative is broken, and a next call to the origin.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun goAwayThenClose(
+        path: String,
+        check: suspend (d: ProtocolDiagnostics, broken: Boolean, nextCall: suspend () -> io.ktor.client.statement.HttpResponse) -> Unit,
+    ) = h3Test {
+        kotlinx.coroutines.coroutineScope {
+            val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
+            val closeGate = CompletableDeferred<Unit>()
+            val (server, ep, port) = originWithRefusingH3(refuseWith, closeGate)
+            val origin = "https://127.0.0.1:$port"
+            try {
+                h3Client(port).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val conn =
+                        assertNotNull(
+                            engine.h3.existing(
+                                io.kuicksilver.ktor.client.h3
+                                    .H3Target("127.0.0.1", "127.0.0.1", port),
+                            ),
+                        )
+                    val call = async { c.get("$origin$path") }
+                    kotlinx.coroutines.withTimeout(30.seconds) { conn.goAwayReceived.first { it != null } }
+                    closeGate.complete(Unit)
+                    val r = call.await()
+                    val d = assertNotNull(r.kuicksilverDiagnostics)
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, r.version, "$d")
+                    assertEquals("h1", r.bodyAsText())
+                    check(d, engine.brokenAltSvc.isBroken(origin, "127.0.0.1:$port")) { c.get("$origin/") }
+                }
+            } finally {
+                closeGate.complete(Unit)
+                ep.close()
+                server.stop(100, 500)
+                coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+            }
+        }
+    }
+
+    /**
      * A stopping server sends GOAWAY and, once its grace period ends, closes what is left with H3_NO_ERROR (RFC 9114
      * section 5.2): an orderly close, not a failure of the alternative (RFC 7838 section 2.4). The request in flight below
      * the GOAWAY id falls back to HTTP/1.1, the alternative is not marked broken, and the next call goes over HTTP/3 on a
      * new connection.
      */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test
     fun closeAfterGoAwayDoesNotMarkBroken() =
-        h3Test {
-            kotlinx.coroutines.coroutineScope {
-                val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
-                val (server, ep, port) = originWithRefusingH3(refuseWith)
-                val origin = "https://127.0.0.1:$port"
-                try {
-                    h3Client(port).use { c ->
-                        val engine = c.engine as KuicksilverEngine
-                        val r = c.get("$origin/goaway-close")
-                        val d = assertNotNull(r.kuicksilverDiagnostics)
-                        assertEquals(HttpProtocolVersion.HTTP_1_1, r.version, "$d")
-                        assertEquals("h1", r.bodyAsText())
-                        assertFalse(d.markedBroken, "$d")
-                        assertFalse(engine.brokenAltSvc.isBroken(origin, "127.0.0.1:$port"))
-                        val next = c.get("$origin/")
-                        assertEquals(HttpProtocolVersion.HTTP_3_0, next.version, "${next.kuicksilverDiagnostics}")
-                    }
-                } finally {
-                    ep.close()
-                    server.stop(100, 500)
-                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
-                }
-            }
+        goAwayThenClose("/goaway-close") { d, broken, nextCall ->
+            assertFalse(d.markedBroken, "$d")
+            assertFalse(broken)
+            val next = nextCall()
+            assertEquals(HttpProtocolVersion.HTTP_3_0, next.version, "${next.kuicksilverDiagnostics}")
+        }
+
+    /**
+     * Regression for [closeAfterGoAwayDoesNotMarkBroken]: GOAWAY followed by a close with an error code
+     * (H3_INTERNAL_ERROR) is no graceful shutdown (RFC 9114 section 5.2 asks for H3_NO_ERROR) and marks the alternative
+     * broken; a server sends GOAWAY early for other reasons too (a cap on requests per connection).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_errorCloseAfterGoAwayMarksBroken() =
+        goAwayThenClose("/goaway-close-error") { d, broken, _ ->
+            assertTrue(d.markedBroken, "$d")
+            assertTrue(broken)
         }
 
     /**
      * Regression for [closeAfterGoAwayDoesNotMarkBroken]: the same H3_NO_ERROR close without a GOAWAY first is a
-     * connection that failed under its request, and marks the alternative broken: what counts is the GOAWAY, not the code
-     * (an unknown code also reads as H3_NO_ERROR, RFC 9114 section 9).
+     * connection that failed under its request, and marks the alternative broken: the code alone does not tell, the GOAWAY
+     * must come first (an unknown code also reads as H3_NO_ERROR, RFC 9114 section 9).
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     @Test

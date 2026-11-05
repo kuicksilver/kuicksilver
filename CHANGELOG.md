@@ -423,11 +423,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   rolling restart of a multi-instance server put the whole origin on HTTP/1.1. Any other close of the setup by the
   server still marks the alternative broken. The refusal on an established connection (a handshake completed into a
   full accept queue) counts the same.
-- Ktor client: a connection the server closes after it sent GOAWAY (a graceful stop whose grace period ended with
-  requests open: RFC 9114 section 5.2) no longer marks the HTTP/3 alternative broken when a request in flight on it
+- Ktor client: a connection the server closes with H3_NO_ERROR after it sent GOAWAY (a graceful stop whose grace period
+  ended with requests open: RFC 9114 section 5.2) no longer marks the HTTP/3 alternative broken when a request in flight on it
   falls back to HTTP/1.1. The close (H3_NO_ERROR) read as a failed connection and marked the alternative broken for 5
   minutes up to 2 days, so a long poll, a server-sent event stream or a slow response caught by a rolling restart put
-  the origin on HTTP/1.1. The same close without a GOAWAY first still marks it.
+  the origin on HTTP/1.1. A close with an error code after GOAWAY, and an H3_NO_ERROR close without a GOAWAY first,
+  still mark it.
 - Ktor server: `KuicksilverServerEventListener.connectionClosed` for an HTTP/3 connection comes after the
   `requestEnded` of every request it carried. It came as soon as the connection took no more requests, so a client
   that closed the connection as soon as it had the answer could be reported gone while its handler still ran.

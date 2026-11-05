@@ -27,6 +27,7 @@ import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
@@ -87,22 +88,34 @@ internal class H3NotSent(
 ) : Exception(cause.message, cause)
 
 /**
- * Set on a request whose HTTP/3 connection the server closed after it had sent GOAWAY ([H3Pool.execute]): the engine's
+ * Set on a request whose HTTP/3 connection the server closed with H3_NO_ERROR after it had sent GOAWAY ([H3Pool.execute]): the engine's
  * fallback for it does not mark the alternative broken (RFC 9114 section 5.2, RFC 7838 section 2.4).
  */
 internal val H3ClosedAfterGoAwayKey: AttributeKey<Unit> = AttributeKey("io.kuicksilver.ktor.client.H3ClosedAfterGoAway")
 
 /**
- * Whether [e] is the peer closing the whole connection the way a server ends it: an application close (CONNECTION_CLOSE
- * 0x1d, any HTTP/3 code: unknown codes read as H3_NO_ERROR, RFC 9114 section 9), or a transport close with NO_ERROR. A
- * transport error code, a stream reset and a local failure are not.
+ * Whether [e] is the peer ending the whole connection the way a graceful shutdown does (RFC 9114 section 5.2: "An
+ * endpoint that completes a graceful shutdown SHOULD use the H3_NO_ERROR error code when closing the connection"): an
+ * application close with H3_NO_ERROR, or with a code this client does not know (read as H3_NO_ERROR, section 9), or a
+ * transport close with NO_ERROR. A close with an error code, a stream error and a local failure are not.
  */
 internal fun isPeerShutdownClose(e: Throwable): Boolean =
     when (e) {
-        is Http3Exception.Protocol -> e.initiator == Initiator.Peer && e.streamId == null
-        is QuicException.ConnectionLost.ApplicationClosed -> e.initiator == Initiator.Peer
-        is QuicException.ConnectionLost.TransportClosed -> e.initiator == Initiator.Peer && e.code == TransportError.NO_ERROR
-        else -> false
+        is Http3Exception.Protocol -> {
+            e.initiator == Initiator.Peer && e.streamId == null && e.h3Code == Http3ErrorCode.NO_ERROR
+        }
+
+        is QuicException.ConnectionLost.ApplicationClosed -> {
+            e.initiator == Initiator.Peer && Http3ErrorCode.normalize(e.code) == Http3ErrorCode.NO_ERROR
+        }
+
+        is QuicException.ConnectionLost.TransportClosed -> {
+            e.initiator == Initiator.Peer && e.code == TransportError.NO_ERROR
+        }
+
+        else -> {
+            false
+        }
     }
 
 /**
@@ -831,8 +844,8 @@ internal class H3Pool(
                         "connectionReleased",
                     ) { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
                 }
-                // the server sent GOAWAY, then closed the connection under this request (a stopping server at the end of its
-                // grace period): an orderly close (RFC 9114 section 5.2), not a failure of the alternative
+                // the server sent GOAWAY, then closed the connection under this request with H3_NO_ERROR (a stopping server at
+                // the end of its grace period): an orderly close (RFC 9114 section 5.2), not a failure of the alternative
                 if (conn.goAwayReceived.value != null && isPeerShutdownClose(e)) data.attributes.put(H3ClosedAfterGoAwayKey, Unit)
                 if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
