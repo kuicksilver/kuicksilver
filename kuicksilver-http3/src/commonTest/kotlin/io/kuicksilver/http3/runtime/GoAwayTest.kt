@@ -136,6 +136,20 @@ class GoAwayTest {
             }
         }
 
+    /**
+     * A request after this client's own GOAWAY was never sent: it fails as retry-safe RequestNotProcessed, so a pool that
+     * handed the connection out just before its GOAWAY repeats the request on a new connection (it was an
+     * IllegalStateException, which failed the call).
+     */
+    @Test fun requestAfterOwnGoAwayNotProcessed() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                p.client.goAway()
+                val e = assertFailsWith<Http3Exception.RequestNotProcessed> { p.client.request(get()) }
+                assertTrue(e.retrySafe)
+            }
+        }
+
     @Test fun increasingGoAwayIdIsIdError() =
         h3Test {
             QuicPair.open().use { q ->

@@ -188,7 +188,8 @@ private suspend fun H3Session.requestOnDispatcher(
         // first: after a GOAWAY the client closes an idle connection itself, and a request then was still never sent
         if (goAwayReceived.value != null) throw Http3Exception.RequestNotProcessed(true)
         if (closed.isCompleted) throw connectionError()
-        check(goAwaySentId == null) { "this client sent GOAWAY: no new requests" }
+        // this client sent GOAWAY and issues no new requests: one handed this connection just before is provably unsent
+        if (goAwaySentId != null) throw Http3Exception.RequestNotProcessed(true)
         // before a stream is opened: a refused section costs no stream credit (the id is not known yet: -1)
         val fields = PseudoHeaders.buildRequest(r)
         PseudoHeaders.requireValidRequest(fields)

@@ -89,7 +89,8 @@ public class Http3Connection private constructor(
      * announces the first request id it will not process (those are reset with H3_REQUEST_REJECTED, which clients may
      * retry elsewhere); once its accepted requests are answered and acknowledged, the client closes the connection with
      * H3_NO_ERROR (a Kuicksilver client does once it read its responses), or the server does three seconds later. A client
-     * sends GOAWAY(0) and stops issuing requests; a client that receives GOAWAY closes with H3_NO_ERROR once it is idle.
+     * sends GOAWAY(0) and stops issuing requests (a request after it fails with [Http3Exception.RequestNotProcessed],
+     * retry-safe, as one above a received GOAWAY); a client that receives GOAWAY closes with H3_NO_ERROR once it is idle.
      */
     public suspend fun goAway() {
         session.goAway()
