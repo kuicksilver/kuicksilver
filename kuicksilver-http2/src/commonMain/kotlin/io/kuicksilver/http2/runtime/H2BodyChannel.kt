@@ -46,9 +46,11 @@ internal class H2BodyChannel(
             if (eof) return false
             for (c in s.conn.pull(s)) buffer.write(c)
             if (buffer.size >= min) return true
-            val (ended, failure) = s.conn.lock.withLock { (s.remoteEnded && s.chunks.isEmpty()) to s.failure }
-            // a response read to its END_STREAM stays complete, whatever happens to the connection or our sending after
+            val (ended, more, failure) = s.conn.lock.withLock { Triple(s.remoteEnded, s.chunks.isNotEmpty(), s.failure) }
+            // a message that arrived to its END_STREAM stays complete, whatever happens to the connection or the stream after
+            // (a server's RST_STREAM after a complete response, RFC 9113 section 8.1): its content is read to the end first
             if (ended) {
+                if (more) continue
                 eof = true
                 return buffer.size >= min
             }

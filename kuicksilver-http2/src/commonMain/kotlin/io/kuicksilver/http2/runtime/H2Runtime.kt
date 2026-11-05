@@ -702,12 +702,20 @@ internal class H2Runtime(
         }
     }
 
-    /** Our side of [s] cannot go on: RST_STREAM CANCEL unless the stream already failed or ended. */
+    /**
+     * Our side of [s] cannot go on: RST_STREAM CANCEL unless the stream already failed or ended. A server whose response is
+     * complete does not reset: a reset would drop the response's frames still queued (RFC 9113 section 6.4); the request's
+     * remaining content is credited as it arrives. (Asking the client to stop with NO_ERROR once those frames are out,
+     * section 8.1, comes with the server engine.)
+     */
     private fun abandon(
         s: StreamRt,
         cause: Throwable,
     ) {
-        val reset = lock.withLock { s.failure == null && !(s.remoteEnded && s.localEnded) }
+        val reset =
+            lock.withLock {
+                s.failure == null && !(s.remoteEnded && s.localEnded) && (client || !s.localEnded)
+            }
         if (!reset) return
         fail(s, cause)
         withCore { reset(s.id, Http2ErrorCode.CANCEL, clock()) }

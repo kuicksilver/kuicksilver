@@ -349,6 +349,63 @@ class H2RuntimeTest {
             b.release()
         }
 
+    /**
+     * RFC 9113 section 8.1: a server may answer before the whole request and then stop it with RST_STREAM NO_ERROR; the
+     * client keeps the response (its content included, even when the reset arrives before the application read it) and
+     * its sending stops without an error.
+     */
+    @Test fun completeResponseThenNoErrorResetKeepsTheResponse() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            val body = ByteChannel()
+            val sending = backgroundScope.async { s.sendBody(body, stallMillis = null) { error("stall") } }
+            runCurrent()
+            srv.write(
+                srv.headers(s.id, listOf(":status" to "200"), endStream = false),
+                FrameEncoder.data(s.id, "early".encodeToByteArray(), 0, 5, true),
+                FrameEncoder.rstStream(s.id, Http2ErrorCode.NO_ERROR.code),
+            )
+            runCurrent()
+            assertEquals(200, s.response().status)
+            assertEquals("early", s.body.readAll().decodeToString())
+            body.writeFully(ByteArray(1000))
+            body.close()
+            sending.await() // returns quietly: the server asked us to stop, without an error
+            s.release()
+        }
+
+    /**
+     * A reset with an error after the response's END_STREAM (the server's handler released the stream with the request
+     * still coming): the request's sending fails, but the response that arrived complete stays complete, even when the
+     * reset is dispatched before the application read the content.
+     */
+    @Test fun completeResponseThenErrorResetKeepsTheBody() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            val body = ByteChannel()
+            val sending = backgroundScope.async { runCatching { s.sendBody(body, stallMillis = null) { error("stall") } } }
+            runCurrent()
+            srv.write(
+                srv.headers(s.id, listOf(":status" to "200"), endStream = false),
+                FrameEncoder.data(s.id, "early".encodeToByteArray(), 0, 5, true),
+                FrameEncoder.rstStream(s.id, Http2ErrorCode.CANCEL.code),
+            )
+            runCurrent()
+            assertEquals(200, s.response().status)
+            assertEquals("early", s.body.readAll().decodeToString())
+            body.close()
+            assertIs<Http2Exception.StreamReset>(sending.await().exceptionOrNull())
+            s.release()
+        }
+
     @Test fun refusedStreamIsNotProcessed() =
         runTest {
             val (srv, deferred) = raw()
