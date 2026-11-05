@@ -158,6 +158,8 @@ static void test_client_verification_still_refuses(void) {
     /* a server that renews no ticket on resumption, so the client's OpenSSL keeps the session it set (ksl servers renew every
        one: here OpenSSL's own ticket handling replaces ksl's callbacks) */
     ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1);
+    static const uint8_t h3_hq[] = {2, 'h', '3', 10, 'h', 'q', '-', 'i', 'n', 't', 'e', 'r', 'o', 'p'}, hq[] = {10, 'h', 'q', '-', 'i', 'n', 't', 'e', 'r', 'o', 'p'};
+    ksl_ctx_set_alpn(sc, h3_hq, sizeof h3_hq); ksl_ctx_set_alpn(none, hq, sizeof hq);
     SSL_CTX_set_session_ticket_cb(sc->ctx, NULL, NULL, NULL); SSL_CTX_set_tlsext_ticket_key_evp_cb(sc->ctx, NULL);
     c = tcp_client(verifying, "server.test"); ksl_ssl *s = ksl_ssl_new(sc, KSL_MODE_TCP);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2: a verified full handshake");
@@ -166,6 +168,11 @@ static void test_client_verification_still_refuses(void) {
     CHECK(verified && ksl_ssl_set_session(c, verified) == KSL_OK && tcp_pump(c, s, NULL, NULL) == KSL_OK && SSL_session_reused(c->ssl), "TLS 1.2: a client without verification resumes it");
     ksl_session *again = ksl_ssl_get1_session(c);
     CHECK(again == verified, "TLS 1.2: the resumed session is the object that was set");
+    /* nor its ALPN (own_alpn gives the negotiated protocol only to tickets of this connection): this resumption negotiated
+       hq-interop, the session still names h3, the protocol of the connection that made it */
+    { unsigned char a[16]; size_t n = 0; const unsigned char *sa = NULL; size_t sl = 0;
+      ksl_ssl_get(c, KSL_GET_ALPN, a, sizeof a, &n); SSL_SESSION_get0_alpn_selected((SSL_SESSION *)again, &sa, &sl);
+      CHECK(n == 10 && !memcmp(a, "hq-interop", 10) && sl == 2 && !memcmp(sa, "h3", 2), "TLS 1.2: the shared session keeps its own connection's ALPN"); }
     ksl_ssl_free(c); ksl_ssl_free(s); c = tcp_client(verifying, "server.test");
     CHECK(ksl_ssl_set_session(c, verified) == KSL_OK, "negative: the verified session handed out again by that client still resumes where verification is on");
     ksl_ssl_free(c); ksl_session_free(again); ksl_session_free(verified); ksl_ctx_free(none); ksl_ctx_free(verifying); ksl_ctx_free(sc);

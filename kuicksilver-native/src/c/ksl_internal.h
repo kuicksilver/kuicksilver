@@ -68,6 +68,7 @@ struct ksl_ssl {
     uint8_t *pending_write; size_t pending_write_len;   /* a copy of the bytes of the write ksl_tcp_write left pending in OpenSSL (WANT_READ), for ksl_tcp_abort */
     int pending_write_unkept;                         /* such a write is pending but its copy could not be made (malloc failed) */
     SSL_SESSION *new_sessions[KSL_CLIENT_TICKETS]; int new_sessions_n;   /* client: tickets not yet handed out by ksl_ssl_get1_session, oldest first */
+    SSL_SESSION *offered_session;                    /* client: the session set by ksl_ssl_set_session (a reference), for own_alpn */
     uint64_t key_updates_sent, key_update_limit;     /* KeyUpdates written; the bound (RFC 9846 4.7.3), 0 = KSL_MAX_KEY_UPDATES */
     int key_updates_exhausted, update_requested_pending;   /* the bound was reached: no more KeyUpdates of ours; our update_requested awaits the peer's KeyUpdate */
     uint64_t fed, update_requested_at;              /* ciphertext bytes fed (ksl_tcp_feed); how many had been when our update_requested was written */

@@ -36,6 +36,7 @@ void ksl_ssl_free(ksl_ssl *s) {
     SSL_set_shutdown(s->ssl, SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);   /* keeps the session resumable */
     SSL_free(s->ssl); BIO_free(s->net);
     for (int i = 0; i < s->new_sessions_n; i++) SSL_SESSION_free(s->new_sessions[i]);
+    SSL_SESSION_free(s->offered_session);
     if (s->pending_write) { OPENSSL_cleanse(s->pending_write, s->pending_write_len); free(s->pending_write); }
     for (int i = 0; i < KSL_NLEVELS; i++) { free(s->in[i].buf); free(s->stash[i].buf); }
     while (s->qh != s->qt) { if (s->q[s->qh].type == KSL_EV_KEY) ksl_key_free(s->q[s->qh].key); free(s->qbuf[s->qh]); s->qh = (s->qh + 1) % KSL_EVQ; }
@@ -162,16 +163,35 @@ static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) {
     if (session_mode_ready() && SSL_SESSION_get_ex_data(sess, session_mode_idx) == NULL)
         (void)SSL_SESSION_set_ex_data(sess, session_mode_idx, (void *)(intptr_t)(s->verify_mode + 1));
 }
+/* A session other than the one this client offered (a ticket received on this connection) takes the ALPN protocol this connection
+   negotiated. RFC 8446 section 4.2.10: the parameters of 0-RTT data, ALPN among them, "are those associated with the PSK in use",
+   for a ticket "those which were negotiated in the connection which established the PSK". An OpenSSL 3.5 client copies a ticket
+   received on a resumed connection from the resumed session, ALPN included (statem_clnt.c, tls_process_new_session_ticket:
+   ssl_session_dup), and records the negotiated protocol only in a new session (extensions_clnt.c, tls_parse_stoc_alpn); OpenSSL 4.1
+   fixes it (PR 32401). Left so, the ticket of an hq-interop resumption of an h3 ticket says h3: the client offers 0-RTT for h3 and
+   aborts with illegal_parameter when the server, right by the ticket's own connection, accepts it under hq-interop (extensions.c,
+   final_early_data). The session offered is shared with other holders and keeps its own connection's protocol. If the protocol
+   cannot be set (no memory), the ticket still resumes but allows no 0-RTT: its ALPN is unknown. */
+static void own_alpn(ksl_ssl *s, SSL_SESSION *sess) {
+    if (!s->done || sess == s->offered_session) return;
+    const unsigned char *a = NULL, *had = NULL; unsigned al = 0; size_t hl = 0;
+    SSL_get0_alpn_selected(s->ssl, &a, &al); SSL_SESSION_get0_alpn_selected(sess, &had, &hl);
+    if (al != hl || (al && memcmp(a, had, al) != 0)) {
+        ERR_set_mark();
+        if (SSL_SESSION_set1_alpn_selected(sess, al ? a : NULL, al) != 1) (void)SSL_SESSION_set_max_early_data(sess, 0);
+        ERR_pop_to_mark();
+    }
+}
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
     ERR_clear_error();
     if (s->new_sessions_n) {   /* TCP client: the tickets in the order they came (ksl_ctx.c new_session_cb), then the current session */
         SSL_SESSION *t = s->new_sessions[0]; memmove(s->new_sessions, s->new_sessions + 1, (size_t)--s->new_sessions_n * sizeof *s->new_sessions);
-        stamp_session(s, t); ksl_live_add(KSL_LIVE_SESSION, 1); return (ksl_session *)t;
+        own_alpn(s, t); stamp_session(s, t); ksl_live_add(KSL_LIVE_SESSION, 1); return (ksl_session *)t;
     }
     SSL_SESSION *sess = SSL_get1_session(s->ssl);
     if (sess && !SSL_SESSION_is_resumable(sess)) { SSL_SESSION_free(sess); sess = NULL; }
-    if (sess) { stamp_session(s, sess); ksl_live_add(KSL_LIVE_SESSION, 1); }
+    if (sess) { own_alpn(s, sess); stamp_session(s, sess); ksl_live_add(KSL_LIVE_SESSION, 1); }
     return (ksl_session *)sess;
 }
 int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
@@ -181,6 +201,7 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
         if (made == 0 || made - 1 == KSL_VERIFY_NONE) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: a session made without verification does not resume where verification is on"); return KSL_ERROR; }
     }
     if (!session || SSL_set_session(s->ssl, (SSL_SESSION *)session) != 1) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: session rejected"); return KSL_ERROR; }
+    SSL_SESSION_free(s->offered_session); s->offered_session = (SSL_SESSION *)session; SSL_SESSION_up_ref(s->offered_session);
     return KSL_OK;
 }
 void ksl_session_free(ksl_session *session) { if (session) ksl_live_add(KSL_LIVE_SESSION, -1); SSL_SESSION_free((SSL_SESSION *)session); }

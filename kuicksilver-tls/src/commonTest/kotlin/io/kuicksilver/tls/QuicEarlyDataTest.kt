@@ -183,6 +183,58 @@ class QuicEarlyDataTest {
         }
     }
 
+    /**
+     * RFC 8446 section 4.2.10 (RFC 9846 section 4.3.10): early data only under "the selected cipher suite" of the PSK. A ticket
+     * from an AES-128-GCM connection, resumed on a server (same process ticket keys) that can only pick ChaCha20-Poly1305 (the
+     * same hash, so the PSK itself is still usable): 0-RTT is refused and the handshake completes in 1-RTT.
+     */
+    @Test fun negative_zeroRttUnderAnotherCipherSuiteRejected() {
+        val aes = {
+            KslQuicCrypto.newSession(
+                Fixtures.server { cipherSuites = CipherSuites(listOf(CipherSuites.AES_128_GCM)) },
+                earlyData = true,
+            )
+        }
+        val chacha = Fixtures.server { cipherSuites = CipherSuites(listOf(CipherSuites.CHACHA20_POLY1305)) }
+        val ticket = firstTicket(aes)
+        val c = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)
+        assertTrue(c.resume(ticket))
+        assertTrue(c.enableEarlyData(null, null), "the ticket allows early data")
+        val s = KslQuicCrypto.newSession(chacha, earlyData = true)
+        assertTrue(s.enableEarlyData(byteArrayOf(1), SetAdmission()))
+        val r = handshake(c, s)
+        try {
+            assertTrue(r.pump.cs.done && r.pump.ss.done, "the handshake completes in 1-RTT")
+            assertEquals(
+                Aead.CHACHA20_POLY1305,
+                r.pump.ss.keys
+                    .last()
+                    .aead,
+                "the server selected ChaCha20-Poly1305",
+            )
+            assertEquals(1 to 0, r.earlyLevels, "the client wrote 0-RTT, the server installed no 0-RTT key")
+            assertEquals(false, c.earlyDataAccepted)
+            assertEquals(false, s.earlyDataAccepted)
+            tickets(r).forEach { it.close() }
+        } finally {
+            r.pump.close()
+        }
+        // the control: the same suite on both connections accepts
+        val again = firstTicket(aes)
+        val c2 = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)
+        assertTrue(c2.resume(again))
+        assertTrue(c2.enableEarlyData(null, null))
+        val s2 = aes()
+        assertTrue(s2.enableEarlyData(byteArrayOf(1), SetAdmission()))
+        val r2 = handshake(c2, s2)
+        try {
+            assertEquals(true, s2.earlyDataAccepted, "the same suite accepts 0-RTT")
+            tickets(r2).forEach { it.close() }
+        } finally {
+            r2.pump.close()
+        }
+    }
+
     @Test fun ticketWithoutEarlyDataPermissionGivesNoZeroRtt() {
         val ticket = firstTicket({ KslQuicCrypto.newSessionForTest(Fixtures.server(), ticketsWithoutEarlyData = true) })
         val c = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)

@@ -245,10 +245,10 @@ static void test_shared_context_concurrent_handshakes(void) {
     share_client = client_ctx("test-ca", KSL_VERIFY_OPENSSL); ksl_ctx_set_option(share_client, KSL_OPT_KEYLOG, 1); ksl_ctx_freeze(share_client);
     pthread_t t[SHARE_THREADS]; share_result res[SHARE_THREADS]; memset(res, 0, sizeof res);
     for (int i = 0; i < SHARE_THREADS; i++) pthread_create(&t[i], NULL, share_worker, &res[i]);
-    int hs = 0, resumed = 0, aged = 0, keylog = 0, failures = 0;
-    for (int i = 0; i < SHARE_THREADS; i++) { pthread_join(t[i], NULL); hs += res[i].handshakes; resumed += res[i].resumed; aged += res[i].aged; keylog += res[i].keylog_ok; failures += res[i].failures; }
+    int hs = 0, resumed = 0, aged = 0, keylog = 0, thread_failures = 0;
+    for (int i = 0; i < SHARE_THREADS; i++) { pthread_join(t[i], NULL); hs += res[i].handshakes; resumed += res[i].resumed; aged += res[i].aged; keylog += res[i].keylog_ok; thread_failures += res[i].failures; }
     int all = SHARE_THREADS * SHARE_ROUNDS;
-    if (failures || aged) printf("handshakes %d, resumed %d, aged %d, keylogs %d, failures %d of %d\n", hs, resumed, aged, keylog, failures, all);
+    if (thread_failures || aged) printf("handshakes %d, resumed %d, aged %d, keylogs %d, failures %d of %d\n", hs, resumed, aged, keylog, thread_failures, all);
     CHECK(hs == all, "every full handshake on the shared context completes");
     CHECK(resumed + aged == all, "every ticket resumes on the same shared context while the keys rotate, unless two rotations passed");
     CHECK(aged <= all / 20, "tickets that aged past two rotations stay rare (a thread descheduled for 100 handshakes)");
@@ -283,6 +283,11 @@ static ksl_ctx *platform_client(void) {
     if (ksl_ctx_set_roots(c, NULL, 0) != KSL_OK) { ksl_ctx_free(c); return NULL; }
     ksl_ctx_set_option(c, KSL_OPT_VERIFY_MODE, KSL_VERIFY_OPENSSL); return c;
 }
+/* the number of objects in a store: X509_STORE_get1_objects (a copy; X509_STORE_get0_objects is deprecated in OpenSSL 4.0) */
+static int store_objects(X509_STORE *st) {
+    STACK_OF(X509_OBJECT) *objs = X509_STORE_get1_objects(st); int n = objs ? sk_X509_OBJECT_num(objs) : -1;
+    sk_X509_OBJECT_pop_free(objs, X509_OBJECT_free); return n;
+}
 static void test_system_store_parsed_once(void) {
     SECTION("trust_system_store_shared_and_reloaded_on_change");
     const char *of = getenv("SSL_CERT_FILE"), *od = getenv("SSL_CERT_DIR"); char *sf = of ? strdup(of) : NULL, *sd = od ? strdup(od) : NULL;
@@ -301,12 +306,12 @@ static void test_system_store_parsed_once(void) {
         X509_STORE *shared = ksl_system_store_for_test();
         CHECK(shared && SSL_CTX_get_cert_store(a->ctx) == shared && SSL_CTX_get_cert_store(b->ctx) == shared, "both contexts share one parsed store");
         CHECK(verifies_server(a) && verifies_server(b), "the shared store verifies the server");
-        int before = sk_X509_OBJECT_num(X509_STORE_get0_objects(shared));
+        int before = store_objects(shared);
         blob extra = chain_of(1, "other-ca"); CHECK(ksl_ctx_set_roots(b, extra.buf, extra.len) == KSL_OK, "explicit roots on a context that used the shared store"); free(extra.buf);
-        CHECK(SSL_CTX_get_cert_store(b->ctx) != shared && sk_X509_OBJECT_num(X509_STORE_get0_objects(shared)) == before, "negative: explicit roots never land in the shared store");
+        CHECK(SSL_CTX_get_cert_store(b->ctx) != shared && store_objects(shared) == before, "negative: explicit roots never land in the shared store");
         CHECK(write_pem(files[0], both, 2), "bundle rewritten (a CA update)");
         ksl_ctx *c = platform_client(); X509_STORE *now = ksl_system_store_for_test();
-        CHECK(c && now != shared && sk_X509_OBJECT_num(X509_STORE_get0_objects(now)) == 2, "a changed bundle is parsed again for new contexts");
+        CHECK(c && now != shared && store_objects(now) == 2, "a changed bundle is parsed again for new contexts");
         CHECK(verifies_server(a), "a context keeps the store it was built with");
         ksl_ctx_free(c);
         remove(files[0]);
