@@ -66,7 +66,9 @@ internal class H2ConnectionCore(
     private val resets = TokenBucket(settings.resetBurst, settings.resetsPerSecond, now)
     private val glitches = TokenBucket(settings.glitchBurst, settings.glitchesPerSecond, now)
 
-    private val streams = HashMap<Int, H2Stream>()
+    // insertion order is the order each side opened its streams in: the resets a GOAWAY or a close reports (and the
+    // engine retries) come out in that order on every platform, not in a hash table's
+    private val streams = LinkedHashMap<Int, H2Stream>()
     private var peerStreams = 0 // peer-initiated streams in [streams]: their handlers count toward our limit
     private var localOpen = 0 // our streams not closed: they count toward the peer's limit
 
