@@ -308,7 +308,7 @@ class ServerH2FloodTest {
                         assertNotNull(
                             raw.await(within = 15.seconds) {
                                 frames += it
-                                it.stream == next && it.endStream || it.type == RawFrame.GOAWAY || it.type == RawFrame.RST_STREAM
+                                (it.stream == next && it.endStream) || it.type == RawFrame.GOAWAY || it.type == RawFrame.RST_STREAM
                             },
                         )
                     assertTrue(end.stream == next && end.type != RawFrame.RST_STREAM, "the connection went on: ${frames.takeLast(5)}")
@@ -330,7 +330,7 @@ class ServerH2FloodTest {
         RawH2Client.connect(port).use { raw ->
             raw.preface()
             raw.headers(1, RawH2Client.get())
-            val f = assertNotNull(raw.await(within = 15.seconds) { it.stream == 1 && it.endStream || it.type == RawFrame.GOAWAY })
+            val f = assertNotNull(raw.await(within = 15.seconds) { (it.stream == 1 && it.endStream) || it.type == RawFrame.GOAWAY })
             assertEquals(1, f.stream, "$f")
         }
     }
