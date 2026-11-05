@@ -22,6 +22,9 @@ SPDX-License-Identifier: Apache-2.0
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-JVM%20%7C%20Android%20%7C%20iOS%20%7C%20macOS%20%7C%20Linux%20%7C%20Windows-555">
   <a href="docs/spec/interop.md"><img alt="Interop: msquic, ngtcp2, picoquic, quic-go, quiche, quinn" src="https://img.shields.io/badge/interop-6%20QUIC%20stacks-2EA44F"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/kuicksilver/kuicksilver"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/kuicksilver/kuicksilver/badge"></a>
+  <!-- OpenSSF Best Practices badge: pending the maintainer's submission (answers in docs/openssf-best-practices.md); add
+  <a href="https://www.bestpractices.dev/projects/PROJECT-ID"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/PROJECT-ID/badge"></a>
+  with the project id once the entry exists. -->
 </p>
 
 > **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.0 is on Maven Central. Do
@@ -212,7 +215,8 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
 - [docs/verifying.md](docs/verifying.md) — verifying a release: signatures, Gradle dependency verification, SBOM and
   provenance, rebuilding the native libraries.
 - [docs/process.md](docs/process.md) — how every change is checked before it reaches a release: tests, review, the
-  local gate on every target, hosted CI, soak and fuzzing, signed releases.
+  local gate on every target, hosted CI, soak and fuzzing, signed releases. [docs/openssf-best-practices.md](docs/openssf-best-practices.md)
+  has the prepared answers for the OpenSSF Best Practices questionnaire.
 - [docs/adr/](docs/adr/README.md) — architecture decision records.
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
