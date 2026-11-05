@@ -836,13 +836,21 @@ internal class H2ConnectionCore(
 
     /**
      * The driver is done with [streamId] (a server's handler returned; a client read or abandoned the response): it stops
-     * counting toward our concurrency limit, and content the application never read is credited to the connection.
+     * counting toward our concurrency limit, and content the application never read is credited to the connection. A
+     * request still open after its complete response is stopped with RST_STREAM NO_ERROR once that response is written
+     * (section 8.1).
      */
     fun release(streamId: Int) {
         val s = streams[streamId] ?: return
         s.released = true
         if (!s.local) refusedInARow = 0
         dropUnconsumed(s)
+        if (!s.local && s.state == StreamState.HALF_CLOSED_LOCAL) {
+            // section 8.1: the response is complete and nobody reads the rest of the request: the server asks the client to
+            // stop with RST_STREAM NO_ERROR once the response's frames are out (Go's server.go wroteFrame does the same)
+            if (s.out.isEmpty()) resetStream(s.id, Http2ErrorCode.NO_ERROR, lastNow, causedByPeer = false) else s.stopPeerAfterFlush = true
+            return
+        }
         if (s.state == StreamState.CLOSED && s.out.isEmpty()) removeStream(s) // else once its last frame is written
     }
 
@@ -1029,6 +1037,11 @@ internal class H2ConnectionCore(
             tryWake(s)
         }
         schedule(s)
+        if (s.stopPeerAfterFlush && s.out.isEmpty()) {
+            s.stopPeerAfterFlush = false
+            // the client ended its side meanwhile, or the reset of [release] (section 8.1) goes out now, after the response
+            if (s.state == StreamState.HALF_CLOSED_LOCAL) resetStream(s.id, Http2ErrorCode.NO_ERROR, now, causedByPeer = false)
+        }
         if (s.state == StreamState.CLOSED && s.out.isEmpty() && s.released) removeStream(s)
         return frame
     }

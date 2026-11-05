@@ -13,13 +13,11 @@ import io.kuicksilver.http2.core.Role
 import io.kuicksilver.http2.message.H2Messages
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ReceiveChannel
 import kotlin.time.Duration
 import kotlin.time.TimeSource
 
 /** Monotonic nanoseconds since the first call. */
-private fun monotonicNanos(): () -> Long {
+internal fun monotonicNanos(): () -> Long {
     val start = TimeSource.Monotonic.markNow()
     return { start.elapsedNow().inWholeNanoseconds }
 }
@@ -185,113 +183,7 @@ public class H2ClientStream internal constructor(
      * The call is over: a stream not finished both ways is reset with CANCEL, the connection forgets it and its slot comes
      * back. Every opened stream must be released once.
      */
-    public fun release(): Unit = rt.release(s)
-}
-
-/**
- * The server side of one HTTP/2 connection: requests arrive on [requests]. Minimal (no flood policy beyond the core's,
- * no Ktor pipeline): the engine's tests use it as an HTTP/2 peer.
- */
-@InternalKuicksilverApi
-public class H2ServerConnection private constructor(
-    private val requests0: Channel<H2ServerStream>,
-) {
-    internal lateinit var rt: H2Runtime
-
-    /** Requests as their heads arrive, validated (RFC 9113 section 8.3.1); a malformed one is reset, never delivered. */
-    public val requests: ReceiveChannel<H2ServerStream> get() = requests0
-
-    /** Sends GOAWAY (NO_ERROR, graceful: first the largest stream identifier, then the last one taken). */
-    public fun shutdown(): Unit = rt.shutdown()
-
-    /** Closes the connection now. */
-    public fun abort(cause: Throwable): Unit = rt.abort(cause)
-
-    /**
-     * Sends GOAWAY with [code] at once, not graceful: its last stream is the last one taken. NO_ERROR lets the streams taken
-     * finish; an error code (HTTP_1_1_REQUIRED, say) ends the connection.
-     */
-    public fun goAway(code: Http2ErrorCode): Unit = rt.goAwayNow(code)
-
-    /** Suspends until the connection ended. */
-    public suspend fun awaitClosed() {
-        rt.closed.await()
+    public fun release() {
+        rt.release(s)
     }
-
-    public companion object {
-        /** Starts serving on [input] and [output]; see [H2ClientConnection.start] for the parameters. */
-        public fun start(
-            input: ByteReadChannel,
-            output: ByteWriteChannel,
-            settings: Http2Settings,
-            scope: CoroutineScope,
-            closeTransport: () -> Unit,
-            clock: () -> Long = monotonicNanos(),
-        ): H2ServerConnection {
-            val ch = Channel<H2ServerStream>(Channel.UNLIMITED) // bounded by our SETTINGS_MAX_CONCURRENT_STREAMS in the core
-            val c = H2ServerConnection(ch)
-            val rt =
-                H2Runtime(
-                    Role.SERVER,
-                    settings,
-                    input,
-                    output,
-                    scope,
-                    clock,
-                    Long.MAX_VALUE,
-                    closeTransport = {
-                        ch.close()
-                        closeTransport()
-                    },
-                    onChange = {},
-                    onRequest = { s, r -> ch.trySend(H2ServerStream(c.rt, s, r.method, r.path ?: "", r.authority, r.fields)) },
-                )
-            c.rt = rt
-            rt.start()
-            return c
-        }
-    }
-}
-
-/** One request a [H2ServerConnection] received. */
-@InternalKuicksilverApi
-public class H2ServerStream internal constructor(
-    private val rt: H2Runtime,
-    private val s: StreamRt,
-    /** `:method`. */
-    public val method: String,
-    /** `:path`. */
-    public val path: String,
-    /** `:authority` (or `host`). */
-    public val authority: String?,
-    /** The regular fields. */
-    public val fields: List<Pair<String, String>>,
-) {
-    /** The stream identifier. */
-    public val id: Int get() = s.id
-
-    /** The request content. */
-    public val body: ByteReadChannel get() = s.body
-
-    /** Sends the response head; [endStream] when there is no content. */
-    public fun respond(
-        status: Int,
-        fields: List<Pair<String, String>> = emptyList(),
-        endStream: Boolean = false,
-    ): Unit = rt.respond(s, status, fields, endStream)
-
-    /** Sends [source] as the response content; ends the stream unless trailers follow ([end] false). */
-    public suspend fun sendBody(
-        source: ByteReadChannel,
-        end: Boolean = true,
-    ): Unit = rt.sendBody(s, source, null, { IllegalStateException("no stall timeout") }, end)
-
-    /** Sends trailers, which end the stream. */
-    public fun trailers(fields: List<Pair<String, String>>): Unit = rt.respondTrailers(s, fields)
-
-    /** Resets the stream with [code]. */
-    public fun reset(code: Http2ErrorCode): Unit = rt.reset(s, code)
-
-    /** The handler is done with the stream. */
-    public fun release(): Unit = rt.release(s)
 }

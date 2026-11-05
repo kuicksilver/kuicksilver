@@ -83,6 +83,9 @@ internal class StreamRt(
     var released = false
     var trailers: List<Pair<String, String>>? = null
 
+    /** Completed with [failure] when the stream fails (a server's engine cancels the request's handler on it). */
+    val failed = CompletableDeferred<Throwable>()
+
     /** Wakes the body's reader. */
     val readable = Channel<Unit>(Channel.CONFLATED)
 
@@ -373,6 +376,13 @@ internal class H2Runtime(
                 lock.withLock { streams.remove(s.id) }
                 return
             }
+        if (e.endStream && r.contentLength > 0) {
+            // RFC 9113 section 8.1.1: no DATA can follow, so the content cannot match its content-length; never delivered
+            malformed(s, "content-length ${r.contentLength} on a request without content")
+            withCore { release(s.id) }
+            lock.withLock { streams.remove(s.id) }
+            return
+        }
         lock.withLock {
             s.headReceived = true
             s.contentLength = r.contentLength
@@ -531,6 +541,7 @@ internal class H2Runtime(
                 }
             }
         if (!set) return
+        s.failed.complete(cause)
         s.head.completeExceptionally(cause)
         s.answered.completeExceptionally(cause)
         s.readable.trySend(Unit)
@@ -766,9 +777,8 @@ internal class H2Runtime(
 
     /**
      * Our side of [s] cannot go on: RST_STREAM CANCEL unless the stream already failed or ended. A server whose response is
-     * complete does not reset: a reset would drop the response's frames still queued (RFC 9113 section 6.4); the request's
-     * remaining content is credited as it arrives. (Asking the client to stop with NO_ERROR once those frames are out,
-     * section 8.1, comes with the server engine.)
+     * complete does not reset: a reset would drop the response's frames still queued (RFC 9113 section 6.4); once the
+     * stream is released, the core asks the client to stop with NO_ERROR after those frames (section 8.1).
      */
     private fun abandon(
         s: StreamRt,
@@ -887,9 +897,10 @@ internal class H2Runtime(
 
     /**
      * The application is done with [s] (its call ended): a stream not finished both ways is reset with CANCEL (RFC 9113
-     * section 8.1: the client no longer wants the response), the core releases it and its reservation comes back.
+     * section 8.1: the client no longer wants the response), the core releases it and its reservation comes back. True for
+     * the first call, false for every later one.
      */
-    fun release(s: StreamRt) {
+    fun release(s: StreamRt): Boolean {
         val first =
             lock.withLock {
                 if (s.released) {
@@ -899,7 +910,7 @@ internal class H2Runtime(
                     true
                 }
             }
-        if (!first) return
+        if (!first) return false
         abandon(s, CancellationException("the call ended"))
         withCore { release(s.id) }
         lock.withLock {
@@ -907,6 +918,7 @@ internal class H2Runtime(
             s.chunks.clear()
         }
         if (client) unreserve()
+        return true
     }
 
     /** A server's response head on [s]. */

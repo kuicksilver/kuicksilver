@@ -45,6 +45,42 @@ class StreamStateTest {
         assertEquals(3, p.client.openStream(GET, endStream = true)) // the next client identifier
     }
 
+    /**
+     * RFC 9113 section 8.1: a server MAY ask the client to stop sending a request with RST_STREAM NO_ERROR after a complete
+     * response. Once the handler is done (release) with the request still open, the core does so after the response's
+     * last frame (as Go's server.go wroteFrame), so a client cannot keep a released stream busy with content nobody reads.
+     */
+    @Test
+    fun releasedRequestStillSendingIsStoppedWithNoErrorAfterTheResponse() {
+        val p = H2Pair()
+        val id = p.client.openStream(GET + ("content-length" to "100"), endStream = false)
+        p.client.sendData(id, ByteArray(10), 0, 10, endStream = false)
+        p.pump()
+        p.server.sendHeaders(id, OK, endStream = false)
+        p.server.sendData(id, "done".encodeToByteArray(), 0, 4, endStream = true) // half-closed (local)
+        p.server.release(id) // the handler is done; the client still sends
+        p.pump()
+        val reset = p.clientGot<H2Event.StreamReset>().single()
+        assertEquals(Http2ErrorCode.NO_ERROR, reset.code)
+        // the response was complete before the reset (the frames went out in order)
+        assertTrue(p.clientGot<H2Event.Data>().single().endStream)
+        assertEquals(0, p.server.activeStreams)
+    }
+
+    /** A handler still reading the request (not released) is not cut off by its own complete response. */
+    @Test
+    fun completeResponseBeforeReleaseLeavesTheRequestOpen() {
+        val p = H2Pair()
+        val id = p.client.openStream(GET, endStream = false)
+        p.pump()
+        p.server.sendHeaders(id, OK, endStream = true)
+        p.pump()
+        assertTrue(p.clientGot<H2Event.StreamReset>().isEmpty())
+        assertEquals(1, p.client.sendData(id, byteArrayOf(1), 0, 1, endStream = true))
+        p.pump()
+        assertTrue(p.serverGot<H2Event.Data>().single().endStream)
+    }
+
     @Test
     fun interimResponsesThenFinalThenTrailers() {
         val p = H2Pair()

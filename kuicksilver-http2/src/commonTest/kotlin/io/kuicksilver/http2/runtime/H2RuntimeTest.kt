@@ -260,6 +260,48 @@ class H2RuntimeTest {
             assertEquals(Http2ErrorCode.CANCEL, seen.await())
         }
 
+    /** The engine's view of a server stream: its failure (here the client's CANCEL) reaches the handler; idle once released. */
+    @Test fun serverStreamFailureReachesTheHandlerAndReleaseCounts() =
+        runTest {
+            val (client, server, _) = pair()
+            val failure = kotlinx.coroutines.CompletableDeferred<Throwable>()
+            val req =
+                backgroundScope.async {
+                    server.requests.receive().also { r ->
+                        r.invokeOnFailure { failure.complete(it) }
+                        r.respond(200)
+                    }
+                }
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/up", listOf("content-length" to "3"), endStream = false)
+            val r = req.await()
+            assertEquals("https", r.scheme)
+            assertEquals(3L, r.contentLength)
+            assertEquals(1, server.openRequests.value)
+            s.response()
+            s.cancel()
+            val e = assertIs<Http2Exception.StreamReset>(failure.await())
+            assertEquals(Http2ErrorCode.CANCEL, e.code)
+            r.release()
+            r.release() // once only
+            assertEquals(0, server.openRequests.value)
+            s.release()
+        }
+
+    /** RFC 9113 section 8.1: the handler is done after a complete response; the client still sending is told to stop. */
+    @Test fun releasedAfterCompleteResponseTheClientIsStoppedWithNoError() =
+        runTest {
+            val (client, server, _) = pair()
+            backgroundScope.serve(server) { r -> r.respond(200, endStream = true) }
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            assertEquals(200, s.response().status)
+            // the request body is not wanted: sending it ends quietly (the server stopped the stream with NO_ERROR)
+            s.sendBody(ByteReadChannel(ByteArray(1 shl 20)), stallMillis = null) { error("stall") }
+            assertEquals(0, s.body.readAll().size)
+            s.release()
+        }
+
     // ---- against a raw server ----
 
     /** A server that writes frames by hand; [read] decodes what the client wrote after its preface. */
