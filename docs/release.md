@@ -9,7 +9,8 @@ The first published version is **0.2.0**. 0.1.0 was a candidate, frozen on 2026-
 
 Since 2026-10-14 a release is built, checked, signed and uploaded **from a maintainer's Mac** with
 `tools/release/local-release.sh`, with no GitHub runner; the gate is `tools/ci/local-matrix.sh` on the same machine.
-The GitHub Actions workflows are disabled; the `release` workflow below remains an alternative if hosted CI is enabled.
+The `build` workflow runs on GitHub-hosted runners for every push and pull request, but it is not the release gate; the
+`release` workflow below is not used and remains an alternative.
 
 ## Once: accounts, keys, DNS
 
@@ -264,10 +265,10 @@ publication, and the upload is a second Gradle invocation on the same commit and
 files; the `.asc` signatures are not covered); and nothing third-party witnesses the build, which is what the
 `release` workflow below could add once it is used (GitHub's artifact attestations, SLSA Build L2).
 
-## Alternative: the `release` workflow (disabled)
+## Alternative: the `release` workflow (not used)
 
-`.github/workflows/release.yml` does the same on GitHub-hosted runners. The workflows are disabled; this is the
-alternative if hosted CI is enabled. *Actions → release → Run workflow* on `main` with the version:
+`.github/workflows/release.yml` does the same on GitHub-hosted runners. It is not used: releases are made locally
+(above); this is the alternative to it. *Actions → release → Run workflow* on `main` with the version:
 the `gate` job refuses a malformed or `-SNAPSHOT` version, another branch, or a commit without a green `build` run (from
 a push, the weekly schedule or a manual dispatch; a pull-request run builds the merge commit and does not count);
 `publish`, on one macOS runner, downloads that run's `jni-*` and `openssl-mingw-x64` artifacts into `build/` (they live

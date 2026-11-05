@@ -73,7 +73,7 @@ Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, wh
   `checkKotlinAbi` compares the build against the dumps and is part of each module's `check`, as is `checkInternalAbi`,
   which reads the compiled classes and fails when a JVM or Android dump lists a class that is, or is nested in, an
   `@InternalKuicksilverApi` class; the local gate (`tools/ci/local-matrix.sh`, with the module lists of
-  `tools/ci/matrix.sh`; the GitHub Actions workflows, whose `apple` job would run it, are disabled) runs it over every
+  `tools/ci/matrix.sh`; the hosted CI's `apple` job runs it too) runs it over every
   module, which needs the Apple, Android and Kotlin/Native toolchains together. An intended API change regenerates the dumps with
   `updateKotlinAbi` in the same commit, and reviewers read the `api/` diff. Before a release, `./gradlew
   checkKotlinAbi` must be green: the dumps are the contract of the version ([release.md](release.md)).
@@ -184,8 +184,8 @@ table once it lists Xcode 27. Apps that use Kotlin 2.4.20 may build with either.
 | `iosArm64` | iOS 15 or newer | compiled, linked and size-checked (`tools/check/ios-size.sh`, `ios-private-api.py`); **not yet run on a physical device** ([ios.md, Device checklist](guide/ios.md#device-checklist)) |
 | `mingwX64` | ECN where the Windows version accepts `IP_ECN` (probed when the socket opens; verified on Windows 11) | the native suites in a local Windows 11 VM (Parallels) |
 
-There is no hosted CI run: the GitHub Actions workflows are disabled. The gate is `tools/ci/local-matrix.sh`, which runs
-on a maintainer's machine, and releases are made from there with `tools/release/local-release.sh` ([release.md](release.md)). Platform limits that are part of the contract (one endpoint loop per port outside Linux and
+The hosted CI (`.github/workflows/build.yml`, every push and pull request) runs the same steps on GitHub's runners. The
+release gate is `tools/ci/local-matrix.sh`, which runs on a maintainer's machine, and releases are made from there with `tools/release/local-release.sh` ([release.md](release.md)). Platform limits that are part of the contract (one endpoint loop per port outside Linux and
 Android, no GSO/GRO on Darwin, the Windows exclusive bind) are in the [README](../README.md#platforms) and the
 [QUIC guide](guide/quic.md#binding-an-endpoint-and-connecting).
 

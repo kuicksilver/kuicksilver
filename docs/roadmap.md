@@ -111,9 +111,9 @@ bug fixed with a test before a release).
 - Longer soak and fuzzing campaigns (done for 0.2.1: a 24-hour Kotlin/Native soak and a 37-hour JVM soak, both flat, and
   2 hours per fuzz target).
 - A statement in [stability.md](stability.md) that the library is not FIPS-certified (done for 0.2.1).
-- Hosted CI: the `build` workflow runs on GitHub Actions by manual dispatch; push, pull-request and scheduled runs come
-  back when its matrix is green on the public runners. The local gate (`tools/ci/local-matrix.sh`) stays the release
-  gate.
+- Hosted CI: the `build` workflow runs on GitHub Actions on every push to `main` and `release/**`, every pull request to
+  them, weekly and by hand (restored on `main` for 0.3.0). The local gate (`tools/ci/local-matrix.sh`) stays the
+  release gate.
 
 Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 ([Device checklist](guide/ios.md#device-checklist)), and the server CPU work below.

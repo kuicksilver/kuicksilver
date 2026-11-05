@@ -141,8 +141,7 @@ The floors were measured on a local host, so the thresholds file says `"blocking
 warning (exit 0) while a failed or missing cell still fails. To make the floors blocking, run `run-local.sh --perf` a
 few times on quiet hosts, fold the runs in with `check-perf.sh --update <dir>[,<dir>...]` (it keeps the best mean per
 cell), commit the new floors and set `"blocking": true` in the same commit. The weekly `perf` workflow
-(`.github/workflows/perf.yml`) does the same on GitHub-hosted runners, but the GitHub Actions workflows are disabled;
-the gate is `tools/ci/local-matrix.sh`.
+(`.github/workflows/perf.yml`) does the same on GitHub-hosted runners; the release gate is `tools/ci/local-matrix.sh`.
 
 ## Style
 

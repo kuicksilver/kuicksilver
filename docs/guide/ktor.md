@@ -772,8 +772,8 @@ the JVM, Android, Linux, macOS, iOS and Windows. The HTTP/3 runs, like the engin
 need a QUIC server peer and run where one can bind, which since 0.2.0 is every target with the accelerated socket: the
 JVM, Android, Linux, macOS, the iOS simulator and Windows (where a probe finds no server, they pass without running). iOS
 runs them on the simulator (`iosSimulatorArm64Test`), not yet on a device. Windows (Kotlin/Native and the JVM) was
-verified in a local Windows 11 VM (Parallels); the GitHub Actions workflows are disabled, and the release gate runs
-locally (`tools/ci/local-matrix.sh --with-windows`).
+verified in a local Windows 11 VM (Parallels) and runs in the hosted CI's Windows jobs; the release gate runs locally
+(`tools/ci/local-matrix.sh --with-windows`).
 
 **Client** (`kuicksilver-ktor-client`): `ContentTest`, `PostTest`, `UploadTest`, `DownloadTest`, `HttpRedirectTest`,
 `HttpTimeoutTest` and `WebSocketTest` against Ktor's test-server routes hosted on the Kuicksilver server engine; every
