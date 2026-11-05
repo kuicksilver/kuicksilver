@@ -230,13 +230,14 @@ internal class H2Runtime(
     /**
      * Queues the core's events for dispatch (under the lock). A peer's GOAWAY is noted here, not at its dispatch: the core
      * may have closed with it already (a GOAWAY and no streams left), and whoever finds the connection unusable meanwhile
-     * must also find the code that says why (HTTP_1_1_REQUIRED, RFC 9113 section 7).
+     * must also find the code that says why (HTTP_1_1_REQUIRED, RFC 9113 section 7). An HTTP_1_1_REQUIRED stays: a later
+     * GOAWAY (section 6.8 allows several) does not take it back.
      */
     private fun takeEventsLocked() {
         while (true) {
             val e = core.nextEvent() ?: break
             if (e is H2Event.GoAway) {
-                goAwayCode = e.code
+                if (goAwayCode != Http2ErrorCode.HTTP_1_1_REQUIRED) goAwayCode = e.code
                 goAwayReceived = true
             }
             pending.addLast(e)

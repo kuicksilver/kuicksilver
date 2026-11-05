@@ -390,6 +390,26 @@ class H2RuntimeTest {
         }
 
     /**
+     * A server may send more than one GOAWAY (RFC 9113 section 6.8); a later NO_ERROR one does not take back an earlier
+     * HTTP_1_1_REQUIRED (section 7): the route must still go to HTTP/1.1 only.
+     */
+    @Test fun http11RequiredStaysAfterALaterNoErrorGoAway() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            val a = client.get("/a")
+            runCurrent()
+            srv.read()
+            srv.write(FrameEncoder.goAway(a.id, Http2ErrorCode.HTTP_1_1_REQUIRED.code, ByteArray(0)))
+            runCurrent()
+            srv.write(FrameEncoder.goAway(a.id, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+            runCurrent()
+            assertEquals(Http2ErrorCode.HTTP_1_1_REQUIRED, client.goAwayCode)
+            a.release()
+        }
+
+    /**
      * RFC 9113 section 8.1: a server may answer before the whole request and then stop it with RST_STREAM NO_ERROR; the
      * client keeps the response (its content included, even when the reset arrives before the application read it) and
      * its sending stops without an error.
