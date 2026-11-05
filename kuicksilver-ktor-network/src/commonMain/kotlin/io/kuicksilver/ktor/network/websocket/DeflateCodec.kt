@@ -38,8 +38,9 @@ internal class MessageTooBigException(
  * [MessageTooBigException] once at most one piece past the limit was produced: nothing is sized by what the data claims.
  * With [noContextTakeover] each message starts with an empty window. Without it, the next message is decompressed with
  * the window of the last one (section 7.2.2, MUST), also after a message that ended its DEFLATE stream with a final block
- * (section 7.2.3.4): the stream is restarted and primed with the window, which zlib hands over on Kotlin/Native
- * (inflateGetDictionary); on the JVM and Android, whose Inflater cannot, the last 32 KiB of output is kept for that.
+ * (section 7.2.3.4): the stream is restarted and primed with the window: the last 32 KiB of output is kept for that on
+ * every platform (the JDK's Inflater cannot hand the window over, and zlib's inflateGetDictionary is newer than the
+ * zlib 1.2.7 of the glibc 2.17 Linux floor).
  *
  * A message is malformed (DeflateDataException) when it has no compressed data at all (the empty message is 0x00,
  * section 7.2.3.6), when data follows a final block other than the 0x00 that pads it (section 7.2.3.4), and, where the
@@ -133,8 +134,9 @@ internal class MessageInflater(
         } else if (n == 0 && tail && r.atBlockBoundary == false) {
             throw DeflateDataException("a compressed message that does not end at a DEFLATE block boundary")
         }
-        // the window survives a final block: zlib on Native hands it over then (inflateGetDictionary), the JDK cannot
-        if (n > 0 && !noContextTakeover && !r.readsWindow) remember(output, offset, n)
+        // the window survives a final block: the last 32 KiB of output is kept for it on every platform (zlib's
+        // inflateGetDictionary would hand it over on Native, but it needs zlib 1.2.7.1, above the manylinux2014 floor)
+        if (n > 0 && !noContextTakeover) remember(output, offset, n)
         produced += n
         if (produced > maxMessageSize) throw MessageTooBigException(produced, maxMessageSize)
         return n
@@ -183,12 +185,6 @@ internal class MessageInflater(
             r.reset()
         } else if (r != null && streamEnded) {
             // a final block ended the stream: a new one, primed with the window the next message may refer back into
-            if (r.readsWindow) {
-                val window = r.window()
-                r.reset()
-                r.setDictionary(window, 0, window.size)
-                return finishMessage()
-            }
             r.reset()
             val h = history
             if (h != null) {
