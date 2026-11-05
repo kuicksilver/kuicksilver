@@ -78,6 +78,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9846 | §4.7.1; RFC 5077 (obsoleted by RFC 9846) — session tickets (TCP server), key rotation | ✅ | 0.2.0 | The TCP server issues session tickets with rotating keys. | [details](rfc/9846.md#s4-7-1-session-tickets-tcp-server-key-rotation) |
 | RFC 9846 | §4.5.1, §4.5.2, §4.7.1 — server identity replaced at run time, tickets bound to it | ✅ | 0.3.0 | A reloadable identity gives each new handshake one whole chain and key, and tickets issued before a reload are not resumed. | [details](rfc/9846.md#s4-5-1-server-identity-replaced-at-run-time) |
 | RFC 9846 | §4.7.1 — total lifetime of resumption keying material | ✅ | 0.3.0 | Renewed tickets resume only under the same leaf, for at most 7 days after the full handshake and never past the leaf's notAfter. | [details](rfc/9846.md#s4-7-1-resumption-lifetime) |
+| RFC 9846 | §4.5.1.3 — MD5 and SHA-1 certificate signatures; keys below 112 bits | ✅ | 0.3.0 | A peer chain with an MD5 or SHA-1 signature below its anchor, or a key under 112 bits, is refused with bad_certificate under every trust configuration. | [details](rfc/9846.md#s4-5-1-3-weak-certificate-signatures-and-keys) |
 | RFC 9525 | (obsoletes RFC 6125) — hostname verification | ✅ | 0.2.0 | One native matcher checks DNS-IDs and IP-IDs on every platform, and it cannot be disabled. | [details](rfc/9525.md#hostname-verification) |
 | RFC 9852 | (BCP 195) — TLS 1.3 as every protocol's default | ✅ | 0.2.0 | TLS 1.3 is the default, and QUIC accepts nothing else. | [details](rfc/9852.md#tls-1-3-as-every-protocols) |
 | RFC 10015 | TLS 1.2 key exchange | ✅ | 0.3.0 | TLS 1.2 offers only ECDHE suites with AEAD: no static RSA, no FFDH(E), no static ECDH. | [details](rfc/10015.md#tls-1-2-key-exchange) |
@@ -87,6 +88,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 7627 | §5.2 — Extended Master Secret required for TLS 1.2 | ✅ | 0.2.1 | A TLS 1.2 peer without Extended Master Secret is refused. | [details](rfc/7627.md#s5-2-ems-required) |
 | RFC 9325 | §3.5 — TLS 1.2 implementations support Extended Master Secret | ✅ | 0.2.1 | TLS 1.2 is offered only with Extended Master Secret. | [details](rfc/9325.md#s3-5-ems) |
 | RFC 9325 | §4.4 — AEAD record limits | ✅ | 0.2.0 | Without KeyUpdate or renegotiation a TLS 1.2 or 1.3 TCP connection ends before its keys reach the AEAD limit. | [details](rfc/9325.md#s4-4-aead-limits) |
+| RFC 9325 | §4.5 — public key length | ✅ | 0.3.0 | No finite-field DH, no curve under 224 bits, and every certificate key of either side needs 112 security bits (RSA 2048) with no SHA-1 or MD5 signature. | [details](rfc/9325.md#s4-5-public-key-length) |
 | RFC 9325 | §7.5 — certificate revocation | ⬜ | — | Revocation checking is planned with the OCSP row; today it depends on the platform verifier. | [details](rfc/9325.md#s7-5-revocation) |
 
 ## HTTP

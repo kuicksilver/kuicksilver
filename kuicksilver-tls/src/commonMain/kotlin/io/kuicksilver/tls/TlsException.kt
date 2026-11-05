@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.tls
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlinx.io.IOException
 
 /** Base of all TLS failures. On the JVM this is an `SSLException`, so existing `catch (e: SSLException)` keeps working. */
@@ -50,6 +51,7 @@ public expect sealed class TlsException(
 }
 
 /** The TLS alert code that [TlsException.Verify] produces (RFC 9846 section 6.2). */
+@OptIn(ExperimentalKuicksilverApi::class)
 public val VerifyReason.alertCode: Int
     get() =
         when (this) {
@@ -58,6 +60,8 @@ public val VerifyReason.alertCode: Int
             is VerifyReason.BadSignature,
             is VerifyReason.BadEncoding,
             is VerifyReason.NoCertificate,
+            is VerifyReason.WeakKey,
+            is VerifyReason.WeakSignature,
             -> 42
 
             is VerifyReason.UnknownIssuer, is VerifyReason.UnknownRevocationStatus -> 48

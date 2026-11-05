@@ -437,6 +437,18 @@ sealed interface io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyR
         final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.UnknownRevocationStatus.hashCode|hashCode(){}[0]
         final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.UnknownRevocationStatus.toString|toString(){}[0]
     }
+
+    final object WeakKey : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.WeakKey|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.WeakKey.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.WeakKey.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.WeakKey.toString|toString(){}[0]
+    }
+
+    final object WeakSignature : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.WeakSignature|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.WeakSignature.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.WeakSignature.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.WeakSignature.toString|toString(){}[0]
+    }
 }
 
 sealed interface io.kuicksilver.tls/VerifyResult { // io.kuicksilver.tls/VerifyResult|null[0]

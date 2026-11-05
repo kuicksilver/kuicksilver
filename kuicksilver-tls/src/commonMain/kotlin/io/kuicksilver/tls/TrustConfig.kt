@@ -3,6 +3,7 @@
 package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlin.io.encoding.Base64
 
 /**
@@ -261,6 +262,28 @@ public sealed interface VerifyReason {
 
     /** The peer sent no certificate where one is required; alert `bad_certificate` (42). */
     public data object NoCertificate : VerifyReason
+
+    /**
+     * A key in the peer's chain is below OpenSSL security level 2, 112 bits (RSA under 2048 bits, an elliptic curve under
+     * 224 bits); alert `bad_certificate` (42). Checked by `ksl` under every [TrustConfig], before the platform verifier or
+     * a [CertificateVerifier] is asked, so that every platform refuses the same presented chains (the JDK, Android and
+     * Windows verifiers accept 1024-bit RSA): the key of every certificate the peer sent that is reachable from the leaf
+     * through issuers whose key verifies the signature, a self-signed root included (stricter than OpenSSL for a
+     * certificate sent above the platform's anchor). On OpenSSL's own path ([TrustConfig.AnchoredCa], `Platform` on
+     * Linux) OpenSSL checks the chain it built, its trust anchor included.
+     */
+    @ExperimentalKuicksilverApi
+    public data object WeakKey : VerifyReason
+
+    /**
+     * A certificate in the peer's chain is signed with a digest below OpenSSL security level 2, 112 bits: SHA-1 or MD5
+     * (RFC 9846 section 4.5.1.3: MD5 MUST and SHA-1 SHOULD be refused); alert `bad_certificate` (42). The own signature of
+     * a self-signed certificate (one that verifies under its own key), and on OpenSSL's path the trust anchor's, are not
+     * checked: they begin the path. Checked
+     * where [WeakKey] is.
+     */
+    @ExperimentalKuicksilverApi
+    public data object WeakSignature : VerifyReason
 
     /**
      * A Certificate Transparency policy (RFC 6962) rejected the chain; alert `certificate_unknown` (46). Reported by the

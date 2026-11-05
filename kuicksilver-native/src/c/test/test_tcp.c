@@ -1086,4 +1086,26 @@ static void test_ticket_lifetime_clamped(void) {
     if (sess) ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_resumption_bounded(); test_ticket_lifetime_clamped(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_read_waiting_for_room_says_so(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
+/* The security-level check of the presented chain runs over TCP too, in TLS 1.3 and TLS 1.2, before the pause (T.5). */
+static int count_pause(ksl_ssl *s, int rc, void *a) { if (rc != KSL_WANT_VERIFY) return 1; (*(int *)a)++; return ksl_ssl_verify_resume(s, 1, 0) == KSL_OK; }
+static void test_weak_chain_refused_before_pause(void) {
+    SECTION("tcp_weak_chain_refused_before_the_pause");
+    for (int v = 0; v < 2; v++) {
+        int version = v ? KSL_TLS1_2 : KSL_TLS1_3;
+        for (int weak = 0; weak < 2; weak++) {
+            const char *leaf = weak ? "weak/leaf-rsa1024" : "weak/leaf-rsa2048";
+            ksl_ctx *sc = ksl_ctx_new(KSL_SERVER), *cc = client_ctx(NULL, KSL_VERIFY_PAUSE);
+            CHECK(ksl_ctx_set_ciphers(sc, NULL, "@SECLEVEL=0:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256") == KSL_OK, "test server at security level 0");
+            blob ch = chain_of(1, leaf); size_t kl; uint8_t *k = key_of(leaf, &kl);
+            CHECK(ksl_ctx_set_identity(sc, ch.buf, ch.len, k, kl) == KSL_OK, "weak identity loads at level 0"); free(ch.buf); free(k);
+            ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, version); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, version);
+            ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); int pauses = 0, alert = 0;
+            int r = tcp_pump(c, s, count_pause, &pauses); last_code(c, &alert); uint32_t code; int raw; char m[256]; ksl_ssl_last_error(c, &code, &raw, m, sizeof m);
+            if (weak) CHECK(r == KSL_ERROR && !c->done && alert == 42 && (raw >> 16) == X509_V_ERR_EE_KEY_TOO_SMALL && pauses == 0, version == KSL_TLS1_3 ? "negative: TLS 1.3 over TCP: a 1024-bit leaf -> bad_certificate before the pause" : "negative: TLS 1.2 over TCP: a 1024-bit leaf -> bad_certificate before the pause");
+            else CHECK(c->done && s->done && pauses == 1, version == KSL_TLS1_3 ? "TLS 1.3 over TCP: a 2048-bit leaf reaches the pause" : "TLS 1.2 over TCP: a 2048-bit leaf reaches the pause");
+            ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+        }
+    }
+    END();
+}
+void run_tcp(void) { test_weak_chain_refused_before_pause(); test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_resumption_bounded(); test_ticket_lifetime_clamped(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_read_waiting_for_room_says_so(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }

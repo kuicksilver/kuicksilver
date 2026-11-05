@@ -629,6 +629,20 @@ public final class io/kuicksilver/tls/VerifyReason$UnknownRevocationStatus : io/
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class io/kuicksilver/tls/VerifyReason$WeakKey : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$WeakKey;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$WeakSignature : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$WeakSignature;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract interface class io/kuicksilver/tls/VerifyResult {
 }
 

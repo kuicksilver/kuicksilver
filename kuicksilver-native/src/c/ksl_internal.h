@@ -115,6 +115,7 @@ size_t ksl_quic_pending(const ksl_ssl *s, int level);   /* CRYPTO bytes provided
 
 /* verification (ksl_verify.c) */
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);
+int ksl_chain_security(int level, STACK_OF(X509) *chain);   /* ksl_verify.c: X509_V_OK or the X509 error of the first weak key or signature */
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg);
 int ksl_client_hello_sni(SSL *ssl, const unsigned char **name, size_t *len);   /* during the ClientHello: its host_name, if any */
 /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed 2^48-1" */

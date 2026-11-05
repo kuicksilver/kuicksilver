@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
@@ -21,12 +25,19 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.ktor.client.AlternativeSource
+import io.kuicksilver.ktor.client.FallbackReason
+import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.InMemoryAltSvcStore
+import io.kuicksilver.ktor.client.kuicksilverDiagnostics
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.AdmissionDecision
 import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -37,17 +48,17 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 
 /**
  * `KuicksilverApplicationEngine.http3Advertising` (docs/guide/ktor.md, "Turning HTTP/3 off on the server"): `Alt-Svc` per
  * response (RFC 7838 section 3 `clear`, on HTTP/3 responses too, section 2.2), GOAWAY to live HTTP/3 connections (RFC 9114
  * section 5.2) and new QUIC connections refused with CONNECTION_REFUSED (RFC 9000 sections 5.2.2, 10.2.3 and 20.1) under
  * `Drain`. Every wait is on an event (a response, GOAWAY, a refusal) under a deadline that names it; nothing sleeps.
- *
- * Follow-up when U.1 merges: `drainRefusesNewQuic` through the Ktor client too (`FallbackReason.Refused`, the Alt-Svc cache
- * cleared by the next HTTP/1.1 response); this branch has no such client API yet.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class ServerHttp3AdvertisingTest {
@@ -192,12 +203,34 @@ class ServerHttp3AdvertisingTest {
             }
         }
 
-    /** Under `Drain` a new QUIC client is refused at its first Initial with CONNECTION_REFUSED; HTTP/1.1 goes on, saying `clear`. */
+    /**
+     * Under `Drain` a new QUIC client is refused at its first Initial with CONNECTION_REFUSED; HTTP/1.1 goes on, saying `clear`.
+     * A Kuicksilver Ktor client in `Auto` mode that learned the alternative before tries HTTP/3, is refused, falls back to
+     * HTTP/1.1 with [FallbackReason.Refused], and that response's `Alt-Svc: clear` empties its cache for the origin.
+     */
     @Test fun drainRefusesNewQuic() =
         h3ServerTest {
             val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            val origin = "https://127.0.0.1:$port"
+            val store = InMemoryAltSvcStore()
+            val client =
+                HttpClient(KuicksilverClient) {
+                    expectSuccess = false
+                    engine {
+                        trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
+                        http3 {
+                            discovery = Http3DiscoveryMode.Auto
+                            altSvcStore = store
+                            hardDelay = Duration.INFINITE // HTTP/1.1 only once HTTP/3 failed: the outcome does not depend on timing
+                        }
+                    }
+                }
             try {
+                // advertised: the client learns the alternative from an HTTP/1.1 response
+                val learned = withTimeout(10.seconds) { client.get("$origin/") }
+                assertEquals(HttpProtocolVersion.HTTP_1_1, learned.kuicksilverDiagnostics?.protocol)
+                assertEquals(listOf(port), store.get(origin).map { it.port }, "Alt-Svc learned before Drain")
                 server.advertising(Http3Advertising.Drain)
                 val refused =
                     withTimeout(10.seconds) {
@@ -208,7 +241,15 @@ class ServerHttp3AdvertisingTest {
                 assertEquals(TransportError.CONNECTION_REFUSED, refused.code)
                 val resp = h1(port)
                 assertEquals(true, resp.endsWith("ok") && resp.contains("Alt-Svc: clear\r\n"), resp)
+                val refusedCall = withTimeout(10.seconds) { client.get("$origin/") }
+                val d = assertNotNull(refusedCall.kuicksilverDiagnostics)
+                assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
+                assertEquals(FallbackReason.Refused, d.fallback, "${d.h3Failure}")
+                assertEquals(AlternativeSource.AltSvc, d.alternativeSource)
+                assertEquals("ok", refusedCall.bodyAsText())
+                assertEquals(emptyList(), store.get(origin), "the HTTP/1.1 response's Alt-Svc: clear emptied the cache")
             } finally {
+                client.close()
                 ep.close()
                 server.stop(100, 500)
             }

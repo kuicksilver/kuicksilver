@@ -119,6 +119,21 @@ intermediate CA accepts the chains that reach it, without its issuers (OpenSSL `
 shared RFC 9525 matcher afterwards on every platform, so a platform matcher can only make the decision stricter; pins
 (`Pinned`) are compared against the chain the platform built, never against certificates the peer merely sent.
 
+Before the platform is asked, `ksl` holds the certificates the peer sent to OpenSSL's security level 2 (RFC 9325 section
+4.5), on every platform alike. It checks every presented certificate reachable from the leaf through issuers whose key
+verifies the signature (each issuer that verifies is followed, so cross-certificates are all checked): every key needs
+112 security bits (RSA 2048 bits, an elliptic curve 224 bits), and every certificate signature too, except the own
+signature of a certificate that is really self-signed (it verifies under its own key): no SHA-1 or MD5 below that (RFC
+9846 section 4.5.1.3). A weaker chain ends the handshake with `bad_certificate` and `TlsException.Verify` with
+`VerifyReason.WeakKey` or `VerifyReason.WeakSignature`. The JDK, Android and Windows verifiers would accept 1024-bit RSA
+on their own. This reads the presented chain, not the chain the platform builds, so it is stricter than OpenSSL's own
+verifier: an extra cross-certificate the server sends above the anchor the platform trusts (signed with SHA-1 by an old
+root, say) is checked and refuses the chain, where OpenSSL would stop at the trusted anchor. A certificate on no verified
+path from the leaf, and an anchor the platform takes from its own store, are not looked at. The same check runs before a
+`Custom` verifier and `Tofu`; there is no switch to turn it off. The endpoint's own chain is held to the same rules when
+the identity is made (`TlsIdentity.fromDer`, `fromPem` and the JVM key store factories throw `TlsException.Config` for a
+SHA-1- or MD5-signed certificate or a key under 112 bits), for a server and for a client certificate alike.
+
 | Platform | Verifier and store | Revocation |
 |---|---|---|
 | JVM | the default `X509TrustManager`: the JDK's `cacerts` or `javax.net.ssl.trustStore`, not the OS store | as the JDK is configured (off by default) |

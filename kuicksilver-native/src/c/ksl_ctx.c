@@ -314,6 +314,21 @@ int ksl_ctx_set_identity_pkey(ksl_ctx *c, const uint8_t *chain, size_t chain_len
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
     if (!key) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no private key"); return KSL_ERROR; }
     STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(chain, chain_len, &sk) || sk_X509_num(sk) == 0) { sk_X509_pop_free(sk, X509_free); ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad certificate chain framing"); return KSL_ERROR; }
+    /* RFC 9325 section 4.5: "servers MUST authenticate using certificates with at least a 2048-bit modulus ... SHA-1 or MD5 MUST
+       NOT be used". OpenSSL checks the keys when they are installed below (ssl_security_cert), not the signatures, so the configured
+       chain goes through the same walk as a peer's first (a self-signed anchor's own signature exempt), before anything is
+       installed: a refused identity never reaches the context. A client certificate is configured here too. */
+    {
+        int weak = ksl_chain_security(SSL_CTX_get_security_level(c->ctx), sk);
+        if (weak != X509_V_OK) {
+            sk_X509_pop_free(sk, X509_free);
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, weak == X509_V_ERR_CA_MD_TOO_WEAK
+                ? "ksl: identity rejected: a certificate of the chain is signed with SHA-1 or MD5 (RFC 9325 section 4.5; at least SHA-256)"
+                : weak == X509_V_ERR_CERT_CHAIN_TOO_LONG ? "ksl: identity rejected: the chain is too long"
+                : "ksl: identity rejected: a key of the chain is under 112 security bits (RFC 9325 section 4.5: RSA 2048, curves 224)");
+            return KSL_ERROR;
+        }
+    }
     /* SSL_CTX_use_PrivateKey takes its own reference to the EVP_PKEY: the caller's handle stays independent */
     int ok = SSL_CTX_use_certificate(c->ctx, sk_X509_value(sk, 0)) == 1 && SSL_CTX_use_PrivateKey(c->ctx, (EVP_PKEY *)key) == 1 && SSL_CTX_check_private_key(c->ctx) == 1;
     for (int i = 1; ok && i < sk_X509_num(sk); i++) ok = SSL_CTX_add1_chain_cert(c->ctx, sk_X509_value(sk, i)) == 1;
