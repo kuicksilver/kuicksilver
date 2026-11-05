@@ -50,7 +50,9 @@ static int presented_chain_security(SSL *ssl, STACK_OF(X509) *chain) {
     if (level > 5) level = 5;
     int min = minbits[level - 1];
     X509 *cur = sk_X509_value(chain, 0);
-    for (int depth = 0; cur != NULL && depth < n; depth++) {   /* at most n steps: a loop of issuers ends too */
+    /* at most n steps, so a loop of issuers ends too, and at most OpenSSL's default verify depth (x509_vpm.c: 100) beyond the
+       leaf: each step searches the chain once, so a peer sending hundreds of certificates costs O(100 n), not O(n^2) */
+    for (int depth = 0; cur != NULL && depth < n && depth <= 100; depth++) {
         EVP_PKEY *pk = X509_get0_pubkey(cur);
         if (pk == NULL || EVP_PKEY_get_security_bits(pk) < min) return depth == 0 ? X509_V_ERR_EE_KEY_TOO_SMALL : X509_V_ERR_CA_KEY_TOO_SMALL;
         if (X509_get_extension_flags(cur) & EXFLAG_SS) break;   /* self-signed: an anchor, whose own signature is not checked */
