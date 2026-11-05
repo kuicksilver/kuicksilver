@@ -79,14 +79,14 @@ internal val tcpConnectRecheck: Duration? = tcpReadRecheck
 
 /**
  * How long a connect whose selector wait is bounded ([tcpConnectRecheck]) may stay pending with no verdict from the socket
- * (`SO_ERROR` 0 and no peer) before it fails: the longest a system's own connect timeout runs (Windows retries a SYN for
- * about 21 s, Linux for about 2 minutes), so a failure whose error the lost event took with it ends too.
+ * (`SO_ERROR` 0 and not connected) before it fails: the longest a system's own connect timeout runs (Windows retries a SYN
+ * for about 21 s, Linux for about 2 minutes), so a failure whose error the lost event took with it ends too.
  */
 internal val CONNECT_UNDECIDED_LIMIT: Duration = 3.minutes
 
 /**
- * Waits for the pending connect of [fd]: connected once `SO_ERROR` is 0 and the socket has a peer (`getpeername`), failed
- * with any other error that is not "not yet". With [recheck] the selector's wait is given up after that long (the select is
+ * Waits for the pending connect of [fd]: connected once `SO_ERROR` is 0 and [tcpConnectedNow] says so, failed with any
+ * other error that is not "not yet". With [recheck] the selector's wait is given up after that long (the select is
  * kept for the next wait) and the socket is looked at; after [undecidedLimit] of rechecks without a verdict the connect
  * fails. [rechecks] counts the waits that gave up (tests).
  */
@@ -100,7 +100,7 @@ internal suspend fun awaitConnected(
 ) = awaitConnectedWith(
     select = { selector.select(socket, SelectInterest.CONNECT) },
     pendingError = { tcpPendingError(fd) },
-    hasPeer = { runCatching { tcpAddressOf(fd, peer = true) }.isSuccess },
+    connected = { tcpConnectedNow(fd) },
     wouldBlock = ::tcpWouldBlock,
     failed = { throw PosixException.forErrno(it, "connect") },
     recheck = recheck,
@@ -110,13 +110,14 @@ internal suspend fun awaitConnected(
 
 /**
  * [awaitConnected] over its seams (tests drive it without sockets): [select] waits for the selector's CONNECT report,
- * [pendingError] reads `SO_ERROR`, [hasPeer] asks for a peer address, [failed] throws for an error. A report with no error and
- * no peer fails at once: the selector reports a connect once (Windows posts FD_CONNECT once), so nothing more will come.
+ * [pendingError] reads `SO_ERROR`, [connected] asks the system whether the connect completed ([tcpConnectedNow]), [failed]
+ * throws for an error. A report with no error that is not connected fails at once: the selector reports a connect once
+ * (Windows posts FD_CONNECT once), so nothing more will come.
  */
 internal suspend fun awaitConnectedWith(
     select: suspend () -> Unit,
     pendingError: () -> Int,
-    hasPeer: () -> Boolean,
+    connected: () -> Boolean,
     wouldBlock: (Int) -> Boolean,
     failed: (Int) -> Nothing,
     recheck: Duration?,
@@ -141,9 +142,9 @@ internal suspend fun awaitConnectedWith(
                 if (reported) pending = null else rechecks?.invoke()
                 val error = pendingError()
                 if (error != 0 && !wouldBlock(error)) failed(error)
-                if (error == 0 && hasPeer()) return@coroutineScope
+                if (error == 0 && connected()) return@coroutineScope
                 if (reported && error == 0) {
-                    throw IOException("the connect was reported done, but the socket has neither an error nor a peer")
+                    throw IOException("the connect was reported done, but the socket is neither connected nor failed")
                 }
                 if (!reported) {
                     undecided += recheck

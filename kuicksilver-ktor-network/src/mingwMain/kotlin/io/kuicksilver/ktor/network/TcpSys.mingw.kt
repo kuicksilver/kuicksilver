@@ -9,6 +9,7 @@ import io.kuicksilver.ktor.network.wsa.ksl_wsa_accept
 import io.kuicksilver.ktor.network.wsa.ksl_wsa_address
 import io.kuicksilver.ktor.network.wsa.ksl_wsa_bind
 import io.kuicksilver.ktor.network.wsa.ksl_wsa_connect
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_connect_state
 import io.kuicksilver.ktor.network.wsa.ksl_wsa_listen
 import io.kuicksilver.ktor.network.wsa.ksl_wsa_nonblocking
 import io.kuicksilver.ktor.network.wsa.ksl_wsa_recv
@@ -202,6 +203,24 @@ internal actual fun tcpPendingError(fd: Int): Int {
         }
     if (rc != 0) throw PosixException.forErrno(e, "getsockopt")
     return value
+}
+
+internal actual fun tcpConnectedNow(fd: Int): Boolean {
+    val (state, e) =
+        memScoped {
+            val err = alloc<IntVar>()
+            ksl_wsa_connect_state(fd.convert(), err.ptr) to err.value
+        }
+    return when (state) {
+        1 -> true
+
+        0 -> false
+
+        // failed: its error, when Winsock recorded one; without one it is no verdict here, and awaitConnected decides
+        -1 -> if (e != 0) throw PosixException.forErrno(e, "connect") else false
+
+        else -> throw PosixException.forErrno(e, "select")
+    }
 }
 
 internal actual fun tcpWouldBlock(error: Int): Boolean = error == WSAEWOULDBLOCK || error == WSAEINPROGRESS

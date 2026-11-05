@@ -84,13 +84,13 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **51 steps**; a release needs `--with-interop --with-windows`, which makes **56** (and `--with-browser`
-adds a Chrome WebTransport run, 57). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
+default it has **54 steps**; a release needs `--with-interop --with-windows`, which makes **59** (and `--with-browser`
+adds a Chrome WebTransport run, 60). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
 refuses to start if either fails. What the steps cover:
 
 | Area | Steps (names as the script prints them) |
 |---|---|
-| Lint and documentation | action and image pins, documentation references and their negative controls, RFC table, links, guide samples, HPACK tables and vectors, ktlint |
+| Lint and documentation | action and image pins, documentation references and their negative controls, the fuzz campaign script on stubs, RFC table, links, guide samples, HPACK tables and vectors, ktlint |
 | Build integrity | dependency verification of every configuration, SPDX headers, module layers, ABI dumps, sans-IO architecture checks, shared source sets |
 | JVM on macOS | every module's JVM tests, the coverage report (no threshold), the sample, the JNI library and its export whitelist, the Intel-Mac library |
 | JVM on Linux | every module's JVM suite against the manylinux `libksl.so`, x64 and arm64, in Docker; the system-OpenSSL build mode |

@@ -241,6 +241,52 @@ class ServerObservabilityTest {
             }
         }
 
+    /**
+     * An HTTP/3 connection is reported closed only once the engine is done with it: after the requests it accepted left the
+     * pipeline, even when the client closed the connection as soon as it had the answer (before, `connectionClosed` came as
+     * the connection stopped accepting requests, before the `requestEnded` of a handler still running after its response).
+     */
+    @Test fun anHttp3ConnectionIsReportedClosedAfterItsRequestsEnded() =
+        h3ServerTest {
+            val events = Recorder()
+            val noMoreRequests = CompletableDeferred<Unit>()
+            val (server, port) =
+                tlsServer({ eventListener = events }) {
+                    routing {
+                        get("/") {
+                            call.respondText("ok")
+                            // still in the pipeline after the answer went out, until the connection takes no more requests
+                            noMoreRequests.await()
+                        }
+                    }
+                }
+            server.engine.afterH3RequestsAcceptedForTest = { noMoreRequests.complete(Unit) }
+            try {
+                val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+                try {
+                    val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                    assertEquals(
+                        "ok",
+                        c
+                            .request(get("/?h3"))
+                            .body
+                            .readFullBody()
+                            .decodeToString(),
+                    )
+                    c.close()
+                } finally {
+                    ep.close()
+                }
+                eventually { events.lines.all.size >= 4 }
+                assertEquals(
+                    listOf("opened HTTP/3.0 true", "started HTTP/3.0 /?h3", "ended HTTP/3.0 200 true", "closed HTTP/3.0"),
+                    events.lines.all,
+                )
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun anEventListenerThrowingCancellationNeverStopsServing() =
         h3ServerTest {
             // not suspending callbacks: a CancellationException out of one is the listener's bug; HTTP/3 accepting goes on

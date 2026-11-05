@@ -40,6 +40,27 @@ class GoAwayTest {
     }
 
     @Test
+    fun unprocessedStreamsAreReportedInTheOrderTheyWereOpened() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        // fifteen streams (1..29) answered and released, so the next ids (31, 33, 35) no longer fall into a hash table's
+        // buckets in their numeric order
+        repeat(15) {
+            val id = c.core.openStream(GET, endStream = true)
+            c.send(c.headers(id, OK, endStream = true))
+            c.core.release(id)
+        }
+        val ids = (1..3).map { c.core.openStream(GET, endStream = true) }
+        assertEquals(listOf(31, 33, 35), ids)
+        c.read()
+        c.events()
+        c.send(FrameEncoder.goAway(29, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+        // the engine retries them on another connection in this order, so it is the order the requests were made in
+        val unprocessed = c.events().filterIsInstance<H2Event.StreamReset>()
+        assertEquals(ids, unprocessed.map { it.streamId })
+    }
+
+    @Test
     fun twoPhaseGoAwayFromServer() {
         val p = H2Pair()
         val first = p.client.openStream(GET, endStream = true)

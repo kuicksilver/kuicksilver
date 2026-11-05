@@ -333,21 +333,44 @@ class ServerHttp3AdvertisingTest {
     /**
      * HTTP/3 responses carry `Alt-Svc: clear` under `Clear` and `Drain` (an alternative may clear its origin's entries, RFC 7838
      * section 2.2), so a client already on HTTP/3 drops the alternative too; under `On`, and with `altSvc = false`, none.
+     * `Drain` sends GOAWAY to the live connection, so its response is checked on a request already in flight when the mode
+     * changes: a new request after the switch may meet the GOAWAY first.
      */
     @Test fun h3ResponsesSayClearWhileWithdrawn() =
         h3ServerTest {
             for (altSvcOn in listOf(true, false)) {
-                val (server, port) = tlsServer(configure = { altSvc = altSvcOn }) { routing { get("/") { call.respondText("ok") } } }
+                val arrived = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                val (server, port) =
+                    tlsServer(configure = { altSvc = altSvcOn }) {
+                        routing {
+                            get("/") { call.respondText("ok") }
+                            get("/slow") {
+                                arrived.complete(Unit)
+                                release.await()
+                                call.respondText("ok")
+                            }
+                        }
+                    }
                 val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
                 try {
                     val c = ep.connect(InetSocketAddress("127.0.0.1", port), h3Tls)
                     val seen =
-                        listOf(Http3Advertising.On, Http3Advertising.Clear, Http3Advertising.On, Http3Advertising.Drain).map { mode ->
+                        listOf(Http3Advertising.On, Http3Advertising.Clear, Http3Advertising.On).map { mode ->
                             server.advertising(mode)
                             val r = withTimeout(10.seconds) { c.request(get()) }
                             r.body.readFullBody()
                             r.headers["alt-svc"]
-                        }
+                        } +
+                            coroutineScope {
+                                val inFlight = async { withTimeout(10.seconds) { c.request(get("/slow")) } }
+                                withTimeout(10.seconds) { arrived.await() }
+                                server.advertising(Http3Advertising.Drain)
+                                release.complete(Unit)
+                                val r = inFlight.await()
+                                r.body.readFullBody()
+                                r.headers["alt-svc"]
+                            }
                     val expected = if (altSvcOn) listOf(null, "clear", null, "clear") else listOf(null, null, null, null)
                     assertEquals(expected, seen, "altSvc = $altSvcOn")
                     c.close()
