@@ -19,7 +19,7 @@ static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t 
     /* the level follows the destination: Linux ignores IPV6_TCLASS for a v4-mapped peer of a dual-stack socket, IP_TOS works on both */
     if (ecn && u->tos_cmsg_on && c) { int tos = ecn & 3; c->cmsg_level = addr[0] == 4 ? IPPROTO_IP : IPPROTO_IPV6; c->cmsg_type = addr[0] == 4 ? IP_TOS : IPV6_TCLASS; c->cmsg_len = CMSG_LEN(sizeof(int)); memcpy(CMSG_DATA(c), &tos, sizeof tos); used += CMSG_SPACE(sizeof(int)); }
     m.msg_controllen = used; if (!used) m.msg_control = NULL;
-    u->sends++;
+    KSL_COUNT(u->sends);
 #ifdef KSL_TEST
     if (u->fail_next_gso && gso_size) { int e = u->fail_next_gso; u->fail_next_gso = 0; *errnum = e; return -1; }
     if (u->fail_next_send && !gso_size) { int e = u->fail_next_send; u->fail_next_send = 0; *errnum = e; return -1; }
@@ -27,7 +27,7 @@ static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t 
     ssize_t r = sendmsg(u->fd, &m, 0); if (r < 0) { *errnum = errno; return -1; } return 0;
 }
 
-static void gso_off(ksl_udp *u) { u->gso_on = 0; u->granted &= ~(uint32_t)KSL_UDP_GSO; u->gso_fallbacks++; }
+static void gso_off(ksl_udp *u) { u->gso_on = 0; u->granted &= ~(uint32_t)KSL_UDP_GSO; KSL_COUNT(u->gso_fallbacks); }
 /* errors a destination causes (port 0, a link-local IPv6 address without its scope id, a family the socket cannot reach): that datagram
    cannot leave, the socket and its options are fine */
 static int dest_error(int e) { return e == EINVAL || e == EAFNOSUPPORT || e == EADDRNOTAVAIL || e == EDESTADDRREQ; }
@@ -44,7 +44,7 @@ static void count_emsgsize(ksl_udp *u, uint32_t len) { __atomic_add_fetch(&u->em
 static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENETDOWN || e == EHOSTDOWN || e == ENOMEM || e == ECONNREFUSED; }
 
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
-    if (!u || u->closed) return KSL_ERROR; *sent = 0; uint32_t i = 0; int icmp_retried = 0;
+    if (!u || KSL_ALOAD(u->closed)) return KSL_ERROR; *sent = 0; uint32_t i = 0; int icmp_retried = 0;
     int gso_probe = 0;   /* a GSO send failed with EINVAL: the first datagram of that run, sent alone, tells GSO's fault from the destination's */
     while (i < n) {
         /* a run of equal-size datagrams to one address with one mark leaves in a single sendmsg when GSO is on */

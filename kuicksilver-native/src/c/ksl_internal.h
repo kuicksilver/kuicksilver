@@ -134,6 +134,12 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
 /* the process's generated ticket keys (ksl_tickets.c): 1 found, 0 no such key, -1 failure */
 int ksl_default_ticket_key(uint32_t rotate_seconds, const uint8_t *name, uint8_t out[80], int *current);
 
+/* Fields one thread writes while another reads them without a lock (ksl_udp: the closed flag a shutdown sets under a blocked
+   receiver, the counters ksl_udp_get(STATS) reads): C11 atomics through the GCC/Clang builtins (every toolchain ksl builds with). */
+#define KSL_ALOAD(x) __atomic_load_n(&(x), __ATOMIC_ACQUIRE)
+#define KSL_COUNT(x) ((void)__atomic_add_fetch(&(x), 1, __ATOMIC_RELAXED))
+#define KSL_RELAXED(x) __atomic_load_n(&(x), __ATOMIC_RELAXED)
+
 /* keys (ksl_key.c) */
 ksl_key *ksl_key_from_secret(int aead, const uint8_t *secret, size_t slen, uint32_t version);
 int ksl_aead_of_cipher(const SSL_CIPHER *c);

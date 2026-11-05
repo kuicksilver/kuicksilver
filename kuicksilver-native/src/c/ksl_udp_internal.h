@@ -60,8 +60,8 @@ struct ksl_udp {
     /* GRO scratch: one received message and the segments of it not yet handed out */
     /* two scratch buffers: the receiver thread owns scratch (GRO train), the sender thread owns tx (joined GSO run) — they never share */
     uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
-    volatile int closed; volatile int in_recv;
-    uint32_t sends, recvs, gso_fallbacks, polls;
+    int closed, in_recv;   /* atomics: closed with KSL_ALOAD and the exchange in ksl_udp_shutdown, in_recv with __atomic_* */
+    uint32_t sends, recvs, gso_fallbacks, polls;   /* KSL_COUNT / KSL_RELAXED */
     /* ICMP hints (ADR-0006): recverr is on with DF on Linux; the receiver fills the Packet Too Big ring, ksl_udp_take_ptb empties it
        (ptb_mu); the sender counts EMSGSIZE (atomics) */
     int recverr; pthread_mutex_t ptb_mu;
