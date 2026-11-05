@@ -40,9 +40,15 @@ static int alert_to_x509_error(int alert) {
    the presented certificates that issued it, as OpenSSL builds one from untrusted certificates: every key needs the level's bits
    (the leaf's EE_KEY_TOO_SMALL, any other CA_KEY_TOO_SMALL), every signature too (CA_MD_TOO_WEAK: SHA-1 counts 63 bits, MD5 39)
    but a self-signed certificate's, which is an anchor (RFC 9846 section 4.5.1.3: MD5 MUST and SHA-1 SHOULD be refused with
-   bad_certificate, except for "certificates that are self-signed or are trust anchors"). Certificates outside the path are not
-   looked at, as OpenSSL ignores them; an anchor the platform takes from its own store is the platform's to judge. libssl maps
-   all three errors to bad_certificate (42), as on OpenSSL's path. */
+   bad_certificate, except for "certificates that are self-signed or are trust anchors"). Self-signed means that the signature
+   verifies under the certificate's own key (X509_self_signed(x, 1)): OpenSSL's EXFLAG_SS alone (v3_purp.c) only compares subject
+   and issuer, the key identifiers when present and the signature's algorithm with the key's type, so a CA-issued certificate
+   whose subject repeats the issuer's name and that carries no key identifiers has it too. Certificates outside the path are not
+   looked at, as OpenSSL ignores them; an anchor the platform takes from its own store is the platform's to judge, while every
+   presented certificate on the path is checked (stricter than OpenSSL, which stops at the first certificate in its trust store:
+   an extra cross-certificate above the platform's anchor counts here). libssl maps all three errors to bad_certificate (42), as
+   on OpenSSL's path. */
+static int weak_chain(int x509_err) { ERR_clear_error(); return x509_err; }
 static int presented_chain_security(SSL *ssl, STACK_OF(X509) *chain) {
     static const int minbits[] = {80, 112, 128, 192, 256};
     int level = SSL_get_security_level(ssl), n = sk_X509_num(chain);
@@ -51,13 +57,16 @@ static int presented_chain_security(SSL *ssl, STACK_OF(X509) *chain) {
     int min = minbits[level - 1];
     X509 *cur = sk_X509_value(chain, 0);
     /* at most n steps, so a loop of issuers ends too, and at most OpenSSL's default verify depth (x509_vpm.c: 100) beyond the
-       leaf: each step searches the chain once, so a peer sending hundreds of certificates costs O(100 n), not O(n^2) */
+       leaf: each step searches the chain once, so a peer sending hundreds of certificates costs O(100 n), not O(n^2). A path
+       longer than that is not checked past the bound: OpenSSL's own path refuses it (X509_V_ERR_CERT_CHAIN_TOO_LONG), and a
+       platform verifier that accepts one decides alone about those certificates. */
     for (int depth = 0; cur != NULL && depth < n && depth <= 100; depth++) {
         EVP_PKEY *pk = X509_get0_pubkey(cur);
-        if (pk == NULL || EVP_PKEY_get_security_bits(pk) < min) return depth == 0 ? X509_V_ERR_EE_KEY_TOO_SMALL : X509_V_ERR_CA_KEY_TOO_SMALL;
-        if (X509_get_extension_flags(cur) & EXFLAG_SS) break;   /* self-signed: an anchor, whose own signature is not checked */
+        if (pk == NULL || EVP_PKEY_get_security_bits(pk) < min) return weak_chain(depth == 0 ? X509_V_ERR_EE_KEY_TOO_SMALL : X509_V_ERR_CA_KEY_TOO_SMALL);
+        if (X509_self_signed(cur, 1) == 1) break;   /* its own signature verifies under its own key: an anchor, not checked */
+        ERR_clear_error();                          /* 0 (not self-signed, or a signature that does not verify) or -1 leave errors */
         int bits = -1;
-        if (!X509_get_signature_info(cur, NULL, NULL, &bits, NULL) || bits < min) return X509_V_ERR_CA_MD_TOO_WEAK;
+        if (!X509_get_signature_info(cur, NULL, NULL, &bits, NULL) || bits < min) return weak_chain(X509_V_ERR_CA_MD_TOO_WEAK);
         X509 *next = NULL;
         for (int i = 1; i < n && next == NULL; i++) { X509 *x = sk_X509_value(chain, i); if (x != cur && X509_check_issued(x, cur) == X509_V_OK) next = x; }
         cur = next;

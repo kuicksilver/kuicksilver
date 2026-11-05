@@ -308,6 +308,19 @@ static void test_chain_security_level(void) {
     CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_KEY_TOO_SMALL && pa == 0, "negative: pause: a 1024-bit root sent along -> bad_certificate");
     weak_run(chain_of(2, W("leaf-under-rsa1024-root"), W("rsa1024-root")), W("leaf-under-rsa1024-root"), W("rsa1024-root"), KSL_VERIFY_OPENSSL, 0, &al, &ve, &dn, &pa);
     CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_KEY_TOO_SMALL, "negative: openssl: anchored at a 1024-bit root -> bad_certificate");
+    /* self-issued but not self-signed: OpenSSL flags these EXFLAG_SS (subject = issuer, no key identifiers, the signature's algorithm
+       fits the key) without checking the signature; only a signature that verifies under the certificate's own key exempts it */
+    weak_run(chain_of(1, W("leaf-self-issued-md5")), W("leaf-self-issued-md5"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0, "negative: pause: a self-issued MD5-signed leaf that is not self-signed -> bad_certificate");
+    if (!(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0)) printf("  got done=%d alert=%d verify_err=%d pauses=%d\n", dn, al, ve, pa);
+    weak_run(chain_of(2, W("leaf-via-self-issued-sha1"), W("mid-self-issued-sha1")), W("leaf-via-self-issued-sha1"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0, "negative: pause: a self-issued SHA-1-signed intermediate that is not self-signed -> bad_certificate");
+    if (!(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0)) printf("  got done=%d alert=%d verify_err=%d pauses=%d\n", dn, al, ve, pa);
+    /* a self-signed leaf (as Tofu meets one): its key counts, its own signature does not */
+    weak_run(chain_of(1, W("self-signed-rsa1024")), W("self-signed-rsa1024"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(!dn && al == 42 && ve == X509_V_ERR_EE_KEY_TOO_SMALL && pa == 0, "negative: pause: a self-signed 1024-bit leaf -> bad_certificate");
+    weak_run(chain_of(1, W("self-signed-sha1")), W("self-signed-sha1"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+    CHECK(dn && pa == 1, "pause: a self-signed P-256 leaf signed with SHA-1 reaches the pause, accepted");
     /* generic alerts: handshake_failure on the wire, the reason kept */
     weak_run(chain_of(1, W("leaf-rsa1024")), W("leaf-rsa1024"), NULL, KSL_VERIFY_PAUSE, 1, &al, &ve, &dn, &pa);
     CHECK(!dn && al == 40 && ve == X509_V_ERR_EE_KEY_TOO_SMALL && pa == 0, "pause + generic alerts: alert 40, verify_err EE_KEY_TOO_SMALL");

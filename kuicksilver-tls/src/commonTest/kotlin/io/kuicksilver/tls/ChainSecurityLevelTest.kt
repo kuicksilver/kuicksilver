@@ -11,6 +11,9 @@ import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslEvent
 import io.kuicksilver.native.KslLoader
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,13 +40,14 @@ class ChainSecurityLevelTest {
 
     /**
      * A handshake of a real client session against a raw `ksl` server at security level 0 (at the default level 2 OpenSSL
-     * refuses to load a weak key as its own identity). A pause is answered with the platform's yes, so that only `ksl`'s
-     * own checks can refuse the chain.
+     * refuses to load a weak key as its own identity). A pause is answered with [verdict], by default the platform's yes, so
+     * that only `ksl`'s own checks can refuse the chain.
      */
     private fun handshake(
         client: TlsConfig,
         chain: List<ByteArray>,
         key: ByteArray,
+        verdict: (QuicTlsSession, List<Certificate>) -> VerifyResult = { _, presented -> VerifyResult.Accepted(presented) },
     ): Outcome {
         val sc = Ksl.ctxNew(KslConst.SERVER)
         var s = 0L
@@ -67,7 +71,7 @@ class ChainSecurityLevelTest {
                 val want = last
                 if (want is DriveResult.WantVerify) {
                     paused = true
-                    c.resumeVerify(VerifyResult.Accepted(want.chain))
+                    c.resumeVerify(verdict(c, want.chain))
                     last = c.drive()
                 }
                 while (true) {
@@ -205,6 +209,75 @@ class ChainSecurityLevelTest {
             )
         for ((chain, key, reason) in cases) refused(handshake(anchored(), chain, key), reason)
         assertTrue(handshake(anchored(), listOf(WeakCerts.leafRsa2048), WeakCerts.leafRsa2048Key).done)
+    }
+
+    /**
+     * Runs [block] to its end in the caller's thread; for verifiers that never suspend (Tofu with [MemoryTofu]), so the
+     * handshake can take their verdict at the pause.
+     */
+    private fun <T> immediate(block: suspend () -> T): T {
+        var result: Result<T>? = null
+        block.startCoroutine(Continuation(EmptyCoroutineContext) { result = it })
+        return (result ?: error("the verifier suspended")).getOrThrow()
+    }
+
+    /** A [TofuStore] in memory whose calls never suspend. */
+    private class MemoryTofu : TofuStore {
+        val pins = HashMap<String, SpkiSha256>()
+
+        override suspend fun get(name: String): SpkiSha256? = pins[name]
+
+        override suspend fun put(
+            name: String,
+            pin: SpkiSha256,
+        ) {
+            pins[name] = pin
+        }
+    }
+
+    private fun tofuVerdict(): (QuicTlsSession, List<Certificate>) -> VerifyResult =
+        { s, presented -> immediate { s.verifyPeer(presented) } }
+
+    /** OpenSSL flags a self-issued certificate without key identifiers as self-signed without checking its signature: not an anchor here. */
+    @Test fun negative_platformRefusesAnMd5SignedSelfIssuedLeaf() {
+        if (!platformPauses) return
+        refused(handshake(platform(), listOf(WeakCerts.leafSelfIssuedMd5), WeakCerts.leafSelfIssuedMd5Key), VerifyReason.WeakSignature)
+    }
+
+    @Test fun negative_platformRefusesASha1SignedSelfIssuedIntermediate() {
+        if (!platformPauses) return
+        refused(
+            handshake(platform(), listOf(WeakCerts.leafViaSelfIssuedSha1, WeakCerts.midSelfIssuedSha1), WeakCerts.leafViaSelfIssuedSha1Key),
+            VerifyReason.WeakSignature,
+        )
+    }
+
+    /** Tofu meets a self-signed 1024-bit key at first contact: refused, and no pin is stored for it. */
+    @Test fun negative_tofuRefusesAWeakSelfSignedKeyAtFirstContact() {
+        val store = MemoryTofu()
+        val o =
+            handshake(
+                Fixtures.client(TrustConfig.Tofu(store)),
+                listOf(WeakCerts.selfSignedRsa1024),
+                WeakCerts.selfSignedRsa1024Key,
+                tofuVerdict(),
+            )
+        refused(o, VerifyReason.WeakKey)
+        assertTrue(store.pins.isEmpty(), "no pin stored for a refused key")
+    }
+
+    /** A self-signed P-256 certificate signed with SHA-1: its own signature is not checked, so Tofu takes it and pins it. */
+    @Test fun tofuAcceptsASha1SelfSignedLeafWithAStrongKey() {
+        val store = MemoryTofu()
+        val o =
+            handshake(
+                Fixtures.client(TrustConfig.Tofu(store)),
+                listOf(WeakCerts.selfSignedSha1),
+                WeakCerts.selfSignedSha1Key,
+                tofuVerdict(),
+            )
+        assertTrue(o.paused && o.done, "${(o.result as? DriveResult.Failed)?.exception}")
+        assertEquals(setOf("server.test"), store.pins.keys)
     }
 
     @Test fun weakReasonsPrintTheirName() {
