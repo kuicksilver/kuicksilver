@@ -39,13 +39,26 @@ conn = {
     "continuation": bytes([7]) + frame(4, 0, 0) + frame(1, 0x1, 3, h("8284")) + frame(9, 0, 3, h("87")) + frame(9, 4, 3, h("86"))
     + frame(6, 0, 0, bytes(8)) + frame(7, 0, 0, struct.pack(">II", 3, 0)),
 }
+# connectionClient: [split][streams][server bytes after its empty SETTINGS]; streams 1, 3, 5 are the client's requests
+def hdr_resp(sid, block, flags=0x4):
+    return frame(1, flags, sid, block)
+client = {
+    "response-with-trailers": bytes([255, 1]) + frame(4, 1, 0) + hdr_resp(1, h("88")) + frame(0, 0, 1, b"hello")
+    + hdr_resp(3, h("88"), 0x5) + frame(1, 0x5, 1, h("4003782d61017a")),
+    "interim-goaway-refused": bytes([9, 2]) + frame(4, 1, 0) + hdr_resp(1, h("08033130 30".replace(" ", ""))) + frame(3, 0, 3, struct.pack(">I", 7))
+    + frame(7, 0, 0, struct.pack(">II", 1, 0)) + hdr_resp(1, h("88"), 0x5),
+    "window-ping-malformed": bytes([3, 4]) + frame(4, 0, 0, struct.pack(">HI", 4, 1)) + frame(8, 0, 0, struct.pack(">I", 65535))
+    + frame(6, 0, 0, bytes(8)) + hdr_resp(5, h("8f"), 0x5) + hdr_resp(1, h("885c0132"), 0x4) + frame(0, 1, 1, b"ab"),
+}
 roundtrip = {
     "lists": bytes([3, 0, 0, 3, 1, 2, 3, 1, 1, 1, 2, 4, 120, 121, 122, 120, 0xff, 0, 2, 0, 4, 1, 2, 3, 4, 0, 1, 5, 1]),
     "sensitive": bytes([2, 0, 1, 6, 115, 101, 99, 114, 101, 116, 0, 2, 3, 105, 100, 61]),
 }
 for d, files in {"H2FrameFuzzTestInputs/frames": frames, "HpackDecodeFuzzTestInputs/hpackDecode": hpack,
-                 "H2ConnectionFuzzTestInputs/connectionServer": conn, "HpackRoundTripFuzzTestInputs/hpackRoundTrip": roundtrip}.items():
+                 "H2ConnectionFuzzTestInputs/connectionServer": conn, "H2ClientConnectionFuzzTestInputs/connectionClient": client,
+                 "HpackRoundTripFuzzTestInputs/hpackRoundTrip": roundtrip}.items():
     os.makedirs(os.path.join(base, d), exist_ok=True)
     for name, data in files.items():
         open(os.path.join(base, d, name), "wb").write(data)
-print(f"seeds written: {len(frames)} frames, {len(hpack)} hpackDecode, {len(conn)} connectionServer, {len(roundtrip)} hpackRoundTrip")
+print(f"seeds written: {len(frames)} frames, {len(hpack)} hpackDecode, {len(conn)} connectionServer, {len(client)} connectionClient, "
+      f"{len(roundtrip)} hpackRoundTrip")

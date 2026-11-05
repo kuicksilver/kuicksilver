@@ -233,6 +233,121 @@ class H2ConnectionFuzzTest {
 }
 
 /**
+ * Fuzz target `connectionClient`: input = [split byte][streams byte][bytes from the server after its SETTINGS]. A client core
+ * opens 1 + (streams byte % 8) requests (every third a POST with a body sent as the windows allow), then reads the input
+ * in pieces of 1 + (split byte) bytes, one virtual millisecond apart, driven like the engine: every field section goes
+ * through the RFC 9113 section 8 checks (H2Messages; a malformed one resets its stream with PROTOCOL_ERROR, a too large
+ * one with CANCEL), content is consumed, finished and reset streams are released, output is drained. Nothing may escape
+ * the core or the checks but their own errors; its state stays within its settings, and the connection send window is
+ * conserved.
+ */
+class H2ClientConnectionFuzzTest {
+    @FuzzTest(maxDuration = "60s")
+    fun connectionClient(data: ByteArray) {
+        if (data.size < 2) return
+        val settings = io.kuicksilver.http2.Http2Settings(maxHeaderListSize = 4_096, maxControlFramesQueued = 64)
+        val core =
+            io.kuicksilver.http2.core
+                .H2ConnectionCore(io.kuicksilver.http2.core.Role.CLIENT, settings, 0)
+        val out = ByteArray(4_096)
+        val body = ByteArray(16_384)
+        val bodyLeft = HashMap<Int, Int>()
+        val finalSeen = HashSet<Int>()
+        var now = 0L
+        // the server's preface (an empty SETTINGS frame) is not fuzzed: the core refuses anything else first (section 3.4)
+        val preface =
+            io.kuicksilver.http2.frame.FrameEncoder
+                .settings(IntArray(0), LongArray(0))
+        core.receive(preface, 0, preface.size, now)
+        val streams = 1 + (data[1].toInt() and 0xff) % 8
+        val opened = ArrayList<Int>()
+        repeat(streams) { i ->
+            val post = i % 3 == 2
+            val fields =
+                listOf(":method" to (if (post) "POST" else "GET"), ":scheme" to "https", ":authority" to "example.com", ":path" to "/$i")
+            val id = core.openStream(fields, endStream = !post)
+            opened += id
+            if (post) bodyLeft[id] = 100_000
+        }
+
+        fun pump(id: Int) {
+            val left = bodyLeft[id] ?: return
+            val n =
+                try {
+                    core.sendData(id, body, 0, minOf(left, body.size), endStream = true)
+                } catch (_: IllegalStateException) {
+                    bodyLeft.remove(id) // reset meanwhile
+                    return
+                }
+            if (n == left) bodyLeft.remove(id) else bodyLeft[id] = left - n
+        }
+        for (id in opened) pump(id)
+
+        fun drive() {
+            while (true) {
+                when (val e = core.nextEvent() ?: return) {
+                    is io.kuicksilver.http2.core.H2Event.HeadersReceived -> {
+                        try {
+                            when {
+                                e.tooLarge -> {
+                                    core.reset(e.streamId, io.kuicksilver.http2.Http2ErrorCode.CANCEL, now)
+                                }
+
+                                e.streamId in finalSeen -> {
+                                    io.kuicksilver.http2.message.H2Messages
+                                        .parseTrailers(e.fields)
+                                }
+
+                                else -> {
+                                    val r =
+                                        io.kuicksilver.http2.message.H2Messages
+                                            .parseResponse(e.fields)
+                                    if (r.status >= 200) finalSeen += e.streamId
+                                }
+                            }
+                        } catch (_: io.kuicksilver.http2.message.MalformedMessage) {
+                            core.reset(e.streamId, io.kuicksilver.http2.Http2ErrorCode.PROTOCOL_ERROR, now)
+                        }
+                        if (e.endStream) core.release(e.streamId)
+                    }
+
+                    is io.kuicksilver.http2.core.H2Event.Data -> {
+                        core.consumed(e.streamId, e.data.size.toLong(), now)
+                        if (e.endStream) core.release(e.streamId)
+                    }
+
+                    is io.kuicksilver.http2.core.H2Event.WindowAvailable -> {
+                        pump(e.streamId)
+                    }
+
+                    is io.kuicksilver.http2.core.H2Event.StreamReset -> {
+                        bodyLeft.remove(e.streamId)
+                        core.release(e.streamId)
+                    }
+
+                    else -> {}
+                }
+            }
+        }
+        val piece = 1 + (data[0].toInt() and 0xff)
+        var p = 2
+        while (p < data.size && !core.isClosed) {
+            val n = minOf(piece, data.size - p)
+            now += 1_000_000
+            core.receive(data, p, n, now)
+            p += n
+            drive()
+            assertTrue(core.activeStreams <= streams, "streams ${core.activeStreams}")
+            assertTrue(core.controlQueued <= 64, "control frames ${core.controlQueued}")
+            assertTrue(core.blockBufferCapacity <= 2 * 4_096, "field block buffer ${core.blockBufferCapacity}")
+            if (!core.isClosed) assertTrue(core.sendWindowConserved, "connection send window not conserved")
+            while (core.poll(out, 0, now) > 0) continue
+            core.nextTimeout()?.let { if (it <= now + 10_000_000_000) core.onTimeout(it) }
+        }
+    }
+}
+
+/**
  * Fuzz target `hpackRoundTrip` (differential, at the HPACK level; the connection-level check of the same property is in
  * `connectionServer`): the input is cut into field lists and peer table size changes; each list is encoded by our encoder
  * and decoded by a separate decoder that learns the table size as the peer would. The decoded list must equal the encoded
