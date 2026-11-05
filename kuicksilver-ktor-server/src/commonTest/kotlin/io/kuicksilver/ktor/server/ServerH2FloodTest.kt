@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.kuicksilver.ktor.server
 
@@ -20,6 +24,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TestTimeSource
@@ -243,30 +248,122 @@ class ServerH2FloodTest {
             }
         }
 
+    /** Three CONTINUATION floods from this address, each ended by the server. */
+    private suspend fun threeFloods(
+        server: Server,
+        port: Int,
+    ) {
+        val before = server.engine.h2FloodEnds.value
+        for (k in 1..3) {
+            RawH2Client.connect(port).use { raw ->
+                raw.preface()
+                raw.write(RawH2Client.frame(RawFrame.HEADERS, 0x1, 1, RawH2Client.block(RawH2Client.get())))
+                raw.flood(100) { RawH2Client.frame(RawFrame.CONTINUATION, 0, 1, byteArrayOf(0)) }
+                raw.goAwaySeen()
+            }
+            withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == before + k } }
+        }
+    }
+
     /**
-     * An address whose HTTP/2 connections end in ENHANCE_YOUR_CALM three times within a minute is refused at accept (before
-     * TLS) for 30 seconds; then it is served again.
+     * With `http2RepeatOffenderPenalty`, an address whose HTTP/2 connections end in ENHANCE_YOUR_CALM three times within a
+     * minute is refused at accept (before TLS) for the penalty; then it is served again.
      */
     @Test fun negative_repeatOffenderBackoff() =
         serverTest {
             val handlers = Handlers()
-            val (server, port) = floodServer(handlers)
+            val (server, port) = floodServer(handlers) { http2RepeatOffenderPenalty = 30.seconds }
             val clock = TestTimeSource()
-            server.engine.h2Offenders = RepeatOffenders(timeSource = clock)
+            assertNotNull(server.engine.h2Offenders, "on with a positive penalty")
+            server.engine.h2Offenders = RepeatOffenders(penalty = 30.seconds, timeSource = clock)
             try {
-                for (k in 1..3) {
-                    RawH2Client.connect(port).use { raw ->
-                        raw.preface()
-                        raw.write(RawH2Client.frame(RawFrame.HEADERS, 0x1, 1, RawH2Client.block(RawH2Client.get())))
-                        raw.flood(100) { RawH2Client.frame(RawFrame.CONTINUATION, 0, 1, byteArrayOf(0)) }
-                        raw.goAwaySeen()
-                    }
-                    withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == k.toLong() } }
-                }
+                threeFloods(server, port)
                 assertFailsWith<Throwable>("refused before the TLS handshake") { RawH2Client.connect(port).close() }
                 assertEquals(1L, server.engine.refusedOffenders.value)
                 clock += 30.seconds
                 assertServes(port)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Off by default: every client behind one shared address (a NAT, an L4 load balancer that rewrites source addresses)
+     * would be refused with a flooder, so only the per-connection limits apply unless the operator turns it on.
+     */
+    @Test fun repeatOffenderBackoffIsOffByDefault() =
+        serverTest {
+            val (server, port) = floodServer(Handlers())
+            try {
+                assertNull(server.engine.h2Offenders)
+                threeFloods(server, port)
+                assertServes(port)
+                assertEquals(0L, server.engine.refusedOffenders.value)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** A field block slower than the request-head deadline ends its connection (ENHANCE_YOUR_CALM) but is no flood strike. */
+    @Test fun slowFieldBlockIsNotAFloodStrike() =
+        serverTest {
+            val (server, port) =
+                floodServer(Handlers()) {
+                    requestHeaderTimeoutSeconds = 1
+                    http2RepeatOffenderPenalty = 30.seconds
+                }
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    // the server's SETTINGS acknowledged first: our acknowledgement inside the field block would be a
+                    // PROTOCOL_ERROR of its own
+                    assertNotNull(raw.await { it.type == RawFrame.SETTINGS && it.flags and 1 == 0 })
+                    raw.write(RawH2Client.frame(RawFrame.HEADERS, 0x1, 1, RawH2Client.block(RawH2Client.get())))
+                    raw.goAwaySeen()?.let { assertEquals(calm, it.errorCode) }
+                }
+                withTimeout(15.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                assertEquals(0L, server.engine.h2FloodEnds.value)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Sustained cancellations below the refill rate: 25 a second for 60 seconds of the connections' clock (a test clock,
+     * moved a second per round), 1500 in all, past the burst of 1000; the reset budget refills at 33 a second, so the
+     * connection goes on.
+     */
+    @Test fun sustainedCancellationsBelowTheRefillRateAreNotPunished() =
+        serverTest {
+            val now = kotlin.concurrent.atomics.AtomicLong(0L)
+            val (server, port) =
+                floodServer(Handlers()) { h2ClockForTest = { now.load() } }
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    assertNotNull(raw.await { it.type == RawFrame.SETTINGS && it.flags and 1 == 0 }) // acknowledged on read
+                    val c =
+                        withTimeout(10.seconds) {
+                            server.engine.h2Live
+                                .live()
+                                .single()
+                        }
+                    var next = 1
+                    for (second in 1..60) {
+                        raw.flood(25, batch = 25) {
+                            val id = next
+                            next += 2
+                            hold(id) + RawH2Client.frame(RawFrame.RST_STREAM, 0, id, byteArrayOf(0, 0, 0, 8))
+                        }
+                        withTimeout(10.seconds) { c.requestsTaken.first { it == 25L * second } }
+                        withTimeout(10.seconds) { c.openRequests.first { it == 0 } }
+                        now.addAndFetch(1_000_000_000L)
+                    }
+                    raw.headers(next, RawH2Client.get())
+                    val end = assertNotNull(raw.await(within = 15.seconds) { it.stream == next || it.type == RawFrame.GOAWAY })
+                    assertEquals(next, end.stream, "the connection went on: $end")
+                }
+                assertEquals(0L, server.engine.h2FloodEnds.value)
             } finally {
                 server.stop(100, 500)
             }

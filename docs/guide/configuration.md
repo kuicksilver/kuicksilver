@@ -294,6 +294,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `http3` | `Boolean` | `true` | serve HTTP/3 on every TLS connector |
 | `http2` (*experimental*) | `Boolean` | `false` | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3; no h2c on plain connectors) ([HTTP/2 on the server](ktor.md#http2-on-the-server)) |
 | `http2Settings` (*experimental*) | `Http2Settings` | `Http2Settings()` | windows, SETTINGS and flood limits of every HTTP/2 connection; its `maxHeaderBlockTime` is bounded by `requestHeaderTimeoutSeconds` |
+| `http2RepeatOffenderPenalty` (*experimental*) | `Duration` | `Duration.ZERO` (off) | not negative; an address whose HTTP/2 connections end in a flood limit three times within a minute has its TCP connections closed at accept for this long (IPv6 by its /56); only for a server that sees real client addresses, never behind a NAT or a source-rewriting load balancer ([HTTP/2 on the server](ktor.md#http2-on-the-server)) |
 | `altSvc` | `Boolean` | `true` | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS (not when the application set its own, not on 421); `engine.http3Advertising` changes it at run time ([Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | QUIC transport of the HTTP/3 listeners |
 | `quicMaxIdleTimeout` | `Duration?` | `null` | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
@@ -329,7 +330,7 @@ keep their defaults and are not configurable from the engine. Ktor's `connection
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
-`kuicksilver.http3`, `kuicksilver.http2`,
+`kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 

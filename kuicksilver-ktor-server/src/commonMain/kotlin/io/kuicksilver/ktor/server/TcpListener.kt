@@ -243,10 +243,10 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             isClosed = { server.isClosed },
                             onError = acceptFailures::report,
                         ) { client ->
-                            // a client whose HTTP/2 connections keep earning ENHANCE_YOUR_CALM waits out its penalty: closed
-                            // here, before the TLS handshake costs anything (threat model 3.23)
+                            // with http2RepeatOffenderPenalty, a client whose HTTP/2 connections keep earning ENHANCE_YOUR_CALM
+                            // waits out its penalty: closed here, before the TLS handshake costs anything (threat model 3.23)
                             val from = client.remoteAddress as? InetSocketAddress
-                            if (h2Offenders.refuses(from)) {
+                            if (h2Offenders?.refuses(from) == true) {
                                 client.abort()
                                 refusedOffenders.update { it + 1 }
                                 refusals.report(from)
@@ -467,7 +467,7 @@ internal suspend fun <S : Any> acceptLoop(
     accept: suspend () -> S,
     isClosed: () -> Boolean,
     onError: (IOException, Duration) -> Unit,
-    serve: (S) -> Unit,
+    serve: suspend (S) -> Unit,
 ): Nothing {
     var pause = Duration.ZERO
     while (true) {

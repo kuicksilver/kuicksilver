@@ -16,6 +16,7 @@ import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.runtime.H2ServerConnection
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.ktor.network.abort
+import io.kuicksilver.ktor.network.bytesSent
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h2.H2Call
 import io.kuicksilver.tls.Certificate
@@ -35,6 +36,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** The engine's live HTTP/2 connections (for [KuicksilverServerProbe] and tests). */
 internal class H2LiveSet {
@@ -107,6 +109,11 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                     h2SettingsWithin(configuration.http2Settings, headerTimeout),
                     this,
                     closeTransport = { sock.close() },
+                    clock =
+                        configuration.h2ClockForTest
+                            ?: kotlin.time.TimeSource.Monotonic
+                                .markNow()
+                                .let { m -> { m.elapsedNow().inWholeNanoseconds } },
                     ownResponseFields = { listOf("date" to httpDateNow()) }, // RFC 9110 section 6.6.1, on the 431
                 )
             conn = c
@@ -133,11 +140,12 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                     launch { closeWhenIdle(c, sock, idle, sendTimeout) },
                     launch {
                         // the protocol is over (a flood limit, any connection error, the last stream after GOAWAY): what is
-                        // left to write gets the send-stall deadline, so a client that floods without reading our answers
+                        // left to write goes out for as long as the client takes it, and once it takes nothing for the
+                        // send-stall deadline the socket is aborted, so a client that floods without reading our answers
                         // does not hold the connection until the idle timeout
                         c.awaitEnded()
-                        if (withTimeoutOrNull(sendTimeout) { c.awaitClosed() } == null) {
-                            c.abort(IOException("the client read nothing of the connection's last frames for $sendTimeout"))
+                        if (!drainsWhileMoving(c, sock, sendTimeout)) {
+                            c.abort(IOException("the client took none of the connection's last frames for $sendTimeout"))
                             sock.abort()
                         }
                     },
@@ -164,13 +172,41 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
 }
 
 /**
- * A connection from [remote] ended in a flood defence (we sent GOAWAY ENHANCE_YOUR_CALM): one strike for its address. The
+ * Waits until [c] wrote what it had left and closed; false once the socket took no byte for [stall] (the bytes the kernel
+ * took, `bytesSent`, looked at every second, as [closeWithin] does; where they are not known, [stall] bounds the whole
+ * wait).
+ */
+private suspend fun drainsWhileMoving(
+    c: H2ServerConnection,
+    sock: Socket,
+    stall: Duration,
+): Boolean {
+    val poll = minOf(1.seconds, stall)
+    var last = sock.bytesSent
+    var quiet = Duration.ZERO
+    while (withTimeoutOrNull(poll) { c.awaitClosed() } == null) {
+        val now = sock.bytesSent
+        if (now == null || now == last) {
+            quiet += poll
+            if (quiet >= stall) return false
+        } else {
+            last = now
+            quiet = Duration.ZERO
+        }
+    }
+    return true
+}
+
+/**
+ * A connection from [remote] ended in a flood defence (we sent GOAWAY ENHANCE_YOUR_CALM for a flood limit): with
+ * `http2RepeatOffenderPenalty`, one strike for its address. The
  * strike that starts a penalty is logged at debug level (many addresses may start one at once); the refusals that follow
  * are the warning, rate-limited per connector ([RefusalReporter]).
  */
-private fun KuicksilverApplicationEngine.strikeOffender(remote: InetSocketAddress?) {
+private suspend fun KuicksilverApplicationEngine.strikeOffender(remote: InetSocketAddress?) {
     h2FloodEnds.update { it + 1 }
-    if (h2Offenders.strike(remote)) {
+    val offenders = h2Offenders ?: return // http2RepeatOffenderPenalty off (the default)
+    if (withContext(NonCancellable) { offenders.strike(remote) }) {
         environment.log.debug(
             "HTTP/2: connections from ${RepeatOffenders.describe(remote)} keep ending in ENHANCE_YOUR_CALM (flood limits); " +
                 "refusing its connections for a while",

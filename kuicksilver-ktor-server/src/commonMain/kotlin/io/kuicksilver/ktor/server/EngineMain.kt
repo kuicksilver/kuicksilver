@@ -17,7 +17,8 @@ import kotlin.time.Duration.Companion.seconds
  * `ktor.security.ssl.*` with `-sslPort`). Keys of its own, on every platform:
  * `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files: the deployment port then serves TLS
  * and HTTP/3), `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate, e.g. `1h`;
- * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount`.
+ * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
+ * default), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount`.
  */
 public object EngineMain {
     /** Starts the server from command-line arguments and the configuration file, and blocks until it stops. */
@@ -87,6 +88,13 @@ public object EngineMain {
                 http2 = it
             }
         config
+            .propertyOrNull("kuicksilver.http2RepeatOffenderPenalty")
+            ?.getString()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                http2RepeatOffenderPenalty = parsePenalty(it)
+            }
+        config
             .propertyOrNull("kuicksilver.altSvc")
             ?.getString()
             ?.toBooleanStrict()
@@ -101,6 +109,17 @@ public object EngineMain {
             ?.getString()
             ?.toInt()
             ?.let { udpSocketCount = it }
+    }
+
+    /** `kuicksilver.http2RepeatOffenderPenalty`: `0` (off) or a duration as `kotlin.time.Duration.parse` reads it (`30s`). */
+    private fun parsePenalty(value: String): Duration {
+        val v = value.trim()
+        if (v == "0") return Duration.ZERO
+        return try {
+            Duration.parse(v)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("kuicksilver.http2RepeatOffenderPenalty: \"$v\" is not a duration (30s, 1m)", e)
+        }
     }
 
     /**

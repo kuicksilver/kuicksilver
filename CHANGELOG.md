@@ -38,8 +38,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   counts `server.h2Connections` and `server.h2Streams`. Flood defences in the engine on top of the per-connection limits
   of `Http2Settings`: a reset stream's handler is cancelled and counts toward SETTINGS_MAX_CONCURRENT_STREAMS until it
   returns (Rapid Reset, MadeYouReset); a connection that is over gets the send-stall deadline for what it still has to
-  write; an address whose connections end in ENHANCE_YOUR_CALM three times within a minute has its TCP connections
-  closed at accept for 30 seconds (IPv6 by its /64). The server passes h2spec 2.6.0, all 146 cases
+  write, for as long as the client takes it; experimental `http2RepeatOffenderPenalty` (`EngineMain` key
+  `kuicksilver.http2RepeatOffenderPenalty`; off by default) closes at accept, for that long, the TCP connections of an
+  address whose HTTP/2 connections ended in a flood limit three times within a minute (IPv6 by its /56): only for a
+  server that sees real client addresses, never behind a NAT or a source-rewriting load balancer. The server passes
+  h2spec 2.6.0, all 146 cases
   (`tools/interop/h2spec.sh`).
 - Ktor client: HTTP/2 over TLS (RFC 9113; `docs/guide/ktor.md`, "HTTP/2 on the client"). Every `https://` connection
   over TCP offers `h2` and `http/1.1` in ALPN (also through HTTP CONNECT and SOCKS5 proxies; never for `http://`, no h2c,

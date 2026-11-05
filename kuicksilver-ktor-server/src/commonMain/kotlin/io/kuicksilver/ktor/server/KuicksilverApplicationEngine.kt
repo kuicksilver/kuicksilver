@@ -150,6 +150,26 @@ public class KuicksilverApplicationEngine(
         public var http2Settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings()
 
         /**
+         * Off ([Duration.ZERO], the default): each HTTP/2 connection that breaks a flood limit of [http2Settings] is ended
+         * with GOAWAY ENHANCE_YOUR_CALM, and that is all. Positive: a client address whose HTTP/2 connections end that way
+         * three times within a minute has its TCP connections (HTTP/1.1 too) closed at accept, before the TLS handshake,
+         * for this long (docs/guide/ktor.md, "HTTP/2 on the server"; threat model 3.23). An IPv6 client counts by its /56,
+         * an IPv4-mapped one by its IPv4 address; a slow field block is not a strike. Enable it only where the server sees
+         * the real address of each client (directly exposed, or behind a proxy that keeps client addresses, such as one
+         * that preserves the source IP): behind a NAT, a load balancer that rewrites source addresses (SNAT, Kubernetes
+         * `externalTrafficPolicy: Cluster`) or a TCP proxy, every client shares the proxy's address and one flooder locks
+         * them all out. `EngineMain` key `kuicksilver.http2RepeatOffenderPenalty` (a duration such as `30s`; `0` is off).
+         *
+         * @throws IllegalArgumentException when set to a negative duration.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var http2RepeatOffenderPenalty: Duration = Duration.ZERO
+            set(value) {
+                require(!value.isNegative()) { "http2RepeatOffenderPenalty must not be negative" }
+                field = value
+            }
+
+        /**
          * QUIC transport settings of the HTTP/3 listener; [QuicConfig.Default] until assigned. With [http3] on,
          * `maxUniStreams` must be at least 3 (RFC 9114 section 6.2): a smaller value fails the start with
          * IllegalArgumentException.
@@ -227,6 +247,9 @@ public class KuicksilverApplicationEngine(
 
         /** Tests shorten the HTTP/1.1 send-stall deadline with this; null keeps the engine's own. */
         internal var sendStallTimeoutForTest: Duration? = null
+
+        /** Tests drive the HTTP/2 connections' clock (monotonic nanoseconds: reset budgets, protocol deadlines) with this. */
+        internal var h2ClockForTest: (() -> Long)? = null
 
         /** How the HTTP/3 listener binds (tests replace it to simulate platforms without a QUIC server). */
         internal var http3Bind: suspend (
@@ -545,9 +568,14 @@ public class KuicksilverApplicationEngine(
     /** Accepted TCP sockets whose descriptor is not released yet (their job completes when it is); for tests. */
     internal val openTcpSockets = kotlinx.coroutines.flow.MutableStateFlow(0)
 
-    /** Client addresses whose HTTP/2 connections keep ending in ENHANCE_YOUR_CALM: refused at accept for a while. */
+    /**
+     * Client addresses whose HTTP/2 connections keep ending in a flood defence, refused at accept for a while; null unless
+     * [Configuration.http2RepeatOffenderPenalty] is positive.
+     */
     @kotlin.concurrent.Volatile
-    internal var h2Offenders: RepeatOffenders = RepeatOffenders()
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    internal var h2Offenders: RepeatOffenders? =
+        configuration.http2RepeatOffenderPenalty.takeIf { it.isPositive() }?.let { RepeatOffenders(it) }
 
     /** HTTP/2 connections that ended in a flood defence (we sent ENHANCE_YOUR_CALM); for tests. */
     internal val h2FloodEnds = kotlinx.coroutines.flow.MutableStateFlow(0L)

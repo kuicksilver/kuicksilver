@@ -142,12 +142,21 @@ Flood defences (threat model, section 3.23): each connection is held to the core
 budget against Rapid Reset, the glitch budget against MadeYouReset and PING, SETTINGS or PRIORITY floods, 8 CONTINUATION
 frames per field block, 10 000 queued control frames), and a broken limit ends it with GOAWAY ENHANCE_YOUR_CALM. A
 stream the client reset cancels its handler and counts toward SETTINGS_MAX_CONCURRENT_STREAMS until the handler
-returns, so no more handlers run at once than that limit. A connection that is over gets the send-stall deadline for
-what it still has to write, then its socket is aborted. An address whose connections end in ENHANCE_YOUR_CALM three
-times within a minute has its TCP connections (HTTP/1.1 too) closed at accept, before the TLS handshake, for 30 seconds,
-with a warning logged at most every 10 seconds per connector; an IPv6 client counts by its /64, so behind a NAT or a
-proxy that shares one address all its clients wait out the penalty together. The server passes h2spec 2.6.0 (all 146
-cases, `tools/interop/h2spec.sh`). HTTP/2 on the server is still experimental and off by default in 0.3.0.
+returns, so no more handlers run at once than that limit. A connection that is over gets what it still has to write
+sent for as long as the client takes it; after the send-stall deadline without progress its socket is aborted. These
+per-connection limits are the defence by default.
+
+`http2RepeatOffenderPenalty` (experimental, `EngineMain` key `kuicksilver.http2RepeatOffenderPenalty`, e.g. `30s`; off
+by default) adds a backoff by address: one whose HTTP/2 connections end in a flood limit's ENHANCE_YOUR_CALM three
+times within a minute has its TCP connections (HTTP/1.1 too) closed at accept, before the TLS handshake, for that long,
+with a warning logged at most every 10 seconds per connector. An IPv4 client counts by its address (also when a
+dual-stack listener reports it as `::ffff:a.b.c.d`), an IPv6 client by its /56; a slow field block is no strike. Turn it
+on only where the server sees each client's real address (directly exposed, or behind an L4 load balancer that keeps
+the source address). Never behind a NAT, CGNAT, an L4 load balancer or Kubernetes Service that rewrites source
+addresses (`externalTrafficPolicy: Cluster`) or a TCP proxy such as HAProxy in TCP mode: every client there shares one
+address, and one flooder would lock them all out.
+
+The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`). HTTP/2 on the server is still experimental and off by default in 0.3.0.
 
 ### Turning HTTP/3 off on the server
 
@@ -331,6 +340,7 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | `kuicksilver.tls.reloadInterval` | how often those PEM files are checked for a renewed certificate (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
+| `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.altSvc` | send `Alt-Svc` on HTTP/1.1 responses (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |

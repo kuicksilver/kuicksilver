@@ -1,31 +1,35 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalAtomicApi::class)
-
 package io.kuicksilver.ktor.server
 
 import io.ktor.network.sockets.InetSocketAddress
-import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 /**
- * Client addresses whose HTTP/2 connections keep ending in a flood defence (GOAWAY ENHANCE_YOUR_CALM: Rapid Reset,
- * MadeYouReset, CONTINUATION, PING or SETTINGS floods, a trickled field block; threat model 3.23). The core already ends
- * each such connection; this makes a client that just reconnects and floods again pay too: [strikes] of them within
- * [window] refuse the address's next TCP connections for [penalty], at accept and before any TLS work. Defaults: 3
- * within a minute, then 30 seconds. An IPv6 address counts by its /64, the usual prefix of one site (RFC 6177): a client
- * holds all of it, so a full address would be one new address away. At most [maxTracked] addresses are remembered, the
- * oldest first forgotten, so an attacker with many addresses costs bounded memory (and those addresses still meet the
- * per-connection limits). Safe to call from any thread.
+ * The opt-in backoff of `http2RepeatOffenderPenalty` (threat model 3.23): client addresses whose HTTP/2 connections keep
+ * ending in a flood defence (GOAWAY ENHANCE_YOUR_CALM from a flood limit: Rapid Reset, MadeYouReset, CONTINUATION, PING
+ * or SETTINGS floods; not a slow field block). The core already ends each such connection; this makes a client that just
+ * reconnects and floods again pay too: [strikes] of them within [window] refuse the address's next TCP connections for
+ * [penalty], at accept and before any TLS work. Every client behind one shared address (a NAT, an L4 load balancer or a
+ * proxy that does not keep client addresses) is refused with the flooder, which is why it is off by default.
+ *
+ * Keys: an IPv4 address (an IPv4-mapped IPv6 address, as a dual-stack listener reports IPv4 peers, counts as its IPv4
+ * address), and an IPv6 address by its /56: end sites are assigned a /56 or a /48 (RFC 6177), so a client can move within
+ * its /56 at will; a /48 would refuse more bystanders. At most [maxTracked] addresses are remembered: addresses that only
+ * struck are forgotten first (oldest first), one serving a penalty only when every remembered one does, and a refusal
+ * keeps the refused address fresh, so a stream of new addresses does not cut a penalty short. Safe to call from any
+ * coroutine: a [Mutex], never a spinning lock; the accept loop skips it while the table is empty.
  */
 internal class RepeatOffenders(
+    private val penalty: Duration,
     private val strikes: Int = 3,
     private val window: Duration = 60.seconds,
-    private val penalty: Duration = 30.seconds,
     private val maxTracked: Int = 4_096,
     private val timeSource: TimeSource = TimeSource.Monotonic,
 ) {
@@ -34,31 +38,24 @@ internal class RepeatOffenders(
         var refusedUntil: TimeMark? = null
     }
 
-    private val lock = AtomicInt(0)
+    private val lock = Mutex()
     private val entries = LinkedHashMap<String, Entry>()
 
-    private inline fun <T> locked(block: () -> T): T {
-        while (!lock.compareAndSet(0, 1)) {
-            // a few map operations under the lock; nothing in it suspends or blocks
-        }
-        try {
-            return block()
-        } finally {
-            lock.store(0)
-        }
-    }
+    /** Entries in [entries]: the accept loop skips the lock and the key while it is 0, the usual case. */
+    @Volatile private var size = 0
 
-    /** Records one ENHANCE_YOUR_CALM for [remote]; true when it starts a penalty (the caller logs that). */
-    fun strike(remote: InetSocketAddress?): Boolean {
-        val key = keyOf(remote) ?: return false
+    /** Records one flood-ended connection of [remote]; true when it starts a penalty (the caller logs that). */
+    suspend fun strike(remote: InetSocketAddress?): Boolean {
+        val key = remote?.let { peerAddressBytes(it) }?.let { keyOf(it) } ?: return false
         val now = timeSource.markNow()
-        return locked {
+        return lock.withLock {
             val e = entries.remove(key) ?: Entry()
-            entries[key] = e // the most recent last: the oldest is forgotten first
-            while (entries.size > maxTracked) entries.remove(entries.keys.first())
+            entries[key] = e // the most recent last
+            evict()
             while (e.marks.isNotEmpty() && e.marks.first().elapsedNow() >= window) e.marks.removeFirst()
             e.marks.addLast(now)
-            if (e.marks.size < strikes) return@locked false
+            size = entries.size
+            if (e.marks.size < strikes) return@withLock false
             e.marks.clear()
             e.refusedUntil = now + penalty
             true
@@ -66,43 +63,72 @@ internal class RepeatOffenders(
     }
 
     /** True while [remote] serves a penalty: its connection is closed at accept. */
-    fun refuses(remote: InetSocketAddress?): Boolean {
-        val key = keyOf(remote) ?: return false
-        return locked {
-            val e = entries[key] ?: return@locked false
-            val until = e.refusedUntil ?: return@locked false
-            if (until.hasNotPassedNow()) return@locked true
+    suspend fun refuses(remote: InetSocketAddress?): Boolean {
+        if (size == 0 || remote == null) return false
+        val key = peerAddressBytes(remote)?.let { keyOf(it) } ?: return false
+        return lock.withLock {
+            val e = entries[key] ?: return@withLock false
+            val until = e.refusedUntil ?: return@withLock false
+            if (until.hasNotPassedNow()) {
+                entries.remove(key)
+                entries[key] = e // still refused: kept fresh against eviction
+                return@withLock true
+            }
             e.refusedUntil = null
             if (e.marks.isEmpty()) entries.remove(key)
+            size = entries.size
             false
         }
     }
 
+    /** Over [maxTracked]: the oldest entry that serves no penalty goes, else the oldest. Under [lock]. */
+    private fun evict() {
+        while (entries.size > maxTracked) {
+            val victim = entries.entries.firstOrNull { it.value.refusedUntil?.hasNotPassedNow() != true }?.key ?: entries.keys.first()
+            entries.remove(victim)
+        }
+    }
+
     /** Addresses remembered (a test hook for the bound). */
-    val tracked: Int get() = locked { entries.size }
+    suspend fun tracked(): Int = lock.withLock { entries.size }
 
     companion object {
-        /** The address as the table counts it, for a log line: a.b.c.d, or an IPv6 /64; never a name (no lookup). */
-        fun describe(remote: InetSocketAddress?): String {
-            val bytes = remote?.resolveAddress() ?: return "an unknown address"
-            if (bytes.size != 16) return bytes.joinToString(".") { (it.toInt() and 0xff).toString() }
-            return (0 until 4).joinToString(":", postfix = "::/64") { i ->
-                (((bytes[2 * i].toInt() and 0xff) shl 8) or (bytes[2 * i + 1].toInt() and 0xff)).toString(16)
-            }
+        /** The address as the table counts it, for a log line: a.b.c.d, or an IPv6 /56; never a name (no lookup). */
+        fun describe(remote: InetSocketAddress?): String =
+            remote?.let { peerAddressBytes(it) }?.let { describe(it) } ?: "an unknown address"
+
+        /** [describe] of address bytes (4 or 16). */
+        fun describe(bytes: ByteArray): String {
+            val ip = unmapped(bytes)
+            if (ip.size != 16) return ip.joinToString(".") { (it.toInt() and 0xff).toString() }
+            val prefix = ip.copyOf(7) + ByteArray(9)
+            val groups = (0 until 4).map { ((prefix[2 * it].toInt() and 0xff) shl 8) or (prefix[2 * it + 1].toInt() and 0xff) }
+            return groups.dropLastWhile { it == 0 }.joinToString(":") { it.toString(16) } + "::/56"
         }
 
-        /** The address bytes (never a name: no lookup), an IPv6 address cut to its /64. */
-        private fun keyOf(remote: InetSocketAddress?): String? {
-            val bytes = remote?.resolveAddress() ?: return null
-            val n = if (bytes.size == 16) 8 else bytes.size
-            val sb = StringBuilder(n * 2 + 2)
-            sb.append(bytes.size).append(':')
+        /** The table's key of address bytes: an IPv4 address (mapped ones included) whole, an IPv6 address by its /56. */
+        fun keyOf(bytes: ByteArray): String {
+            val ip = unmapped(bytes)
+            val n = if (ip.size == 16) IPV6_PREFIX_BYTES else ip.size
+            val sb = StringBuilder(n * 2 + 3)
+            sb.append(ip.size).append(':')
             for (i in 0 until n) {
-                val b = bytes[i].toInt() and 0xff
+                val b = ip[i].toInt() and 0xff
                 sb.append(HEX[b shr 4]).append(HEX[b and 0xf])
             }
             return sb.toString()
         }
+
+        /** `::ffff:a.b.c.d` (RFC 4291 section 2.5.5.2) as the 4 bytes of a.b.c.d; anything else as it is. */
+        private fun unmapped(bytes: ByteArray): ByteArray {
+            if (bytes.size != 16) return bytes
+            for (i in 0 until 10) if (bytes[i].toInt() != 0) return bytes
+            if (bytes[10].toInt() != -1 || bytes[11].toInt() != -1) return bytes
+            return bytes.copyOfRange(12, 16)
+        }
+
+        /** /56 */
+        private const val IPV6_PREFIX_BYTES = 7
 
         private const val HEX = "0123456789abcdef"
     }
