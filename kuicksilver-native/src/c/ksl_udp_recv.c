@@ -63,18 +63,30 @@ static int pktinfo_dst(const struct cmsghdr *c, uint8_t dst[KSL_UDP_ADDR_LEN], i
     return 1;
 }
 #ifdef __APPLE__
-/* Darwin fills no ipi_spec_dst on receive: an IPv4 destination is one to answer from unless it is an interface's broadcast address
-   (getifaddrs). Unicast ones are remembered for 10 s (8 of them), so the interfaces are read once per new destination, not per datagram */
-static int v4_unicast(ksl_udp *u, const uint8_t a[4]) {
-    int64_t now = now_ns();
-    if (now - u->ucast_at > 10 * (int64_t)1000000000) { u->ucast_n = 0; u->ucast_at = now; }
-    for (int i = 0; i < u->ucast_n; i++) if (!memcmp(u->ucast[i], a, 4)) return 1;
-    struct ifaddrs *ifs = NULL, *i; int bcast = 0; if (getifaddrs(&ifs) != 0) return 0;   /* unsure: unknown */
-    for (i = ifs; i && !bcast; i = i->ifa_next)
-        if ((i->ifa_flags & IFF_BROADCAST) && i->ifa_broadaddr && i->ifa_broadaddr->sa_family == AF_INET && !memcmp(&((struct sockaddr_in *)i->ifa_broadaddr)->sin_addr, a, 4)) bcast = 1;
+/* Darwin fills no ipi_spec_dst on receive. The interfaces' IPv4 addresses and broadcast addresses are read (getifaddrs) at most once a
+   second and kept for 10 s: a destination among the addresses is one to answer from, one among the broadcast addresses is not, and an
+   unseen one rereads the interfaces if a second has passed, else is unknown until then. So the receive thread reads the interfaces at
+   most once a second whatever arrives (a flood of broadcasts, datagrams to many addresses), and a known address costs a table scan */
+static int find4(uint8_t (*t)[4], int n, const uint8_t a[4]) { for (int k = 0; k < n; k++) if (!memcmp(t[k], a, 4)) return 1; return 0; }
+static void read_ifs(ksl_udp *u, int64_t now) {
+    u->ifs_at = now; u->if_n_addr = u->if_n_bcast = 0;
+    struct ifaddrs *ifs = NULL, *i; if (getifaddrs(&ifs) != 0) return;   /* unreadable: every destination unknown until the next look */
+    for (i = ifs; i; i = i->ifa_next) {
+        if (!(i->ifa_flags & IFF_UP) || !i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
+        if (u->if_n_addr < 16) memcpy(u->if_addr[u->if_n_addr++], &((struct sockaddr_in *)i->ifa_addr)->sin_addr, 4);
+        if ((i->ifa_flags & IFF_BROADCAST) && i->ifa_broadaddr && i->ifa_broadaddr->sa_family == AF_INET && u->if_n_bcast < 16)
+            memcpy(u->if_bcast[u->if_n_bcast++], &((struct sockaddr_in *)i->ifa_broadaddr)->sin_addr, 4);
+    }
     freeifaddrs(ifs);
-    if (!bcast && u->ucast_n < 8) memcpy(u->ucast[u->ucast_n++], a, 4);
-    return !bcast;
+}
+static int v4_unicast(ksl_udp *u, const uint8_t a[4]) {
+    int64_t now = now_ns(), age = now - u->ifs_at;
+    if (!u->ifs_at || age > 10 * (int64_t)1000000000) { read_ifs(u, now); age = 0; }
+    if (find4(u->if_bcast, u->if_n_bcast, a)) return 0;
+    if (find4(u->if_addr, u->if_n_addr, a)) return 1;
+    if (age < (int64_t)1000000000) return 0;   /* unseen, and the interfaces were read within the second: unknown */
+    read_ifs(u, now);
+    return !find4(u->if_bcast, u->if_n_bcast, a) && find4(u->if_addr, u->if_n_addr, a);
 }
 #endif
 /* the destination as reported: unknown (all zero) when it is no address to answer from — multicast, limited or subnet-directed broadcast

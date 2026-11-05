@@ -65,8 +65,9 @@ struct ksl_udp {
     int pktinfo;   /* KSL_UDP_PKTINFO granted: destinations read from IP_PKTINFO / IPV6_PKTINFO (IP_RECVDSTADDR), sources written the same way */
     /* receiver thread only, telling an IPv4 destination that is an address of this host from a subnet-directed broadcast one: Linux
        reads ipi_spec_dst next to ipi_addr (the IP_PKTINFO cmsg arrives on a dual-stack socket too, v4_spec); Darwin, whose
-       ipi_spec_dst is not filled on receive, checks the interfaces' broadcast addresses, the unicast ones it found kept for a while */
-    int v4_spec; uint8_t ucast[8][4]; int ucast_n; int64_t ucast_at;
+       ipi_spec_dst is not filled on receive, checks against the interfaces' IPv4 addresses and broadcast addresses, read at most once a
+       second and kept for 10 s (16 of each) */
+    int v4_spec; uint8_t if_addr[16][4], if_bcast[16][4]; int if_n_addr, if_n_bcast; int64_t ifs_at;
     uint32_t last_errno; char last_msg[KSL_MSG]; pthread_mutex_t err_mu;   /* err_mu guards the pair; initialised in ksl_udp_open */
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* GRO scratch: one received message and the segments of it not yet handed out */
