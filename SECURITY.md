@@ -25,6 +25,10 @@ Please include:
 
 Hardening suggestions that are not exploitable may be filed as ordinary issues. If you are unsure, report privately.
 
+Our own findings follow the same rule: a crash found by fuzzing (locally or in the weekly hosted fuzzing run, which
+never uploads reproducers or crash logs) is kept private until it is fixed, and is disclosed as below if it was
+reachable by a peer.
+
 ## What happens next
 
 | Step | Target |
@@ -44,9 +48,9 @@ a release with a security fix is coming, without details, and the release's `CHA
 ## Where to see the status
 
 - **Advisories**: <https://github.com/kuicksilver/kuicksilver/security/advisories>, for vulnerabilities in Kuicksilver
-  and for OpenSSL advisories that affect it (see [OpenSSL](#openssl)). They are also in the GitHub Advisory Database
-  under the Maven ecosystem, so GitHub's Dependabot alerts and other scanners that read it can tell a project that
-  depends on an affected `io.kuicksilver` version.
+  and for OpenSSL advisories that affect it (see [OpenSSL](#openssl)). GitHub reviews them for the GitHub Advisory Database
+  (Maven ecosystem); once there, Dependabot alerts and other scanners that read it can tell a project that depends on
+  an affected `io.kuicksilver` version.
 - **Releases**: the `CHANGELOG.md` section of each version has a **Security** heading for security fixes, including
   OpenSSL updates, and the same text is on the version's GitHub release. *Watch → Custom → Releases* (or *Security
   alerts*) on the repository gets you a notification.
@@ -55,7 +59,7 @@ a release with a security fix is coming, without details, and the release's `CHA
 
 | Version | Supported |
 |---|---|
-| the latest 0.x release (0.2.1 today) | yes: security fixes and OpenSSL updates |
+| the latest 0.x release (0.2.1 today; updated with each release) | yes: security fixes and OpenSSL updates |
 | older 0.x releases | no — upgrade to the latest |
 | unreleased code on `main` | fixes land there first; not a supported release |
 
@@ -94,11 +98,15 @@ from us, so we commit to the following.
   When we are not sure an issue is unreachable, we treat it as reachable.
 - **Maven Central limits.** By agreement with Sonatype, the `io.kuicksilver` namespace has a monthly file and size
   quota that one release nearly fills, so planned releases come at most once a month ([docs/release.md, Publishing
-  limits](docs/release.md#once-accounts-keys-dns)). A security release does not wait for the next month: when the
-  month's quota is used up, it is uploaded above it (`tools/release/local-release.sh --allow-over-limit`), relying on the
-  grace Sonatype allows above the limits, and the next planned release moves later instead. This emergency path has not
-  been needed yet. If Central refused such an upload, the advisory would say so, name the affected versions and any
-  mitigation, and the release would follow as soon as Central accepts it.
+  limits](docs/release.md#once-accounts-keys-dns)). A security release does not wait for the next month: it is
+  uploaded to Central even when the month's quota is already used, and whether Central accepts a deployment above the
+  quota is Sonatype's decision. This emergency path has not been needed yet. If Central refused such an upload, the
+  advisory would say so, name the affected versions and any mitigation, and the release would follow as soon as Central
+  accepts it. A 7-day patch for a Moderate or Low issue can likewise take the month's release slot and push the next
+  planned release later.
+- **What such a release goes through.** An OpenSSL patch release runs the full local gate on its release commit, like
+  every release ([docs/release.md](docs/release.md#every-release)), but not the 24–72 hour soak that precedes a planned
+  release: an OpenSSL patch release within a 3.5.x line changes no Kuicksilver code.
 
 - **Version strings.** The OpenSSL version stays visible in the native libraries (and in the JVM jar manifest as
   `OpenSSL-Version` and `OpenSSL-SHA256`), so scanners can see which release you ship. Update Kuicksilver promptly when

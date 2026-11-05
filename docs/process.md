@@ -9,11 +9,11 @@ practice that no tool enforces, or is partial, this page says so.
 | Stage | What | Where | Enforced by a tool |
 |---|---|---|---|
 | [1](#1-a-test-that-fails-before-the-fix) | A test that fails before the fix | [CONTRIBUTING.md, Tests](../CONTRIBUTING.md#tests) | no (the test itself, once written, runs everywhere) |
-| [2](#2-review-the-code-and-the-rfc-text) | Independent code review and a check against the RFC text | [CONTRIBUTING.md, Review checklist](../CONTRIBUTING.md#review-checklist) | no |
+| [2](#2-review-the-code-and-the-rfc-text) | Code review and a check against the RFC text | [CONTRIBUTING.md, Review checklist](../CONTRIBUTING.md#review-checklist) | no |
 | [3](#3-where-the-rfc-leaves-a-choice-reference-stacks) | Comparison with reference stacks where the RFC leaves a choice | `docs/spec/rfc/<rfc>.md`, peer notes; commit messages | no |
 | [4](#4-the-rfc-compliance-matrix-and-the-threat-model) | The RFC compliance matrix and the threat model | [rfc-compliance.md](spec/rfc-compliance.md), [threat-model.md](spec/threat-model.md) | format and references: yes; content: review |
 | [5](#5-integration-and-the-local-gate) | Integration branch and the local gate on every target | [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh) | yes |
-| [6](#6-hosted-ci) | Hosted CI on every push and pull request | [`.github/workflows/build.yml`](../.github/workflows/build.yml) | yes |
+| [6](#6-hosted-ci) | Hosted CI on pushes and pull requests to `main` and `release/**` | [`.github/workflows/build.yml`](../.github/workflows/build.yml) | runs automatically; no branch protection requires it green yet |
 | [7](#7-before-a-release-soak-fuzzing-benchmarks) | Soak, fuzzing campaigns, benchmarks | `kuicksilver-soak`, `tools/fuzz`, [benchmarks.md](benchmarks.md) | run by hand; the verdicts are computed |
 | [8](#8-the-release) | Signed artifacts, SBOM, provenance, verification | [release.md](release.md), [verifying.md](verifying.md) | yes (`tools/release/local-release.sh` refuses) |
 | [9](#9-after-a-release) | Vulnerability handling and OpenSSL updates | [SECURITY.md](../SECURITY.md) | no (commitments) |
@@ -22,8 +22,9 @@ practice that no tool enforces, or is partial, this page says so.
 
 A bug fix starts with a test that fails for the reason of the bug (RED), then the fix makes it pass (GREEN); the pull
 request or the commit message names the test and how it failed ([CONTRIBUTING.md, Tests](../CONTRIBUTING.md#tests)). Every security check has a `negative_*` test that fails when the check is removed; the
-threat model lists them. Tests do not wait with `sleep` or `delay`: they use virtual time, the seeded network simulator
-in `kuicksilver-testing` or `MemoryNetwork`, so a failure reproduces from its seed.
+threat model lists them. The rule for new tests is no waiting with `sleep` or `delay`: virtual time, the seeded
+network simulator in `kuicksilver-testing` or `MemoryNetwork`, so a failure reproduces from its seed; some older tests
+still poll with a deadline.
 
 No tool checks that a test failed before the fix; reviewers ask for it, and the pull request template has a box for it
 ([`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)). A failing existing test is first treated
@@ -31,7 +32,7 @@ as a bug in the code; a test is changed only when it is wrong or fragile, and th
 
 ## 2. Review: the code and the RFC text
 
-Every change gets two reviews, each independent of the change's author:
+Every change goes through two review passes:
 
 - **A code review** against the [Review checklist](../CONTRIBUTING.md#review-checklist): the classes of bugs this
   project has shipped or nearly shipped (a deadline on every wait on a peer, bounded memory per peer, every resource
@@ -41,7 +42,8 @@ Every change gets two reviews, each independent of the change's author:
   memory: every MUST and SHOULD the change touches is met, and the rows of the compliance matrix (stage 4) say so.
   A deviation from a MUST or SHOULD is not accepted as "partial"; it is fixed, or the row says it is not met.
 
-Findings are fixed in their own commits, each with its own failing test (stage 1), and the fix is reviewed again.
+Findings are fixed in their own commits, with a failing test where the finding is a behaviour a test can show (stage 1),
+and the fix is reviewed again.
 
 What is not in place: reviews are not yet recorded on GitHub pull requests (changes are integrated locally, stage 5),
 and there is no second maintainer. `.github/CODEOWNERS` still names a placeholder team.
@@ -58,7 +60,7 @@ choice is compared with what established implementations do, from their sources:
 The comparison cites the peer's file and line, and is recorded in the commit message and in the notes on peers of the
 row's details file (for example [docs/spec/rfc/9113.md](spec/rfc/9113.md), [docs/spec/rfc/9000.md](spec/rfc/9000.md)).
 This is a practice of review, not a check a tool runs. The same six QUIC stacks are the peers of the interop runs
-(stage 5) and of the comparison in [benchmarks.md](benchmarks.md).
+(stage 5); [benchmarks.md](benchmarks.md) compares with three of them (quiche, quinn and msquic).
 
 ## 4. The RFC compliance matrix and the threat model
 
@@ -109,29 +111,38 @@ Every run except a dry run writes a gate record, `build/ci/gate/<commit>.stamp`,
 `result=pass` only when every step passed on a clean tree that stayed on the same commit. The release script accepts only
 a passing record of the release commit run with `--with-interop --with-windows` and without `--skip-*` (stage 8).
 
-Not covered by the local gate: running the `mingwX64` test executables (hosted CI only), the C tests under sanitizers
+Not covered by the local gate: running the `mingwX64` test executables and the Windows C tests (`ksl_test.exe`;
+hosted CI only), the C tests under sanitizers
 on Linux, and a physical iOS device ([ios.md, Device checklist](guide/ios.md#device-checklist)). Interop results and
 their analysis are in [docs/spec/interop.md](spec/interop.md).
 
 ## 6. Hosted CI
 
 [`.github/workflows/build.yml`](../.github/workflows/build.yml) is the CI counterpart of the local gate: the same step
-names, and the same module and interop case lists from [`tools/ci/matrix.sh`](../tools/ci/matrix.sh). It runs on every
-push to `main` and `release/**`, on every pull request to them, weekly, and by hand. Its jobs: `lint`; the OpenSSL
+names, and the same module and interop case lists from [`tools/ci/matrix.sh`](../tools/ci/matrix.sh). It runs on pushes
+to `main` and `release/**`, on pull requests to them, weekly, and by hand. The QUIC Interop Runner jobs run only weekly
+and by hand, so hosted CI does not repeat every local step on every push. Its jobs: `lint`; the OpenSSL
 builds in Docker; `linux` (x64 and arm64: C tests, `libksl.so`, JVM suites, system OpenSSL); `linux-native` and
 `linux-native-arm64` (Kotlin/Native test executables); `windows` (the `mingwX64` test executables and the C tests on a
 Windows runner); `windows-jvm` (JVM suites on Windows against the mingw-w64 dll); `apple` (ABI dumps, ASan C tests, JVM suites, the Intel-Mac library, the double build) and `apple-native` (`macosArm64`
 and `iosSimulatorArm64` suites, `iosArm64` compiled); `android` (API 24 and 35 emulators); `jdk-compat`
 (tests on JDK 17 and 25); `jvm-jar` and `consumer-smoke` (the jar with all five JNI libraries, a sample built from a
 local publication); and, weekly or on request, the QUIC Interop Runner against the six peers. Nothing in it publishes,
-signs or reads a secret, and pull requests from forks run with read-only rights.
+signs or reads a secret, and pull requests from forks run with read-only rights; a maintainer approves the workflow
+runs of every pull request from an outside contributor before they start (repository setting).
 
-Hosted CI is not the release gate: a release needs the local gate record (stage 5). The other workflows:
+Hosted CI is not the release gate: a release needs the local gate record (stage 5). `main` has no branch protection
+yet, so nothing requires a hosted run to be green before a change lands; the hosted results are read, not enforced. The other workflows:
 
+- [`codeql.yml`](../.github/workflows/codeql.yml): CodeQL security queries over the C shim and the Kotlin JVM code, on
+  pull requests, pushes to `main` and weekly;
 - [`scorecard.yml`](../.github/workflows/scorecard.yml): OpenSSF Scorecard, weekly and on pushes to `main`;
 - [`perf.yml`](../.github/workflows/perf.yml): the interop runner's throughput measurements against the floors of
-  `tools/interop/perf-thresholds.json`, weekly; the floors warn and do not fail yet;
-- [`fuzz.yml`](../.github/workflows/fuzz.yml): a fuzzing campaign, one runner per target, by hand only;
+  `tools/interop/perf-thresholds.json`, by hand only (shared runners are too noisy for a weekly verdict; the workflow
+  is disabled in the repository settings until the maintainer enables it again); the floors warn and do not fail yet;
+- [`fuzz.yml`](../.github/workflows/fuzz.yml): a fuzzing campaign, one runner per target, weekly (2 hours per target)
+  and by hand. A finding fails the job and notifies the maintainers; its reproducer and logs are never uploaded,
+  because artifacts of a public repository are public and a finding stays private until it is fixed;
 - [`release.yml`](../.github/workflows/release.yml): a hosted release, not used ([release.md](release.md#alternative-the-release-workflow-not-used));
 - [`interop-image.yml`](../.github/workflows/interop-image.yml): publishes the interop images of a released version to
   GHCR, by hand;
@@ -149,8 +160,9 @@ These run by hand on the maintainer's machine; each has a computed verdict, not 
   For 0.2.1 these were a 24-hour Kotlin/Native soak and a 37-hour JVM soak ([roadmap.md](roadmap.md)).
 - **Fuzzing campaigns.** [`tools/fuzz/campaign.sh`](../tools/fuzz/campaign.sh) fuzzes every Jazzer target (TLS, QUIC,
   HTTP/3, QPACK, HTTP/2, HPACK, WebSocket, and stateful fuzzers of QUIC and HTTP/2 connections; `campaign.sh list`) and the libFuzzer harness of the `ksl` C parsing
-  code, resumably and in slices; the grown corpora are minimized into `tools/fuzz/corpus/`, which the gate replays. A
-  crash becomes a committed input, a unit test and a fix. For 0.2.1: 2 hours per target.
+  code, resumably and in slices, locally and in the weekly hosted run (stage 6); the grown corpora are minimized into
+  `tools/fuzz/corpus/`, which the gate replays. A crash becomes a committed input, a unit test and a fix, and is
+  handled as a private vulnerability report until it is fixed when it may be reachable by a peer. For 0.2.1: 2 hours per target.
 - **Benchmarks.** [docs/benchmarks.md](benchmarks.md) compares goodput, CPU per GB and handshakes per second with
   quiche, quinn and msquic (`tools/bench/run-table.sh`), with its caveats: one Apple Silicon host, and the amd64 peer
   images run emulated. It is rerun for releases that change performance, not for every release.
@@ -176,7 +188,8 @@ Central validates it.
   person build, describe and sign, and no hosted build platform witnesses it ([release.md](release.md#build-provenance)).
 - **Verification.** [`tools/verify/verify-release.sh`](../tools/verify/verify-release.sh) checks the tag, every
   signature, the SBOM and the provenance, and rebuilds the native libraries that are reproducible on a Mac, comparing
-  them byte for byte with the published ones; the Linux and Windows JNI libraries are not reproducible yet
+  them byte for byte with the published ones; the Linux and Windows JNI libraries, the `mingwx64` archives and the
+  Kotlin and Gradle outputs (class files, klib IR) are not reproducible yet
   ([verifying.md](verifying.md#which-native-libraries-are-reproducible)).
 
 ## 9. After a release

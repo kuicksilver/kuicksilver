@@ -9,7 +9,8 @@ The first published version is **0.2.0**. 0.1.0 was a candidate, frozen on 2026-
 
 Since 2026-10-14 a release is built, checked, signed and uploaded **from a maintainer's Mac** with
 `tools/release/local-release.sh`, with no GitHub runner; the gate is `tools/ci/local-matrix.sh` on the same machine.
-The `build` workflow runs on GitHub-hosted runners for every push and pull request, but it is not the release gate; the
+The `build` workflow runs on GitHub-hosted runners for pushes and pull requests to `main` and `release/**`, but it is
+not the release gate; the
 `release` workflow below is not used and remains an alternative.
 
 ## Once: accounts, keys, DNS
@@ -73,8 +74,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `KuicksilverInfo.VERSION` in `samples/ios/kuicksilver-swift`, `tools/check/consumer-smoke.sh`), normally set when the
    line was started, and for a final version the README ("X.Y.Z is on Maven Central", the dependency line) and
    `docs/guide/ios.md` (the dependency line, the xcframework URL) name the version itself (a prerelease such as
-   0.3.0-rc1 leaves them at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks). Commit, then run the gate
-   (step 1) on that commit.
+   0.3.0-rc1 leaves them at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks). For a final version of
+   the newest line, the supported-versions table of `SECURITY.md` names it too ("0.2.1 today"; the script does not check
+   this). Commit, then run the gate (step 1) on that commit. The 24–72 hour soak of CONTRIBUTING ("Soak and churn")
+   precedes a planned release; a patch release that only moves OpenSSL to a fixed 3.5.x release (SECURITY.md, OpenSSL)
+   needs the full gate but not the long soak.
 3. Dry run, then the release, from the same commit:
    ```
    tools/release/local-release.sh <version> --dry-run      # everything but the upload; refusals become warnings

@@ -185,7 +185,8 @@ table once it lists Xcode 27. Apps that use Kotlin 2.4.20 may build with either.
 | `iosArm64` | iOS 15 or newer | compiled, linked and size-checked (`tools/check/ios-size.sh`, `ios-private-api.py`); **not yet run on a physical device** ([ios.md, Device checklist](guide/ios.md#device-checklist)) |
 | `mingwX64` | ECN where the Windows version accepts `IP_ECN` (probed when the socket opens; verified on Windows 11) | the native suites in a local Windows 11 VM (Parallels) |
 
-The hosted CI (`.github/workflows/build.yml`, every push and pull request) runs the same steps on GitHub's runners. The
+The hosted CI (`.github/workflows/build.yml`, on pushes and pull requests to `main` and `release/**`) runs the same
+steps on GitHub's runners, except the QUIC Interop Runner, which it runs weekly. The
 release gate is `tools/ci/local-matrix.sh`, which runs on a maintainer's machine, and releases are made from there with `tools/release/local-release.sh` ([release.md](release.md)). Platform limits that are part of the contract (one endpoint loop per port outside Linux and
 Android, no GSO/GRO on Darwin, the Windows exclusive bind) are in the [README](../README.md#platforms) and the
 [QUIC guide](guide/quic.md#binding-an-endpoint-and-connecting).

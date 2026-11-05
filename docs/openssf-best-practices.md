@@ -15,17 +15,17 @@ answer against the repository when submitting; this file is not kept in sync by 
 | Criterion | Level | Answer | Evidence |
 |---|---|---|---|
 | `description_good` | MUST | Met | [README.md](../README.md): what Kuicksilver is (QUIC, HTTP/3 and TLS for Kotlin Multiplatform, Ktor engines) and the problem it solves |
-| `interact` | MUST | Met | README: Maven Central coordinates, quick start; [CONTRIBUTING.md](../CONTRIBUTING.md); GitHub issues and discussions ([`.github/ISSUE_TEMPLATE/config.yml`](../.github/ISSUE_TEMPLATE/config.yml)) |
+| `interact` | MUST | Met | README: Maven Central coordinates, quick start; [CONTRIBUTING.md](../CONTRIBUTING.md); GitHub issues with templates ([`.github/ISSUE_TEMPLATE/`](../.github/ISSUE_TEMPLATE/config.yml)) |
 | `contribution` | MUST | Met | [CONTRIBUTING.md, Proposing a change](../CONTRIBUTING.md#proposing-a-change) |
 | `contribution_requirements` | SHOULD | Met | CONTRIBUTING: style, tests first, the [pull request checklist](../CONTRIBUTING.md#pull-request-checklist), the Developer Certificate of Origin |
 | `floss_license` | MUST | Met | Apache-2.0 ([LICENSE](../LICENSE)); the bundled OpenSSL is Apache-2.0 too ([NOTICE](../NOTICE)) |
 | `floss_license_osi` | SUGGESTED | Met | Apache-2.0 is OSI-approved |
 | `license_location` | MUST | Met | `LICENSE` at the repository root |
 | `documentation_basics` | MUST | Met | README, the guides in `docs/guide/` ([QUIC](guide/quic.md), [TLS](guide/tls.md), [HTTP/3](guide/http3.md), [Ktor](guide/ktor.md), [iOS](guide/ios.md)), [architecture.md](architecture.md) |
-| `documentation_interface` | MUST | Met | KDoc on every public declaration (`explicitApi()`), javadoc jars on Maven Central (Dokka), the [configuration reference](guide/configuration.md), [stability.md](stability.md) |
+| `documentation_interface` | MUST | Met | KDoc on public declarations, required by CONTRIBUTING (Style: "Explicit API") and checked in review; `explicitApi()` enforces visibility modifiers, not KDoc. Javadoc jars on Maven Central (Dokka), the [configuration reference](guide/configuration.md), [stability.md](stability.md) |
 | `sites_https` | MUST | Met | The project site is the GitHub repository (HTTPS); artifacts come from Maven Central over HTTPS. Owner: if `kuicksilver.io` serves pages, they must be HTTPS only |
-| `discussion` | MUST | Met | GitHub issues and discussions: searchable, addressable by URL, open to new participants, no proprietary client needed |
-| `english` | SHOULD | Met | Documentation, code, issues and commits are in English (CONTRIBUTING, AGENTS.md) |
+| `discussion` | MUST | Met | GitHub issues: searchable, addressable by URL, open to new participants, no proprietary client needed (GitHub Discussions are not enabled) |
+| `english` | SHOULD | Met | Documentation, code, issues and commits are in English (the repository itself; CONTRIBUTING, Style) |
 | `maintained` | MUST | Met | Releases 0.2.0 (2026-10-18) and 0.2.1 (2026-11-04); active `main` ([CHANGELOG.md](../CHANGELOG.md)) |
 
 ## Change control
@@ -65,7 +65,7 @@ answer against the repository when submitting; this file is not kept in sync by 
 | `test` | MUST | Met | Unit and integration tests in every module (`commonTest`, `jvmTest`, native tests), the `ksl` C tests ([`tools/c-test.sh`](../tools/c-test.sh)); FLOSS (kotlin-test, JUnit) |
 | `test_invocation` | SHOULD | Met | `./gradlew :<module>:jvmTest`, `check`; the whole gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh) |
 | `test_most` | SUGGESTED | Met | JVM line and branch coverage with Kover (`-Pkuicksilver.coverage :koverHtmlReportJvmTests`, CONTRIBUTING, Tests); no threshold, by decision |
-| `test_continuous_integration` | SUGGESTED | Met | [`.github/workflows/build.yml`](../.github/workflows/build.yml) on every push and pull request; the local gate before every release ([process.md](process.md)) |
+| `test_continuous_integration` | SUGGESTED | Met | [`.github/workflows/build.yml`](../.github/workflows/build.yml) on pushes and pull requests to `main` and `release/**`; the local gate before every release ([process.md](process.md)) |
 | `test_policy` | MUST | Met | CONTRIBUTING, Tests: a test that fails before the fix, `negative_*` controls for security checks |
 | `tests_are_added` | MUST | Met | Fixes in the CHANGELOG name their tests; commits add the failing test with the fix |
 | `tests_documented_added` | SUGGESTED | Met | CONTRIBUTING, Tests, and the pull request checklist |
@@ -82,7 +82,7 @@ answer against the repository when submitting; this file is not kept in sync by 
 | `crypto_published` | MUST | Met | Only published, reviewed algorithms through OpenSSL 3.5 LTS (TLS 1.3, TLS 1.2 with ECDHE and AEAD suites, QUIC packet protection per RFC 9001) |
 | `crypto_call` | SHOULD | Met | Cryptography is called from OpenSSL through the `ksl` shim; nothing is reimplemented |
 | `crypto_floss` | MUST | Met | OpenSSL (Apache-2.0) |
-| `crypto_keylength` | MUST | Met, check | Key exchange groups: X25519MLKEM768, X25519, P-256, X448, P-384, P-521 (`kuicksilver-native/src/c/ksl_ctx.c`); no finite-field DH or DSA (`no-dh`, `no-dsa` in [`tools/openssl/configure-flags.txt`](../tools/openssl/configure-flags.txt)). The minimum RSA key size of a peer certificate is OpenSSL's default security level (`ksl` sets none): confirm it rejects keys below 2048 bits before answering |
+| `crypto_keylength` | MUST | Met for what Kuicksilver chooses; see the note | What Kuicksilver chooses meets the NIST minimums: key exchange groups X25519MLKEM768, X25519, P-256, X448, P-384, P-521 (`kuicksilver-native/src/c/ksl_ctx.c`); AEADs with 128- or 256-bit keys; no finite-field DH or DSA (`no-dh`, `no-dsa` in [`tools/openssl/configure-flags.txt`](../tools/openssl/configure-flags.txt)); OpenSSL 3.5's default security level 2 (112 bits: RSA keys of 2048 bits or more; `ksl` does not lower it) applies to the endpoint's own certificate and to chains OpenSSL verifies. Note: under `TrustConfig.Platform` the platform verifier decides on the peer's chain, and the JDK, Android and Windows verifiers accept 1024-bit RSA; a minimum of 112 bits on that path is a planned code change. Answer accordingly |
 | `crypto_working` | MUST | Met | Broken algorithms are compiled out of the bundled OpenSSL: SSL 3, TLS 1.0 and 1.1, RC4, DES, MD4, legacy provider (`configure-flags.txt`) |
 | `crypto_weaknesses` | SHOULD | Met | The default TLS 1.2 list is ECDHE with AES-GCM or ChaCha20-Poly1305 only (`ksl_ctx.c`, `TLS12_PROFILE`); no CBC or SHA-1 suites by default |
 | `crypto_pfs` | SHOULD | Met | TLS 1.3 and QUIC always use (EC)DHE; the default TLS 1.2 suites are ECDHE only. An application can pass its own TLS 1.2 list |
@@ -98,11 +98,11 @@ answer against the repository when submitting; this file is not kept in sync by 
 
 | Criterion | Level | Answer | Evidence |
 |---|---|---|---|
-| `static_analysis` | MUST | Met, weak | ktlint on every change, the project's own static checks (sans-IO import rules and module layering: `checkQuicArchitecture`, `checkHttp3Architecture`, `checkHttp2Architecture`, `checkLayerDependencies`), shellcheck through actionlint on the workflows, the export, symbol-prefix and keylog checks of the native libraries. No general-purpose analyser that looks for bugs (CodeQL, clang-tidy, detekt) runs today; adding CodeQL for the C shim and Kotlin would make this answer solid |
-| `static_analysis_common_vulnerabilities` | SUGGESTED | Unmet | No tool of that kind runs (see above) |
-| `static_analysis_fixed` | MUST | Met | ktlint and the architecture checks fail the gate until fixed |
-| `static_analysis_often` | SUGGESTED | Met | On every gate run and every hosted CI run |
-| `dynamic_analysis` | SUGGESTED | Met | Fuzzing: Jazzer targets and a libFuzzer harness of the C parsers ([`tools/fuzz/campaign.sh`](../tools/fuzz/campaign.sh)), committed corpora replayed by the gate; the network simulator's Monte-Carlo runs; soak runs ([process.md](process.md#7-before-a-release-soak-fuzzing-benchmarks)) |
+| `static_analysis` | MUST | Met | CodeQL with the `security-extended` queries over the C shim and the Kotlin JVM compilation ([`.github/workflows/codeql.yml`](../.github/workflows/codeql.yml): pull requests, pushes to `main`, weekly); ktlint; the project's own static checks (sans-IO import rules and module layering: `checkQuicArchitecture`, `checkHttp3Architecture`, `checkHttp2Architecture`, `checkLayerDependencies`); shellcheck (`-S error`) over every tracked `*.sh` in the hosted lint job; the export, symbol-prefix and keylog checks of the native libraries. Check that the CodeQL workflow has run green before submitting |
+| `static_analysis_common_vulnerabilities` | SUGGESTED | Met | CodeQL's security queries (above) |
+| `static_analysis_fixed` | MUST | Met | ktlint, shellcheck and the architecture checks fail the build until fixed; CodeQL alerts of medium or higher severity are fixed or dismissed with a reason |
+| `static_analysis_often` | SUGGESTED | Met | ktlint, shellcheck and the architecture checks on every gate and hosted CI run; CodeQL on every pull request and push to `main`, and weekly |
+| `dynamic_analysis` | SUGGESTED | Met | Fuzzing: Jazzer targets and a libFuzzer harness of the C parsers ([`tools/fuzz/campaign.sh`](../tools/fuzz/campaign.sh)), weekly on GitHub-hosted runners ([`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml), 2 hours per target), committed corpora replayed by the gate; the network simulator's Monte-Carlo runs; soak runs ([process.md](process.md#7-before-a-release-soak-fuzzing-benchmarks)) |
 | `dynamic_analysis_unsafe` | SUGGESTED | Met | The `ksl` C tests run under AddressSanitizer and UndefinedBehaviorSanitizer (`tools/c-test.sh`, gate step "c-tests: macos-arm64 (ASan/UBSan)"); the libFuzzer harness is built with sanitizers |
 | `dynamic_analysis_enable_assertions` | SUGGESTED | Met | Tests and fuzzing run debug builds with assertions and the sanitizers on |
 | `dynamic_analysis_fixed` | MUST | Met | A fuzz crash becomes a committed input, a unit test and a fix (CONTRIBUTING, Tests, "Fuzzing"); no known unfixed medium or higher finding |
