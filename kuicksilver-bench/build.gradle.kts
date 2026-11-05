@@ -17,6 +17,7 @@ kotlin {
         all { languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi") }   // internal tooling: uses the library's experimental API directly
         commonMain.dependencies {
             implementation(project(":kuicksilver-quic"))
+            implementation(project(":kuicksilver-testing"))   // MemoryNetwork for EndpointHandshakeBenchmark
             implementation(libs.kotlinx.benchmark.runtime)
         }
         jvmTest.dependencies { implementation(kotlin("test-junit5")) }
@@ -31,6 +32,8 @@ benchmark {
         named("main") { warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
         // the QUIC core alone (in-memory loopback, Null and ksl crypto): `./gradlew :kuicksilver-bench:jvmCoreBenchmark` / `macosArm64CoreBenchmark`
         register("core") { include("CoreThroughputBenchmark"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
+        // whole connections (handshake and close) through the core with ksl crypto: `./gradlew :kuicksilver-bench:jvmHandshakeBenchmark` / `macosArm64HandshakeBenchmark`
+        register("handshake") { include("HandshakeBenchmark"); include("EndpointHandshakeBenchmark"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
     }
 }
 tasks.named<Test>("jvmTest") {
