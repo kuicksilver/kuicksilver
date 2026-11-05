@@ -59,14 +59,15 @@ internal class H2Http11Required(
     /** As [H2NotProcessed.bodyConsumed]. */
     val bodyConsumed: Boolean,
     /**
-     * The request may go again over HTTP/1.1: the server refused this stream itself (RST_STREAM HTTP_1_1_REQUIRED), or it
-     * provably did not process the request, or the request is idempotent with a body that can be sent again (RFC 9110
-     * section 9.2.2). Otherwise the call fails; the route is marked either way.
+     * The request may go again over HTTP/1.1: the server provably did not process it, or it is idempotent with a body
+     * that can be sent again (RFC 9110 section 9.2.2), whether the server answered on its stream (RST_STREAM) or for the
+     * whole connection (GOAWAY). Otherwise the call fails with [io.kuicksilver.ktor.client.Http11RequiredException]; the
+     * route is marked either way.
      */
     val mayRepeat: Boolean,
 ) : Exception(cause.message, cause)
 
-/** The server refused this stream with RST_STREAM HTTP_1_1_REQUIRED: the request was rejected, not processed. */
+/** The server reset this stream with HTTP_1_1_REQUIRED. */
 private fun isStreamHttp11Required(e: Http2Exception): Boolean =
     e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.HTTP_1_1_REQUIRED
 
@@ -195,7 +196,9 @@ internal suspend fun h2Exchange(
             (e is Http2Exception.StreamReset || e is Http2Exception.ConnectionClosed) &&
                 conn.client.goAwayCode == Http2ErrorCode.HTTP_1_1_REQUIRED
         if (onStream || onConnection) {
-            val mayRepeat = onStream || e.notProcessed || (data.method.isIdempotent() && body.isReplayable())
+            // RFC 9110 section 9.2.2 (owner decision 2026-11-05): even a reset of our own stream does not prove the server
+            // did not act on the request, so a POST is not sent twice behind the application's back
+            val mayRepeat = e.notProcessed || (data.method.isIdempotent() && body.isReplayable())
             throw H2Http11Required(e, consumed, mayRepeat)
         }
         // REFUSED_STREAM twice on one connection retires it (OkHttp RealConnection.trackFailure); the streams a GOAWAY

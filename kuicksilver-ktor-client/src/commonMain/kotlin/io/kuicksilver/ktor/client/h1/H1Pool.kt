@@ -584,7 +584,15 @@ internal class H1Pool(
                     // RFC 9113 section 7: the server wants this request over HTTP/1.1; the route offers only http/1.1 for a while
                     h2Refused.mark(key)
                     // a request the server may have processed is not sent again (RFC 9110 section 9.2.2, RFC 9113 section 8.7)
-                    if (!e.mayRepeat) throw e.cause
+                    if (!e.mayRepeat) {
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        throw io.kuicksilver.ktor.client.Http11RequiredException(
+                            "the server requires HTTP/1.1 (HTTP_1_1_REQUIRED) for ${data.method.value} ${data.url.protocol.name}://" +
+                                "${data.url.host}:${data.url.port}; the request may have been processed, so it was not sent again; " +
+                                "this route now uses HTTP/1.1, and the request can be repeated",
+                            e.cause,
+                        )
+                    }
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     diagnostics?.let {
                         it.h2Refused = true

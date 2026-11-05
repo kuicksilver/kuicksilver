@@ -435,8 +435,10 @@ client](ktor.md#http2-on-the-client)). A server or middlebox whose HTTP/2 is bro
 (`StreamReset`, `ConnectionClosed`, `MalformedMessage`) where HTTP/1.1 worked before. `engine { http2 { enabled = false } }`
 offers only `http/1.1` again, as in 0.2; report the server's behaviour (with the `Http2Exception` and its code).
 
-- A server that answers HTTP_1_1_REQUIRED is honoured: the request goes again over HTTP/1.1 and the route offers only
-  `http/1.1` for 5 minutes, doubling up to 2 days at each new refusal. `ProtocolDiagnostics.fallback` is `H2Refused`
+- A server that answers HTTP_1_1_REQUIRED is honoured: the route offers only `http/1.1` for 5 minutes, doubling up to
+  2 days at each new refusal, and the request goes again over HTTP/1.1 when that is safe (idempotent with a body that
+  can be sent again, or not processed). Otherwise, a POST say, the call fails with `Http11RequiredException`: send it
+  again and it goes over HTTP/1.1. `ProtocolDiagnostics.fallback` is `H2Refused`
   for those calls, and the diagnostics line says `fallback=H2Refused` with the HTTP/3 reason as `h3Fallback=`.
 - `Http2Exception.MalformedMessage`: the server's response broke RFC 9113 section 8 (a connection-specific field such as
   `transfer-encoding` or `connection`, an uppercase field name, a content-length that does not match the body). Fix the

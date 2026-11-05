@@ -277,7 +277,7 @@ public enum class FallbackReason {
 
     /**
      * The call went over HTTP/1.1 because the server answered HTTP/2 with HTTP_1_1_REQUIRED (RFC 9113 section 7), on this
-     * call (repeated over HTTP/1.1) or lately (its route offers only `http/1.1` for 5 minutes, doubling up to 2 days at
+     * call (repeated over HTTP/1.1, when that was safe: otherwise the call failed with `Http11RequiredException`) or lately (its route offers only `http/1.1` for 5 minutes, doubling up to 2 days at
      * each new refusal). The reason HTTP/3 was not used is in the log line as `h3Fallback=`.
      */
     H2Refused,

@@ -78,6 +78,19 @@ internal fun ByteReadChannel.withSocketTimeout(request: HttpRequestData): ByteRe
     request.socketTimeoutMillis()?.let { SocketTimeoutChannel(this, it, request) } ?: this
 
 /**
+ * The server answered an HTTP/2 request with HTTP_1_1_REQUIRED (RFC 9113 section 7), on its stream or for the whole
+ * connection, after it may have processed it: a request that is not idempotent, or whose body cannot be sent again, is
+ * not repeated over HTTP/1.1 by the engine (RFC 9110 section 9.2.2). The route (origin and proxy) now offers only
+ * HTTP/1.1 (`FallbackReason.H2Refused`), so the application may send the request again and it goes over HTTP/1.1.
+ * [cause] is the `Http2Exception` the server's answer produced.
+ */
+@io.kuicksilver.annotations.ExperimentalKuicksilverApi
+public class Http11RequiredException(
+    message: String,
+    cause: Throwable? = null,
+) : kotlinx.io.IOException(message, cause)
+
+/**
  * The HTTP/3 attempt failed (or the alternative answered 421), or the server did not process an HTTP/2 request (GOAWAY,
  * REFUSED_STREAM) or asked for HTTP/1.1 (HTTP_1_1_REQUIRED), after the request's streamed body was consumed, so the
  * request cannot be repeated over HTTP/1.1 or on a new connection: the application decides whether to retry

@@ -465,6 +465,38 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * RST_STREAM(HTTP_1_1_REQUIRED) on a POST's own stream: the server may have processed it, so it is not sent again over
+     * HTTP/1.1 (RFC 9110 section 9.2.2; owner decision). The call fails with an error that says so, the route is marked,
+     * and the next POST goes straight over HTTP/1.1 and succeeds.
+     */
+    @Test fun negative_http11RequiredOnTheStreamDoesNotRepeatAPost() =
+        clientTest {
+            val h2Requests = AtomicInt(0)
+            val h1Requests = AtomicInt(0)
+            tlsH2WithSilentUdp(onRequest = { _, r ->
+                h2Requests.addAndFetch(1)
+                r.reset(Http2ErrorCode.HTTP_1_1_REQUIRED)
+            }, h1 = { _, input, output ->
+                while (true) {
+                    if (readRequest(input).isEmpty()) break
+                    h1Requests.addAndFetch(1)
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh1")
+                }
+            }) { port, _ ->
+                testClient().use { c ->
+                    val e = assertFailsWith<Http11RequiredException> { c.post("https://127.0.0.1:$port/") { setBody("once") } }
+                    assertTrue("HTTP/1.1" in e.message!!)
+                    assertEquals(1, h2Requests.load())
+                    assertEquals(0, h1Requests.load(), "the POST must not be repeated over HTTP/1.1: $e")
+                    val r = c.post("https://127.0.0.1:$port/") { setBody("again") }
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                    assertEquals("h1", r.bodyAsText())
+                    assertEquals(1, h2Requests.load())
+                }
+            }
+        }
+
     /** HTTP_1_1_REQUIRED on the whole connection (its GOAWAY) does the same as on the stream (RFC 9113 section 7). */
     @Test fun http11RequiredOnTheConnection() =
         clientTest {
@@ -514,7 +546,8 @@ class ClientH2Test {
                 }
             }) { port, _ ->
                 testClient().use { c ->
-                    assertFailsWith<Http2Exception> { c.post("https://127.0.0.1:$port/") { setBody("once") } }
+                    // the same typed error as on the stream (owner decision): the route is HTTP/1.1 now, the call may be repeated
+                    assertFailsWith<Http11RequiredException> { c.post("https://127.0.0.1:$port/") { setBody("once") } }
                     assertEquals(1, h2Posts.load())
                     assertEquals(0, h1Requests.load(), "the POST must not be repeated over HTTP/1.1")
                     val r = c.get("https://127.0.0.1:$port/")

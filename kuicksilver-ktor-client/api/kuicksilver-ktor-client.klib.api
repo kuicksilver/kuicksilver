@@ -152,6 +152,10 @@ final class io.kuicksilver.ktor.client/HostPort { // io.kuicksilver.ktor.client/
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/HostPort.toString|toString(){}[0]
 }
 
+final class io.kuicksilver.ktor.client/Http11RequiredException : kotlinx.io/IOException { // io.kuicksilver.ktor.client/Http11RequiredException|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.kuicksilver.ktor.client/Http11RequiredException.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}
+
 final class io.kuicksilver.ktor.client/Http2ClientConfig { // io.kuicksilver.ktor.client/Http2ClientConfig|null[0]
     constructor <init>() // io.kuicksilver.ktor.client/Http2ClientConfig.<init>|<init>(){}[0]
 

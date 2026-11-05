@@ -373,9 +373,10 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   REFUSED_STREAM (RFC 9113 section 8.7), goes again on another stream or connection, at most twice, whatever its
   method; a streamed body already consumed fails the call with `H3BodyConsumed` instead. A server that answers
   HTTP_1_1_REQUIRED makes its route offer only `http/1.1` for 5 minutes (doubling up to 2 days at each new refusal):
-  `ProtocolDiagnostics.fallback` says `H2Refused`. The request itself goes again over HTTP/1.1 when the server refused its
-  stream with that code, or did not process it, or when it is idempotent with a body that can be sent again; a POST the
-  server may have processed before its GOAWAY with HTTP_1_1_REQUIRED is not sent twice: that call fails. Any other HTTP/2 failure fails
+  `ProtocolDiagnostics.fallback` says `H2Refused`. The request itself goes again over HTTP/1.1 only when the server did
+  not process it, or when it is idempotent with a body that can be sent again (a GET, say); a POST the server may have
+  processed is not sent twice: that call fails with `Http11RequiredException`, and the application can send it again,
+  which then goes over HTTP/1.1. Any other HTTP/2 failure fails
   the call with `Http2Exception` (`StreamReset`, `ConnectionClosed`, `MalformedMessage`, `FieldSectionTooLarge`); there
   is no silent repeat over HTTP/1.1.
 - **Responses** are checked against RFC 9113 section 8: a malformed one (an invalid field, a content-length that does
