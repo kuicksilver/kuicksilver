@@ -236,12 +236,22 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 },
                         )
                     val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
+                    val refusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     try {
                         acceptLoop(
                             accept = { server.accept() },
                             isClosed = { server.isClosed },
                             onError = acceptFailures::report,
                         ) { client ->
+                            // a client whose HTTP/2 connections keep earning ENHANCE_YOUR_CALM waits out its penalty: closed
+                            // here, before the TLS handshake costs anything (threat model 3.23)
+                            val from = client.remoteAddress as? InetSocketAddress
+                            if (h2Offenders.refuses(from)) {
+                                client.abort()
+                                refusedOffenders.update { it + 1 }
+                                refusals.report(from)
+                                return@acceptLoop
+                            }
                             // the request-head deadline of the first request counts from here, the TLS handshake included
                             val accepted = TimeSource.Monotonic.markNow()
                             openTcpSockets.update { it + 1 }
@@ -532,6 +542,33 @@ private val CLOSE_POLL: Duration = 1.seconds
 
 /** How long [closeWithin] waits for an aborted socket to release its descriptor. */
 private val ABORT_WAIT: Duration = 3.seconds
+
+/**
+ * Logs the connections closed at accept for an address under an HTTP/2 penalty ([RepeatOffenders]): the first at once,
+ * then at most one line per [interval], saying how many were left out, as [AcceptFailureReporter]. A flooding client
+ * reconnects as fast as it can, and a line per refusal would flood the log in its place. Used from the one accept-loop
+ * coroutine only.
+ */
+internal class RefusalReporter(
+    private val interval: Duration,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val log: (String) -> Unit,
+) {
+    private var lastLogged: TimeMark? = null
+    private var leftOut = 0
+
+    fun report(remote: InetSocketAddress?) {
+        val last = lastLogged
+        if (last != null && last.elapsedNow() < interval) {
+            leftOut++
+            return
+        }
+        val more = if (leftOut > 0) " ($leftOut more since the last report)" else ""
+        log("Refused a connection from ${RepeatOffenders.describe(remote)}: its HTTP/2 connections kept ending in ENHANCE_YOUR_CALM$more")
+        lastLogged = timeSource.markNow()
+        leftOut = 0
+    }
+}
 
 /** At most one accept-failure warning per this interval. */
 internal val ACCEPT_FAILURE_LOG_INTERVAL: Duration = 10.seconds

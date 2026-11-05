@@ -25,6 +25,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -130,6 +131,16 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                         c.shutdown() // the server stops: two-step GOAWAY, the requests taken finish
                     },
                     launch { closeWhenIdle(c, sock, idle, sendTimeout) },
+                    launch {
+                        // the protocol is over (a flood limit, any connection error, the last stream after GOAWAY): what is
+                        // left to write gets the send-stall deadline, so a client that floods without reading our answers
+                        // does not hold the connection until the idle timeout
+                        c.awaitEnded()
+                        if (withTimeoutOrNull(sendTimeout) { c.awaitClosed() } == null) {
+                            c.abort(IOException("the client read nothing of the connection's last frames for $sendTimeout"))
+                            sock.abort()
+                        }
+                    },
                 )
             launch {
                 // a request's failure is its own (handleH2 catches it; the supervisor is the second line)
@@ -143,11 +154,27 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
             watchers.forEach { it.cancel() }
         }
     } finally {
+        conn?.let { if (it.endedByFloodDefence) strikeOffender(remote) }
         // closeWithin handles a cancelled caller itself (it aborts); the probe's set is left last and without cancellation,
         // so a forced stop neither skips the close nor leaves the entry behind
         closeWithin(sock, { sock.abort() }, if (conn?.isClosed == true) sendTimeout else Duration.ZERO)
         if (conn != null) events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_2_0, remote) }
         conn?.let { withContext(NonCancellable) { h2Live.remove(it) } }
+    }
+}
+
+/**
+ * A connection from [remote] ended in a flood defence (we sent GOAWAY ENHANCE_YOUR_CALM): one strike for its address. The
+ * strike that starts a penalty is logged at debug level (many addresses may start one at once); the refusals that follow
+ * are the warning, rate-limited per connector ([RefusalReporter]).
+ */
+private fun KuicksilverApplicationEngine.strikeOffender(remote: InetSocketAddress?) {
+    h2FloodEnds.update { it + 1 }
+    if (h2Offenders.strike(remote)) {
+        environment.log.debug(
+            "HTTP/2: connections from ${RepeatOffenders.describe(remote)} keep ending in ENHANCE_YOUR_CALM (flood limits); " +
+                "refusing its connections for a while",
+        )
     }
 }
 

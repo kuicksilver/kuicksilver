@@ -544,6 +544,16 @@ public class KuicksilverApplicationEngine(
 
     /** Accepted TCP sockets whose descriptor is not released yet (their job completes when it is); for tests. */
     internal val openTcpSockets = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    /** Client addresses whose HTTP/2 connections keep ending in ENHANCE_YOUR_CALM: refused at accept for a while. */
+    @kotlin.concurrent.Volatile
+    internal var h2Offenders: RepeatOffenders = RepeatOffenders()
+
+    /** HTTP/2 connections that ended in a flood defence (we sent ENHANCE_YOUR_CALM); for tests. */
+    internal val h2FloodEnds = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** TCP connections closed at accept because their address serves an HTTP/2 penalty ([h2Offenders]); for tests. */
+    internal val refusedOffenders = kotlinx.coroutines.flow.MutableStateFlow(0L)
 }
 
 /** `EngineSSLConnectorConfig` (JVM `sslConnector {}`) as a Kuicksilver connector; null on platforms without it. */

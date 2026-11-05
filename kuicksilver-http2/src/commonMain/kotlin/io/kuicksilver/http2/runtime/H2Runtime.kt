@@ -152,6 +152,9 @@ internal class H2Runtime(
     /** Completed when the connection is over, with nothing left to write. */
     val closed = CompletableDeferred<Unit>()
 
+    /** Completed when the protocol ended ([closeCause] is set), possibly with frames still to write ([closed] follows). */
+    val ended = CompletableDeferred<Unit>()
+
     @Volatile var closeCause: Throwable? = null
         private set
 
@@ -522,6 +525,7 @@ internal class H2Runtime(
             }
                 ?: Http2Exception.ConnectionClosed(e.code, e.byPeer, notProcessed = false, "the connection ended (${e.code}): ${e.reason}")
         closeCause = cause
+        ended.complete(Unit)
         prefaceReceived.completeExceptionally(cause)
         val left = lock.withLock { streams.values.toList() }
         for (s in left) fail(s, cause) // a complete response stays complete (fail keeps it)

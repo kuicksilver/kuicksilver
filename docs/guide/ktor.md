@@ -138,8 +138,16 @@ credited to the client only as the handler reads it. A client's RST_STREAM cance
 request still arriving when its handler is done with a complete response is stopped with RST_STREAM NO_ERROR (RFC 9113
 section 8.1). `eventListener` reports these connections and calls with `HTTP_2_0`.
 
-Not in this release yet: the engine-level flood defences of the 0.3.0 plan beyond the core's limits (a backoff for
-addresses that keep getting ENHANCE_YOUR_CALM) and the h2spec run of the release gate (threat model, section 3.23).
+Flood defences (threat model, section 3.23): each connection is held to the core's limits (`http2Settings`: the reset
+budget against Rapid Reset, the glitch budget against MadeYouReset and PING, SETTINGS or PRIORITY floods, 8 CONTINUATION
+frames per field block, 10 000 queued control frames), and a broken limit ends it with GOAWAY ENHANCE_YOUR_CALM. A
+stream the client reset cancels its handler and counts toward SETTINGS_MAX_CONCURRENT_STREAMS until the handler
+returns, so no more handlers run at once than that limit. A connection that is over gets the send-stall deadline for
+what it still has to write, then its socket is aborted. An address whose connections end in ENHANCE_YOUR_CALM three
+times within a minute has its TCP connections (HTTP/1.1 too) closed at accept, before the TLS handshake, for 30 seconds,
+with a warning logged at most every 10 seconds per connector; an IPv6 client counts by its /64, so behind a NAT or a
+proxy that shares one address all its clients wait out the penalty together. The server passes h2spec 2.6.0 (all 146
+cases, `tools/interop/h2spec.sh`). HTTP/2 on the server is still experimental and off by default in 0.3.0.
 
 ### Turning HTTP/3 off on the server
 
