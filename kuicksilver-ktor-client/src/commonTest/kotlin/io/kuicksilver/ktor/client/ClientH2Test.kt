@@ -198,6 +198,24 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * A burst of requests onto a connection that is due for a health check shares one PING: forty checks of their own
+     * overflowed the core's sixteen outstanding PINGs, the dropped ones never got an answer, and a healthy connection was
+     * aborted under the burst.
+     */
+    @Test fun healthCheckBurstSharesOnePing() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, log ->
+                testClient(engine = { connectTimeout = 3.seconds }).use { c ->
+                    engine(c).h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
+                    assertEquals("h2", c.get("https://127.0.0.1:$port/").bodyAsText())
+                    val all = coroutineScope { (1..40).map { async { c.get("https://127.0.0.1:$port/").bodyAsText() } }.awaitAll() }
+                    assertEquals(List(40) { "h2" }, all)
+                    assertEquals(1, log.acceptCount, "the healthy connection served the burst")
+                }
+            }
+        }
+
     /** The kill switch for HTTP/3 does not turn HTTP/2 off. */
     @Test fun http3SwitchedOffStillUsesH2() =
         clientTest {

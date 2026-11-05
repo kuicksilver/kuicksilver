@@ -501,6 +501,22 @@ class H2RuntimeTest {
             assertFalse(silent.checkHealth(1_000))
         }
 
+    @Test fun concurrentHealthChecksShareOnePing() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            runCurrent()
+            srv.read()
+            val checks = (1..40).map { backgroundScope.async { client.checkHealth(1_000) } }
+            runCurrent()
+            val pings = srv.read().filterIsInstance<Frame.Ping>().filter { !it.ack }
+            assertEquals(1, pings.size, "one PING for forty concurrent checks")
+            srv.write(FrameEncoder.ping(true, pings.single().payload))
+            runCurrent()
+            assertTrue(checks.all { it.await() })
+        }
+
     @Test fun pingAnsweredKeepsTheConnection() =
         runTest {
             val (client, server, _) = pair(pingInterval = 1.seconds)

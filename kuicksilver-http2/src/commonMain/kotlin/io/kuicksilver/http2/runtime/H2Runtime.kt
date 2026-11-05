@@ -876,12 +876,27 @@ internal class H2Runtime(
         onChange()
     }
 
+    /** The health check in flight, shared by every caller that asks meanwhile (under lock). */
+    private var healthCheck: CompletableDeferred<Boolean>? = null
+
     /**
      * Sends a PING and waits for its acknowledgement at most [timeoutMillis]; false when none came (or the connection
-     * ended). The caller retires a connection that fails it.
+     * ended). One check at a time per connection: callers that ask while one is in flight share its answer, so a burst of
+     * requests sends one PING, not one each (the core keeps 16 outstanding PINGs and forgets the oldest, whose answers
+     * would then never be seen; a server may also take a PING burst for a flood). The caller retires a connection that
+     * fails it.
      */
     suspend fun checkHealth(timeoutMillis: Long): Boolean {
         if (closed.isCompleted) return false
+        var mine = false
+        val shared =
+            lock.withLock {
+                healthCheck ?: CompletableDeferred<Boolean>().also {
+                    healthCheck = it
+                    mine = true
+                }
+            }
+        if (!mine) return shared.await()
         val acked = CompletableDeferred<Unit>()
         val payload =
             withCore {
@@ -890,13 +905,27 @@ internal class H2Runtime(
                 p
             }
         val ok =
-            withTimeoutOrNull(timeoutMillis) {
-                kotlinx.coroutines.selects.select {
-                    acked.onAwait { true }
-                    closed.onAwait { false }
+            try {
+                withTimeoutOrNull(timeoutMillis) {
+                    kotlinx.coroutines.selects.select {
+                        acked.onAwait { true }
+                        closed.onAwait { false }
+                    }
+                } ?: false
+            } catch (e: CancellationException) {
+                // the caller went away: the others still get an answer, a negative one rather than none
+                lock.withLock {
+                    healthPings.remove(payload)
+                    healthCheck = null
                 }
-            } ?: false
-        if (!ok) lock.withLock { healthPings.remove(payload) }
+                shared.complete(false)
+                throw e
+            }
+        lock.withLock {
+            if (!ok) healthPings.remove(payload)
+            healthCheck = null
+        }
+        shared.complete(ok)
         return ok
     }
 
