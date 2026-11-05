@@ -1,0 +1,45 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# OpenSSF Scorecard (https://github.com/ossf/scorecard-action): scores the repository's security practices (pinned
+# dependencies, token permissions, branch protection, signed releases, fuzzing, ...) and publishes the result to the
+# OpenSSF API, which serves the README badge and https://scorecard.dev/viewer/?uri=github.com/kuicksilver/kuicksilver.
+# The SARIF goes to the repository's code-scanning alerts and is kept as an artifact for 5 days.
+#
+# Shape of the official example workflow: publish_results needs a job without workflow-level env or defaults, no
+# container or services, and only the actions below. Actions are pinned by commit SHA (tools/check/pins.sh).
+name: scorecard
+on:
+  branch_protection_rule:   # re-score when branch protection changes
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * 3'   # weekly (Wednesday 05:23 UTC)
+  workflow_dispatch:
+permissions: {}
+
+jobs:
+  analysis:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read           # the workflow runs Scorecard reads (CI-Tests, ...)
+      security-events: write  # upload the SARIF to code scanning
+      id-token: write         # the OIDC token that signs the published result
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+      - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: results.sarif

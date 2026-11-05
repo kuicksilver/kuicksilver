@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
   <a href="docs/guide/ktor.md"><img alt="Ktor 3.6" src="https://img.shields.io/badge/Ktor-3.6-087CFA"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-JVM%20%7C%20Android%20%7C%20iOS%20%7C%20macOS%20%7C%20Linux%20%7C%20Windows-555">
   <a href="docs/spec/interop.md"><img alt="Interop: msquic, ngtcp2, picoquic, quic-go, quiche, quinn" src="https://img.shields.io/badge/interop-6%20QUIC%20stacks-2EA44F"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/kuicksilver/kuicksilver"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/kuicksilver/kuicksilver/badge"></a>
 </p>
 
 > **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.0 is on Maven Central. Do
