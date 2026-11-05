@@ -223,6 +223,54 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * A repeat must not wait for its own first attempt: the refused stream is released before the request goes again, so
+     * with one stream and one connection allowed the repeat takes that stream (not a connect timeout).
+     */
+    @Test fun refusedStreamRepeatAtTheRouteLimit() =
+        clientTest {
+            val n = AtomicInt(0)
+            tlsH2WithSilentUdp(settings = Http2Settings(maxConcurrentStreams = 1), onRequest = { _, r ->
+                if (n.addAndFetch(1) == 1) r.reset(Http2ErrorCode.REFUSED_STREAM) else ok(r)
+            }) { port, log ->
+                testClient(engine = {
+                    maxConnectionsPerRoute = 1
+                    connectTimeout = 3.seconds
+                }).use { c ->
+                    assertEquals("h2", c.post("https://127.0.0.1:$port/") { setBody("payload") }.bodyAsText())
+                    assertEquals(1, log.acceptCount)
+                }
+            }
+        }
+
+    /**
+     * A GOAWAY at the route limit: the connection's refused stream is released at once, so the drained connection closes,
+     * gives its slot back, and the repeat opens the route's one new connection.
+     */
+    @Test fun goAwayRepeatAtTheRouteLimit() =
+        clientTest {
+            val conns =
+                kotlinx.coroutines.channels.Channel<io.kuicksilver.http2.runtime.H2ServerConnection>(
+                    kotlinx.coroutines.channels.Channel.UNLIMITED,
+                )
+            tlsH2WithSilentUdp(onConnection = { _, c -> conns.send(c) }, onRequest = { index, r ->
+                if (index == 0) {
+                    conns.receive().goAway(Http2ErrorCode.NO_ERROR)
+                    r.reset(Http2ErrorCode.REFUSED_STREAM)
+                } else {
+                    ok(r)
+                }
+            }) { port, log ->
+                testClient(engine = {
+                    maxConnectionsPerRoute = 1
+                    connectTimeout = 3.seconds
+                }).use { c ->
+                    assertEquals("h2", c.post("https://127.0.0.1:$port/") { setBody("payload") }.bodyAsText())
+                    assertEquals(2, log.acceptCount)
+                }
+            }
+        }
+
     @Test fun nonIdempotentNotRetriedWhenProcessed() =
         clientTest {
             val n = AtomicInt(0)

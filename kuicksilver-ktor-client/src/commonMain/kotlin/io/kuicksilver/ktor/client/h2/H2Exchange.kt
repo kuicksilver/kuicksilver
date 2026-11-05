@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.kuicksilver.ktor.client.h2
 
@@ -107,17 +111,24 @@ internal suspend fun h2Exchange(
             onReleased(conn.client.isUsable)
             throw e
         }
-    val job = callContext[Job]
-    if (job == null) {
+    // the stream (and its reservation) goes back once: when the call ends, or at once when this attempt fails, so a
+    // repeat never waits for the stream or the connection its own first attempt still holds
+    val released = kotlin.concurrent.atomics.AtomicBoolean(false)
+    var sender: Job? = null
+
+    fun release() {
+        if (!released.compareAndSet(false, true)) return
+        sender?.cancel()
         stream.release()
         onReleased(conn.client.isUsable)
+    }
+    val job = callContext[Job]
+    if (job == null) {
+        release()
         throw IllegalStateException("a call without a Job")
     }
     // in use until the call ends (its body read or abandoned), not just until the response head
-    job.invokeOnCompletion {
-        stream.release()
-        onReleased(conn.client.isUsable)
-    }
+    job.invokeOnCompletion { release() }
     val activity = data.socketTimeoutMillis()?.let { Activity() }
     var bodyStarted = false
     try {
@@ -132,28 +143,29 @@ internal suspend fun h2Exchange(
                         val source = bodyChannel(body, callContext)
                         if (source != null) {
                             val counted = activity?.let { ConsumedBody(source, it) } ?: source
-                            GlobalScope
-                                .launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-request-body")) {
-                                    try {
-                                        stream.sendBody(counted, data.socketTimeoutMillis()) {
-                                            io.ktor.client.plugins
-                                                .SocketTimeoutException(data, null)
-                                        }
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Throwable) {
-                                        // the stream is reset with it, so the response read fails with it too (unless it was complete)
-                                        runCatching {
-                                            if (events.logger.isEnabled(io.kuicksilver.quic.LogLevel.Debug)) {
-                                                events.logger.log(
-                                                    io.kuicksilver.quic.LogLevel.Debug,
-                                                    "HTTP/2 request body of stream ${stream.id} failed",
-                                                    e,
-                                                )
+                            sender =
+                                GlobalScope
+                                    .launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-request-body")) {
+                                        try {
+                                            stream.sendBody(counted, data.socketTimeoutMillis()) {
+                                                io.ktor.client.plugins
+                                                    .SocketTimeoutException(data, null)
+                                            }
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Throwable) {
+                                            // the stream is reset with it, so the response read fails with it too (unless it was complete)
+                                            runCatching {
+                                                if (events.logger.isEnabled(io.kuicksilver.quic.LogLevel.Debug)) {
+                                                    events.logger.log(
+                                                        io.kuicksilver.quic.LogLevel.Debug,
+                                                        "HTTP/2 request body of stream ${stream.id} failed",
+                                                        e,
+                                                    )
+                                                }
                                             }
                                         }
                                     }
-                                }.also { sender -> job.invokeOnCompletion { sender.cancel() } }
                         }
                     }
                 }
@@ -167,7 +179,9 @@ internal suspend fun h2Exchange(
             data.attributes.getOrNull(ResponseAdapterAttributeKey)?.adapt(data, status, headers, bodyChannel, data.body, callContext)
                 ?: bodyChannel
         return HttpResponseData(status, requestTime, headers, HttpProtocolVersion.HTTP_2_0, responseBody, callContext)
-    } catch (e: Http2Exception) {
+    } catch (e: Throwable) {
+        release() // this attempt is over: its stream must not hold the connection or a stream slot for the repeat
+        if (e !is Http2Exception) throw e
         val consumed = bodyStarted && !body.isReplayable()
         // on the stream, or for the whole connection: a GOAWAY with HTTP_1_1_REQUIRED reports the streams above its last
         // one as refused (not processed), and those below it as lost with the connection
