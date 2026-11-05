@@ -80,6 +80,22 @@ public class H2ServerConnection private constructor(
         rt.closed.await()
     }
 
+    /**
+     * Suspends until the connection ended as a protocol ([closeCause] is set): a connection error (ours or the client's
+     * GOAWAY), the transport lost, or the last stream done after a GOAWAY. What is left to write may still be waiting for
+     * the client to read it; [awaitClosed] returns once it went out, so the engine bounds the gap between the two.
+     */
+    public suspend fun awaitEnded() {
+        rt.ended.await()
+    }
+
+    /**
+     * The connection ended because the client broke one of the flood limits of [Http2Settings] (we sent GOAWAY
+     * ENHANCE_YOUR_CALM, RFC 9113 section 5.4.1); a field block slower than `maxHeaderBlockTime` (also ENHANCE_YOUR_CALM)
+     * is a slow client, not a flood, and does not count. The engine may count it against the client's address.
+     */
+    public val endedByFloodDefence: Boolean get() = rt.endedByFlood
+
     internal fun released() {
         open.update { it - 1 }
     }

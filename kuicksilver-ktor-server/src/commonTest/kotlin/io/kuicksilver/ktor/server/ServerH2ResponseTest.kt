@@ -158,7 +158,20 @@ class ServerH2ResponseTest {
     /** RFC 9113 section 8.6: no 101, and a 1xx is never a final response: the application's one goes out as a 500. */
     @Test fun negative_finalInterimStatusIs500() =
         serverTest {
-            val (server, port) = h2TlsServer { routing { get("/") { call.respond(HttpStatusCode.SwitchingProtocols) } } }
+            val ended = CompletableDeferred<HttpStatusCode?>()
+            val (server, port) =
+                h2TlsServer(configure = {
+                    eventListener =
+                        object : KuicksilverServerEventListener() {
+                            override fun requestEnded(
+                                protocol: HttpProtocolVersion,
+                                call: io.ktor.server.application.ApplicationCall,
+                                cause: Throwable?,
+                            ) {
+                                ended.complete(call.response.status())
+                            }
+                        }
+                }) { routing { get("/") { call.respond(HttpStatusCode.SwitchingProtocols) } } }
             try {
                 RawH2Client.connect(port).use { raw ->
                     raw.preface()
@@ -167,6 +180,8 @@ class ServerH2ResponseTest {
                     assertEquals(0x8e.toByte(), h.payload[0], ":status 500 (static index 14)")
                     assertTrue(h.endStream)
                 }
+                // the call says what was sent: listeners and logs see the 500, not the application's 1xx
+                assertEquals(HttpStatusCode.InternalServerError, withTimeout(10.seconds) { ended.await() })
             } finally {
                 server.stop(100, 500)
             }

@@ -145,6 +145,13 @@ internal class H2ConnectionCore(
     private var closed = false
     private var closedReported = false
 
+    /**
+     * The connection ended with ENHANCE_YOUR_CALM because a field block took longer than `maxHeaderBlockTime`: a slow
+     * peer, not a flood (the engine does not count it against the peer's address).
+     */
+    var slowFieldBlock: Boolean = false
+        private set
+
     /** True once the connection ended (an error, a finished GOAWAY): nothing more is read, [poll] drains what is left. */
     val isClosed: Boolean get() = closed
 
@@ -393,13 +400,13 @@ internal class H2ConnectionCore(
             if (!peerInitiated(id) || client) {
                 // a client never accepts a stream from the server (no push); a stream of ours we never opened is idle
                 if (isIdle(id)) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "HEADERS on idle stream $id")
-                if (recentlyClosed[id] == false) streamError(id, Http2ErrorCode.STREAM_CLOSED, "HEADERS on a closed stream", now)
+                if (recentlyClosed[id] == false) headersOnClosed(id)
                 return
             }
             if (id <= lastPeerStreamId) {
                 // section 5.1.1: identifiers only grow; a closed stream we remember answers STREAM_CLOSED
                 when (recentlyClosed[id]) {
-                    false -> streamError(id, Http2ErrorCode.STREAM_CLOSED, "HEADERS on a closed stream", now)
+                    false -> headersOnClosed(id)
 
                     true -> Unit
 
@@ -440,7 +447,7 @@ internal class H2ConnectionCore(
             return
         }
         if (s.state == StreamState.CLOSED) {
-            if (recentlyClosed[id] != true) streamError(id, Http2ErrorCode.STREAM_CLOSED, "HEADERS on a closed stream", now)
+            if (recentlyClosed[id] != true) headersOnClosed(id)
             return
         }
         if (blockDependency ==
@@ -475,6 +482,15 @@ internal class H2ConnectionCore(
         emit(H2Event.HeadersReceived(id, fields, endStream, !fits))
         if (endStream) remoteEnded(s)
     }
+
+    /**
+     * HEADERS on a stream that closed without a reset of ours (both END_STREAM flags, or the peer's RST_STREAM): RFC 9113
+     * section 5.1, "closed", lets an endpoint treat it as a connection error of type STREAM_CLOSED, and RFC 7540 section 5.1
+     * required that after END_STREAM; a peer that sends it has lost track of its streams (h2spec http2/5.1/12). Frames the
+     * peer may still send after our END_STREAM or reset (WINDOW_UPDATE, RST_STREAM; anything on a stream we reset) are not
+     * this.
+     */
+    private fun headersOnClosed(id: Int): Nothing = throw H2ConnectionError(Http2ErrorCode.STREAM_CLOSED, "HEADERS on closed stream $id")
 
     private fun onPushPromise(
         f: Frame.PushPromise,
@@ -950,6 +966,7 @@ internal class H2ConnectionCore(
             return connectionError(Http2ErrorCode.SETTINGS_TIMEOUT, "SETTINGS not acknowledged within ${settings.settingsAckTimeout}")
         }
         if (inBlock && now - blockStartedAt >= settings.maxHeaderBlockTime.inWholeNanoseconds) {
+            slowFieldBlock = true
             return connectionError(Http2ErrorCode.ENHANCE_YOUR_CALM, "field block not finished within ${settings.maxHeaderBlockTime}")
         }
         if (gracefulPing >= 0 && now >= gracefulDeadline) finishGracefulGoAway()

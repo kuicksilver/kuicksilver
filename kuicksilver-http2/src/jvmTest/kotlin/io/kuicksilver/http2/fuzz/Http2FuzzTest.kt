@@ -93,10 +93,13 @@ class HpackDecodeFuzzTest {
 /**
  * Fuzz target `connectionServer`: input = [split byte][bytes after the client preface]. A server core fed the input in
  * pieces of 1 + (split byte) bytes, one virtual millisecond apart, driven like an engine: every request gets response
- * headers and a body sent as the windows allow, streams are released when done or reset, content is consumed, output is
- * drained and decoded as the client would, with its own HPACK decoder. Nothing may escape the core; its state stays within
- * its settings; the connection send window is conserved (credit = window left + DATA queued + DATA written: dropped DATA
- * gives its window back); every field block on the wire decodes to the response the driver sent on that stream.
+ * headers and a body sent as the windows allow, streams are released when done or, when reset, one piece later (the
+ * engine's handler of a reset stream is cancelled, and returns, after the core reported the reset), content is consumed,
+ * output is drained and decoded as the client would, with its own HPACK decoder. Nothing may escape the core; its state
+ * stays within its settings; handlers that have not returned, reset ones included, never pass SETTINGS_MAX_CONCURRENT_STREAMS
+ * (Rapid Reset, CVE-2023-44487; MadeYouReset, CVE-2025-8671); the connection send window is conserved (credit = window
+ * left + DATA queued + DATA written: dropped DATA gives its window back); every field block on the wire decodes to the
+ * response the driver sent on that stream.
  */
 class H2ConnectionFuzzTest {
     private class Wire {
@@ -144,6 +147,7 @@ class H2ConnectionFuzzTest {
         val wire = Wire()
         val sent = HashMap<Int, List<Pair<String, String>>>()
         val bodyLeft = HashMap<Int, Int>()
+        val handlers = Handlers()
         val piece = 1 + (data[0].toInt() and 0xff)
         var now = 0L
         core.receive(io.kuicksilver.http2.frame.H2.PREFACE, 0, 24, now)
@@ -151,9 +155,11 @@ class H2ConnectionFuzzTest {
         while (p < data.size && !core.isClosed) {
             val n = minOf(piece, data.size - p)
             now += 1_000_000
+            handlers.returnCancelled(core) // the handlers of the streams reset in the previous piece return now
             core.receive(data, p, n, now)
             p += n
-            drive(core, now, sent, bodyLeft, (data[p - 1].toInt() and 0xff) * 64)
+            drive(core, now, sent, bodyLeft, handlers, 1 + (data[p - 1].toInt() and 0xff) * 64) // never empty: a body waits for window
+            assertTrue(handlers.running.size <= 8, "handlers running ${handlers.running.size}, reset ones included")
             assertTrue(core.activeStreams <= 8, "streams ${core.activeStreams}")
             assertTrue(core.controlQueued <= 64, "control frames ${core.controlQueued}")
             assertTrue(core.blockBufferCapacity <= 2 * 4_096, "field block buffer ${core.blockBufferCapacity}")
@@ -167,11 +173,41 @@ class H2ConnectionFuzzTest {
         }
     }
 
+    /** The model of the engine's handlers: one per request until it returns; a reset one returns a piece later. */
+    private class Handlers {
+        val running = HashSet<Int>()
+        private val cancelled = ArrayList<Int>()
+
+        fun start(id: Int) {
+            running += id
+        }
+
+        /** The handler returned: the stream is released. */
+        fun done(
+            core: io.kuicksilver.http2.core.H2ConnectionCore,
+            id: Int,
+        ) {
+            running -= id
+            cancelled -= id
+            core.release(id)
+        }
+
+        /** The stream was reset: its handler is cancelled and returns later. */
+        fun cancel(id: Int) {
+            if (id in running && id !in cancelled) cancelled += id
+        }
+
+        fun returnCancelled(core: io.kuicksilver.http2.core.H2ConnectionCore) {
+            for (id in cancelled.toList()) done(core, id)
+        }
+    }
+
     private fun drive(
         core: io.kuicksilver.http2.core.H2ConnectionCore,
         now: Long,
         sent: MutableMap<Int, List<Pair<String, String>>>,
         bodyLeft: MutableMap<Int, Int>,
+        handlers: Handlers,
         bodySize: Int,
     ) {
         val body = ByteArray(16_384)
@@ -182,13 +218,12 @@ class H2ConnectionFuzzTest {
                 try {
                     core.sendData(id, body, 0, minOf(left, body.size), endStream = true)
                 } catch (_: IllegalStateException) {
-                    bodyLeft.remove(id) // closed meanwhile
-                    core.release(id)
+                    bodyLeft.remove(id) // closed meanwhile: its reset event cancels the handler
                     return
                 }
             if (n == left) {
                 bodyLeft.remove(id)
-                core.release(id)
+                handlers.done(core, id)
             } else {
                 bodyLeft[id] = left - n
             }
@@ -197,6 +232,7 @@ class H2ConnectionFuzzTest {
             when (val e = core.nextEvent() ?: return) {
                 is io.kuicksilver.http2.core.H2Event.HeadersReceived -> {
                     if (sent.containsKey(e.streamId)) continue // trailers of a request we answered already
+                    handlers.start(e.streamId)
                     val fields = listOf(":status" to (if (e.tooLarge) "431" else "200"))
                     try {
                         core.sendHeaders(e.streamId, fields, endStream = false)
@@ -204,12 +240,13 @@ class H2ConnectionFuzzTest {
                         bodyLeft[e.streamId] = bodySize
                         pump(e.streamId)
                     } catch (_: IllegalStateException) {
-                        // the stream was closed meanwhile: the driver's call is refused, nothing else happens
-                        core.release(e.streamId)
+                        // the stream was reset meanwhile: the driver's call is refused, and the handler, busy until it
+                        // notices its cancellation, returns a piece later
+                        handlers.cancel(e.streamId)
                     } catch (_: io.kuicksilver.http2.core.H2HeaderListTooLarge) {
                         // the peer's SETTINGS_MAX_HEADER_LIST_SIZE refuses even this response: an engine resets the stream
                         core.reset(e.streamId, io.kuicksilver.http2.Http2ErrorCode.INTERNAL_ERROR, now)
-                        core.release(e.streamId)
+                        handlers.done(core, e.streamId)
                     }
                 }
 
@@ -223,7 +260,8 @@ class H2ConnectionFuzzTest {
 
                 is io.kuicksilver.http2.core.H2Event.StreamReset -> {
                     bodyLeft.remove(e.streamId)
-                    core.release(e.streamId)
+                    // a stream the driver never took (refused, or reset before its HEADERS were reported) has no handler
+                    if (e.streamId in handlers.running) handlers.cancel(e.streamId) else core.release(e.streamId)
                 }
 
                 else -> {}

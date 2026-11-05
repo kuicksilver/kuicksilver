@@ -3,7 +3,8 @@
 package io.kuicksilver.http2.core
 
 /**
- * A token bucket on virtual time: [burst] tokens, refilled at [perSecond] per second, like nghttp2's `nghttp2_ratelim`.
+ * A token bucket on virtual time: [burst] tokens, refilled at [perSecond] per second (0: never), like nghttp2's
+ * `nghttp2_ratelim`.
  * A connection has two: a server's budget for the client's RST_STREAM frames (Rapid Reset, CVE-2023-44487) and the glitch
  * budget for suspicious frames and the stream errors the peer causes (MadeYouReset, CVE-2025-8671); an empty bucket ends
  * the connection. Tokens are kept in billionths so the refill needs no division per call.
@@ -20,10 +21,10 @@ internal class TokenBucket(
     /** Takes one token at [now] (nanoseconds); false when the bucket is empty. */
     fun take(now: Long): Boolean {
         val elapsed = now - last
-        if (elapsed > 0) {
+        if (elapsed > 0 && perSecond > 0) {
             last = now
             // elapsed ns x perSecond tokens/s = elapsed x perSecond billionths; cap first so the product cannot overflow
-            tokens = if (perSecond == 0 || elapsed >= capacity / perSecond) capacity else minOf(capacity, tokens + elapsed * perSecond)
+            tokens = if (elapsed >= capacity / perSecond) capacity else minOf(capacity, tokens + elapsed * perSecond)
         }
         if (tokens < UNIT) return false
         tokens -= UNIT

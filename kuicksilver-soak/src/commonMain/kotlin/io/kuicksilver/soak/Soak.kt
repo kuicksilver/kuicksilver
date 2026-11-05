@@ -328,6 +328,8 @@ internal class Soak(
                 "server.h3Connections" to 0,
                 "server.h3Jobs" to 0,
                 "server.tcpJobs" to 0,
+                "server.h2Connections" to 0,
+                "server.h2Streams" to 0,
                 "soak.serverJobs" to 0,
                 "proc.fds" to 4,
                 "jvm.threads" to 16,

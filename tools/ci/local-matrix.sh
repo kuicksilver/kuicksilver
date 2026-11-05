@@ -185,6 +185,7 @@ step "docker: test.kexe linux-arm64 (all modules)" bash tools/ci/run-kexe.sh lin
 step "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64
 step "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
 step "docker: system OpenSSL mode"              bash tools/ci/system-openssl.sh
+step "docker: h2spec (HTTP/2 server, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0), never pulls it itself
 step "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-windows.sh build/jni-windows
 # CI windows-jvm runs the JVM suites of native, tls, quic, http3, ktor-network, ktor-client and ktor-server on windows-2025
 # against this dll (-Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost); there is no Windows host

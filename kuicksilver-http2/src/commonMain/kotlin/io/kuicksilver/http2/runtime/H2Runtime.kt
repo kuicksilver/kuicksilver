@@ -152,6 +152,13 @@ internal class H2Runtime(
     /** Completed when the connection is over, with nothing left to write. */
     val closed = CompletableDeferred<Unit>()
 
+    /** Completed when the protocol ended ([closeCause] is set), possibly with frames still to write ([closed] follows). */
+    val ended = CompletableDeferred<Unit>()
+
+    /** The connection ended because the peer broke a flood limit (we sent ENHANCE_YOUR_CALM; not for a slow field block). */
+    @Volatile var endedByFlood: Boolean = false
+        private set
+
     @Volatile var closeCause: Throwable? = null
         private set
 
@@ -542,6 +549,9 @@ internal class H2Runtime(
     private fun onClosed(e: H2Event.Closed) {
         // set as the event was queued ([takeEventsLocked])
         val cause = closeCause ?: closedCause(e).also { closeCause = it }
+        endedByFlood =
+            transportLost == null && e.code == Http2ErrorCode.ENHANCE_YOUR_CALM && !e.byPeer && !lock.withLock { core.slowFieldBlock }
+        ended.complete(Unit)
         prefaceReceived.completeExceptionally(cause)
         val left = lock.withLock { streams.values.toList() }
         for (s in left) fail(s, cause) // a complete response stays complete (fail keeps it)

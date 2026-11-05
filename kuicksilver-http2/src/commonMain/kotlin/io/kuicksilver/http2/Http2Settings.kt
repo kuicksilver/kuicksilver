@@ -48,7 +48,7 @@ public class Http2Settings(
     public val maxEmptyFrames: Int = 100,
     /** A server's budget for the client's RST_STREAM frames (Rapid Reset), burst; default 1000, as nghttp2. */
     public val resetBurst: Int = 1_000,
-    /** The refill rate of that budget per second; default 33, as nghttp2. */
+    /** The refill rate of that budget per second; 0: it never refills (the burst is all a connection gets); default 33, as nghttp2. */
     public val resetsPerSecond: Int = 33,
     /** How long one field block (HEADERS and its CONTINUATION frames) may take to arrive; default 10 s. */
     public val maxHeaderBlockTime: Duration = 10.seconds,
@@ -58,7 +58,7 @@ public class Http2Settings(
      * bandwidth probe that follows our data is free, as grpc-go's ping strikes), and every stream error the peer causes.
      */
     public val glitchBurst: Int = 10_000,
-    /** The refill rate of the glitch budget per second; default 330, as nghttp2. */
+    /** The refill rate of the glitch budget per second; 0: it never refills; default 330, as nghttp2. */
     public val glitchesPerSecond: Int = 330,
 ) {
     init {

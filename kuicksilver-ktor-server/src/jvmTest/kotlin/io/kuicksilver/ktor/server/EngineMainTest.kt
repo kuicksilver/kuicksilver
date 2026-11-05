@@ -127,6 +127,20 @@ class EngineMainTest {
         assertFailsWith<IllegalArgumentException> { http2("-P:kuicksilver.http2=yes") }
     }
 
+    /** `kuicksilver.http2RepeatOffenderPenalty` turns the backoff by address on; off by default (threat model 3.23). */
+    @Test fun http2RepeatOffenderPenaltyKey() {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        fun penalty(vararg extra: String): Pair<Duration, Boolean> {
+            val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
+            return server.engine.configuration.http2RepeatOffenderPenalty to (server.engine.h2Offenders != null)
+        }
+        assertEquals(Duration.ZERO to false, penalty(), "off by default")
+        assertEquals(30.seconds to true, penalty("-P:kuicksilver.http2RepeatOffenderPenalty=30s"))
+        assertEquals(Duration.ZERO to false, penalty("-P:kuicksilver.http2RepeatOffenderPenalty=0"))
+        assertFailsWith<IllegalArgumentException> { penalty("-P:kuicksilver.http2RepeatOffenderPenalty=-1s") }
+        assertFailsWith<IllegalArgumentException> { penalty("-P:kuicksilver.http2RepeatOffenderPenalty=soon") }
+    }
+
     @Test fun reloadIntervalKeyParsed() {
         assertEquals(30.seconds, EngineMain.parseReloadInterval("30s"))
         assertEquals(1.hours, EngineMain.parseReloadInterval("1h"))
