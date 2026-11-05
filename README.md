@@ -103,7 +103,8 @@ embeddedServer(Kuicksilver, configure = {
 ```
 
 A TLS connector serves HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port number, and advertises HTTP/3
-with `Alt-Svc`.
+with `Alt-Svc`. Open, publish and forward both `443/tcp` and `443/udp`: [deploying the HTTP/3 server](docs/guide/deployment.md)
+covers firewalls, Docker, Kubernetes, load balancers and kernel buffers.
 
 ### Raw QUIC
 
@@ -197,7 +198,7 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
 - [docs/architecture.md](docs/architecture.md) — how the code is organised, invariants, entry points.
 - [docs/roadmap.md](docs/roadmap.md) — the never-published 0.1.0 candidate, what 0.2.0 ships, its stated limits, and what later releases bring.
 - [docs/guide/](docs/guide/quic.md) — user guides: [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
-  [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [iOS](docs/guide/ios.md),
+  [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [deploying the HTTP/3 server](docs/guide/deployment.md), [iOS](docs/guide/ios.md),
   [publishing on the App Store](docs/guide/app-store.md), the [configuration reference](docs/guide/configuration.md)
   (every option with its default) and [troubleshooting](docs/guide/troubleshooting.md).
 - [docs/stability.md](docs/stability.md) — what 0.2.x promises: stable and experimental API, the ABI checks, the `ksl`

@@ -44,7 +44,7 @@ within `QuicConfig.handshakeTimeout` (10 s).
 
 | Cause | How to tell | Fix |
 |---|---|---|
-| UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only) | the server's `EndpointStats.datagramsReceived` does not move; TCP to the same port works; the Ktor client's `kuicksilverDiagnostics.fallback` is `HandshakeTimeout`, later `BrokenAlternative` | open UDP on the port; with the Ktor client use `Http3DiscoveryMode.Auto` or `Preferred`, which fall back to HTTP/1.1 ([below](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
+| UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only) | the server's `EndpointStats.datagramsReceived` does not move; TCP to the same port works; the Ktor client's `kuicksilverDiagnostics.fallback` is `HandshakeTimeout`, later `BrokenAlternative` | open UDP on the port ([Deploying the HTTP/3 server](deployment.md#firewalls-and-security-groups)); with the Ktor client use `Http3DiscoveryMode.Auto` or `Preferred`, which fall back to HTTP/1.1 ([below](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
 | The server refuses silently: `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached | server `EndpointStats.connectionsRefusedLimits`, `initialsDropped` | raise the limits in `quicEndpointConfig { }` or spread the load |
 | Wrong address or port, nothing listening | no server traffic at all; on Kotlin/Native a QUIC server needs the accelerated socket | check `QuicEndpoint.localAddress` on the server and the address the client resolved |
 | Heavy loss on the first flight (radio links, a peer using `X25519MLKEM768`, whose first flights span two datagrams) | the qlog shows Initial retransmissions at 1 s, 2 s, 4 s | lower `QuicConfig.initialRtt` (default 333 ms, at most 10 s), see [QUIC: Configuration](quic.md#configuration); a client endpoint that already finished a connection to the same server address starts from its last smoothed RTT on its own |
@@ -254,7 +254,8 @@ datagram per call.
 Several endpoint loops on one port need kernel `SO_REUSEPORT` flow hashing: Linux and Android only. On macOS, iOS and
 Windows `bind` throws "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"; with a custom `io` or
 the portable socket "loops > 1 needs the accelerated transport…". Use `loops = 1` there (Ktor server:
-`udpSocketCount = 1`), or several processes behind a QUIC-aware load balancer.
+`udpSocketCount = 1`), or several processes behind a QUIC-aware load balancer
+([Deploying the HTTP/3 server: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)).
 
 ### Windows
 
@@ -264,7 +265,8 @@ the portable socket "loops > 1 needs the accelerated transport…". Use `loops =
 - A wildcard bind (`0.0.0.0` or `::`) is dual-stack; on a host without IPv6, `0.0.0.0` falls back to an IPv4 socket.
 - `TrustConfig.Platform` verifies with CryptoAPI and the Windows root store, fetching missing intermediates through
   AIA; a revoked leaf is `Revoked`, an unknown revocation status is ignored.
-- A server must be allowed through the Windows firewall for inbound UDP and TCP on its port.
+- A server must be allowed through the Windows firewall for inbound UDP and TCP on its port
+  ([Deploying the HTTP/3 server](deployment.md#firewalls-and-security-groups)).
 - `keylogFile` on the JVM is refused (Windows has no POSIX permission view); on Kotlin/Native the file is only
   created ([below](#key-logging-is-refused)).
 
@@ -438,7 +440,8 @@ The server logs why:
 - A fixed port whose UDP side is taken fails the start instead.
 
 Without HTTP/3 the server sends no `Alt-Svc`. Also check `http3 = true`, that a firewall passes UDP to the port, and
-that `altSvc` is on so clients learn about HTTP/3. `Alt-Svc: clear` instead of `h3=…`, or new QUIC clients refused with
+that `altSvc` is on so clients learn about HTTP/3 ([Deploying the HTTP/3 server](deployment.md) has a checklist for
+the network in front of the server). `Alt-Svc: clear` instead of `h3=…`, or new QUIC clients refused with
 CONNECTION_REFUSED (0x2) while HTTP/1.1 answers, mean `engine.http3Advertising` is `Clear` or `Drain`
 ([Ktor: Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)).
 

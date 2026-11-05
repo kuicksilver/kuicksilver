@@ -11,6 +11,7 @@ Published on Maven Central under `io.kuicksilver` (Apache-2.0). Modules: kuicksi
 - [QUIC guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md): QUIC connections, streams, datagrams, migration, the coroutine API
 - [HTTP/3 guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md): HTTP/3 and QPACK over kuicksilver-quic
 - [Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md): the Ktor client and server engines, Alt-Svc discovery, fallback to HTTP/1.1
+- [Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md): UDP and TCP on one port, Alt-Svc, firewalls, Docker, Kubernetes, load balancers and proxies, UDP buffers, GSO, checking a deployment
 - [iOS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ios.md): using Kuicksilver from iOS and Swift
 - [App Store](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/app-store.md): publishing an app that embeds Kuicksilver on the App Store
 - [Configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md): every option with its default

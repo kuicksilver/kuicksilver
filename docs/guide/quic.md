@@ -94,7 +94,8 @@ USO/URO and ECN where the Windows version grants them (`io.capabilities` tells),
 With `IoPreference.Portable`, or where `ksl` cannot open its socket, the portable socket is used (NIO on the JVM,
 `ktor-network` on Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per
 path. A QUIC server on Kotlin/Native needs the accelerated socket (Linux, Apple, Windows): without it `bind` with a `server` throws
-`UnsupportedOperationException`, since the portable Native socket is client-only (ADR-0006).
+`UnsupportedOperationException`, since the portable Native socket is client-only (ADR-0006). Socket buffer sizes, GSO
+and GRO on a server host: [Deploying the HTTP/3 server: The host](deployment.md#the-host).
 
 ```kotlin
 // guide:quic:client-connect

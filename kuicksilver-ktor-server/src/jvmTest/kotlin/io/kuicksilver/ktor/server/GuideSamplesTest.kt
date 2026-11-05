@@ -7,10 +7,13 @@ package io.kuicksilver.ktor.server
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.application.pluginOrNull
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -38,7 +41,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** The server code blocks of docs/guide/ktor.md, kept compiling and running (block markers `guide:ktor:server*`). */
+/**
+ * The server code blocks of docs/guide/ktor.md (block markers `guide:ktor:server*`) and docs/guide/deployment.md
+ * (`guide:deployment:*`), kept compiling and running.
+ */
 class GuideSamplesTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -178,6 +184,57 @@ class GuideSamplesTest {
 
         assertEquals(Http3Advertising.On, server.engine.http3Advertising) // ServerHttp3AdvertisingTest runs each mode
         identity.close()
+    }
+
+    @Test fun deploymentGuideHasEveryMarker() {
+        val guide =
+            generateSequence(File("").absoluteFile) {
+                it.parentFile
+            }.map { File(it, "docs/guide/deployment.md") }.first { it.exists() }.readText()
+        assertTrue("guide:deployment:public-alt-svc" in guide, "marker public-alt-svc")
+    }
+
+    @Test fun publicAltSvcSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:deployment:public-alt-svc
+        val publicPort = 443 // the UDP port clients reach (the load balancer's or the NAT's), not the one bound here
+        lateinit var engine: KuicksilverApplicationEngine
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+            }) {
+                intercept(ApplicationCallPipeline.Plugins) {
+                    // an Alt-Svc the application sets is never replaced, so it follows engine.http3Advertising itself
+                    val h3 = engine.http3Advertising == Http3Advertising.On
+                    call.response.header("Alt-Svc", if (h3) "h3=\":$publicPort\"; ma=86400" else "clear")
+                }
+                routing { get("/") { call.respondText("ok") } }
+            }
+        engine = server.engine
+
+        server.start(wait = false)
+        try {
+            runBlocking {
+                withTimeout(30.seconds) {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+                    val get = "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n"
+
+                    fun altSvc(resp: String) = resp.lines().filter { it.startsWith("Alt-Svc", ignoreCase = true) }
+                    val on = rawHttp(port, get)
+                    assertEquals(listOf("Alt-Svc: h3=\":443\"; ma=86400"), altSvc(on), on) // the public port, once
+                    server.engine.http3Advertising = Http3Advertising.Drain
+                    val drained = rawHttp(port, get)
+                    assertEquals(listOf("Alt-Svc: clear"), altSvc(drained), drained)
+                }
+            }
+        } finally {
+            server.stop(100, 500)
+            identity.close()
+        }
     }
 
     @Test fun prioritySample() =
