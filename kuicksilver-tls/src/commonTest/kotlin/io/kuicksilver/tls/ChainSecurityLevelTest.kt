@@ -10,6 +10,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslEvent
+import io.kuicksilver.native.KslException
 import io.kuicksilver.native.KslLoader
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
@@ -309,6 +310,19 @@ class ChainSecurityLevelTest {
             assertTrue(e.message!!.contains("SHA-1 or MD5"), e.message)
         }
         TlsIdentity.fromDer(listOf(WeakCerts.leafUnderSha1Root, WeakCerts.sha1Root), WeakCerts.leafUnderSha1RootKey.copyOf()).close()
+    }
+
+    /**
+     * A chain past the walk's bounds (101 certificates, 2n + 2 signature checks) is refused with CERT_CHAIN_TOO_LONG, which
+     * libssl sends as unknown_ca: the exception names the same alert. The chains themselves are built in C
+     * (`chain_security_bounds`); this pins the mapping of what `ksl` reports.
+     */
+    @Test fun negative_chainTooLongIsUnknownIssuerWithItsAlert() {
+        val (e, alert) = KslException.Internal(0, 48 or (22 shl 16), "chain too long").toTlsFailure(emptyList())
+        assertEquals(48, alert)
+        val reason = assertIs<TlsException.Verify>(e).reason
+        assertEquals(VerifyReason.UnknownIssuer, reason)
+        assertEquals(48, reason.alertCode)
     }
 
     @Test fun weakReasonsPrintTheirName() {

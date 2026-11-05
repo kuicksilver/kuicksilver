@@ -3,6 +3,7 @@
 /* Verification contract (ADR-0011, ADR-0012): OpenSSL verifier, client pause, matcher on every path, EKU, chains. */
 #define _POSIX_C_SOURCE 200809L   /* setenv, unsetenv, strdup under -std=c11 with glibc */
 #include "test_common.h"
+#include "ksl_internal.h"   /* ksl_chain_security, for the bounds on chains built here */
 #include <openssl/x509_vfy.h>
 #include <openssl/pem.h>
 #include <sys/stat.h>
@@ -355,6 +356,7 @@ static void test_chain_security_level(void) {
 static int identity_ok(const char *leaf, const char *mid, char *msg, size_t msg_len) {
     ksl_ctx *c = ksl_ctx_new(KSL_SERVER); blob ch = mid ? chain_of(2, leaf, mid) : chain_of(1, leaf); size_t kl; uint8_t *k = key_of(leaf, &kl);
     int r = ksl_ctx_set_identity(c, ch.buf, ch.len, k, kl); uint32_t e; msg[0] = 0; if (r != KSL_OK) ksl_ctx_last_error(c, &e, msg, msg_len);
+    if (r != KSL_OK) CHECK(SSL_CTX_get0_certificate(c->ctx) == NULL && !c->has_leaf, "a refused identity is not installed in the context");
     free(ch.buf); free(k); ksl_ctx_free(c); return r == KSL_OK;
 }
 static void test_own_identity_security_level(void) {
@@ -373,4 +375,40 @@ static void test_own_identity_security_level(void) {
     CHECK(ksl_ctx_set_identity(cc, ch.buf, ch.len, k, kl) == KSL_ERROR, "negative: a SHA-1-signed client certificate is refused"); free(ch.buf); free(k); ksl_ctx_free(cc);
     END();
 }
-void run_verify_security_level(void) { test_chain_security_level(); test_own_identity_security_level(); }
+/* A certificate with subject CN=<subject>, issued by issuer_name with issuer_key (itself when NULL), no extensions: no key
+   identifiers, so X509_check_issued matches by names alone */
+static X509 *make_cert(EVP_PKEY *key, const char *subject, const char *issuer_name, EVP_PKEY *issuer_key) {
+    X509 *x = X509_new(); X509_NAME *sn = X509_NAME_new(), *in = X509_NAME_new();
+    X509_NAME_add_entry_by_txt(sn, "CN", MBSTRING_ASC, (const unsigned char *)subject, -1, -1, 0);
+    X509_NAME_add_entry_by_txt(in, "CN", MBSTRING_ASC, (const unsigned char *)(issuer_name ? issuer_name : subject), -1, -1, 0);
+    X509_set_version(x, X509_VERSION_3); ASN1_INTEGER_set(X509_get_serialNumber(x), 1);
+    X509_set_subject_name(x, sn); X509_set_issuer_name(x, in); X509_gmtime_adj(X509_getm_notBefore(x), 0); X509_gmtime_adj(X509_getm_notAfter(x), 86400);
+    X509_set_pubkey(x, key); X509_sign(x, issuer_key ? issuer_key : key, EVP_sha256());
+    X509_NAME_free(sn); X509_NAME_free(in); return x;
+}
+static void test_chain_security_bounds(void) {
+    SECTION("chain_security_bounds");
+    /* a straight chain of 103 certificates, each signed by the next, the last self-signed: past 101 visited it is refused */
+    {
+        enum { N = 103 }; EVP_PKEY *k[N]; STACK_OF(X509) *sk = sk_X509_new_null(); char name[N][16];
+        for (int i = 0; i < N; i++) { k[i] = EVP_EC_gen("P-256"); snprintf(name[i], sizeof name[i], "c%d", i); }
+        for (int i = 0; i < N; i++) sk_X509_push(sk, make_cert(k[i], name[i], i + 1 < N ? name[i + 1] : NULL, i + 1 < N ? k[i + 1] : NULL));
+        CHECK(ksl_chain_security(2, sk) == X509_V_ERR_CERT_CHAIN_TOO_LONG, "negative: 103 certificates on one path -> CERT_CHAIN_TOO_LONG");
+        X509 *last = sk_X509_pop(sk); X509_free(sk_X509_pop(sk)); X509_free(last);   /* 101 left: within the bound */
+        X509 *top = make_cert(k[100], name[100], NULL, NULL); X509_free(sk_X509_pop(sk)); sk_X509_push(sk, top);
+        CHECK(ksl_chain_security(2, sk) == X509_V_OK, "101 certificates, the last self-signed: within the bound");
+        sk_X509_pop_free(sk, X509_free); for (int i = 0; i < N; i++) EVP_PKEY_free(k[i]);
+    }
+    /* one subject for all: a path of 10 (each signed by the next, the last self-signed) and 10 self-signed decoys; every visited
+       certificate matches every other by name, so verification would take ~10 x 15; past 2n + 2 = 44 the chain is refused */
+    {
+        enum { M = 10, D = 10 }; EVP_PKEY *k[M + D]; STACK_OF(X509) *sk = sk_X509_new_null();
+        for (int i = 0; i < M + D; i++) k[i] = EVP_EC_gen("P-256");
+        for (int i = 0; i < M; i++) sk_X509_push(sk, make_cert(k[i], "same", i + 1 < M ? "same" : NULL, i + 1 < M ? k[i + 1] : NULL));
+        for (int i = 0; i < D; i++) sk_X509_push(sk, make_cert(k[M + i], "same", NULL, NULL));
+        CHECK(ksl_chain_security(2, sk) == X509_V_ERR_CERT_CHAIN_TOO_LONG, "negative: decoys of one subject past the 2n + 2 verifications -> CERT_CHAIN_TOO_LONG");
+        sk_X509_pop_free(sk, X509_free); for (int i = 0; i < M + D; i++) EVP_PKEY_free(k[i]);
+    }
+    ERR_clear_error(); END();
+}
+void run_verify_security_level(void) { test_chain_security_level(); test_own_identity_security_level(); test_chain_security_bounds(); }

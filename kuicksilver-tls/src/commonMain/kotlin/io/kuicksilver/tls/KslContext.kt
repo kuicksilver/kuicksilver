@@ -476,11 +476,11 @@ internal fun KslException.Internal.toTlsFailure(presented: List<Certificate>): P
                 VerifyReason.InvalidPurpose
             }
 
-            2, 18, 19, 20, 21, 24, 27 -> {
+            2, 18, 19, 20, 21, 22, 24, 27 -> {
                 VerifyReason.UnknownIssuer
             }
 
-            // issuer / self-signed / untrusted family
+            // issuer / self-signed / untrusted family; 22 CERT_CHAIN_TOO_LONG (also ksl's chain walk past its bounds), unknown_ca on the wire
             7, 8 -> {
                 VerifyReason.BadSignature
             }

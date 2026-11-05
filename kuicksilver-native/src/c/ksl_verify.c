@@ -46,7 +46,9 @@ static int alert_to_x509_error(int alert) {
    visited once; every issuer that verifies is followed, so cross-certificates (two certificates with one key) are all
    checked. This is stricter than OpenSSL, which checks only the path it builds and stops at the first certificate in its
    trust store (the owner's choice: a presented certificate above the platform's anchor counts here); certificates on no
-   verified path from the leaf are not looked at.
+   verified path from the leaf are not looked at. Only X509_check_issued edges are followed: above a certificate whose AKID
+   does not match its real issuer's SKID (a CA's misissuance) nothing is checked; a peer cannot make such a certificate, it
+   would need the CA's key to sign it.
 
    What: every key needs the level's bits (the leaf's EE_KEY_TOO_SMALL, any other CA_KEY_TOO_SMALL), every signature too
    (CA_MD_TOO_WEAK: SHA-1 counts 63 bits, MD5 39) but the own signature of a certificate that is self-signed in fact,

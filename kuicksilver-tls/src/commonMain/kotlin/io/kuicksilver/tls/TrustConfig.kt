@@ -269,8 +269,8 @@ public sealed interface VerifyReason {
      * a [CertificateVerifier] is asked, so that every platform refuses the same presented chains (the JDK, Android and
      * Windows verifiers accept 1024-bit RSA): the key of every certificate the peer sent that is reachable from the leaf
      * through issuers whose key verifies the signature, a self-signed root included (stricter than OpenSSL for a
-     * certificate sent above the platform's anchor). On OpenSSL's own path ([TrustConfig.AnchoredCa], `Platform` on Linux) OpenSSL checks the chain it built,
-     * its trust anchor included.
+     * certificate sent above the platform's anchor). On OpenSSL's own path ([TrustConfig.AnchoredCa], `Platform` on
+     * Linux) OpenSSL checks the chain it built, its trust anchor included.
      */
     @ExperimentalKuicksilverApi
     public data object WeakKey : VerifyReason
