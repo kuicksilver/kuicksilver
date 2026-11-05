@@ -97,7 +97,7 @@ internal class H2Response(
             call.application.environment.log.warn(
                 "HTTP/2: the application answered ${call.request.local.uri} with $statusCode as its final response; sent 500 instead",
             )
-            statusCode = HttpStatusCode.InternalServerError
+            status(HttpStatusCode.InternalServerError) // the call's status too: listeners and logs see what was sent
             headersBuilder.clear()
             interimReplaced = true
         }
@@ -130,7 +130,10 @@ internal class H2Response(
      * Sends [content] within the client's windows and ends the stream. RFC 9113 section 8.1.1: content that does not
      * match the response's content-length makes it malformed, so a response that would send more stops before the extra
      * bytes and one that ends short is not ended: either way the stream is reset with INTERNAL_ERROR (the client sees a
-     * failed response, never a short or long one that looks complete) and the call fails with an IOException.
+     * failed response, never a short or long one that looks complete) and the call fails with an IOException. The check
+     * is per piece read from [content] (up to 16 KiB): the piece that would cross the declared length is not sent at all,
+     * not even its bytes within the length, since the stream is reset either way and those bytes would only make a
+     * longer prefix of a response the client must discard.
      */
     private suspend fun send(content: ByteReadChannel) {
         val stall = { IOException("the client took no response content for $sendStallMillis ms") }
