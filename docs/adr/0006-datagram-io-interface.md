@@ -155,7 +155,7 @@ unspecified address): `ksl_udp_recv_dst` reports each datagram's destination (`I
 `ksl_udp_send_src` sends a slot from a named source (`IP_PKTINFO` with `ipi_spec_dst` for IPv4, also on a dual-stack socket,
 `IPV6_PKTINFO` for IPv6; `IN_PKTINFO` / `IN6_PKTINFO` through `WSASendMsg`). No interface index travels: the 20-byte address
 has no room for it, and with index 0 the kernel routes from the named source. Slots with different sources never share a GSO
-run. Multicast, broadcast (subnet-directed: Linux `ipi_spec_dst`, Darwin a check against the interface addresses, Windows `MSG_BCAST`) and IPv6
+run. Multicast, broadcast (subnet-directed: Linux `ipi_spec_dst`, Darwin a check against the interface addresses, read at most once a second and limited to the first 16 IPv4 addresses, so a datagram to a later one is answered from the route's choice, Windows `MSG_BCAST`) and IPv6
 link-local destinations are reported as unknown. `KslDatagramIo` carries the address as `PacketBatch.localAddress`; the core fixes
 it per server path when the path is made (as quinn-proto and quic-go) and names it on every datagram of that path ([RFC 9000 details](../spec/rfc/9000.md#s9-local-address-of-a-server-path)). The portable sockets (NIO,
 ktor-network) have no such call: on a multi-address host a server there binds the address clients use. Tests: `test_udp.c`
