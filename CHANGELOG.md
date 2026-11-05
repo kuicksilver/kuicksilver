@@ -416,6 +416,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client: a QUIC setup the server refuses with CONNECTION_REFUSED (a server in `Drain`, stopping, or with a full
+  accept queue; RFC 9000 sections 5.2.2 and 20.1) no longer marks the HTTP/3 alternative broken. The call falls back to
+  HTTP/1.1 once (`ProtocolDiagnostics.fallback = Refused`), the alternative stays cached (RFC 7838 sections 2.2 and 3),
+  and the next call tries HTTP/3 again. It was marked broken for 5 minutes, doubling up to 2 days at each refusal, so a
+  rolling restart of a multi-instance server put the whole origin on HTTP/1.1. Any other close of the setup by the
+  server still marks the alternative broken.
 - Ktor server: `KuicksilverServerEventListener.connectionClosed` for an HTTP/3 connection comes after the
   `requestEnded` of every request it carried. It came as soon as the connection took no more requests, so a client
   that closed the connection as soon as it had the answer could be reported gone while its handler still ran.

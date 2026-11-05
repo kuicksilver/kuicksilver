@@ -26,8 +26,10 @@ import io.kuicksilver.ktor.client.h3.H3Pool
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
 import io.kuicksilver.ktor.client.h3.H3Target
 import io.kuicksilver.ktor.network.engineSelector
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -475,7 +477,8 @@ internal class KuicksilverEngine(
                                         .getCompleted()
                                         .quic.stats.smoothedRtt,
                                 )
-                            } else if (outcome !is CancellationException) {
+                            } else if (outcome !is CancellationException && !isTransientRefusal(outcome)) {
+                                // a refusal (CONNECTION_REFUSED) is no failure of the alternative: the next call tries it again
                                 brokenAltSvc.markBroken(origin, alt, classifyH3Failure(outcome) ?: FallbackReason.Other)
                                 events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
                             }
@@ -672,17 +675,37 @@ internal class KuicksilverEngine(
 /**
  * Whether an HTTP/3 failure says the alternative itself does not work (RFC 7838 section 2.4): the connection could not be
  * set up (handshake, transport) or failed as a whole. A single stream's reset, a malformed message, a refused request
- * and a field section refused locally are about one exchange and leave the alternative usable.
+ * and a field section refused locally are about one exchange and leave the alternative usable, and so does a server's
+ * CONNECTION_REFUSED ([isTransientRefusal]).
  */
 internal fun marksAlternativeBroken(e: Throwable): Boolean =
-    when (e) {
-        is H3NotSent -> e.cause !is Http3Exception.RequestNotProcessed
-        is QuicException.StreamError -> false
-        is QuicException -> true
-        is Http3Exception.Protocol -> e.streamId == null
-        is Http3Exception.Qpack, is Http3Exception.Settings -> true
-        else -> false
+    if (isTransientRefusal(e)) {
+        false
+    } else {
+        when (e) {
+            is H3NotSent -> e.cause !is Http3Exception.RequestNotProcessed
+            is QuicException.StreamError -> false
+            is QuicException -> true
+            is Http3Exception.Protocol -> e.streamId == null
+            is Http3Exception.Qpack, is Http3Exception.Settings -> true
+            else -> false
+        }
     }
+
+/**
+ * Whether an HTTP/3 failure is the server refusing a new connection for now: a CONNECTION_CLOSE from the peer with
+ * CONNECTION_REFUSED (RFC 9000 section 20.1), which a server sends when it cannot take the client (section 5.2.2: a full
+ * accept queue, `Drain`, a stop; also quic-go's `sendConnectionRefused` and quinn's `refuse`). That says nothing against
+ * the alternative, which stays valid (RFC 7838 sections 2.2 and 3): the call falls back to HTTP/1.1 like one HTTP/3 was
+ * not ready for ([FallbackReason.H3NotReady]), and the alternative is not marked broken, so the next call tries HTTP/3
+ * again (another instance behind the same address may take it) instead of waiting out 5 minutes to 2 days.
+ */
+internal fun isTransientRefusal(e: Throwable): Boolean {
+    val failure = if (e is H3NotSent) e.cause ?: e else e
+    return failure is QuicException.ConnectionLost.TransportClosed &&
+        failure.initiator == Initiator.Peer &&
+        failure.code == TransportError.CONNECTION_REFUSED
+}
 
 /** RFC 9110 section 9.2.2. */
 internal fun HttpMethod.isIdempotent(): Boolean =

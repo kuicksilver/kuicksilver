@@ -23,8 +23,11 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.AdmissionDecision
+import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsException
@@ -40,7 +43,11 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
@@ -122,7 +129,7 @@ class ClientFallbackTest {
         }
 
     /** A raw HTTP/3 server endpoint on a free UDP port of 127.0.0.1. */
-    private suspend fun h3Endpoint(): Http3Endpoint {
+    private suspend fun h3Endpoint(admission: ConnectionAdmission = ConnectionAdmission.default()): Http3Endpoint {
         val tls =
             tlsConfig(TlsRole.Server) {
                 alpn = listOf("h3")
@@ -136,6 +143,7 @@ class ClientFallbackTest {
                 .apply {
                     this.server =
                         QuicServerConfig.Builder(tls).build()
+                    this.admission = admission
                 }.build(),
         )
     }
@@ -188,6 +196,155 @@ class ClientFallbackTest {
         }
         return ep
     }
+
+    /**
+     * A raw HTTP/3 server on a free UDP port that answers 200 to every request, except that while [refuseWith] holds a
+     * code, its admission refuses each new client statelessly with an Initial CONNECTION_CLOSE carrying that code (as
+     * `Drain`, a full accept queue or a stop do with CONNECTION_REFUSED, RFC 9000 section 5.2.2).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private suspend fun CoroutineScope.refusingH3(refuseWith: kotlin.concurrent.atomics.AtomicReference<Long?>): Http3Endpoint {
+        val ep =
+            h3Endpoint(
+                ConnectionAdmission { refuseWith.load()?.let { AdmissionDecision.Close(it) } ?: AdmissionDecision.Allow },
+            )
+        launch {
+            runCatching {
+                while (true) {
+                    val conn = ep.accept()
+                    launch { runCatching { while (true) conn.acceptRequest().respond(200).finish() } }
+                }
+            }
+        }
+        return ep
+    }
+
+    /** An HTTP/1.1 origin that announces its UDP twin as `h3` (RFC 7838) on every response, and [refusingH3] on that twin. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private suspend fun CoroutineScope.originWithRefusingH3(refuseWith: kotlin.concurrent.atomics.AtomicReference<Long?>) =
+        h1AndH3({
+            routing {
+                get("/") {
+                    call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
+                    call.respondText("h1")
+                }
+            }
+        }) { refusingH3(refuseWith) }
+
+    /**
+     * CONNECTION_REFUSED (a pod in `Drain`, with a full accept queue or stopping) is transient (RFC 9000 sections 5.2.2,
+     * 10.2.3 and 20.1): each refused call falls back to HTTP/1.1 once with `fallback = Refused`, the alternative stays
+     * cached and is never marked broken (RFC 7838 sections 2.2 and 3) however often the refusal repeats, and the first call
+     * after the server takes clients again goes over HTTP/3. Before 0.3.0 the first refusal marked the alternative broken
+     * for 5 minutes, doubling up to 2 days. `hardDelay = INFINITE`: HTTP/1.1 starts only once HTTP/3 failed, so the
+     * winner of each race does not depend on timing.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun connectionRefusedFallsBackWithoutMarkingBroken() =
+        h3Test {
+            kotlinx.coroutines.coroutineScope {
+                val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
+                val (server, ep, port) = originWithRefusingH3(refuseWith)
+                val marked = mutableListOf<String>()
+                val listener =
+                    object : KuicksilverEventListener() {
+                        override fun altSvcMarkedBroken(
+                            origin: String,
+                            alternative: String,
+                        ) {
+                            marked += alternative
+                        }
+                    }
+                val origin = "https://127.0.0.1:$port"
+                try {
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        eventListener = listener
+                        http3 { hardDelay = Duration.INFINITE }
+                    }).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        assertEquals(FallbackReason.NoAlternative, c.get("$origin/").kuicksilverDiagnostics?.fallback) // learns h3
+                        refuseWith.store(TransportError.CONNECTION_REFUSED)
+                        // repeated refusals: every call tries HTTP/3 again and falls back once; nothing escalates
+                        repeat(3) { i ->
+                            val r = c.get("$origin/")
+                            val d = assertNotNull(r.kuicksilverDiagnostics)
+                            assertEquals(HttpProtocolVersion.HTTP_1_1, r.version, "call $i")
+                            assertEquals(FallbackReason.Refused, d.fallback, "call $i: ${d.h3Failure}")
+                            assertEquals(
+                                TransportError.CONNECTION_REFUSED,
+                                (d.h3Failure as? io.kuicksilver.quic.QuicException.ConnectionLost.TransportClosed)?.code,
+                                "call $i: ${d.h3Failure}",
+                            )
+                            assertEquals("h1", r.bodyAsText())
+                            assertFalse(engine.brokenAltSvc.isBroken(origin, "127.0.0.1:$port"), "call $i marked the alternative broken")
+                            assertEquals(listOf(port), engine.altSvcSnapshot(io.ktor.http.Url("$origin/")).map { it.port })
+                        }
+                        // the server takes new clients again: the next call goes over HTTP/3, no broken mark held it back
+                        refuseWith.store(null)
+                        val back = c.get("$origin/")
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, back.version, "${back.kuicksilverDiagnostics}")
+                        assertNull(back.kuicksilverDiagnostics?.fallback)
+                        assertEquals(emptyList(), marked, "altSvcMarkedBroken")
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /**
+     * Regression for [connectionRefusedFallsBackWithoutMarkingBroken]: a setup the server closes with any other code
+     * (PROTOCOL_VIOLATION here) is a real setup failure, and still marks the alternative broken (RFC 7838 section 2.4).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_otherSetupCloseStillMarksBroken() =
+        h3Test {
+            kotlinx.coroutines.coroutineScope {
+                val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
+                val (server, ep, port) = originWithRefusingH3(refuseWith)
+                val markedBroken = CompletableDeferred<String>()
+                val listener =
+                    object : KuicksilverEventListener() {
+                        override fun altSvcMarkedBroken(
+                            origin: String,
+                            alternative: String,
+                        ) {
+                            markedBroken.complete(alternative)
+                        }
+                    }
+                val origin = "https://127.0.0.1:$port"
+                try {
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        eventListener = listener
+                        http3 { hardDelay = Duration.INFINITE }
+                    }).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        c.get("$origin/") // learns h3
+                        refuseWith.store(TransportError.PROTOCOL_VIOLATION)
+                        val r = c.get("$origin/")
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                        assertEquals(FallbackReason.Refused, r.kuicksilverDiagnostics?.fallback, "${r.kuicksilverDiagnostics?.h3Failure}")
+                        val alt =
+                            kotlinx.coroutines.withTimeoutOrNull(30.seconds) { markedBroken.await() }
+                                ?: kotlin.test.fail("127.0.0.1:$port was not marked broken within 30 s")
+                        assertEquals("127.0.0.1:$port", alt)
+                        assertTrue(engine.brokenAltSvc.isBroken(origin, alt))
+                        refuseWith.store(null)
+                        val next = c.get("$origin/")
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, next.version)
+                        assertEquals(FallbackReason.BrokenAlternative, next.kuicksilverDiagnostics?.fallback)
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
 
     /**
      * The HTTP/3 connection to 127.0.0.1:[port], once there is one: joins the setup a lost race left running (or returns

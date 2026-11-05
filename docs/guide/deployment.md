@@ -167,10 +167,12 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   limit) instead of timing out. Stop the server with Ktor's `shutdownGracePeriod` and `shutdownTimeout`; the larger of the
   two bounds the stop (keep the timeout ≥ the grace period), so keep the `preStop` delay plus `shutdownTimeout` below
   the pod's `terminationGracePeriodSeconds`.
-  Switching a pod to `Http3Advertising.Drain` before it stops has a cost: its responses send `Alt-Svc: clear` for the
-  whole origin, not just that pod, and the Kuicksilver client counts a refused QUIC setup as a failure that marks the
-  alternative broken for 5 minutes, doubling up to 2 days ([Ktor: Racing and fallback](ktor.md#racing-and-fallback)).
-  Use `Drain` to take HTTP/3 out of service, not for routine restarts.
+  A client refused this way recovers quickly: the Kuicksilver client treats `CONNECTION_REFUSED` as transient, falls
+  back to TCP for that call only and tries HTTP/3 again on the next one, which another pod may take; it does not mark
+  the alternative broken ([Ktor: Racing and fallback](ktor.md#racing-and-fallback); before 0.3.0 it did, for 5 minutes
+  doubling up to 2 days). Switching a pod to `Http3Advertising.Drain` before it stops has a cost: its responses send
+  `Alt-Svc: clear` for the whole origin, not just that pod, so clients that get one drop the alternative until another
+  response announces it again. Use `Drain` to take HTTP/3 out of service, not for routine restarts.
 
 ## Load balancers and proxies
 
@@ -325,7 +327,7 @@ On the server, `engine.http3Advertising` (experimental) is read per response and
 |---|---|
 | `On` | normal operation |
 | `Clear` | HTTP/3 should stop being offered, but connections that use it may finish in their own time |
-| `Drain` | HTTP/3 must go now: GOAWAY to live connections, new QUIC clients refused with CONNECTION_REFUSED (within the stateless rate limit; beyond it they time out), so they fall back at once |
+| `Drain` | HTTP/3 must go now: GOAWAY to live connections, new QUIC clients refused with CONNECTION_REFUSED (within the stateless rate limit; beyond it they time out), so they fall back at once; a Kuicksilver client does not mark the alternative broken for the refusal and is back on HTTP/3 as soon as the server announces it again |
 
 The UDP socket stays bound in every mode. To block UDP for good, use the firewall, after at least 24 hours (`ma=86400`)
 in `Drain` or `Clear`, so that returning clients have dropped the cached alternative first; clients that do not come
@@ -408,7 +410,7 @@ alternative from an earlier run; HTTP/3 starts from the next call.
 | `tcpdump` shows Initials, no answer | the host firewall drops them; the per-IP or stateless rate limit or the admission policy drops them (all clients behind one NAT address); answers leave from another source address ([reply addresses](#reply-addresses)) |
 | `curl --http3-only` fails with a TLS error | the certificate does not cover the name, or a connector with `sniSelector` (no HTTP/3) |
 | Client `fallback = HandshakeTimeout`, then `BrokenAlternative` | UDP blocked on the client's network or in front of the server |
-| Client `fallback = Refused` | the server is in `Drain`, stopping, or its accept queue is full |
+| Client `fallback = Refused` | the server is in `Drain`, stopping, or its accept queue is full (`h3Failure` code 0x2, CONNECTION_REFUSED: transient, the next call tries HTTP/3 again); another code: the server's QUIC listener |
 | Client `fallback = TlsFailure` | the certificate on the UDP side, its `h3` ALPN |
 | Client `fallback = NoAlternative` on every call | the client never saw `Alt-Svc` (a proxy strips it), or the alternative's port is unprivileged for a privileged origin |
 | Connections drop when clients change networks | an L4 load balancer with several instances ([Connection IDs](#connection-ids-and-several-instances)) |

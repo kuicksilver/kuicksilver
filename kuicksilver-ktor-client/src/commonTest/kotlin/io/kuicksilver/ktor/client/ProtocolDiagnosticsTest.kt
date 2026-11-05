@@ -13,6 +13,7 @@ import io.kuicksilver.ktor.client.h3.H3NotSent
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeoutKind
+import io.kuicksilver.quic.TransportError
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -45,6 +46,39 @@ class ProtocolDiagnosticsTest {
         assertEquals(FallbackReason.TlsFailure, classifyH3Failure(closed(0x012a, Initiator.Local)))
         assertEquals(FallbackReason.Refused, classifyH3Failure(closed(0x2)))
         assertEquals(FallbackReason.Http3Error, classifyH3Failure(closed(0xa, Initiator.Local)))
+    }
+
+    /**
+     * CONNECTION_REFUSED from the server (Drain, a full accept queue, a stop: RFC 9000 sections 5.2.2, 10.2.3, 20.1) says
+     * nothing against the alternative: it is a transient refusal, on its own or wrapped as not sent, and marks nothing.
+     */
+    @Test fun connectionRefusedIsTransient() {
+        val refused = closed(TransportError.CONNECTION_REFUSED)
+        assertTrue(isTransientRefusal(refused))
+        assertTrue(isTransientRefusal(H3NotSent(refused)))
+        assertFalse(marksAlternativeBroken(refused))
+        assertFalse(marksAlternativeBroken(H3NotSent(refused)))
+        assertEquals(FallbackReason.Refused, classifyH3Failure(H3NotSent(refused)))
+    }
+
+    /** Every other setup failure still marks the alternative broken: a TLS alert, another peer close, version negotiation, a timeout. */
+    @Test fun negative_otherSetupFailuresAreNotTransient() {
+        val failures =
+            listOf(
+                closed(0x0128), // CRYPTO_ERROR: handshake_failure
+                closed(TransportError.PROTOCOL_VIOLATION),
+                closed(TransportError.CONNECTION_REFUSED, Initiator.Local), // never sent by the server
+                QuicException.ConnectionLost.VersionNegotiation(listOf(0x6b3343cf), listOf(1)),
+                QuicException.ConnectionLost.Timeout(TimeoutKind.Handshake, 1.seconds),
+                ConnectTimeoutException("https://a.test", 10, null),
+            )
+        for (e in failures) {
+            assertFalse(isTransientRefusal(e), "$e")
+            assertFalse(isTransientRefusal(H3NotSent(e)), "$e")
+        }
+        assertTrue(marksAlternativeBroken(closed(0x0128)))
+        assertTrue(marksAlternativeBroken(H3NotSent(closed(TransportError.PROTOCOL_VIOLATION))))
+        assertTrue(marksAlternativeBroken(QuicException.ConnectionLost.VersionNegotiation(listOf(0x6b3343cf), listOf(1))))
     }
 
     @Test fun versionNegotiationIsRefused() {

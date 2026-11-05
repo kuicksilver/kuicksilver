@@ -152,7 +152,9 @@ cached alternative service entries".
   CONNECTION_CLOSE frame with error code CONNECTION_REFUSED" (sections 10.2.3 and 20.1). It is under the endpoint's
   stateless rate limit, runs before `quicAdmission` (which is not asked), unless a hard limit (`maxConnections`,
   `maxConnectionsPerIp`) drops the Initial first, and `EndpointStats.connectionsRefusedAdmission` counts it. A refused client falls back to TCP at once instead of waiting for
-  its handshake timeout, and its next HTTP/1.1 response clears its cached alternative.
+  its handshake timeout, and its next HTTP/1.1 response clears its cached alternative. A Kuicksilver client does not
+  mark the alternative broken for the refusal ([Racing and fallback](#racing-and-fallback)), so once the instance (or
+  another one) serves HTTP/3 and announces it again, the client is back on HTTP/3 with its next call.
 - The UDP socket stays bound under `Drain`: releasing the port and binding it again on `On` would race other processes
   for it (and, with `udpSocketCount > 1`, for each of its sockets), and a closed port answers with nothing or an ICMP
   error that clients only notice at their handshake timeout. To block UDP outright, use the firewall.
@@ -529,7 +531,11 @@ failure is reported — the race was the one HTTP/1.1 attempt, there is no secon
 An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell
 back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
 single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
-network. Broken alternatives are skipped (straight to HTTP/1.1).
+network. Broken alternatives are skipped (straight to HTTP/1.1). A server that refuses the QUIC setup with
+`CONNECTION_REFUSED` (it is in `Drain`, stopping, or its accept queue is full: RFC 9000 section 5.2.2) has not shown the
+alternative broken: that call falls back to HTTP/1.1 once (`fallback = Refused`), the alternative stays cached and
+unmarked (RFC 7838 sections 2.2 and 3), and the next call tries HTTP/3 again, so a rolling restart costs one fallback per
+refused setup instead of minutes to days of HTTP/1.1. Any other close of the setup by the server still marks it broken.
 
 ### Turning HTTP/3 off remotely
 
@@ -897,7 +903,7 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `HandshakeTimeout` | no QUIC answer within the handshake or connect timeout | UDP to the port: a firewall, a VPN, a cloud security group open for TCP only |
 | `UdpUnreachable` | ICMP unreachable for the UDP port | not reported yet: such calls show `HandshakeTimeout` |
 | `H3NotReady` | HTTP/1.1 was ready before HTTP/3 answered (HTTP/3 had not failed) | nothing; the QUIC setup goes on and serves later calls |
-| `Refused` | the server closed the QUIC connection without a TLS alert (`CONNECTION_REFUSED`), or no common QUIC version | the server's QUIC listener and its limits |
+| `Refused` | the server closed the QUIC connection without a TLS alert (`CONNECTION_REFUSED`), or no common QUIC version | `CONNECTION_REFUSED`: nothing, the server is draining, stopping or full, and the next call tries HTTP/3 again (the alternative is not marked broken); otherwise the server's QUIC listener and its limits |
 | `TlsFailure` | a TLS alert in the QUIC handshake, or a local certificate failure | the UDP side's certificate and its `h3` ALPN |
 | `Http3Error` | the HTTP/3 connection failed as a whole (an HTTP/3 or QPACK error, a stateless reset, an idle timeout) | `h3Failure`, a qlog trace |
 | `ZeroRttRejected` | the server rejected 0-RTT | nothing |
