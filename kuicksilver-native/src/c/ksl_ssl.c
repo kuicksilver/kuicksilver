@@ -158,7 +158,6 @@ static int session_mode_ready(void) { return CRYPTO_THREAD_run_once(&session_mod
 /* A session keeps the stamp it got when it was first handed out: a TLS 1.2 resumption (or TLS 1.3 before the first ticket) hands out
    the very SSL_SESSION that was set, which other holders share. Stamping it again would let a client without verification turn a
    verified session into one made without verification for all of them, and write its ex data while another thread reads it in
-   ksl_ssl_set_session (review 2026-10-28 T-N1). A new session (a ticket, a full handshake's) has no stamp yet and gets this one's.
    ksl_ssl_set_session (review 2026-10-28 T-N1). A new session (a ticket, a full handshake's) has no stamp yet and gets this one's. */
 static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) {
     if (session_mode_ready() && SSL_SESSION_get_ex_data(sess, session_mode_idx) == NULL)
@@ -171,12 +170,15 @@ static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) {
    ssl_session_dup), and records the negotiated protocol only in a new session (extensions_clnt.c, tls_parse_stoc_alpn); OpenSSL 4.1
    fixes it (PR 32401). Left so, the ticket of an hq-interop resumption of an h3 ticket says h3: the client offers 0-RTT for h3 and
    aborts with illegal_parameter when the server, right by the ticket's own connection, accepts it under hq-interop (extensions.c,
-   final_early_data). The session offered is shared with other holders and keeps its own connection's protocol. */
+   final_early_data). The session offered is shared with other holders and keeps its own connection's protocol. If the protocol
+   cannot be set (no memory), the ticket still resumes but allows no 0-RTT: its ALPN is unknown. */
 static void own_alpn(ksl_ssl *s, SSL_SESSION *sess) {
     if (!s->done || sess == s->offered_session) return;
     const unsigned char *a = NULL, *had = NULL; unsigned al = 0; size_t hl = 0;
     SSL_get0_alpn_selected(s->ssl, &a, &al); SSL_SESSION_get0_alpn_selected(sess, &had, &hl);
-    if (al != hl || (al && memcmp(a, had, al) != 0)) (void)SSL_SESSION_set1_alpn_selected(sess, al ? a : NULL, al);
+    if ((al != hl || (al && memcmp(a, had, al) != 0)) && SSL_SESSION_set1_alpn_selected(sess, al ? a : NULL, al) != 1) {
+        (void)SSL_SESSION_set_max_early_data(sess, 0); ERR_clear_error();
+    }
 }
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
