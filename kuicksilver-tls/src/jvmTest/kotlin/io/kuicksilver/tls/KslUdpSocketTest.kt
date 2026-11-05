@@ -92,23 +92,23 @@ class KslUdpSocketTest {
                 val re = ByteArray(n)
                 // Windows grants ECN from 10 2004 / Server 2022 on (IP_ECN); Linux and macOS always do
                 val ecnRead = !windows || b.grantedFlags and KslUdpSocket.ECN != 0
+                // each call fills the first slots again: under load the n datagrams can arrive over several calls, so every
+                // call's slots are checked before the next one overwrites them
                 var got = 0
-                while (got <
-                    n
-                ) {
-                    val r = b.receive(rb, rl, ra, re, n, 2000)
+                while (got < n) {
+                    val r = b.receive(rb, rl, ra, re, n - got, 2000)
                     assertTrue(r > 0, "receive timed out with $got of $n")
+                    for (i in 0 until r) {
+                        assertEquals(1200, rl[i], "length of datagram ${got + i}")
+                        if (ecnRead) assertEquals(2, re[i].toInt(), "ECT(0) on datagram ${got + i}")
+                        assertEquals(
+                            a.localAddress.toList(),
+                            ra.copyOfRange(i * KslUdpSocket.ADDR_LEN, (i + 1) * KslUdpSocket.ADDR_LEN).toList(),
+                        )
+                    }
                     got += r
                 }
                 assertEquals(n, got)
-                for (i in 0 until n) {
-                    assertEquals(1200, rl[i])
-                    if (ecnRead) assertEquals(2, re[i].toInt(), "ECT(0) on slot $i")
-                    assertEquals(
-                        a.localAddress.toList(),
-                        ra.copyOfRange(i * KslUdpSocket.ADDR_LEN, (i + 1) * KslUdpSocket.ADDR_LEN).toList(),
-                    )
-                }
                 val one = ByteArray(1200)
                 rb[0].copyTo(one, 0, 0, 1200)
                 assertTrue(one.all { it == one[0] })
