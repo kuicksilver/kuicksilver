@@ -1,0 +1,58 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# CodeQL code scanning: the security queries over the ksl C shim (c-cpp, build-mode none: no OpenSSL build needed) and
+# the Kotlin of every module's JVM compilation (java-kotlin, a traced Gradle build; CodeQL 2.27.1 or newer extracts
+# Kotlin 2.4.20). Alerts go to the repository's code-scanning page. Kotlin/Native-only and Android-only source sets are
+# not compiled for the JVM and so not analysed; the common code they share is.
+name: codeql
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, 'release/**']
+  schedule:
+    - cron: '41 4 * * 4'   # weekly (Thursday 04:41 UTC): new queries on unchanged code
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write   # upload the results to code scanning
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build-mode: none
+          - language: java-kotlin
+            build-mode: manual
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        if: matrix.language == 'java-kotlin'
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+      - name: 'codeql: compile the JVM sources (traced)'
+        if: matrix.build-mode == 'manual'
+        # CodeQL traces the Kotlin compiler: no daemon, in-process compilation, nothing from a build cache or an earlier run
+        run: |
+          ./gradlew --no-daemon --no-build-cache --no-configuration-cache --rerun-tasks --max-workers=2 \
+            -Pkotlin.incremental=false -Pkotlin.compiler.execution.strategy=in-process \
+            -x :kuicksilver-native:buildJniHost compileKotlinJvm
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
