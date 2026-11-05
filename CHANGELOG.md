@@ -225,6 +225,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   until it is closed. The process's generated session ticket keys are now looked up at each ticket, so they keep
   rotating (`SessionTicketConfig.rotateEvery`) under a context that lives as long as the server. The context was about
   10 % of a server's CPU per handshake (`EndpointHandshakeBenchmark`, Kotlin/Native profile).
+- Performance (handshakes): a connection that ends normally builds no exception objects but its two close reasons (an
+  unused `ConnectionLost.Internal` and a `JobCancellationException` per side are gone); ksl fetches HKDF and the packet
+  ciphers from OpenSSL once per process instead of per key; the CRYPTO streams' buffers grow on first use (a connection
+  allocates about a third less on the JVM heap). In-process benchmarks on a loaded host: 11–18 % more connections per
+  second (`docs/benchmarks.md`, "0.3.0 work in progress").
 - WebTransport: `drain()` also sets the session's own `drainRequested` (draft-ietf-webtrans-http3 section 4.7: the
   side that asks winds down too); before, it reflected only the peer's drain or GOAWAY.
 - Ktor client: a `wss` WebSocket belongs to the `https` origin (RFC 8441 section 5 via RFC 9220; RFC 7838 section 2.4):

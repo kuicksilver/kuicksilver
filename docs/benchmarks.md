@@ -315,8 +315,8 @@ the same load, 12 000 handshakes, 3 940 samples):
   Kuicksilver's server picks the hybrid; quinn's and msquic's interop servers pick X25519 (`key_share` group 0x11EC vs
   0x001D in the ServerHello; msquic also picks AES-256-GCM). In OpenSSL alone (`tools/bench/ksl-ctx-bench.sh`, M4 Max,
   three runs) the server's share of a handshake is 131 µs with the hybrid and 102 µs with X25519: ML-KEM-768 costs the
-  server 29 µs, 3 % of 0.92 ms, plus a ClientHello in two datagrams. The per-session `SSL_CTX` costs 53 µs more; sharing
-  one per server configuration is on the roadmap.
+  server 29 µs, 3 % of 0.92 ms, plus a ClientHello in two datagrams. The per-session `SSL_CTX` costs 53 µs more; 0.3.0
+  shares one per server configuration ([0.3.0 work in progress](#030-work-in-progress)).
 - Fixed: the interop server forgets a connection when it ends; the timer waits with `select { onTimeout }`, which does
   not throw; a connection's DATAGRAM sender starts with its first datagram, so most connections never run it and do not
   throw through it when they end. One trap on the way: a 1 MiB read buffer per 32-byte request doubled the Native
@@ -326,6 +326,53 @@ the same load, 12 000 handshakes, 3 940 samples):
   ms and 1750 per second (quinn 0.53 ms). What remains between Kuicksilver and quinn here is the Kotlin side (core,
   coroutines, collector, ~0.45 ms) and the OpenSSL side (~0.18 ms with the per-session context).
 
+
+## 0.3.0 work in progress
+
+Not comparable with the tables above: in-process microbenchmarks on a host loaded by other builds, to show what a change
+did, not how Kuicksilver compares. The rate against quinn (the handshake table above) is measured again on a quiet machine.
+
+### Handshakes (P.3, 2026-11-05)
+
+`HandshakeBenchmark` runs whole QUIC connections between two `ConnectionCore`s under virtual time (a full 1-RTT
+handshake with ksl crypto, the client's close, both cores closed); `EndpointHandshakeBenchmark` runs them through two
+endpoints over a `MemoryNetwork` (the runtimes, coroutines and timers of both sides included). Both measure client and
+server together in one process. Medians of three runs each, before and after interleaved, M4 Max with other builds
+running (load average 2–4); JVM: JMH, 1 fork, 3 × 2 s warm-up, 5 × 2 s; Native: kotlinx-benchmark, same iterations.
+
+| connections per second | before | after |
+|---|---|---|
+| `HandshakeBenchmark`, JVM | 1862 [1840–1887] | 2183 [2144–2226] (+17 %) |
+| `HandshakeBenchmark`, Native | 1727 [1723–1803] | 2027 [2024–2104] (+17 %) |
+| `EndpointHandshakeBenchmark`, JVM | 1576 [1440–1622] | 1857 [1728–1874] (+18 %) |
+| `EndpointHandshakeBenchmark`, Native | 1224 [1197–1342] | 1356 [1351–1490] (+11 %) |
+
+JVM heap allocated per connection (JMH `gc.alloc.rate.norm`): 170 → 108 KB (core), 201 → 136 KB (endpoints).
+Exception objects per connection (JFR `jdk.JavaExceptionThrow`): 6 → 2, the two close reasons the API hands out.
+
+Where the Native endpoint benchmark's busy CPU went (`sample`, 10 s, about 7 000 samples on the worker threads each time):
+
+| | before | after |
+|---|---|---|
+| the OpenSSL handshake (`ksl_drive`: key shares, the ECDSA signature, the key schedule) | 48 % | 53 % |
+| a new server `SSL_CTX` per connection (`KslContext.create`) | 9.1 % | 0 |
+| a new client `SSL_CTX` per connection | 6.3 % | 7.5 % |
+| packet keys (`key_build`: HKDF, cipher set-up) | 7.2 % | 5.3 % |
+| building exception objects | 0.3 % | 0.1 % |
+
+- **One `SSL_CTX` per server configuration.** The handshakes of a server configuration share one context per identity
+  snapshot (a `TlsIdentity.Reloadable` reload builds one more; the old one goes after its last connection). The client
+  still builds one per connection: it is a client-side cost here, and in the handshake table the load generator's.
+- **No exceptions on the normal path** but the close reasons: a runtime that finished no longer builds an unused
+  `ConnectionLost.Internal`, and a connection that never sent a DATAGRAM has no drainer job to cancel.
+- **Packet keys:** HKDF and the AEAD and header-protection ciphers are fetched from OpenSSL's provider store once per
+  process instead of per key (`tools/bench/ksl-ctx-bench.sh`: an Initial key 4.8 → 3.4 µs, the next key phase 4.0 → 2.7
+  µs).
+- **Allocations:** the CRYPTO streams' send rings and receive scratch grow on first use (a 4 KiB ring per CRYPTO level
+  and a 16 KiB scratch per connection before); `HandshakeAllocationTest` holds a connection under 125 000 bytes.
+- Reproduce: `./gradlew :kuicksilver-bench:jvmHandshakeBenchmark` (or `jvmBenchmarkJar`, then run the JMH jar it builds
+  with `HandshakeBenchmark -prof gc`) and `:kuicksilver-bench:macosArm64HandshakeBenchmark`, with `sample <pid> 10 1`
+  on `macosArm64Benchmark.kexe`.
 
 ## msquic's goodput outlier
 
@@ -341,8 +388,9 @@ msquic runs emulated here, and why its congestion controller keeps that rate was
 
 ## Still open
 
-- **CPU per handshake:** 0.79 ms (Native) and 0.95 ms (JVM) against quinn's 0.53 ms; the per-session `SSL_CTX` and the
-  Kotlin side are on the roadmap.
+- **CPU per handshake:** 0.79 ms (Native) and 0.95 ms (JVM) against quinn's 0.53 ms. 0.3.0 shares the server's `SSL_CTX`
+  ([0.3.0 work in progress](#030-work-in-progress)); the handshake table is to be measured again; the Kotlin side is on
+  the roadmap.
 - **The Kotlin/Native server** costs 28 % more CPU per GB than the JVM server (3.5 vs 2.7 s/GB).
 - **Acknowledgements:** fewer ACKs per byte would need the receiver side of the ack-frequency extension
   (draft-ietf-quic-ack-frequency).

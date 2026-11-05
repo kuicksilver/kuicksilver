@@ -17,8 +17,8 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
   `max_early_data = 0xffffffff`, the only value QUIC allows (RFC 9001 §4.6.1). Every ticket the connection issues then
   carries `early_data`. On a client it fails unless the resumed session's ticket allowed early data.
 - With `max_early_data > 0` and without `SSL_OP_NO_ANTI_REPLAY`, OpenSSL switches to stateful single-use tickets in its
-  server session cache. ksl keeps that cache off and creates an `SSL_CTX` per QUIC session, so this mode would reject
-  every early data. ksl therefore sets `SSL_OP_NO_ANTI_REPLAY`, as the ngtcp2 examples do.
+  server session cache. ksl keeps that cache off and creates an `SSL_CTX` per QUIC session (since 0.3.0 one per server
+  configuration and identity, shared by its sessions; the cache stays off), so this mode would reject every early data. ksl therefore sets `SSL_OP_NO_ANTI_REPLAY`, as the ngtcp2 examples do.
 - With stateless tickets, OpenSSL accepts early data only for the first PSK identity, only when the ticket has not
   expired, and only when the client's `obfuscated_ticket_age` lies within `TICKET_AGE_ALLOWANCE` (10 s) of the
   server's age. This is RFC 9846 §8.3 freshness.
