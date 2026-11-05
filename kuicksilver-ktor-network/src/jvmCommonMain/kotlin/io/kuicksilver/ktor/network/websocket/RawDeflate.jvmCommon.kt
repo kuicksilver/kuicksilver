@@ -50,11 +50,6 @@ internal actual class RawInflater actual constructor(
     // java.util.zip.Inflater does not expose zlib's data_type
     actual val atBlockBoundary: Boolean? get() = null
 
-    // no inflateGetDictionary in java.util.zip: MessageInflater keeps the output's last 32 KiB itself
-    actual val readsWindow: Boolean get() = false
-
-    actual fun window(): ByteArray = throw UnsupportedOperationException("java.util.zip.Inflater does not expose its window")
-
     actual fun setDictionary(
         bytes: ByteArray,
         offset: Int,

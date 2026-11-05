@@ -5,12 +5,10 @@
 package io.kuicksilver.ktor.network.websocket
 
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.UIntVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.free
-import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
@@ -35,7 +33,6 @@ import platform.zlib.deflateInit2
 import platform.zlib.deflateReset
 import platform.zlib.inflate
 import platform.zlib.inflateEnd
-import platform.zlib.inflateGetDictionary
 import platform.zlib.inflateInit2
 import platform.zlib.inflateReset
 import platform.zlib.inflateSetDictionary
@@ -208,20 +205,6 @@ internal actual class RawInflater actual constructor(
 
     // zlib sets data_type after every inflate(): + 128 when it waits for the next block's header (inflate.c)
     actual val atBlockBoundary: Boolean? get() = z.strm.data_type and 128 != 0
-
-    actual val readsWindow: Boolean get() = true
-
-    actual fun window(): ByteArray {
-        val buffer = ByteArray(32 * 1024)
-        val length =
-            memScoped {
-                val n = alloc<UIntVar>()
-                val rc = buffer.usePinned { inflateGetDictionary(z.strm.ptr, it.addressOf(0).reinterpret(), n.ptr) }
-                check(rc == Z_OK) { "inflateGetDictionary failed: $rc" }
-                n.value.toInt()
-            }
-        return buffer.copyOf(length)
-    }
 
     actual fun setDictionary(
         bytes: ByteArray,

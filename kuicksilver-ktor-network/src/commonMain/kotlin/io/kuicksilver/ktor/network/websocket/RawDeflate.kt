@@ -61,12 +61,6 @@ internal expect class RawInflater(
      */
     val atBlockBoundary: Boolean?
 
-    /** Whether [window] reads the LZ77 window from zlib (Kotlin/Native); the JDK's Inflater has no such call. */
-    val readsWindow: Boolean
-
-    /** The current LZ77 window, up to 32 KiB (zlib's inflateGetDictionary); only where [readsWindow]. */
-    fun window(): ByteArray
-
     /** Primes the window of a fresh stream with [length] bytes of [bytes] from [offset] (zlib's inflateSetDictionary). */
     fun setDictionary(
         bytes: ByteArray,

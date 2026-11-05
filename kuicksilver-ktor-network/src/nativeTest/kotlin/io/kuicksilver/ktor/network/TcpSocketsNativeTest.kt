@@ -425,6 +425,9 @@ class TcpSocketsNativeTest {
             }
         }
 
+    // TEST-NET-1 (RFC 5737): no host answers there
+    private val testNet1Discard = TcpAddress(byteArrayOf(192.toByte(), 0, 2, 1), 9)
+
     /**
      * A connect that stays undecided (no error, no peer: what is left when the event that carried the error was lost) fails
      * once its rechecks add up to the limit, instead of waiting for ever. A SYN to an address that never answers stays
@@ -435,13 +438,19 @@ class TcpSocketsNativeTest {
             val selector = SelectorManager(Dispatchers.Default)
             val deaf = NoConnectWakeUpSelector(selector)
             try {
+                // a VPN in TUN mode (and Docker Desktop behind it) completes any TCP handshake itself: then nothing stays undecided
+                val faked = withTimeoutOrNull(2.seconds) { runCatching { connectTcpAddressWith(selector, testNet1Discard, null) } }
+                if (faked?.isSuccess == true) {
+                    faked.getOrThrow().close()
+                    println("skipped: this network answers TCP connects to TEST-NET-1 (a VPN or proxy in TUN mode)")
+                    return@runBlocking
+                }
                 val failure =
                     withTimeoutOrNull(10.seconds) {
                         runCatching {
-                            // TEST-NET-1 (RFC 5737): no host answers there
                             connectTcpAddressWith(
                                 deaf,
-                                TcpAddress(byteArrayOf(192.toByte(), 0, 2, 1), 9),
+                                testNet1Discard,
                                 20.milliseconds,
                                 undecidedLimit = 100.milliseconds,
                             )
