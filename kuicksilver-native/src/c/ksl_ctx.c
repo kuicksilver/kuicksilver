@@ -63,7 +63,7 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
     else { for (size_t i = 0; i < c->ticket_key_count; i++) if (!memcmp(c->ticket_keys + i * 80, key_name, 16)) { k = c->ticket_keys + i * 80; current = i == 0; break; } if (!k) return 0; }
     int rc = enc ? 1 : (current ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
     if (enc) { memcpy(key_name, k, 16); if (RAND_bytes(iv, 16) != 1) rc = -1; }
-    if (rc > 0 && EVP_CipherInit_ex(ectx, EVP_aes_256_cbc(), NULL, k + 16, iv, enc) != 1) rc = -1;
+    if (rc > 0 && EVP_CipherInit_ex(ectx, ksl_cipher(KSL_CIPHER_AES_256_CBC, EVP_aes_256_cbc()), NULL, k + 16, iv, enc) != 1) rc = -1;
     if (rc > 0) {
         OSSL_PARAM p[3]; p[0] = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY, (void *)(k + 48), 32);
         p[1] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, "SHA256", 0); p[2] = OSSL_PARAM_construct_end();

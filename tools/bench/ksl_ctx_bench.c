@@ -85,5 +85,13 @@ int main(int argc, char **argv) {
     t0 = now_us();
     for (int i = 0; i < hn; i++) { ksl_ctx *s2 = server_ctx(); ok &= handshake(cc, s2); ksl_ctx_free(s2); }
     printf("  the same with a new server context each: %8.1f us%s\n", (now_us() - t0) / hn, ok ? "" : " (FAILED)");
+    /* packet keys: what a connection derives besides the handshake (Initial keys per side and direction, the next key phase) */
+    uint8_t dcid[8] = {0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08}; int kn = n * 5;
+    for (int i = 0; i < kn / 10; i++) ksl_key_free(ksl_key_initial(dcid, sizeof dcid, 0, KSL_DIR_WRITE, 1));   /* warm-up */
+    t0 = now_us(); for (int i = 0; i < kn; i++) ksl_key_free(ksl_key_initial(dcid, sizeof dcid, 0, KSL_DIR_WRITE, 1));
+    printf("Initial key (one direction, HKDF + AES): %8.2f us\n", (now_us() - t0) / kn);
+    ksl_key *base = ksl_key_initial(dcid, sizeof dcid, 0, KSL_DIR_WRITE, 1); t0 = now_us();
+    for (int i = 0; i < kn; i++) ksl_key_free(ksl_key_next(base));
+    printf("next key phase (ksl_key_next):           %8.2f us\n", (now_us() - t0) / kn); ksl_key_free(base);
     ksl_ctx_free(cc); ksl_ctx_free(sc); ksl_pkey_free(pkey); free(chain); free(ca); return ok ? 0 : 1;
 }

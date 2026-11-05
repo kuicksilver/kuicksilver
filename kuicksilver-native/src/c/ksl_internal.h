@@ -143,6 +143,16 @@ int ksl_aead_of_cipher(const SSL_CIPHER *c);
 static inline int ksl_span_fits(size_t off, size_t n, size_t len) { return off <= len && n <= len - off; }
 
 /* shared crypto (ksl_crypto.c) */
+/* ciphers fetched once per process (ksl_crypto.c): the fetched one, or `legacy` when the fetch failed */
+#define KSL_CIPHER_AES_128_GCM 0
+#define KSL_CIPHER_AES_256_GCM 1
+#define KSL_CIPHER_CHACHA20_POLY1305 2
+#define KSL_CIPHER_AES_128_ECB 3
+#define KSL_CIPHER_AES_256_ECB 4
+#define KSL_CIPHER_CHACHA20 5
+#define KSL_CIPHER_AES_256_CBC 6
+#define KSL_CIPHER_COUNT 7
+const EVP_CIPHER *ksl_cipher(int which, const EVP_CIPHER *legacy);
 int ksl_hkdf_extract(int hash, const uint8_t *salt, size_t sl, const uint8_t *ikm, size_t il, uint8_t *out, size_t olen);
 int ksl_parse_chain(const uint8_t *framed, size_t len, STACK_OF(X509) **out);
 #endif
