@@ -26,6 +26,7 @@ import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.WebTransportCloseInfo
 import io.kuicksilver.ktor.server.webTransport
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.KuicksilverLogger
@@ -452,17 +453,22 @@ class ClientKillSwitchTest {
             }
         }
 
-    /** `closeHttp3Connections()` asks the server to wind every WebTransport session down: WT_DRAIN_SESSION. */
+    /**
+     * `closeHttp3Connections()` asks the server to wind every WebTransport session down: WT_DRAIN_SESSION. The server here
+     * leaves the session open until the client ends it: one that closed it at the GOAWAY (which already asks for a drain,
+     * section 4.7) could do so before the client's WT_DRAIN_SESSION, which then has no session left to mark.
+     */
     @Test fun closeHttp3ConnectionsDrainsWebTransportSessions() =
         h3Test {
             val drained = CompletableDeferred<Unit>()
+            val serverEnd = CompletableDeferred<WebTransportCloseInfo>()
             val (server, port) =
                 testServer(configure = { webTransport = true }) {
                     routing {
                         webTransport("/wt") { session ->
                             session.drainRequested.first { it }
                             drained.complete(Unit)
-                            session.close(0, "drained")
+                            serverEnd.complete(session.closed.await())
                         }
                     }
                 }
@@ -473,7 +479,8 @@ class ClientKillSwitchTest {
                     c.closeHttp3Connections()
                     assertTrue(session.drainRequested.value, "the client's own session winds down too (section 4.7)")
                     withTimeoutOrNull(30.seconds) { drained.await() } ?: fail("the server saw no drain within 30 s")
-                    val info = withTimeoutOrNull(30.seconds) { session.closed.await() } ?: fail("the session did not end")
+                    session.close(0, "drained")
+                    val info = withTimeoutOrNull(30.seconds) { serverEnd.await() } ?: fail("the session did not end")
                     assertEquals("drained", info.reason)
                 }
             } finally {
