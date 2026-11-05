@@ -125,6 +125,8 @@ internal class H2Runtime(
     private val onChange: () -> Unit,
     /** A server's new request stream, its request already validated. */
     private val onRequest: ((StreamRt, io.kuicksilver.http2.message.H2Request) -> Unit)? = null,
+    /** A server's fields for the responses the runtime makes itself (the 431): the engine's `date`, say. */
+    private val ownResponseFields: () -> List<Pair<String, String>> = { emptyList() },
 ) {
     private val client = role == Role.CLIENT
     val lock = SpinLock()
@@ -361,7 +363,7 @@ internal class H2Runtime(
         if (e.tooLarge) {
             // RFC 9113 section 8.2 and the core's contract: a server answers 431
             withCore {
-                sendHeaders(s.id, listOf(":status" to "431"), endStream = true)
+                sendHeaders(s.id, listOf(":status" to "431") + ownResponseFields(), endStream = true)
                 release(s.id)
             }
             lock.withLock { streams.remove(s.id) }

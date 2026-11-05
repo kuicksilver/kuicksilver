@@ -37,6 +37,14 @@ public class H2ServerConnection private constructor(
     /** Requests delivered on [requests] and not released yet: 0 means the connection is idle. */
     public val openRequests: StateFlow<Int> get() = open
 
+    private val taken = MutableStateFlow(0L)
+
+    /**
+     * Requests delivered so far, counting up: unlike [openRequests], a request that came and went between two looks still
+     * shows (a StateFlow conflates 0, 1, 0 into 0).
+     */
+    public val requestsTaken: StateFlow<Long> get() = taken
+
     /** Ended: nothing more is sent or received. */
     public val isClosed: Boolean get() = rt.closed.isCompleted
 
@@ -80,7 +88,8 @@ public class H2ServerConnection private constructor(
         /**
          * Starts serving on [input] and [output] (our SETTINGS go out at once). [scope] owns the connection's coroutines;
          * [closeTransport] closes the socket under the channels once the connection is over or lost. [clock] gives
-         * monotonic nanoseconds.
+         * monotonic nanoseconds. [ownResponseFields] go on the responses the connection makes itself (the 431 for a field
+         * section above the limit): an origin server's `date` (RFC 9110 section 6.6.1), say.
          */
         public fun start(
             input: ByteReadChannel,
@@ -89,6 +98,7 @@ public class H2ServerConnection private constructor(
             scope: CoroutineScope,
             closeTransport: () -> Unit,
             clock: () -> Long = monotonicNanos(),
+            ownResponseFields: () -> List<Pair<String, String>> = { emptyList() },
         ): H2ServerConnection {
             val ch = Channel<H2ServerStream>(Channel.UNLIMITED) // bounded by our SETTINGS_MAX_CONCURRENT_STREAMS in the core
             val c = H2ServerConnection(ch)
@@ -109,9 +119,11 @@ public class H2ServerConnection private constructor(
                     onRequest = { s, r ->
                         val stream = H2ServerStream(c, c.rt, s, r.method, r.scheme, r.path ?: "", r.authority, r.fields, r.contentLength)
                         c.open.update { it + 1 }
+                        c.taken.update { it + 1 }
                         // a connection that ended meanwhile takes no request: the stream goes back at once
                         if (ch.trySend(stream).isFailure) stream.release()
                     },
+                    ownResponseFields = ownResponseFields,
                 )
             c.rt = rt
             rt.start()
