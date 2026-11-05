@@ -772,6 +772,21 @@ internal class H2ConnectionCore(
         return n
     }
 
+    /**
+     * Ends our side of [streamId] with an empty DATA frame carrying END_STREAM, for a body whose end is known only after its
+     * last bytes went out; an empty frame needs no window (section 6.9.1), so a body that used the window up exactly still
+     * ends. Returns false while a DATA frame of the stream waits for [poll] (one at a time): call again once [poll] wrote it.
+     */
+    fun endStream(streamId: Int): Boolean {
+        val s = streams[streamId] ?: throw IllegalStateException("stream $streamId is closed")
+        check(canSend(s)) { "stream $streamId cannot send" }
+        if (s.dataQueued) return false
+        enqueue(s, OutItem.Data(FrameEncoder.data(streamId, EMPTY, 0, 0, true), 0))
+        s.dataQueued = true
+        localEnded(s)
+        return true
+    }
+
     /** The application read [n] bytes of [streamId]: credit goes back to the peer (WINDOW_UPDATE) when due. */
     fun consumed(
         streamId: Int,
@@ -1252,5 +1267,6 @@ internal class H2ConnectionCore(
 
     private companion object {
         const val MAX_PINGS_OUT = 16
+        val EMPTY = ByteArray(0)
     }
 }

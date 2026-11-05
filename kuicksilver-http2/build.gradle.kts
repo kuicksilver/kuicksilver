@@ -11,6 +11,9 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(project(":kuicksilver-native"))
+            // the coroutine runtime (io.kuicksilver.http2.runtime) over the engines' ktor-io byte channels; the sans-IO core needs neither
+            api(libs.ktor.io)
+            api(libs.kotlinx.coroutines.core)
         }
         jvmTest.dependencies {
             implementation(kotlin("test-junit5"))

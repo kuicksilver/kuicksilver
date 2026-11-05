@@ -48,3 +48,29 @@ public final class io/kuicksilver/http2/Http2Settings {
 	public fun toString ()Ljava/lang/String;
 }
 
+public abstract class io/kuicksilver/http2/runtime/Http2Exception : java/io/IOException {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public abstract fun getNotProcessed ()Z
+}
+
+public final class io/kuicksilver/http2/runtime/Http2Exception$ConnectionClosed : io/kuicksilver/http2/runtime/Http2Exception {
+	public final fun getByPeer ()Z
+	public final fun getCode ()Lio/kuicksilver/http2/Http2ErrorCode;
+	public fun getNotProcessed ()Z
+}
+
+public final class io/kuicksilver/http2/runtime/Http2Exception$FieldSectionTooLarge : io/kuicksilver/http2/runtime/Http2Exception {
+	public fun getNotProcessed ()Z
+}
+
+public final class io/kuicksilver/http2/runtime/Http2Exception$MalformedMessage : io/kuicksilver/http2/runtime/Http2Exception {
+	public fun getNotProcessed ()Z
+}
+
+public final class io/kuicksilver/http2/runtime/Http2Exception$StreamReset : io/kuicksilver/http2/runtime/Http2Exception {
+	public final fun getByPeer ()Z
+	public final fun getCode ()Lio/kuicksilver/http2/Http2ErrorCode;
+	public fun getNotProcessed ()Z
+	public final fun getStreamId ()I
+}
+
