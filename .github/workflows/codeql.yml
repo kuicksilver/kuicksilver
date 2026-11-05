@@ -7,7 +7,7 @@
 name: codeql
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
     branches: [main, 'release/**']
   schedule:
@@ -48,9 +48,12 @@ jobs:
           queries: security-extended
       - name: 'codeql: compile the JVM sources (traced)'
         if: matrix.build-mode == 'manual'
-        # CodeQL traces the Kotlin compiler: no daemon, in-process compilation, nothing from a build cache or an earlier run
+        # CodeQL traces the Kotlin compiler: no daemon, in-process compilation, nothing from the build cache (the fresh
+        # checkout has no earlier outputs, so every compile task runs). The task graph of compileKotlinJvm holds no OpenSSL
+        # task once buildJniHost (the host JNI library, and the OpenSSL fetch and build under it) is excluded: the jars of the
+        # lower modules are then built without a native library, which compiling does not need.
         run: |
-          ./gradlew --no-daemon --no-build-cache --no-configuration-cache --rerun-tasks --max-workers=2 \
+          ./gradlew --no-daemon --no-build-cache --no-configuration-cache --max-workers=2 \
             -Pkotlin.incremental=false -Pkotlin.compiler.execution.strategy=in-process \
             -x :kuicksilver-native:buildJniHost compileKotlinJvm
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
