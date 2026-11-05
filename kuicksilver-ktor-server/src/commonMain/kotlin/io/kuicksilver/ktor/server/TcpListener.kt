@@ -342,14 +342,16 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     )
                                 }
                                 events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
-                                val connection =
-                                    H1Connection(
-                                        sock.openReadChannel(),
-                                        sock.openWriteChannel(),
-                                        sock.remoteAddress.toNetworkAddress(),
-                                        sock.localAddress.toNetworkAddress(),
-                                    )
+                                var connection: H1Connection? = null
                                 try {
+                                    // inside the try: a socket whose channels cannot be opened is still closed below
+                                    connection =
+                                        H1Connection(
+                                            sock.openReadChannel(),
+                                            sock.openWriteChannel(),
+                                            sock.remoteAddress.toNetworkAddress(),
+                                            sock.localAddress.toNetworkAddress(),
+                                        )
                                     startH1Pipeline(
                                         connection,
                                         timeout,
@@ -360,7 +362,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
                                     // a client cut for not reading has had the stall deadline already: no second one for the close
-                                    closeWithin(sock, { sock.abort() }, if (connection.clientStoppedReading) Duration.ZERO else sendTimeout)
+                                    val stall = if (connection?.clientStoppedReading == true) Duration.ZERO else sendTimeout
+                                    closeWithin(sock, { sock.abort() }, stall)
                                     events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_1_1, remote) }
                                 }
                             }
