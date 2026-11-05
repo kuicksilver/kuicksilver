@@ -223,12 +223,49 @@ class PathTest {
     }
 
     /**
-     * The client's datagrams start arriving at another of the server's addresses, from the same client address: a new 4-tuple, so a
-     * new path that is validated before the server moves there (RFC 9000 sections 9.3 and 8.2), with fresh congestion state (section
-     * 9.4: more than the peer's port changed), reported as a migration, not a NAT rebinding; from then on the server sends from the
-     * new address.
+     * Only a client migrates (RFC 9000 section 9), and a client discards packets from a server address it did not send to (section
+     * 5.2.1), so datagrams of the same client address reaching another of the server's addresses are no reason to answer from there:
+     * an off-path attacker's copy sent to that address would otherwise move the server to an address the client drops, stalling the
+     * connection. The local end of a path is fixed when the path is made (as quinn-proto's `FourTuple::local_ip` and quic-go's
+     * `sendConn` packet info): such datagrams are processed on the existing path and every answer keeps leaving from its address,
+     * whether migration is allowed or not.
      */
-    @Test fun aNewLocalAddressIsANewPath() {
+    @Test fun negative_datagramsToAnotherLocalAddressDoNotMoveTheServer() {
+        for (allow in listOf(true, false)) {
+            val a = InetSocketAddress("192.0.2.10", 443)
+            val b = InetSocketAddress("192.0.2.11", 443)
+            val p = EndpointPair(serverQuic = io.kuicksilver.quic.quicConfig { allowMigration = allow })
+            try {
+                p.serverLocal = a
+                val c = p.connect()
+                assertTrue(p.confirmed(c))
+                p.settle()
+                val s = p.server()
+                val sentBefore = p.serverSentLocal.size
+                p.serverLocal = b // the client's own packets, or an attacker's copies of them, now reach address b
+                send(c, 3000)
+                p.settle(10)
+                assertTrue(p.changes(s).isEmpty(), "allowMigration=$allow: no path change: ${p.changes(s).map { it.reason }}")
+                assertEquals(1, s.paths.all.size, "allowMigration=$allow: no second path")
+                assertEquals(a, s.paths.active.local)
+                val after = p.serverSentLocal.drop(sentBefore)
+                assertTrue(
+                    after.isNotEmpty() && after.all { it == a },
+                    "allowMigration=$allow: every answer still from $a: ${after.toSet()}",
+                )
+                assertTrue(s.stats.bytesReceived > 3000, "the data was processed on the existing path")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /**
+     * A real move of the client (here a NAT rebinding: a new port) opens a path whose local end is the address its first datagram
+     * reached; when that is another address of ours, the path never gets the connection ID the old address used (RFC 9000 section
+     * 9.5: "MUST NOT reuse a connection ID when sending from more than one local address").
+     */
+    @Test fun aNewClientAddressTakesTheLocalAddressItsDatagramReached() {
         val a = InetSocketAddress("192.0.2.10", 443)
         val b = InetSocketAddress("192.0.2.11", 443)
         val p = EndpointPair()
@@ -238,18 +275,16 @@ class PathTest {
             assertTrue(p.confirmed(c))
             p.settle()
             val s = p.server()
-            val sentBefore = p.serverSentLocal.size
+            val sentBefore = p.serverSent.size
             p.serverLocal = b
+            p.clientSource = InetSocketAddress("10.0.0.1", 40001)
+            p.clientListens += p.clientSource
             send(c)
             p.settle(10)
-            assertEquals(listOf(PathChangeReason.PeerMigration), p.changes(s).map { it.reason })
+            assertEquals(listOf(PathChangeReason.NatRebinding), p.changes(s).map { it.reason })
+            assertEquals(p.clientSource, s.paths.active.remote)
             assertEquals(b, s.paths.active.local)
-            assertEquals(p.clientAddr, s.paths.active.remote)
-            assertEquals(PathState.Validated, s.paths.active.state)
-            val after = p.serverSentLocal.drop(sentBefore)
-            assertTrue(b in after, "the server answered from the new address")
-            assertEquals(b, after.last(), "and stays there")
-            // section 9.5: "MUST NOT reuse a connection ID when sending from more than one local address"
+            assertEquals(b, p.serverSentLocal.last())
             val len = c.localCid.length
 
             fun dcid(i: Int) =
@@ -257,17 +292,11 @@ class PathTest {
                     .second
                     .copyOfRange(1, 1 + len)
                     .toList()
-            val fromA =
-                p.serverSentLocal.indices
-                    .filter {
-                        p.serverSentLocal[it] == a && p.serverSent[it].second[0].toInt() and 0x80 == 0
-                    }.map { dcid(it) }
-                    .toSet()
-            val fromB =
-                p.serverSentLocal.indices
-                    .filter { p.serverSentLocal[it] == b }
-                    .map { dcid(it) }
-                    .toSet()
+
+            fun shortFrom(l: InetSocketAddress) =
+                p.serverSentLocal.indices.filter { p.serverSentLocal[it] == l && p.serverSent[it].second[0].toInt() and 0x80 == 0 }
+            val fromA = shortFrom(a).map { dcid(it) }.toSet()
+            val fromB = shortFrom(b).filter { it >= sentBefore }.map { dcid(it) }.toSet()
             assertTrue(fromA.isNotEmpty() && fromB.isNotEmpty())
             assertTrue(fromA.intersect(fromB).isEmpty(), "no connection ID from both local addresses")
         } finally {

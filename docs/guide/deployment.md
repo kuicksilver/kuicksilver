@@ -216,8 +216,9 @@ address the client used. With the default `host = "0.0.0.0"` (or `::`) the engin
 Android, macOS, iOS, Windows; 0.3.0) learns the destination of every datagram (`IP_PKTINFO` / `IPV6_PKTINFO`) and
 sends that connection's packets, and any stateless answer to it, from that address. This covers a host with several
 addresses, a secondary IP, a floating or virtual IP (keepalived) and a VIP on `lo` for IPVS direct routing or similar
-direct server return. A client whose packets start to arrive at another of the server's addresses is treated as a new
-path and validated first.
+direct server return. A connection keeps the server address its client first reached: packets of the same client that
+later arrive at another of the server's addresses are processed, and the answers still leave from the first one (only a
+client migrates, and it does so by changing its own address).
 
 Before 0.3.0, and still with the portable socket (`IoPreference.Portable`, the JVM without the native library, a
 Kotlin/Native target without `ksl_udp`; the log says "using the portable socket" when it falls back), the kernel picks

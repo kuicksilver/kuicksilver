@@ -850,7 +850,7 @@ public class ConnectionCore internal constructor(
         if (state == ConnectionState.Closing &&
             closeFrame?.let { !it.application && it.code == TransportError.AEAD_LIMIT_REACHED } == true
         ) {
-            receiver.countOnly(length, from, socket, local)
+            receiver.countOnly(length, from, socket)
         } else {
             receiver.onDatagram(data, length, from, socket, ecn, now, local)
         }

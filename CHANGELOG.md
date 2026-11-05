@@ -421,9 +421,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   so every answer left from the address the route back to the client picks: on a host with several addresses, a floating
   or virtual IP (keepalived) or a VIP on `lo` for IPVS direct routing and other direct server return, the client dropped
   the answers as a stranger's (RFC 9000 section 9) and HTTP/3 never connected while TCP worked. The socket now reads each
-  datagram's destination and sends from it; a server path includes that local address (a datagram to another of the
-  server's addresses opens a new path, validated before the server moves there, with a connection ID not used from the old
-  address, section 9.5), and stateless answers (Version Negotiation, Retry, Stateless Reset, refusals) leave from it too.
+  datagram's destination and sends from it: a server path takes the address its first datagram reached and keeps it (only a
+  client migrates; datagrams of the same client to another server address, or an attacker's copies of them, change
+  nothing), a path to a new client address takes the address its datagram reached and never the old address's connection
+  ID (section 9.5), and stateless answers (Version Negotiation, Retry, Stateless Reset, refusals) leave from the address of
+  the datagram they answer. Multicast, broadcast (subnet-directed too) and IPv6 link-local destinations are not answered
+  from.
   New experimental API: `PacketBatch.localAddress` / `setLocalAddress`, `EndpointCore.handleDatagram(…, local)`,
   `ConnectionCore.handleDatagram(…, local)`; ksl (additive in ABI 7): `KSL_UDP_PKTINFO`, `ksl_udp_send_src`,
   `ksl_udp_recv_dst`. The portable sockets (NIO on the JVM, ktor-network on Kotlin/Native) cannot do this: bind them to

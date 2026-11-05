@@ -638,18 +638,23 @@ public class EndpointCore internal constructor(
         }
         var created = 0
         var n = 0
-        while (n < max) {
-            val e = q.poll() ?: break
-            n++
-            try {
-                rxLocal = e.local
-                if (admitOne(e, now, inflight, handshakeBuffer)) {
-                    created++
-                    inflight++
+        val saved = rxLocal // the datagram being handled, if any, keeps its own local address after the drain
+        try {
+            while (n < max) {
+                val e = q.poll() ?: break
+                n++
+                try {
+                    rxLocal = e.local
+                    if (admitOne(e, now, inflight, handshakeBuffer)) {
+                        created++
+                        inflight++
+                    }
+                } finally {
+                    q.recycle(e)
                 }
-            } finally {
-                q.recycle(e)
             }
+        } finally {
+            rxLocal = saved
         }
         return created
     }

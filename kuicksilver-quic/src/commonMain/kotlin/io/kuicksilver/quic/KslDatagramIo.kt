@@ -154,7 +154,7 @@ internal class KslDatagramIo private constructor(
         enc.copyInto(out, off)
     }
 
-    // our addresses (destinations on receive, sources on send): a few per host, 8 entries; the same bytes answer the same instance
+    // our addresses the datagrams arrived at (receive side only): a few per host, 8 entries; the same bytes answer the same instance
     private val localKeys = ByteArray(LOCALS * KslUdpSocket.ADDR_LEN)
     private val localsSeen = arrayOfNulls<InetSocketAddress>(LOCALS)
     private var localNext = 0
@@ -174,22 +174,32 @@ internal class KslDatagramIo private constructor(
         return inetOf(a, off).also { localsSeen[slot] = it }
     }
 
-    /** [a] (an instance [localOf] made, or any address) as a source entry at [off]; family 0 for null or a host name. */
+    // sources on send (send side only; the receiver's cache above is another thread's): the last 4 instances by identity, as destKeys
+    private val srcKeys = arrayOfNulls<InetSocketAddress>(4)
+    private val srcBytes = ByteArray(4 * KslUdpSocket.ADDR_LEN)
+    private var srcNext = 0
+
+    /** [a] as a source entry at [off]; family 0 for null or a host name. */
     private fun encodeLocalInto(
         a: InetSocketAddress?,
         out: ByteArray,
         off: Int,
     ) {
         if (a != null) {
-            for (k in 0 until LOCALS) {
-                if (localsSeen[k] === a) {
-                    localKeys.copyInto(out, off, k * KslUdpSocket.ADDR_LEN, (k + 1) * KslUdpSocket.ADDR_LEN)
+            for (k in 0 until 4) {
+                if (srcKeys[k] === a) {
+                    srcBytes.copyInto(out, off, k * KslUdpSocket.ADDR_LEN, (k + 1) * KslUdpSocket.ADDR_LEN)
                     return
                 }
             }
             val ip = a.ipBytesNoDns()
             if (ip != null) {
-                KslUdpSocket.encodeAddress(ip, a.port).copyInto(out, off)
+                val enc = KslUdpSocket.encodeAddress(ip, a.port)
+                val slot = srcNext
+                srcNext = (srcNext + 1) % 4
+                enc.copyInto(srcBytes, slot * KslUdpSocket.ADDR_LEN)
+                srcKeys[slot] = a
+                enc.copyInto(out, off)
                 return
             }
         }

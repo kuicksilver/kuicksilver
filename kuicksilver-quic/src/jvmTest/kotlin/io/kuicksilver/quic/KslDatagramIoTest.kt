@@ -212,8 +212,8 @@ class KslDatagramIoTest {
             assumeTrue(second != null, "needs a second local IPv4 address (127.0.0.2 not bindable and no up interface address)")
             val w = assertNotNull(KslDatagramIo.open(InetSocketAddress("0.0.0.0", 0)))
             val c4 = assertNotNull(KslDatagramIo.open(lo))
-            // null: no IPv6 loopback, that case is skipped
             val c6 = runCatching { KslDatagramIo.open(InetSocketAddress("::1", 0)) }.getOrNull()
+            if (c6 == null) println("wildcardSocketReportsTheDestinationAndRepliesFromIt: SKIP ::1 case (no IPv6 loopback)")
             val out = PacketBatch(1)
             val inb = PacketBatch(1)
             try {

@@ -198,6 +198,12 @@ internal fun ConnectionCore.migrationAllowedFrom(from: InetSocketAddress): Boole
     return !special || AddressClass.isLoopback(path.remote) || AddressClass.isLinkLocal(path.remote)
 }
 
+/** Both local ends are the same IP, or both unknown (the socket does not report destinations). */
+internal fun sameLocal(
+    a: InetSocketAddress?,
+    b: InetSocketAddress?,
+): Boolean = a === b || (a != null && b != null && AddressClass.ipBytes(a).contentEquals(AddressClass.ipBytes(b)))
+
 internal fun ConnectionCore.sameIp(
     a: InetSocketAddress,
     b: InetSocketAddress,
@@ -237,10 +243,8 @@ internal fun ConnectionCore.onPathPacket(
     datagramBytes: Int,
 ) {
     val active = paths.active
-    val local = serverLocal(receiver.local) // a path is the 4-tuple (RFC 9000 section 9): the address the client sent to counts too
     if (active.isRemote(from) &&
-        socket == active.socket &&
-        active.isLocal(local)
+        socket == active.socket
     ) {
         if (nonProbing && pn > largestNonProbingPn) largestNonProbingPn = pn
         if (rxDcidSeq >= 0) activeDcidSeq = rxDcidSeq
@@ -248,7 +252,7 @@ internal fun ConnectionCore.onPathPacket(
         return
     }
     if (role == TlsRole.Client) return // servers do not migrate (preferred_address is not supported)
-    var p = paths.byRemote(socket, from, local)
+    var p = paths.byRemote(socket, from)
     if (p != null && p.handshakeCandidate) {
         // the handshake-time candidate's address: the server does not move there on a packet's source (an off-path copy carries the
         // same packets, RFC 9000 section 9.3.3), only once the address answers its own PATH_CHALLENGE (adoptHandshakeCandidate)
@@ -269,16 +273,11 @@ internal fun ConnectionCore.onPathPacket(
             now = now,
             abandonValidatingHeardBefore = if (migrating) TimeMark.NEVER else now - idle,
         ) ?: return
-        p.local = local
+        p.local = serverLocal(receiver.local) // a new client address: our end is the address its datagram reached
         p.amplification.onReceived(datagramBytes)
         // NAT rebinding keeps the congestion state (same network); the old address probes on a controller of its own. A move to our
-        // preferred address, or to another address of ours on the same socket, changes the server's end of the path: fresh congestion
-        // state and RTT (RFC 9000 section 9.4)
-        if (socket == active.socket && sameIp(from, active.remote) &&
-            active.isLocal(local)
-        ) {
-            p.inheritFrom(active, config.congestionController())
-        }
+        // preferred address changes the server's end of the path: fresh congestion state and RTT (RFC 9000 section 9.4)
+        if (socket == active.socket && sameIp(from, active.remote)) p.inheritFrom(active, config.congestionController())
         initServerPath(p, active)
         startValidation(p)
     } else if (p.state == PathState.Unknown || (p.state == PathState.Failed && p.standbyUntil <= now)) {
@@ -300,7 +299,7 @@ internal fun ConnectionCore.onPathPacket(
         ) {
             switchPath(
                 p,
-                if (sameIp(from, active.remote) && active.isLocal(local)) PathChangeReason.NatRebinding else PathChangeReason.PeerMigration,
+                if (sameIp(from, active.remote)) PathChangeReason.NatRebinding else PathChangeReason.PeerMigration,
                 challengeOld = true,
             )
         }
@@ -529,8 +528,9 @@ internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
         return it.cid
     }
     // the current ID only toward a new client address from the same local address (a NAT rebinding the client did not choose, section
-    // 9.5 MAY); "MUST NOT reuse a connection ID when sending from more than one local address": another local address of ours waits
-    return if (role == TlsRole.Server && p.socket == paths.active.socket && paths.active.isLocal(p.local) &&
+    // 9.5 MAY); "MUST NOT reuse a connection ID when sending from more than one local address": a path that took another address of
+    // ours (its first datagram reached it) waits for a spare one
+    return if (role == TlsRole.Server && p.socket == paths.active.socket && sameLocal(p.local, paths.active.local) &&
         !p.peerChangedDcid
     ) {
         remoteCid
@@ -590,8 +590,7 @@ internal fun ConnectionCore.onPathChallenge(
     from: InetSocketAddress,
     datagramBytes: Int,
 ) {
-    val local = serverLocal(receiver.local)
-    var p = paths.byRemote(socket, from, local)
+    var p = paths.byRemote(socket, from)
     if (p ==
         null
     ) {
@@ -602,7 +601,7 @@ internal fun ConnectionCore.onPathChallenge(
             glitch(0x1a)
             return
         }
-        p.local = local
+        p.local = serverLocal(receiver.local)
         p.amplification.onReceived(datagramBytes)
         if (role == TlsRole.Server) initServerPath(p, paths.active)
     }

@@ -98,11 +98,10 @@ internal class PacketReceiver(
         length: Int,
         from: InetSocketAddress,
         socket: PathId,
-        local: InetSocketAddress? = null,
     ) {
         c.bytesReceived += length
         c.paths
-            .byRemote(socket, from, c.serverLocal(local))
+            .byRemote(socket, from)
             ?.amplification
             ?.onReceived(length) // per-path bytes; RFC 9000 sections 8.1 and 9.3.1: an unvalidated path has a 3x budget
     }
@@ -126,7 +125,7 @@ internal class PacketReceiver(
             c.datagramsDropped++
             return
         } // RFC 9000 section 9: a client discards packets from an unknown server address
-        countOnly(length, from, socket, local)
+        countOnly(length, from, socket)
         datagramEcn = ecn // a socket that cannot read marks delivers NotEct itself (ADR-0006)
         var off = 0
         // the first packet of the datagram: FIRST_NONE until one parsed, then whether it was handled (processed, held, or an
