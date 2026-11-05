@@ -25,7 +25,8 @@ internal class H2Conn(
     createdAt: Long,
 ) : PooledConnection(route, createdAt) {
     /** REFUSED_STREAM answers so far: the second retires the connection (OkHttp's `RealConnection.trackFailure`). */
-    @kotlin.concurrent.Volatile var refusedStreams: Int = 0
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    val refusedStreams: kotlin.concurrent.atomics.AtomicInt = kotlin.concurrent.atomics.AtomicInt(0)
 
     override val isOpen: Boolean get() = client.isUsable
 

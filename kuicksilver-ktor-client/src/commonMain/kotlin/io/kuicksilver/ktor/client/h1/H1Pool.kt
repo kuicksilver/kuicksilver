@@ -221,7 +221,15 @@ internal class H1Pool(
         key: String,
     ): Boolean =
         config.http2.enabled && data.url.protocol.isSecure() && tls13Only &&
-            !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !h2Refused.isRefused(key)
+            !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !upgrades(data.body) && !h2Refused.isRefused(key)
+
+    /** A body that takes over the connection (`Upgrade`): HTTP/2 has no such thing (RFC 9113 section 8.6), so HTTP/1.1. */
+    private fun upgrades(body: OutgoingContent): Boolean =
+        when (body) {
+            is OutgoingContent.ProtocolUpgrade -> true
+            is OutgoingContent.ContentWrapper -> upgrades(body.delegate())
+            else -> false
+        }
 
     /**
      * Whether the engine's TLS is TLS 1.3 only (the default). RFC 9113 section 9.2.1 makes a TLS 1.2 renegotiation a

@@ -580,6 +580,32 @@ class ClientH2Test {
             }
         }
 
+    /** A request whose body upgrades the connection (not a WebSocket) needs HTTP/1.1: it offers only http/1.1 (RFC 9113 section 8.6). */
+    @Test fun protocolUpgradeBodyGoesOverH1Only() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }, h1 = { _, input, _ -> readRequest(input) }) { port, log ->
+                testClient().use { c ->
+                    runCatching {
+                        withTimeout(10.seconds) {
+                            c.post("https://127.0.0.1:$port/upgrade") {
+                                setBody(
+                                    object : io.ktor.http.content.OutgoingContent.ProtocolUpgrade() {
+                                        override suspend fun upgrade(
+                                            input: io.ktor.utils.io.ByteReadChannel,
+                                            output: io.ktor.utils.io.ByteWriteChannel,
+                                            engineContext: kotlin.coroutines.CoroutineContext,
+                                            userContext: kotlin.coroutines.CoroutineContext,
+                                        ): kotlinx.coroutines.Job = kotlinx.coroutines.Job().also { it.complete() }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    assertEquals(listOf<String?>("http/1.1"), log.protocols)
+                }
+            }
+        }
+
     @Test fun throughConnectProxyIsH2() =
         clientTest {
             tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, _ ->

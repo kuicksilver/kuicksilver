@@ -132,7 +132,10 @@ internal class H2Runtime(
     private val kick = Channel<Unit>(Channel.CONFLATED)
     private val timerKick = Channel<Unit>(Channel.CONFLATED)
 
-    /** Counts what the writer handed to the transport (an `endStream` that had to wait for its frame's predecessor). */
+    /**
+     * Counts what the writer handed to the transport, and failed streams: an `endStream` that waits for its frame's
+     * predecessor wakes on either (a stream reset meanwhile would leave the writer nothing to write).
+     */
     private val written = MutableStateFlow(0L)
 
     private val job = SupervisorJob(parent.coroutineContext[Job])
@@ -497,6 +500,7 @@ internal class H2Runtime(
         s.answered.completeExceptionally(cause)
         s.readable.trySend(Unit)
         s.writable.trySend(Unit)
+        written.update { it + 1 } // a sender waiting to end its body looks again (and finds the failure)
     }
 
     // ---- loops ----

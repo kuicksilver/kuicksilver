@@ -198,8 +198,11 @@ internal suspend fun h2Exchange(
             val mayRepeat = onStream || e.notProcessed || (data.method.isIdempotent() && body.isReplayable())
             throw H2Http11Required(e, consumed, mayRepeat)
         }
-        // REFUSED_STREAM twice on one connection retires it (OkHttp RealConnection.trackFailure)
-        if (e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.REFUSED_STREAM && ++conn.refusedStreams >= 2) {
+        // REFUSED_STREAM twice on one connection retires it (OkHttp RealConnection.trackFailure); the streams a GOAWAY
+        // refuses are not counted (the connection is going away already, and one GOAWAY may refuse many)
+        if (e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.REFUSED_STREAM && conn.client.goAwayCode == null &&
+            conn.refusedStreams.addAndFetch(1) >= 2
+        ) {
             conn.client.shutdown()
         }
         if (e.notProcessed) throw H2NotProcessed(e, consumed)
