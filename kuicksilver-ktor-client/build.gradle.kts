@@ -1,7 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Ktor client engine: HttpClient(Kuicksilver) — HTTP/3 and HTTP/1.1 over TLS 1.3, Alt-Svc discovery (docs/guide/ktor.md).
+// Ktor client engine: HttpClient(Kuicksilver) — HTTP/3, HTTP/2 and HTTP/1.1 over TLS 1.3, Alt-Svc discovery (docs/guide/ktor.md).
 import java.util.concurrent.TimeUnit
 
 plugins {
@@ -18,6 +18,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(project(":kuicksilver-http3"))
+            api(project(":kuicksilver-http2"))
             api(project(":kuicksilver-ktor-network"))
             api(libs.ktor.client.core)
             implementation(libs.ktor.http.cio)
@@ -30,6 +31,7 @@ kotlin {
         }
         jvmTest.dependencies {
             implementation(kotlin("test-junit5"))
+            implementation(libs.netty.codec.http2) // H2InteropTest: an HTTP/2 server that is not ours
         }
     }
 }

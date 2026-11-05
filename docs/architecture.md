@@ -149,12 +149,18 @@ with WINDOW_UPDATE only after the application consumed the data and window auto-
 per-connection limit against floods (`H2Limits.kt`: CONTINUATION frames and bytes, queued control frames, empty DATA
 frames, a glitch budget, a server's budget for the client's stream resets). Field lists are HPACK-encoded when `poll`
 writes them, so the encoder follows the wire order. Bytes go in through `receive` and out through `poll`; time is a
-parameter. The public API is `Http2Settings` and `Http2ErrorCode`.
+parameter. `message` holds the RFC 9113 section 8 field and message rules (a port of `kuicksilver-http3`'s, checked
+against the shared `tools/vectors/http-fields.json`). `runtime` (not sans-IO) drives one core per connection over ktor-io
+byte channels for the engines: a reader, a writer and a timer coroutine, every core call under one lock, events
+dispatched in order; response bodies credit the peer as the application reads them. The public API is `Http2Settings`,
+`Http2ErrorCode` and `Http2Exception`; the runtime is `@InternalKuicksilverApi`.
 
 ### `kuicksilver-ktor-client`, `kuicksilver-ktor-server`
 
 The Ktor engines (`io.kuicksilver.ktor.client`, `io.kuicksilver.ktor.server`). The client runs HTTP/1.1 over
-`TlsConnection` (`h1`: a vendored CIO parser, a connection pool) and HTTP/3 over `Http3Endpoint` (`h3`: `H3Pool`), with
+`TlsConnection` (`h1`: a vendored CIO parser, a connection pool), HTTP/2 on the same TCP path when the server picks
+`h2` in ALPN (`h2`: `H2Pool`, one multiplexed connection per route holding one slot of the TCP pool, and `H2Exchange`
+over the `kuicksilver-http2` runtime) and HTTP/3 over `Http3Endpoint` (`h3`: `H3Pool`), with
 `Http3DiscoveryMode` (`Auto` learns `Alt-Svc`, `Preferred`, `H3Only`, `H1Only`), a connection race (`ProtocolRace`), a
 broken-alternative memory (`BrokenAltSvc`) and fallback rules that never replay a consumed body. The server serves
 HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port (`KuicksilverApplicationEngine` starts and stops the

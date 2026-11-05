@@ -13,6 +13,7 @@ kover = "0.9.11"
 kotlinter = "5.7.0"
 maven-publish = "0.37.0"
 jazzer = "0.30.0"
+netty = "4.1.110.Final"
 kotlinx-benchmark = "0.5.0"
 cyclonedx-core-java = "13.2.0"
 
@@ -36,6 +37,8 @@ ktor-server-hsts = { module = "io.ktor:ktor-server-hsts", version.ref = "ktor" }
 ktor-server-forwarded-header = { module = "io.ktor:ktor-server-forwarded-header", version.ref = "ktor" }
 ktor-server-auto-head-response = { module = "io.ktor:ktor-server-auto-head-response", version.ref = "ktor" }
 jazzer-junit = { module = "com.code-intelligence:jazzer-junit", version.ref = "jazzer" }
+# test-only: an independent HTTP/2 server (Netty's codec over JDK TLS with ALPN) for the client engine's H2InteropTest
+netty-codec-http2 = { module = "io.netty:netty-codec-http2", version.ref = "netty" }
 # plugin artifacts for build-logic
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }

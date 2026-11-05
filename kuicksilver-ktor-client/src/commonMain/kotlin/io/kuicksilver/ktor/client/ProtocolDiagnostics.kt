@@ -35,7 +35,7 @@ import kotlin.time.Duration.Companion.nanoseconds
  */
 @ExperimentalKuicksilverApi
 public class ProtocolDiagnostics internal constructor() {
-    /** The protocol the response came over: `HTTP_3_0` or `HTTP_1_1`. */
+    /** The protocol the response came over: `HTTP_3_0`, `HTTP_2_0` or `HTTP_1_1`. */
     public var protocol: HttpProtocolVersion = HttpProtocolVersion.HTTP_1_1
         internal set
 
@@ -45,7 +45,9 @@ public class ProtocolDiagnostics internal constructor() {
 
     /**
      * Why the call did not go over HTTP/3; null when it did. See [FallbackReason] for what each value means and what to
-     * check.
+     * check. A call over HTTP/2 has the reason HTTP/3 was not used, as one over HTTP/1.1. The one exception is
+     * [FallbackReason.H2Refused]: the call went over HTTP/1.1 because the server refused HTTP/2, and the reason HTTP/3 was
+     * not used appears in the log line as `h3Fallback=`.
      */
     public var fallback: FallbackReason? = null
         internal set
@@ -68,7 +70,7 @@ public class ProtocolDiagnostics internal constructor() {
     public var alternativeSource: AlternativeSource? = null
         internal set
 
-    /** Whether HTTP/3 and HTTP/1.1 connection setups raced for this call (docs/guide/ktor.md, "Racing and fallback"). */
+    /** Whether HTTP/3 and TCP (HTTP/1.1 or HTTP/2) connection setups raced for this call (docs/guide/ktor.md, "Racing and fallback"). */
     public var raced: Boolean = false
         internal set
 
@@ -103,6 +105,12 @@ public class ProtocolDiagnostics internal constructor() {
 
     /** This call's HTTP/3 failure marked the alternative broken (for the log line). */
     internal var markedBroken: Boolean = false
+
+    /** The route answered HTTP_1_1_REQUIRED (this call, or lately): [fallback] becomes [FallbackReason.H2Refused] on HTTP/1.1. */
+    internal var h2Refused: Boolean = false
+
+    /** The reason HTTP/3 was not used, when [FallbackReason.H2Refused] took its place in [fallback] (for the log line). */
+    internal var h3Fallback: FallbackReason? = null
 
     internal fun raced(headStart: Duration) {
         raced = true
@@ -154,6 +162,7 @@ public class ProtocolDiagnostics internal constructor() {
             first = false
         }
         fallback?.let { item("fallback=$it") }
+        h3Fallback?.let { item("h3Fallback=$it") }
         alternative?.let {
             val alt = logSafe(it)
             item(if (alternativeSource == null) "alt=$alt" else "alt=$alt via $alternativeSource")
@@ -183,7 +192,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | Value | Meaning | What to check |
  * |---|---|---|
  * | [NotSecure] | an `http://` or `ws://` URL | HTTP/3 needs `https` (RFC 9114 section 3.1) |
- * | [Proxy] | a proxy applies to the request | `proxy`, `proxyResolver`; `ProxyResolvers.None` connects directly |
+ * | [Proxy] | a proxy applies to the request (HTTP/1.1 or HTTP/2 through it) | `proxy`, `proxyResolver`; `ProxyResolvers.None` connects directly |
  * | [Configuration] | `Http3DiscoveryMode.H1Only` | the discovery mode |
  * | [Http3Disabled] | `http3 { http3Allowed }` said false | your remote configuration |
  * | [NoAlternative] | `Auto` and the origin announced no `Alt-Svc` (yet) | the server's `Alt-Svc` header |
@@ -200,6 +209,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [GoAway] | the server kept refusing the request with GOAWAY | the server is shutting down |
  * | [StreamFailed] | one request stream failed and the request was repeated over HTTP/1.1 | `h3Failure` |
  * | [Other] | any other HTTP/3 failure | `h3Failure` |
+ * | [H2Refused] | over HTTP/1.1: the server answered HTTP/2 with HTTP_1_1_REQUIRED (now or lately) | the server's HTTP/2 configuration; `http2 { enabled = false }` |
  *
  * New values may be added in later versions (docs/stability.md).
  */
@@ -208,7 +218,7 @@ public enum class FallbackReason {
     /** An `http://` or `ws://` request: HTTP/3 needs TLS. */
     NotSecure,
 
-    /** A proxy applies to the request: through it only HTTP/1.1. */
+    /** A proxy applies to the request: through it only TCP (HTTP/1.1, or HTTP/2 inside the tunnel). */
     Proxy,
 
     /** `Http3DiscoveryMode.H1Only`. */
@@ -264,6 +274,13 @@ public enum class FallbackReason {
 
     /** Any other HTTP/3 failure. */
     Other,
+
+    /**
+     * The call went over HTTP/1.1 because the server answered HTTP/2 with HTTP_1_1_REQUIRED (RFC 9113 section 7), on this
+     * call (repeated over HTTP/1.1, when that was safe: otherwise the call failed with `Http11RequiredException`) or lately (its route offers only `http/1.1` for 5 minutes, doubling up to 2 days at
+     * each new refusal). The reason HTTP/3 was not used is in the log line as `h3Fallback=`.
+     */
+    H2Refused,
 }
 
 /** Where the HTTP/3 endpoint of a call came from ([ProtocolDiagnostics.alternativeSource]). */

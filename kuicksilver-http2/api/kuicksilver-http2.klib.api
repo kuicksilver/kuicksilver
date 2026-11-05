@@ -75,3 +75,38 @@ final class io.kuicksilver.http2/Http2Settings { // io.kuicksilver.http2/Http2Se
 
     final fun toString(): kotlin/String // io.kuicksilver.http2/Http2Settings.toString|toString(){}[0]
 }
+
+sealed class io.kuicksilver.http2.runtime/Http2Exception : kotlinx.io/IOException { // io.kuicksilver.http2.runtime/Http2Exception|null[0]
+    abstract val notProcessed // io.kuicksilver.http2.runtime/Http2Exception.notProcessed|{}notProcessed[0]
+        abstract fun <get-notProcessed>(): kotlin/Boolean // io.kuicksilver.http2.runtime/Http2Exception.notProcessed.<get-notProcessed>|<get-notProcessed>(){}[0]
+
+    final class ConnectionClosed : io.kuicksilver.http2.runtime/Http2Exception { // io.kuicksilver.http2.runtime/Http2Exception.ConnectionClosed|null[0]
+        final val byPeer // io.kuicksilver.http2.runtime/Http2Exception.ConnectionClosed.byPeer|{}byPeer[0]
+            final fun <get-byPeer>(): kotlin/Boolean // io.kuicksilver.http2.runtime/Http2Exception.ConnectionClosed.byPeer.<get-byPeer>|<get-byPeer>(){}[0]
+        final val code // io.kuicksilver.http2.runtime/Http2Exception.ConnectionClosed.code|{}code[0]
+            final fun <get-code>(): io.kuicksilver.http2/Http2ErrorCode? // io.kuicksilver.http2.runtime/Http2Exception.ConnectionClosed.code.<get-code>|<get-code>(){}[0]
+        final val notProcessed // io.kuicksilver.http2.runtime/Http2Exception.ConnectionClosed.notProcessed|{}notProcessed[0]
+            final fun <get-notProcessed>(): kotlin/Boolean // io.kuicksilver.http2.runtime/Http2Exception.ConnectionClosed.notProcessed.<get-notProcessed>|<get-notProcessed>(){}[0]
+    }
+
+    final class FieldSectionTooLarge : io.kuicksilver.http2.runtime/Http2Exception { // io.kuicksilver.http2.runtime/Http2Exception.FieldSectionTooLarge|null[0]
+        final val notProcessed // io.kuicksilver.http2.runtime/Http2Exception.FieldSectionTooLarge.notProcessed|{}notProcessed[0]
+            final fun <get-notProcessed>(): kotlin/Boolean // io.kuicksilver.http2.runtime/Http2Exception.FieldSectionTooLarge.notProcessed.<get-notProcessed>|<get-notProcessed>(){}[0]
+    }
+
+    final class MalformedMessage : io.kuicksilver.http2.runtime/Http2Exception { // io.kuicksilver.http2.runtime/Http2Exception.MalformedMessage|null[0]
+        final val notProcessed // io.kuicksilver.http2.runtime/Http2Exception.MalformedMessage.notProcessed|{}notProcessed[0]
+            final fun <get-notProcessed>(): kotlin/Boolean // io.kuicksilver.http2.runtime/Http2Exception.MalformedMessage.notProcessed.<get-notProcessed>|<get-notProcessed>(){}[0]
+    }
+
+    final class StreamReset : io.kuicksilver.http2.runtime/Http2Exception { // io.kuicksilver.http2.runtime/Http2Exception.StreamReset|null[0]
+        final val byPeer // io.kuicksilver.http2.runtime/Http2Exception.StreamReset.byPeer|{}byPeer[0]
+            final fun <get-byPeer>(): kotlin/Boolean // io.kuicksilver.http2.runtime/Http2Exception.StreamReset.byPeer.<get-byPeer>|<get-byPeer>(){}[0]
+        final val code // io.kuicksilver.http2.runtime/Http2Exception.StreamReset.code|{}code[0]
+            final fun <get-code>(): io.kuicksilver.http2/Http2ErrorCode // io.kuicksilver.http2.runtime/Http2Exception.StreamReset.code.<get-code>|<get-code>(){}[0]
+        final val notProcessed // io.kuicksilver.http2.runtime/Http2Exception.StreamReset.notProcessed|{}notProcessed[0]
+            final fun <get-notProcessed>(): kotlin/Boolean // io.kuicksilver.http2.runtime/Http2Exception.StreamReset.notProcessed.<get-notProcessed>|<get-notProcessed>(){}[0]
+        final val streamId // io.kuicksilver.http2.runtime/Http2Exception.StreamReset.streamId|{}streamId[0]
+            final fun <get-streamId>(): kotlin/Int // io.kuicksilver.http2.runtime/Http2Exception.StreamReset.streamId.<get-streamId>|<get-streamId>(){}[0]
+    }
+}

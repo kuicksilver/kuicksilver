@@ -44,6 +44,29 @@ class FlowControlTest {
         assertTrue(updates.any { it.streamId == id2 } && updates.any { it.streamId == 0 })
     }
 
+    /**
+     * A streamed body that used the peer's window up exactly still ends: its END_STREAM goes in an empty DATA frame, which
+     * needs no window (section 6.9.1), once the last DATA frame was written. Without it the client waits for window the
+     * server never grants (it has the whole body) and the server waits for an END_STREAM that never comes.
+     */
+    @Test
+    fun endStreamNeedsNoWindow() {
+        val p = H2Pair(serverSettings = Http2Settings(initialStreamWindow = 16_384, maxStreamWindow = 16_384))
+        p.pump()
+        val id = p.client.openStream(GET.map { if (it.first == ":method") ":method" to "POST" else it }, endStream = false)
+        p.pump()
+        val chunk = ByteArray(16_384)
+        assertEquals(16_384, p.client.sendData(id, chunk, 0, chunk.size, endStream = false))
+        // the frame is still queued: one DATA frame at a time
+        assertEquals(false, p.client.endStream(id))
+        p.pump()
+        assertTrue(p.client.endStream(id))
+        p.pump()
+        val data = p.serverGot<H2Event.Data>()
+        assertEquals(16_384, data.sumOf { it.data.size })
+        assertTrue(data.last().endStream, "the server sees the end of the body")
+    }
+
     @Test
     fun senderStopsAtTheWindowUntilTheReceiverReads() {
         val p = H2Pair()

@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
-(`kuicksilver-http3`); HTTP/2 is not implemented (ADR-0009). The code blocks below compile and run as `GuideSamplesTest`
+(`kuicksilver-http3`); the client also speaks HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), the server does not yet. The code blocks below compile and run as `GuideSamplesTest`
 (`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`); the engines' other tests run on every
 target (see "Compatibility"). Every engine option with its default is in the [configuration
 reference](configuration.md); common failures are in [troubleshooting](troubleshooting.md).
@@ -304,7 +304,8 @@ val client = HttpClient(Kuicksilver) {
 ```
 
 - `https://` and `wss://` go over TLS 1.3 with the same `trust`, `identity` and `tls {}` settings whatever the protocol;
-  SNI and verification use the URL's host. `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
+  SNI and verification use the URL's host. Over TCP, `https://` is HTTP/2 when the server picks `h2` in ALPN and
+  HTTP/1.1 otherwise ([HTTP/2 on the client](#http2-on-the-client)). `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
   the app's Network Security Configuration as OkHttp does: a host for which `NetworkSecurityPolicy.isCleartextTrafficPermitted`
   is false (every host by default from `targetSdk` 28) is refused before any connection with an `IOException`
   "CLEARTEXT communication to <host> not permitted by network security policy".
@@ -320,8 +321,8 @@ val client = HttpClient(Kuicksilver) {
   Go's net/http and nginx tolerate) fails the response with "Whitespace before the end of a chunk size line" since
   0.2.1. A proxy's response to `CONNECT` has the same
   limits.
-- Requests go through a proxy when one applies (by default the platform's proxy settings): HTTP/1.1 only, see
-  [Proxies](#proxies).
+- Requests go through a proxy when one applies (by default the platform's proxy settings): TCP only (HTTP/1.1, or HTTP/2
+  inside the tunnel), see [Proxies](#proxies).
 - Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake) fails with Ktor's
   `ConnectTimeoutException`, the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
   The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
@@ -345,6 +346,63 @@ val client = HttpClient(Kuicksilver) {
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
   and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
 
+### HTTP/2 on the client
+
+```kotlin
+// guide:ktor:http2-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        http2 {
+            enabled = true                                      // the default: offer h2 on every TLS connection over TCP
+            pingInterval = 30.seconds                           // a keep-alive PING; Duration.INFINITE (the default): none
+            settings = Http2Settings(initialStreamWindow = 1 shl 20)  // our windows and limits (threat model 3.23)
+        }
+    }
+}
+```
+
+Every `https://` connection over TCP offers `h2` and `http/1.1` in ALPN (RFC 9113 section 3.2); when the server picks
+`h2` the responses report `HttpProtocolVersion.HTTP_2_0` and one connection per route carries the requests as streams.
+This holds directly, through an HTTP CONNECT tunnel and through SOCKS5 (ALPN is inside the TLS session with the origin,
+as with OkHttp), in every `http3 { discovery }` mode but `H3Only`, and whatever `http3Allowed` says: the HTTP/3 kill
+switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1.1`, as in 0.2.
+
+- **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c) and WebSockets, which offer `http/1.1` only (WebSockets over
+  HTTP/2, RFC 8441, are not supported yet). No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
+  ends the connection), no RFC 7540 priorities (`priority(...)` goes as the end-to-end `priority` field), and no
+  connection coalescing across origins.
+- **Repeats.** A request the server did not process, a stream above a GOAWAY's last stream or refused with
+  REFUSED_STREAM (RFC 9113 section 8.7), goes again on another stream or connection, at most twice, whatever its
+  method; a streamed body already consumed fails the call with `H3BodyConsumed` instead. A server that answers
+  HTTP_1_1_REQUIRED makes its route offer only `http/1.1` for 5 minutes (doubling up to 2 days at each new refusal):
+  `ProtocolDiagnostics.fallback` says `H2Refused`. The request itself goes again over HTTP/1.1 only when the server did
+  not process it, or when it is idempotent with a body that can be sent again (a GET, say); a POST the server may have
+  processed is not sent twice: that call fails with `Http11RequiredException`, and the application can send it again,
+  which then goes over HTTP/1.1. Any other HTTP/2 failure fails
+  the call with `Http2Exception` (`StreamReset`, `ConnectionClosed`, `MalformedMessage`, `FieldSectionTooLarge`); there
+  is no silent repeat over HTTP/1.1.
+- **Responses** are checked against RFC 9113 section 8: a malformed one (an invalid field, a content-length that does
+  not match the content) fails with `Http2Exception.MalformedMessage`. A response field section above
+  `settings.maxHeaderListSize` (64 KiB) fails its call, not the connection.
+- **Flow control follows the application's reading**: the server gets window back as the body is read, so a body the
+  application does not read stops the server at the stream window (512 KiB, growing to 6 MiB while the application
+  keeps up) instead of filling memory.
+- **Deadlines.** The server's SETTINGS (its preface) must arrive within the connect timeout; ours must be acknowledged
+  within `settings.settingsAckTimeout` (10 s). A connection quiet for 10 s is checked with a PING before it takes a
+  request (half the connect timeout at most, 5 s; one PING per connection, shared by the requests that wait); one that
+  does not answer takes no new request and the request goes to a new connection. Calls still running on it are not cut:
+  the connection gets GOAWAY and closes once they are done (or closes at once when none run). With
+  `maxConnectionsPerRoute = 1` such a connection keeps the route's only slot until those calls end, and new requests
+  wait for it within their connect timeout. Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
+  (`HttpTimeout`), and with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its
+  calls fail; with neither, a connection that dies mid-exchange holds the call until TCP gives up, as over HTTP/1.1.
+- **TLS 1.3 only.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers only `http/1.1`:
+  RFC 9113 section 9.2.1 requires a TLS 1.2 renegotiation to fail an HTTP/2 connection, which the TLS layer cannot report.
+- **Events and diagnostics.** `protocolSelected` comes once the connection is in hand and names its protocol
+  (`HTTP_2_0`), then `connectionAcquired(HTTP_2_0, reused)`; the race reports `raceEnded(winner = HTTP_2_0)`; and
+  `ProtocolDiagnostics.protocol` is `HTTP_2_0` (its `fallback` still says why HTTP/3 was not used).
+
 ### Connection pool
 
 ```kotlin
@@ -352,10 +410,10 @@ val client = HttpClient(Kuicksilver) {
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
-        maxConnectionsCount = 1000                 // HTTP/1.1 connections of the engine, idle ones included
+        maxConnectionsCount = 1000                 // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
         maxConnectionsPerRoute = 100               // ... to one route (scheme, host, port, proxy)
         maxIdleConnectionsPerRoute = 4             // idle keep-alive connections kept per route
-        idleTimeout = 5.minutes                    // idle HTTP/1.1 and HTTP/3 connections are closed after this
+        idleTimeout = 5.minutes                    // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
         maxConnectionLifetime = Duration.INFINITE  // age after which a connection takes no new requests
     }
 }
@@ -380,6 +438,14 @@ the server closed meanwhile is detected when it is taken from the pool and repla
   `HttpRequestTimeoutException`). A full route does not hold up requests to other routes, and when only the total is
   exhausted the oldest idle connection of another route is closed to make room. A cancelled or timed-out waiter leaves
   the queue without taking or losing a slot. WebSocket connections hold their slot while open.
+- **HTTP/2.** One connection per route while it has a free stream under the server's SETTINGS_MAX_CONCURRENT_STREAMS;
+  it counts once toward `maxConnectionsPerRoute` and `maxConnectionsCount` however many requests it carries. When it is
+  full a second one opens, within those limits; at the limits a request waits for a free stream within the connect
+  timeout. Requests that start together toward a new origin open one connection: one connects while the others wait for
+  it (ALPN is known only after the TLS handshake) and use it when it is HTTP/2, or connect on their own when it is
+  HTTP/1.1; an origin last seen on HTTP/1.1 does not make them wait. A connection
+  without requests for `idleTimeout`, or past `maxConnectionLifetime`, is sent GOAWAY and closes once its requests are
+  done; a server's GOAWAY moves new requests to a new connection.
 - **HTTP/3.** One QUIC connection per origin (and alternative) carries all requests. When the server's MAX_STREAMS
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
@@ -399,7 +465,7 @@ the server closed meanwhile is detected when it is taken from the pool and repla
 | `Auto` (default) | HTTP/1.1 first; HTTP/3 once the origin announced it with `Alt-Svc` (see below) |
 | `Preferred` | HTTP/3 by prior knowledge, falling back to HTTP/1.1 (like `curl --http3`); `quicHints` gives the same treatment to listed origins in `Auto` mode |
 | `H3Only` | HTTP/3 only (like `curl --http3-only`): failures are reported, never retried over TCP; an `http://` or `ws://` request (HTTP/3 needs `https`, RFC 9114 section 3.1), and with a proxy configured every request, fails with `UnsupportedOperationException` |
-| `H1Only` | HTTP/1.1 only |
+| `H1Only` | no HTTP/3: TCP only, which is HTTP/1.1, or HTTP/2 when the server offers it ([HTTP/2 on the client](#http2-on-the-client)) |
 
 HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`. One QUIC connection per origin carries all its requests; a
 request the server did not process (GOAWAY above its stream, `H3_REQUEST_REJECTED`) is repeated on a new connection
@@ -454,8 +520,10 @@ open yet, the engine races connection setups (RFC 8305 section 5, after Chromium
 TCP + TLS starts when QUIC fails, or after a head start of 1.5 x the host's smoothed RTT (250 ms without history,
 clamped to 100 ms..2 s; `hardDelay` overrides it) — and after 10 ms, the least RFC 8305 section 5 allows between two
 attempts, on a network where QUIC was never seen working (`hardDelay = Duration.INFINITE` starts TCP only once QUIC
-failed, on any network). The request runs once, on the winner. A QUIC setup that loses the race keeps going in the background and
-serves the next requests once it is up; a TCP connection that loses is closed. When both setups fail, the HTTP/1.1
+failed, on any network). The TCP side is HTTP/2 when the server offers it (`raceEnded` reports `HTTP_2_0`), and an
+HTTP/2 connection to the origin that is already open serves it at once. The request runs once, on the winner. A QUIC
+setup that loses the race keeps going in the background and serves the next requests once it is up; a TCP connection
+that loses goes back to the pool. When both setups fail, the HTTP/1.1
 failure is reported — the race was the one HTTP/1.1 attempt, there is no second one.
 
 An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell

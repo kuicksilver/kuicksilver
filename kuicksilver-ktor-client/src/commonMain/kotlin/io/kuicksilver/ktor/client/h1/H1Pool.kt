@@ -22,6 +22,7 @@ import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
+import io.kuicksilver.http2.runtime.H2ClientConnection
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ActivityInput
 import io.kuicksilver.ktor.client.ActivityOutput
@@ -31,6 +32,12 @@ import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.ResolvedProxy
 import io.kuicksilver.ktor.client.connectTimeoutMillis
+import io.kuicksilver.ktor.client.h2.H2Conn
+import io.kuicksilver.ktor.client.h2.H2Http11Required
+import io.kuicksilver.ktor.client.h2.H2NotProcessed
+import io.kuicksilver.ktor.client.h2.H2Pool
+import io.kuicksilver.ktor.client.h2.H2RefusedRoutes
+import io.kuicksilver.ktor.client.h2.h2Exchange
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.platformCleartextPermitted
@@ -45,11 +52,20 @@ import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
@@ -84,7 +100,10 @@ internal class H1Connection(
 }
 
 /**
- * HTTP/1.1 over TCP with TLS 1.3 (ADR-0009: no HTTP/2), with keep-alive and connection limits ([ConnectionPool]): at most
+ * The TCP path: HTTP/1.1, and HTTP/2 when the server picks `h2` in ALPN (RFC 9113 section 3.2; ADR-0017), over TLS 1.3.
+ * An HTTP/2 connection takes one slot of the limits below and serves its route's requests as streams ([H2Pool]): one
+ * connection per route while it has a free stream, a second only when it is full. HTTP/1.1 keeps keep-alive and the
+ * connection limits ([ConnectionPool]): at most
  * `maxConnectionsCount` connections and `maxConnectionsPerRoute` per route, requests beyond that wait in FIFO order
  * within the connect timeout; a connection whose response body ended by its framing goes back to an idle list of at most
  * `maxIdleConnectionsPerRoute` per route, kept for `idleTimeout`. A stale idle connection is replaced once, transparently,
@@ -97,7 +116,30 @@ internal class H1Pool(
     private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
     private val clock: () -> Long = monotonicMillis(),
 ) {
+    /** The HTTP/2 connections' coroutines: not the engine's request job, which waits for its children before the cleanup. */
+    private val h2Scope = CoroutineScope(selector.coroutineContext.minusKey(Job) + SupervisorJob() + CoroutineName("kuicksilver-h2"))
+
+    /** HTTP/2 connections by route; internal for tests. */
+    internal val h2 = H2Pool(config.poolLimits(), clock)
+
+    /**
+     * An HTTP/2 connection from which nothing arrived for this long is checked with a PING before it takes a request
+     * (Chromium checks a session idle for 10 s, "at risk of loss"); internal so tests can check every reuse.
+     */
+    internal var h2HealthAfterIdleMillis: Long = 10_000
+
+    /** Runs after a request got a pool permit and before it may become its route's dialer (tests: widens that gap). */
+    internal var beforeDialForTest: (suspend () -> Unit)? = null
+
+    /** Routes that answered HTTP_1_1_REQUIRED; internal for tests. */
+    internal val h2Refused = H2RefusedRoutes(clock)
+
     init {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val ping = config.http2.pingInterval
+        require(
+            ping.isInfinite() || ping >= MIN_PING_INTERVAL,
+        ) { "http2.pingInterval must be at least 100 ms or Duration.INFINITE, was $ping" }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val delay = config.connectionAttemptDelay
         // RFC 8305 section 8: at least 10 ms (100 ms recommended as the floor), at most 2 s
@@ -118,10 +160,21 @@ internal class H1Pool(
     /** Returns a connection that finished its exchange, or one that lost the protocol race unused. */
     fun recycle(c: H1Connection) = pool.release(c)
 
-    /** Closes idle connections past their idle timeout or lifetime; the milliseconds until the next expiry, null when none is idle. */
-    fun evictExpired(): Long? = pool.evictExpired()
+    /** Gives back what the race's TCP side opened and did not use: an HTTP/1.1 connection, or a reserved HTTP/2 stream. */
+    fun recycle(o: Opened) {
+        o.connection?.let { pool.release(it) }
+        o.h2?.client?.unreserve()
+    }
+
+    /**
+     * Closes idle connections past their idle timeout or lifetime, and retires HTTP/2 connections the same way; the
+     * milliseconds until the next expiry, null when nothing waits for one.
+     */
+    fun evictExpired(): Long? = listOfNotNull(pool.evictExpired(), h2.evictExpired()).minOrNull()
 
     suspend fun closeAll() {
+        h2.closeAll()
+        h2Scope.cancel()
         pool.shutdown()
         sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
     }
@@ -141,20 +194,56 @@ internal class H1Pool(
     suspend fun open(
         data: HttpRequestData,
         dns: RequestDns = config.newRequestDns(),
-    ): Opened = obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let { Opened(it.connection, it.reused) }
+    ): Opened = obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let { Opened(it.connection, it.reused, it.h2) }
 
-    /** A connection [open] handed out and whether it came from the idle pool. */
+    /**
+     * A connection [open] handed out and whether it came from the idle pool (or, for HTTP/2, was open already): an HTTP/1.1
+     * [connection], or a stream reserved on the HTTP/2 connection [h2].
+     */
     class Opened(
-        val connection: H1Connection,
+        val connection: H1Connection?,
         val reused: Boolean,
+        val h2: H2Conn? = null,
     )
 
-    /** A connection from [obtain], whether it came from the idle pool, and the WebSocket keys it holds. */
+    /** A connection from [obtain] (as [Opened]) and the WebSocket keys it holds. */
     private class Obtained(
-        val connection: H1Connection,
+        val connection: H1Connection?,
         val reused: Boolean,
         val held: WebSocketConnecting.Held?,
+        val h2: H2Conn? = null,
     )
+
+    /**
+     * Whether [data] may go over HTTP/2 on [key]: enabled, `https` (no h2c, ADR-0017), not a WebSocket (RFC 8441 is not
+     * supported: OkHttp also opens WebSockets over HTTP/1.1) and the route did not answer HTTP_1_1_REQUIRED lately.
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun h2Allowed(
+        data: HttpRequestData,
+        key: String,
+    ): Boolean =
+        config.http2.enabled && data.url.protocol.isSecure() && tls13Only &&
+            !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !upgrades(data.body) && !h2Refused.isRefused(key)
+
+    /** A body that takes over the connection (`Upgrade`): HTTP/2 has no such thing (RFC 9113 section 8.6), so HTTP/1.1. */
+    private fun upgrades(body: OutgoingContent): Boolean =
+        when (body) {
+            is OutgoingContent.ProtocolUpgrade -> true
+            is OutgoingContent.ContentWrapper -> upgrades(body.delegate())
+            else -> false
+        }
+
+    /**
+     * Whether the engine's TLS is TLS 1.3 only (the default). RFC 9113 section 9.2.1 makes a TLS 1.2 renegotiation a
+     * connection error of type PROTOCOL_ERROR, and the TLS layer cannot report one: OpenSSL answers a server's
+     * HelloRequest itself (no_renegotiation, SSL_OP_NO_RENEGOTIATION in ksl_ctx.c) and the connection goes on. So a client
+     * configured to allow TLS 1.2 offers only http/1.1 rather than run HTTP/2 against that MUST; TLS 1.2 is opt-in, for
+     * peers without TLS 1.3 (TlsVersions.Tls12And13).
+     */
+    private val tls13Only: Boolean by lazy {
+        config.tlsConfigFor("localhost", listOf("http/1.1")).versions == io.kuicksilver.tls.TlsVersions.Tls13
+    }
 
     /**
      * An idle connection for [key] ([Obtained.reused]), else a new one once the limits allow; waiting for room and
@@ -174,23 +263,120 @@ internal class H1Pool(
         webSocketKeys: List<String>?,
     ): Obtained {
         val held = webSocketKeys?.let { webSocketConnecting.acquire(it) }
+        val h2Ok = webSocketKeys == null && h2Allowed(data, key)
         var conn: H1Connection? = null
+        var stream: H2Conn? = null
         var reused = false
         try {
             withTimeout(data.connectTimeoutMillis(config)) {
-                val idle = pool.acquire(key)
-                if (idle != null) {
-                    conn = idle
-                    reused = true
-                } else {
-                    try {
-                        conn =
-                            connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns)
-                                .also { pool.adopt(it) }
-                    } catch (e: Throwable) {
-                        pool.releasePermit(key)
-                        throw e
+                // a request that may use HTTP/2 also watches its route: a stream that frees up, or a connection that
+                // another request just set up, serves it instead of a new TCP connection (OkHttp RealRoutePlanner)
+                val signal = if (h2Ok) h2.watch(key) else null
+                try {
+                    while (true) {
+                        // the change count, read before looking: a dial decision refuses when it moved since, and the
+                        // waits below end when the published signal passes it
+                        val seen = if (signal != null) h2.version(key) else null
+                        if (signal != null) {
+                            val found = h2.reserve(key)
+                            if (found != null) {
+                                // a connection quiet for a while may be dead (a NAT that forgot it, a peer gone without a
+                                // FIN): one PING, bounded, before the request goes on it; a failed one retires it, and the
+                                // request, not sent there, looks again
+                                if (found.client.receivedIdleMillis >= h2HealthAfterIdleMillis &&
+                                    !found.client.checkHealth(healthTimeoutMillis(data))
+                                ) {
+                                    found.client.unreserve()
+                                    // calls still running on it (a long poll, an upload) are not cut: GOAWAY, no new streams,
+                                    // closed when they are done; a connection without any is closed at once
+                                    if (found.client.reservedStreams > 0) {
+                                        found.client.shutdown()
+                                    } else {
+                                        found.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                                    }
+                                    continue
+                                }
+                                stream = found
+                                reused = true
+                                return@withTimeout
+                            }
+                        }
+                        val got = acquireOrChange(key, signal, seen)
+                        if (got === CHANGED) continue
+                        if (got is H1Connection) {
+                            conn = got
+                            reused = true
+                            return@withTimeout
+                        }
+                        // a route marked meanwhile (HTTP_1_1_REQUIRED on a connection of this loop) offers http/1.1 only
+                        val offerH2 = h2Ok && !h2Refused.isRefused(key)
+                        // one HTTP/2 connect at a time per route (RFC 9113 section 9.1): the others wait for its outcome
+                        // without a permit, within the connect timeout
+                        beforeDialForTest?.invoke()
+                        if (offerH2 && signal != null && !h2.tryStartDial(key, seen!!)) {
+                            pool.releasePermit(key)
+                            signal.first { it > seen }
+                            continue
+                        }
+                        val dialer = offerH2 && signal != null
+                        val opened =
+                            try {
+                                connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns, offerH2).also { pool.adopt(it) }
+                            } catch (e: Throwable) {
+                                pool.releasePermit(key)
+                                if (dialer) h2.endDial(key, null)
+                                throw e
+                            }
+                        if (opened is H1Connection) {
+                            if (dialer) h2.endDial(key, false) // the waiting requests connect on their own now
+                            conn = opened
+                            return@withTimeout
+                        }
+                        val c = opened as H2Conn
+                        h2Scope.launch {
+                            // its slot comes back once it ended (GOAWAY drained, an error, closed by the pool)
+                            c.client.awaitClosed()
+                            h2.remove(c)
+                            c.close()
+                        }
+                        // the waiting requests are told only once the connection is in the pool (or refused): told earlier,
+                        // they would find nothing and connect again
+                        try {
+                            // another HTTP/2 connection with room (opened while this one connected): use it, close this one
+                            val other = h2.reserve(key)
+                            if (other != null) {
+                                c.client.shutdown()
+                                stream = other
+                                reused = true
+                                return@withTimeout
+                            }
+                            // our stream first, then the pool: another request cannot take the one stream this request opened for
+                            if (c.client.tryReserve()) {
+                                h2.register(c)
+                                stream = c
+                                return@withTimeout
+                            }
+                            // a server that sends GOAWAY with HTTP_1_1_REQUIRED at once wants HTTP/1.1 (RFC 9113 section 7): the
+                            // route is marked and the next round connects with http/1.1 only
+                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                            if (c.client.goAwayCode == io.kuicksilver.http2.Http2ErrorCode.HTTP_1_1_REQUIRED) {
+                                h2Refused.mark(key)
+                                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                                data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.h2Refused = true
+                            } else {
+                                // a new connection that takes no request (a GOAWAY at once, SETTINGS_MAX_CONCURRENT_STREAMS 0):
+                                // the call fails rather than open connection after connection to a server that refuses them
+                                c.client.shutdown()
+                                throw kotlinx.io.IOException(
+                                    "the server took no request on a new HTTP/2 connection (GOAWAY or SETTINGS_MAX_CONCURRENT_STREAMS 0)",
+                                )
+                            }
+                        } finally {
+                            if (dialer) h2.endDial(key, true)
+                        }
                     }
+                } finally {
+                    if (signal != null) h2.unwatch(key)
                 }
             }
         } catch (e: Throwable) {
@@ -198,11 +384,56 @@ internal class H1Pool(
             if (e is CancellationException) {
                 // a timeout that fired as the block returned: the connection is not handed out, so its slot comes back here
                 conn?.let { if (reused) pool.release(it) else it.close() }
+                stream?.client?.unreserve()
                 if (e is TimeoutCancellationException) throw ConnectTimeoutException(data, e)
             }
             throw e
         }
-        return Obtained(conn!!, reused, held)
+        return Obtained(conn, reused, held, stream)
+    }
+
+    /** The bound of a health PING: half the connect timeout (the rest is for a new connection), at most 5 s. */
+    private fun healthTimeoutMillis(data: HttpRequestData): Long = (data.connectTimeoutMillis(config) / 2).coerceIn(1, 5_000)
+
+    /**
+     * [ConnectionPool.acquire] for [key] (an idle [H1Connection], or [PERMIT] to open one); with [signal], it gives up
+     * with [CHANGED] as soon as the route's HTTP/2 state changes after [seen]. What the pool granted meanwhile is never
+     * lost: a grant that arrives with the change or a cancellation is handed back.
+     */
+    private suspend fun acquireOrChange(
+        key: String,
+        signal: StateFlow<Long>?,
+        seen: Long?,
+    ): Any {
+        if (signal == null) return pool.acquire(key) ?: PERMIT
+        return coroutineScope {
+            var got: Any? = null
+            val a = launch(start = CoroutineStart.UNDISPATCHED) { got = pool.acquire(key) ?: PERMIT }
+            if (got != null) return@coroutineScope got!!
+            val watcher =
+                launch {
+                    signal.first { it > seen!! }
+                    a.cancel()
+                }
+            try {
+                a.join()
+            } catch (e: Throwable) {
+                a.cancel()
+                watcher.cancel()
+                withContext(NonCancellable) { a.join() }
+                got?.let { giveBack(key, it) }
+                throw e
+            }
+            watcher.cancel()
+            got ?: CHANGED
+        }
+    }
+
+    private fun giveBack(
+        key: String,
+        got: Any,
+    ) {
+        if (got is H1Connection) pool.release(got) else pool.releasePermit(key)
     }
 
     /**
@@ -215,11 +446,12 @@ internal class H1Pool(
         preopened: Opened? = null,
         dns: RequestDns = config.newRequestDns(),
         proxy: ResolvedProxy? = null,
+        onSelected: ((HttpProtocolVersion) -> Unit)? = null,
     ): HttpResponseData {
         @OptIn(io.ktor.utils.io.InternalAPI::class)
         val webSocket = data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY)
         // a WebSocket is CONNECTING from its connection until the server answers its handshake (RFC 6455 section 4.1)
-        return exchange(data, callContext, preopened, dns, proxy, if (webSocket) remoteHosts(data, dns, proxy) else null)
+        return exchange(data, callContext, preopened, dns, proxy, if (webSocket) remoteHosts(data, dns, proxy) else null, onSelected)
     }
 
     /** Race-opened connections a WebSocket gave back because its keys were taken (tests). */
@@ -268,6 +500,7 @@ internal class H1Pool(
         dns: RequestDns,
         proxy: ResolvedProxy?,
         webSocketKeys: List<String>?,
+        onSelected: ((HttpProtocolVersion) -> Unit)?,
     ): HttpResponseData {
         // a request sent again over HTTP/1.1 (after a 421 or a failure over HTTP/3) leaves its HTTP/3 exchange behind:
         // HttpResponse.updatePriority must not reach that stream
@@ -287,6 +520,12 @@ internal class H1Pool(
         val key = keyOf(data, proxy)
         var first = true
         var given = preopened
+        var announced: HttpProtocolVersion? = null
+        var h2Repeats = 0
+        var attempt = 1 // this call's attempts on the TCP path, for the retry event
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val diagnostics = data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)
         while (true) {
             // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does.
             // A WebSocket takes its keys before it holds a connection (RFC 6455 section 4.1): a connection the race opened is
@@ -296,16 +535,81 @@ internal class H1Pool(
             given = null
             val preHeld = if (pre != null && webSocketKeys != null) webSocketConnecting.tryAcquire(webSocketKeys) else null
             if (pre != null && webSocketKeys != null && preHeld == null) {
-                pool.release(pre.connection)
+                recycle(pre)
                 raceConnectionsReturnedForTest++
             }
             val obtained =
                 if (pre != null && (webSocketKeys == null || preHeld != null)) {
-                    Obtained(pre.connection, pre.reused, preHeld)
+                    Obtained(pre.connection, pre.reused, preHeld, pre.h2)
                 } else {
                     obtain(data, key, dns, proxy, webSocketKeys)
                 }
-            val conn = obtained.connection
+            val h2c = obtained.h2
+            val protocol = if (h2c != null) HttpProtocolVersion.HTTP_2_0 else HttpProtocolVersion.HTTP_1_1
+            // HTTP/1.1 where HTTP/2 would have been offered, but the route answered HTTP_1_1_REQUIRED lately
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            if (h2c == null && diagnostics != null && webSocketKeys == null && !h2Allowed(data, key) &&
+                config.http2.enabled && secure && h2Refused.isRefused(key)
+            ) {
+                diagnostics.h2Refused = true
+            }
+            // protocolSelected goes out once the connection is in hand, with the protocol it speaks; again only when a
+            // repeat changes it (HTTP_1_1_REQUIRED)
+            if (announced != protocol) {
+                announced = protocol
+                onSelected?.invoke(protocol)
+            }
+            if (h2c != null) {
+                events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_2_0, obtained.reused) }
+                try {
+                    return h2Exchange(h2c, data, callContext, events) { kept ->
+                        events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_2_0, kept) }
+                    }
+                } catch (e: H2NotProcessed) {
+                    // RFC 9113 section 8.7: not processed, so safe to repeat whatever the method, on another stream or
+                    // connection; at most twice, as over HTTP/3
+                    if (e.bodyConsumed) {
+                        throw io.kuicksilver.ktor.client.H3BodyConsumed(
+                            "the server did not process the HTTP/2 request and its streamed body was already consumed",
+                            e.cause,
+                        )
+                    }
+                    if (++h2Repeats > 2) throw e.cause
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    diagnostics?.let { it.attempts++ }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, e.cause) }
+                    continue
+                } catch (e: H2Http11Required) {
+                    // RFC 9113 section 7: the server wants this request over HTTP/1.1; the route offers only http/1.1 for a while
+                    h2Refused.mark(key)
+                    // a request the server may have processed is not sent again (RFC 9110 section 9.2.2, RFC 9113 section 8.7)
+                    if (!e.mayRepeat) {
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        throw io.kuicksilver.ktor.client.Http11RequiredException(
+                            "the server requires HTTP/1.1 (HTTP_1_1_REQUIRED) for ${data.method.value} ${data.url.protocol.name}://" +
+                                "${data.url.host}:${data.url.port}; the request may have been processed, so it was not sent again; " +
+                                "this route now uses HTTP/1.1, and the request can be repeated",
+                            e.cause,
+                        )
+                    }
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    diagnostics?.let {
+                        it.h2Refused = true
+                        it.attempts++
+                    }
+                    if (e.bodyConsumed) {
+                        throw io.kuicksilver.ktor.client.H3BodyConsumed(
+                            "the server asked for HTTP/1.1 (HTTP_1_1_REQUIRED) and the request's streamed body was already consumed",
+                            e.cause,
+                        )
+                    }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, e.cause) }
+                    continue
+                }
+            }
+            val conn = obtained.connection!!
             val reused = obtained.reused
             var held = obtained.held
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
@@ -416,7 +720,8 @@ internal class H1Pool(
                     data.attributes.put(ExpectationFailedKey, Unit)
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
-                    events.emit("retry") { retry(data, 2, IllegalStateException("417 Expectation Failed to Expect: 100-continue")) }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, IllegalStateException("417 Expectation Failed to Expect: 100-continue")) }
                     continue
                 }
                 return response
@@ -444,7 +749,8 @@ internal class H1Pool(
                     first = false
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
-                    events.emit("retry") { retry(data, 2, e) }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, e) }
                     continue
                 }
                 throw e
@@ -553,7 +859,8 @@ internal class H1Pool(
         proxy: ResolvedProxy?,
         key: String,
         dns: RequestDns,
-    ): H1Connection {
+        h2Ok: Boolean = false,
+    ): PooledConnection {
         val (host, port) = if (proxy != null) proxy.host to proxy.port else url.host to url.port
         // through socks5:// (names resolved here) each address of the origin in turn while the proxy answers "network
         // unreachable" or "host unreachable" (RFC 1928 section 6, REP 3 and 4), each on a new connection to the proxy
@@ -592,14 +899,39 @@ internal class H1Pool(
                     }
                 }
                 return if (secure) {
+                    // through a proxy too: ALPN is inside the TLS session with the origin (OkHttp does the same)
+                    val alpn = if (h2Ok) listOf("h2", "http/1.1") else listOf("http/1.1")
                     val tls =
                         TlsConnection.client(
                             rawIn,
                             rawOut,
-                            config.tlsConfigFor(url.host, listOf("http/1.1")),
+                            config.tlsConfigFor(url.host, alpn),
                             callContextOrEmpty(),
                             sessions,
                         )
+                    if (h2Ok && tls.negotiatedAlpn == "h2") {
+                        // RFC 9113 section 3.2: h2 over TLS; the server's preface (its SETTINGS) within the connect timeout
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        val client =
+                            try {
+                                H2ClientConnection.start(
+                                    tls.input,
+                                    tls.output,
+                                    config.http2.settings,
+                                    h2Scope,
+                                    config.http2.pingInterval,
+                                    closeTransport = {
+                                        tls.close()
+                                        tcp.close()
+                                    },
+                                    onChange = { h2.bump(key) },
+                                )
+                            } catch (e: Throwable) {
+                                tls.close()
+                                throw e
+                            }
+                        return H2Conn(client, key, clock())
+                    }
                     H1Connection(tcp, tls, tls.input, tls.output, key, clock())
                 } else {
                     H1Connection(tcp, null, rawIn, rawOut, key, clock())
@@ -678,4 +1010,11 @@ private fun OutgoingContent.isStreamed(): Boolean =
 
 /** RFC 8305 section 8: the connection attempt delay is at least 10 ms and at most 2 s. */
 private val MIN_ATTEMPT_DELAY = 10.milliseconds
+
+/** OkHttp has no floor; below 100 ms a PING timer would end connections on any ordinary delay. */
+private val MIN_PING_INTERVAL = 100.milliseconds
+
+/** [H1Pool]'s answers from the pool: a permit to open a connection, or a change of the route's HTTP/2 connections. */
+private val PERMIT = Any()
+private val CHANGED = Any()
 private val MAX_ATTEMPT_DELAY = 2.seconds

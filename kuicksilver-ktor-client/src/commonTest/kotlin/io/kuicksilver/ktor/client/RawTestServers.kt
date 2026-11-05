@@ -12,9 +12,12 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.close
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
+import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
@@ -27,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 /** Reads a request head and its Content-Length body; returns the request line ("" at end of stream). */
 internal suspend fun readRequest(input: ByteReadChannel): String {
@@ -54,12 +58,26 @@ internal suspend fun tlsH1WithSilentUdp(
     acceptAfter: kotlinx.coroutines.Deferred<Unit>? = null,
     handler: suspend CoroutineScope.(index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
     block: suspend (Int) -> Unit,
+) = tlsWithSilentUdp(listOf("http/1.1"), silentUdp, listener, acceptAfter, { i, _, input, output -> handler(i, input, output) }, block)
+
+/**
+ * [tlsH1WithSilentUdp] with the server's ALPN list [alpn] (its own order of preference picks the protocol, RFC 7301
+ * section 3.2): [handler] also gets the protocol the connection negotiated (null without one).
+ */
+internal suspend fun tlsWithSilentUdp(
+    alpn: List<String>,
+    silentUdp: Boolean = true,
+    listener: ServerSocket? = null,
+    acceptAfter: kotlinx.coroutines.Deferred<Unit>? = null,
+    handler: suspend CoroutineScope.(index: Int, negotiated: String?, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
+    block: suspend (Int) -> Unit,
 ) {
     require(listener == null || !silentUdp) { "a given listener comes with its own UDP side" }
+    val serverAlpn = alpn
     val tls =
         tlsConfig(TlsRole.Server) {
             identity = ClientFixtures.identity()
-            alpn = listOf("http/1.1")
+            this.alpn = serverAlpn
         }
     val selector = SelectorManager(Dispatchers.Default)
     var udp: BoundDatagramSocket? = null
@@ -106,7 +124,9 @@ internal suspend fun tlsH1WithSilentUdp(
                         val i = index++
                         launch {
                             runCatching {
-                                raw.tlsServer(tls).use { s -> handler(i, s.openReadChannel(), s.openWriteChannel(autoFlush = true)) }
+                                raw.tlsServer(tls).use { s ->
+                                    handler(i, s.negotiatedAlpn, s.openReadChannel(), s.openWriteChannel(autoFlush = true))
+                                }
                             }
                             raw.close()
                         }
@@ -275,4 +295,163 @@ internal suspend fun udpRelay(
         tcp?.close()
         selector.close()
     }
+}
+
+/** What a [tlsH2WithSilentUdp] server saw: connections accepted, their ALPN, and the ones that have ended. */
+internal class H2ServerLog {
+    private val lock = kotlinx.coroutines.sync.Mutex()
+    val accepted = kotlinx.coroutines.channels.Channel<String?>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    val ended = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+
+    @kotlin.concurrent.Volatile var acceptCount: Int = 0
+
+    /** The ALPN of every connection so far. */
+    val protocols = ArrayList<String?>()
+
+    suspend fun accept(alpn: String?) {
+        lock.lock()
+        try {
+            acceptCount++
+            protocols += alpn
+        } finally {
+            lock.unlock()
+        }
+        accepted.send(alpn)
+    }
+}
+
+/**
+ * An HTTP/2 server on 127.0.0.1 over TLS with ALPN [alpn] (`h2` first: picked whenever the client offers it): every
+ * connection that negotiated `h2` runs our server runtime with [settings] and hands each request to [onRequest] (which
+ * must answer it), the stream released after; a connection that negotiated anything else goes to [h1] (default: closed at
+ * once). With [silentUdp] the UDP twin port is bound and silent (QUIC blocked). [block] gets the port and the log.
+ */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal suspend fun tlsH2WithSilentUdp(
+    settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings(),
+    alpn: List<String> = listOf("h2", "http/1.1"),
+    silentUdp: Boolean = false,
+    h1: suspend CoroutineScope.(index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit = { _, _, _ -> },
+    onConnection: suspend (index: Int, connection: io.kuicksilver.http2.runtime.H2ServerConnection) -> Unit = { _, _ -> },
+    onRequest: suspend CoroutineScope.(connection: Int, request: io.kuicksilver.http2.runtime.H2ServerStream) -> Unit,
+    block: suspend (port: Int, log: H2ServerLog) -> Unit,
+) {
+    val log = H2ServerLog()
+    tlsWithSilentUdp(alpn, silentUdp, handler = { index, negotiated, input, output ->
+        log.accept(negotiated)
+        if (negotiated != "h2") return@tlsWithSilentUdp h1(index, input, output)
+        val conn =
+            io.kuicksilver.http2.runtime.H2ServerConnection.start(input, output, settings, this, closeTransport = {
+                // a clean close (the last frames are flushed, then close_notify), as a server ends a connection
+                output.close(null)
+            })
+        onConnection(index, conn)
+        val requests =
+            launch {
+                for (r in conn.requests) {
+                    launch {
+                        try {
+                            onRequest(index, r)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            // the client went away mid-answer: nothing to do
+                        } finally {
+                            r.release()
+                        }
+                    }
+                }
+            }
+        try {
+            conn.awaitClosed()
+            // the socket closes when this returns: first let the client close its side (it does once it saw our last
+            // frames), so our close_notify is out before the socket goes; closing at once sometimes cut the TLS
+            // output and the client saw a truncation instead of our SETTINGS and GOAWAY
+            kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { input.readRemaining() } }
+        } finally {
+            requests.cancel()
+            log.ended.trySend(index)
+        }
+    }) { port -> block(port, log) }
+}
+
+/**
+ * A raw HTTP/2 server by hand: reads the client preface, sends an empty SETTINGS, acknowledges the client's, answers
+ * every request with `:status 200` and END_STREAM and every PING with its ACK; with [answerOnce] it answers only the first
+ * request and then nothing at all (a dead peer that still holds the connection). Returns when the client closes.
+ */
+internal suspend fun rawH2Server(
+    input: ByteReadChannel,
+    output: ByteWriteChannel,
+    answerOnce: Boolean = false,
+    // the first answer leaves its stream open (a long poll); completing this sends its last DATA ("done", END_STREAM)
+    finishFirst: kotlinx.coroutines.Deferred<Unit>? = null,
+) = coroutineScope {
+    val writeLock = kotlinx.coroutines.sync.Mutex()
+
+    fun frame(
+        type: Int,
+        flags: Int,
+        stream: Int,
+        payload: ByteArray = ByteArray(0),
+    ): ByteArray =
+        byteArrayOf(
+            (payload.size shr 16).toByte(),
+            (payload.size shr 8).toByte(),
+            payload.size.toByte(),
+            type.toByte(),
+            flags.toByte(),
+            (stream ushr 24).toByte(),
+            (stream shr 16).toByte(),
+            (stream shr 8).toByte(),
+            stream.toByte(),
+        ) + payload
+    try {
+        input.readByteArray(24) // PRI * HTTP/2.0...
+        output.writeFully(frame(4, 0, 0))
+        output.flush()
+        var answered = 0
+        while (true) {
+            val head = input.readByteArray(9)
+            val len = ((head[0].toInt() and 0xff) shl 16) or ((head[1].toInt() and 0xff) shl 8) or (head[2].toInt() and 0xff)
+            val type = head[3].toInt() and 0xff
+            val flags = head[4].toInt() and 0xff
+            val stream =
+                ((head[5].toInt() and 0x7f) shl 24) or ((head[6].toInt() and 0xff) shl 16) or
+                    ((head[7].toInt() and 0xff) shl 8) or (head[8].toInt() and 0xff)
+            val payload = input.readByteArray(len)
+            val live = !answerOnce || answered == 0
+            when {
+                type == 4 && flags and 1 == 0 -> {
+                    writeLock.withLock { output.writeFully(frame(4, 1, 0)) }
+                }
+
+                type == 1 && live && answered == 0 && finishFirst != null -> {
+                    answered++
+                    writeLock.withLock { output.writeFully(frame(1, 0x4, stream, byteArrayOf(0x88.toByte()))) } // stays open
+                    launch {
+                        finishFirst.await()
+                        writeLock.withLock {
+                            output.writeFully(frame(0, 0x1, stream, "done".encodeToByteArray()))
+                            output.flush()
+                        }
+                    }
+                }
+
+                type == 1 && live -> {
+                    // :status 200, END_HEADERS | END_STREAM
+                    writeLock.withLock { output.writeFully(frame(1, 0x5, stream, byteArrayOf(0x88.toByte()))) }
+                    answered++
+                }
+
+                type == 6 && flags and 1 == 0 && live -> {
+                    writeLock.withLock { output.writeFully(frame(6, 1, 0, payload)) }
+                }
+            }
+            writeLock.withLock { output.flush() }
+        }
+    } catch (_: Throwable) {
+        // the client closed the connection
+    }
+    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
 }

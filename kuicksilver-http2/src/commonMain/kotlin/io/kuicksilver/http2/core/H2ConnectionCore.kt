@@ -146,6 +146,14 @@ internal class H2ConnectionCore(
     /** True once the connection ended (an error, a finished GOAWAY): nothing more is read, [poll] drains what is left. */
     val isClosed: Boolean get() = closed
 
+    /** A stream we open can still get an identifier (section 5.1.1: identifiers cannot be reused). */
+    val streamIdsLeft: Boolean get() = nextLocalId in 1..H2.MAX_STREAM_ID
+
+    /** Moves the next identifier of our streams to [id] (a test hook: exhausting 2^30 identifiers takes too long). */
+    internal fun nextStreamIdForTest(id: Int) {
+        nextLocalId = id
+    }
+
     /** Streams the core still holds (closed ones the driver has not released yet included). */
     val activeStreams: Int get() = streams.size
 
@@ -772,6 +780,21 @@ internal class H2ConnectionCore(
         return n
     }
 
+    /**
+     * Ends our side of [streamId] with an empty DATA frame carrying END_STREAM, for a body whose end is known only after its
+     * last bytes went out; an empty frame needs no window (section 6.9.1), so a body that used the window up exactly still
+     * ends. Returns false while a DATA frame of the stream waits for [poll] (one at a time): call again once [poll] wrote it.
+     */
+    fun endStream(streamId: Int): Boolean {
+        val s = streams[streamId] ?: throw IllegalStateException("stream $streamId is closed")
+        check(canSend(s)) { "stream $streamId cannot send" }
+        if (s.dataQueued) return false
+        enqueue(s, OutItem.Data(FrameEncoder.data(streamId, EMPTY, 0, 0, true), 0))
+        s.dataQueued = true
+        localEnded(s)
+        return true
+    }
+
     /** The application read [n] bytes of [streamId]: credit goes back to the peer (WINDOW_UPDATE) when due. */
     fun consumed(
         streamId: Int,
@@ -1252,5 +1275,6 @@ internal class H2ConnectionCore(
 
     private companion object {
         const val MAX_PINGS_OUT = 16
+        val EMPTY = ByteArray(0)
     }
 }

@@ -407,7 +407,8 @@ possible.
 ### Requests wait and then fail with `ConnectTimeoutException`
 
 HTTP/1.1 requests beyond `maxConnectionsPerRoute` (100) or `maxConnectionsCount` (1000) wait in FIFO order and share
-the connect timeout. A pile-up usually means response bodies that are never read or closed, which keep their
+the connect timeout. Over HTTP/2 a request waits only when every connection of its route is at the server's
+SETTINGS_MAX_CONCURRENT_STREAMS and the route has no room for another connection. A pile-up usually means response bodies that are never read or closed, which keep their
 connections. Read or cancel every body; raise the limits only for real concurrency. HTTP/3 requests instead wait for
 the server's stream credit (MAX_STREAMS) until the request or socket timeout
 ([Ktor: Connection pool](ktor.md#connection-pool)).
@@ -430,8 +431,29 @@ implementations tolerate it.
 ### `H3BodyConsumed`
 
 "421 Misdirected Request from the alternative, and the request body was already consumed": a streamed
-`ReadChannelContent` body that HTTP/3 already read cannot be replayed on another connection. Send bodies the engine can
-replay (bytes, a `WriteChannelContent` writer) when such retries matter.
+`ReadChannelContent` body that HTTP/3 already read cannot be replayed on another connection. The same holds over HTTP/2
+for a request the server did not process (GOAWAY, REFUSED_STREAM) or answered with HTTP_1_1_REQUIRED. Send bodies the
+engine can replay (bytes, a `WriteChannelContent` writer) when such retries matter.
+
+### Calls over HTTP/2 fail, or a server misbehaves with HTTP/2
+
+The client offers HTTP/2 to every `https://` server over TCP since 0.3.0 ([Ktor: HTTP/2 on the
+client](ktor.md#http2-on-the-client)). A server or middlebox whose HTTP/2 is broken shows as `Http2Exception` failures
+(`StreamReset`, `ConnectionClosed`, `MalformedMessage`) where HTTP/1.1 worked before. `engine { http2 { enabled = false } }`
+offers only `http/1.1` again, as in 0.2; report the server's behaviour (with the `Http2Exception` and its code).
+
+- A server that answers HTTP_1_1_REQUIRED is honoured: the route offers only `http/1.1` for 5 minutes, doubling up to
+  2 days at each new refusal, and the request goes again over HTTP/1.1 when that is safe (idempotent with a body that
+  can be sent again, or not processed). Otherwise, a POST say, the call fails with `Http11RequiredException`: send it
+  again and it goes over HTTP/1.1. `ProtocolDiagnostics.fallback` is `H2Refused`
+  for those calls, and the diagnostics line says `fallback=H2Refused` with the HTTP/3 reason as `h3Fallback=`.
+- `Http2Exception.MalformedMessage`: the server's response broke RFC 9113 section 8 (a connection-specific field such as
+  `transfer-encoding` or `connection`, an uppercase field name, a content-length that does not match the body). Fix the
+  server; the engine does not accept such responses over HTTP/2.
+- `Http2Exception.FieldSectionTooLarge`: the response's header fields exceed `http2 { settings.maxHeaderListSize }`
+  (64 KiB); raise it only for a server you trust.
+- `Http2Exception.ConnectionClosed` mentioning PING: `pingInterval` is set and the server did not answer a PING within
+  it; raise the interval or leave it at `Duration.INFINITE`.
 
 ### The server serves HTTP/1.1 but no HTTP/3
 

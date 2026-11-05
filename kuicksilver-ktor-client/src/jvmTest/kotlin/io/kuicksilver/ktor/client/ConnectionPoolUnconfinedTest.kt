@@ -6,6 +6,7 @@ import io.kuicksilver.ktor.client.h1.ConnectionPool
 import io.kuicksilver.ktor.client.h1.PoolLimits
 import io.kuicksilver.ktor.client.h1.PooledConnection
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -40,7 +41,7 @@ class ConnectionPoolUnconfinedTest {
         t.isDaemon = true // a deadlocked thread must not keep the test JVM alive
         t.start()
         t.join(30_000)
-        assertFalse(t.isAlive, "deadlock: the thread still spins on the pool's lock")
+        assertFalse(t.isAlive, "deadlock: the thread still spins on the pool's lock:\n" + t.stackTrace.take(40).joinToString("\n"))
         failure?.let { throw it }
     }
 
@@ -72,5 +73,29 @@ class ConnectionPoolUnconfinedTest {
             held.close() // its slot goes to the waiter as a permit, inline
             waiter.join()
             assertEquals(0, p.liveCount)
+        }
+
+    /**
+     * [io.kuicksilver.ktor.client.h2.H2Pool]: a request waiting for its route's signal (`first { it > seen }`) resumes inline
+     * under Unconfined and looks for a stream at once ([io.kuicksilver.ktor.client.h2.H2Pool.reserve], the pool's lock). The
+     * signal must change after the lock is released: `bump` and `endDial` here; `register` publishes the same way.
+     */
+    @Test fun h2SignalWaiterLooksAgainAtOnceWithoutDeadlock() =
+        inThread {
+            val p =
+                io.kuicksilver.ktor.client.h2
+                    .H2Pool(PoolLimits(10, 1, 1, 300_000, Long.MAX_VALUE)) { 0L }
+            for (change in listOf<(io.kuicksilver.ktor.client.h2.H2Pool) -> Unit>({ it.bump("r") }, { it.endDial("r", null) })) {
+                val signal = p.watch("r")
+                val seen = p.version("r")
+                val waiter =
+                    launch(Dispatchers.Unconfined) {
+                        signal.first { it > seen }
+                        assertEquals(null, p.reserve("r")) // takes the pool's lock right away
+                    }
+                change(p)
+                waiter.join()
+                p.unwatch("r")
+            }
         }
 }

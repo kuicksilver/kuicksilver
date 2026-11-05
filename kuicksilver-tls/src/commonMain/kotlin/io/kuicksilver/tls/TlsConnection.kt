@@ -57,6 +57,7 @@ public class TlsConnection private constructor(
 
     private val scope = CoroutineScope(context + SupervisorJob(context[Job]) + Dispatchers.Default)
     private val inputChannel = ByteChannel(autoFlush = true)
+    private val inputView = DeliverThenFail(inputChannel)
     private val outputChannel = ByteChannel(autoFlush = true)
     private val verification = Verification(config)
     private var presented: List<Certificate> = emptyList()
@@ -72,7 +73,7 @@ public class TlsConnection private constructor(
     private var recordBytes = Int.MAX_VALUE
 
     /** Plaintext from the peer. Closed cleanly after `close_notify`; closed with a [TlsException] on any other end. */
-    public val input: ByteReadChannel get() = inputChannel
+    public val input: ByteReadChannel get() = inputView
 
     /** Plaintext to the peer. Closing it sends `close_notify`. */
     public val output: ByteWriteChannel get() = outputChannel
@@ -433,7 +434,9 @@ public class TlsConnection private constructor(
         } catch (
             e: Throwable,
         ) {
-            inputChannel.cancel(e as? TlsException ?: TlsException.Protocol(null, e.message ?: "transport failure", e))
+            // the plaintext decrypted before the failure (a truncation: the transport ended without close_notify) is still
+            // the application's; it gets the failure once it has read that, never a clean end
+            inputView.failAfterBuffered(e as? TlsException ?: TlsException.Protocol(null, e.message ?: "transport failure", e))
         }
     }
 
@@ -1066,3 +1069,48 @@ internal fun TrustConfig.cacheKey(): String =
         is TrustConfig.Tofu -> "tofu:${store.hashCode()}"
         is TrustConfig.Custom -> "custom:${verifier.hashCode()}"
     }
+
+/**
+ * [TlsConnection.input]: [inner] as the reader pump fills it, failing with a recorded failure only once what [inner]
+ * already holds was read. ktor-io's own channel drops its buffered bytes when it is cancelled (`readBuffer` throws as soon
+ * as a cause is set), so bytes the peer sent right before an abortive close were lost. A failure is never a clean end:
+ * `isClosedForRead` stays false and every read past the delivered bytes throws it, as `cancel` made it before
+ * (ClosedByteChannelException with the TLS failure as its cause).
+ */
+@OptIn(io.ktor.utils.io.InternalAPI::class)
+private class DeliverThenFail(
+    private val inner: ByteChannel,
+) : ByteReadChannel {
+    @Volatile private var failure: Throwable? = null
+
+    /** Records [cause] and closes [inner] cleanly: its bytes stay readable, then reads fail with [cause]. */
+    suspend fun failAfterBuffered(cause: Throwable) {
+        if (failure == null) {
+            failure =
+                io.ktor.utils.io
+                    .ClosedByteChannelException(cause)
+        }
+        // an input the application cancelled already has its own cause and nothing to deliver
+        runCatching { inner.flushAndClose() }
+    }
+
+    override val closedCause: Throwable? get() = failure ?: inner.closedCause
+
+    override val isClosedForRead: Boolean get() = failure == null && inner.isClosedForRead
+
+    override val readBuffer: kotlinx.io.Source get() {
+        val f = failure
+        if (f != null && inner.isClosedForRead) throw f
+        return inner.readBuffer
+    }
+
+    override suspend fun awaitContent(min: Int): Boolean {
+        val enough = inner.awaitContent(min)
+        if (!enough) failure?.let { throw it }
+        return enough
+    }
+
+    override fun cancel(cause: Throwable?) {
+        inner.cancel(cause)
+    }
+}

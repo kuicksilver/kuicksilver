@@ -133,6 +133,7 @@ http3.qpackDecode jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.QpackDecodeFuz
 http2.frames jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.H2FrameFuzzTest frames
 http2.hpackDecode jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.HpackDecodeFuzzTest hpackDecode
 http2.connectionServer jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.H2ConnectionFuzzTest connectionServer
+http2.connectionClient jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.H2ClientConnectionFuzzTest connectionClient
 http2.hpackRoundTrip jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.HpackRoundTripFuzzTest hpackRoundTrip
 ktor-network.inflate jvm kuicksilver-ktor-network io.kuicksilver.ktor.network.fuzz.InflateFuzzTest inflate
 ktor-network.wsGuard jvm kuicksilver-ktor-network io.kuicksilver.ktor.network.fuzz.WsGuardFuzzTest wsGuard
