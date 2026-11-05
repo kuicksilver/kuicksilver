@@ -88,6 +88,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 7627 | §5.2 — Extended Master Secret required for TLS 1.2 | ✅ | 0.2.1 | A TLS 1.2 peer without Extended Master Secret is refused. | [details](rfc/7627.md#s5-2-ems-required) |
 | RFC 9325 | §3.5 — TLS 1.2 implementations support Extended Master Secret | ✅ | 0.2.1 | TLS 1.2 is offered only with Extended Master Secret. | [details](rfc/9325.md#s3-5-ems) |
 | RFC 9325 | §4.4 — AEAD record limits | ✅ | 0.2.0 | Without KeyUpdate or renegotiation a TLS 1.2 or 1.3 TCP connection ends before its keys reach the AEAD limit. | [details](rfc/9325.md#s4-4-aead-limits) |
+| RFC 9325 | §4.5 — public key length | ✅ | 0.3.0 | No finite-field DH, no curve under 224 bits, and every certificate key of either side needs 112 security bits (RSA 2048) with no SHA-1 or MD5 signature. | [details](rfc/9325.md#s4-5-public-key-length) |
 | RFC 9325 | §7.5 — certificate revocation | ⬜ | — | Revocation checking is planned with the OCSP row; today it depends on the platform verifier. | [details](rfc/9325.md#s7-5-revocation) |
 
 ## HTTP
