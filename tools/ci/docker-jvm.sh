@@ -44,5 +44,5 @@ else
     -e GRADLE_USER_HOME=/tmp/gh -v "$root/tools/ci/gradle-init.d:/tmp/gh/init.d:ro" -v "$dist:/opt/gradle:ro" \
     -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \
     eclipse-temurin:21@sha256:3e3c176ffed168beb42c607be9bc1639b466cf00261a0fb04425562c9d0c5c2b bash -c \
-    "/opt/gradle/bin/gradle --offline --no-daemon --no-watch-fs -q --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
+    "/opt/gradle/bin/gradle --offline --no-daemon --no-watch-fs -q --continue -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
 fi
