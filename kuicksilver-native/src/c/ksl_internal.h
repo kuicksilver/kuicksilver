@@ -28,6 +28,7 @@ struct ksl_ctx {
     /* settings SSL_new copies into each session, kept so an SNI override can apply them (ksl_ctx_apply_to_ssl) */
     char suites13[256], list12[512]; const char *groups; uint8_t sid_ctx[32]; size_t sid_ctx_len;
     uint8_t *ticket_keys; size_t ticket_key_count;   /* 80-byte entries, first encrypts */
+    uint32_t ticket_rotate;                          /* > 0: the process's generated keys, rotated at this period (ksl_tickets.c), instead of ticket_keys */
     int64_t auth_timeout;                            /* server: seconds a resumption chain may follow its full handshake (ksl_ctx.c) */
     uint8_t leaf_sha256[32]; int64_t leaf_not_after; int has_leaf;   /* the identity's leaf, digested once when it is set (tickets bind it) */
     int shared_roots;                                /* the cert store is the process-wide system store: never modified */
@@ -129,6 +130,9 @@ X509_STORE *ksl_ctx_private_store(ksl_ctx *c);
 /* 0-RTT (ksl_ctx.c) */
 void ksl_ctx_enable_early_data(SSL_CTX *ctx);
 int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
+
+/* the process's generated ticket keys (ksl_tickets.c): 1 found, 0 no such key, -1 failure */
+int ksl_default_ticket_key(uint32_t rotate_seconds, const uint8_t *name, uint8_t out[80], int *current);
 
 /* keys (ksl_key.c) */
 ksl_key *ksl_key_from_secret(int aead, const uint8_t *secret, size_t slen, uint32_t version);

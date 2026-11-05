@@ -3,8 +3,9 @@
 /* Session ticket keys (RFC 9846 section 4.7.1) that never leave native memory (threat model 1, 3.7):
  *  - the process-wide generated keys: a current key that encrypts and the previous one that still decrypts, rotated here;
  *  - explicit keys a deployment shares between processes: copied in once, registered under an id, never handed back.
- * A context takes a copy of the keys it needs (ksl_ctx_set_ticket_keys), which ksl_ctx_free cleanses. Every temporary is
- * cleansed before it goes out of scope. */
+ * A context takes a copy of explicit keys (ksl_ctx_set_ticket_keys), which ksl_ctx_free cleanses; a context on the generated keys
+ * looks them up at each ticket (ksl_default_ticket_key), so they rotate under a context that lives as long as its server. Every
+ * temporary is cleansed before it goes out of scope. */
 #include "ksl_internal.h"
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
@@ -34,31 +35,57 @@ int64_t (*ksl_ticket_clock)(void) = wall_seconds;   /* the C tests move time; no
 static void init_lock(void) { lock = CRYPTO_THREAD_lock_new(); lock_ok = lock != NULL; }
 static int locked(void) { return CRYPTO_THREAD_run_once(&once, init_lock) && lock_ok && CRYPTO_THREAD_write_lock(lock); }
 
+/* Rotates the generated keys when the current one is rotate_seconds old, under the lock. Wall clock, as OpenSSL's ticket ages: a step
+   forward rotates early (the previous key still decrypts), a step back by more than a period rotates too, so a clock reset cannot
+   freeze the current key. Every context that uses the generated keys sees the same keys at any moment: rotation happens here only. */
+static int rotate_if_due(uint32_t rotate_seconds) {
+    int64_t now = ksl_ticket_clock();
+    if (gen_count != 0 && now - gen_rotated_at < (int64_t)rotate_seconds && now >= gen_rotated_at - (int64_t)rotate_seconds) return 1;
+    uint8_t fresh[KEY]; int ok = RAND_priv_bytes(fresh, KEY) == 1;
+    if (ok) {
+        if (gen_count > 0) { memcpy(gen + KEY, gen, KEY); gen_count = 2; } else gen_count = 1;
+        memcpy(gen, fresh, KEY); gen_rotated_at = now;
+    }
+    OPENSSL_cleanse(fresh, sizeof fresh);
+    return ok;
+}
+
+/* The context does not copy the generated keys: a server keeps one context per configuration for as long as it runs, so the keys
+   are looked up (and rotated when due) at every ticket the context encrypts or decrypts (ksl_default_ticket_key). */
 int ksl_ctx_use_default_ticket_keys(ksl_ctx *c, uint32_t rotate_seconds) {
     if (c->frozen) { ksl_ctx_set_error(c, KSL_E_CTX_FROZEN, "ksl: context is frozen"); return KSL_ERROR; }
     if (rotate_seconds == 0) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: rotation period must be positive"); return KSL_ERROR; }
     if (!locked()) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ticket key lock unavailable"); return KSL_ERROR; }
-    /* Wall clock, as OpenSSL's ticket ages: a step forward rotates early (the previous key still decrypts), a step back by more
-       than a period rotates too, so a clock reset cannot freeze the current key. Servers that start together see one snapshot:
-       rotation happens under the lock. */
-    int64_t now = ksl_ticket_clock();
-    int ok = 1;
-    if (gen_count == 0 || now - gen_rotated_at >= (int64_t)rotate_seconds || now < gen_rotated_at - (int64_t)rotate_seconds) {
-        uint8_t fresh[KEY];
-        if (RAND_priv_bytes(fresh, KEY) != 1) ok = 0;
-        else {
-            if (gen_count > 0) { memcpy(gen + KEY, gen, KEY); gen_count = 2; } else gen_count = 1;
-            memcpy(gen, fresh, KEY); gen_rotated_at = now;
-        }
-        OPENSSL_cleanse(fresh, sizeof fresh);
-    }
-    uint8_t snap[2 * KEY]; int n = gen_count; memcpy(snap, gen, (size_t)n * KEY);
+    int ok = rotate_if_due(rotate_seconds);   /* the first key exists before the first handshake needs it */
     CRYPTO_THREAD_unlock(lock);
-    int rc = ok ? ksl_ctx_set_ticket_keys(c, snap, (size_t)n) : KSL_ERROR;
-    if (!ok) ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no randomness for ticket keys");
-    OPENSSL_cleanse(snap, sizeof snap);
-    return rc;
+    if (!ok) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no randomness for ticket keys"); return KSL_ERROR; }
+    if (c->ticket_keys) { OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * KEY); free(c->ticket_keys); c->ticket_keys = NULL; c->ticket_key_count = 0; }
+    c->ticket_rotate = rotate_seconds;
+    return KSL_OK;
 }
+
+/* For ticket_cb (ksl_ctx.c) of a context on the generated keys: copies the current key (name NULL: to encrypt) or the key named
+   `name` (to decrypt) into out, after rotating when due. 1 found (*current: it is the current key), 0 no such key, -1 failure. */
+int ksl_default_ticket_key(uint32_t rotate_seconds, const uint8_t *name, uint8_t out[80], int *current) {
+    if (!locked()) return -1;
+    int r = rotate_if_due(rotate_seconds) ? 0 : -1;
+    for (int i = 0; r == 0 && i < gen_count; i++)
+        if (!name || !memcmp(gen + i * KEY, name, 16)) { memcpy(out, gen + i * KEY, KEY); *current = i == 0; r = 1; }
+    CRYPTO_THREAD_unlock(lock);
+    return r;
+}
+
+#ifdef KSL_TEST
+/* The keys `c` would use now, current first (n x 80 bytes into out, at most `max`): the generated ones (rotated when due, as a
+   ticket would) or its explicit copy. */
+size_t ksl_ctx_ticket_keys_for_test(ksl_ctx *c, uint8_t *out, size_t max) {
+    if (!c->ticket_rotate) { size_t n = c->ticket_key_count < max ? c->ticket_key_count : max; if (n) memcpy(out, c->ticket_keys, n * KEY); return n; }
+    if (!locked()) return 0;
+    size_t n = rotate_if_due(c->ticket_rotate) ? (size_t)gen_count : 0; if (n > max) n = max;
+    if (n) memcpy(out, gen, n * KEY);
+    CRYPTO_THREAD_unlock(lock); return n;
+}
+#endif
 
 int ksl_ticket_keys_register(const uint8_t *keys, size_t n) {
     if (!keys || n == 0 || n > MAX_KEYS_PER_SET) return KSL_ERROR;

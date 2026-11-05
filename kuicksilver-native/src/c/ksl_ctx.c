@@ -46,20 +46,31 @@ static void keylog_cb(const SSL *ssl, const char *line) {
 /* RFC 9846 section 4.7.1 tickets: name16 | aes-256 key 32 | hmac-sha256 key 32; current key encrypts, all keys decrypt. */
 static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_MAX_IV_LENGTH], EVP_CIPHER_CTX *ectx, EVP_MAC_CTX *hctx, int enc) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1); ksl_ctx *c = s->owner;
-    const uint8_t *k = NULL; if (!c->ticket_keys) return 0;   /* an override context without keys: no ticket (TLS 1.3 sends none), none decrypts */
+    const uint8_t *k = NULL; if (!c->ticket_keys && !c->ticket_rotate) return 0;   /* an override context without keys: no ticket (TLS 1.3 sends none), none decrypts */
     /* KSL_OPT_NUM_TICKETS 0: tickets only from ksl_ssl_new_session_ticket (after Kotlin's pin verdict); 0 here makes TLS 1.3 send none, so a
        ticket can never precede the verdict, whatever count the SSL carries. TLS 1.2 issues its ticket inside the handshake, before any
        verdict: 0 sends an empty one, so no 1.2 session is resumable. SSL_OP_NO_TICKET would switch TLS 1.3 to stateful tickets, which
        need the server cache ksl keeps off. */
     if (enc && c->num_tickets == 0 && (SSL_version(ssl) < TLS1_3_VERSION || !s->ticket_authorized)) return 0;
     if (enc && s->skip_ticket) return 0;   /* ticket_gen_cb: the session's authentication window or leaf has no time left */
-    if (enc) { k = c->ticket_keys; memcpy(key_name, k, 16); if (RAND_bytes(iv, 16) != 1) return -1; }
-    else { for (size_t i = 0; i < c->ticket_key_count; i++) if (!memcmp(c->ticket_keys + i * 80, key_name, 16)) { k = c->ticket_keys + i * 80; break; } if (!k) return 0; }
-    if (EVP_CipherInit_ex(ectx, EVP_aes_256_cbc(), NULL, k + 16, iv, enc) != 1) return -1;
-    OSSL_PARAM p[3]; p[0] = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY, (void *)(k + 48), 32);
-    p[1] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, "SHA256", 0); p[2] = OSSL_PARAM_construct_end();
-    if (EVP_MAC_CTX_set_params(hctx, p) != 1) return -1;
-    return enc ? 1 : (k == c->ticket_keys ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
+    /* the process's generated keys are looked up now (rotated when due): a context lives as long as its server configuration */
+    uint8_t gk[80]; int current = 0;
+    if (c->ticket_rotate) {
+        int r = ksl_default_ticket_key(c->ticket_rotate, enc ? NULL : key_name, gk, &current);
+        if (r <= 0) { OPENSSL_cleanse(gk, sizeof gk); return r; }
+        k = gk;
+    } else if (enc) k = c->ticket_keys, current = 1;
+    else { for (size_t i = 0; i < c->ticket_key_count; i++) if (!memcmp(c->ticket_keys + i * 80, key_name, 16)) { k = c->ticket_keys + i * 80; current = i == 0; break; } if (!k) return 0; }
+    int rc = enc ? 1 : (current ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
+    if (enc) { memcpy(key_name, k, 16); if (RAND_bytes(iv, 16) != 1) rc = -1; }
+    if (rc > 0 && EVP_CipherInit_ex(ectx, EVP_aes_256_cbc(), NULL, k + 16, iv, enc) != 1) rc = -1;
+    if (rc > 0) {
+        OSSL_PARAM p[3]; p[0] = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY, (void *)(k + 48), 32);
+        p[1] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, "SHA256", 0); p[2] = OSSL_PARAM_construct_end();
+        if (EVP_MAC_CTX_set_params(hctx, p) != 1) rc = -1;
+    }
+    OPENSSL_cleanse(gk, sizeof gk);
+    return rc;
 }
 
 /* Ticket app data: one flag byte (KSL_TICKET_AFTER_VERDICT: issued by ksl_ssl_new_session_ticket, after the pin verdict;
@@ -435,7 +446,7 @@ int ksl_ctx_set_ticket_keys(ksl_ctx *c, const uint8_t *keys, size_t n) {
     if (!keys || n == 0) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no ticket keys"); return KSL_ERROR; }
     uint8_t *copy = malloc(n * 80); if (!copy) return KSL_ERROR; memcpy(copy, keys, n * 80);
     if (c->ticket_keys) { OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * 80); free(c->ticket_keys); }
-    c->ticket_keys = copy; c->ticket_key_count = n; return KSL_OK;   /* ticket_cb (installed by ksl_ctx_new) reads them */
+    c->ticket_keys = copy; c->ticket_key_count = n; c->ticket_rotate = 0; return KSL_OK;   /* ticket_cb (installed by ksl_ctx_new) reads them */
 }
 /* Binds tickets to a server configuration: OpenSSL resumes a session only when its sid_ctx equals the SSL's, otherwise a full handshake
    runs. Kotlin derives it from the trust configuration, so a resumed session proves this configuration's verdict. */

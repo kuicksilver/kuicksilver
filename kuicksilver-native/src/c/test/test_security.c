@@ -97,29 +97,59 @@ static int resumes_across(ksl_ctx *first, ksl_ctx *second) {
 }
 static int key_eq(const uint8_t *a, const uint8_t *b) { return !memcmp(a, b, 80); }
 
+/* a full handshake against `server`: its session (ticket), or NULL */
+static ksl_session *ticket_from(ksl_ctx *cc, ksl_ctx *server) {
+    int done[2]; ksl_ssl *c = tclient(cc), *s = ksl_ssl_new(server, KSL_MODE_QUIC); ksl_quic_set_transport_params(s, TP, sizeof TP);
+    tpump(c, s, done); ksl_session *sess = done[0] && done[1] ? ksl_ssl_get1_session(c) : NULL; ksl_ssl_free(c); ksl_ssl_free(s); return sess;
+}
+static int resumes_with(ksl_ctx *cc, ksl_session *sess, ksl_ctx *server) {
+    int done[2]; uint8_t b = 0; size_t n; ksl_ssl *c = tclient(cc), *s = ksl_ssl_new(server, KSL_MODE_QUIC); ksl_quic_set_transport_params(s, TP, sizeof TP);
+    ksl_ssl_set_session(c, sess); tpump(c, s, done); ksl_ssl_get(c, KSL_GET_SESSION_REUSED, &b, 1, &n);
+    int reused = done[0] && done[1] && b == 1; ksl_ssl_free(c); ksl_ssl_free(s); return reused;
+}
+size_t ksl_ctx_ticket_keys_for_test(ksl_ctx *c, uint8_t *out, size_t max);   /* ksl_tickets.c */
 static void test_default_ticket_keys_rotate_in_ksl(void) {
     SECTION("tickets_default_keys_generated_and_rotated_in_ksl");
     int64_t (*saved)(void) = ksl_ticket_clock; ksl_ticket_clock = fake_clock; fake_now = 1000000;
-    ksl_ctx *a = ticket_server(0, 100), *b = ticket_server(0, 100);
-    CHECK(a->ticket_key_count >= 1 && b->ticket_key_count == a->ticket_key_count && key_eq(a->ticket_keys, b->ticket_keys), "contexts made together share the current key");
+    ksl_ctx *a = ticket_server(0, 100), *b = ticket_server(0, 100), *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+    uint8_t ka[160], kb[160], kn[160]; size_t na = ksl_ctx_ticket_keys_for_test(a, ka, 2), nb = ksl_ctx_ticket_keys_for_test(b, kb, 2);
+    CHECK(na >= 1 && nb == na && key_eq(ka, kb), "contexts made together share the current key");
     CHECK(resumes_across(a, b), "a ticket of one context resumes on another with the process keys");
-    uint8_t k0[80]; memcpy(k0, a->ticket_keys, 80);
+    ksl_session *t0 = ticket_from(cc, a);
+    uint8_t k0[80]; memcpy(k0, ka, 80);
     fake_now += 99; ksl_ctx *same = ticket_server(0, 100);
-    CHECK(key_eq(same->ticket_keys, k0), "no rotation before the period ends");
+    CHECK(ksl_ctx_ticket_keys_for_test(same, kn, 2) >= 1 && key_eq(kn, k0), "no rotation before the period ends");
     fake_now += 1; ksl_ctx *r1 = ticket_server(0, 100);
-    CHECK(r1->ticket_key_count == 2 && !key_eq(r1->ticket_keys, k0) && key_eq(r1->ticket_keys + 80, k0), "rotation: a new current key, the old one kept as previous");
-    CHECK(resumes_across(a, r1), "a ticket under the previous key still resumes after one rotation");
-    uint8_t k1[80]; memcpy(k1, r1->ticket_keys, 80);
+    CHECK(ksl_ctx_ticket_keys_for_test(r1, kn, 2) == 2 && !key_eq(kn, k0) && key_eq(kn + 80, k0), "rotation: a new current key, the old one kept as previous");
+    CHECK(ksl_ctx_ticket_keys_for_test(a, ka, 2) == 2 && key_eq(ka, kn) && key_eq(ka + 80, k0), "a context made before the rotation rotates with the process keys");
+    CHECK(t0 && resumes_with(cc, t0, r1), "a ticket under the previous key still resumes after one rotation");
+    uint8_t k1[80]; memcpy(k1, kn, 80);
     fake_now += 100; ksl_ctx *r2 = ticket_server(0, 100);
-    CHECK(r2->ticket_key_count == 2 && key_eq(r2->ticket_keys + 80, k1) && !key_eq(r2->ticket_keys, k0) && !key_eq(r2->ticket_keys + 80, k0), "two rotations drop the first key");
-    CHECK(!resumes_across(a, r2), "negative: a ticket two rotations old does not resume");
-    uint8_t k2[80]; memcpy(k2, r2->ticket_keys, 80);
+    CHECK(ksl_ctx_ticket_keys_for_test(r2, kn, 2) == 2 && key_eq(kn + 80, k1) && !key_eq(kn, k0) && !key_eq(kn + 80, k0), "two rotations drop the first key");
+    CHECK(t0 && !resumes_with(cc, t0, r2), "negative: a ticket two rotations old does not resume");
+    uint8_t k2[80]; memcpy(k2, kn, 80);
     fake_now -= 1000; ksl_ctx *back = ticket_server(0, 100);
-    CHECK(!key_eq(back->ticket_keys, k2) && key_eq(back->ticket_keys + 80, k2), "a clock step back by more than a period rotates");
+    CHECK(ksl_ctx_ticket_keys_for_test(back, kn, 2) == 2 && !key_eq(kn, k2) && key_eq(kn + 80, k2), "a clock step back by more than a period rotates");
     ksl_ctx *bad = server_ctx("server");
     CHECK(ksl_ctx_use_default_ticket_keys(bad, 0) == KSL_ERROR, "negative: a zero period is refused");
     ksl_ctx_freeze(bad); CHECK(ksl_ctx_use_default_ticket_keys(bad, 100) == KSL_ERROR, "negative: a frozen context is refused");
-    ksl_ctx *all[] = {a, b, same, r1, r2, back, bad}; for (size_t i = 0; i < sizeof all / sizeof *all; i++) ksl_ctx_free(all[i]);
+    ksl_session_free(t0);
+    ksl_ctx *all[] = {a, b, same, r1, r2, back, bad, cc}; for (size_t i = 0; i < sizeof all / sizeof *all; i++) ksl_ctx_free(all[i]);
+    ksl_ticket_clock = saved; END();
+}
+/* A server shares one context between its connections for as long as it runs: the process keys must rotate under it, not stay
+   the snapshot of the moment it was built (RFC 9846 section 4.7.1 leaves the rotation to the server; ours is SessionTicketConfig.rotateEvery). */
+static void test_default_ticket_keys_rotate_under_a_long_lived_context(void) {
+    SECTION("tickets_default_keys_rotate_under_a_shared_context");
+    int64_t (*saved)(void) = ksl_ticket_clock; ksl_ticket_clock = fake_clock; fake_now += 30 * 86400;   /* the first use below rotates */
+    ksl_ctx *a = ticket_server(0, 100), *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+    ksl_session *t0 = ticket_from(cc, a);
+    fake_now += 100; ksl_session *t1 = ticket_from(cc, a);   /* issued after one rotation, by the same context */
+    CHECK(t0 && t1, "tickets issued");
+    fake_now += 100;   /* a second rotation: t0's key is gone, t1's is the previous one */
+    CHECK(t0 && !resumes_with(cc, t0, a), "negative: a ticket two rotations old does not resume, even on the context that issued it");
+    CHECK(t1 && resumes_with(cc, t1, a), "a ticket issued after a rotation was encrypted with the new key: one rotation later it still resumes");
+    ksl_session_free(t0); ksl_session_free(t1); ksl_ctx_free(a); ksl_ctx_free(cc);
     ksl_ticket_clock = saved; END();
 }
 static void test_registered_ticket_keys(void) {
@@ -144,7 +174,7 @@ static void test_registered_ticket_keys(void) {
 #ifndef _WIN32
 #include <pthread.h>
 static uint8_t seen[8][80];
-static void *make_ctx(void *arg) { ksl_ctx *c = ticket_server(0, 7 * 86400); memcpy(seen[(intptr_t)arg], c->ticket_keys, 80); ksl_ctx_free(c); return NULL; }
+static void *make_ctx(void *arg) { ksl_ctx *c = ticket_server(0, 7 * 86400); uint8_t k[160]; if (ksl_ctx_ticket_keys_for_test(c, k, 2) >= 1) memcpy(seen[(intptr_t)arg], k, 80); ksl_ctx_free(c); return NULL; }
 static void test_default_keys_concurrent_first_use(void) {
     SECTION("tickets_concurrent_contexts_agree_on_one_key");
     int64_t (*saved)(void) = ksl_ticket_clock; ksl_ticket_clock = fake_clock; fake_now += 30 * 86400;   /* the next use rotates */
@@ -221,6 +251,6 @@ static void test_system_store_parsed_once(void) {
 
 void run_security(void) {
     test_span_fits_never_wraps(); test_secret_buffer_growth_wipes_old_block();
-    test_default_ticket_keys_rotate_in_ksl(); test_registered_ticket_keys(); test_default_keys_concurrent_first_use();
+    test_default_ticket_keys_rotate_in_ksl(); test_default_ticket_keys_rotate_under_a_long_lived_context(); test_registered_ticket_keys(); test_default_keys_concurrent_first_use();
     test_system_store_parsed_once();
 }
