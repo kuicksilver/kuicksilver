@@ -183,6 +183,8 @@ class TcpLimitsTest {
         assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().maxTcpConnectionsPerIp = 0 }
         val c = KuicksilverApplicationEngine.Configuration()
         assertEquals(10_000, c.maxTcpConnections)
+        assertEquals(null, c.maxTcpConnectionsPerIp, "off by default: behind a proxy every client shares one address")
+        c.maxTcpConnectionsPerIp = 256
         assertEquals(256, c.maxTcpConnectionsPerIp)
         c.maxTcpConnectionsPerIp = null
         assertEquals(null, c.maxTcpConnectionsPerIp)

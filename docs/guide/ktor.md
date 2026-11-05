@@ -79,26 +79,34 @@ server.start(wait = true)
 
 ### Connection limits
 
-Each TCP connector holds at most `maxTcpConnections` (*experimental*, 10,000) connections at once and at most
-`maxTcpConnectionsPerIp` (*experimental*, 256; `null` turns it off) from one client address, HTTP/1.1 and HTTP/2 alike. A
-connection counts from `accept` (its TLS handshake included) until its socket is released.
+Each TCP connector holds at most `maxTcpConnections` (*experimental*, 10,000) connections at once, and, when it is set,
+at most `maxTcpConnectionsPerIp` (*experimental*, off by default) from one client address, HTTP/1.1 and HTTP/2 alike. A
+connection counts from `accept` (its TLS handshake included) until its socket is released (a socket whose release hangs
+is given up after the abort wait, so for that moment the descriptors in use can briefly exceed the limit).
 
 - At `maxTcpConnections` the connector stops accepting, as Go's `netutil.LimitListener`, Jetty's `ConnectionLimit` and
   nginx's `worker_connections` do: new clients wait in the OS backlog (their connect succeeds, nothing is read from
-  them) and are accepted as connections close; the server spends no descriptor or TLS work on them. A client the
-  backlog cannot hold as well is refused by the OS. Such waiting clients are not reported to the event listener.
-- Over `maxTcpConnectionsPerIp` a connection is closed right after `accept`, before its TLS handshake (an address is
-  known only then), as nginx's `limit_conn` does, and `KuicksilverServerEventListener.connectionRefused` hears it with the
-  reason `per-IP limit`; the application log gets one warning, then at most one per 10 s with a count. An address is
-  its bytes, never looked up as a name: an IPv6 client counts by its whole address, an IPv4-mapped one as its IPv4
-  address, as QUIC's `maxConnectionsPerIp` counts HTTP/3 clients. Behind a NAT, a proxy or a load balancer that does
-  not keep client addresses every client shares one address: raise the limit there or turn it off.
+  them) and are accepted as connections close; the server spends no descriptor or TLS work on them. Once the backlog is
+  full too (511 on the JVM, 50 on Kotlin/Native), the OS drops further connection attempts (Linux by default, with
+  `tcp_abort_on_overflow` 0: the client's TCP retries its SYN) or resets them. Waiting clients are not reported to the
+  event listener.
+- `maxTcpConnectionsPerIp` is off by default, as in nginx, Caddy, Go, Jetty, Netty, Envoy and HAProxy. Behind a reverse
+  proxy, a load balancer, Kubernetes source NAT or any NAT every client shares one address, and an HTTP/1.1 proxy opens
+  an upstream connection per request in flight (plus one per WebSocket or SSE stream). Enable it (256, say) only when
+  the server faces its clients directly. Over it, a connection is reset right after `accept`, before its TLS handshake
+  (an address is known only then), as nginx's stream `limit_conn` and Envoy's `connection_limit` filter do; a proxy in
+  front reports that as 502 or 503, and its passive health checks may take the server out.
+  `KuicksilverServerEventListener.connectionRefused` hears it with the reason `per-IP limit`; the application log gets
+  one warning, then at most one per 10 s with a count. An address is its bytes, never looked up as a name: an
+  IPv4-mapped client counts as its IPv4 address, an IPv6 client by its whole address, as QUIC's `maxConnectionsPerIp`
+  counts HTTP/3 clients, so a client that holds a /64 gets around it.
 - The checks run cheapest first: the connection slot before `accept`, the per-address count right after it, then
   `http2RepeatOffenderPenalty` (when on), and only then the TLS handshake.
-- Size `maxTcpConnections` below the process's descriptor limit (`ulimit -n`; macOS starts shells at 256), leaving room
-  for the UDP sockets, files and outgoing connections the application opens. Above it `accept()` fails with EMFILE;
-  the engine then backs off (5 ms doubling to 1 s) instead of spinning, but clients wait until descriptors free up.
-- `EngineMain` keys `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` is off).
+- The default 10,000 does not protect a process whose descriptor limit is lower (`ulimit -n`: 256 in a macOS shell,
+  often 1024 on Linux): raise that limit, or set `maxTcpConnections` below it, leaving room for the UDP sockets, files
+  and outgoing connections the application opens. Above it `accept()` fails with EMFILE; the engine then backs off
+  (5 ms doubling to 1 s) instead of spinning, but clients wait until descriptors free up.
+- `EngineMain` keys `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off).
 - HTTP/3 has its own limits in the QUIC endpoint, `maxConnections` and `maxConnectionsPerIp` (the same 10,000 and 256),
   which the engine does not let you change yet ([deployment guide](deployment.md#security-limits)).
 
@@ -370,7 +378,7 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.maxTcpConnections` | TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
-| `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`256`; `0`, off); see [Connection limits](#connection-limits) |
+| `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
 | `kuicksilver.altSvc` | send `Alt-Svc` on HTTP/1.1 responses (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |

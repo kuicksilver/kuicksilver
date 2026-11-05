@@ -18,7 +18,7 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files: the deployment port then serves TLS
  * and HTTP/3), `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate, e.g. `1h`;
  * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
- * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` is off), `kuicksilver.altSvc`,
+ * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`,
  * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount`.
  */
 public object EngineMain {

@@ -148,7 +148,7 @@ class EngineMainTest {
             val c = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra)).engine.configuration
             return c.maxTcpConnections to c.maxTcpConnectionsPerIp
         }
-        assertEquals(10_000 to 256, limits(), "the defaults")
+        assertEquals(10_000 to null, limits(), "the defaults: the per-IP limit is off")
         assertEquals(500 to 16, limits("-P:kuicksilver.maxTcpConnections=500", "-P:kuicksilver.maxTcpConnectionsPerIp=16"))
         assertEquals(10_000 to null, limits("-P:kuicksilver.maxTcpConnectionsPerIp=0"))
         assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.maxTcpConnections=0") }
