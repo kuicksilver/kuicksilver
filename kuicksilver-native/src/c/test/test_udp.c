@@ -52,22 +52,22 @@ static uint32_t ping(ksl_udp *a, ksl_udp *b, const uint8_t to[KSL_UDP_ADDR_LEN],
     for (uint32_t i = 0; i < n; i++) free(bufs[i]); for (uint32_t i = 0; i < 64; i++) free(rb[i]);
     return total;
 }
-struct sender_args { ksl_udp *u; const uint8_t *to; volatile int stop; };
+struct sender_args { ksl_udp *u; const uint8_t *to; int stop; };   /* stop: __atomic, the main thread sets it */
 static void *sender_thread(void *arg) {
     struct sender_args *sa = arg; uint8_t *bufs[4]; uint32_t lens[4]; uint8_t addrs[4 * KSL_UDP_ADDR_LEN]; uint8_t ecn[4];
     for (uint32_t i = 0; i < 4; i++) { bufs[i] = malloc(1200); memset(bufs[i], 0x70, 1200); lens[i] = 1200; memcpy(addrs + i * KSL_UDP_ADDR_LEN, sa->to, KSL_UDP_ADDR_LEN); ecn[i] = 0; }
-    while (!sa->stop) { uint32_t sent = 0; ksl_udp_send(sa->u, bufs, lens, addrs, ecn, 4, &sent); }
+    while (!__atomic_load_n(&sa->stop, __ATOMIC_ACQUIRE)) { uint32_t sent = 0; ksl_udp_send(sa->u, bufs, lens, addrs, ecn, 4, &sent); }
     for (uint32_t i = 0; i < 4; i++) free(bufs[i]); return NULL;
 }
 /* sends an empty datagram to 127.0.0.1:port every 5 ms for at most 1.5 s, until stop */
-struct junk_args { uint16_t port; volatile int stop; };
+struct junk_args { uint16_t port; int stop; };   /* stop: __atomic */
 static void *junk_thread(void *arg) {
     struct junk_args *ja = arg; int s = socket(AF_INET, SOCK_DGRAM, 0); if (s < 0) return NULL;
     struct sockaddr_in to; memset(&to, 0, sizeof to); to.sin_family = AF_INET; to.sin_port = htons(ja->port); to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 #ifdef __APPLE__
     to.sin_len = sizeof to;
 #endif
-    for (int i = 0; i < 300 && !ja->stop; i++) { (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to); struct timespec w = { 0, 5000000 }; nanosleep(&w, NULL); }
+    for (int i = 0; i < 300 && !__atomic_load_n(&ja->stop, __ATOMIC_ACQUIRE); i++) { (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to); struct timespec w = { 0, 5000000 }; nanosleep(&w, NULL); }
     close(s); return NULL;
 }
 /* one datagram of [len] bytes from u to [to]; the number ksl_udp_send reports as sent */
@@ -240,7 +240,7 @@ void run_udp(void) {
                 if (total != 8) corrupted++; rounds++;
                 uint32_t d = 0; ksl_udp_recv(a, db, dc, dl, da, de, 8, &d, 0);   /* keep a's queue from filling with the sender's traffic */
             }
-            sa.stop = 1; pthread_join(t, NULL);
+            __atomic_store_n(&sa.stop, 1, __ATOMIC_RELEASE); pthread_join(t, NULL);
             CHECK(ok && rounds == 300, "300 rounds of trains received"); CHECK(corrupted == 0, "no segment corrupted by the concurrent sender");
             for (uint32_t i = 0; i < 8; i++) { free(tb[i]); free(rb[i]); free(db[i]); } ksl_udp_close(c); } }
         /* udp_gso_run_never_starts_with_a_larger_datagram: [1452, 1200, 1200] leaves as two sendmsg — a run whose gso_size exceeds
@@ -414,7 +414,7 @@ void run_udp(void) {
             struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0);
             int rc = ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 20);
             clock_gettime(CLOCK_MONOTONIC, &t1); long ms = (long)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000);
-            ja.stop = 1; pthread_join(t, NULL);
+            __atomic_store_n(&ja.stop, 1, __ATOMIC_RELEASE); pthread_join(t, NULL);
             CHECK(rc == KSL_WANT_READ && got == 0, "only empty datagrams: KSL_WANT_READ");
             CHECK(ms < 200, "a 20 ms receive answers within 200 ms while empty datagrams keep arriving");
             int64_t ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000 + (t1.tv_nsec - t0.tv_nsec);

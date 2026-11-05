@@ -163,7 +163,7 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_UDP_GET_FD: if (cap < 4) return KSL_ERROR; be32(out, (uint32_t)u->fd); *len = 4; return KSL_OK;
     case KSL_UDP_GET_CAPS: if (cap < 8) return KSL_ERROR; be32(out, u->granted); be16(out + 4, u->gso_on ? u->gso_max : 0); be16(out + 6, u->batch); *len = 8; return KSL_OK;
     case KSL_UDP_GET_LOCAL: if (cap < KSL_UDP_ADDR_LEN) return KSL_ERROR; memcpy(out, u->local, KSL_UDP_ADDR_LEN); *len = KSL_UDP_ADDR_LEN; return KSL_OK;
-    case KSL_UDP_GET_STATS: if (cap < 12) return KSL_ERROR; be32(out, u->sends); be32(out + 4, u->recvs); be32(out + 8, u->gso_fallbacks); *len = 12; return KSL_OK;
+    case KSL_UDP_GET_STATS: if (cap < 12) return KSL_ERROR; be32(out, KSL_RELAXED(u->sends)); be32(out + 4, KSL_RELAXED(u->recvs)); be32(out + 8, KSL_RELAXED(u->gso_fallbacks)); *len = 12; return KSL_OK;
     case KSL_UDP_GET_ERROR: { if (cap < 4) return KSL_ERROR; char msg[KSL_MSG]; err_lock(u); uint32_t e = u->last_errno; memcpy(msg, u->last_msg, KSL_MSG); err_unlock(u);
         msg[KSL_MSG - 1] = 0; be32(out, e); size_t m = strlen(msg); if (m > cap - 4) m = cap - 4; memcpy(out + 4, msg, m); *len = 4 + m; return KSL_OK; }
     default: return KSL_ERROR;
@@ -171,8 +171,8 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
 }
 
 void ksl_udp_shutdown(ksl_udp *u) {
-    if (!u || u->closed) return;
-    u->closed = 1; if (u->wake[1] >= 0) { uint8_t b = 1; ssize_t w = write(u->wake[1], &b, 1); (void)w; }
+    if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_ACQ_REL)) return;   /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD */
+    if (u->wake[1] >= 0) { uint8_t b = 1; ssize_t w = write(u->wake[1], &b, 1); (void)w; }
     if (u->fd >= 0) { shutdown(u->fd, SHUT_RDWR); }
 }
 void ksl_udp_close(ksl_udp *u) {
@@ -210,10 +210,10 @@ void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint
 #ifdef KSL_TEST
 void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu) { ksl_udp_push_ptb(u, quote, len, dst, mtu); }
 uint32_t ksl_udp_ptb_dropped_for_test(ksl_udp *u) { pthread_mutex_lock(&u->ptb_mu); uint32_t d = u->ptb_dropped; pthread_mutex_unlock(&u->ptb_mu); return d; }
-uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) { return u->errqueue_reads; }
+uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) { return KSL_RELAXED(u->errqueue_reads); }
 int ksl_udp_recverr_for_test(ksl_udp *u) { return u->recverr; }
-uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return u->sends; }
-uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { return u->recvs + u->polls; }
+uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return KSL_RELAXED(u->sends); }
+uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { return KSL_RELAXED(u->recvs) + KSL_RELAXED(u->polls); }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { u->fail_next_gso = err; }
 void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { u->fail_next_send = err; }
 void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) { set_err(u, e, what); }

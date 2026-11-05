@@ -65,7 +65,8 @@ and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemente
   implies, and `SSL_OP_NO_ANTI_REPLAY` is not set, its built-in anti-replay makes tickets stateful: a ticket carries
   only a session ID, the session stays in the internal server session cache, and the first resumption removes it
   (single use). ksl turns that cache off (`SSL_SESS_CACHE_OFF`), creates an `SSL_CTX` per QUIC session
-  (`KslQuicCrypto.newSession`), and encrypts stateless tickets with keys supplied from Kotlin. With the built-in mode
+  (`KslQuicCrypto.newSession`; since 0.3.0 one per server configuration and identity, shared by its sessions, with the
+  cache still off), and encrypts stateless tickets with keys supplied from Kotlin. With the built-in mode
   a ticket would name a session nobody stored, so it could not be resumed at all, not even in 1-RTT. Hence
   `SSL_OP_NO_ANTI_REPLAY`, which brings back stateless tickets, plus a replay register of our own (item 2).
   (c) `SSL_set_quic_tls_early_data_enabled` also sets `max_early_data_size` to `0xffffffff`, the only value RFC 9001

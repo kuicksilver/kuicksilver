@@ -8,11 +8,43 @@
 
 static const char *digest_name(int hash) { return hash == KSL_HASH_SHA384 ? "SHA384" : "SHA256"; }
 
+/* Algorithms fetched once per process. A legacy getter (EVP_aes_128_gcm()) or a name passed per call makes OpenSSL 3 fetch the
+   implementation from the provider store on every use (a lock and a hash lookup, and for HKDF a second fetch of the digest by
+   name): about a third of each packet key a connection derives (P.3, docs/benchmarks.md). A fetched algorithm is immutable and
+   reference-counted, so the process keeps these for its life and shares them between threads; the HKDF templates are only ever
+   duplicated (EVP_KDF_CTX_dup copies the digest by reference), never derived from. NULL when a fetch failed: the callers then
+   take the per-call path, as before. */
+static CRYPTO_ONCE fetch_once = CRYPTO_ONCE_STATIC_INIT;
+static EVP_KDF_CTX *hkdf_tmpl[2];   /* SHA-256, SHA-384 */
+static EVP_CIPHER *ciphers[KSL_CIPHER_COUNT];
+static void fetch_all(void) {
+    ERR_set_mark();   /* a failed fetch leaves only its own errors behind, and only those are cleared (the caller's queue stays) */
+    EVP_KDF *kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
+    for (int i = 0; kdf && i < 2; i++) {
+        EVP_KDF_CTX *t = EVP_KDF_CTX_new(kdf); OSSL_PARAM p[2];
+        p[0] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char *)(i ? "SHA384" : "SHA256"), 0); p[1] = OSSL_PARAM_construct_end();
+        if (t && EVP_KDF_CTX_set_params(t, p) == 1) hkdf_tmpl[i] = t; else EVP_KDF_CTX_free(t);
+    }
+    EVP_KDF_free(kdf);
+    static const char *const names[KSL_CIPHER_COUNT] = {"AES-128-GCM", "AES-256-GCM", "ChaCha20-Poly1305", "AES-128-ECB", "AES-256-ECB", "ChaCha20", "AES-256-CBC"};
+    for (int i = 0; i < KSL_CIPHER_COUNT; i++) ciphers[i] = EVP_CIPHER_fetch(NULL, names[i], NULL);
+    ERR_pop_to_mark();
+}
+const EVP_CIPHER *ksl_cipher(int which, const EVP_CIPHER *legacy) {
+    if (!CRYPTO_THREAD_run_once(&fetch_once, fetch_all) || which < 0 || which >= KSL_CIPHER_COUNT || !ciphers[which]) return legacy;
+    return ciphers[which];
+}
+
 static int hkdf(int mode, int hash, const uint8_t *key, size_t klen, const uint8_t *salt, size_t slen, const uint8_t *info, size_t ilen, uint8_t *out, size_t olen) {
-    EVP_KDF *kdf = EVP_KDF_fetch(NULL, "HKDF", NULL); if (!kdf) return 0;
-    EVP_KDF_CTX *kctx = EVP_KDF_CTX_new(kdf); EVP_KDF_free(kdf); if (!kctx) return 0;
+    EVP_KDF_CTX *tmpl = CRYPTO_THREAD_run_once(&fetch_once, fetch_all) ? hkdf_tmpl[hash == KSL_HASH_SHA384] : NULL, *kctx;
     OSSL_PARAM p[6]; int i = 0;
-    p[i++] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char *)digest_name(hash), 0);
+    if (tmpl) kctx = EVP_KDF_CTX_dup(tmpl);   /* the digest is set already */
+    else {
+        EVP_KDF *kdf = EVP_KDF_fetch(NULL, "HKDF", NULL); if (!kdf) return 0;
+        kctx = EVP_KDF_CTX_new(kdf); EVP_KDF_free(kdf);
+        p[i++] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char *)digest_name(hash), 0);
+    }
+    if (!kctx) return 0;
     p[i++] = OSSL_PARAM_construct_int(OSSL_KDF_PARAM_MODE, &mode);
     p[i++] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, (void *)key, klen);
     if (salt) p[i++] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, (void *)salt, slen);

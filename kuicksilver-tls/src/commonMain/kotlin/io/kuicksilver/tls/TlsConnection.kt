@@ -38,15 +38,19 @@ import kotlin.time.Duration.Companion.seconds
  * a QUIC stream, anything that offers channels.
  */
 public class TlsConnection private constructor(
-    private val ctx: KslContext,
+    private val lease: KslContext.Lease,
     private val transportIn: ByteReadChannel,
     private val transportOut: ByteWriteChannel,
     context: CoroutineContext,
     private val sessionCache: SessionCache,
 ) : AutoCloseable {
+    private val ctx = lease.ctx
     private val config = ctx.config
     private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_TCP)
     private val lock = Mutex()
+
+    /** The context this connection was built from (tests). */
+    internal val contextForTest: KslContext get() = ctx
 
     /** Runs [block] with the session's ksl handle under the session lock (the native test hooks). */
     internal suspend fun <T> withSslForTest(block: (Long) -> T): T = lock.withLock { block(s()) }
@@ -57,7 +61,7 @@ public class TlsConnection private constructor(
     private val verification = Verification(config)
     private var presented: List<Certificate> = emptyList()
     private var reference: HostName? = null
-    private var overrideCtx: KslContext? = null
+    private var overrideCtx: KslContext.Lease? = null
     private var cacheKey: String? = null
     private var reused = false
     private var closed = false
@@ -241,7 +245,7 @@ public class TlsConnection private constructor(
             override != null -> {
                 val o = KslContext.create(config.withOverride(override), quic = false)
                 overrideCtx = o
-                lock.withLock { Ksl.sslSniResume(s(), o.handle, 0) }
+                lock.withLock { Ksl.sslSniResume(s(), o.ctx.handle, 0) }
             }
 
             info.serverName != null -> {
@@ -260,7 +264,7 @@ public class TlsConnection private constructor(
         protocolVersion = if (Ksl.sslGet(s(), KslConst.GET_VERSION)[1].toInt() == 0x03) TlsVersion.Tls12 else TlsVersion.Tls13
         reused = Ksl.sslGet(s(), KslConst.GET_SESSION_REUSED)[0].toInt() == 1
         presented = chain()
-        val effective = overrideCtx?.config ?: config
+        val effective = overrideCtx?.ctx?.config ?: config
         if (effective.role == TlsRole.Client) {
             if (reused) {
                 // no Certificate on a resumed handshake: trust is re-established from the cached chain (ADR-0011: resumption never bypasses
@@ -689,7 +693,7 @@ public class TlsConnection private constructor(
         cached?.close()
         cached = null
         overrideCtx?.close()
-        ctx.close()
+        lease.close()
     }
 
     /** True when this connection resumed a previous session (no Certificate was exchanged). */
@@ -767,7 +771,7 @@ public class TlsConnection private constructor(
             context: CoroutineContext,
             sessionCache: SessionCache,
         ): TlsConnection {
-            val ctx = KslContext.create(config, quic = false)
+            val ctx = KslContext.acquire(config, quic = false)
             val c =
                 try {
                     TlsConnection(ctx, transportIn, transportOut, context, sessionCache)

@@ -372,28 +372,35 @@ internal class ConnectionRuntime(
     private val datagramSignal = Channel<Unit>(Channel.CONFLATED)
 
     /**
-     * Applies queued send commands on the loop and flushes; one coroutine per connection, woken per burst. Started by the first
-     * datagram: a connection that sends none never runs it, so its end cancels a coroutine that never suspended (no
-     * CancellationException thrown through it; a handshake benchmark pays that per connection, docs/benchmarks.md).
+     * Applies queued send commands on the loop and flushes; one coroutine per connection, woken per burst. Made and started by
+     * the first datagram queued: most connections send none, and such a connection ends with no job to cancel (a cancelled job
+     * builds a CancellationException, a stack capture per connection on Kotlin/Native; P.3).
      */
-    private val datagramDrainer: Job =
-        loop.scope.launch(start = CoroutineStart.LAZY) {
-            try {
-                for (u in sendQueue.signal) {
-                    while (true) {
-                        val added = sendQueue.applyCommands()
-                        if (added || !sendQueue.isEmpty) loop.flush(core) // let the core send what the window allows
-                        if (!sendQueue.hasPendingCommands) break
-                        // the network did not take them: the policy decides who goes
-                        if (sendQueue.isFull) sendQueue.evictForPending() else kotlinx.coroutines.yield()
-                    }
+    private val datagramDrainer = kotlin.concurrent.atomics.AtomicReference<Job?>(null)
+
+    private fun startDatagramDrainer() {
+        if (datagramDrainer.load() != null) return
+        val job = loop.scope.launch(start = CoroutineStart.LAZY) { drainDatagrams() }
+        if (datagramDrainer.compareAndSet(null, job)) job.start() else job.cancel() // another caller made one first
+    }
+
+    private suspend fun drainDatagrams() {
+        try {
+            for (u in sendQueue.signal) {
+                while (true) {
+                    val added = sendQueue.applyCommands()
+                    if (added || !sendQueue.isEmpty) loop.flush(core) // let the core send what the window allows
+                    if (!sendQueue.hasPendingCommands) break
+                    // the network did not take them: the policy decides who goes
+                    if (sendQueue.isFull) sendQueue.evictForPending() else kotlinx.coroutines.yield()
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (!finished) core.failInternal(e)
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!finished) core.failInternal(e)
         }
+    }
 
     private fun datagramPrecheck(size: Int): DatagramSendResult? {
         if (core.config.maxDatagramFrameSize == 0L) return DatagramSendResult.Unsupported(DatagramUnsupportedReason.Disabled)
@@ -414,7 +421,7 @@ internal class ConnectionRuntime(
         if (finished) return DatagramSendResult.Closed
         if (policy === DatagramPolicy.Reject && !sendQueue.hasRoom(data.size)) return DatagramSendResult.QueueFull
         sendQueue.offer(data.copyOf(), policy)
-        datagramDrainer.start()
+        startDatagramDrainer()
         return DatagramSendResult.Sent
     }
 
@@ -448,7 +455,7 @@ internal class ConnectionRuntime(
         }
         if (finished) throw closedDeferred.await()
         sendQueue.offer(data.copyOf(), policy)
-        datagramDrainer.start()
+        startDatagramDrainer()
     }
 
     /** Pull-based: the core's own 128-entry queue is the only buffer, so what nobody collects is dropped there and counted. */
@@ -624,7 +631,8 @@ internal class ConnectionRuntime(
 
     /** The connection reached Closed and leaves the loop: everything, its path sockets included, is released. */
     internal fun finish() {
-        retire(QuicException.ConnectionLost.Internal("connection finished", null))
+        // normally the Closed event already ended the application side (failed): then no reason is built, a Throwable per connection
+        if (finished) releasePaths() else retire(QuicException.ConnectionLost.Internal("connection finished", null))
     }
 
     /** [failed], and the path sockets are closed even when the core is still closing (the loop or the endpoint goes away). */
@@ -652,7 +660,7 @@ internal class ConnectionRuntime(
             accepted.close(reason)
             for (s in streams.values) s.connectionLost(reason)
             if (core.state == ConnectionState.Closed) releasePaths()
-            datagramDrainer.cancel()
+            datagramDrainer.load()?.cancel()
             sendQueue.close()
             datagramSignal.close()
             // every waiter (open, flush, keyUpdate, addPath, sendDatagram) wakes with the connection's own reason

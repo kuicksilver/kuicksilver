@@ -25,7 +25,7 @@ static void drain_errqueue(ksl_udp *u) {
     for (int i = 0; i < ERRQUEUE_BATCH; i++) {
         uint8_t data[KSL_UDP_PTB_QUOTE]; struct sockaddr_storage ss; struct iovec iov = { data, sizeof data }; uint8_t cbuf[512];
         struct msghdr m; memset(&m, 0, sizeof m); memset(&ss, 0, sizeof ss); m.msg_name = &ss; m.msg_namelen = sizeof ss; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
-        ssize_t r = recvmsg(u->fd, &m, MSG_ERRQUEUE | MSG_DONTWAIT); u->errqueue_reads++;
+        ssize_t r = recvmsg(u->fd, &m, MSG_ERRQUEUE | MSG_DONTWAIT); KSL_COUNT(u->errqueue_reads);
         if (r < 0) { if (errno == EINTR) continue; return; }   /* EAGAIN: the queue is empty */
         for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
             if (!((c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_RECVERR) || (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_RECVERR))) continue;
@@ -47,7 +47,7 @@ static int64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, 
    at the clock */
 #define DROP_CHECK 64
 int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
-    if (!u || u->closed) return KSL_ERROR; *received = 0; if (!n) return KSL_OK;
+    if (!u || KSL_ALOAD(u->closed)) return KSL_ERROR; *received = 0; if (!n) return KSL_OK;
     __atomic_add_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
     uint32_t filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, 0);
     int rc = KSL_OK; uint32_t dropped = 0;
@@ -57,7 +57,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
     /* recvmsg first, poll only when the queue is empty and nothing was taken yet: one system call per datagram, not two (a sender
        whose datagrams arrive one by one, without GSO, cost a poll and a recvmsg each) */
     while (filled < n) {
-        if (u->closed) { rc = KSL_ERROR; break; }
+        if (KSL_ALOAD(u->closed)) { rc = KSL_ERROR; break; }
         /* a run of datagrams that all get dropped (from a sender faster than the drain, so recvmsg never answers EAGAIN) still ends
            at the deadline; a call that may not wait (timeout 0) or already holds datagrams stops after DROP_CHECK of them. Checked
            before recvmsg: a datagram once taken is always looked at, never lost to the bound */
@@ -67,7 +67,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
         }
         struct sockaddr_storage ss; struct iovec iov = { u->scratch, GRO_MAX }; uint8_t cbuf[256];
         struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sizeof ss; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
-        ssize_t r = recvmsg(u->fd, &m, MSG_DONTWAIT); u->recvs++;
+        ssize_t r = recvmsg(u->fd, &m, MSG_DONTWAIT); KSL_COUNT(u->recvs);
         if (r < 0 && errno == EINTR) continue;
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             if (filled || timeout_ms == 0) { if (!filled) rc = KSL_WANT_READ; break; }
@@ -75,7 +75,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
             /* the time left rounded up to whole milliseconds: poll's unit; rounding down would answer before the timeout */
             if (timeout_ms > 0) { int64_t left = deadline - now_ns(); if (left <= 0) { rc = KSL_WANT_READ; break; } wait = (int)((left + 999999) / 1000000); }
             struct pollfd pf[2] = { { u->fd, POLLIN, 0 }, { u->wake[0], POLLIN, 0 } };
-            int pr = poll(pf, u->wake[0] >= 0 ? 2 : 1, wait); u->polls++;
+            int pr = poll(pf, u->wake[0] >= 0 ? 2 : 1, wait); KSL_COUNT(u->polls);
             if (pr == 0) { rc = KSL_WANT_READ; break; }
             if (pr < 0) { if (errno == EINTR) continue; set_err(u, errno, "poll"); rc = KSL_ERROR; break; }
             if (pf[1].revents) { rc = KSL_ERROR; break; }   /* closed from another thread */

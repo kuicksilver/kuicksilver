@@ -18,14 +18,14 @@ import io.kuicksilver.native.of
 /** The OpenSSL-backed [QuicCrypto]. */
 public object KslQuicCrypto : QuicCrypto {
     override fun newSession(config: TlsConfig): QuicTlsSession =
-        KslQuicTlsSession(KslContext.create(config, quic = true), earlyDataSession = false)
+        KslQuicTlsSession(KslContext.acquire(config, quic = true), earlyDataSession = false)
 
     override fun newSession(
         config: TlsConfig,
         earlyData: Boolean,
     ): QuicTlsSession =
         KslQuicTlsSession(
-            KslContext.create(config, quic = true, quicTickets = earlyData, earlyData = earlyData),
+            KslContext.acquire(config, quic = true, quicTickets = earlyData, earlyData = earlyData),
             earlyDataSession = earlyData,
         )
 
@@ -34,7 +34,7 @@ public object KslQuicCrypto : QuicCrypto {
         config: TlsConfig,
         ticketsWithoutEarlyData: Boolean,
     ): QuicTlsSession =
-        KslQuicTlsSession(KslContext.create(config, quic = true, quicTickets = ticketsWithoutEarlyData), earlyDataSession = true)
+        KslQuicTlsSession(KslContext.acquire(config, quic = true, quicTickets = ticketsWithoutEarlyData), earlyDataSession = true)
 
     override fun initialProtectors(
         dcid: ByteArray,
@@ -207,10 +207,18 @@ internal class KslPacketProtector(
 }
 
 internal class KslQuicTlsSession(
-    private val ctx: KslContext,
+    // the session's reference to its context (often shared with the configuration's other sessions), given back by close
+    private val lease: KslContext.Lease,
     private val earlyDataSession: Boolean = false,
 ) : QuicTlsSession {
-    private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_QUIC)
+    private val ctx = lease.ctx
+    private var ssl: Long =
+        try {
+            Ksl.sslNew(ctx.handle, KslConst.MODE_QUIC)
+        } catch (t: Throwable) {
+            lease.close() // nobody can close a session that was never built
+            throw t
+        }
     private val event = KslEvent()
     private var presented: List<Certificate> = emptyList()
     private var alpn: String? = null
@@ -223,15 +231,26 @@ internal class KslQuicTlsSession(
     init {
         val config = ctx.config
         if (config.role == TlsRole.Client) {
-            val reference = referenceOf(config)
-            val host = HostName.normalize(reference)
-            this.reference = host
-            sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
-            Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
+            try {
+                val reference = referenceOf(config)
+                val host = HostName.normalize(reference)
+                this.reference = host
+                sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
+                Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
+            } catch (t: Throwable) {
+                // a session that failed to build is nobody's to close: its SSL and context go now (close() would read fields not set yet)
+                Ksl.sslFree(ssl)
+                ssl = 0L
+                lease.close()
+                throw t
+            }
         }
     }
 
     private fun s(): Long = ssl.also { if (it == 0L) throw IllegalStateException("session closed") }
+
+    /** The context this session was built from (tests). */
+    internal val context: KslContext get() = ctx
 
     override fun setTransportParameters(encoded: ByteArray): Unit = mapped { Ksl.quicSetTransportParams(s(), encoded) }
 
@@ -572,7 +591,7 @@ internal class KslQuicTlsSession(
         pendingTickets.clear()
         if (lastSession != 0L) Ksl.sessionFree(lastSession)
         lastSession = 0L
-        ctx.close()
+        lease.close()
     }
 }
 

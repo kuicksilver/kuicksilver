@@ -95,7 +95,9 @@ public class CipherSuites(
  *   Explicit keys are not rotated by the library: construct a new configuration with the new key first and the old one after.
  *   Each distinct set stays in native memory for the life of the process (at most 1024 distinct sets).
  * @property rotateEvery how often the process-wide generated keys rotate (default 1 day, positive, at most 7 days); the previous key
- *   still decrypts until the next rotation. Explicit [keys] are not rotated by the library. A longer period lets one stolen
+ *   still decrypts until the next rotation. The generated keys are one set per process, shared by every server that uses them:
+ *   configurations with different periods rotate the same keys, so the shortest period in use sets the pace (a ticket then
+ *   resumes for at least one such period). Explicit [keys] are not rotated by the library. A longer period lets one stolen
  *   ticket key decrypt more resumed sessions (RFC 9846 section 4.7.1).
  * @property ticketLifetime how long an issued ticket resumes (default 12 hours, at least 1 second, at most [rotateEvery] / 2,
  *   whole seconds);

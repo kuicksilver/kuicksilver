@@ -9,7 +9,7 @@ val allowed = mapOf(
     "kuicksilver-quic" to setOf("kuicksilver-tls"),
     "kuicksilver-testing" to setOf("kuicksilver-quic"),
     "kuicksilver-interop" to setOf("kuicksilver-quic", "kuicksilver-http3"),
-    "kuicksilver-bench" to setOf("kuicksilver-quic"),
+    "kuicksilver-bench" to setOf("kuicksilver-quic", "kuicksilver-testing"),   // MemoryNetwork for the endpoint benchmark (not published)
     "kuicksilver-http3" to setOf("kuicksilver-quic"),
     // HTTP/2 needs no QUIC or TLS (ADR-0017): only the annotations of kuicksilver-native, the bottom layer
     "kuicksilver-http2" to setOf("kuicksilver-native"),

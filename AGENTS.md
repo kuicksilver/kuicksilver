@@ -27,6 +27,7 @@ These rules apply to any AI agent working in this repository. Human contributors
 ./gradlew --max-workers=2 :<module>:jvmTest --tests '<pattern>'
 ./gradlew --max-workers=2 :<module>:macosArm64Test           # Kotlin/Native, macOS host
 bash tools/c-test.sh                                         # ksl C tests (ASan/UBSan)
+KSL_TSAN=1 bash tools/c-test.sh                              # the same under ThreadSanitizer
 ./gradlew checkSpdxHeaders checkLayerDependencies :kuicksilver-quic:checkQuicArchitecture :kuicksilver-http3:checkHttp3Architecture :kuicksilver-http2:checkHttp2Architecture
 ./gradlew :<module>:checkKotlinAbi                           # :<module>:updateKotlinAbi after an intended API change
 bash tools/check/links.sh                                    # Markdown links

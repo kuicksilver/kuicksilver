@@ -28,8 +28,14 @@ int ksl_aead_of_cipher(const SSL_CIPHER *c) {
     default: return 0;
     }
 }
-static const EVP_CIPHER *cipher_of(int aead) { return aead == KSL_AEAD_AES_128_GCM ? EVP_aes_128_gcm() : aead == KSL_AEAD_AES_256_GCM ? EVP_aes_256_gcm() : EVP_chacha20_poly1305(); }
-static const EVP_CIPHER *hp_cipher_of(int aead) { return aead == KSL_AEAD_AES_128_GCM ? EVP_aes_128_ecb() : aead == KSL_AEAD_AES_256_GCM ? EVP_aes_256_ecb() : EVP_chacha20(); }
+static const EVP_CIPHER *cipher_of(int aead) {
+    return aead == KSL_AEAD_AES_128_GCM ? ksl_cipher(KSL_CIPHER_AES_128_GCM, EVP_aes_128_gcm()) : aead == KSL_AEAD_AES_256_GCM ? ksl_cipher(KSL_CIPHER_AES_256_GCM, EVP_aes_256_gcm())
+         : ksl_cipher(KSL_CIPHER_CHACHA20_POLY1305, EVP_chacha20_poly1305());
+}
+static const EVP_CIPHER *hp_cipher_of(int aead) {
+    return aead == KSL_AEAD_AES_128_GCM ? ksl_cipher(KSL_CIPHER_AES_128_ECB, EVP_aes_128_ecb()) : aead == KSL_AEAD_AES_256_GCM ? ksl_cipher(KSL_CIPHER_AES_256_ECB, EVP_aes_256_ecb())
+         : ksl_cipher(KSL_CIPHER_CHACHA20, EVP_chacha20());
+}
 
 static ksl_key *key_build(int aead, uint32_t version, const uint8_t *secret, size_t slen) {
     ksl_key *k = calloc(1, sizeof *k); if (!k) return NULL;
@@ -118,7 +124,7 @@ int ksl_header_mask(ksl_key *k, const uint8_t sample[16], uint8_t mask[5]) {
     if (k->aead == KSL_AEAD_CHACHA20_POLY1305) {
         /* RFC 9001 5.4.4: counter = sample[0..4], nonce = sample[4..16], mask = ChaCha20 keystream over 5 zero bytes */
         static const uint8_t zero[5] = {0};
-        if (EVP_EncryptInit_ex(k->hp_ctx, EVP_chacha20(), NULL, k->hp, sample) != 1 || EVP_EncryptUpdate(k->hp_ctx, out, &n, zero, 5) != 1 || n != 5) return KSL_ERROR;
+        if (EVP_EncryptInit_ex(k->hp_ctx, hp_cipher_of(KSL_AEAD_CHACHA20_POLY1305), NULL, k->hp, sample) != 1 || EVP_EncryptUpdate(k->hp_ctx, out, &n, zero, 5) != 1 || n != 5) return KSL_ERROR;
     } else {
         if (EVP_EncryptUpdate(k->hp_ctx, out, &n, sample, 16) != 1 || n != 16) return KSL_ERROR;
     }
@@ -129,7 +135,7 @@ int ksl_retry_tag(uint32_t version, const uint8_t *odcid, size_t odcid_len, cons
     const uint8_t *key = version == V2 ? RETRY_KEY_V2 : RETRY_KEY_V1, *nonce = version == V2 ? RETRY_NONCE_V2 : RETRY_NONCE_V1;
     if (version != V1 && version != V2) return KSL_ERROR;
     EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new(); int n = 0, ok = c != NULL;
-    ok = ok && EVP_EncryptInit_ex(c, EVP_aes_128_gcm(), NULL, key, nonce) == 1 && EVP_EncryptUpdate(c, NULL, &n, retry_pseudo, (int)plen) == 1
+    ok = ok && EVP_EncryptInit_ex(c, cipher_of(KSL_AEAD_AES_128_GCM), NULL, key, nonce) == 1 && EVP_EncryptUpdate(c, NULL, &n, retry_pseudo, (int)plen) == 1
        && EVP_EncryptFinal_ex(c, tag, &n) == 1 && EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_AEAD_GET_TAG, 16, tag) == 1;
     EVP_CIPHER_CTX_free(c); return ok ? KSL_OK : KSL_ERROR;
 }

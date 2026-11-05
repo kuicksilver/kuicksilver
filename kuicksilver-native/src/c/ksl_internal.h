@@ -28,6 +28,7 @@ struct ksl_ctx {
     /* settings SSL_new copies into each session, kept so an SNI override can apply them (ksl_ctx_apply_to_ssl) */
     char suites13[256], list12[512]; const char *groups; uint8_t sid_ctx[32]; size_t sid_ctx_len;
     uint8_t *ticket_keys; size_t ticket_key_count;   /* 80-byte entries, first encrypts */
+    uint32_t ticket_rotate;                          /* > 0: the process's generated keys, rotated at this period (ksl_tickets.c), instead of ticket_keys */
     int64_t auth_timeout;                            /* server: seconds a resumption chain may follow its full handshake (ksl_ctx.c) */
     uint8_t leaf_sha256[32]; int64_t leaf_not_after; int has_leaf;   /* the identity's leaf, digested once when it is set (tickets bind it) */
     int shared_roots;                                /* the cert store is the process-wide system store: never modified */
@@ -130,6 +131,15 @@ X509_STORE *ksl_ctx_private_store(ksl_ctx *c);
 void ksl_ctx_enable_early_data(SSL_CTX *ctx);
 int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
 
+/* the process's generated ticket keys (ksl_tickets.c): 1 found, 0 no such key, -1 failure */
+int ksl_default_ticket_key(uint32_t rotate_seconds, const uint8_t *name, uint8_t out[80], int *current);
+
+/* Fields one thread writes while another reads them without a lock (ksl_udp: the closed flag a shutdown sets under a blocked
+   receiver, the counters ksl_udp_get(STATS) reads): C11 atomics through the GCC/Clang builtins (every toolchain ksl builds with). */
+#define KSL_ALOAD(x) __atomic_load_n(&(x), __ATOMIC_ACQUIRE)
+#define KSL_COUNT(x) ((void)__atomic_add_fetch(&(x), 1, __ATOMIC_RELAXED))
+#define KSL_RELAXED(x) __atomic_load_n(&(x), __ATOMIC_RELAXED)
+
 /* keys (ksl_key.c) */
 ksl_key *ksl_key_from_secret(int aead, const uint8_t *secret, size_t slen, uint32_t version);
 int ksl_aead_of_cipher(const SSL_CIPHER *c);
@@ -139,6 +149,16 @@ int ksl_aead_of_cipher(const SSL_CIPHER *c);
 static inline int ksl_span_fits(size_t off, size_t n, size_t len) { return off <= len && n <= len - off; }
 
 /* shared crypto (ksl_crypto.c) */
+/* ciphers fetched once per process (ksl_crypto.c): the fetched one, or `legacy` when the fetch failed */
+#define KSL_CIPHER_AES_128_GCM 0
+#define KSL_CIPHER_AES_256_GCM 1
+#define KSL_CIPHER_CHACHA20_POLY1305 2
+#define KSL_CIPHER_AES_128_ECB 3
+#define KSL_CIPHER_AES_256_ECB 4
+#define KSL_CIPHER_CHACHA20 5
+#define KSL_CIPHER_AES_256_CBC 6
+#define KSL_CIPHER_COUNT 7
+const EVP_CIPHER *ksl_cipher(int which, const EVP_CIPHER *legacy);
 int ksl_hkdf_extract(int hash, const uint8_t *salt, size_t sl, const uint8_t *ikm, size_t il, uint8_t *out, size_t olen);
 int ksl_parse_chain(const uint8_t *framed, size_t len, STACK_OF(X509) **out);
 #endif

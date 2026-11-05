@@ -17,7 +17,11 @@ set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root" || exit 2
 . tools/ci/matrix.sh
 dry=0; skip_android=0; skip_docker=0; with_interop=0; with_windows=0; with_browser=0
-for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; --with-browser) with_browser=1 ;; esac; done
+usage() { echo "usage: [KSL_GATE_WORKERS=n] tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop] [--with-windows] [--with-browser] [-h|--help]"; }
+# an unknown option stops here, before any step: a mistyped flag must not start an hours-long gate with other options
+for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; --with-browser) with_browser=1 ;;
+  -h|--help) usage; exit 0 ;;
+  *) echo "local-matrix.sh: unknown option '$a'" >&2; usage >&2; exit 2 ;; esac; done
 # Kotlin incremental compilation is off: a gate must not trust compiler state left by earlier builds in this checkout
 # (Kotlin 2.4.20's classpath-snapshot diff failed on stale state in a gate run, 2026-10-16).
 G="./gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false"; failed=0; n=0; results=""
@@ -136,6 +140,7 @@ step "quic/http3: architecture checks"         $G $KSL_ARCH_CHECKS
 step "compile: shared source sets (metadata)"  $G allMetadataJar   # commonMain/nativeMain/... of every module, the interop endpoint too: the per-target builds compile them only per target
 step "openssl: no-sslkeylog (macos-arm64)"      bash tools/check/keylog-disabled.sh build/openssl/macos-arm64/include
 step "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
+step "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.sh macos-arm64   # ~5 s; any data race fails
 # shellcheck disable=SC2086
 step "jvm: all module tests"                   $G $KSL_JVM_TESTS
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
