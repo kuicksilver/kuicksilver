@@ -48,6 +48,9 @@ public class TlsConnection private constructor(
     private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_TCP)
     private val lock = Mutex()
 
+    /** The context this connection was built from (tests). */
+    internal val contextForTest: KslContext get() = ctx
+
     /** Runs [block] with the session's ksl handle under the session lock (the native test hooks). */
     internal suspend fun <T> withSslForTest(block: (Long) -> T): T = lock.withLock { block(s()) }
 
@@ -767,7 +770,7 @@ public class TlsConnection private constructor(
             context: CoroutineContext,
             sessionCache: SessionCache,
         ): TlsConnection {
-            val ctx = KslContext.create(config, quic = false)
+            val ctx = KslContext.acquire(config, quic = false)
             val c =
                 try {
                     TlsConnection(ctx, transportIn, transportOut, context, sessionCache)

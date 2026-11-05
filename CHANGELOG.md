@@ -218,6 +218,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS (performance): a server no longer builds an OpenSSL context (`SSL_CTX`, with its identity, suites and ticket keys)
+  per connection. The handshakes of one server configuration share one context per identity snapshot, for QUIC and TCP
+  alike; a `TlsIdentity.Reloadable` reload makes the next handshake build one from the new identity, and the old one is
+  freed after its last connection. An identity keeps the contexts built from it (at most 8, one per server configuration)
+  until it is closed. The process's generated session ticket keys are now looked up at each ticket, so they keep
+  rotating (`SessionTicketConfig.rotateEvery`) under a context that lives as long as the server. The context was about
+  10 % of a server's CPU per handshake (`EndpointHandshakeBenchmark`, Kotlin/Native profile).
 - WebTransport: `drain()` also sets the session's own `drainRequested` (draft-ietf-webtrans-http3 section 4.7: the
   side that asks winds down too); before, it reflected only the peer's drain or GOAWAY.
 - Ktor client: a `wss` WebSocket belongs to the `https` origin (RFC 8441 section 5 via RFC 9220; RFC 7838 section 2.4):

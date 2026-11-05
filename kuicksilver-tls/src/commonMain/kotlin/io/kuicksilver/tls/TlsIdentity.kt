@@ -29,6 +29,10 @@ public sealed interface TlsIdentity {
      * only the handle, never the key bytes (threat model 1, 3.7). Every context built from this identity holds its own
      * reference, so [close] frees the key once those contexts are gone too; closing is safe while connections still run.
      * Building a context after [close] throws [IllegalStateException].
+     *
+     * Since 0.3.0 the handshakes of one server configuration share one context built from this identity (an OpenSSL
+     * `SSL_CTX`: built once instead of per connection); the identity keeps it, and at most seven more of other server
+     * configurations, until [close]. A context in use stays until its last connection is gone.
      */
     public class InMemory internal constructor(
         chain: List<Certificate>,
@@ -75,8 +79,14 @@ public sealed interface TlsIdentity {
         /** True once [close] ran (the native key may still serve contexts built before). */
         internal val isClosed: Boolean get() = closed.load() != 0
 
+        /** The server contexts built from this identity, shared by the handshakes of each configuration (`KslContext.acquire`). */
+        internal val serverContexts = SharedServerContexts()
+
         override fun close() {
-            if (closed.compareAndSet(0, 1)) release()
+            if (closed.compareAndSet(0, 1)) {
+                serverContexts.close() // each goes with its last connection
+                release()
+            }
         }
     }
 
@@ -84,11 +94,13 @@ public sealed interface TlsIdentity {
      * A server (or client) identity that can be replaced while the process runs: certificate rotation without a restart.
      * Made by [TlsIdentity.reloadable]; use it as `TlsConfig.identity` (or a connector's identity) like an [InMemory].
      *
-     * **One identity per handshake.** Every TLS handshake builds its own OpenSSL context (TCP connections and QUIC sessions
-     * alike) and takes the chain and key from one [current] snapshot, so a handshake presents a consistent pair (RFC 9846
-     * section 4.5.1, Certificate, and 4.5.2, CertificateVerify, are made from the same identity) whatever [reload] does
-     * meanwhile. Handshakes in progress and established connections keep the identity they started with; [reload] affects
-     * only handshakes that start after it returns.
+     * **One identity per handshake.** Every TLS handshake (TCP connections and QUIC sessions alike) takes the [current]
+     * snapshot when it starts and runs on an OpenSSL context built from that snapshot's chain and key, so a handshake presents
+     * a consistent pair (RFC 9846 section 4.5.1, Certificate, and 4.5.2, CertificateVerify, are made from the same identity)
+     * whatever [reload] does meanwhile. The handshakes of one server configuration share one context per snapshot: the first
+     * handshake after a [reload] builds one from the new identity, and the old one is freed when its last connection is gone.
+     * Handshakes in progress and established connections keep the identity they started with; [reload] affects only
+     * handshakes that start after it returns.
      *
      * **Ownership.** The reloadable identity owns the [InMemory] it was made with and each one [reload] accepted: [reload]
      * closes the identity it replaces, and [close] closes [current]. A closed [InMemory] frees its native key only when the
@@ -181,6 +193,23 @@ public sealed interface TlsIdentity {
                         cur.release()
                     }
                 }
+                // closed while still current: closed from outside (or by close() of this object); nothing newer to retry with
+                if (ref.load() === cur) throw IllegalStateException("identity closed")
+            }
+        }
+
+        /**
+         * Runs [block] with the [current] snapshot until it gives a result: null means that snapshot's key was gone (replaced and
+         * closed between the load and the use), and the new current one is tried, as [withCurrentKey] does.
+         *
+         * @throws IllegalStateException when this identity is closed.
+         */
+        internal fun <T : Any> withCurrentSnapshot(block: (InMemory) -> T?): T {
+            while (true) {
+                if (closed.load() != 0) throw IllegalStateException("identity closed")
+                val cur = ref.load()
+                beforeAcquireForTest?.invoke(cur)
+                block(cur)?.let { return it }
                 // closed while still current: closed from outside (or by close() of this object); nothing newer to retry with
                 if (ref.load() === cur) throw IllegalStateException("identity closed")
             }

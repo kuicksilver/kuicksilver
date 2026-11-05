@@ -18,14 +18,14 @@ import io.kuicksilver.native.of
 /** The OpenSSL-backed [QuicCrypto]. */
 public object KslQuicCrypto : QuicCrypto {
     override fun newSession(config: TlsConfig): QuicTlsSession =
-        KslQuicTlsSession(KslContext.create(config, quic = true), earlyDataSession = false)
+        KslQuicTlsSession(KslContext.acquire(config, quic = true), earlyDataSession = false)
 
     override fun newSession(
         config: TlsConfig,
         earlyData: Boolean,
     ): QuicTlsSession =
         KslQuicTlsSession(
-            KslContext.create(config, quic = true, quicTickets = earlyData, earlyData = earlyData),
+            KslContext.acquire(config, quic = true, quicTickets = earlyData, earlyData = earlyData),
             earlyDataSession = earlyData,
         )
 
@@ -34,7 +34,7 @@ public object KslQuicCrypto : QuicCrypto {
         config: TlsConfig,
         ticketsWithoutEarlyData: Boolean,
     ): QuicTlsSession =
-        KslQuicTlsSession(KslContext.create(config, quic = true, quicTickets = ticketsWithoutEarlyData), earlyDataSession = true)
+        KslQuicTlsSession(KslContext.acquire(config, quic = true, quicTickets = ticketsWithoutEarlyData), earlyDataSession = true)
 
     override fun initialProtectors(
         dcid: ByteArray,
@@ -210,7 +210,15 @@ internal class KslQuicTlsSession(
     private val ctx: KslContext,
     private val earlyDataSession: Boolean = false,
 ) : QuicTlsSession {
-    private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_QUIC)
+    // the session owns one reference to ctx (often shared with the configuration's other sessions), given back once by close
+    private var ssl: Long =
+        try {
+            Ksl.sslNew(ctx.handle, KslConst.MODE_QUIC)
+        } catch (t: Throwable) {
+            ctx.close() // nobody can close a session that was never built
+            throw t
+        }
+    private var ctxReleased = false
     private val event = KslEvent()
     private var presented: List<Certificate> = emptyList()
     private var alpn: String? = null
@@ -232,6 +240,9 @@ internal class KslQuicTlsSession(
     }
 
     private fun s(): Long = ssl.also { if (it == 0L) throw IllegalStateException("session closed") }
+
+    /** The context this session was built from (tests). */
+    internal val context: KslContext get() = ctx
 
     override fun setTransportParameters(encoded: ByteArray): Unit = mapped { Ksl.quicSetTransportParams(s(), encoded) }
 
@@ -572,7 +583,10 @@ internal class KslQuicTlsSession(
         pendingTickets.clear()
         if (lastSession != 0L) Ksl.sessionFree(lastSession)
         lastSession = 0L
-        ctx.close()
+        if (!ctxReleased) {
+            ctxReleased = true
+            ctx.close()
+        }
     }
 }
 

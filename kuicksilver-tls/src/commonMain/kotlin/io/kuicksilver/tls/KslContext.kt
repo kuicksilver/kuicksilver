@@ -1,6 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(
+    InternalKuicksilverApi::class,
+    DelicateKuicksilverApi::class,
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    ExperimentalAtomicApi::class,
+)
 
 package io.kuicksilver.tls
 
@@ -10,8 +15,15 @@ import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslException
 import io.kuicksilver.native.KslLoader
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
-/** Translates a [TlsConfig] into a frozen `ksl_ctx`; shared by the QUIC and TCP sessions. */
+/**
+ * Translates a [TlsConfig] into a frozen `ksl_ctx`; shared by the QUIC and TCP sessions. Reference-counted: whoever got it from
+ * [create] or [acquire] holds one reference and gives it back with [close]; the native context is freed with the last one. A
+ * server's sessions share one per configuration and identity snapshot ([acquire], [SharedServerContexts]).
+ */
 internal class KslContext private constructor(
     val handle: Long,
     val config: TlsConfig,
@@ -23,17 +35,41 @@ internal class KslContext private constructor(
      * separately, and a reload in between must not resume a session authenticated with another client certificate.
      */
     val identityTag: String?,
+    private val quicTickets: Boolean,
+    private val earlyData: Boolean,
 ) : AutoCloseable {
     /** The verifier `ksl` runs itself (AnchoredCa) or the pause for Kotlin-side trust. */
     val verifyMode: Int = verifyModeFor(config)
-    private var closed = false
 
-    override fun close() {
-        if (!closed) {
-            closed = true
-            Ksl.ctxFree(handle)
+    // 1 for whoever built it; +1 for each other holder (a sharing registry, each session of a shared context)
+    private val refs = AtomicInt(1)
+
+    /** True once the native context was freed (tests). */
+    internal val isFreed: Boolean get() = refs.load() == 0
+
+    /** Takes one more reference unless the context is already freed (then false, and nothing to [close]). */
+    fun tryRetain(): Boolean {
+        while (true) {
+            val r = refs.load()
+            if (r == 0) return false
+            if (refs.compareAndSet(r, r + 1)) return true
         }
     }
+
+    /** Gives one reference back; the last one frees the native context. Each holder closes exactly once. */
+    override fun close() {
+        val r = refs.addAndFetch(-1)
+        check(r >= 0) { "KslContext closed more often than retained" }
+        if (r == 0) Ksl.ctxFree(handle)
+    }
+
+    /** Whether this context is the one [acquire] would build for these arguments. */
+    fun serves(
+        config: TlsConfig,
+        quic: Boolean,
+        quicTickets: Boolean,
+        earlyData: Boolean,
+    ): Boolean = this.config === config && this.quic == quic && this.quicTickets == quicTickets && this.earlyData == earlyData
 
     companion object {
         fun verifyModeFor(config: TlsConfig): Int {
@@ -74,36 +110,97 @@ internal class KslContext private constructor(
             }
 
         /**
-         * [quicTickets]: a QUIC server issues session tickets (two per full handshake, one per resumption) and, with
-         * [earlyData], ones that allow 0-RTT (ADR-0015); a QUIC server without it issues none.
+         * A context of its own for one session, the caller's to [close]. [quicTickets]: a QUIC server issues session tickets (two
+         * per full handshake, one per resumption) and, with [earlyData], ones that allow 0-RTT (ADR-0015); a QUIC server without
+         * it issues none. Servers use [acquire].
          */
         fun create(
             config: TlsConfig,
             quic: Boolean,
             quicTickets: Boolean = false,
             earlyData: Boolean = false,
+        ): KslContext = build(config, quic, quicTickets, earlyData, null)!!
+
+        /**
+         * The context for one more session of [config], the caller's to [close] (one reference). A server configuration with an
+         * identity shares one context per identity snapshot between all its sessions (P.3: `SSL_CTX_new` and the identity's
+         * set-up were a twelfth of a handshake's CPU), kept by that snapshot until it is closed ([SharedServerContexts]); a
+         * `TlsIdentity.Reloadable` takes its [TlsIdentity.Reloadable.current] snapshot per handshake, as before, so a reload makes
+         * the next handshake build a context from the new identity. A context is immutable once built (`ksl_ctx_freeze`), and
+         * everything that differs per connection lives in the session (`ksl_ssl`); the process ticket keys are looked up per
+         * ticket, so they rotate under a shared context. Anything else (a client, an SNI override, a server without an identity)
+         * gets a context of its own ([create]).
+         *
+         * @throws IllegalStateException when the identity is closed.
+         */
+        fun acquire(
+            config: TlsConfig,
+            quic: Boolean,
+            quicTickets: Boolean = false,
+            earlyData: Boolean = false,
         ): KslContext {
+            if (config.role != TlsRole.Server) return create(config, quic, quicTickets, earlyData)
+            return when (val id = config.identity) {
+                is TlsIdentity.InMemory -> {
+                    id.serverContexts.acquire(config, quic, quicTickets, earlyData) { build(config, quic, quicTickets, earlyData, id) }
+                        ?: throw IllegalStateException("identity closed")
+                }
+
+                is TlsIdentity.Reloadable -> {
+                    id.withCurrentSnapshot { cur ->
+                        cur.serverContexts.acquire(
+                            config,
+                            quic,
+                            quicTickets,
+                            earlyData,
+                        ) { build(config, quic, quicTickets, earlyData, cur) }
+                    }
+                }
+
+                null -> {
+                    create(config, quic, quicTickets, earlyData)
+                }
+            }
+        }
+
+        /**
+         * Builds and freezes a context. [snapshot]: the identity to configure instead of resolving `config.identity` (its key
+         * taken with [TlsIdentity.InMemory.tryAcquire]); null is returned, and nothing is left behind, when that snapshot's key
+         * is already gone (closed and released): the caller retries with the current one or reports the identity closed.
+         */
+        private fun build(
+            config: TlsConfig,
+            quic: Boolean,
+            quicTickets: Boolean,
+            earlyData: Boolean,
+            snapshot: TlsIdentity.InMemory?,
+        ): KslContext? {
             KslLoader.ensureLoaded()
             config.validateFor(quic)
             if (earlyData && config.role == TlsRole.Server && config.clientAuth != ClientAuth.None) {
                 throw TlsException.Config("0-RTT with client certificates is not supported")
             }
-            val h = Ksl.ctxNew(if (config.role == TlsRole.Client) KslConst.CLIENT else KslConst.SERVER)
+            if (snapshot != null && !snapshot.tryAcquire()) return null
             try {
-                val tag: String?
+                val h = Ksl.ctxNew(if (config.role == TlsRole.Client) KslConst.CLIENT else KslConst.SERVER)
                 try {
-                    tag = configure(h, config, quic)
-                    if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData)
-                } catch (
-                    e: KslException.Internal,
-                ) {
-                    throw TlsException.Config("invalid TLS configuration: ${e.message}")
+                    val tag: String?
+                    try {
+                        tag = configure(h, config, quic, snapshot)
+                        if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData)
+                    } catch (
+                        e: KslException.Internal,
+                    ) {
+                        throw TlsException.Config("invalid TLS configuration: ${e.message}")
+                    }
+                    Ksl.ctxFreeze(h)
+                    return KslContext(h, config, quic, tag, quicTickets, earlyData)
+                } catch (t: Throwable) {
+                    Ksl.ctxFree(h)
+                    throw t
                 }
-                Ksl.ctxFreeze(h)
-                return KslContext(h, config, quic, tag)
-            } catch (t: Throwable) {
-                Ksl.ctxFree(h)
-                throw t
+            } finally {
+                snapshot?.release()
             }
         }
 
@@ -111,31 +208,22 @@ internal class KslContext private constructor(
         private fun certificateTag(leaf: Certificate): String =
             Ksl.sha2(256, leaf.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
-        /** Returns the [identityTag] of the identity it configured. */
+        /** Returns the [identityTag] of the identity it configured: [snapshot] (whose key the caller holds) when given. */
         private fun configure(
             h: Long,
             config: TlsConfig,
             quic: Boolean,
+            snapshot: TlsIdentity.InMemory?,
         ): String? {
             if (config.alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(config.alpn))
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             val tag =
-                config.identity?.let { id ->
-                    when (id) {
-                        is TlsIdentity.InMemory -> {
-                            id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
-                            certificateTag(id.chain[0])
-                        }
-
-                        // chain and key from one snapshot: a reload between them would pair one identity's chain with another's key
-                        is TlsIdentity.Reloadable -> {
-                            id.withCurrentKey { cur, k ->
-                                Ksl.ctxSetIdentityKey(h, cur.chain.map { it.encoded }, k)
-                                certificateTag(cur.chain[0])
-                            }
-                        }
-                    }
+                if (snapshot != null) {
+                    Ksl.ctxSetIdentityKey(h, snapshot.chain.map { it.encoded }, snapshot.keyHandle)
+                    certificateTag(snapshot.chain[0])
+                } else {
+                    config.identity?.let { id -> identityOf(h, id) }
                 }
             if (config.role ==
                 TlsRole.Client
@@ -158,7 +246,8 @@ internal class KslContext private constructor(
                 )
                 if (config.sniSelector != null) Ksl.ctxSetOption(h, KslConst.OPT_SNI_PAUSE, 1)
                 if (!quic) {
-                    // every connection has its own SSL_CTX: without shared keys no ticket could ever be resumed, so the default is a process-wide rotating set
+                    // contexts of other configurations and processes (and, before P.3, of every connection): without shared keys no ticket could be
+                    // resumed elsewhere, so the default is a process-wide rotating set
                     useTicketKeys(h, config.sessionTickets)
                     Ksl.ctxSetOption(
                         h,
@@ -207,6 +296,26 @@ internal class KslContext private constructor(
             if (earlyData) Ksl.ctxSetOption(h, KslConst.OPT_EARLY_DATA, 1)
         }
 
+        /** Configures [id] into [h]; returns its [identityTag]. */
+        private fun identityOf(
+            h: Long,
+            id: TlsIdentity,
+        ): String =
+            when (id) {
+                is TlsIdentity.InMemory -> {
+                    id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
+                    certificateTag(id.chain[0])
+                }
+
+                // chain and key from one snapshot: a reload between them would pair one identity's chain with another's key
+                is TlsIdentity.Reloadable -> {
+                    id.withCurrentKey { cur, k ->
+                        Ksl.ctxSetIdentityKey(h, cur.chain.map { it.encoded }, k)
+                        certificateTag(cur.chain[0])
+                    }
+                }
+            }
+
         fun alpnWire(alpn: List<String>): ByteArray =
             alpn
                 .flatMap { p ->
@@ -214,6 +323,70 @@ internal class KslContext private constructor(
                     listOf(b.size.toByte()) +
                         b.toList()
                 }.toByteArray()
+    }
+}
+
+/**
+ * The server contexts built from one identity snapshot ([TlsIdentity.InMemory.serverContexts]), one per configuration and kind
+ * ([KslContext.serves]), each shared by every session of its configuration. The registry holds one reference to each; [close]
+ * (the identity's close, which a reload does to the snapshot it replaces) drops them, so a context goes when the identity is
+ * closed and its last session is gone, never while a session uses it. At most [MAX] contexts are kept: the oldest goes first
+ * (a process that keeps building new configurations around one identity holds no more), and still serves its sessions.
+ */
+internal class SharedServerContexts {
+    // null once closed: nothing is kept any more
+    private val entries = AtomicReference<List<KslContext>?>(emptyList())
+
+    /**
+     * One reference to the context for these arguments, [build] it when there is none yet (null from [build]: the snapshot's key
+     * is gone). Null when the registry is closed and [build] could not run, or returned null.
+     */
+    fun acquire(
+        config: TlsConfig,
+        quic: Boolean,
+        quicTickets: Boolean,
+        earlyData: Boolean,
+        build: () -> KslContext?,
+    ): KslContext? {
+        find(entries.load() ?: return null, config, quic, quicTickets, earlyData)?.let { return it }
+        val made = build() ?: return null
+        while (true) {
+            // closed meanwhile: the context was built from a key still held, so this handshake goes on with it, unshared
+            val list = entries.load() ?: return made
+            find(list, config, quic, quicTickets, earlyData)?.let {
+                made.close() // another session built one first: share that one
+                return it
+            }
+            check(made.tryRetain()) // the registry's reference
+            val grown = list + made
+            val evicted = if (grown.size > MAX) grown[0] else null
+            if (entries.compareAndSet(list, if (evicted != null) grown.drop(1) else grown)) {
+                evicted?.close()
+                return made
+            }
+            made.close() // the list changed: give the registry's reference back and look again
+        }
+    }
+
+    private fun find(
+        list: List<KslContext>,
+        config: TlsConfig,
+        quic: Boolean,
+        quicTickets: Boolean,
+        earlyData: Boolean,
+    ): KslContext? {
+        for (c in list) if (c.serves(config, quic, quicTickets, earlyData) && c.tryRetain()) return c
+        return null
+    }
+
+    /** Drops the registry's references; contexts still in use go with their last session. */
+    fun close() {
+        entries.exchange(null)?.forEach { it.close() }
+    }
+
+    private companion object {
+        /** Contexts one identity snapshot keeps: a server rarely has more configurations per identity (QUIC, TCP, a few ports). */
+        const val MAX = 8
     }
 }
 
