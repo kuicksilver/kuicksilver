@@ -210,6 +210,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3: a request on a connection after this client's own `goAway()` fails with `Http3Exception.RequestNotProcessed`
   (retry-safe) instead of `IllegalStateException`: it was never sent, as one above a received GOAWAY, so a pool that
   handed the connection out just before may repeat it on a new connection.
+- Ktor client: an `Alt-Svc` alternative whose host is not an RFC 3986 host (RFC 7838 section 3: a space, a control
+  character, a bare IPv6 address) is malformed and skipped; before, the text was taken as it came.
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
   a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
   `NoWhenBranchMatchedException` when it meets a `Reloadable`.
