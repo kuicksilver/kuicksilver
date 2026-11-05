@@ -163,39 +163,45 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                     val remote = (conn.quic.activePath ?: conn.quic.paths.firstOrNull())?.remoteAddress
                     events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_3_0, remote) }
                     // the last resort: a failure that still reaches this coroutine is logged, not left uncaught (Native aborts on those)
-                    launch(
-                        connections +
-                            CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/3 connection on port $port failed: $e") },
-                    ) {
-                        val peer = conn.quic.peerCertificates
-                        try {
-                            while (true) {
-                                val req =
-                                    try {
-                                        conn.acceptRequest()
-                                    } catch (
-                                        e: CancellationException,
-                                    ) {
-                                        throw e
-                                    } catch (e: Throwable) {
-                                        break
-                                    }
-                                launch {
-                                    // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
-                                    try {
-                                        handleHttp3(req, local, peer)
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Throwable) {
-                                        environment.log.debug("HTTP/3 request on port $port failed: $e")
+                    val served =
+                        launch(
+                            connections +
+                                CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/3 connection on port $port failed: $e") },
+                        ) {
+                            val peer = conn.quic.peerCertificates
+                            try {
+                                while (true) {
+                                    val req =
+                                        try {
+                                            conn.acceptRequest()
+                                        } catch (
+                                            e: CancellationException,
+                                        ) {
+                                            throw e
+                                        } catch (e: Throwable) {
+                                            break
+                                        }
+                                    launch {
+                                        // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
+                                        try {
+                                            handleHttp3(req, local, peer)
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Throwable) {
+                                            environment.log.debug("HTTP/3 request on port $port failed: $e")
+                                        }
                                     }
                                 }
+                            } finally {
+                                afterH3RequestsAcceptedForTest?.invoke()
+                                listener.remove(conn)
+                                conn.close()
                             }
-                        } finally {
-                            listener.remove(conn)
-                            conn.close()
-                            events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_3_0, remote) }
                         }
+                    // the engine is done with the connection once the requests it accepted (this job's children) ended too:
+                    // a client that closes as soon as it has its answer must not see connectionClosed before requestEnded
+                    served.invokeOnCompletion {
+                        events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_3_0, remote) }
                     }
                 }
             }

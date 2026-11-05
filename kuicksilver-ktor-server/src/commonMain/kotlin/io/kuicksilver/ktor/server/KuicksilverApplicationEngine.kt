@@ -513,6 +513,9 @@ public class KuicksilverApplicationEngine(
     /** Test hook: runs in the HTTP/3 accept loop after each accepted connection, before it is served. */
     internal var afterH3AcceptForTest: (suspend () -> Unit)? = null
 
+    /** Test hook: runs when an HTTP/3 connection accepts no more requests, while the requests it accepted may still run. */
+    internal var afterH3RequestsAcceptedForTest: (() -> Unit)? = null
+
     /** Test hook: runs as an HTTP/3 WebSocket upgrade starts, after Ktor committed the response, before the answer is sent. */
     internal var beforeH3UpgradeForTest: (() -> Unit)? = null
     internal val tcpConnectionsForProbe = ArrayList<Job>()
