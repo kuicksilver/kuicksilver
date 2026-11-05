@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # CI matrix. The same steps as tools/ci/local-matrix.sh, which runs them on the owner's macOS host: both take the
 # module and interop case lists from tools/ci/matrix.sh, and step names match so a red step maps to a local one.
-# Written to pass on fresh GitHub-hosted runners; to be confirmed by the first run after the repository goes public.
+# Runs on every push to main and release/**, every pull request to them, weekly (the whole matrix plus the QUIC Interop
+# Runner), and by hand (the `only` input picks jobs). Nothing here publishes, signs or reads a secret: every job has
+# contents: read, so a pull request from a fork (pull_request, never pull_request_target) runs with the same rights as
+# any other; publishing is release.yml and interop-image.yml, both dispatch-only.
 #
 #   lint ──────────────────────────────────────────────── pins, SPDX, script syntax
 #   openssl-docker (linux-x64, linux-arm64, mingw-x64 + the Windows JNI dll) ─┬─ linux (x64, arm64): manylinux C tests, .so, JVM suites, system OpenSSL
@@ -17,7 +20,14 @@
 #   linux ── jdk-compat (JDK 17 API, tests on 17 / 25)
 name: build
 on:
-  # push, pull_request and the weekly schedule come back once the matrix is green on the public runners again (2026-10-26)
+  # Documentation-only changes run the whole matrix too (no paths-ignore): the lint job checks the docs (doc-refs, links,
+  # the RFC table, guide-sync) and the JVM suites compile and run the guides' code samples (GuideSamplesTest).
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+    branches: [main, 'release/**']
+  schedule:
+    - cron: '17 3 * * 1'   # weekly (Monday 03:17 UTC): the whole matrix plus the QUIC Interop Runner
   workflow_dispatch:
     inputs:
       only:
@@ -30,8 +40,11 @@ on:
         default: false
 permissions: {}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer push to the same branch or pull request cancels the older run: the workflow publishes nothing, and
+  # release.yml asks for a green run of the release commit, which is the newest one when it is released. Scheduled and
+  # manual runs have groups of their own and are never cancelled by a push.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 defaults:
   run:
     shell: bash

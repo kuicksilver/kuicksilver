@@ -1,6 +1,6 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Weekly throughput check: the QUIC Interop Runner measurements (goodput, crosstraffic; runner pinned in tools/interop/runner.lock)
+# Throughput check, started by hand: the QUIC Interop Runner measurements (goodput, crosstraffic; runner pinned in tools/interop/runner.lock)
 # with kuicksilver as server and as client against every peer of tools/interop/perf-thresholds.json, checked by
 # tools/interop/check-perf.sh — a measurement failed or missing turns the job red; one below its threshold does too once
 # the thresholds file says "blocking": true (until then it is a warning annotation). Local equivalent:
@@ -9,8 +9,7 @@
 #   image (JVM interop image, once; peers from the thresholds file) ── perf (one job per peer: both roles, both measurements)
 name: perf
 on:
-  schedule:
-    - cron: '43 4 * * 2'   # weekly (Tuesday 04:43 UTC); build.yml's interop job runs only on manual dispatch
+  # manual only (owner, 2026-11-05): goodput on shared GitHub-hosted runners is too noisy for a weekly verdict
   workflow_dispatch:
 permissions: {}
 concurrency:

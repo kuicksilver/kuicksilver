@@ -47,8 +47,9 @@ candidate above.
 | Kotlin/Native macOS arm64, iOS | yes | yes (macOS arm64 tested; iOS on the simulator, also against a host peer) | accelerated, without GSO/GRO (ADR-0006) |
 | Kotlin/Native Windows (mingw x64) | yes | yes | accelerated (Winsock) |
 
-Windows (Kotlin/Native and the JVM) is cross-built and was verified in a local Windows 11 VM (Parallels). The GitHub
-Actions workflows are disabled; the gate is `tools/ci/local-matrix.sh` (with `--with-windows` for the Windows VM).
+Windows (Kotlin/Native and the JVM) is cross-built and was verified in a local Windows 11 VM (Parallels). At the time
+of 0.2.0 the GitHub Actions workflows were disabled; the gate was `tools/ci/local-matrix.sh` (with `--with-windows` for
+the Windows VM).
 
 What 0.2.0 brings:
 - Hardening from the 2026-10-08 full review: PATH_CHALLENGE backoff
@@ -76,7 +77,7 @@ What 0.2.0 brings:
 - Coverage reports of the JVM tests with Kover (`-Pkuicksilver.coverage :koverHtmlReportJvmTests`, no threshold).
 - The interop runner's `perf` protocol and throughput thresholds (`tools/interop/perf-thresholds.json`, checked by
   `tools/interop/run-local.sh --perf`; the floors warn until they are measured on more than one host, and the weekly
-  `perf` workflow that would run them is disabled like the other workflows).
+  `perf` workflow that would run them was disabled like the other workflows then).
 - BBR congestion control (draft-ietf-ccwg-bbr-06, BBRv3), shipped in 0.2.0 by decision: opt-in and experimental
   (`Bbr`; CUBIC stays the default), with spurious-loss undo, restart from idle, PMTU changes, property tests, a Jazzer
   target and harsh simulator scenarios against CUBIC ([Choosing a congestion controller](guide/quic.md#choosing-a-congestion-controller)).
@@ -89,7 +90,7 @@ Known limits of 0.2.0, stated on purpose:
 - No HTTP/2 in the client engine (ADR-0009; superseded by ADR-0017 for 0.3.0), no HTTP/3 server push, no certificate compression (RFC 8879), no OCSP/CRL
   checks of our own (the platform verifier decides under `TrustConfig.Platform`).
 - `loops > 1` only on Linux and Android (kernel `SO_REUSEPORT` flow hashing); macOS and Windows run one loop per port.
-- Windows: verified in a local VM only, no hosted CI run (above).
+- Windows: verified in a local VM only, no hosted CI run at the time (above).
 - iOS: the test suites run on the simulator, also against a peer on the host; not yet verified on a physical device.
 - No macosX64 target. The `kuicksilver-testing` module is not published.
 
@@ -111,9 +112,9 @@ bug fixed with a test before a release).
 - Longer soak and fuzzing campaigns (done for 0.2.1: a 24-hour Kotlin/Native soak and a 37-hour JVM soak, both flat, and
   2 hours per fuzz target).
 - A statement in [stability.md](stability.md) that the library is not FIPS-certified (done for 0.2.1).
-- Hosted CI: the `build` workflow runs on GitHub Actions by manual dispatch; push, pull-request and scheduled runs come
-  back when its matrix is green on the public runners. The local gate (`tools/ci/local-matrix.sh`) stays the release
-  gate.
+- Hosted CI: the `build` workflow runs on GitHub Actions on every push to `main` and `release/**`, every pull request to
+  them, weekly and by hand (restored on `main` for 0.3.0). The local gate (`tools/ci/local-matrix.sh`) stays the
+  release gate.
 
 Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 ([Device checklist](guide/ios.md#device-checklist)), and the server CPU work below.

@@ -116,7 +116,7 @@ kbit/s): the recorded mean minus 25 % for goodput and minus 40 % for crosstraffi
 goodput, 2100–4200 crosstraffic). `tools/interop/run-local.sh --perf` runs the two measurements against every peer in
 that file, and `tools/interop/check-perf.sh` fails when a cell is failed or missing. A cell below its floor only warns
 until the floors are measured on more hosts (`"blocking": false` in the thresholds file; CONTRIBUTING.md, Throughput).
-`.github/workflows/perf.yml` would run the same weekly on GitHub-hosted runners, but the workflows are disabled. The floors catch a collapse (a congestion-control or pacing regression), not a few per cent; the native
+`.github/workflows/perf.yml` runs the same on GitHub-hosted runners on manual dispatch only (shared runners are too noisy for a weekly verdict). The floors catch a collapse (a congestion-control or pacing regression), not a few per cent; the native
 image has no floors yet.
 
 Native image (linuxArm64, 54/60 green; "?" for `ecn` — quic-go and msquic do not support the case, `rebind-port` for msquic — its client):

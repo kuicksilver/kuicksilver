@@ -19,6 +19,7 @@ Published on Maven Central under `io.kuicksilver` (Apache-2.0). Modules: kuicksi
 ## Policies
 
 - [API stability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md): stable and experimental API, ABI checks, supported platforms, Ktor and OpenSSL policies
+- [Development process](https://github.com/kuicksilver/kuicksilver/blob/main/docs/process.md): how every change is checked before a release: failing-first tests, review against the RFC text, the local gate on every target, hosted CI, soak, fuzzing, signed releases with SBOM and provenance
 - [Verifying a release](https://github.com/kuicksilver/kuicksilver/blob/main/docs/verifying.md): signatures, Gradle dependency verification, SBOM and provenance, reproducible native libraries
 
 ## Optional

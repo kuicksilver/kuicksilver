@@ -24,6 +24,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   current value, so a keep-alive connection follows a change at its next response. With `altSvc = false` no `Alt-Svc` is
   sent in any mode; an application's own `Alt-Svc` is never replaced. HTTP/1.1 responses read the engine's `Alt-Svc`
   per response now instead of once per connection.
+- Documentation: `docs/process.md`, how every change is checked before it reaches a release (a test that fails
+  first, code review and a check against the RFC text, reference stacks, the compliance matrix and threat model, the
+  local gate and its coverage, hosted CI, soak and fuzzing, signed releases with SBOM and provenance, and what is
+  manual or partial today).
 - TLS: certificate rotation without a restart (experimental `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`;
   `docs/guide/tls.md`, "Rotating the server certificate"). `reload(next)` makes `next` the identity of every handshake
   that starts afterwards, over TCP and QUIC; each handshake takes chain and key from one snapshot, and running
@@ -232,6 +236,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   body unread), so even a streamed body can be sent again.
 - Ktor client: an `Alt-Svc` alternative whose host is not an RFC 3986 host (RFC 7838 section 3: a space, a control
   character, a bare IPv6 address) is malformed and skipped; before, the text was taken as it came.
+- Security policy (`SECURITY.md`): an OpenSSL advisory whose issue is reachable through Kuicksilver now gets a patch
+  release with the fixed OpenSSL within 7 days (Moderate and Low; was 14 days for Moderate and the next planned release
+  for Low), Critical and High still within 72 hours, each with a GitHub Security Advisory of this repository naming the
+  OpenSSL CVE and the fixed version. New: where to see advisories and security releases, the emergency path when the
+  month's Maven Central quota is used up, and `main` in the supported-versions table.
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
   a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
   `NoWhenBranchMatchedException` when it meets a `Reloadable`.

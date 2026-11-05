@@ -21,6 +21,10 @@ SPDX-License-Identifier: Apache-2.0
   <a href="docs/guide/ktor.md"><img alt="Ktor 3.6" src="https://img.shields.io/badge/Ktor-3.6-087CFA"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-JVM%20%7C%20Android%20%7C%20iOS%20%7C%20macOS%20%7C%20Linux%20%7C%20Windows-555">
   <a href="docs/spec/interop.md"><img alt="Interop: msquic, ngtcp2, picoquic, quic-go, quiche, quinn" src="https://img.shields.io/badge/interop-6%20QUIC%20stacks-2EA44F"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/kuicksilver/kuicksilver"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/kuicksilver/kuicksilver/badge"></a>
+  <!-- OpenSSF Best Practices badge: pending the maintainer's submission (answers in docs/openssf-best-practices.md); add
+  <a href="https://www.bestpractices.dev/projects/PROJECT-ID"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/PROJECT-ID/badge"></a>
+  with the project id once the entry exists. -->
 </p>
 
 > **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.0 is on Maven Central. Do
@@ -152,11 +156,11 @@ in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repos
 
 | Platform | Targets | QUIC client | QUIC server | Limits |
 |---|---|---|---|---|
-| JVM 17+ | Linux x86_64 / aarch64, macOS arm64 / x86_64, Windows x86_64 | yes | yes | Linux: glibc 2.17 or newer (the native library is built in manylinux2014); musl (Alpine) is not supported. macOS 11 or newer. Accelerated UDP everywhere: on Linux (GSO/GRO, ECN, DF), macOS (ECN, DF; no GSO/GRO) and Windows (USO/URO and ECN where the Windows version grants them, DF). `loops > 1` needs Linux. The Windows JNI library is cross-built with mingw-w64; the JVM suites on Windows were verified in a local Windows 11 VM (Parallels); the GitHub Actions workflows are disabled, and the gate runs locally (`tools/ci/local-matrix.sh --with-windows`, see [Platforms](docs/stability.md#platforms)). |
+| JVM 17+ | Linux x86_64 / aarch64, macOS arm64 / x86_64, Windows x86_64 | yes | yes | Linux: glibc 2.17 or newer (the native library is built in manylinux2014); musl (Alpine) is not supported. macOS 11 or newer. Accelerated UDP everywhere: on Linux (GSO/GRO, ECN, DF), macOS (ECN, DF; no GSO/GRO) and Windows (USO/URO and ECN where the Windows version grants them, DF). `loops > 1` needs Linux. The Windows JNI library is cross-built with mingw-w64; the JVM suites on Windows were verified in a local Windows 11 VM (Parallels), which the release gate uses (`tools/ci/local-matrix.sh --with-windows`, see [Platforms](docs/stability.md#platforms)); the hosted CI's `windows-jvm` job runs them on GitHub's Windows runners. |
 | Android | `minSdk` 24; arm64-v8a, armeabi-v7a, x86_64 | yes | yes | Native libraries are aligned for 16 KiB pages; accelerated UDP as on Linux. |
 | Kotlin/Native Linux | `linuxX64`, `linuxArm64` | yes | yes | glibc of the Kotlin/Native sysroot (2.19 on x64, 2.25 on arm64); the system zlib (`libz.so.1`, since 0.3.0). |
 | Kotlin/Native Apple | `macosArm64`, `iosArm64`, `iosSimulatorArm64` (no `macosX64`: deprecated by Kotlin; the JVM on Intel Macs is served by the JNI library) | yes | yes | macOS 12 or newer, iOS 15 or newer. The server runs on the accelerated `ksl` socket (ADR-0006): ECN and DF, no GSO/GRO (Darwin has none), `loops = 1` only (Darwin has no `SO_REUSEPORT` flow hashing). The test suites of every module run on the iOS simulator (`iosSimulatorArm64Test`), and `:kuicksilver-ktor-client:iosHostInteropTest` runs the simulator against a peer on the host (Ktor HTTP/3 and HTTP/1.1, raw QUIC in both directions, IPv4 and IPv6); network following through `NWPathMonitor` (`followDefaultNetwork`) is in `appleMain`. Not yet verified on a physical device. |
-| Kotlin/Native Windows | `mingwX64` | yes | yes | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN where Windows accepts `IP_ECN`, probed when the socket opens and verified on Windows 11, USO/URO where granted), `loops = 1` only (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); the GitHub Actions workflows are disabled, and the gate runs locally (`tools/ci/local-matrix.sh`). |
+| Kotlin/Native Windows | `mingwX64` | yes | yes | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN where Windows accepts `IP_ECN`, probed when the socket opens and verified on Windows 11, USO/URO where granted), `loops = 1` only (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); the hosted CI's `windows` job runs the test executables on GitHub's Windows runners, and the release gate runs locally (`tools/ci/local-matrix.sh`). |
 
 TLS over TCP (`TlsConnection`, `Socket.tls()`) works on every target above. JS and Wasm are not targets.
 
@@ -210,6 +214,9 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.
 - [docs/verifying.md](docs/verifying.md) — verifying a release: signatures, Gradle dependency verification, SBOM and
   provenance, rebuilding the native libraries.
+- [docs/process.md](docs/process.md) — how every change is checked before it reaches a release: tests, review, the
+  local gate on every target, hosted CI, soak and fuzzing, signed releases. [docs/openssf-best-practices.md](docs/openssf-best-practices.md)
+  has the prepared answers for the OpenSSF Best Practices questionnaire.
 - [docs/adr/](docs/adr/README.md) — architecture decision records.
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

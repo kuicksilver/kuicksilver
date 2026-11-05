@@ -7,7 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 Thank you for helping. Kuicksilver is a network security component, so the bar for changes is high and the process is
 explicit: an issue first for anything that changes behaviour or API, tests that fail before the fix, and a sign-off on
-every commit. This document says how to build, test and propose changes. By participating you agree to the
+every commit. This document says how to build, test and propose changes; [docs/process.md](docs/process.md) describes
+every stage a change goes through before it reaches a release. By participating you agree to the
 [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through [SECURITY.md](SECURITY.md), never a public issue.
 
 ## Building
@@ -140,9 +141,10 @@ server:443` and no capture started: the scenario never ran and no endpoint sent 
 The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a
 warning (exit 0) while a failed or missing cell still fails. To make the floors blocking, run `run-local.sh --perf` a
 few times on quiet hosts, fold the runs in with `check-perf.sh --update <dir>[,<dir>...]` (it keeps the best mean per
-cell), commit the new floors and set `"blocking": true` in the same commit. The weekly `perf` workflow
-(`.github/workflows/perf.yml`) does the same on GitHub-hosted runners, but the GitHub Actions workflows are disabled;
-the gate is `tools/ci/local-matrix.sh`.
+cell), commit the new floors and set `"blocking": true` in the same commit. The `perf` workflow
+(`.github/workflows/perf.yml`, manual dispatch only; disabled in the repository settings until the maintainer enables it
+again) does the same on GitHub-hosted runners; the release gate is `tools/ci/local-matrix.sh`
+([docs/process.md](docs/process.md)).
 
 ## Style
 
@@ -241,11 +243,18 @@ the gate is `tools/ci/local-matrix.sh`.
   coverage beyond that committed corpus and the seeds. Options: `--slice MIN`, `--goal HOURS` per target, `--goals id=HOURS,...` per target, `--hours
   HOURS` of wall clock, `--jobs N` slices at once (each on its own target, default 1), `--nice N` (default 19),
   `--targets id,...` (`tools/fuzz/campaign.sh list`), `--fork N` (libFuzzer/Jazzer fork mode, N workers on the slice's
-  target; default off, for a machine the campaign owns). On GitHub, *Actions → fuzz → Run workflow* (`.github/workflows/fuzz.yml`,
-  dispatch only) gives every target its own runner for `hours_per_target` (`--fork` with one worker per CPU, `--nice 0`,
-  `--gap 0`), keeps each grown corpus, pruned, in the Actions cache between runs (one entry per target and branch: the
-  `corpus-cache` job deletes the older ones), fails the target's job on a finding and uploads
-  its reproducers, logs and `stats.tsv` as `fuzz-<target>`; the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
+  target; default off, for a machine the campaign owns). On GitHub, `.github/workflows/fuzz.yml` (weekly, every target for 2 hours,
+  and *Actions → fuzz → Run workflow*) gives every target its own runner for `hours_per_target` (`--fork` with one worker
+  per CPU, `--nice 0`, `--gap 0`), keeps each grown corpus, pruned, in the Actions cache between runs (one entry per
+  target and branch: the `corpus-cache` job deletes the older ones). The repository's build caches (Gradle, Kotlin/Native,
+  OpenSSL) already exceed the default 10 GB, so the weekly corpora are evicted first; each pruned corpus is therefore
+  also kept as the `fuzz-corpus-<target>` artifact for 90 days and restored from there when the cache has no entry (only
+  from a fuzz run of this repository on `main`, and only its regular files). A finding fails the target's job, which
+  notifies the maintainers; that target's corpus is then neither cached nor uploaded in that run, and its reproducer
+  and the slice logs are never uploaded: artifacts of a public repository are public, and a finding stays private until
+  it is fixed ([SECURITY.md](SECURITY.md)). That a target found something is visible in the public run; what it found
+  is not. Reproduce it locally with `tools/fuzz/campaign.sh run --targets <target>`. Only `stats.tsv` is uploaded (`fuzz-stats-<target>`);
+  the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
   reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
   in `build/fuzz-campaign/load-timeouts/` and is not a finding. ClusterFuzzLite is not used: `.clusterfuzzlite/` and
