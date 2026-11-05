@@ -815,7 +815,7 @@ internal class H2ConnectionCore(
     /**
      * Resets [streamId] with [code] (the application cancelled it). A stream whose field section was never written is idle
      * to the peer: it is dropped without a RST_STREAM (section 6.4; a later stream closes it, section 5.1.1) and reported
-     * as not processed.
+     * as not processed. A stream already closed (the peer reset it, or it ended both ways) gets nothing (sections 5.1, 5.4.2).
      */
     fun reset(
         streamId: Int,
@@ -831,18 +831,28 @@ internal class H2ConnectionCore(
             return
         }
         if (isIdle(streamId) && s == null) return // section 6.4: never on an idle stream
+        // section 5.1: nothing but PRIORITY on a closed stream, and section 5.4.2: no RST_STREAM in answer to the peer's
+        if (s?.state == StreamState.CLOSED || (s == null && streamId in recentlyClosed)) return
         resetStream(streamId, code, now, causedByPeer = false)
     }
 
     /**
      * The driver is done with [streamId] (a server's handler returned; a client read or abandoned the response): it stops
-     * counting toward our concurrency limit, and content the application never read is credited to the connection.
+     * counting toward our concurrency limit, and content the application never read is credited to the connection. A
+     * request still open after its complete response is stopped with RST_STREAM NO_ERROR once that response is written
+     * (section 8.1).
      */
     fun release(streamId: Int) {
         val s = streams[streamId] ?: return
         s.released = true
         if (!s.local) refusedInARow = 0
         dropUnconsumed(s)
+        if (!s.local && s.state == StreamState.HALF_CLOSED_LOCAL) {
+            // section 8.1: the response is complete and nobody reads the rest of the request: the server asks the client to
+            // stop with RST_STREAM NO_ERROR once the response's frames are out (Go's server.go wroteFrame does the same)
+            if (s.out.isEmpty()) resetStream(s.id, Http2ErrorCode.NO_ERROR, lastNow, causedByPeer = false) else s.stopPeerAfterFlush = true
+            return
+        }
         if (s.state == StreamState.CLOSED && s.out.isEmpty()) removeStream(s) // else once its last frame is written
     }
 
@@ -872,7 +882,10 @@ internal class H2ConnectionCore(
     ) {
         if (closed) return
         if (code != Http2ErrorCode.NO_ERROR) return connectionError(code, debug.decodeToString())
-        if (graceful && goAwaySentLastId < 0) {
+        // a graceful GOAWAY after one of ours changes nothing: a two-step one in progress keeps its second step for when
+        // its PING returns (a second call must not collapse it and cut the streams that crossed the first GOAWAY)
+        if (graceful && goAwaySentLastId >= 0) return
+        if (graceful) {
             sendGoAway(H2.MAX_STREAM_ID, code, debug)
             gracefulPing = ping(now)
             gracefulDeadline = now + settings.settingsAckTimeout.inWholeNanoseconds
@@ -1029,6 +1042,11 @@ internal class H2ConnectionCore(
             tryWake(s)
         }
         schedule(s)
+        if (s.stopPeerAfterFlush && s.out.isEmpty()) {
+            s.stopPeerAfterFlush = false
+            // the client ended its side meanwhile, or the reset of [release] (section 8.1) goes out now, after the response
+            if (s.state == StreamState.HALF_CLOSED_LOCAL) resetStream(s.id, Http2ErrorCode.NO_ERROR, now, causedByPeer = false)
+        }
         if (s.state == StreamState.CLOSED && s.out.isEmpty() && s.released) removeStream(s)
         return frame
     }

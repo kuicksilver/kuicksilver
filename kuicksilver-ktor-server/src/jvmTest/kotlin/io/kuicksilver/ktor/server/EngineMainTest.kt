@@ -115,6 +115,18 @@ class EngineMainTest {
             }
         }
 
+    /** `kuicksilver.http2` turns HTTP/2 on (it is off by default, 0.3.0). */
+    @Test fun http2Key() {
+        fun http2(vararg extra: String): Boolean {
+            val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            return server.engine.configuration.http2
+        }
+        assertEquals(false, http2())
+        assertEquals(true, http2("-P:kuicksilver.http2=true"))
+        assertFailsWith<IllegalArgumentException> { http2("-P:kuicksilver.http2=yes") }
+    }
+
     @Test fun reloadIntervalKeyParsed() {
         assertEquals(30.seconds, EngineMain.parseReloadInterval("30s"))
         assertEquals(1.hours, EngineMain.parseReloadInterval("1h"))

@@ -58,4 +58,7 @@ internal class H2Stream(
 
     /** The driver said it is done with the stream ([H2ConnectionCore.release]). */
     var released = false
+
+    /** Released after a complete response with the request still open: RST_STREAM NO_ERROR follows the last frame (section 8.1). */
+    var stopPeerAfterFlush = false
 }

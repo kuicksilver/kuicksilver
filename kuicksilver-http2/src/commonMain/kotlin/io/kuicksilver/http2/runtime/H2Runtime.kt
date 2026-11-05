@@ -83,6 +83,9 @@ internal class StreamRt(
     var released = false
     var trailers: List<Pair<String, String>>? = null
 
+    /** Completed with [failure] when the stream fails (a server's engine cancels the request's handler on it). */
+    val failed = CompletableDeferred<Throwable>()
+
     /** Wakes the body's reader. */
     val readable = Channel<Unit>(Channel.CONFLATED)
 
@@ -122,6 +125,8 @@ internal class H2Runtime(
     private val onChange: () -> Unit,
     /** A server's new request stream, its request already validated. */
     private val onRequest: ((StreamRt, io.kuicksilver.http2.message.H2Request) -> Unit)? = null,
+    /** A server's fields for the responses the runtime makes itself (the 431): the engine's `date`, say. */
+    private val ownResponseFields: () -> List<Pair<String, String>> = { emptyList() },
 ) {
     private val client = role == Role.CLIENT
     val lock = SpinLock()
@@ -202,9 +207,18 @@ internal class H2Runtime(
     }
 
     /**
-     * Wakes the writer when the core has something to write (only then: the writer's own poll would wake it forever) and
-     * the timer (a deadline may have moved), then dispatches the events in order, one dispatcher at a time.
+     * [withCore] for a call the core may refuse because the stream ended under us (IllegalStateException from
+     * `sendHeaders`, `sendData`, `endStream`): null then. Only the core's own call is guarded: an exception out of the
+     * event dispatch that follows (a callback of the engine) is not a refusal and passes through.
      */
+    private inline fun <T : Any> withCoreUnlessRefused(crossinline block: H2ConnectionCore.() -> T): T? =
+        withCore {
+            try {
+                block()
+            } catch (_: IllegalStateException) {
+                null
+            }
+        }
 
     /** Runs right before a body's END_STREAM is queued (tests: the peer's reset arrives in that gap). */
     internal var beforeEndStreamForTest: (() -> Unit)? = null
@@ -227,6 +241,10 @@ internal class H2Runtime(
         }
     }
 
+    /**
+     * Wakes the writer when the core has something to write (only then: the writer's own poll would wake it forever) and
+     * the timer (a deadline may have moved), then dispatches the events in order, one dispatcher at a time.
+     */
     private fun afterCore(wantsWrite: Boolean) {
         if (wantsWrite) kick.trySend(Unit)
         timerKick.trySend(Unit)
@@ -345,7 +363,7 @@ internal class H2Runtime(
         if (e.tooLarge) {
             // RFC 9113 section 8.2 and the core's contract: a server answers 431
             withCore {
-                sendHeaders(s.id, listOf(":status" to "431"), endStream = true)
+                sendHeaders(s.id, listOf(":status" to "431") + ownResponseFields(), endStream = true)
                 release(s.id)
             }
             lock.withLock { streams.remove(s.id) }
@@ -360,6 +378,13 @@ internal class H2Runtime(
                 lock.withLock { streams.remove(s.id) }
                 return
             }
+        if (e.endStream && r.contentLength > 0) {
+            // RFC 9113 section 8.1.1: no DATA can follow, so the content cannot match its content-length; never delivered
+            malformed(s, "content-length ${r.contentLength} on a request without content")
+            withCore { release(s.id) }
+            lock.withLock { streams.remove(s.id) }
+            return
+        }
         lock.withLock {
             s.headReceived = true
             s.contentLength = r.contentLength
@@ -442,7 +467,8 @@ internal class H2Runtime(
         val ended = lock.withLock { core.isClosed }
         // RFC 9113 section 8.1: a server may answer before the whole request and then reset with NO_ERROR: the client stops
         // sending and keeps the response
-        if (e.byPeer && e.code == Http2ErrorCode.NO_ERROR && lock.withLock { s.remoteEnded }) {
+        // (a client's NO_ERROR reset has no such meaning: on a server it fails the stream like any reset)
+        if (client && e.byPeer && e.code == Http2ErrorCode.NO_ERROR && lock.withLock { s.remoteEnded }) {
             lock.withLock { s.localEnded = true }
             s.writable.trySend(Unit)
             return
@@ -518,6 +544,7 @@ internal class H2Runtime(
                 }
             }
         if (!set) return
+        s.failed.complete(cause)
         s.head.completeExceptionally(cause)
         s.answered.completeExceptionally(cause)
         s.readable.trySend(Unit)
@@ -753,9 +780,8 @@ internal class H2Runtime(
 
     /**
      * Our side of [s] cannot go on: RST_STREAM CANCEL unless the stream already failed or ended. A server whose response is
-     * complete does not reset: a reset would drop the response's frames still queued (RFC 9113 section 6.4); the request's
-     * remaining content is credited as it arrives. (Asking the client to stop with NO_ERROR once those frames are out,
-     * section 8.1, comes with the server engine.)
+     * complete does not reset: a reset would drop the response's frames still queued (RFC 9113 section 6.4); once the
+     * stream is released, the core asks the client to stop with NO_ERROR after those frames (section 8.1).
      */
     private fun abandon(
         s: StreamRt,
@@ -782,13 +808,12 @@ internal class H2Runtime(
      * waiting for another thread's dispatch, so this waits until the runtime knows (the stream failed, or the peer ended
      * our side after a complete response), and the caller's next round reports that, never the core's refusal.
      */
-    private suspend fun <T> sendStep(
+    private suspend fun <T : Any> sendStep(
         s: StreamRt,
         block: H2ConnectionCore.() -> T,
     ): T? {
-        try {
-            return withCore(block)
-        } catch (e: IllegalStateException) {
+        val r = withCoreUnlessRefused(block)
+        if (r == null) {
             while (lock.withLock { s.failure == null && !s.localEnded }) {
                 if (closed.isCompleted) {
                     // the connection is over and nothing failed the stream: it fails now, typed
@@ -803,8 +828,8 @@ internal class H2Runtime(
                     closed.onAwait {}
                 }
             }
-            return null
         }
+        return r
     }
 
     /**
@@ -812,22 +837,19 @@ internal class H2Runtime(
      * ended under us becomes the stream's failure, or a typed reset when the runtime does not know it yet; the core's
      * IllegalStateException never reaches the application.
      */
-    private inline fun <T> guarded(
+    private inline fun guarded(
         s: StreamRt,
-        block: H2ConnectionCore.() -> T,
-    ): T =
-        try {
-            withCore(block)
-        } catch (e: IllegalStateException) {
-            throw lock.withLock { s.failure } ?: closeCause
-                ?: Http2Exception.StreamReset(
-                    s.id,
-                    Http2ErrorCode.CANCEL,
-                    byPeer = true,
-                    notProcessed = false,
-                    "stream ${s.id} ended under us",
-                )
-        }
+        crossinline block: H2ConnectionCore.() -> Unit,
+    ) {
+        withCoreUnlessRefused { block() } ?: throw lock.withLock { s.failure } ?: closeCause
+            ?: Http2Exception.StreamReset(
+                s.id,
+                Http2ErrorCode.CANCEL,
+                byPeer = true,
+                notProcessed = false,
+                "stream ${s.id} ended under us",
+            )
+    }
 
     private suspend fun awaitWindow(
         s: StreamRt,
@@ -878,9 +900,10 @@ internal class H2Runtime(
 
     /**
      * The application is done with [s] (its call ended): a stream not finished both ways is reset with CANCEL (RFC 9113
-     * section 8.1: the client no longer wants the response), the core releases it and its reservation comes back.
+     * section 8.1: the client no longer wants the response), the core releases it and its reservation comes back. True for
+     * the first call, false for every later one.
      */
-    fun release(s: StreamRt) {
+    fun release(s: StreamRt): Boolean {
         val first =
             lock.withLock {
                 if (s.released) {
@@ -890,7 +913,7 @@ internal class H2Runtime(
                     true
                 }
             }
-        if (!first) return
+        if (!first) return false
         abandon(s, CancellationException("the call ended"))
         withCore { release(s.id) }
         lock.withLock {
@@ -898,6 +921,7 @@ internal class H2Runtime(
             s.chunks.clear()
         }
         if (client) unreserve()
+        return true
     }
 
     /** A server's response head on [s]. */

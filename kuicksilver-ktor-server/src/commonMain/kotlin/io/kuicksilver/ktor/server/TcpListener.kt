@@ -200,7 +200,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
         // completed when accepting ends (the engine stops): connections read no further request, idle ones close at once
         val draining: CompletableJob = Job()
         tcpConnectionsForProbe += connections
-        val tlsConfig = l.tls?.tlsConfig(listOf("http/1.1"))
+        val tlsConfig = l.tls?.let { tcpTlsConfig(it) }
+        // RFC 9113 section 3.2: `h2` only over TLS, and only where it was offered (no h2c on a plain connector)
+        val h2Offered = tlsConfig != null && H2_ALPN in tlsConfig.alpn
         val scheme = if (l.tls != null) "https" else "http"
         val acceptJob =
             launch(rootJob + CoroutineName("accept-${l.config}")) {
@@ -226,7 +228,12 @@ internal fun KuicksilverApplicationEngine.startTcp(
                     val connectionScope =
                         CoroutineScope(
                             coroutineContext + connections + CoroutineName("connection") +
-                                CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/1.1 connection on port $port failed: $e") },
+                                CoroutineExceptionHandler {
+                                    _,
+                                    e,
+                                    ->
+                                    environment.log.debug("TCP connection (HTTP/1.1 or HTTP/2) on port $port failed: $e")
+                                },
                         )
                     val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     try {
@@ -266,6 +273,19 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     peer = emptyList()
                                 }
                                 val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else NO_ALT_SVC
+                                if (h2Offered && (sock as? io.kuicksilver.ktor.network.TlsSocket)?.negotiatedAlpn == H2_ALPN) {
+                                    return@launch serveH2(
+                                        sock,
+                                        remote,
+                                        peer,
+                                        altSvc,
+                                        (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
+                                        timeout,
+                                        headerTimeout,
+                                        sendTimeout,
+                                        draining,
+                                    )
+                                }
                                 events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
                                 val connection =
                                     H1Connection(
@@ -307,6 +327,23 @@ internal fun KuicksilverApplicationEngine.startTcp(
         rootJob.invokeOnCompletion { selector.close() }
         return TcpServer(rootJob, acceptJob, socket, h3Endpoint, draining, connections)
     }
+}
+
+/** The ALPN protocol ID of HTTP/2 over TLS (RFC 9113 section 3.2). */
+internal const val H2_ALPN = "h2"
+
+/**
+ * The TLS configuration of a TCP connector: ALPN `h2` before `http/1.1` when [KuicksilverApplicationEngine.Configuration.http2]
+ * is set (the server picks by its own order, so a client that offers both gets HTTP/2, RFC 7301 section 3.2), else
+ * `http/1.1` alone. HTTP/2 is offered only over TLS 1.3: RFC 9113 section 9.2.1 makes a TLS 1.2 renegotiation a
+ * connection error, which the TLS layer cannot report (OpenSSL refuses renegotiation on its own, ksl_ctx.c), and section
+ * 9.2.2 restricts the TLS 1.2 cipher suites; the server negotiates TLS 1.3 only, so this holds for every connector.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnector): io.kuicksilver.tls.TlsConfig {
+    val h1 = tls.tlsConfig(listOf("http/1.1"))
+    if (!configuration.http2 || h1.versions != io.kuicksilver.tls.TlsVersions.Tls13) return h1
+    return tls.tlsConfig(listOf(H2_ALPN, "http/1.1"))
 }
 
 /**

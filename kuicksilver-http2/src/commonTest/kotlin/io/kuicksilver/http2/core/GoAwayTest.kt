@@ -60,6 +60,27 @@ class GoAwayTest {
         assertEquals(ids, unprocessed.map { it.streamId })
     }
 
+    /** A second graceful GOAWAY (the engine stops while an idle close is under way) keeps the first one's two steps. */
+    @Test
+    fun repeatedGracefulGoAwayKeepsTheTwoSteps() {
+        val p = RawH2Peer(Role.SERVER)
+        p.handshake()
+        p.send(p.headers(1, endStream = true))
+        p.core.goAway(Http2ErrorCode.NO_ERROR, ByteArray(0), graceful = true, now = p.now)
+        p.core.goAway(Http2ErrorCode.NO_ERROR, ByteArray(0), graceful = true, now = p.now)
+        p.read()
+        assertEquals(listOf(H2.MAX_STREAM_ID), p.written.filterIsInstance<Frame.GoAway>().map { it.lastStreamId })
+        // a request that crosses the first GOAWAY is still taken
+        p.send(p.headers(3, endStream = true))
+        val ping = p.written.filterIsInstance<Frame.Ping>().single { !it.ack }
+        p.send(
+            io.kuicksilver.http2.frame.FrameEncoder
+                .ping(true, ping.payload),
+        )
+        p.read()
+        assertEquals(listOf(H2.MAX_STREAM_ID, 3), p.written.filterIsInstance<Frame.GoAway>().map { it.lastStreamId })
+    }
+
     @Test
     fun twoPhaseGoAwayFromServer() {
         val p = H2Pair()

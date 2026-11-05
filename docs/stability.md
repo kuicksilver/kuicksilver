@@ -259,6 +259,7 @@ the connection core are internal.
 |---|---|
 | `quicEarlyData`, `ApplicationRequest.receivedEarly` | 0-RTT |
 | `logger`, `qlog`, `connectionListener`, `eventListener`, `KuicksilverServerEventListener` | observability |
+| `http2`, `http2Settings` | HTTP/2 on TLS connectors (opt-in) |
 
 ### `kuicksilver-ktor-network`
 

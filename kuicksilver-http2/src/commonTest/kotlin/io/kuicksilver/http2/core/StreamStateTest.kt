@@ -45,6 +45,63 @@ class StreamStateTest {
         assertEquals(3, p.client.openStream(GET, endStream = true)) // the next client identifier
     }
 
+    /**
+     * RFC 9113 section 8.1: a server MAY ask the client to stop sending a request with RST_STREAM NO_ERROR after a complete
+     * response. Once the handler is done (release) with the request still open, the core does so after the response's
+     * last frame (as Go's server.go wroteFrame), so a client cannot keep a released stream busy with content nobody reads.
+     */
+    @Test
+    fun releasedRequestStillSendingIsStoppedWithNoErrorAfterTheResponse() {
+        val p = H2Pair()
+        val id = p.client.openStream(GET + ("content-length" to "100"), endStream = false)
+        p.client.sendData(id, ByteArray(10), 0, 10, endStream = false)
+        p.pump()
+        p.server.sendHeaders(id, OK, endStream = false)
+        p.server.sendData(id, "done".encodeToByteArray(), 0, 4, endStream = true) // half-closed (local)
+        p.server.release(id) // the handler is done; the client still sends
+        p.pump()
+        val reset = p.clientGot<H2Event.StreamReset>().single()
+        assertEquals(Http2ErrorCode.NO_ERROR, reset.code)
+        // the response was complete before the reset (the frames went out in order)
+        assertTrue(p.clientGot<H2Event.Data>().single().endStream)
+        assertEquals(0, p.server.activeStreams)
+    }
+
+    /** A handler still reading the request (not released) is not cut off by its own complete response. */
+    @Test
+    fun completeResponseBeforeReleaseLeavesTheRequestOpen() {
+        val p = H2Pair()
+        val id = p.client.openStream(GET, endStream = false)
+        p.pump()
+        p.server.sendHeaders(id, OK, endStream = true)
+        p.pump()
+        assertTrue(p.clientGot<H2Event.StreamReset>().isEmpty())
+        assertEquals(1, p.client.sendData(id, byteArrayOf(1), 0, 1, endStream = true))
+        p.pump()
+        assertTrue(p.serverGot<H2Event.Data>().single().endStream)
+    }
+
+    /**
+     * RFC 9113 section 5.4.2: an endpoint MUST NOT send a RST_STREAM in response to a RST_STREAM; section 5.1: nothing but
+     * PRIORITY goes out on a closed stream. The driver's reset of a stream the peer reset, or that ended both ways, sends
+     * nothing.
+     */
+    @Test
+    fun negative_noResetOfAStreamThePeerResetOrThatEnded() {
+        val p = RawH2Peer(Role.SERVER)
+        p.handshake()
+        p.send(p.headers(1, endStream = false), p.headers(3, endStream = true))
+        p.send(FrameEncoder.rstStream(1, Http2ErrorCode.CANCEL.code))
+        p.core.sendHeaders(3, OK, endStream = true) // 3 ends both ways
+        p.read()
+        p.core.reset(1, Http2ErrorCode.INTERNAL_ERROR, p.now)
+        p.core.reset(3, Http2ErrorCode.INTERNAL_ERROR, p.now)
+        p.core.release(1)
+        p.core.release(3)
+        p.read()
+        assertEquals(emptyList(), p.resets().map { it.streamId }, "no RST_STREAM after the peer's, none on an ended stream")
+    }
+
     @Test
     fun interimResponsesThenFinalThenTrailers() {
         val p = H2Pair()

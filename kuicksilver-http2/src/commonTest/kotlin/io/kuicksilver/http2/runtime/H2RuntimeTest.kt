@@ -260,6 +260,48 @@ class H2RuntimeTest {
             assertEquals(Http2ErrorCode.CANCEL, seen.await())
         }
 
+    /** The engine's view of a server stream: its failure (here the client's CANCEL) reaches the handler; idle once released. */
+    @Test fun serverStreamFailureReachesTheHandlerAndReleaseCounts() =
+        runTest {
+            val (client, server, _) = pair()
+            val failure = kotlinx.coroutines.CompletableDeferred<Throwable>()
+            val req =
+                backgroundScope.async {
+                    server.requests.receive().also { r ->
+                        r.invokeOnFailure { failure.complete(it) }
+                        r.respond(200)
+                    }
+                }
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/up", listOf("content-length" to "3"), endStream = false)
+            val r = req.await()
+            assertEquals("https", r.scheme)
+            assertEquals(3L, r.contentLength)
+            assertEquals(1, server.openRequests.value)
+            s.response()
+            s.cancel()
+            val e = assertIs<Http2Exception.StreamReset>(failure.await())
+            assertEquals(Http2ErrorCode.CANCEL, e.code)
+            r.release()
+            r.release() // once only
+            assertEquals(0, server.openRequests.value)
+            s.release()
+        }
+
+    /** RFC 9113 section 8.1: the handler is done after a complete response; the client still sending is told to stop. */
+    @Test fun releasedAfterCompleteResponseTheClientIsStoppedWithNoError() =
+        runTest {
+            val (client, server, _) = pair()
+            backgroundScope.serve(server) { r -> r.respond(200, endStream = true) }
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            assertEquals(200, s.response().status)
+            // the request body is not wanted: sending it ends quietly (the server stopped the stream with NO_ERROR)
+            s.sendBody(ByteReadChannel(ByteArray(1 shl 20)), stallMillis = null) { error("stall") }
+            assertEquals(0, s.body.readAll().size)
+            s.release()
+        }
+
     // ---- against a raw server ----
 
     /** A server that writes frames by hand; [read] decodes what the client wrote after its preface. */
@@ -610,6 +652,57 @@ class H2RuntimeTest {
             assertTrue(client.isUsable, "a field section too large fails its request, not the connection")
             a.release()
             b.release()
+        }
+
+    /**
+     * Only the core's own refusal of a sender's call means "the stream ended under us". An IllegalStateException out of the
+     * event dispatch that follows the call (here the engine's `onChange` callback, run by the sender's thread because the
+     * event was waiting when its call returned) is not one: taken for a refusal, the sender waited for a stream failure that
+     * never came, or sent the chunk the core had already taken a second time.
+     */
+    @Test fun negative_dispatchFailureIsNotTakenForTheCoresRefusal() =
+        runTest {
+            var armed = false
+            val w = Wire()
+            val server = H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            val client =
+                H2ClientConnection.start(
+                    w.toClient,
+                    w.toServer,
+                    Http2Settings(),
+                    backgroundScope,
+                    Duration.INFINITE,
+                    { w.close() },
+                    onChange = { if (armed) throw IllegalStateException("from onChange") },
+                    clock = clock(),
+                )
+            val got =
+                backgroundScope.async {
+                    runCatching {
+                        server.requests
+                            .receive()
+                            .body
+                            .readAll()
+                    }
+                }
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            runCurrent()
+            // a SETTINGS from the server whose event (SettingsChanged, which calls onChange) waits for the next dispatcher
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            armed = true
+            val e =
+                withTimeout(10.seconds) {
+                    assertFailsWith<IllegalStateException> {
+                        s.sendBody(ByteReadChannel("once".encodeToByteArray()), stallMillis = null) { error("stall") }
+                    }
+                }
+            assertEquals("from onChange", e.message)
+            armed = false
+            runCurrent()
+            // the chunk went out once; the stream was then reset (the sender failed), so the body is not complete
+            assertIs<Http2Exception.StreamReset>(got.await().exceptionOrNull())
+            s.release()
         }
 }
 

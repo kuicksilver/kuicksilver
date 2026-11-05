@@ -9,9 +9,9 @@ import io.ktor.util.logging.Logger
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 
 /**
- * Hears the server engine's connections and requests over HTTP/1.1 and HTTP/3 (docs/guide/ktor.md, "Observability"); set it
- * with `eventListener` in the engine configuration. Every method has an empty default. A connection reports
- * [connectionOpened] once its TLS handshake (HTTP/1.1) or QUIC handshake (HTTP/3) completed, and [connectionClosed] when
+ * Hears the server engine's connections and requests over HTTP/1.1, HTTP/2 and HTTP/3 (docs/guide/ktor.md, "Observability");
+ * set it with `eventListener` in the engine configuration. Every method has an empty default. A connection reports
+ * [connectionOpened] once its TLS handshake (HTTP/1.1, HTTP/2) or QUIC handshake (HTTP/3) completed, and [connectionClosed] when
  * the engine is done with it; each request reports [requestStarted] before the application's pipeline and [requestEnded]
  * after it.
  *
@@ -21,8 +21,8 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 @ExperimentalKuicksilverApi
 public abstract class KuicksilverServerEventListener {
     /**
-     * A client connected over [protocol] (`HTTP_1_1`, `HTTP_1_0` for plain connectors alike, or `HTTP_3_0`) from [remote]:
-     * after the TLS handshake for HTTP/1.1, at `accept` for HTTP/3, which with `quicEarlyData` is when 0-RTT was accepted,
+     * A client connected over [protocol] (`HTTP_1_1`, `HTTP_1_0` for plain connectors alike, `HTTP_2_0`, or `HTTP_3_0`) from
+     * [remote]: after the TLS handshake for HTTP/1.1 and HTTP/2 (ALPN `h2`), at `accept` for HTTP/3, which with `quicEarlyData` is when 0-RTT was accepted,
      * before the handshake completes (the client is not authenticated yet).
      */
     public open fun connectionOpened(

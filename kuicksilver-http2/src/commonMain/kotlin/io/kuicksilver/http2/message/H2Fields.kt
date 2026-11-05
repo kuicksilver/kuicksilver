@@ -254,8 +254,9 @@ internal object H2Messages {
             host = v
         }
         var authority = pseudo[":authority"]
-        // section 8.3.1: a host field that differs from :authority makes the request malformed
-        if (authority != null && host != null && authority != host) throw MalformedMessage(":authority and host differ")
+        // section 8.3.1: a host field that identifies another entity than :authority makes the request malformed; RFC 9110
+        // section 4.2.3: the host compares case-insensitively and a missing port is the scheme's default
+        if (authority != null && host != null && !sameEntity(authority, host, scheme)) throw MalformedMessage(":authority and host differ")
         if (protocol != null) {
             // RFC 8441 section 4: only with the setting, only on CONNECT, and with :scheme and :path
             if (!connectProtocolEnabled) throw MalformedMessage(":protocol without SETTINGS_ENABLE_CONNECT_PROTOCOL")
@@ -304,6 +305,29 @@ internal object H2Messages {
         }
         val (checked, length) = H2Fields.checkContentLength(regular)
         return H2Request(method, scheme, authority ?: host, path, protocol, checked, length)
+    }
+
+    /** Whether two authorities name the same host and port (RFC 9110 section 4.2.3), the default port of [scheme] filled in. */
+    private fun sameEntity(
+        a: String,
+        b: String,
+        scheme: String?,
+    ): Boolean {
+        val default =
+            when (scheme) {
+                "https" -> "443"
+                "http" -> "80"
+                else -> null
+            }
+
+        fun norm(x: String): String {
+            val v = x.lowercase()
+            val hostEnd = if (v.startsWith("[")) v.indexOf(']') + 1 else v.indexOf(':').let { if (it < 0) v.length else it }
+            if (hostEnd <= 0) return v
+            val port = v.substring(hostEnd).removePrefix(":")
+            return v.substring(0, hostEnd) + ":" + port.ifEmpty { default ?: "" }
+        }
+        return a == b || norm(a) == norm(b)
     }
 
     /** A response field section (a client's view): `:status` only (section 8.3.2), three digits 100..599. */
