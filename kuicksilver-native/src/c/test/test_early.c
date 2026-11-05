@@ -104,10 +104,10 @@ static void test_early_context_mismatch(void) {
     CHECK(ct.done && st.done && re == 1, "the session still resumes");
     ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
-/* RFC 8446 section 4.2.10 (RFC 9846 section 4.3.10): the server accepts early data only when the selected cipher suite is "the
-   same as" the one "associated with the selected PSK", that is the one "negotiated in the connection during which the ticket was
-   established". OpenSSL 3.5 compares only the suite's hash (4.1 adds the suite check, PR 32032); ksl checks it in
-   allow_early_data_cb. */
+/* RFC 8446 section 4.2.10 (RFC 9846 section 4.3.10): the server accepts early data only when the selected cipher suite and ALPN
+   protocol are "the same as those associated with the selected PSK", that is "those negotiated in the connection during which the
+   ticket was established". OpenSSL 3.5 compares only the suite's hash (4.1 adds the suite check, PR 32032) and keeps a resumed
+   session's original ALPN in the tickets it renews (fixed in 4.1, PR 32401); ksl checks both itself (allow_early_data_cb). */
 static ksl_ctx *suite_server_ctx(const char *suites, const uint8_t *alpn, size_t alpn_len) {
     ksl_ctx *c = server_ctx("server"); ksl_ctx_set_ticket_keys(c, TICKET_KEY, 1); ksl_ctx_set_option(c, KSL_OPT_NUM_TICKETS, 2);
     if (suites && ksl_ctx_set_ciphers(c, suites, NULL) != KSL_OK) printf("suites %s rejected\n", suites);
@@ -131,6 +131,47 @@ static void test_negative_early_cipher_mismatch(void) {
     resume(cc, aes, again, "cfg-1", 1, &rc, &cst, &sst, &ct2, &st2, &re);
     CHECK(cst == 2 && sst == 2 && ct2.done && st2.done, "the same suite accepts 0-RTT");
     ksl_session_free(again); ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(aes); ksl_ctx_free(chacha); END();
+}
+static const uint8_t ALPN_H3_HQ[] = {2, 'h', '3', 10, 'h', 'q', '-', 'i', 'n', 't', 'e', 'r', 'o', 'p'};
+static const uint8_t ALPN_HQ_H3[] = {10, 'h', 'q', '-', 'i', 'n', 't', 'e', 'r', 'o', 'p', 2, 'h', '3'};
+static const uint8_t ALPN_HQ[] = {10, 'h', 'q', '-', 'i', 'n', 't', 'e', 'r', 'o', 'p'};
+/* The ALPN of the connection that issued the ticket. OpenSSL 3.5 compares it with the selected protocol (statem_srvr.c,
+   tls_handle_alpn) and writes the selected protocol into every renewed ticket (tls_construct_new_session_ticket); it keeps the
+   old one only when a resumption selects none (fixed in 4.1, PR 32401), which a QUIC connection cannot complete (RFC 9001
+   section 8.1: ksl_client_hello_cb, ksl_drive). */
+static void test_negative_early_alpn_mismatch(void) {
+    SECTION("negative_quic_early_data_alpn_mismatch_rejects");
+    ksl_ctx *h3 = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *hq = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *both = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+    ksl_ctx_set_alpn(hq, ALPN_HQ, sizeof ALPN_HQ); ksl_ctx_set_alpn(both, ALPN_H3_HQ, sizeof ALPN_H3_HQ);
+    ksl_ctx *sc = suite_server_ctx(NULL, ALPN_H3_HQ, sizeof ALPN_H3_HQ), *hq_first = suite_server_ctx(NULL, ALPN_HQ_H3, sizeof ALPN_HQ_H3);
+    ksl_session *t1 = first_session(h3, sc, "cfg-1"); CHECK(t1 != NULL, "ticket of an h3 connection");
+    /* 0-RTT with the h3 ticket where the server selects hq-interop */
+    int rc; uint8_t cst, sst, re; track ct = {0}, st = {0};
+    resume(both, hq_first, t1, "cfg-1", 1, &rc, &cst, &sst, &ct, &st, &re);
+    CHECK(rc == KSL_OK && st.levels[KSL_DIR_READ][KSL_LEVEL_EARLY] == 0 && cst == 1 && sst == 1, "an h3 ticket under hq-interop: 0-RTT rejected");
+    CHECK(ct.done && st.done && re == 1, "the PSK still resumes in 1-RTT");
+    /* a fresh h3 ticket resumed under hq-interop without 0-RTT: the renewed ticket belongs to an hq-interop connection; one
+       renewed ticket per attempt (a client uses a ticket once, RFC 9846 appendix C.4) */
+    ksl_session *t2[2] = {NULL, NULL};
+    for (int i = 0; i < 2; i++) {
+        ksl_session *fresh = first_session(h3, sc, "cfg-1");
+        ksl_ssl *c = qclient(hq), *s = qserver(sc, "cfg-1"); track ct1 = {0}, st1 = {0};
+        ksl_ssl_set_session(c, fresh); pump_early(c, s, &ct1, &st1);
+        uint8_t alpn[32]; size_t an = 0; ksl_ssl_get(s, KSL_GET_ALPN, alpn, sizeof alpn, &an);
+        CHECK(ct1.done && st1.done && reused(c) == 1 && an == 10 && !memcmp(alpn, "hq-interop", 10), "resumed under hq-interop");
+        t2[i] = ksl_ssl_get1_session(c); CHECK(t2[i] != NULL && t2[i] != fresh, "a renewed ticket");
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(fresh);
+    }
+    /* 0-RTT with that ticket where the server selects h3 (the protocol of the ticket's original full handshake) */
+    track ct2 = {0}, st2 = {0};
+    if (t2[0]) resume(both, sc, t2[0], "cfg-1", 1, &rc, &cst, &sst, &ct2, &st2, &re);
+    CHECK(t2[0] && rc == KSL_OK && st2.levels[KSL_DIR_READ][KSL_LEVEL_EARLY] == 0 && cst == 1 && sst == 1, "a renewed hq-interop ticket under h3: 0-RTT rejected");
+    CHECK(ct2.done && st2.done && re == 1, "the PSK still resumes in 1-RTT");
+    /* the control: the renewed ticket under its own protocol accepts */
+    track ct3 = {0}, st3 = {0};
+    if (t2[1]) resume(both, hq_first, t2[1], "cfg-1", 1, &rc, &cst, &sst, &ct3, &st3, &re);
+    CHECK(t2[1] && cst == 2 && sst == 2 && ct3.done && st3.done, "a renewed hq-interop ticket under hq-interop accepts 0-RTT");
+    ksl_session_free(t2[0]); ksl_session_free(t2[1]); ksl_session_free(t1); ksl_ctx_free(h3); ksl_ctx_free(hq); ksl_ctx_free(both); ksl_ctx_free(sc); ksl_ctx_free(hq_first); END();
 }
 static void test_early_verdict_refused(void) {
     SECTION("quic_early_data_needs_transport_verdict");
@@ -228,5 +269,5 @@ static void test_ticket_bound_to_version(void) {
     }
     ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
-void run_early(void) { test_server_done_waits_for_finished(); test_early_accepted(); test_resumption_renews_ticket(); test_early_context_mismatch(); test_negative_early_cipher_mismatch(); test_early_verdict_refused(); test_ticket_without_early_data(); test_early_option_server_only();
+void run_early(void) { test_server_done_waits_for_finished(); test_early_accepted(); test_resumption_renews_ticket(); test_early_context_mismatch(); test_negative_early_cipher_mismatch(); test_negative_early_alpn_mismatch(); test_early_verdict_refused(); test_ticket_without_early_data(); test_early_option_server_only();
     test_early_key_in_original_version(); test_ticket_bound_to_version(); }
