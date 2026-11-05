@@ -122,7 +122,7 @@ Original row: draft-ietf-webtrans-http3-16 §4.4, §4.5, §4.7, §6 (session).
 - the session's streams are reset and stopped with `WT_SESSION_GONE`
 - a cancelled `close()` still ends the session completely (the CONNECT is ended in the connection's scope)
 - an application that cancels a stream's `output` resets it, one that cancels its `input` stops it, both with code 0
-- `drainRequested` on the peer's drain or a GOAWAY
+- `drainRequested` on the peer's drain or a GOAWAY, and on this side's own `drain()` (0.3.0: the sending side's application winds down too; the Ktor client's `closeHttp3Connections()` drains every session, also one whose CONNECT completes after it) — `WebTransportCloseTest.ownDrainSetsBothFlags`, `ClientKillSwitchTest.closeHttp3ConnectionsDrainsWebTransportSessions`, `.webTransportSessionTrackedAfterCloseIsDrained`
 - a stream we opened is reset with RESET_STREAM_AT keeping its header as the reliable size when both sides set `QuicConfig.resetStreamAt` (the Ktor server sets it with `webTransport`; `wtResetUsesResetStreamAtWhenNegotiated`), else with RESET_STREAM (the header may then be lost and the peer drops the stream)
 
 **Tests that pin it.**

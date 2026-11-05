@@ -430,7 +430,7 @@ internal class KuicksilverEngine(
                         }
                     }
                 }
-                h3WithFallback(t, data, callContext, d, extraHeaders, dns)
+                h3WithFallback(t, data, callContext, d, extraHeaders, dns, prefer = conn)
             }
 
             Protocol.H1 -> {
@@ -586,9 +586,10 @@ internal class KuicksilverEngine(
         d: ProtocolDiagnostics,
         extraHeaders: List<Pair<String, String>> = emptyList(),
         dns: RequestDns = config.newRequestDns(),
+        prefer: io.kuicksilver.http3.Http3Connection? = null, // the race's connection, used even if since retired
     ): HttpResponseData =
         try {
-            h3.execute(target, data, callContext, extraHeaders, dns)
+            h3.execute(target, data, callContext, extraHeaders, dns, prefer)
         } catch (
             e: CancellationException,
         ) {

@@ -208,9 +208,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- WebTransport: `drain()` also sets the session's own `drainRequested` (draft-ietf-webtrans-http3 section 4.7: the
+  side that asks winds down too); before, it reflected only the peer's drain or GOAWAY.
 - HTTP/3: a request on a connection after this client's own `goAway()` fails with `Http3Exception.RequestNotProcessed`
-  (retry-safe) instead of `IllegalStateException`: it was never sent, as one above a received GOAWAY, so a pool that
-  handed the connection out just before may repeat it on a new connection.
+  (retry-safe, message "request not sent: this client sent GOAWAY") instead of `IllegalStateException`: it was never
+  sent, as one above a received GOAWAY, so a pool that handed the connection out just before may repeat it on a new
+  connection. The new experimental `RequestNotProcessed.neverSent` says when nothing of the request left the client (its
+  body unread), so even a streamed body can be sent again.
 - Ktor client: an `Alt-Svc` alternative whose host is not an RFC 3986 host (RFC 7838 section 3: a space, a control
   character, a bare IPv6 address) is malformed and skipped; before, the text was taken as it came.
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);

@@ -220,6 +220,8 @@ public final class io/kuicksilver/http3/Http3Exception$RequestNotProcessed : io/
 	public synthetic fun <init> (ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun createCopy ()Lio/kuicksilver/http3/Http3Exception$RequestNotProcessed;
 	public synthetic fun createCopy ()Ljava/lang/Throwable;
+	public fun getMessage ()Ljava/lang/String;
+	public final fun getNeverSent ()Z
 	public final fun getRetrySafe ()Z
 }
 

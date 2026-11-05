@@ -66,10 +66,14 @@ public suspend fun HttpClient.webTransport(
     }
     val connection = engine.h3.dedicated(url.host, url.port, engine.config.connectTimeout.inWholeMilliseconds)
     try {
+        engine.h3.webTransportStepForTest?.invoke("dedicated")
         val host = if (':' in url.host && !url.host.startsWith("[")) "[${url.host}]" else url.host // an IPv6 literal
         val authority = if (url.port == URLProtocol.HTTPS.defaultPort) host else "$host:${url.port}"
         val request = http3Request("CONNECT", authority, url.fullPath.ifEmpty { "/" }) { this.headers = headers }
-        return connection.webTransportOwningConnection(request, protocols).also { engine.h3.trackSession(it, connection) }
+        val session = connection.webTransportOwningConnection(request, protocols)
+        engine.h3.webTransportStepForTest?.invoke("connected")
+        engine.h3.trackSession(session, connection)
+        return session
     } catch (e: Throwable) {
         // no session: the connection opened for it goes too
         withContext(NonCancellable) { runCatching { connection.close(Http3ErrorCode.NO_ERROR, "") } }

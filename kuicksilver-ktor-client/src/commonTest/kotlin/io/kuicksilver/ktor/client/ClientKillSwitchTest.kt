@@ -7,7 +7,9 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
+import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
@@ -18,6 +20,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.webSocket
+import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Connection
@@ -38,6 +41,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.readString
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
@@ -285,8 +289,12 @@ class ClientKillSwitchTest {
                                 val r = conn.acceptRequest()
                                 launch {
                                     runCatching {
+                                        // "/echo" answers with the request body
+                                        val echo = if (r.path == "/echo") r.body.readRemaining().readString() else null
                                         val w = r.respond(200, Http3Headers(emptyList()))
-                                        if (r.path == "/slow") {
+                                        if (echo != null) {
+                                            w.output.writeStringUtf8(echo)
+                                        } else if (r.path == "/slow") {
                                             w.output.writeStringUtf8("start")
                                             w.output.flush()
                                             gate.await()
@@ -463,6 +471,7 @@ class ClientKillSwitchTest {
                     val session = c.webTransport("https://127.0.0.1:$port/wt")
                     assertEquals(1, (c.engine as KuicksilverEngine).h3.sessionCountForTest)
                     c.closeHttp3Connections()
+                    assertTrue(session.drainRequested.value, "the client's own session winds down too (section 4.7)")
                     withTimeoutOrNull(30.seconds) { drained.await() } ?: fail("the server saw no drain within 30 s")
                     val info = withTimeoutOrNull(30.seconds) { session.closed.await() } ?: fail("the session did not end")
                     assertEquals("drained", info.reason)
@@ -492,6 +501,130 @@ class ClientKillSwitchTest {
                 }
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A streamed (non-replayable) body: a request refused by this client's own GOAWAY before anything went out is repeated
+     * on a new connection with its body intact, instead of failing with H3BodyConsumed.
+     */
+    @Test fun streamedBodyRefusedByOwnGoAwayIsRepeated() =
+        h3Test {
+            coroutineScope {
+                val gate = CompletableDeferred<Unit>().apply { complete(Unit) }
+                val accepted = AtomicReference(emptyList<Http3Connection>())
+                val ep = recordingH3(gate, accepted)
+                val port = ep.localAddress.port
+                try {
+                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
+                        val fired = AtomicBoolean(false)
+                        engine.h3.afterAcquireForTest = { if (fired.compareAndSet(false, true)) c.closeHttp3Connections() }
+                        val r =
+                            c.post("https://127.0.0.1:$port/echo") {
+                                setBody(
+                                    io.ktor.utils.io
+                                        .ByteReadChannel("streamed body"),
+                                ) // a ReadChannelContent: not replayable
+                            }
+                        assertTrue(fired.load())
+                        assertEquals("streamed body", r.bodyAsText())
+                        assertEquals(2, r.kuicksilverDiagnostics?.attempts)
+                        assertEquals(2, accepted.load().size)
+                    }
+                } finally {
+                    ep.close()
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /** A race whose HTTP/3 setup was retired by closeHttp3Connections() still serves its request on it: one handshake. */
+    @Test fun raceSetupRetiredMidwayIsStillUsed() =
+        h3Test {
+            coroutineScope {
+                val gate = CompletableDeferred<Unit>().apply { complete(Unit) }
+                val accepted = AtomicReference(emptyList<Http3Connection>())
+                val ep = recordingH3(gate, accepted)
+                val port = ep.localAddress.port
+                val inSetup = CompletableDeferred<Unit>()
+                val proceed = CompletableDeferred<Unit>()
+                try {
+                    // INFINITE: HTTP/1.1 only after HTTP/3 failed, and nothing listens on TCP
+                    testClient(Http3DiscoveryMode.Preferred, engine = { http3 { hardDelay = Duration.INFINITE } }).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        engine.h3.beforeSetupForTest = {
+                            inSetup.complete(Unit)
+                            proceed.await()
+                        }
+                        val call = async { c.get("https://127.0.0.1:$port/") }
+                        inSetup.await()
+                        c.closeHttp3Connections()
+                        proceed.complete(Unit)
+                        val r = call.await()
+                        assertEquals("ok", r.bodyAsText())
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        assertEquals(1, accepted.load().size, "one handshake")
+                    }
+                } finally {
+                    proceed.complete(Unit)
+                    ep.close()
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /**
+     * closeHttp3Connections() between a WebTransport connection's setup and its CONNECT: the connection got a GOAWAY, so the
+     * CONNECT is not sent and `webTransport` fails (the app falls back), the connection closed.
+     */
+    @Test fun webTransportConnectingWhenClosedFails() =
+        h3Test {
+            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { it.closed.await() } } }
+            try {
+                testClient(Http3DiscoveryMode.Auto).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.h3.webTransportStepForTest = { step -> if (step == "dedicated") c.closeHttp3Connections() }
+                    val e = assertFailsWith<Throwable> { c.webTransport("https://127.0.0.1:$port/wt") }
+                    assertTrue(
+                        generateSequence(e) { it.cause }.any { it is io.kuicksilver.http3.Http3Exception.RequestNotProcessed },
+                        "$e",
+                    )
+                    withTimeoutOrNull(30.seconds) { engine.h3.dedicatedCount.first { it == 0 } }
+                        ?: fail("the dedicated connection did not close")
+                    assertEquals(0, engine.h3.sessionCountForTest)
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /** closeHttp3Connections() between the CONNECT and the session's tracking: the session is drained when it is tracked. */
+    @Test fun webTransportSessionTrackedAfterCloseIsDrained() =
+        h3Test {
+            val drained = CompletableDeferred<Unit>()
+            val (server, port) =
+                testServer(configure = { webTransport = true }) {
+                    routing {
+                        webTransport("/wt") { session ->
+                            session.drainRequested.first { it }
+                            drained.complete(Unit)
+                            session.closed.await()
+                        }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.Auto).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.h3.webTransportStepForTest = { step -> if (step == "connected") c.closeHttp3Connections() }
+                    val session = c.webTransport("https://127.0.0.1:$port/wt")
+                    assertTrue(session.drainRequested.value, "drained when tracked")
+                    withTimeoutOrNull(30.seconds) { drained.await() } ?: fail("the server saw no drain within 30 s")
+                    session.close(0, "")
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
             }
         }
 }
