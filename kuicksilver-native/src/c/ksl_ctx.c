@@ -215,7 +215,20 @@ static int new_session_cb(SSL *ssl, SSL_SESSION *sess) {
     s->new_sessions[s->new_sessions_n++] = sess;
     return 1;   /* the reference is ours */
 }
-static int allow_early_data_cb(SSL *ssl, void *arg) { (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); return s && s->early_allow && s->early_ctx_match; }
+/* The last word on 0-RTT, called by OpenSSL once the suite is chosen, the ticket decrypted and ALPN selected (extensions.c,
+   final_early_data). RFC 8446 section 4.2.10 (RFC 9846 section 4.3.10): the server "MUST verify that the following values are the
+   same as those associated with the selected PSK: The TLS version number, The selected cipher suite, The selected ALPN protocol, if
+   any". OpenSSL 3.5 checks the version (TLS 1.3 only) and the ALPN (statem_srvr.c, tls_handle_alpn: early_data_ok = 0), but of the
+   suite only its hash: a resumption that picks another suite with the same hash (TLS_AES_128_GCM_SHA256 and
+   TLS_CHACHA20_POLY1305_SHA256) would accept early data. OpenSSL 4.1 adds that comparison (ssl/statem/extensions_srvr.c:1584-1591,
+   PR 32032); until then ksl makes it here: the pending cipher is the one selected for this handshake, the session's the one
+   restored from the ticket. The transport's verdict (replay register) and the early context bound into the ticket come on top. */
+static int allow_early_data_cb(SSL *ssl, void *arg) {
+    (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); const SSL_SESSION *sess = SSL_get0_session(ssl);
+    const SSL_CIPHER *selected = SSL_get_pending_cipher(ssl), *psk = sess ? SSL_SESSION_get0_cipher(sess) : NULL;
+    if (!selected || !psk || SSL_CIPHER_get_id(selected) != SSL_CIPHER_get_id(psk)) return 0;
+    return s && s->early_allow && s->early_ctx_match;
+}
 void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
     /* OpenSSL's own anti-replay makes tickets stateful in the server cache ksl keeps off: with it every early data would be refused */
     SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);

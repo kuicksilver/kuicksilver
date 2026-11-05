@@ -416,6 +416,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC 0-RTT: a server accepts early data only under the cipher suite of the ticket's own connection (RFC 8446
+  §4.2.10, RFC 9846 §4.3.10: MUST). OpenSSL 3.5 resumed a ticket under another suite with the same hash (a
+  TLS_AES_128_GCM_SHA256 ticket where the server picks TLS_CHACHA20_POLY1305_SHA256) and accepted its early data; such a
+  resumption now continues in 1-RTT, as OpenSSL 4.1 does.
 - Ktor server: `KuicksilverServerEventListener.connectionClosed` for an HTTP/3 connection comes after the
   `requestEnded` of every request it carried. It came as soon as the connection took no more requests, so a client
   that closed the connection as soon as it had the answer could be reported gone while its handler still ran.

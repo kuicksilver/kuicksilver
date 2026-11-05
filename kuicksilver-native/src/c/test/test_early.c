@@ -104,6 +104,34 @@ static void test_early_context_mismatch(void) {
     CHECK(ct.done && st.done && re == 1, "the session still resumes");
     ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
+/* RFC 8446 section 4.2.10 (RFC 9846 section 4.3.10): the server accepts early data only when the selected cipher suite is "the
+   same as" the one "associated with the selected PSK", that is the one "negotiated in the connection during which the ticket was
+   established". OpenSSL 3.5 compares only the suite's hash (4.1 adds the suite check, PR 32032); ksl checks it in
+   allow_early_data_cb. */
+static ksl_ctx *suite_server_ctx(const char *suites, const uint8_t *alpn, size_t alpn_len) {
+    ksl_ctx *c = server_ctx("server"); ksl_ctx_set_ticket_keys(c, TICKET_KEY, 1); ksl_ctx_set_option(c, KSL_OPT_NUM_TICKETS, 2);
+    if (suites && ksl_ctx_set_ciphers(c, suites, NULL) != KSL_OK) printf("suites %s rejected\n", suites);
+    if (alpn) ksl_ctx_set_alpn(c, alpn, alpn_len);
+    ksl_ctx_set_option(c, KSL_OPT_EARLY_DATA, 1); ksl_ctx_freeze(c); return c;
+}
+static void test_negative_early_cipher_mismatch(void) {
+    SECTION("negative_quic_early_data_cipher_suite_mismatch_rejects");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+    ksl_ctx *aes = suite_server_ctx("TLS_AES_128_GCM_SHA256", NULL, 0), *chacha = suite_server_ctx("TLS_CHACHA20_POLY1305_SHA256", NULL, 0);
+    ksl_session *sess = first_session(cc, aes, "cfg-1"); CHECK(sess != NULL, "a ticket issued under TLS_AES_128_GCM_SHA256");
+    /* the client offers every suite; the second server (same ticket keys) can only pick ChaCha20, whose hash (SHA-256) is the same */
+    int rc; uint8_t cst, sst, re; track ct = {0}, st = {0};
+    resume(cc, chacha, sess, "cfg-1", 1, &rc, &cst, &sst, &ct, &st, &re);
+    CHECK(rc == KSL_OK, "client requested 0-RTT");
+    CHECK(st.levels[KSL_DIR_READ][KSL_LEVEL_EARLY] == 0, "server installs no 0-RTT key under another suite");
+    CHECK(cst == 1 && sst == 1, "both report rejected");
+    CHECK(ct.done && st.done && re == 1, "the PSK still resumes in 1-RTT");
+    /* the control: the same suite on both connections accepts */
+    ksl_session *again = first_session(cc, aes, "cfg-1"); track ct2 = {0}, st2 = {0};
+    resume(cc, aes, again, "cfg-1", 1, &rc, &cst, &sst, &ct2, &st2, &re);
+    CHECK(cst == 2 && sst == 2 && ct2.done && st2.done, "the same suite accepts 0-RTT");
+    ksl_session_free(again); ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(aes); ksl_ctx_free(chacha); END();
+}
 static void test_early_verdict_refused(void) {
     SECTION("quic_early_data_needs_transport_verdict");
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = early_server_ctx(1);
@@ -200,5 +228,5 @@ static void test_ticket_bound_to_version(void) {
     }
     ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
-void run_early(void) { test_server_done_waits_for_finished(); test_early_accepted(); test_resumption_renews_ticket(); test_early_context_mismatch(); test_early_verdict_refused(); test_ticket_without_early_data(); test_early_option_server_only();
+void run_early(void) { test_server_done_waits_for_finished(); test_early_accepted(); test_resumption_renews_ticket(); test_early_context_mismatch(); test_negative_early_cipher_mismatch(); test_early_verdict_refused(); test_ticket_without_early_data(); test_early_option_server_only();
     test_early_key_in_original_version(); test_ticket_bound_to_version(); }
