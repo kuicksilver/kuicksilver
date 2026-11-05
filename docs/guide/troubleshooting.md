@@ -126,9 +126,14 @@ unused connections on the client side.
 
 ### `StatelessReset` or `ApplicationClosed`
 
-- `ConnectionLost.StatelessReset` ("stateless reset received"): the peer lost the connection's state (a restart, a
-  crash, a load balancer that sent the packets to another instance). Reconnect; behind a load balancer, route QUIC by
-  connection ID or keep clients on one instance.
+- `ConnectionLost.StatelessReset` ("stateless reset received"): the peer lost the connection's state and could still
+  prove it was the endpoint that issued the connection ID (RFC 9000 section 10.3), for example a peer that keeps its
+  reset key across a restart. Reconnect. A Kuicksilver peer cannot do that after a restart, and neither can another
+  instance behind a load balancer: reset tokens come from a key of the endpoint that issued the connection
+  ([QUIC: Stateless reset](quic.md#stateless-reset)). Such an endpoint does answer with a Stateless Reset, but its token
+  does not match, so the client ignores it (counted in `ConnectionStats.invalidResets`), and the connection ends with
+  "Idle timeout" instead ([above](#idle-timeout-after-30s)). Behind a load balancer, keep each client on one instance
+  ([Deploying the HTTP/3 server: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)).
 - `ConnectionLost.ApplicationClosed` ("application closed by <Local|Peer>: code <n> (<reason>)"): an application
   `close(code, reason)`. Over HTTP/3, `Http3Exception.fromQuic(e)` reads the code as an HTTP/3 error
   (`Http3Exception.Protocol` with an `Http3ErrorCode`, `H3_NO_ERROR` after a graceful GOAWAY).
