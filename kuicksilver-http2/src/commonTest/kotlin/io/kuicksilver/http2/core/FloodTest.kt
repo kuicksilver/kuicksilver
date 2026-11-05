@@ -253,6 +253,21 @@ class FloodTest {
         assertEquals(null, s.goAway())
     }
 
+    /** `resetsPerSecond = 0` is a budget that never refills: the burst is all a connection gets, however slowly it is spent. */
+    @Test
+    fun negative_zeroRefillRateNeverRefills() {
+        val s = RawH2Peer(Role.SERVER, Http2Settings(resetBurst = 10, resetsPerSecond = 0))
+        s.handshake()
+        var id = 1
+        repeat(11) {
+            s.now += 100 * SECOND
+            s.send(s.headers(id, endStream = true), FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code))
+            for (e in s.events()) if (e is H2Event.StreamReset) s.core.release(e.streamId)
+            id += 2
+        }
+        s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+    }
+
     @Test
     fun negative_interimResponseFloodBounded() {
         // a server that answers with 1xx responses forever: all of them together stay within the field section limit
