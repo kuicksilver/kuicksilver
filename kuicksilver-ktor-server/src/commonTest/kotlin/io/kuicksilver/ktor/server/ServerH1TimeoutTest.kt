@@ -20,6 +20,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.network.connectTcp
@@ -30,6 +31,9 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -56,6 +60,68 @@ class ServerH1TimeoutTest {
                 val received = withTimeout(10.seconds) { rawHttp(port, "", tls = null) }
                 assertEquals("", received)
             } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** A real ClientHello, as the TLS client sends it: caught by a plain listener that never answers. */
+    private suspend fun clientHello(selector: SelectorManager): ByteArray {
+        val listener =
+            io.kuicksilver.ktor.network
+                .bindTcp(selector, "127.0.0.1", 0)
+        try {
+            val port = (listener.localAddress as InetSocketAddress).port
+            return coroutineScope {
+                val client =
+                    launch { runCatching { connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(ServerFixtures.clientTls()) } }
+                val accepted = listener.accept()
+                try {
+                    val input = accepted.openReadChannel()
+                    val head = input.readByteArray(5) // the TLS record header: its length in bytes 3 and 4
+                    val body = input.readByteArray(((head[3].toInt() and 0xff) shl 8) or (head[4].toInt() and 0xff))
+                    head + body
+                } finally {
+                    client.cancel()
+                    accepted.close()
+                }
+            }
+        } finally {
+            listener.close()
+        }
+    }
+
+    /**
+     * A client that sends its ClientHello and then neither reads nor answers fails the handshake at the request-head
+     * deadline, and its socket is released (aborted, not left to a graceful close that waits on the client), so its
+     * `maxTcpConnections` slot comes back: with the limit at 1, the next client is served.
+     */
+    @Test fun negative_unfinishedTlsHandshakeReleasesItsSocket() =
+        serverTest {
+            val (server, port) =
+                tlsServer(
+                    configure = {
+                        requestHeaderTimeoutSeconds = 1
+                        maxTcpConnections = 1
+                    },
+                ) { routing { get("/") { call.respondText("ok") } } }
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                val hello = clientHello(selector)
+                val stuck = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                try {
+                    val w = stuck.openWriteChannel()
+                    w.writeFully(hello)
+                    w.flush()
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
+                    withTimeout(15.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                    val answer =
+                        withTimeout(15.seconds) { rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n") }
+                    assertTrue(answer.startsWith("HTTP/1.1 200"), answer)
+                } finally {
+                    stuck.close()
+                }
+            } finally {
+                selector.close()
                 server.stop(100, 500)
             }
         }

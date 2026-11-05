@@ -304,7 +304,15 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             withTimeoutOrNull(headerTimeout) { client.tlsServer(tlsConfig) }
                                                 ?: throw IOException("No TLS handshake within the request header timeout ($headerTimeout)")
                                         } catch (e: Throwable) {
-                                            client.close()
+                                            // never a close without a bound (the socket has none of its own): it would keep
+                                            // the connection's maxTcpConnections slot while the client takes nothing. A FIN
+                                            // (and an alert, if one is pending) for as long as the close moves, then an abort;
+                                            // a stop aborts at once
+                                            if (e is CancellationException) {
+                                                client.abort()
+                                            } else {
+                                                closeWithin(client, { client.abort() }, sendTimeout)
+                                            }
                                             if (e !is CancellationException) {
                                                 events.emit(
                                                     "tlsHandshakeFailed",
