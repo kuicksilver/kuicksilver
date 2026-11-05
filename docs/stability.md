@@ -145,8 +145,9 @@ operating system.
   `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL release signing key; the
   build verifies both before compiling (`tools/openssl/fetch.sh`).
 - **Updates** follow the commitments in [SECURITY.md, OpenSSL](../SECURITY.md#openssl): a Kuicksilver release with the
-  fixed OpenSSL within 72 hours of an OpenSSL release fixing a Critical or High issue, within 14 days for Moderate, in
-  the next planned release for Low or unreachable issues, and within 30 days for a non-security 3.5.x patch release.
+  fixed OpenSSL within 72 hours of an OpenSSL advisory for a Critical or High issue reachable through Kuicksilver,
+  within 7 days for a reachable Moderate or Low one, in the next planned release for issues that are not reachable, and
+  within 30 days for a non-security 3.5.x patch release, with a GitHub Security Advisory for each reachable issue.
   Such a release is a patch release (0.2.x) when nothing else changes.
 - **Visibility.** The version stays visible in the native libraries; the JVM jar's manifest names it as
   `OpenSSL-Version` and `OpenSSL-SHA256`.

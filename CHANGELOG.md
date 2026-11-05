@@ -191,6 +191,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Security policy (`SECURITY.md`): an OpenSSL advisory whose issue is reachable through Kuicksilver now gets a patch
+  release with the fixed OpenSSL within 7 days (Moderate and Low; was 14 days for Moderate and the next planned release
+  for Low), Critical and High still within 72 hours, each with a GitHub Security Advisory of this repository naming the
+  OpenSSL CVE and the fixed version. New: where to see advisories and security releases, the emergency path when the
+  month's Maven Central quota is used up, and `main` in the supported-versions table.
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
   a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
   `NoWhenBranchMatchedException` when it meets a `Reloadable`.

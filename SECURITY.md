@@ -35,16 +35,29 @@ Hardening suggestions that are not exploitable may be filed as ordinary issues. 
 | Public disclosure | coordinated with you; by default no later than 90 days after the report |
 
 We keep you informed while we work on the fix, agree the disclosure date with you, and credit you in the advisory
-unless you prefer otherwise. Advisories are published as GitHub Security Advisories, with a CVE requested through
-GitHub. A few days before a security release we announce that a release with a security fix is coming, without
-details, and the release's `CHANGELOG.md` entry lists the fix under **Security**. There is no bug bounty.
+unless you prefer otherwise. A vulnerability in Kuicksilver's own code is published as a GitHub Security Advisory of
+this repository, with a CVE requested through GitHub, once the fixed version is on Maven Central; the advisory names the
+affected and the fixed versions of the `io.kuicksilver` packages. A few days before a security release we announce that
+a release with a security fix is coming, without details, and the release's `CHANGELOG.md` entry lists the fix under
+**Security**. There is no bug bounty.
+
+## Where to see the status
+
+- **Advisories**: <https://github.com/kuicksilver/kuicksilver/security/advisories>, for vulnerabilities in Kuicksilver
+  and for OpenSSL advisories that affect it (see [OpenSSL](#openssl)). They are also in the GitHub Advisory Database
+  under the Maven ecosystem, so GitHub's Dependabot alerts and other scanners that read it can tell a project that
+  depends on an affected `io.kuicksilver` version.
+- **Releases**: the `CHANGELOG.md` section of each version has a **Security** heading for security fixes, including
+  OpenSSL updates, and the same text is on the version's GitHub release. *Watch → Custom → Releases* (or *Security
+  alerts*) on the repository gets you a notification.
 
 ## Supported versions
 
 | Version | Supported |
 |---|---|
-| latest 0.x release | yes |
+| the latest 0.x release (0.2.1 today) | yes: security fixes and OpenSSL updates |
 | older 0.x releases | no — upgrade to the latest |
+| unreleased code on `main` | fixes land there first; not a supported release |
 
 Kuicksilver is pre-1.0: only the latest 0.x release receives fixes. From 1.0 on, the latest minor release of each
 supported major version will receive security fixes, and a major version will be supported for at least two years
@@ -64,15 +77,28 @@ from us, so we commit to the following.
   not use (legacy protocols and ciphers, DTLS, OpenSSL's own QUIC and socket code, engines, dynamic modules, key
   logging, and more), which removes a large part of OpenSSL's attack surface.
 - **Watching upstream.** The maintainers follow the openssl-announce list, which pre-announces security releases.
-- **When OpenSSL publishes a fix**, we check the advisory against our configuration and release a Kuicksilver version
-  with the fixed OpenSSL:
+- **When OpenSSL publishes a security advisory**, we check it against our configuration (the compiled-out features
+  above) and against how Kuicksilver calls OpenSSL, and decide whether the issue is reachable through Kuicksilver. For
+  every issue that is, we make a patch release of the supported line with the fixed OpenSSL (OpenSSL publishes the
+  fixed release together with its advisory):
 
-  | OpenSSL severity | Kuicksilver release with the fixed OpenSSL |
+  | OpenSSL advisory | Kuicksilver patch release with the fixed OpenSSL |
   |---|---|
-  | Critical or High | within 72 hours of the OpenSSL release |
-  | Moderate | within 14 days |
-  | Low, or not reachable in our configuration | in the next planned release, with a note saying why it does not affect us |
+  | Critical or High, reachable through Kuicksilver | within 72 hours of the advisory |
+  | Moderate or Low, reachable through Kuicksilver | within 7 days of the advisory |
+  | Not reachable in our configuration or through our use of OpenSSL | in the next planned release, with a note saying why it does not affect us |
   | Non-security 3.5.x patch release | within 30 days |
+
+  For a reachable issue we also publish a GitHub Security Advisory of this repository that names the OpenSSL advisory
+  and CVE, the affected Kuicksilver versions and the fixed one ([Where to see the status](#where-to-see-the-status)).
+  When we are not sure an issue is unreachable, we treat it as reachable.
+- **Maven Central limits.** By agreement with Sonatype, the `io.kuicksilver` namespace has a monthly file and size
+  quota that one release nearly fills, so planned releases come at most once a month ([docs/release.md, Publishing
+  limits](docs/release.md#once-accounts-keys-dns)). A security release does not wait for the next month: when the
+  month's quota is used up, it is uploaded above it (`tools/release/local-release.sh --allow-over-limit`), relying on the
+  grace Sonatype allows above the limits, and the next planned release moves later instead. This emergency path has not
+  been needed yet. If Central refused such an upload, the advisory would say so, name the affected versions and any
+  mitigation, and the release would follow as soon as Central accepts it.
 
 - **Version strings.** The OpenSSL version stays visible in the native libraries (and in the JVM jar manifest as
   `OpenSSL-Version` and `OpenSSL-SHA256`), so scanners can see which release you ship. Update Kuicksilver promptly when
