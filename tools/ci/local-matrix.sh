@@ -136,6 +136,7 @@ step "quic/http3: architecture checks"         $G $KSL_ARCH_CHECKS
 step "compile: shared source sets (metadata)"  $G allMetadataJar   # commonMain/nativeMain/... of every module, the interop endpoint too: the per-target builds compile them only per target
 step "openssl: no-sslkeylog (macos-arm64)"      bash tools/check/keylog-disabled.sh build/openssl/macos-arm64/include
 step "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
+step "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.sh macos-arm64   # ~5 s; any data race fails
 # shellcheck disable=SC2086
 step "jvm: all module tests"                   $G $KSL_JVM_TESTS
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
