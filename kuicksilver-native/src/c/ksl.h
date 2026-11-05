@@ -310,7 +310,7 @@ int      ksl_udp_send_src(ksl_udp *, uint8_t *const *bufs, const uint32_t *lens,
 int      ksl_udp_recv_dst(ksl_udp *, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *dsts, uint8_t *ecn, uint32_t n, uint32_t *received, int timeout_ms);
          /* ksl_udp_recv that also fills dsts (n KSL_UDP_ADDR_LEN entries, NULL: not wanted) with the address each datagram was sent to, the port
             this socket's (IPv4 through a dual-stack socket as family 4); all zero (family 0) when it is not known: KSL_UDP_PKTINFO not granted, or a
-            datagram without the control message; also for a multicast, limited-broadcast or IPv6 link-local destination, no address to answer from. GRO segments
+            datagram without the control message; also for a multicast, broadcast (limited or subnet-directed) or IPv6 link-local destination, no address to answer from, and on Linux for an IPv4 one without IP_PKTINFO. GRO segments
             share their train's. Additive in ABI 7 */
 int      ksl_udp_get(ksl_udp *, int what, uint8_t *out, size_t cap, size_t *len);
 #define KSL_UDP_PTB_QUOTE 64        /* bytes of the quoted datagram kept per Packet Too Big */

@@ -55,6 +55,12 @@
 #ifndef SIO_UDP_NETRESET
 #define SIO_UDP_NETRESET _WSAIOW(IOC_VENDOR, 15)
 #endif
+#ifndef MSG_BCAST
+#define MSG_BCAST 0x400
+#endif
+#ifndef MSG_MCAST
+#define MSG_MCAST 0x800
+#endif
 #ifndef WSA_FLAG_NO_HANDLE_INHERIT
 #define WSA_FLAG_NO_HANDLE_INHERIT 0x80
 #endif
@@ -358,8 +364,9 @@ static int take_datagram(ksl_udp *u, WSAMSG *m, uint32_t r, const struct sockadd
     }
     if (r == 0) return 0;
     if (ss->ss_family == AF_INET6) { const uint8_t *p = (const uint8_t *)&((const struct sockaddr_in6 *)ss)->sin6_addr; if (p[0] == 0xfe && (p[1] & 0xc0) == 0x80) return 0; }
-    if (dst[0]) {   /* a multicast or limited-broadcast destination is no address to answer from: unknown, the route picks the source */
-        if ((dst[0] == 4 && ((dst[3] & 0xf0) == 0xe0 || (dst[3] == 255 && dst[4] == 255 && dst[5] == 255 && dst[6] == 255))) || (dst[0] == 6 && (dst[3] == 0xff || (dst[3] == 0xfe && (dst[4] & 0xc0) == 0x80)))) memset(dst, 0, sizeof dst);
+    if (dst[0]) {   /* a multicast, broadcast (limited or subnet-directed: WSARecvMsg flags it MSG_BCAST) or IPv6 link-local destination is no
+                       address to answer from: unknown, the route picks the source */
+        if ((m->dwFlags & (MSG_BCAST | MSG_MCAST)) || (dst[0] == 4 && ((dst[3] & 0xf0) == 0xe0 || (dst[3] == 255 && dst[4] == 255 && dst[5] == 255 && dst[6] == 255))) || (dst[0] == 6 && (dst[3] == 0xff || (dst[3] == 0xfe && (dst[4] & 0xc0) == 0x80)))) memset(dst, 0, sizeof dst);
         else { dst[1] = u->local[1]; dst[2] = u->local[2]; }
     }
     u->pend_off = 0; u->pend_len = r; u->pend_seg = seg; from_sockaddr(ss, u->pend_addr); memcpy(u->pend_dst, dst, KSL_UDP_ADDR_LEN); u->pend_ecn = mark;

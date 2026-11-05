@@ -23,6 +23,10 @@
 #include <netinet/udp.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#ifdef __APPLE__
+#include <ifaddrs.h>
+#include <net/if.h>
+#endif
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -59,6 +63,10 @@ struct ksl_udp {
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, tos_cmsg_on, eperm_retried;
     int pktinfo;   /* KSL_UDP_PKTINFO granted: destinations read from IP_PKTINFO / IPV6_PKTINFO (IP_RECVDSTADDR), sources written the same way */
+    /* receiver thread only, telling an IPv4 destination that is an address of this host from a subnet-directed broadcast one: Linux
+       reads ipi_spec_dst next to ipi_addr (the IP_PKTINFO cmsg arrives on a dual-stack socket too, v4_spec); Darwin, whose
+       ipi_spec_dst is not filled on receive, checks the interfaces' broadcast addresses, the unicast ones it found kept for a while */
+    int v4_spec; uint8_t ucast[8][4]; int ucast_n; int64_t ucast_at;
     uint32_t last_errno; char last_msg[KSL_MSG]; pthread_mutex_t err_mu;   /* err_mu guards the pair; initialised in ksl_udp_open */
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* GRO scratch: one received message and the segments of it not yet handed out */

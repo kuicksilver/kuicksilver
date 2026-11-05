@@ -141,11 +141,15 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     }
     /* the destination of each datagram, so a reply leaves from the address it arrived on (RFC 9000 section 9): only a wildcard bind
        needs it, as quic-go sys_conn_oob.go (newConn: IsUnspecified). AF_INET: IP_PKTINFO (IP_RECVPKTINFO, the same option, on Darwin: quic-go
-       sys_conn_helper_darwin.go). AF_INET6, dual-stack too: IPV6_RECVPKTINFO alone, which reports v4-mapped traffic as a v4-mapped
-       IPV6_PKTINFO, as msquic datapath_epoll.c (CxPlatSocketContextInitialize) */
+       sys_conn_helper_darwin.go). AF_INET6, dual-stack too: IPV6_RECVPKTINFO, which reports v4-mapped traffic as a v4-mapped
+       IPV6_PKTINFO, as msquic datapath_epoll.c (CxPlatSocketContextInitialize); Linux also takes IP_PKTINFO on the dual-stack socket
+       for its ipi_spec_dst, which tells a subnet-directed broadcast destination from an address of this host */
     if ((flags & KSL_UDP_PKTINFO) && is_wildcard(addr)) {
         int ok = u->family == AF_INET6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &one, sizeof one) == 0
                                        : setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) == 0;   /* Darwin: IP_RECVPKTINFO is IP_PKTINFO */
+#ifdef __linux__
+        u->v4_spec = ok && (u->family == AF_INET || (u->dual && setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) == 0));
+#endif
         if (ok) { u->granted |= KSL_UDP_PKTINFO; u->pktinfo = 1; }
     }
 #ifdef __linux__   /* Darwin has no UDP_SEGMENT/UDP_GRO: the caps never grant them and every datagram is its own sendmsg/recvmsg */

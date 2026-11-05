@@ -48,17 +48,50 @@ static int64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, 
 #define DROP_CHECK 64
 /* the address a datagram was sent to, from IP_PKTINFO (ipi_addr: the header's destination, as quinn-udp unix.rs decode_recv and quic-go
    sys_conn_oob.go ReadPacket) or IPV6_PKTINFO (v4-mapped on a dual-stack socket: family 4); the port is the socket's. 0 when not one of them */
-static int pktinfo_dst(const ksl_udp *u, const struct cmsghdr *c, uint8_t dst[KSL_UDP_ADDR_LEN]) {
+/* spec: set to 1 (local, ipi_spec_dst == ipi_addr, which Linux fills only for a destination that is an address of this host, RTN_LOCAL;
+   a subnet-directed broadcast gets the receiving interface's address) or 2 (not local) when an IP_PKTINFO cmsg was read */
+static int pktinfo_dst(const struct cmsghdr *c, uint8_t dst[KSL_UDP_ADDR_LEN], int *spec) {
     if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_PKTINFO && c->cmsg_len >= CMSG_LEN(sizeof(struct in_pktinfo))) {
         struct in_pktinfo pi; memcpy(&pi, CMSG_DATA(c), sizeof pi); memset(dst, 0, KSL_UDP_ADDR_LEN); dst[0] = 4; memcpy(dst + 3, &pi.ipi_addr, 4);
+        *spec = memcmp(&pi.ipi_spec_dst, &pi.ipi_addr, 4) == 0 ? 1 : 2;
     } else if (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_PKTINFO && c->cmsg_len >= CMSG_LEN(sizeof(struct in6_pktinfo))) {
         struct in6_pktinfo pi; memcpy(&pi, CMSG_DATA(c), sizeof pi); struct sockaddr_storage ss; memset(&ss, 0, sizeof ss);
-        ss.ss_family = AF_INET6; memcpy(&((struct sockaddr_in6 *)&ss)->sin6_addr, &pi.ipi6_addr, 16); from_sockaddr(&ss, dst);   /* unmaps */
+        ss.ss_family = AF_INET6; memcpy(&((struct sockaddr_in6 *)&ss)->sin6_addr, &pi.ipi6_addr, 16);
+        if (*spec && IN6_IS_ADDR_V4MAPPED(&pi.ipi6_addr)) return 1;   /* the IP_PKTINFO of the same datagram already said it */
+        from_sockaddr(&ss, dst);   /* unmaps */
     } else return 0;
-    /* a multicast or limited-broadcast destination is no address to answer from (QUIC is unicast), a link-local one has no scope id in the
-       address format: unknown, the route picks the source */
-    if ((dst[0] == 4 && ((dst[3] & 0xf0) == 0xe0 || (dst[3] == 255 && dst[4] == 255 && dst[5] == 255 && dst[6] == 255))) || (dst[0] == 6 && (dst[3] == 0xff || (dst[3] == 0xfe && (dst[4] & 0xc0) == 0x80)))) { memset(dst, 0, KSL_UDP_ADDR_LEN); return 1; }
-    dst[1] = u->local[1]; dst[2] = u->local[2]; return 1;
+    return 1;
+}
+#ifdef __APPLE__
+/* Darwin fills no ipi_spec_dst on receive: an IPv4 destination is one to answer from unless it is an interface's broadcast address
+   (getifaddrs). Unicast ones are remembered for 10 s (8 of them), so the interfaces are read once per new destination, not per datagram */
+static int v4_unicast(ksl_udp *u, const uint8_t a[4]) {
+    int64_t now = now_ns();
+    if (now - u->ucast_at > 10 * (int64_t)1000000000) { u->ucast_n = 0; u->ucast_at = now; }
+    for (int i = 0; i < u->ucast_n; i++) if (!memcmp(u->ucast[i], a, 4)) return 1;
+    struct ifaddrs *ifs = NULL, *i; int bcast = 0; if (getifaddrs(&ifs) != 0) return 0;   /* unsure: unknown */
+    for (i = ifs; i && !bcast; i = i->ifa_next)
+        if ((i->ifa_flags & IFF_BROADCAST) && i->ifa_broadaddr && i->ifa_broadaddr->sa_family == AF_INET && !memcmp(&((struct sockaddr_in *)i->ifa_broadaddr)->sin_addr, a, 4)) bcast = 1;
+    freeifaddrs(ifs);
+    if (!bcast && u->ucast_n < 8) memcpy(u->ucast[u->ucast_n++], a, 4);
+    return !bcast;
+}
+#endif
+/* the destination as reported: unknown (all zero) when it is no address to answer from — multicast, limited or subnet-directed broadcast
+   (QUIC is unicast; a reply from such a source is refused by Linux and could leave spoofed elsewhere), IPv6 link-local (no scope id in
+   the address format), or an IPv4 destination this platform cannot vouch for; else the socket's port added */
+static void finish_dst(ksl_udp *u, uint8_t dst[KSL_UDP_ADDR_LEN], int spec) {
+    if (!dst[0]) return;
+    int bad = (dst[0] == 4 && ((dst[3] & 0xf0) == 0xe0 || (dst[3] == 255 && dst[4] == 255 && dst[5] == 255 && dst[6] == 255))) ||
+              (dst[0] == 6 && (dst[3] == 0xff || (dst[3] == 0xfe && (dst[4] & 0xc0) == 0x80)));
+#ifdef __linux__
+    if (!bad && dst[0] == 4) bad = !u->v4_spec || spec != 1;
+#else
+    (void)spec;
+    if (!bad && dst[0] == 4) bad = !v4_unicast(u, dst + 3);
+#endif
+    if (bad) { memset(dst, 0, KSL_UDP_ADDR_LEN); return; }
+    dst[1] = u->local[1]; dst[2] = u->local[2];
 }
 int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
     return ksl_udp_recv_dst(u, bufs, caps, lens, addrs, NULL, ecnv, n, received, timeout_ms);
@@ -105,9 +138,9 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
         if (r < 0 && icmp_errno(errno)) { drain_errqueue(u); dropped++; continue; }
         if (r < 0) { set_err(u, errno, "recvmsg"); rc = filled ? KSL_OK : KSL_ERROR; break; }
         if (m.msg_flags & MSG_TRUNC) { dropped++; continue; }   /* bigger than the scratch: dropped whole */
-        uint32_t gso = 0; uint8_t mark = 0; uint8_t dst[KSL_UDP_ADDR_LEN] = { 0 };
+        uint32_t gso = 0; uint8_t mark = 0; uint8_t dst[KSL_UDP_ADDR_LEN] = { 0 }; int spec = 0;
         for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
-            if (u->pktinfo && pktinfo_dst(u, c, dst)) continue;
+            if (u->pktinfo && pktinfo_dst(c, dst, &spec)) continue;
 #ifdef __linux__
             if (c->cmsg_level == SOL_UDP && c->cmsg_type == UDP_GRO) { int g; memcpy(&g, CMSG_DATA(c), sizeof g); if (g > 0) gso = (uint32_t)g; }
             else
@@ -115,6 +148,7 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
             /* Darwin labels the received TOS cmsg IP_RECVTOS (one byte), Linux IP_TOS; as in msquic datapath_kqueue.c and quic-go sys_conn_helper_darwin.go */
             if ((c->cmsg_level == IPPROTO_IP && (c->cmsg_type == IP_TOS || c->cmsg_type == IP_RECVTOS)) || (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_TCLASS)) { int tos = 0; if (c->cmsg_len >= CMSG_LEN(sizeof(int))) memcpy(&tos, CMSG_DATA(c), sizeof tos); else tos = *(uint8_t *)CMSG_DATA(c); mark = (uint8_t)(tos & 3); }
         }
+        if (u->pktinfo) finish_dst(u, dst, spec);
         u->pend_off = 0; u->pend_len = (uint32_t)r; u->pend_seg = gso; from_sockaddr(&ss, u->pend_addr); memcpy(u->pend_dst, dst, KSL_UDP_ADDR_LEN); u->pend_ecn = mark;
         if (r == 0) { u->pend_len = 0; dropped++; continue; }   /* an empty datagram carries nothing for QUIC */
         if (ss.ss_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(&((struct sockaddr_in6 *)&ss)->sin6_addr)) { u->pend_len = 0; dropped++; continue; }   /* the address format has no scope id: no reply could reach a link-local peer */
