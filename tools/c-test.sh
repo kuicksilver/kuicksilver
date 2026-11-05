@@ -4,7 +4,8 @@
 # Builds and runs the ksl C tests with ASan/UBSan against the host OpenSSL build. Usage: tools/c-test.sh [target] [extra cflags]
 # mingw-x64: cross-built with the Kotlin/Native llvm + mingw sysroot (no sanitizers); runs on a Windows host (CI), under wine64 when
 # it is installed, else is only built. KSL_TSAN=1 (host targets): ThreadSanitizer instead of ASan/UBSan, into ksl_test_tsan; any
-# report fails the run (halt_on_error), so a data race between threads cannot pass as a green test.
+# report fails the run, so a data race between threads cannot pass as a green test: halt_on_error stops at the first report (on
+# macOS by abort, exit 134; exitcode=66 is what a run that got to its end with reports exits with).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; cd "$root"
 target="${1:-$( [ "$(uname)" = Darwin ] && echo macos-arm64 || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )}"

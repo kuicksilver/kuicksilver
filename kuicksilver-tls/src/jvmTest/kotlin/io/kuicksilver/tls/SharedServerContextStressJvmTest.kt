@@ -50,13 +50,19 @@ class SharedServerContextStressJvmTest {
         val reloads =
             java.util.concurrent.atomic
                 .AtomicInteger()
+        // one deadline for the whole test: a thread still running past it fails the test with what it got through
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+
+        fun running() = System.nanoTime() < deadline && failures.isEmpty()
         val workers =
             List(4) { w ->
                 Thread {
                     start.await()
                     val open = ArrayDeque<KslQuicTlsSession>()
                     try {
-                        repeat(400) { i ->
+                        // at least 400 sessions each, and on until the reloader is through: every reload meets running workers
+                        var i = 0
+                        while ((i < 400 || reloads.get() < 60) && running()) {
                             val s =
                                 KslQuicCrypto.newSession(
                                     configs[(w * 7 + i) % configs.size],
@@ -66,6 +72,7 @@ class SharedServerContextStressJvmTest {
                             built.incrementAndGet()
                             open += s
                             if (open.size > 12) repeat(6) { open.removeFirst().close() }
+                            i++
                         }
                     } catch (t: Throwable) {
                         failures += t
@@ -78,9 +85,9 @@ class SharedServerContextStressJvmTest {
             Thread {
                 start.await()
                 try {
-                    // one reload per 25 sessions built (1600 in all): the reloads land throughout the workers' run, not at its start
+                    // one reload per 25 sessions built: the reloads land throughout the workers' run, not at its start
                     var done = 0
-                    while (done < 60 && workers.any { it.isAlive }) {
+                    while (done < 60 && running()) {
                         if (built.get() >= (done + 1) * 25) {
                             r.reload(if (done++ % 2 == 0) identityB() else identityA())
                             reloads.incrementAndGet()
@@ -95,8 +102,8 @@ class SharedServerContextStressJvmTest {
         (workers + reloader).forEach { it.start() }
         start.countDown()
         (workers + reloader).forEach {
-            it.join(TimeUnit.SECONDS.toMillis(60))
-            assertTrue(!it.isAlive, "a thread did not finish within 60 s")
+            it.join(maxOf(1L, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()) + 5_000))
+            assertTrue(!it.isAlive, "a thread did not finish within the 60 s deadline: ${built.get()} sessions, ${reloads.get()} reloads")
         }
         assertEquals(emptyList(), failures.toList(), "no failure while the identity is open")
         assertEquals(60, reloads.get(), "all 60 reloads ran while the workers built sessions")
