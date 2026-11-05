@@ -177,6 +177,104 @@ class PathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 9: a path is the 4-tuple. A server on a wildcard socket learns which of its addresses the client sent to
+     * ([io.kuicksilver.quic.PacketBatch.localAddress]) and every datagram of the connection, from the first flight on, names that
+     * address as its source: on a multi-address host or a VIP the client hears back from the address it chose.
+     */
+    @Test fun serverRepliesFromTheLocalAddressTheClientUsed() {
+        val vip = InetSocketAddress("192.0.2.10", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = vip
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            send(c, 3000)
+            p.settle(10)
+            assertTrue(p.serverSentLocal.isNotEmpty())
+            assertTrue(p.serverSentLocal.all { it == vip }, "every server datagram leaves from $vip: ${p.serverSentLocal.toSet()}")
+            assertEquals(
+                vip,
+                p
+                    .server()
+                    .paths.active.local,
+            )
+            assertTrue(p.changes(p.server()).isEmpty(), "the same 4-tuple: no path change")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Where the socket cannot tell (the portable sockets, a specific bind) nothing names a source: the socket's own address is used. */
+    @Test fun noLocalAddressWithoutTheSocketReportingIt() {
+        val (p, c) = connected()
+        try {
+            send(c, 3000)
+            p.settle(10)
+            assertTrue(p.serverSentLocal.all { it == null }, "no source named: ${p.serverSentLocal.toSet()}")
+            assertNull(
+                p
+                    .server()
+                    .paths.active.local,
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The client's datagrams start arriving at another of the server's addresses, from the same client address: a new 4-tuple, so a
+     * new path that is validated before the server moves there (RFC 9000 sections 9.3 and 8.2), with fresh congestion state (section
+     * 9.4: more than the peer's port changed), reported as a migration, not a NAT rebinding; from then on the server sends from the
+     * new address.
+     */
+    @Test fun aNewLocalAddressIsANewPath() {
+        val a = InetSocketAddress("192.0.2.10", 443)
+        val b = InetSocketAddress("192.0.2.11", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = a
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.settle()
+            val s = p.server()
+            val sentBefore = p.serverSentLocal.size
+            p.serverLocal = b
+            send(c)
+            p.settle(10)
+            assertEquals(listOf(PathChangeReason.PeerMigration), p.changes(s).map { it.reason })
+            assertEquals(b, s.paths.active.local)
+            assertEquals(p.clientAddr, s.paths.active.remote)
+            assertEquals(PathState.Validated, s.paths.active.state)
+            val after = p.serverSentLocal.drop(sentBefore)
+            assertTrue(b in after, "the server answered from the new address")
+            assertEquals(b, after.last(), "and stays there")
+            // section 9.5: "MUST NOT reuse a connection ID when sending from more than one local address"
+            val len = c.localCid.length
+
+            fun dcid(i: Int) =
+                p.serverSent[i]
+                    .second
+                    .copyOfRange(1, 1 + len)
+                    .toList()
+            val fromA =
+                p.serverSentLocal.indices
+                    .filter {
+                        p.serverSentLocal[it] == a && p.serverSent[it].second[0].toInt() and 0x80 == 0
+                    }.map { dcid(it) }
+                    .toSet()
+            val fromB =
+                p.serverSentLocal.indices
+                    .filter { p.serverSentLocal[it] == b }
+                    .map { dcid(it) }
+                    .toSet()
+            assertTrue(fromA.isNotEmpty() && fromB.isNotEmpty())
+            assertTrue(fromA.intersect(fromB).isEmpty(), "no connection ID from both local addresses")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun natRebindKeepsCongestionAndRtt() {
         val (p, c) = connected()
         try {

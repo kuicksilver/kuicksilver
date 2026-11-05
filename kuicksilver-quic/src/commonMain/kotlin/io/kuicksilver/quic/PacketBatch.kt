@@ -3,6 +3,7 @@
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 
 /**
@@ -34,6 +35,7 @@ public class PacketBatch internal constructor(
         }
     private val lengths = IntArray(capacity)
     private val addresses = arrayOfNulls<InetSocketAddress>(capacity)
+    private val locals = arrayOfNulls<InetSocketAddress>(capacity)
     private val ecns = Array(capacity) { Ecn.NotEct }
     private val paths = IntArray(capacity)
 
@@ -60,12 +62,31 @@ public class PacketBatch internal constructor(
      */
     public fun address(i: Int): InetSocketAddress? = addresses[i]
 
-    /** Sets the peer address of slot [i]. */
+    /** Sets the peer address of slot [i]; clears its [localAddress], so a producer that does not know it never leaves a stale one. */
     public fun setAddress(
         i: Int,
         a: InetSocketAddress,
     ) {
         addresses[i] = a
+        locals[i] = null
+    }
+
+    /**
+     * Our address of slot [i] (RFC 9000 section 9: a path is the 4-tuple). For a received datagram, the address it was sent to, which
+     * a socket bound to a wildcard address learns from IP_PKTINFO / IPV6_PKTINFO (the accelerated socket; null when the socket cannot
+     * tell, as the portable ones). For an outgoing one, the source it must leave from, null for the socket's own choice. Set it after
+     * [setAddress], which clears it.
+     */
+    @ExperimentalKuicksilverApi
+    public fun localAddress(i: Int): InetSocketAddress? = locals[i]
+
+    /** Sets our address of slot [i] ([localAddress]); null lets the socket choose. */
+    @ExperimentalKuicksilverApi
+    public fun setLocalAddress(
+        i: Int,
+        a: InetSocketAddress?,
+    ) {
+        locals[i] = a
     }
 
     /** ECN codepoint of slot [i]: the mark to send with, or the mark the datagram arrived with (RFC 9000 section 13.4). */

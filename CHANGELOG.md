@@ -416,6 +416,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a server bound to a wildcard address (`0.0.0.0`, `::`, the Ktor connector's default `host`) answers from the address
+  the client sent to. Its accelerated UDP socket (Linux, Android, Apple, Windows) did not use `IP_PKTINFO` / `IPV6_PKTINFO`,
+  so every answer left from the address the route back to the client picks: on a host with several addresses, a floating
+  or virtual IP (keepalived) or a VIP on `lo` for IPVS direct routing and other direct server return, the client dropped
+  the answers as a stranger's (RFC 9000 section 9) and HTTP/3 never connected while TCP worked. The socket now reads each
+  datagram's destination and sends from it; a server path includes that local address (a datagram to another of the
+  server's addresses opens a new path, validated before the server moves there, with a connection ID not used from the old
+  address, section 9.5), and stateless answers (Version Negotiation, Retry, Stateless Reset, refusals) leave from it too.
+  New experimental API: `PacketBatch.localAddress` / `setLocalAddress`, `EndpointCore.handleDatagram(…, local)`,
+  `ConnectionCore.handleDatagram(…, local)`; ksl (additive in ABI 7): `KSL_UDP_PKTINFO`, `ksl_udp_send_src`,
+  `ksl_udp_recv_dst`. The portable sockets (NIO on the JVM, ktor-network on Kotlin/Native) cannot do this: bind them to
+  the address clients use ([deployment guide](docs/guide/deployment.md#reply-addresses)).
 - Ktor server: `KuicksilverServerEventListener.connectionClosed` for an HTTP/3 connection comes after the
   `requestEnded` of every request it carried. It came as soon as the connection took no more requests, so a client
   that closed the connection as soon as it had the answer could be reported gone while its handler still ran.

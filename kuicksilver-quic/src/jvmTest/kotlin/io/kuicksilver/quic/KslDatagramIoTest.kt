@@ -182,6 +182,122 @@ class KslDatagramIoTest {
             }
         }
 
+    /**
+     * A second IPv4 address of this host besides 127.0.0.1: 127.0.0.2 where the whole 127/8 is local (Linux, Windows), else the first
+     * up, non-loopback interface address a socket can bind (macOS has 127.0.0.1 alone on lo0 unless an alias was added); null when
+     * there is none.
+     */
+    private fun secondAddress(): String? {
+        fun bindable(ip: String) = runCatching { java.net.DatagramSocket(java.net.InetSocketAddress(ip, 0)).close() }.isSuccess
+        if (bindable("127.0.0.2")) return "127.0.0.2"
+        return java.net.NetworkInterface
+            .getNetworkInterfaces()
+            .toList()
+            .filter { runCatching { it.isUp && !it.isLoopback }.getOrDefault(false) }
+            .flatMap { it.inetAddresses.toList() }
+            .filterIsInstance<java.net.Inet4Address>()
+            .map { it.hostAddress }
+            .firstOrNull { bindable(it) }
+    }
+
+    /**
+     * RFC 9000 section 9: a path is the 4-tuple. A socket bound to 0.0.0.0 reports the address each datagram was sent to, and a
+     * datagram whose slot names that local address leaves from it: the reply to a client that used the host's second address comes
+     * from that address, not from 127.0.0.1, the address the route back to the client picks.
+     */
+    @Test fun wildcardSocketReportsTheDestinationAndRepliesFromIt() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
+            val second = secondAddress()
+            assumeTrue(second != null, "needs a second local IPv4 address (127.0.0.2 not bindable and no up interface address)")
+            val w = assertNotNull(KslDatagramIo.open(InetSocketAddress("0.0.0.0", 0)))
+            val c4 = assertNotNull(KslDatagramIo.open(lo))
+            // null: no IPv6 loopback, that case is skipped
+            val c6 = runCatching { KslDatagramIo.open(InetSocketAddress("::1", 0)) }.getOrNull()
+            val out = PacketBatch(1)
+            val inb = PacketBatch(1)
+            try {
+                for (to in listOfNotNull("127.0.0.1", second!!, if (c6 != null) "::1" else null)) {
+                    val c = if (to == "::1") c6!! else c4
+                    out.clear()
+                    out.buffer(0).copyFrom(ByteArray(60) { 3 }, 0, 0, 60)
+                    out.setLength(0, 60)
+                    out.setAddress(0, InetSocketAddress(to, w.localAddress.port))
+                    assertEquals(1, c.send(out))
+                    inb.clear()
+                    withTimeout(5.seconds) { while (inb.count < 1) w.receive(inb) }
+                    val local = assertNotNull(inb.localAddress(0), "the destination of a datagram to $to is reported")
+                    val ip =
+                        java.net.InetAddress
+                            .getByName(to)
+                            .address
+                    assertContentEquals(ip, local.resolveAddress(), "the destination is $to")
+                    assertEquals(w.localAddress.port, local.port)
+                    out.clear()
+                    out.buffer(0).copyFrom(ByteArray(70) { 4 }, 0, 0, 70)
+                    out.setLength(0, 70)
+                    out.setAddress(0, inb.address(0)!!)
+                    out.setLocalAddress(0, local)
+                    assertEquals(1, w.send(out))
+                    inb.clear()
+                    withTimeout(5.seconds) { while (inb.count < 1) c.receive(inb) }
+                    assertContentEquals(ip, inb.address(0)!!.resolveAddress(), "the reply leaves from $to, the address the client sent to")
+                    assertEquals(null, inb.localAddress(0), "a socket on a specific address reports no destination")
+                }
+            } finally {
+                out.close()
+                inb.close()
+                w.close()
+                c4.close()
+                c6?.close()
+            }
+        }
+
+    /**
+     * End to end: a server bound to 0.0.0.0 completes a handshake with a client that connected to the host's second address. A client
+     * drops packets from an address it did not send to (RFC 9000 section 9), so without the local address on the server's path the
+     * replies left from 127.0.0.1 and the handshake timed out.
+     */
+    @Test fun wildcardServerHandshakesOnTheSecondAddress() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
+            val second = secondAddress()
+            assumeTrue(second != null, "needs a second local IPv4 address (127.0.0.2 not bindable and no up interface address)")
+            val server =
+                QuicEndpoint.bind(
+                    InetSocketAddress("0.0.0.0", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            ; crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            try {
+                withTimeout(30.seconds) {
+                    val accepted = async { server.accept() }
+                    val c =
+                        client.connect(
+                            InetSocketAddress(second!!, server.localAddress.port),
+                            QuicClientConfig.Builder(CoreFixtures.client()).build(),
+                        )
+                    val s = accepted.await()
+                    val sink = async { s.acceptStream().input.readExactly(3) }
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1, 2, 3), 0, 3)
+                    st.output.flushAndClose()
+                    assertContentEquals(byteArrayOf(1, 2, 3), sink.await())
+                    c.close()
+                    s.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
     /** A refused accelerated socket (a sandbox, limits) falls back to the portable one instead of failing the bind (macOS server review). */
     @Test fun refusedSocketFallsBackToPortable() =
         runBlocking {

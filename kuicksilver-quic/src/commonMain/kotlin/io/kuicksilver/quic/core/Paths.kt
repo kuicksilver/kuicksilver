@@ -41,6 +41,23 @@ internal class Path(
     /** True when [a] is this path's peer: equal as ktor sees it, or the same port and the same IP once host names are resolved. */
     fun isRemote(a: InetSocketAddress): Boolean = remote == a || (remote.port == a.port && remoteKey == AddressClass.ipKey(a))
 
+    /**
+     * Server: our address on this path, the one the client sent to (RFC 9000 section 9: a path is the 4-tuple), learned from the
+     * datagram that opened it on a wildcard socket that reports destinations ([io.kuicksilver.quic.PacketBatch.localAddress]); every
+     * datagram of the path leaves from it, so a reply on a multi-address host or a VIP comes from the address the client knows.
+     * Null where the socket cannot tell (the portable sockets, a specific bind) and on a client, whose source the kernel picks
+     * (as quinn-proto `Connection::local_ip` and quic-go `newSendConn` for a client).
+     */
+    var local: InetSocketAddress? = null
+        set(value) {
+            field = value
+            localKey = value?.let { AddressClass.ipKey(it) }
+        }
+    private var localKey: AddressClass.IpKey? = null
+
+    /** True when a datagram that arrived at [l] belongs to this path's local end: the same IP, or either side unknown. */
+    fun isLocal(l: InetSocketAddress?): Boolean = l == null || localKey == null || local === l || localKey == AddressClass.ipKey(l)
+
     var state: PathState = PathState.Unknown
     val amplification = AmplificationLimit()
 
@@ -268,14 +285,17 @@ internal class Paths(
     /** Told about a path dropped to make room for a new one (the core retires its peer connection ID). */
     var onEvicted: ((Path) -> Unit)? = null
 
+    /** The path of the 4-tuple ([socket], [local], [a]); [local] null matches any local address (RFC 9000 section 9). */
     fun byRemote(
         socket: PathId,
         a: InetSocketAddress,
+        local: InetSocketAddress? = null,
     ): Path? {
         for (i in 0 until all.size) {
             val p = all[i]
             if (p.socket == socket &&
-                p.isRemote(a)
+                p.isRemote(a) &&
+                p.isLocal(local)
             ) {
                 return p
             }

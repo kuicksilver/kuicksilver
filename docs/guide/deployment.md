@@ -211,12 +211,19 @@ Notes on specific products (checked 2026-11-05):
 
 ### Reply addresses
 
-The engine's UDP socket does not choose the source address of its answers per packet (no `IP_PKTINFO` /
-`IPV6_PKTINFO` yet): with the default `host = "0.0.0.0"` the kernel picks it from the route to the client. On a host with
-one address that is the address the client sent to. On a host that receives on another address than its route's (a
-secondary IP, a floating or virtual IP, a VIP on `lo` for IPVS direct routing or similar direct server return), the
-answers leave from the wrong address, the client drops them, and QUIC never connects while TCP works. Until that is
-fixed in the engine, bind the connector's `host` to the address clients send to in such setups.
+A client drops QUIC packets from an address it did not send to (RFC 9000 section 9), so every answer must leave from the
+address the client used. With the default `host = "0.0.0.0"` (or `::`) the engine's accelerated UDP socket (Linux,
+Android, macOS, iOS, Windows; 0.3.0) learns the destination of every datagram (`IP_PKTINFO` / `IPV6_PKTINFO`) and
+sends that connection's packets, and any stateless answer to it, from that address. This covers a host with several
+addresses, a secondary IP, a floating or virtual IP (keepalived) and a VIP on `lo` for IPVS direct routing or similar
+direct server return. A client whose packets start to arrive at another of the server's addresses is treated as a new
+path and validated first.
+
+Before 0.3.0, and still with the portable socket (`IoPreference.Portable`, the JVM without the native library, a
+Kotlin/Native target without `ksl_udp`; the log says "using the portable socket" when it falls back), the kernel picks
+the source from the route to the client: on such hosts the answers leave from the wrong address and QUIC never
+connects while TCP works. There, bind the connector's `host` to the address clients send to (one connector per address
+when there are several).
 
 ### Connection IDs and several instances
 

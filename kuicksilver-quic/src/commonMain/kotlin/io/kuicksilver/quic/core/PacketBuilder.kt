@@ -104,6 +104,7 @@ internal class PacketBuilder(
                 out.setLength(count, n)
                 out.setAddress(count, target.remote)
                 out.setPath(count, target.socket)
+                out.setLocalAddress(count, target.local)
                 out.setEcn(count, currentMark)
                 count++
                 bytes +=
@@ -138,6 +139,7 @@ internal class PacketBuilder(
                         out.setLength(count, n)
                         out.setAddress(count, c.path.remote)
                         out.setPath(count, c.path.socket)
+                        out.setLocalAddress(count, c.path.local)
                         out.setEcn(count, currentMark)
                         count++
                         c.bytesSent +=
@@ -166,6 +168,7 @@ internal class PacketBuilder(
             out.setLength(count, n)
             out.setAddress(count, c.path.remote)
             out.setPath(count, c.path.socket)
+            out.setLocalAddress(count, c.path.local)
             out.setEcn(count, currentMark)
             count++
             bytes +=
@@ -247,6 +250,7 @@ internal class PacketBuilder(
                 out.setLength(count, pos)
                 out.setAddress(count, k.remote)
                 out.setPath(count, k.socket)
+                out.setLocalAddress(count, k.local)
                 out.setEcn(count, io.kuicksilver.quic.Ecn.NotEct)
                 count++
                 c.bytesSent += pos
