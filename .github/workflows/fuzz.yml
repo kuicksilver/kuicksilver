@@ -159,7 +159,8 @@ jobs:
           names=$(unzip -Z1 "$RUNNER_TEMP/corpus.zip")
           if grep -Eq '(^/|(^|/)\.\.(/|$))' <<< "$names"; then echo "::warning::artifact $id has paths outside its directory; not used"; exit 0; fi
           x="$RUNNER_TEMP/corpus-x"; rm -rf "$x"; mkdir -p "$x" "build/fuzz-campaign/corpus/$TARGET"
-          unzip -q "$RUNNER_TEMP/corpus.zip" -d "$x"
+          # unzip refuses to write through a link it made (exit 2): such an archive is not used, the run starts from the seeds
+          unzip -q "$RUNNER_TEMP/corpus.zip" -d "$x" || { echo "::warning::artifact $id did not unpack cleanly; not used"; rm -rf "$x"; exit 0; }
           find "$x" ! -type f ! -type d -delete
           find "$x" -type f -exec cp {} "build/fuzz-campaign/corpus/$TARGET/" \;
           echo "corpus artifact $id: $(find "build/fuzz-campaign/corpus/$TARGET" -type f | wc -l | tr -d ' ') inputs"
