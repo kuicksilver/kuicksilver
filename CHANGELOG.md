@@ -416,6 +416,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 client: a server's GOAWAY with HTTP_1_1_REQUIRED before the first request now always sends the call over
+  HTTP/1.1. The connection became unusable as soon as the GOAWAY was read, but its error code was recorded only when the
+  event was dispatched, so a request that looked in between found the connection refusing streams without a code and
+  failed with "the server took no request on a new HTTP/2 connection".
 - Ktor server: `KuicksilverServerEventListener.connectionClosed` for an HTTP/3 connection comes after the
   `requestEnded` of every request it carried. It came as soon as the connection took no more requests, so a client
   that closed the connection as soon as it had the answer could be reported gone while its handler still ran.

@@ -192,7 +192,7 @@ internal class H2Runtime(
                 try {
                     core.block()
                 } finally {
-                    while (true) pending.addLast(core.nextEvent() ?: break)
+                    takeEventsLocked()
                     wantsWrite = core.wantsWrite || core.isClosed
                 }
             }
@@ -223,7 +223,23 @@ internal class H2Runtime(
     internal fun receiveWithoutDispatchForTest(bytes: ByteArray) {
         lock.withLock {
             core.receive(bytes, 0, bytes.size, clock())
-            while (true) pending.addLast(core.nextEvent() ?: break)
+            takeEventsLocked()
+        }
+    }
+
+    /**
+     * Queues the core's events for dispatch (under the lock). A peer's GOAWAY is noted here, not at its dispatch: the core
+     * may have closed with it already (a GOAWAY and no streams left), and whoever finds the connection unusable meanwhile
+     * must also find the code that says why (HTTP_1_1_REQUIRED, RFC 9113 section 7).
+     */
+    private fun takeEventsLocked() {
+        while (true) {
+            val e = core.nextEvent() ?: break
+            if (e is H2Event.GoAway) {
+                goAwayCode = e.code
+                goAwayReceived = true
+            }
+            pending.addLast(e)
         }
     }
 
@@ -478,8 +494,7 @@ internal class H2Runtime(
     }
 
     private fun onGoAway(e: H2Event.GoAway) {
-        goAwayReceived = true
-        goAwayCode = e.code
+        // goAwayReceived and goAwayCode were set as the event was queued ([takeEventsLocked])
         onChange()
     }
 

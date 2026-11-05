@@ -369,6 +369,27 @@ class H2RuntimeTest {
         }
 
     /**
+     * A GOAWAY on a connection without streams closes the core at once, under the lock, while its event may still wait
+     * for another thread's dispatch: whoever then finds the connection unusable must also see the GOAWAY's code (the pool
+     * reads HTTP_1_1_REQUIRED from it, RFC 9113 section 7; seen too early it was null and the call failed with "the
+     * server took no request", ClientH2Test.http11RequiredBeforeTheFirstRequest on the JDK 17 job).
+     */
+    @Test fun goAwayCodeIsKnownOnceTheConnectionIsUnusable() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            runCurrent()
+            client.rt.holdDispatchForTest()
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.goAway(0, Http2ErrorCode.HTTP_1_1_REQUIRED.code, ByteArray(0)))
+            assertFalse(client.tryReserve())
+            assertEquals(Http2ErrorCode.HTTP_1_1_REQUIRED, client.goAwayCode, "the code of the GOAWAY that made it unusable")
+            client.rt.releaseDispatchForTest()
+            runCurrent()
+            assertEquals(Http2ErrorCode.HTTP_1_1_REQUIRED, client.goAwayCode)
+        }
+
+    /**
      * RFC 9113 section 8.1: a server may answer before the whole request and then stop it with RST_STREAM NO_ERROR; the
      * client keeps the response (its content included, even when the reset arrives before the application read it) and
      * its sending stops without an error.
