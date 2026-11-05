@@ -63,6 +63,15 @@ public class H2ClientConnection private constructor(
         rt.closed.await()
     }
 
+    /** Milliseconds since anything arrived from the server. */
+    public val receivedIdleMillis: Long get() = (rt.clock() - rt.lastReceived) / 1_000_000
+
+    /**
+     * Sends a PING and waits at most [timeoutMillis] for its acknowledgement (a connection health check); false when none
+     * came or the connection ended.
+     */
+    public suspend fun checkHealth(timeoutMillis: Long): Boolean = rt.checkHealth(timeoutMillis)
+
     /** Takes a stream slot within the peer's limit; false when the connection is full or not usable. */
     public fun tryReserve(): Boolean = rt.tryReserve()
 

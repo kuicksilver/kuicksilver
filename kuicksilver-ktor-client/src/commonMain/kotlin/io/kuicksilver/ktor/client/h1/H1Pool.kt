@@ -122,6 +122,12 @@ internal class H1Pool(
     /** HTTP/2 connections by route; internal for tests. */
     internal val h2 = H2Pool(config.poolLimits(), clock)
 
+    /**
+     * An HTTP/2 connection from which nothing arrived for this long is checked with a PING before it takes a request
+     * (Chromium checks a session idle for 10 s, "at risk of loss"); internal so tests can check every reuse.
+     */
+    internal var h2HealthAfterIdleMillis: Long = 10_000
+
     /** Routes that answered HTTP_1_1_REQUIRED; internal for tests. */
     internal val h2Refused = H2RefusedRoutes(clock)
 
@@ -214,8 +220,19 @@ internal class H1Pool(
         data: HttpRequestData,
         key: String,
     ): Boolean =
-        config.http2.enabled && data.url.protocol.isSecure() &&
+        config.http2.enabled && data.url.protocol.isSecure() && tls13Only &&
             !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !h2Refused.isRefused(key)
+
+    /**
+     * Whether the engine's TLS is TLS 1.3 only (the default). RFC 9113 section 9.2.1 makes a TLS 1.2 renegotiation a
+     * connection error of type PROTOCOL_ERROR, and the TLS layer cannot report one: OpenSSL answers a server's
+     * HelloRequest itself (no_renegotiation, SSL_OP_NO_RENEGOTIATION in ksl_ctx.c) and the connection goes on. So a client
+     * configured to allow TLS 1.2 offers only http/1.1 rather than run HTTP/2 against that MUST; TLS 1.2 is opt-in, for
+     * peers without TLS 1.3 (TlsVersions.Tls12And13).
+     */
+    private val tls13Only: Boolean by lazy {
+        config.tlsConfigFor("localhost", listOf("http/1.1")).versions == io.kuicksilver.tls.TlsVersions.Tls13
+    }
 
     /**
      * An idle connection for [key] ([Obtained.reused]), else a new one once the limits allow; waiting for room and
@@ -248,8 +265,19 @@ internal class H1Pool(
                     while (true) {
                         val seen = signal?.value
                         if (signal != null) {
-                            h2.reserve(key)?.let {
-                                stream = it
+                            val found = h2.reserve(key)
+                            if (found != null) {
+                                // a connection quiet for a while may be dead (a NAT that forgot it, a peer gone without a
+                                // FIN): one PING, bounded, before the request goes on it; a failed one retires it, and the
+                                // request, not sent there, looks again
+                                if (found.client.receivedIdleMillis >= h2HealthAfterIdleMillis &&
+                                    !found.client.checkHealth(healthTimeoutMillis(data))
+                                ) {
+                                    found.client.unreserve()
+                                    found.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                                    continue
+                                }
+                                stream = found
                                 reused = true
                                 return@withTimeout
                             }
@@ -343,6 +371,9 @@ internal class H1Pool(
         }
         return Obtained(conn, reused, held, stream)
     }
+
+    /** The bound of a health PING: half the connect timeout (the rest is for a new connection), at most 5 s. */
+    private fun healthTimeoutMillis(data: HttpRequestData): Long = (data.connectTimeoutMillis(config) / 2).coerceIn(1, 5_000)
 
     /**
      * [ConnectionPool.acquire] for [key] (an idle [H1Connection], or [PERMIT] to open one); with [signal], it gives up

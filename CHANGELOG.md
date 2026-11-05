@@ -26,7 +26,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   not processed, or idempotent with a body that can be sent again; otherwise the call fails); any other HTTP/2 failure fails the call with the new
   `Http2Exception` (experimental, in `kuicksilver-http2`). Responses are checked against RFC 9113 section 8 (a malformed
   one fails the call); flow control follows the application's reading; the server's preface must arrive within the
-  connect timeout, and an optional PING interval closes a silent connection. Configuration: experimental
+  connect timeout, a connection quiet for 10 s is checked with a PING before it takes a request, and an optional PING
+  interval closes a silent connection. HTTP/2 needs TLS 1.3: a client that allows TLS 1.2 offers only `http/1.1`
+  (RFC 9113 section 9.2.1). Configuration: experimental
   `engine { http2 { enabled; settings; pingInterval } }` (`Http2ClientConfig`); `enabled = false` offers only
   `http/1.1`, as in 0.2. The HTTP/3 kill switch (`http3Allowed`) does not turn HTTP/2 off. Responses report
   `HttpProtocolVersion.HTTP_2_0`, as do `ProtocolDiagnostics.protocol`, `connectionAcquired` and the race's

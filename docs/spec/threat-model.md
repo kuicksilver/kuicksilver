@@ -396,10 +396,12 @@ HTTP/2 since 0.3.0 (client side below), the server engine does not yet.
   Field lists are HPACK-encoded when written, never when queued, so the encoder follows the wire order and a dropped list
   never touched it.
 - **Client side (the Ktor engine, a hostile or broken server):** HTTP/2 only over TLS 1.3 after ALPN `h2` (no h2c), with
-  the same trust and pins as HTTP/1.1 and HTTP/3. Every wait on the server has a deadline: its preface within the connect
-  timeout, our SETTINGS acknowledged within `settingsAckTimeout`, a shut send window within the request's socket timeout,
-  an optional PING interval (one unanswered PING at the next ends the connection), idle connections closed after
-  `idleTimeout`. Memory per stream follows the application's reading (credit only for what the application pulled; a
+  the same trust and pins as HTTP/1.1 and HTTP/3 (a client that allows TLS 1.2 offers only http/1.1, since a TLS 1.2
+  renegotiation could not be refused as RFC 9113 §9.2.1 requires). Waits on the server: its preface within the connect
+  timeout, our SETTINGS acknowledged within `settingsAckTimeout`, a health PING (bounded) before a connection quiet for
+  10 s takes a request, idle connections closed after `idleTimeout`; within an exchange, a response or a shut send
+  window is bounded by the request's socket timeout or the optional PING interval, and without either by TCP alone, as
+  over HTTP/1.1. Memory per stream follows the application's reading (credit only for what the application pulled; a
   response it does not read stops the server at the stream window); a response field section above
   SETTINGS_MAX_HEADER_LIST_SIZE (an HPACK bomb included) fails its call only; a malformed response (RFC 9113 §8.1.1:
   connection-specific fields, invalid names or values, content-length that does not match the DATA) is never handed to

@@ -160,6 +160,13 @@ internal class H2Runtime(
     private val transportClosed = AtomicBoolean(false)
     private var awaitingPong = -1L // under lock
 
+    /** When bytes last arrived from the peer, on [clock]. */
+    @Volatile var lastReceived: Long = clock()
+        private set
+
+    /** PINGs of [checkHealth] waiting for their acknowledgement, by payload (under lock). */
+    private val healthPings = HashMap<Long, CompletableDeferred<Unit>>()
+
     /** Streams reserved by the pool and not released (under lock). */
     private var reserved = 0
 
@@ -240,7 +247,12 @@ internal class H2Runtime(
             }
 
             is H2Event.PingAck -> {
-                lock.withLock { if (e.payload == awaitingPong) awaitingPong = -1 }
+                val health =
+                    lock.withLock {
+                        if (e.payload == awaitingPong) awaitingPong = -1
+                        healthPings.remove(e.payload)
+                    }
+                health?.complete(Unit)
             }
 
             is H2Event.Closed -> {
@@ -500,6 +512,7 @@ internal class H2Runtime(
                     return
                 }
                 if (n == 0) continue
+                lastReceived = clock()
                 withCore { receive(buf, 0, n, clock()) }
                 if (lock.withLock { core.isClosed }) return
             }
@@ -857,6 +870,30 @@ internal class H2Runtime(
     fun goAwayNow(code: Http2ErrorCode) {
         withCore { goAway(code, ByteArray(0), graceful = false, now = clock()) }
         onChange()
+    }
+
+    /**
+     * Sends a PING and waits for its acknowledgement at most [timeoutMillis]; false when none came (or the connection
+     * ended). The caller retires a connection that fails it.
+     */
+    suspend fun checkHealth(timeoutMillis: Long): Boolean {
+        if (closed.isCompleted) return false
+        val acked = CompletableDeferred<Unit>()
+        val payload =
+            withCore {
+                val p = ping(clock())
+                healthPings[p] = acked
+                p
+            }
+        val ok =
+            withTimeoutOrNull(timeoutMillis) {
+                kotlinx.coroutines.selects.select {
+                    acked.onAwait { true }
+                    closed.onAwait { false }
+                }
+            } ?: false
+        if (!ok) lock.withLock { healthPings.remove(payload) }
+        return ok
     }
 
     /** Ends the connection now ([cause] for the streams still running). */

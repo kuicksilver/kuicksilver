@@ -385,8 +385,13 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   application does not read stops the server at the stream window (512 KiB, growing to 6 MiB while the application
   keeps up) instead of filling memory.
 - **Deadlines.** The server's SETTINGS (its preface) must arrive within the connect timeout; ours must be acknowledged
-  within `settings.settingsAckTimeout` (10 s); a send window that stays shut fails the request at the socket timeout;
-  with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its calls fail.
+  within `settings.settingsAckTimeout` (10 s). A connection quiet for 10 s is checked with a PING before it takes a
+  request (half the connect timeout at most, 5 s); one that does not answer is closed and the request goes to a new
+  connection. Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
+  (`HttpTimeout`), and with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its
+  calls fail; with neither, a connection that dies mid-exchange holds the call until TCP gives up, as over HTTP/1.1.
+- **TLS 1.3 only.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers only `http/1.1`:
+  RFC 9113 section 9.2.1 requires a TLS 1.2 renegotiation to fail an HTTP/2 connection, which the TLS layer cannot report.
 - **Events and diagnostics.** `protocolSelected` comes once the connection is in hand and names its protocol
   (`HTTP_2_0`), then `connectionAcquired(HTTP_2_0, reused)`; the race reports `raceEnded(winner = HTTP_2_0)`; and
   `ProtocolDiagnostics.protocol` is `HTTP_2_0` (its `fallback` still says why HTTP/3 was not used).

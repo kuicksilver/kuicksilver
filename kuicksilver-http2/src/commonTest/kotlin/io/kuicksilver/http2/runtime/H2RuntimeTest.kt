@@ -489,6 +489,18 @@ class H2RuntimeTest {
             a.release()
         }
 
+    @Test fun healthCheckIsAnsweredOrTimesOut() =
+        runTest {
+            val (client, _, _) = pair()
+            assertTrue(client.checkHealth(1_000))
+            val (srv, deferred) = raw()
+            srv.settings()
+            val silent = deferred.await()
+            runCurrent()
+            // the raw server reads but answers no PING: false once the bound has passed (virtual time)
+            assertFalse(silent.checkHealth(1_000))
+        }
+
     @Test fun pingAnsweredKeepsTheConnection() =
         runTest {
             val (client, server, _) = pair(pingInterval = 1.seconds)

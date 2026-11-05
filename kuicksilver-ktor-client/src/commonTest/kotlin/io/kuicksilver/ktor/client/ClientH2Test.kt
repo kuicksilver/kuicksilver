@@ -159,6 +159,45 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * RFC 9113 section 9.2.1: over TLS 1.2 a renegotiation must be a connection error, which the TLS layer cannot report
+     * (OpenSSL answers a HelloRequest itself with no_renegotiation). A client that allows TLS 1.2 therefore offers only
+     * http/1.1; the default, TLS 1.3 only, offers h2.
+     */
+    @Test fun tls12AllowedOffersOnlyHttp11() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }, h1 = { _, input, output ->
+                readRequest(input)
+                output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nh1")
+                runCatching { input.readRemaining() }
+            }) { port, log ->
+                testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
+                    assertEquals(listOf<String?>("http/1.1"), log.protocols)
+                }
+            }
+        }
+
+    /**
+     * A connection reused after a quiet spell is checked first (Chromium's PING on a session "at risk of loss"): a PING
+     * that is not answered within its bound retires the connection, and the request, which never went out on it, takes a
+     * new connection instead of hanging on a dead one.
+     */
+    @Test fun negative_silentIdleConnectionIsRetiredByAHealthPing() =
+        clientTest {
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
+                rawH2Server(input, output, answerOnce = index == 0)
+            }) { port ->
+                testClient(engine = { connectTimeout = 2.seconds }).use { c ->
+                    val e = engine(c)
+                    e.h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
+                    assertEquals(200, c.get("https://127.0.0.1:$port/").status.value)
+                    // connection 0 now answers nothing: the health PING fails, connection 1 serves the request
+                    assertEquals(200, c.get("https://127.0.0.1:$port/").status.value)
+                }
+            }
+        }
+
     /** The kill switch for HTTP/3 does not turn HTTP/2 off. */
     @Test fun http3SwitchedOffStillUsesH2() =
         clientTest {

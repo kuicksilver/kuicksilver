@@ -16,6 +16,7 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
@@ -367,4 +368,67 @@ internal suspend fun tlsH2WithSilentUdp(
             log.ended.trySend(index)
         }
     }) { port -> block(port, log) }
+}
+
+/**
+ * A raw HTTP/2 server by hand: reads the client preface, sends an empty SETTINGS, acknowledges the client's, answers
+ * every request with `:status 200` and END_STREAM and every PING with its ACK; with [answerOnce] it answers only the first
+ * request and then nothing at all (a dead peer that still holds the connection). Returns when the client closes.
+ */
+internal suspend fun rawH2Server(
+    input: ByteReadChannel,
+    output: ByteWriteChannel,
+    answerOnce: Boolean = false,
+) {
+    fun frame(
+        type: Int,
+        flags: Int,
+        stream: Int,
+        payload: ByteArray = ByteArray(0),
+    ): ByteArray =
+        byteArrayOf(
+            (payload.size shr 16).toByte(),
+            (payload.size shr 8).toByte(),
+            payload.size.toByte(),
+            type.toByte(),
+            flags.toByte(),
+            (stream ushr 24).toByte(),
+            (stream shr 16).toByte(),
+            (stream shr 8).toByte(),
+            stream.toByte(),
+        ) + payload
+    try {
+        input.readByteArray(24) // PRI * HTTP/2.0...
+        output.writeFully(frame(4, 0, 0))
+        output.flush()
+        var answered = 0
+        while (true) {
+            val head = input.readByteArray(9)
+            val len = ((head[0].toInt() and 0xff) shl 16) or ((head[1].toInt() and 0xff) shl 8) or (head[2].toInt() and 0xff)
+            val type = head[3].toInt() and 0xff
+            val flags = head[4].toInt() and 0xff
+            val stream =
+                ((head[5].toInt() and 0x7f) shl 24) or ((head[6].toInt() and 0xff) shl 16) or
+                    ((head[7].toInt() and 0xff) shl 8) or (head[8].toInt() and 0xff)
+            val payload = input.readByteArray(len)
+            val live = !answerOnce || answered == 0
+            when {
+                type == 4 && flags and 1 == 0 -> {
+                    output.writeFully(frame(4, 1, 0))
+                }
+
+                type == 1 && live -> {
+                    output.writeFully(frame(1, 0x5, stream, byteArrayOf(0x88.toByte()))) // :status 200, END_HEADERS | END_STREAM
+                    answered++
+                }
+
+                type == 6 && flags and 1 == 0 && live -> {
+                    output.writeFully(frame(6, 1, 0, payload))
+                }
+            }
+            output.flush()
+        }
+    } catch (_: Throwable) {
+        // the client closed the connection
+    }
 }
