@@ -305,14 +305,25 @@ internal class H2ServerLog {
 
     @kotlin.concurrent.Volatile var acceptCount: Int = 0
 
-    /** The ALPN of every connection so far. */
-    val protocols = ArrayList<String?>()
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val seen = kotlin.concurrent.atomics.AtomicReference<List<String?>>(emptyList())
 
+    /**
+     * The ALPN of every connection so far: a snapshot, safe to read from the test's thread (a plain list written by the
+     * server's threads could be read stale there).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    val protocols: List<String?> get() = seen.load()
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     suspend fun accept(alpn: String?) {
         lock.lock()
         try {
             acceptCount++
-            protocols += alpn
+            while (true) {
+                val old = seen.load()
+                if (seen.compareAndSet(old, old + alpn)) break
+            }
         } finally {
             lock.unlock()
         }
