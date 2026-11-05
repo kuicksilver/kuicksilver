@@ -672,6 +672,7 @@ class ClientH2Test {
                 testClient(block = { install(WebSockets) }).use { c ->
                     runCatching { c.webSocket("wss://127.0.0.1:$port/ws") {} }
                     // RFC 8441 is not supported: a WebSocket offers http/1.1 only, so this server's h2 preference is not used
+                    assertEquals("http/1.1", withTimeout(10.seconds) { log.accepted.receive() })
                     assertEquals(listOf<String?>("http/1.1"), log.protocols)
                 }
             }
@@ -698,6 +699,8 @@ class ClientH2Test {
                             }
                         }
                     }
+                    // the server logs a connection when its TLS handshake is done: wait for that, not for the call's outcome
+                    assertEquals("http/1.1", withTimeout(10.seconds) { log.accepted.receive() })
                     assertEquals(listOf<String?>("http/1.1"), log.protocols)
                 }
             }

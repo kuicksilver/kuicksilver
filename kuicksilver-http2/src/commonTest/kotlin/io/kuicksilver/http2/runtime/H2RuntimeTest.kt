@@ -425,6 +425,44 @@ class H2RuntimeTest {
             s.release()
         }
 
+    /**
+     * The peer's reset closes the stream in the core while its event is still waiting for another thread's dispatch, and
+     * the body's sender reaches its END_STREAM in that gap: the core refuses ("stream 1 is closed"). That refusal must
+     * never become the stream's failure: the sender waits for the reset's event and the call fails with the reset
+     * (found by the integration matrix: an IllegalStateException reached the application).
+     */
+    @Test fun negative_bodyEndAfterAPendingResetFailsWithTheReset() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            runCurrent()
+            client.rt.beforeEndStreamForTest = {
+                client.rt.beforeEndStreamForTest = null
+                client.rt.holdDispatchForTest()
+                client.rt.receiveWithoutDispatchForTest(FrameEncoder.rstStream(s.id, Http2ErrorCode.HTTP_1_1_REQUIRED.code))
+            }
+            val sending =
+                backgroundScope.async {
+                    runCatching {
+                        s.sendBody(
+                            ByteReadChannel("x".encodeToByteArray()),
+                            null,
+                        ) { error("stall") }
+                    }
+                }
+            runCurrent()
+            client.rt.releaseDispatchForTest()
+            runCurrent()
+            val sent = sending.await().exceptionOrNull()
+            assertIs<Http2Exception.StreamReset>(sent, "the sender fails with the reset, not the core's refusal: $sent")
+            val e = assertFailsWith<Http2Exception.StreamReset> { s.response() }
+            assertEquals(Http2ErrorCode.HTTP_1_1_REQUIRED, e.code)
+            s.release()
+        }
+
     @Test fun refusedStreamIsNotProcessed() =
         runTest {
             val (srv, deferred) = raw()

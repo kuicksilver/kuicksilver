@@ -205,6 +205,28 @@ internal class H2Runtime(
      * Wakes the writer when the core has something to write (only then: the writer's own poll would wake it forever) and
      * the timer (a deadline may have moved), then dispatches the events in order, one dispatcher at a time.
      */
+
+    /** Runs right before a body's END_STREAM is queued (tests: the peer's reset arrives in that gap). */
+    internal var beforeEndStreamForTest: (() -> Unit)? = null
+
+    /** Tests: another thread is dispatching events, so this thread's events wait for it ([releaseDispatchForTest]). */
+    internal fun holdDispatchForTest() {
+        lock.withLock { dispatching = true }
+    }
+
+    internal fun releaseDispatchForTest() {
+        lock.withLock { dispatching = false }
+        afterCore(false)
+    }
+
+    /** Tests: feeds peer bytes into the core without dispatching their events (they stay pending). */
+    internal fun receiveWithoutDispatchForTest(bytes: ByteArray) {
+        lock.withLock {
+            core.receive(bytes, 0, bytes.size, clock())
+            while (true) pending.addLast(core.nextEvent() ?: break)
+        }
+    }
+
     private fun afterCore(wantsWrite: Boolean) {
         if (wantsWrite) kick.trySend(Unit)
         timerKick.trySend(Unit)
@@ -700,7 +722,7 @@ internal class H2Runtime(
                 var off = 0
                 while (off < n) {
                     if (!sendable(s)) return
-                    val k = guarded(s) { sendData(s.id, buf, off, n - off, endStream = false) }
+                    val k = sendStep(s) { sendData(s.id, buf, off, n - off, endStream = false) } ?: continue
                     off += k
                     if (k == 0) awaitWindow(s, stallMillis, stallError)
                 }
@@ -710,7 +732,9 @@ internal class H2Runtime(
                 if (!sendable(s)) return
                 // read before trying: the writer may write the frame in the way between the try and the wait
                 val seen = written.value
-                if (guarded(s) { endStream(s.id) }) {
+                beforeEndStreamForTest?.invoke()
+                val ended = sendStep(s) { endStream(s.id) } ?: continue
+                if (ended) {
                     lock.withLock { s.localEnded = true }
                     return
                 }
@@ -752,6 +776,42 @@ internal class H2Runtime(
             !s.localEnded
         }
 
+    /**
+     * A core call of [s]'s sender, after a suspension: null when the core refused it because the stream ended under us (a
+     * reset or GOAWAY from the peer, the connection). The core can be ahead of the runtime there: its event may still be
+     * waiting for another thread's dispatch, so this waits until the runtime knows (the stream failed, or the peer ended
+     * our side after a complete response), and the caller's next round reports that, never the core's refusal.
+     */
+    private suspend fun <T> sendStep(
+        s: StreamRt,
+        block: H2ConnectionCore.() -> T,
+    ): T? {
+        try {
+            return withCore(block)
+        } catch (e: IllegalStateException) {
+            while (lock.withLock { s.failure == null && !s.localEnded }) {
+                if (closed.isCompleted) {
+                    // the connection is over and nothing failed the stream: it fails now, typed
+                    fail(
+                        s,
+                        closeCause ?: Http2Exception.ConnectionClosed(null, byPeer = false, notProcessed = false, "the connection ended"),
+                    )
+                    break
+                }
+                kotlinx.coroutines.selects.select {
+                    s.writable.onReceive {}
+                    closed.onAwait {}
+                }
+            }
+            return null
+        }
+    }
+
+    /**
+     * A core call for [s] that does not suspend (a server's response head and trailers): a refusal because the stream
+     * ended under us becomes the stream's failure, or a typed reset when the runtime does not know it yet; the core's
+     * IllegalStateException never reaches the application.
+     */
     private inline fun <T> guarded(
         s: StreamRt,
         block: H2ConnectionCore.() -> T,
@@ -759,8 +819,14 @@ internal class H2Runtime(
         try {
             withCore(block)
         } catch (e: IllegalStateException) {
-            // the stream ended under us (a reset, the connection): its failure says why
-            throw lock.withLock { s.failure } ?: closeCause ?: e
+            throw lock.withLock { s.failure } ?: closeCause
+                ?: Http2Exception.StreamReset(
+                    s.id,
+                    Http2ErrorCode.CANCEL,
+                    byPeer = true,
+                    notProcessed = false,
+                    "stream ${s.id} ended under us",
+                )
         }
 
     private suspend fun awaitWindow(
