@@ -296,7 +296,7 @@ class QuicLbTest {
                 val i = r.issue(kotlin.random.Random(1), client = false)
                 assertEquals(CidIssuance.SingleNoMigration, i.issuance, "no unreserved nonce is ever used")
                 assertTrue(i.temporary, "this request only")
-                assertTrue(failures >= 1, "reported: $failures")
+                assertEquals(1, failures)
                 assertEquals(0, exhausted, "not exhaustion")
                 assertFalse(
                     s.routes.current!!
@@ -316,17 +316,33 @@ class QuicLbTest {
         val space = QuicLbNonceSpace(4, ByteArray(4), null, r, 0)
         space.prime()
         assertEquals(1, r.stores.size, "the first block, failed")
-        repeat(7) { assertNull(space.next(null)) } // each a tick: tries at 1, 3 and 7 (back-off 1, 2, 4)
-        assertEquals(4, r.stores.size, "tries spaced out by the back-off, not one a request")
+        repeat(5) { assertNull(space.next(null)) }
+        assertEquals(1, r.stores.size, "requests do not drive the store, batches do")
         assertEquals(0L, space.drawnForTest, "nothing drawn while nothing is reserved")
-        repeat(7) { space.tick() } // ticks 8..14: the next try is due at 15
-        assertEquals(4, r.stores.size)
+        space.tick()
+        assertEquals(2, r.stores.size, "one try in the batch")
+        space.tick()
+        assertEquals(2, r.stores.size, "back-off: two batches now")
         r.fail = false
         space.tick()
-        assertEquals(5, r.stores.size)
+        assertEquals(3, r.stores.size)
         assertEquals(0L, space.drawnForTest)
         assertNotNull(space.next(null), "stored")
         assertEquals(65_536L, r.stores.last(), "the block after an outage starts at the next draw, not past the stale mark")
+    }
+
+    /** A storm of requests during an outage: the store is tried at most once a batch, however many requests come. */
+    @Test fun reservationStormTriesAtMostOnceABatch() {
+        val r = MemoryReservation().also { it.fail = true }
+        val space = QuicLbNonceSpace(4, ByteArray(4), null, r, 0)
+        space.prime()
+        val batches = 20
+        repeat(batches) {
+            repeat(5_000) { assertNull(space.next(null)) }
+            space.tick()
+        }
+        assertTrue(r.stores.size <= batches + 1, "${r.stores.size} store tries for $batches batches of 5,000 requests")
+        assertEquals(0L, space.drawnForTest)
     }
 
     /** A group's back-off is scaled by its loops: about one try a round of their batches. */

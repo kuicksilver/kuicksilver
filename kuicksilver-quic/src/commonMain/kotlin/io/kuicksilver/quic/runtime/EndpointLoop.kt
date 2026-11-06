@@ -929,15 +929,16 @@ internal suspend fun applyLoadBalancer(
                 committed = true
                 loop.afterLbCommitForTest?.invoke()
             }
-            withContext(NonCancellable) { afterCommit() }
             return
         } catch (e: io.kuicksilver.quic.endpoint.QuicLbState.StaleConfiguration) {
             // defensive: the update mutexes (EndpointLoop.lbLock, LoopGroup.lbLock) already rule this out
             if (++tries >= 3) throw e
         } catch (e: Throwable) {
-            // committed and then cancelled: the rest of the change still happens ([afterCommit], not cancellable)
-            if (committed) withContext(NonCancellable) { afterCommit() } else lb.discard(prepared)
+            if (!committed) lb.discard(prepared)
             throw e
+        } finally {
+            // committed, whether the caller goes on or was cancelled right then: the rest of the change happens, once
+            if (committed) withContext(NonCancellable) { afterCommit() }
         }
     }
 }

@@ -87,6 +87,9 @@ public interface QuicEndpoint : AutoCloseable {
      * get one ID and `disable_active_migration`, live ones keep theirs. Deliver the configuration to the load balancers
      * first (section 3.1). The configuration is built on `Dispatchers.IO` (a nonce reservation's first store may fsync) and
      * switched to on the endpoint's loops, one update at a time; once switched, cancelling the caller does not undo it.
+     * The call waits for the configuration's nonce reservation (its first `store`) and for the loop it switches on, and
+     * cannot be cancelled while it does: a `QuicLbNonceReservation` that hangs, or a wedged loop, holds it and every later
+     * update. In a group, a loop that takes more than 5 s to move its connections is logged at `Warn` and skipped.
      *
      * IllegalArgumentException for a configuration of another connection ID length, a plaintext one while a
      * `preferredAddress` is offered, or one that uses a server ID in clear that an encrypted configuration used, or the

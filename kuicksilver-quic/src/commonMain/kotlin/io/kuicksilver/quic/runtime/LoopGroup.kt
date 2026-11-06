@@ -14,6 +14,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.Releaser
+import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.withLiteralHost
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -107,7 +108,12 @@ internal class LoopGroup private constructor(
                 for (l in loops) {
                     if (l === first) continue
                     try {
-                        l.runOnLoop { l.core.reissueForLoadBalancer() }
+                        // a wedged loop must not hold the update (and the next one) for ever
+                        kotlinx.coroutines.withTimeoutOrNull(FAN_OUT_TIMEOUT) { l.runOnLoop { l.core.reissueForLoadBalancer() } }
+                            ?: l.observer.logger.emit(io.kuicksilver.quic.LogLevel.Warn) {
+                                "QUIC-LB: loop ${l.index} did not take the configuration change within $FAN_OUT_TIMEOUT; " +
+                                    "its connections keep their IDs until the next change"
+                            }
                     } catch (_: io.kuicksilver.quic.QuicException.EndpointClosing) {
                         // that loop is closing with the group: nothing to move
                     }
@@ -186,6 +192,9 @@ internal class LoopGroup private constructor(
     )
 
     companion object {
+        /** How long a loop has to move its connections to a new QUIC-LB configuration before the update goes on without it. */
+        private val FAN_OUT_TIMEOUT = kotlin.time.Duration.parse("5s")
+
         internal const val NO_REUSEPORT = "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"
 
         suspend fun bind(

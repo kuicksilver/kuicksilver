@@ -705,9 +705,12 @@ never release it): its nonce is spent unused past a full pool, counted in `Endpo
 a Retry the connection keeps that SCID as its one server ID; one of the previous configuration then gets the change's
 NEW_CONNECTION_ID that retires it, and an unroutable one made only because no nonce was reserved is replaced. An
 update builds the new configuration on `Dispatchers.IO` (a reservation's first `store` may fsync there), off the
-endpoint's loops, and switches to it on them, one update at a time; a caller cancelled after the switch leaves it in force.
+endpoint's loops, and switches to it on them, one update at a time; a caller cancelled after the switch leaves it in force. The call cannot be
+cancelled while it waits for the reservation's `store` or for a loop: a store that hangs, or a wedged loop, holds it (a
+group skips, and logs, a loop that takes more than 5 s to move its connections).
 Later stores run on the loop that draws past half a block; after a failed store the retries are paced by the receive
-batches of every loop (and the requests that find nothing reserved), with the back-off scaled by the number of loops, so
+batches of every loop (never by the requests themselves, so a flood of them cannot drive it), with the back-off scaled
+by the number of loops, so
 the group makes about one try a round however its traffic is spread. The hash also takes a client's random
 first Initial DCID for one of ours one time in 32 (when its first octet happens to encode our length); that client's
 datagrams then all go to the loop the DCID hashes to: an extra copy between loops for about 1 in 32 new connections. The

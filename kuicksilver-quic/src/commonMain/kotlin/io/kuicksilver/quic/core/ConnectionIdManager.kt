@@ -284,7 +284,11 @@ internal class ConnectionIdManager(
         reissuePending = false
         val cid = reissueSource?.invoke(random) ?: return
         issueRetiringOlderWith(cid)
+        reissuedForTest?.invoke()
     }
+
+    /** Test hook: a configuration change's ID went out. */
+    var reissuedForTest: (() -> Unit)? = null
 
     /** Called by [reissueSource] that could not make the ID just now (a nonce reservation not stored): the change waits ([retryPendingReissue]). */
     fun keepReissuePending() {

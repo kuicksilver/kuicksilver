@@ -259,8 +259,8 @@ internal class SpinLock {
  * configuration before it switches to it); later blocks are stored ahead of need, once half of the current one is drawn,
  * by the thread that crosses it, outside any lock. While no reserved nonce is left, [next] draws nothing: it tries one
  * store if one is due and returns null otherwise. After a failed store the next try waits [tick]s (one per receive batch of
- * every loop that issues from this space, and one per request that finds nothing reserved): 1, doubling to 1,024, times
- * the group's loops, so the group makes about one try a round of its loops' batches.
+ * every loop that issues from this space; requests do not count, so a flood of them cannot drive the store): 1, doubling
+ * to 1,024, times the group's loops, so the group makes about one try a round of its loops' batches.
  */
 internal class QuicLbNonceSpace(
     val length: Int,
@@ -362,7 +362,6 @@ internal class QuicLbNonceSpace(
             primeFailure?.let { e -> if (primeReported.compareAndSet(0, 1)) onStoreFailed(e) }
             if (exhausted) return null
             if (drawn.load() >= reservedUpTo.load()) {
-                ticks.incrementAndFetch() // a request that finds nothing reserved counts as a tick (a loop with no batches)
                 refill(drawn.load(), force = true, loops, onStoreFailed)
                 if (drawn.load() >= reservedUpTo.load()) return null // nothing drawn while nothing is reserved
             }

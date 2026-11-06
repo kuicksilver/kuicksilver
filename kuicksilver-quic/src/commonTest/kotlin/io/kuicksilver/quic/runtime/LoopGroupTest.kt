@@ -4,6 +4,7 @@ package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -18,6 +19,7 @@ import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.QuicClientConfig
+import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
@@ -856,18 +858,27 @@ class LoopGroupTest {
                         .space
                         .useUpReservationForTest()
                     group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, key, reservation))
+                    reservation.fail = false // right away: the back-off stays at its first step
                     val s = serverConnectionOf(loop1)
-                    assertTrue(loop1.runOnLoop { s.cids.reissuePendingForTest }, "the change waits for a nonce")
-                    reservation.fail = false
+                    val reissued = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    val pending =
+                        loop1.runOnLoop {
+                            s.cids.reissuedForTest = { reissued.complete(Unit) }
+                            s.cids.reissuePendingForTest
+                        }
+                    assertTrue(pending, "the change waits for a nonce")
                     val st = c.openBidi()
-                    val reader = launch { sc.acceptStream().input.readBuffer() }
-                    while (loop1.runOnLoop { s.cids.reissuePendingForTest }) {
-                        st.output.writeFully(ByteArray(100) { 1 }) // datagrams to loop 1 only: its batches tick
+                    val input = sc.acceptStreamAfter(st)
+                    var rounds = 0
+                    while (!reissued.isCompleted) {
+                        // one round trip to loop 1 only: its receive batches tick the reservation
+                        st.output.writeFully(ByteArray(100) { 1 })
                         st.output.flush()
-                        delay(5)
+                        input.readFully(ByteArray(100))
+                        rounds++
                     }
+                    assertTrue(rounds < 100, "$rounds round trips")
                     assertEquals(0L, group.loopForTest(0).stats.datagramsReceived, "loop 0 saw no traffic")
-                    reader.cancel()
                     c.close()
                 } finally {
                     client.close()
@@ -875,4 +886,13 @@ class LoopGroupTest {
                 }
             }
         }
+
+    /** The server side of [st]: its first bytes make the stream known to the server. */
+    private suspend fun QuicConnection.acceptStreamAfter(st: io.kuicksilver.quic.QuicStream): io.ktor.utils.io.ByteReadChannel {
+        st.output.writeFully(ByteArray(1))
+        st.output.flush()
+        val input = acceptStream().input
+        input.readFully(ByteArray(1))
+        return input
+    }
 }
