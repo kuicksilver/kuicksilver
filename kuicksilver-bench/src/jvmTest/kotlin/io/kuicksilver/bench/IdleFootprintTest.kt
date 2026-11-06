@@ -33,10 +33,11 @@ class IdleFootprintTest {
     }
 
     private companion object {
-        // 79-90 K measured (2026-11-06, JVM 21), in two modes: some runs the accept channel still references the finished
-        // request stream and its 8 KiB input segment (docs/benchmarks.md, "Memory"), which depends on whether the request
-        // arrived before acceptRequest waited. 88-104 K with 4 KiB reassembly windows, 292 K with per-stream staging arrays
-        const val HTTP3_CEILING = 110_000L
+        // 78.6-79.6 K measured (2026-11-06, JVM 21, 12 runs). Before, in about a third of the runs, 88.6-89.4 K: the HTTP/3
+        // accept loop's coroutine frame still held the last request stream and its 8 KiB input segment when that request had
+        // arrived while the loop waited (docs/benchmarks.md, "Memory"); this ceiling catches that mode coming back. 88-104 K
+        // with 4 KiB reassembly windows, 292 K with per-stream staging arrays
+        const val HTTP3_CEILING = 85_000L
         const val CORE_CEILING = 35_500L // 35 104 measured (2026-11-06, JVM 21); 36 160 with the DATAGRAM ring made up front
     }
 }

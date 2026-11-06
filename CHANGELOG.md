@@ -279,6 +279,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/3: an idle server connection no longer keeps its last request stream (with that stream's input buffer and an
+  8 KiB kotlinx-io segment, about 10 KB) when the request arrived while the session waited for it: the accept loop's
+  coroutine frame held the stream until the next one came.
+
 - Native: `ksl_open` decrypts a packet in its own buffer instead of through a heap copy that it then wiped: no `malloc`,
   copy or wipe per received packet. A packet whose authentication tag fails still leaves no plaintext behind: its
   ciphertext is restored in place (or wiped should that fail), as before.

@@ -758,11 +758,26 @@ internal class H3Session(
         }
     }
 
+    /** What [acceptNext] took; acceptLoop's coroutine only. */
+    private var nextAccepted: QuicStream? = null
+
+    /**
+     * Takes the next peer stream into [nextAccepted] and returns Unit. Not `val st = quic.acceptStream()` in [acceptLoop]: a
+     * suspending call that waited hands its result to the caller's coroutine frame, which keeps it in its result slot until
+     * the frame is resumed again. The accept loop's frame then held the connection's last request stream (its input buffer
+     * and an 8 KiB kotlinx-io segment, about 10 KB per idle connection) for as long as no new stream came, reachable from
+     * the accept queue's waiter (docs/benchmarks.md, "Memory"). This frame ends with the call; the loop's is resumed with Unit.
+     */
+    private suspend fun acceptNext() {
+        nextAccepted = quic.acceptStream()
+    }
+
     private suspend fun acceptLoop() {
         while (true) {
             val st =
                 try {
-                    quic.acceptStream()
+                    acceptNext()
+                    nextAccepted!!.also { nextAccepted = null }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Throwable) {
