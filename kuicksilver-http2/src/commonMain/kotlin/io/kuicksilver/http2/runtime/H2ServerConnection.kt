@@ -194,6 +194,7 @@ public class H2ServerStream internal constructor(
      * malformed after its head (content that does not match content-length), or the connection ended. At once when it
      * failed already. Not run for a stream that completed both ways.
      */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     public fun invokeOnFailure(handler: (Throwable) -> Unit) {
         s.failed.invokeOnCompletion { if (it == null) handler(s.failed.getCompleted()) }
     }

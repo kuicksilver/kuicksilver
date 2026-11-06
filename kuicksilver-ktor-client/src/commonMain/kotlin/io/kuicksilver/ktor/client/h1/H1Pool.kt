@@ -409,7 +409,7 @@ internal class H1Pool(
         return coroutineScope {
             var got: Any? = null
             val a = launch(start = CoroutineStart.UNDISPATCHED) { got = pool.acquire(key) ?: PERMIT }
-            if (got != null) return@coroutineScope got!!
+            if (got != null) return@coroutineScope got
             val watcher =
                 launch {
                     signal.first { it > seen!! }

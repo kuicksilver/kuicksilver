@@ -630,9 +630,7 @@ internal class H2ConnectionCore(
                     if (v > 1) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_NO_RFC7540_PRIORITIES = $v")
                 }
 
-                else -> {
-                    Unit
-                } // section 6.5.2: unknown settings are ignored
+                else -> {} // section 6.5.2: unknown settings are ignored
             }
         }
         queueControl(FrameEncoder.settingsAck()) // section 6.5.3: immediately
