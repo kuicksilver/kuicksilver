@@ -59,15 +59,16 @@ int ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int ti
         a.sin_family = AF_INET; memcpy(&a.sin_port, server + 2, 2); memcpy(&a.sin_addr, server + 4, 4);   /* KSL_UDP_ADDR_LEN: family, port BE, address */
         st.nsaddr_list[0] = a; st.nscount = 1;
     }
-    /* glibc waits max(1, (retrans << try) / nscount) seconds per server and try, so the whole query takes about
-       sum over tries of max(nscount, retrans << try): with r = secs / 3 and two tries, at most nscount servers of r,
-       that is r + 2r = secs; below 3 s, one try of secs. Servers past the count the budget allows are not asked. */
+    /* Every configured nameserver is kept: with the first one down a lookup must still reach the next. The wait per
+       server and try is set from the budget. glibc's send_dg computes it as max(1, retrans << k), divided by nscount
+       for k > 0, where k is the try in older code and the server index in newer code (not checked against glibc here:
+       no source in the local references); with r = secs / (n + 2) and two tries both readings stay within secs for
+       n <= 3 (glibc's MAXNS): first try n * r or r + (n - 1) of at least 1 s each, second try max(n, 2r) or the same as
+       the first. Below 2 s per server one try of r = secs / n, at least 1 s, so the bound is max(timeout, n seconds). */
     int secs = timeout_ms / 1000; if (secs < 1) secs = 1;
-    int r = secs >= 3 ? secs / 3 : secs;
-    st.retry = secs >= 3 ? 2 : 1;
-    st.retrans = r;
-    if (st.nscount > r) st.nscount = r;
-    if (st.nscount < 1) st.nscount = 1;
+    int servers = st.nscount < 1 ? 1 : st.nscount;
+    if (secs >= 2 * servers) { st.retry = 2; st.retrans = secs / (servers + 2) < 1 ? 1 : secs / (servers + 2); }
+    else { st.retry = 1; st.retrans = secs / servers < 1 ? 1 : secs / servers; }
     size_t room = cap - 1; if (room > INT_MAX) room = INT_MAX;
     int n = res_nquery(&st, name, C_IN, type, out + 1, (int)room);
     int herr = st.res_h_errno;

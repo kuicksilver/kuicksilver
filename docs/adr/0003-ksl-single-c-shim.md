@@ -75,5 +75,5 @@ cap, len)` asks the operating system's resolver for one record type, so the look
 older than the glibc floors), `DNSServiceQueryRecord` on Apple (libSystem), `DnsQuery_W` on Windows (`dnsapi.dll`).
 Linux returns the whole DNS message, Apple and Windows a list of records (they hand out records, not messages); the first
 byte of `out` says which. Android answers `KSL_DNS_NOT_SUPPORTED` (no public call below API 29: Kotlin asks
-`DnsResolver.rawQuery` there). No state, no threads; the call blocks for about `timeout_ms` at most (on Linux about max(`timeout_ms`, 1 s), the tries and nameservers sized to it, plus a possible TCP retry of a truncated answer), except on Windows,
+`DnsResolver.rawQuery` there). No state, no threads; the call blocks for about `timeout_ms` at most (on Linux about max(`timeout_ms`, one second per configured nameserver), every nameserver asked and the tries and waits sized to the budget, plus a possible TCP retry of a truncated answer), except on Windows,
 whose call takes no timeout: Kotlin stops waiting and lets it end, at most four lookups at a time per process. 76 functions.

@@ -357,7 +357,7 @@ int      ksl_retry_tag(uint32_t version, const uint8_t *odcid, size_t odcid_len,
 int      ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int timeout_ms, uint8_t *out, size_t cap, size_t *len);
          /* class IN. name: 1..253 printable ASCII bytes, labels of 1..63 (else KSL_ERROR before any lookup). server: NULL for the system's
             resolvers, or a KSL_UDP_ADDR_LEN address to ask instead (Linux: IPv4; Windows: IPv4 on port 53; Apple: KSL_DNS_NOT_SUPPORTED);
-            for tests. Blocks for about max(timeout_ms, 1 s) at most on Linux (two tries of a third and two thirds when it is 3 s or more, one try below, and no more nameservers than whole seconds fit; a truncated answer retried over TCP may add one more wait) and on Apple; Windows
+            for tests. Blocks for about max(timeout_ms, nameservers x 1 s) at most on Linux (every configured nameserver is asked, two tries when the budget allows 2 s per nameserver, one below; a truncated answer retried over TCP may add one more wait; the per-server wait follows glibc send_dg, see ksl_dns.c) and about timeout_ms on Apple; Windows
             takes no timeout, the caller stops waiting. KSL_ERROR when the answer does not fit in cap: no byte is written past it */
 
 /* --- KslCrypto --- */
