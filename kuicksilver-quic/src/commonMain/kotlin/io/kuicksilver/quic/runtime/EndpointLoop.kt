@@ -910,46 +910,51 @@ internal class EndpointLoop private constructor(
         fullThisFlush.clear()
         // connections marked dirty while this flush runs (a refusal in onHandshakeCompleted, a failure marking others) get
         // further rounds here: their CONNECTION_CLOSE must not wait for the next datagram or timer
-        var rounds = 0
-        while (dirty.isNotEmpty() && rounds++ < FLUSH_ROUNDS) {
-            // the list is copied (into a list kept for it, by index: no copy or iterator allocated per flush): a flush can
-            // retire connections, and a failure inside one marks others dirty
-            val list = flushRound
-            list.clear()
-            for (i in 0 until dirty.size) list.add(dirty[i])
-            core.clearDirty()
-            for (k in 0 until list.size) {
-                val c = list[k]
-                val rt = runtimes[c] ?: continue
-                try {
-                    // a connection closing: its CONNECTION_CLOSE goes to the socket first, and the application side of the end
-                    // (failing streams, waking waiters, the listener's onClosed) follows; the paths' addresses are what the send needs
-                    if (c.state == ConnectionState.Closing) rt.refreshPathRemotes() else rt.drainEvents()
-                    outBatch.clear()
-                    if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
-                    rt.drainEvents()
-                    rt.tick()
-                } catch (e: Throwable) {
-                    // our own cancellation goes on; a CancellationException out of a callback is that connection's failure
-                    if (e is CancellationException) ctx.ensureActive()
-                    c.failInternal(e)
-                    rt.drainEvents()
-                }
-                if (c.state ==
-                    ConnectionState.Closed
-                ) {
-                    handshakeEnded(rt)
-                    rt.finish()
-                    timers.remove(c)
-                    core.remove(c)
-                    runtimes.remove(c)
-                    if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)
-                } else {
-                    timers.update(c, c.nextTimeoutOrNever())
+        try {
+            var rounds = 0
+            while (dirty.isNotEmpty() && rounds++ < FLUSH_ROUNDS) {
+                // the list is copied (into a list kept for it, by index: no copy or iterator allocated per flush): a flush can
+                // retire connections, and a failure inside one marks others dirty
+                val list = flushRound
+                list.clear()
+                for (i in 0 until dirty.size) list.add(dirty[i])
+                core.clearDirty()
+                for (k in 0 until list.size) {
+                    val c = list[k]
+                    val rt = runtimes[c] ?: continue
+                    try {
+                        // a connection closing: its CONNECTION_CLOSE goes to the socket first, and the application side of the end
+                        // (failing streams, waking waiters, the listener's onClosed) follows; the paths' addresses are what the send needs
+                        if (c.state == ConnectionState.Closing) rt.refreshPathRemotes() else rt.drainEvents()
+                        outBatch.clear()
+                        if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
+                        rt.drainEvents()
+                        rt.tick()
+                    } catch (e: Throwable) {
+                        // our own cancellation goes on; a CancellationException out of a callback is that connection's failure
+                        if (e is CancellationException) ctx.ensureActive()
+                        c.failInternal(e)
+                        rt.drainEvents()
+                    }
+                    if (c.state ==
+                        ConnectionState.Closed
+                    ) {
+                        handshakeEnded(rt)
+                        rt.finish()
+                        timers.remove(c)
+                        core.remove(c)
+                        runtimes.remove(c)
+                        if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)
+                    } else {
+                        timers.update(c, c.nextTimeoutOrNever())
+                    }
                 }
             }
+        } finally {
+            // the round's connections are not kept past the flush, also when it ends in an exception (our cancellation):
+            // a closed one would stay reachable from the loop
+            flushRound.clear()
         }
-        flushRound.clear() // the round's connections are not kept past the flush: a closed one would stay reachable from the loop
         if (dirty.isNotEmpty()) wake.trySend(Unit) // still more after the bounded rounds: the timer coroutine flushes again
         outBatch.clear()
         if (core.pollStateless(outBatch) > 0) sendStateless(io, outBatch)

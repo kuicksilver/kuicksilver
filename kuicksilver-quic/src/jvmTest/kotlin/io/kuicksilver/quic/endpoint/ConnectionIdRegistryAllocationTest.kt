@@ -64,6 +64,7 @@ class ConnectionIdRegistryAllocationTest {
             repeat(10_000) { i -> r.add(ConnectionId(ByteArray(8) { (i shr (8 * (it % 4))).toByte() }.also { it[7] = 1 }), q.client) }
             val mine = Array(4) { k -> ConnectionId(ByteArray(8) { (k * 37 + it).toByte() }.also { it[7] = 2 }) }
             val mx = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
+
             fun close() {
                 for (k in mine.indices) r.add(mine[k], p.client)
                 r.removeAll(p.client)
