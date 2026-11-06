@@ -654,7 +654,8 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   answer such as SERVFAIL, a transport error, a timeout) abandons it with an `IOException`, so an attacker who drops the
   answers cannot downgrade the connection (RFC 9460 section 3.1). `HttpsRecordSource.ProtectedSystem { ... }` does the
   same for the system resolver when your check says its answers are protected; on Android
-  `HttpsRecordSource.followingPrivateDns(connectivity)` says so while strict Private DNS is on. Elsewhere no public API
+  `HttpsRecordSource.followingPrivateDns(connectivity)` says so while strict Private DNS is on (the engine has no
+  `Context`: with plain `System` strict Private DNS is not taken into account, so opt in with this builder). Elsewhere no public API
   tells whether the system's DNS is encrypted, so `System` treats failures as "no records";
 - answers are cached for their TTL, never longer (at most a day; "no records" for the negative TTL of the answer's SOA
   record, RFC 2308, and not at all without one; at most 1000 names), together with the other HTTPS records and the
