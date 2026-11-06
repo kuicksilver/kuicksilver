@@ -97,7 +97,7 @@ internal class KslNioSocket(
         writer = job
         // cancelled (the socket's job, or close()'s bound): nothing will drain the rest, release the descriptor; a failed writer
         // closed it already (writeLoop), since `reader` completes its job normally after a failure
-        job.job.invokeOnCompletion { cause -> if (cause != null) runCatching { nio.close() } }
+        job.job.invokeOnCompletion { cause -> if (cause != null) closeDescriptor() }
         return job
     }
 
@@ -128,7 +128,7 @@ internal class KslNioSocket(
             // peer reading to the end of a close-delimited body would take the cut one for the whole
             if (e !is CancellationException) {
                 runCatching { nio.setOption(StandardSocketOptions.SO_LINGER, 0) }
-                runCatching { nio.close() }
+                closeDescriptor()
             }
             throw e
         } finally {
@@ -142,6 +142,18 @@ internal class KslNioSocket(
                 }
             }
         }
+    }
+
+    /**
+     * Closes the descriptor from the writer's side and tells the selector, which resumes ktor's reader if it waits there for
+     * the socket to become readable (it fails with ClosedChannelException). Closing a registered channel only cancels its
+     * key, and a cancelled key is never selected again, so without this the reader waited for good: a TLS client whose
+     * server reset the connection before its ClientHello went out (a refusal at accept), and whose write then failed on the
+     * reset first, waited out its whole handshake timeout.
+     */
+    private fun closeDescriptor() {
+        runCatching { nio.close() }
+        runCatching { selector.notifyClosed(selectable) }
     }
 
     override fun close() {
