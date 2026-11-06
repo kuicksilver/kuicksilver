@@ -3,24 +3,54 @@
 /* TLS over TCP through memory: ciphertext moves via feed/drain on a BIO pair, plaintext via write/read. */
 #include "ksl_internal.h"
 
-static int tcp_only(ksl_ssl *s) { if (s->mode != KSL_MODE_TCP) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: not a TCP session"); return 0; } return 1; }
+static int tcp_only(ksl_ssl *s) {
+    if (s->mode != KSL_MODE_TCP) {
+        ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: not a TCP session");
+        return 0;
+    }
+    return 1;
+}
 
 int ksl_tcp_feed(ksl_ssl *s, const uint8_t *ciphertext, size_t len, size_t *consumed) {
-    if (!tcp_only(s)) return KSL_ERROR; *consumed = 0; if (!len) return KSL_OK;
+    if (!tcp_only(s))
+        return KSL_ERROR;
+    *consumed = 0;
+    if (!len)
+        return KSL_OK;
     int n = BIO_write(s->net, ciphertext, (int)(len > INT32_MAX ? INT32_MAX : len));
-    if (n > 0) { *consumed = (size_t)n; s->fed += (uint64_t)n; } return n > 0 || BIO_should_retry(s->net) ? KSL_OK : KSL_ERROR;
+    if (n > 0) {
+        *consumed = (size_t)n;
+        s->fed += (uint64_t)n;
+    }
+    return n > 0 || BIO_should_retry(s->net) ? KSL_OK : KSL_ERROR;
 }
 int ksl_tcp_drain(ksl_ssl *s, uint8_t *out, size_t cap, size_t *written) {
-    if (!tcp_only(s)) return KSL_ERROR; *written = 0; if (!cap) return KSL_OK;
+    if (!tcp_only(s))
+        return KSL_ERROR;
+    *written = 0;
+    if (!cap)
+        return KSL_OK;
     int n = BIO_read(s->net, out, (int)(cap > INT32_MAX ? INT32_MAX : cap));
-    if (n > 0) *written = (size_t)n; return n > 0 || BIO_should_retry(s->net) ? KSL_OK : KSL_ERROR;
+    if (n > 0)
+        *written = (size_t)n;
+    return n > 0 || BIO_should_retry(s->net) ? KSL_OK : KSL_ERROR;
 }
 static int map_error(ksl_ssl *s, int r) {
     switch (SSL_get_error(s->ssl, r)) {
-    case SSL_ERROR_WANT_READ: case SSL_ERROR_WANT_WRITE: ERR_clear_error(); return KSL_WANT_READ;
-    case SSL_ERROR_ZERO_RETURN: ERR_clear_error(); return KSL_EOF;
-    case SSL_ERROR_SYSCALL: if (!ERR_peek_error()) return ksl_ssl_fail(s, KSL_E_TRUNCATED, "ksl: peer closed without close_notify"); /* fallthrough */
-    default: s->fatal = 1; ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: TLS error"); return KSL_ERROR;
+    case SSL_ERROR_WANT_READ:
+    case SSL_ERROR_WANT_WRITE:
+        ERR_clear_error();
+        return KSL_WANT_READ;
+    case SSL_ERROR_ZERO_RETURN:
+        ERR_clear_error();
+        return KSL_EOF;
+    case SSL_ERROR_SYSCALL:
+        if (!ERR_peek_error())
+            return ksl_ssl_fail(s, KSL_E_TRUNCATED, "ksl: peer closed without close_notify"); /* fallthrough */
+    default:
+        s->fatal = 1;
+        ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: TLS error");
+        return KSL_ERROR;
     }
 }
 /* RFC 9846 section 5.5: "For AES-GCM, up to 2^24.5 full-size records (about 24 million) may be encrypted under a given set of keys
@@ -39,43 +69,62 @@ static int map_error(ksl_ssl *s, int r) {
    renegotiation (a new handshake on the connection), so a TLS 1.2 connection ends before its keys reach the same limit of its
    AEAD (the CCM figure is the AEAD's, not the version's), with internal_error where an alert can be sent (a TLS 1.2 client):
    close_notify would end the application's stream as if it were complete. */
-#define KSL_GCM_RECORD_LIMIT UINT64_C(23726566)   /* 2^24.5, rounded down */
+#define KSL_GCM_RECORD_LIMIT UINT64_C(23726566) /* 2^24.5, rounded down */
 #define KSL_CCM_RECORD_LIMIT (UINT64_C(1) << 23)
 #define KSL_NO_RECORD_LIMIT UINT64_MAX
 static uint64_t aead_record_limit(ksl_ssl *s) {
-    const SSL_CIPHER *c = SSL_get_current_cipher(s->ssl); int nid = c ? SSL_CIPHER_get_cipher_nid(c) : NID_undef;
-    if (nid == NID_chacha20_poly1305) return KSL_NO_RECORD_LIMIT;
-    if (nid == NID_aes_128_gcm || nid == NID_aes_256_gcm) return KSL_GCM_RECORD_LIMIT;
-    return KSL_CCM_RECORD_LIMIT;   /* AES-CCM and CCM_8; the lowest figure for anything else */
+    const SSL_CIPHER *c = SSL_get_current_cipher(s->ssl);
+    int nid = c ? SSL_CIPHER_get_cipher_nid(c) : NID_undef;
+    if (nid == NID_chacha20_poly1305)
+        return KSL_NO_RECORD_LIMIT;
+    if (nid == NID_aes_128_gcm || nid == NID_aes_256_gcm)
+        return KSL_GCM_RECORD_LIMIT;
+    return KSL_CCM_RECORD_LIMIT; /* AES-CCM and CCM_8; the lowest figure for anything else */
 }
 static uint64_t record_limit(ksl_ssl *s) {
-    if (!s->record_limit) s->record_limit = aead_record_limit(s);
+    if (!s->record_limit)
+        s->record_limit = aead_record_limit(s);
     return s->record_limit;
 }
 /* The record count at which the sending key is updated: half of AES-CCM's limit and a third of AES-GCM's */
 static uint64_t key_update_records(ksl_ssl *s) {
-    if (SSL_version(s->ssl) < TLS1_3_VERSION) return KSL_NO_RECORD_LIMIT;
-    if (s->key_update_records) return s->key_update_records;
+    if (SSL_version(s->ssl) < TLS1_3_VERSION)
+        return KSL_NO_RECORD_LIMIT;
+    if (s->key_update_records)
+        return s->key_update_records;
     uint64_t limit = record_limit(s);
-    return limit == KSL_NO_RECORD_LIMIT ? KSL_NO_RECORD_LIMIT : limit == KSL_GCM_RECORD_LIMIT ? UINT64_C(1) << 23 : UINT64_C(1) << 22;
+    return limit == KSL_NO_RECORD_LIMIT    ? KSL_NO_RECORD_LIMIT
+           : limit == KSL_GCM_RECORD_LIMIT ? UINT64_C(1) << 23
+                                           : UINT64_C(1) << 22;
 }
 /* The plaintext size of a full record: 16 KiB, or the negotiated max_fragment_length (RFC 6066 section 4) */
-static size_t record_size(ksl_ssl *s) { uint8_t mfl = SSL_SESSION_get_max_fragment_length(SSL_get_session(s->ssl)); return mfl >= 1 && mfl <= 4 ? (size_t)256 << mfl : 16384; }
+static size_t record_size(ksl_ssl *s) {
+    uint8_t mfl = SSL_SESSION_get_max_fragment_length(SSL_get_session(s->ssl));
+    return mfl >= 1 && mfl <= 4 ? (size_t)256 << mfl : 16384;
+}
 /* After a write: the records are counted where they are written (ksl_msg_cb); at the KeyUpdate point an update is scheduled, and
    the count starts over when its message goes out (ksl_msg_cb). */
 static void count_records(ksl_ssl *s) {
-    if (s->records_sent < key_update_records(s) || s->key_updates_exhausted) return;   /* past the epoch bound: the record limit ends the session */
+    if (s->records_sent < key_update_records(s) || s->key_updates_exhausted)
+        return; /* past the epoch bound: the record limit ends the session */
     /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for, or ours already
        scheduled): tried after the next write. Called directly: the write succeeded, and the session's last error stays the last failure's */
-    if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) != 1) ERR_clear_error();
+    if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) != 1)
+        ERR_clear_error();
 }
 /* One more record under the sending keys would reach their limit (records ksl_tcp_write did not ask for count too) */
-static int at_record_limit(ksl_ssl *s) { return record_limit(s) != KSL_NO_RECORD_LIMIT && s->records_sent + 1 >= record_limit(s); }
+static int at_record_limit(ksl_ssl *s) {
+    return record_limit(s) != KSL_NO_RECORD_LIMIT && s->records_sent + 1 >= record_limit(s);
+}
 static int abort_session(ksl_ssl *s, const char *why);
 static void drop_pending_write(ksl_ssl *s) {
     s->pending_write_unkept = 0;
-    if (!s->pending_write) return;
-    OPENSSL_cleanse(s->pending_write, s->pending_write_len); free(s->pending_write); s->pending_write = NULL; s->pending_write_len = 0;
+    if (!s->pending_write)
+        return;
+    OPENSSL_cleanse(s->pending_write, s->pending_write_len);
+    free(s->pending_write);
+    s->pending_write = NULL;
+    s->pending_write_len = 0;
 }
 /* One record per call. A write the transport has no room for stays pending inside OpenSSL: as a record already built, or still as
    plaintext behind a handshake message under way (a queued KeyUpdate, a NewSessionTicket), which OpenSSL writes first and then
@@ -84,17 +133,38 @@ static void drop_pending_write(ksl_ssl *s) {
    bytes and length, from any buffer (SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER); a retry with another length (OpenSSL allows a longer one)
    replaces the copy, so the abort completes what OpenSSL holds now, never an older write it would refuse with SSL_R_BAD_LENGTH. */
 int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *consumed) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
-    size_t frag = record_size(s); if (len > frag) len = frag;
+    if (!tcp_only(s))
+        return KSL_ERROR;
+    if (s->fatal)
+        return KSL_ERROR;
+    *consumed = 0;
+    if (!s->done)
+        return KSL_WANT_READ;
+    size_t frag = record_size(s);
+    if (len > frag)
+        len = frag;
     /* one more record would reach the keys' limit: the session ends, with internal_error where an alert can be sent */
-    if (len && !s->pending_write && at_record_limit(s))
-        { (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)"); return KSL_ERROR; }
-    ERR_clear_error(); size_t n = 0; int r = SSL_write_ex(s->ssl, plaintext, len, &n);
-    if (r == 1) { drop_pending_write(s); *consumed = n; count_records(s); return KSL_OK; }
+    if (len && !s->pending_write && at_record_limit(s)) {
+        (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)");
+        return KSL_ERROR;
+    }
+    ERR_clear_error();
+    size_t n = 0;
+    int r = SSL_write_ex(s->ssl, plaintext, len, &n);
+    if (r == 1) {
+        drop_pending_write(s);
+        *consumed = n;
+        count_records(s);
+        return KSL_OK;
+    }
     if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && len && (!s->pending_write || s->pending_write_len != len)) {
         drop_pending_write(s);
         s->pending_write = malloc(len);
-        if (s->pending_write) { memcpy(s->pending_write, plaintext, len); s->pending_write_len = len; } else s->pending_write_unkept = 1;
+        if (s->pending_write) {
+            memcpy(s->pending_write, plaintext, len);
+            s->pending_write_len = len;
+        } else
+            s->pending_write_unkept = 1;
     }
     return map_error(s, r);
 }
@@ -105,19 +175,42 @@ int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *cons
    has no room answers KSL_OK with nothing read: drain, then read again. Plaintext read as the limit is reached is returned; the
    next call ends the session. */
 int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
+    if (!tcp_only(s))
+        return KSL_ERROR;
+    if (s->fatal)
+        return KSL_ERROR;
+    *read = 0;
+    if (!s->done)
+        return KSL_WANT_READ;
     static const char *why = "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)";
     uint64_t limit = record_limit(s);
     for (;;) {
-        if (s->limit_due || (limit != KSL_NO_RECORD_LIMIT && s->records_sent + 2 >= limit)) { (void)abort_session(s, why); return KSL_ERROR; }
-        ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
-        if (r == 1) { if (at_record_limit(s)) s->limit_due = 1; *read = n; return KSL_OK; }
-        if (at_record_limit(s)) { (void)abort_session(s, why); return KSL_ERROR; }
+        if (s->limit_due || (limit != KSL_NO_RECORD_LIMIT && s->records_sent + 2 >= limit)) {
+            (void)abort_session(s, why);
+            return KSL_ERROR;
+        }
+        ERR_clear_error();
+        size_t n = 0;
+        int r = SSL_read_ex(s->ssl, out, cap, &n);
+        if (r == 1) {
+            if (at_record_limit(s))
+                s->limit_due = 1;
+            *read = n;
+            return KSL_OK;
+        }
+        if (at_record_limit(s)) {
+            (void)abort_session(s, why);
+            return KSL_ERROR;
+        }
         int e = SSL_get_error(s->ssl, r);
-        if (e == SSL_ERROR_WANT_READ && BIO_ctrl_pending(SSL_get_rbio(s->ssl)) > 0) continue;
+        if (e == SSL_ERROR_WANT_READ && BIO_ctrl_pending(SSL_get_rbio(s->ssl)) > 0)
+            continue;
         /* it must write first and the pair is full: KSL_OK with nothing read, so the caller drains and reads again rather than
            wait for input the records already fed may not need */
-        if (e == SSL_ERROR_WANT_WRITE) { ERR_clear_error(); return KSL_OK; }
+        if (e == SSL_ERROR_WANT_WRITE) {
+            ERR_clear_error();
+            return KSL_OK;
+        }
         return map_error(s, r);
     }
 }
@@ -135,55 +228,92 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
    Either needs room in the BIO pair: the caller drained it before (ksl_tcp_drain), else no alert can follow. */
 static int abort_session(ksl_ssl *s, const char *why) {
     /* a session that failed already (its record limit included) keeps the error that ended it */
-    if (s->fatal) return KSL_ERROR;
-    if (!s->done) { ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); return KSL_ERROR; }
-    ERR_clear_error(); int started = 0, client = s->owner->role == KSL_CLIENT; const char *stuck = NULL;
-    s->abort_alert = 1; s->last_alert = 0;
+    if (s->fatal)
+        return KSL_ERROR;
+    if (!s->done) {
+        ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established");
+        return KSL_ERROR;
+    }
+    ERR_clear_error();
+    int started = 0, client = s->owner->role == KSL_CLIENT;
+    const char *stuck = NULL;
+    s->abort_alert = 1;
+    s->last_alert = 0;
     if (s->pending_write_unkept)
-        stuck = "ksl: session aborted without an alert: a record write is pending and its bytes could not be kept (out of memory)";
+        stuck =
+            "ksl: session aborted without an alert: a record write is pending and its bytes could not be kept (out of memory)";
     else if (s->pending_write) {
         size_t n = 0;
-        if (SSL_write_ex(s->ssl, s->pending_write, s->pending_write_len, &n) == 1) drop_pending_write(s);
-        else stuck = "ksl: session aborted without an alert: a record write is pending and the transport takes no more";
+        if (SSL_write_ex(s->ssl, s->pending_write, s->pending_write_len, &n) == 1)
+            drop_pending_write(s);
+        else
+            stuck = "ksl: session aborted without an alert: a record write is pending and the transport takes no more";
     }
     if (!stuck && SSL_in_init(s->ssl) && SSL_do_handshake(s->ssl) != 1 && s->last_alert != SSL_AD_INTERNAL_ERROR)
         stuck = "ksl: session aborted without an alert: a handshake message is pending and the transport takes no more";
-    if (!stuck && s->last_alert != SSL_AD_INTERNAL_ERROR) {   /* a queued ticket fails as soon as it is built (ticket_gen_cb) */
-        if (SSL_version(s->ssl) >= TLS1_3_VERSION) started = !client && SSL_new_session_ticket(s->ssl) == 1;
+    if (!stuck &&
+        s->last_alert != SSL_AD_INTERNAL_ERROR) { /* a queued ticket fails as soon as it is built (ticket_gen_cb) */
+        if (SSL_version(s->ssl) >= TLS1_3_VERSION)
+            started = !client && SSL_new_session_ticket(s->ssl) == 1;
         else if (client) {
-            SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);   /* SSL_renegotiate refuses otherwise; the ClientHello is never sent */
+            SSL_clear_options(
+                s->ssl, SSL_OP_NO_RENEGOTIATION); /* SSL_renegotiate refuses otherwise; the ClientHello is never sent */
             started = SSL_renegotiate(s->ssl) == 1;
             SSL_set_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
         }
-        if (started) (void)SSL_do_handshake(s->ssl);
+        if (started)
+            (void)SSL_do_handshake(s->ssl);
     }
-    int sent = s->last_alert == SSL_AD_INTERNAL_ERROR;   /* info_cb: a fatal alert we sent */
+    int sent = s->last_alert == SSL_AD_INTERNAL_ERROR; /* info_cb: a fatal alert we sent */
     /* a TLS 1.2 client whose last received record arrived in part: OpenSSL keeps its first bytes and starts no renegotiation while
        it does (ssl3_renegotiate_check), and only the rest of the record, from the peer, would release them */
-    if (!sent && !stuck && client && started && SSL_version(s->ssl) < TLS1_3_VERSION && SSL_has_pending(s->ssl) && SSL_pending(s->ssl) == 0)
-        stuck = "ksl: session aborted without an alert: a received record is incomplete, and OpenSSL starts no renegotiation before its rest arrives";
+    if (!sent && !stuck && client && started && SSL_version(s->ssl) < TLS1_3_VERSION && SSL_has_pending(s->ssl) &&
+        SSL_pending(s->ssl) == 0)
+        stuck =
+            "ksl: session aborted without an alert: a received record is incomplete, and OpenSSL starts no renegotiation before its rest arrives";
     char m[KSL_MSG];
-    const char *how = sent ? "ksl: session aborted with internal_error" : stuck ? stuck : "ksl: session aborted; OpenSSL can send no alert for this role and version";
-    if (why) snprintf(m, sizeof m, "%s; %s", why, how + 5); else snprintf(m, sizeof m, "%s", how);   /* how without its "ksl: " */
+    const char *how = sent    ? "ksl: session aborted with internal_error"
+                      : stuck ? stuck
+                              : "ksl: session aborted; OpenSSL can send no alert for this role and version";
+    if (why)
+        snprintf(m, sizeof m, "%s; %s", why, how + 5);
+    else
+        snprintf(m, sizeof m, "%s", how); /* how without its "ksl: " */
     ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, m);
     return sent ? KSL_OK : KSL_ERROR;
 }
-int ksl_tcp_abort(ksl_ssl *s) { return tcp_only(s) ? abort_session(s, NULL) : KSL_ERROR; }
+int ksl_tcp_abort(ksl_ssl *s) {
+    return tcp_only(s) ? abort_session(s, NULL) : KSL_ERROR;
+}
 int ksl_tcp_shutdown(ksl_ssl *s) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; ERR_clear_error();
+    if (!tcp_only(s))
+        return KSL_ERROR;
+    if (s->fatal)
+        return KSL_ERROR;
+    ERR_clear_error();
     int r = SSL_shutdown(s->ssl);
-    if (r == 1) return KSL_OK;                 /* both close_notify alerts exchanged */
-    if (r == 0) return KSL_WANT_READ;          /* ours sent, waiting for the peer's */
+    if (r == 1)
+        return KSL_OK; /* both close_notify alerts exchanged */
+    if (r == 0)
+        return KSL_WANT_READ; /* ours sent, waiting for the peer's */
     return map_error(s, r);
 }
 
 #ifdef KSL_TEST
 /* Test hook: the number of records after which ksl_tcp_write updates the sending key (by the AEAD otherwise; UINT64_MAX, never), counted from now. */
-void ksl_tcp_set_key_update_records_for_test(ksl_ssl *s, uint64_t records) { s->key_update_records = records; s->records_sent = 0; }
+void ksl_tcp_set_key_update_records_for_test(ksl_ssl *s, uint64_t records) {
+    s->key_update_records = records;
+    s->records_sent = 0;
+}
 /* Test hook: the records the keys may protect (the AEAD's limit otherwise); UINT64_MAX, none */
 /* The sending keys reach their record limit [records] records from now (relative, as the Kotlin tests' ksl_test_hooks_set_record_limit:
    records ksl already wrote under the keys, a TLS 1.2 side's Finished or a TLS 1.3 server's tickets, are added) */
-void ksl_tcp_set_record_limit_for_test(ksl_ssl *s, uint64_t records) { s->record_limit = s->records_sent + records; }
+void ksl_tcp_set_record_limit_for_test(ksl_ssl *s, uint64_t records) {
+    s->record_limit = s->records_sent + records;
+}
 /* Test hook: the record count of the automatic KeyUpdate and the record limit, as the session applies them */
-void ksl_tcp_record_bounds_for_test(ksl_ssl *s, uint64_t *key_update_at, uint64_t *limit) { *key_update_at = key_update_records(s); *limit = record_limit(s); }
+void ksl_tcp_record_bounds_for_test(ksl_ssl *s, uint64_t *key_update_at, uint64_t *limit) {
+    *key_update_at = key_update_records(s);
+    *limit = record_limit(s);
+}
 #endif

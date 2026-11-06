@@ -10,25 +10,53 @@
 #include "ksl_udp_internal.h"
 
 #ifdef KSL_UDP_ACCEL
-#ifndef __linux__   /* Darwin has neither SOCK_CLOEXEC/SOCK_NONBLOCK nor pipe2 */
-static int cloexec_nonblock(int fd) { int fl = fcntl(fd, F_GETFL); if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) != 0) return -1; int fd_fl = fcntl(fd, F_GETFD); return fd_fl < 0 || fcntl(fd, F_SETFD, fd_fl | FD_CLOEXEC) != 0 ? -1 : 0; }
+#ifndef __linux__ /* Darwin has neither SOCK_CLOEXEC/SOCK_NONBLOCK nor pipe2 */
+static int cloexec_nonblock(int fd) {
+    int fl = fcntl(fd, F_GETFL);
+    if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) != 0)
+        return -1;
+    int fd_fl = fcntl(fd, F_GETFD);
+    return fd_fl < 0 || fcntl(fd, F_SETFD, fd_fl | FD_CLOEXEC) != 0 ? -1 : 0;
+}
 #endif
-static void be32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
-static void be16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
+static void be32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
+}
+static void be16(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)(v >> 8);
+    p[1] = (uint8_t)v;
+}
 
 #ifdef KSL_TEST
-static int no_ipv6_for_test;   /* simulates a host without IPv6: socket(AF_INET6) fails */
-void ksl_udp_no_ipv6_for_test(int on) { no_ipv6_for_test = on; }
+static int no_ipv6_for_test; /* simulates a host without IPv6: socket(AF_INET6) fails */
+void ksl_udp_no_ipv6_for_test(int on) {
+    no_ipv6_for_test = on;
+}
 #endif
 #ifdef __APPLE__
 /* Binds an AF_INET socket to 0.0.0.0:[port] (0: any) and releases it at once: the port it got, 0 when the IPv4 side refused
    (errno set, EADDRINUSE when an IPv4 socket holds the port). */
 static uint16_t ipv4_port_probe(uint16_t port) {
-    int s = socket(AF_INET, SOCK_DGRAM, 0); if (s < 0) return 0;
-    struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_len = sizeof a; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_ANY); a.sin_port = htons(port);
-    socklen_t l = sizeof a; uint16_t p = 0;
-    if (bind(s, (struct sockaddr *)&a, sizeof a) == 0 && getsockname(s, (struct sockaddr *)&a, &l) == 0) p = ntohs(a.sin_port);
-    int e = errno; close(s); errno = e; return p;
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0)
+        return 0;
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_len = sizeof a;
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    a.sin_port = htons(port);
+    socklen_t l = sizeof a;
+    uint16_t p = 0;
+    if (bind(s, (struct sockaddr *)&a, sizeof a) == 0 && getsockname(s, (struct sockaddr *)&a, &l) == 0)
+        p = ntohs(a.sin_port);
+    int e = errno;
+    close(s);
+    errno = e;
+    return p;
 }
 /* Darwin binds a dual-stack socket without looking at the IPv4 sockets: the ephemeral port can be one an IPv4 socket holds
    (127.0.0.1:P, 0.0.0.0:P), and an explicit :: on P succeeds beside 0.0.0.0:P; either way the IPv4 socket keeps receiving the IPv4
@@ -39,105 +67,220 @@ static uint16_t ipv4_port_probe(uint16_t port) {
 static int bind_dual(int fd, struct sockaddr_storage *ss, socklen_t sl) {
     uint16_t want = ntohs(((struct sockaddr_in6 *)ss)->sin6_port);
     if (want) {
-        if (!ipv4_port_probe(want) && errno == EADDRINUSE) return -1;
+        if (!ipv4_port_probe(want) && errno == EADDRINUSE)
+            return -1;
         return bind(fd, (struct sockaddr *)ss, sl) == 0 ? 0 : -1;
     }
     for (int i = 0; i < 32; i++) {
-        uint16_t p = ipv4_port_probe(0); if (!p) break;
+        uint16_t p = ipv4_port_probe(0);
+        if (!p)
+            break;
         ((struct sockaddr_in6 *)ss)->sin6_port = htons(p);
-        if (bind(fd, (struct sockaddr *)ss, sl) == 0) return 0;
-        if (errno != EADDRINUSE) break;
+        if (bind(fd, (struct sockaddr *)ss, sl) == 0)
+            return 0;
+        if (errno != EADDRINUSE)
+            break;
     }
-    ((struct sockaddr_in6 *)ss)->sin6_port = 0; return -2;
+    ((struct sockaddr_in6 *)ss)->sin6_port = 0;
+    return -2;
 }
 #endif
-static int is_wildcard(const uint8_t *a) { for (int i = 3; i < (a[0] == 4 ? 7 : 19); i++) if (a[i]) return 0; return 1; }
+static int is_wildcard(const uint8_t *a) {
+    for (int i = 3; i < (a[0] == 4 ? 7 : 19); i++)
+        if (a[i])
+            return 0;
+    return 1;
+}
 /* socket, the options bind needs first, bind; -1 with errno and the failed step. dual: AF_INET6 bound to :: with IPV6_V6ONLY off */
 static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dual, int flags, const char **step) {
-    int family = dual || addr[0] == 6 ? AF_INET6 : AF_INET, fd = -1; *step = "socket";
+    int family = dual || addr[0] == 6 ? AF_INET6 : AF_INET, fd = -1;
+    *step = "socket";
 #ifdef KSL_TEST
-    if (family == AF_INET6 && no_ipv6_for_test) { errno = EAFNOSUPPORT; return -1; }
+    if (family == AF_INET6 && no_ipv6_for_test) {
+        errno = EAFNOSUPPORT;
+        return -1;
+    }
 #endif
 #ifdef __linux__
     fd = socket(family, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-#else   /* Darwin has no SOCK_CLOEXEC/SOCK_NONBLOCK: set them right after creation */
+#else /* Darwin has no SOCK_CLOEXEC/SOCK_NONBLOCK: set them right after creation */
     fd = socket(family, SOCK_DGRAM, 0);
-    if (fd >= 0 && cloexec_nonblock(fd) != 0) { int e = errno; close(fd); fd = -1; errno = e; }
+    if (fd >= 0 && cloexec_nonblock(fd) != 0) {
+        int e = errno;
+        close(fd);
+        fd = -1;
+        errno = e;
+    }
 #endif
-    if (fd < 0) return -1;
+    if (fd < 0)
+        return -1;
     int one = 1, v6only = !dual;
 #ifdef __APPLE__
     int r;
 #endif
 #ifdef SO_NOSIGPIPE
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);   /* Darwin: an error never raises SIGPIPE in the host process */
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one,
+               sizeof one); /* Darwin: an error never raises SIGPIPE in the host process */
 #endif
-#ifdef __linux__   /* Darwin has SO_REUSEPORT but hands unicast UDP to one of the sockets only (no flow hashing): loops would starve, so never granted there */
-    if (flags & KSL_UDP_REUSEPORT) { if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one) == 0) u->granted |= KSL_UDP_REUSEPORT; }
+#ifdef __linux__ /* Darwin has SO_REUSEPORT but hands unicast UDP to one of the sockets only (no flow hashing): loops would starve, so never granted there */
+    if (flags & KSL_UDP_REUSEPORT) {
+        if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one) == 0)
+            u->granted |= KSL_UDP_REUSEPORT;
+    }
 #else
     (void)flags;
 #endif
-    uint8_t any[KSL_UDP_ADDR_LEN] = { 6 }; any[1] = addr[1]; any[2] = addr[2];
-    struct sockaddr_storage ss; socklen_t sl = to_sockaddr(dual ? any : addr, &ss);
-    if (family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof v6only) != 0 && dual) { *step = "IPV6_V6ONLY"; }
-#ifdef __APPLE__   /* a port the IPv4 side has free too (bind_dual) */
-    else if (dual && (r = bind_dual(fd, &ss, sl)) != -2) { if (r == 0) { u->family = family; u->dual = dual; return fd; } *step = "bind"; }
+    uint8_t any[KSL_UDP_ADDR_LEN] = {6};
+    any[1] = addr[1];
+    any[2] = addr[2];
+    struct sockaddr_storage ss;
+    socklen_t sl = to_sockaddr(dual ? any : addr, &ss);
+    if (family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof v6only) != 0 && dual) {
+        *step = "IPV6_V6ONLY";
+    }
+#ifdef __APPLE__ /* a port the IPv4 side has free too (bind_dual) */
+    else if (dual && (r = bind_dual(fd, &ss, sl)) != -2) {
+        if (r == 0) {
+            u->family = family;
+            u->dual = dual;
+            return fd;
+        }
+        *step = "bind";
+    }
 #endif
-    else if (bind(fd, (struct sockaddr *)&ss, sl) == 0) { u->family = family; u->dual = dual; return fd; }
-    else *step = "bind";
-    int e = errno; close(fd); errno = e; return -1;
+    else if (bind(fd, (struct sockaddr *)&ss, sl) == 0) {
+        u->family = family;
+        u->dual = dual;
+        return fd;
+    } else
+        *step = "bind";
+    int e = errno;
+    close(fd);
+    errno = e;
+    return -1;
 }
-static ksl_udp *open_failed(ksl_udp *u, uint32_t code, const char *what, int e, uint32_t *err, char *msg, size_t msglen) {
-    if (err) *err = code; if (msg && msglen) { char t[128]; ksl_errtext(e, t, sizeof t); snprintf(msg, msglen, "%s: %s", what, t); }
-    if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
-    pthread_mutex_destroy(&u->err_mu); pthread_mutex_destroy(&u->ptb_mu); free(u->scratch); free(u->tx); free(u); return NULL;
+static ksl_udp *open_failed(ksl_udp *u, uint32_t code, const char *what, int e, uint32_t *err, char *msg,
+                            size_t msglen) {
+    if (err)
+        *err = code;
+    if (msg && msglen) {
+        char t[128];
+        ksl_errtext(e, t, sizeof t);
+        snprintf(msg, msglen, "%s: %s", what, t);
+    }
+    if (u->fd >= 0)
+        close(u->fd);
+    if (u->wake[0] >= 0)
+        close(u->wake[0]);
+    if (u->wake[1] >= 0)
+        close(u->wake[1]);
+    pthread_mutex_destroy(&u->err_mu);
+    pthread_mutex_destroy(&u->ptb_mu);
+    free(u->scratch);
+    free(u->tx);
+    free(u);
+    return NULL;
 }
 
 ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) {
-    if (!addr || (addr[0] != 4 && addr[0] != 6)) { if (err) *err = KSL_E_BAD_ARG; if (msg && msglen) snprintf(msg, msglen, "ksl_udp: bad address"); return NULL; }
-    ksl_udp *u = calloc(1, sizeof *u); if (!u) { if (err) *err = KSL_E_BAD_ARG; return NULL; }
-    if (pthread_mutex_init(&u->err_mu, NULL) != 0) { free(u); if (err) *err = KSL_E_BAD_ARG; return NULL; }
-    if (pthread_mutex_init(&u->ptb_mu, NULL) != 0) { pthread_mutex_destroy(&u->err_mu); free(u); if (err) *err = KSL_E_BAD_ARG; return NULL; }
-    u->requested = (uint32_t)flags; u->wake[0] = u->wake[1] = -1; u->fd = -1;
+    if (!addr || (addr[0] != 4 && addr[0] != 6)) {
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        if (msg && msglen)
+            snprintf(msg, msglen, "ksl_udp: bad address");
+        return NULL;
+    }
+    ksl_udp *u = calloc(1, sizeof *u);
+    if (!u) {
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        return NULL;
+    }
+    if (pthread_mutex_init(&u->err_mu, NULL) != 0) {
+        free(u);
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        return NULL;
+    }
+    if (pthread_mutex_init(&u->ptb_mu, NULL) != 0) {
+        pthread_mutex_destroy(&u->err_mu);
+        free(u);
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        return NULL;
+    }
+    u->requested = (uint32_t)flags;
+    u->wake[0] = u->wake[1] = -1;
+    u->fd = -1;
     /* a wildcard (0.0.0.0 or ::) takes both families on one dual-stack socket, as NIO's DatagramChannel: a client bound to 0.0.0.0
        reaches IPv6 servers and a server on 0.0.0.0 answers IPv6 clients. Without IPv6 (or with :: taken) the requested family alone. */
     const char *step = "socket";
-    if (is_wildcard(addr)) u->fd = bind_socket(u, addr, 1, flags, &step);
-    if (u->fd < 0) { u->granted = 0; u->fd = bind_socket(u, addr, 0, flags, &step); }
-    if (u->fd < 0) return open_failed(u, step[0] == 's' ? KSL_E_NOT_SUPPORTED : strcmp(step, "bind") == 0 ? KSL_E_BIND : KSL_E_BAD_ARG, step, errno, err, msg, msglen);
+    if (is_wildcard(addr))
+        u->fd = bind_socket(u, addr, 1, flags, &step);
+    if (u->fd < 0) {
+        u->granted = 0;
+        u->fd = bind_socket(u, addr, 0, flags, &step);
+    }
+    if (u->fd < 0)
+        return open_failed(u,
+                           step[0] == 's'              ? KSL_E_NOT_SUPPORTED
+                           : strcmp(step, "bind") == 0 ? KSL_E_BIND
+                                                       : KSL_E_BAD_ARG,
+                           step, errno, err, msg, msglen);
     int one = 1, v4 = u->family == AF_INET || u->dual, v6 = u->family == AF_INET6;
     /* 7 MB; Darwin refuses more than kern.ipc.maxsockbuf (8 MB less overhead by default), so halve until the kernel takes it */
-    for (int rcv = 7 * 1024 * 1024; rcv >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv) != 0; rcv /= 2) {}
-    for (int snd = 7 * 1024 * 1024; snd >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof snd) != 0; snd /= 2) {}
-    if (flags & KSL_UDP_ECN) {   /* read marks on the way in; marks on the way out travel as a per-message cmsg */
+    for (int rcv = 7 * 1024 * 1024;
+         rcv >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv) != 0; rcv /= 2) {
+    }
+    for (int snd = 7 * 1024 * 1024;
+         snd >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof snd) != 0; snd /= 2) {
+    }
+    if (flags & KSL_UDP_ECN) { /* read marks on the way in; marks on the way out travel as a per-message cmsg */
         int ok = 1;
-        if (v6) ok = ok && setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &one, sizeof one) == 0;
-#ifdef __APPLE__   /* Darwin refuses IP_RECVTOS on an AF_INET6 socket (EINVAL) and reports v4-mapped marks through IPV6_TCLASS */
+        if (v6)
+            ok = ok && setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &one, sizeof one) == 0;
+#ifdef __APPLE__ /* Darwin refuses IP_RECVTOS on an AF_INET6 socket (EINVAL) and reports v4-mapped marks through IPV6_TCLASS */
         if (!v6)
 #endif
-        if (v4) ok = ok && setsockopt(u->fd, IPPROTO_IP, IP_RECVTOS, &one, sizeof one) == 0;   /* Linux: on AF_INET6 it covers v4-mapped traffic */
-        if (ok) { u->granted |= KSL_UDP_ECN; u->tos_cmsg_on = 1; }
+            if (v4)
+                ok = ok && setsockopt(u->fd, IPPROTO_IP, IP_RECVTOS, &one, sizeof one) ==
+                               0; /* Linux: on AF_INET6 it covers v4-mapped traffic */
+        if (ok) {
+            u->granted |= KSL_UDP_ECN;
+            u->tos_cmsg_on = 1;
+        }
     }
-    if (flags & KSL_UDP_DF) {   /* DF set; never DO mode: the kernel's path MTU cache must not drive sizes (an attacker's ICMP would shrink it: quic-go CVE-2024-53259) */
+    if (flags &
+        KSL_UDP_DF) { /* DF set; never DO mode: the kernel's path MTU cache must not drive sizes (an attacker's ICMP would shrink it: quic-go CVE-2024-53259) */
         int ok = 1;
-#ifdef __APPLE__   /* Darwin has only the DF bit, as in quic-go sys_conn_df_darwin.go; on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too (IP_DONTFRAG: EINVAL).
+#ifdef __APPLE__ /* Darwin has only the DF bit, as in quic-go sys_conn_df_darwin.go; on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too (IP_DONTFRAG: EINVAL).
                       It does cache a path MTU from an ICMPv6 Packet Too Big (clamped to >= 1280): a larger datagram then fails with EMSGSIZE,
                       a lost slot, and QUIC's 1248-byte IPv6 floor (1200 + headers) still fits, so a forged PTB cannot stop sending */
-        ok = v6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0 : setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0;
+        ok = v6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0
+                : setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0;
 #else
         int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE;
-        if (v4) ok = ok && setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, &probe, sizeof probe) == 0;   /* on AF_INET6: the v4-mapped half */
-        if (v6) { ok = ok && setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6) == 0; if (ok) setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one); }
+        if (v4)
+            ok = ok && setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, &probe, sizeof probe) ==
+                           0; /* on AF_INET6: the v4-mapped half */
+        if (v6) {
+            ok = ok && setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6) == 0;
+            if (ok)
+                setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one);
+        }
         /* ICMP errors into the error queue (ADR-0006): Packet Too Big as a DPLPMTUD hint (RFC 8899 section 4.6), validated by the caller.
            The queue also takes port and host unreachable, which set sk_err: ksl_udp_recv drains it and never fails on such an error */
         if (ok) {
             int rv = 1;
-            if (v4) rv = rv && setsockopt(u->fd, IPPROTO_IP, IP_RECVERR, &one, sizeof one) == 0;
-            if (v6) rv = rv && setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVERR, &one, sizeof one) == 0;
+            if (v4)
+                rv = rv && setsockopt(u->fd, IPPROTO_IP, IP_RECVERR, &one, sizeof one) == 0;
+            if (v6)
+                rv = rv && setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVERR, &one, sizeof one) == 0;
             u->recverr = rv;
         }
 #endif
-        if (ok) u->granted |= KSL_UDP_DF;
+        if (ok)
+            u->granted |= KSL_UDP_DF;
     }
     /* the destination of each datagram, so a reply leaves from the address it arrived on (RFC 9000 section 9): only a wildcard bind
        needs it, as quic-go sys_conn_oob.go (newConn: IsUnspecified). AF_INET: IP_PKTINFO (IP_RECVPKTINFO, the same option, on Darwin: quic-go
@@ -146,123 +289,359 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
        for its ipi_spec_dst, which tells a subnet-directed broadcast destination from an address of this host */
     if ((flags & KSL_UDP_PKTINFO) && is_wildcard(addr)) {
         int ok = u->family == AF_INET6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &one, sizeof one) == 0
-                                       : setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) == 0;   /* Darwin: IP_RECVPKTINFO is IP_PKTINFO */
+                                       : setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) ==
+                                             0; /* Darwin: IP_RECVPKTINFO is IP_PKTINFO */
 #ifdef __linux__
-        u->v4_spec = ok && (u->family == AF_INET || (u->dual && setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) == 0));
+        u->v4_spec = ok && (u->family == AF_INET ||
+                            (u->dual && setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) == 0));
 #endif
-        if (ok) { u->granted |= KSL_UDP_PKTINFO; u->pktinfo = 1; }
+        if (ok) {
+            u->granted |= KSL_UDP_PKTINFO;
+            u->pktinfo = 1;
+        }
     }
-#ifdef __linux__   /* Darwin has no UDP_SEGMENT/UDP_GRO: the caps never grant them and every datagram is its own sendmsg/recvmsg */
-    if (flags & KSL_UDP_GSO) { int zero = 0; if (setsockopt(u->fd, SOL_UDP, UDP_SEGMENT, &zero, sizeof zero) == 0) { u->granted |= KSL_UDP_GSO; u->gso_on = 1; u->gso_max = GSO_SEGMENTS; } }
-    if (flags & KSL_UDP_GRO) { if (setsockopt(u->fd, SOL_UDP, UDP_GRO, &one, sizeof one) == 0) u->granted |= KSL_UDP_GRO; }
+#ifdef __linux__ /* Darwin has no UDP_SEGMENT/UDP_GRO: the caps never grant them and every datagram is its own sendmsg/recvmsg */
+    if (flags & KSL_UDP_GSO) {
+        int zero = 0;
+        if (setsockopt(u->fd, SOL_UDP, UDP_SEGMENT, &zero, sizeof zero) == 0) {
+            u->granted |= KSL_UDP_GSO;
+            u->gso_on = 1;
+            u->gso_max = GSO_SEGMENTS;
+        }
+    }
+    if (flags & KSL_UDP_GRO) {
+        if (setsockopt(u->fd, SOL_UDP, UDP_GRO, &one, sizeof one) == 0)
+            u->granted |= KSL_UDP_GRO;
+    }
 #endif
     u->batch = 16;
 #ifdef __linux__
-    if (pipe2(u->wake, O_CLOEXEC | O_NONBLOCK) != 0) { u->wake[0] = u->wake[1] = -1; }
-#else   /* Darwin: shutdown(2) does not wake a poll on a UDP socket, the pipe is the only way to end a blocked receive: no pipe, no socket */
-    if (pipe(u->wake) != 0 || cloexec_nonblock(u->wake[0]) != 0 || cloexec_nonblock(u->wake[1]) != 0) return open_failed(u, KSL_E_NOT_SUPPORTED, "wake pipe", errno, err, msg, msglen);
+    if (pipe2(u->wake, O_CLOEXEC | O_NONBLOCK) != 0) {
+        u->wake[0] = u->wake[1] = -1;
+    }
+#else /* Darwin: shutdown(2) does not wake a poll on a UDP socket, the pipe is the only way to end a blocked receive: no pipe, no socket */
+    if (pipe(u->wake) != 0 || cloexec_nonblock(u->wake[0]) != 0 || cloexec_nonblock(u->wake[1]) != 0)
+        return open_failed(u, KSL_E_NOT_SUPPORTED, "wake pipe", errno, err, msg, msglen);
 #endif
-    u->scratch = malloc(GRO_MAX); u->tx = malloc(GRO_MAX); if (!u->scratch || !u->tx) return open_failed(u, KSL_E_BAD_ARG, "malloc", ENOMEM, err, msg, msglen);
-    struct sockaddr_storage ss; socklen_t sl = sizeof ss;
-    if (getsockname(u->fd, (struct sockaddr *)&ss, &sl) == 0) from_sockaddr(&ss, u->local);
-    if (u->dual && addr[0] == 4) { memset(u->local + 3, 0, KSL_UDP_ADDR_LEN - 3); u->local[0] = 4; }   /* 0.0.0.0 asked: 0.0.0.0 reported, the port the kernel chose */
-    ksl_live_add(KSL_LIVE_UDP, 1); ksl_live_add(KSL_LIVE_WAKE, (u->wake[0] >= 0) + (u->wake[1] >= 0));
+    u->scratch = malloc(GRO_MAX);
+    u->tx = malloc(GRO_MAX);
+    if (!u->scratch || !u->tx)
+        return open_failed(u, KSL_E_BAD_ARG, "malloc", ENOMEM, err, msg, msglen);
+    struct sockaddr_storage ss;
+    socklen_t sl = sizeof ss;
+    if (getsockname(u->fd, (struct sockaddr *)&ss, &sl) == 0)
+        from_sockaddr(&ss, u->local);
+    if (u->dual && addr[0] == 4) {
+        memset(u->local + 3, 0, KSL_UDP_ADDR_LEN - 3);
+        u->local[0] = 4;
+    } /* 0.0.0.0 asked: 0.0.0.0 reported, the port the kernel chose */
+    ksl_live_add(KSL_LIVE_UDP, 1);
+    ksl_live_add(KSL_LIVE_WAKE, (u->wake[0] >= 0) + (u->wake[1] >= 0));
     return u;
 }
 
 int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
-    if (!u || !out || !len) return KSL_ERROR;
+    if (!u || !out || !len)
+        return KSL_ERROR;
     switch (what) {
-    case KSL_UDP_GET_FD: if (cap < 4) return KSL_ERROR; be32(out, (uint32_t)u->fd); *len = 4; return KSL_OK;
-    case KSL_UDP_GET_CAPS: if (cap < 8) return KSL_ERROR; be32(out, u->granted); be16(out + 4, u->gso_on ? u->gso_max : 0); be16(out + 6, u->batch); *len = 8; return KSL_OK;
-    case KSL_UDP_GET_LOCAL: if (cap < KSL_UDP_ADDR_LEN) return KSL_ERROR; memcpy(out, u->local, KSL_UDP_ADDR_LEN); *len = KSL_UDP_ADDR_LEN; return KSL_OK;
-    case KSL_UDP_GET_STATS: if (cap < 12) return KSL_ERROR; be32(out, KSL_RELAXED(u->sends)); be32(out + 4, KSL_RELAXED(u->recvs)); be32(out + 8, KSL_RELAXED(u->gso_fallbacks)); *len = 12; return KSL_OK;
-    case KSL_UDP_GET_ERROR: { if (cap < 4) return KSL_ERROR; char msg[KSL_MSG]; err_lock(u); uint32_t e = u->last_errno; memcpy(msg, u->last_msg, KSL_MSG); err_unlock(u);
-        msg[KSL_MSG - 1] = 0; be32(out, e); size_t m = strlen(msg); if (m > cap - 4) m = cap - 4; memcpy(out + 4, msg, m); *len = 4 + m; return KSL_OK; }
-    default: return KSL_ERROR;
+    case KSL_UDP_GET_FD:
+        if (cap < 4)
+            return KSL_ERROR;
+        be32(out, (uint32_t)u->fd);
+        *len = 4;
+        return KSL_OK;
+    case KSL_UDP_GET_CAPS:
+        if (cap < 8)
+            return KSL_ERROR;
+        be32(out, u->granted);
+        be16(out + 4, u->gso_on ? u->gso_max : 0);
+        be16(out + 6, u->batch);
+        *len = 8;
+        return KSL_OK;
+    case KSL_UDP_GET_LOCAL:
+        if (cap < KSL_UDP_ADDR_LEN)
+            return KSL_ERROR;
+        memcpy(out, u->local, KSL_UDP_ADDR_LEN);
+        *len = KSL_UDP_ADDR_LEN;
+        return KSL_OK;
+    case KSL_UDP_GET_STATS:
+        if (cap < 12)
+            return KSL_ERROR;
+        be32(out, KSL_RELAXED(u->sends));
+        be32(out + 4, KSL_RELAXED(u->recvs));
+        be32(out + 8, KSL_RELAXED(u->gso_fallbacks));
+        *len = 12;
+        return KSL_OK;
+    case KSL_UDP_GET_ERROR: {
+        if (cap < 4)
+            return KSL_ERROR;
+        char msg[KSL_MSG];
+        err_lock(u);
+        uint32_t e = u->last_errno;
+        memcpy(msg, u->last_msg, KSL_MSG);
+        err_unlock(u);
+        msg[KSL_MSG - 1] = 0;
+        be32(out, e);
+        size_t m = strlen(msg);
+        if (m > cap - 4)
+            m = cap - 4;
+        memcpy(out + 4, msg, m);
+        *len = 4 + m;
+        return KSL_OK;
+    }
+    default:
+        return KSL_ERROR;
     }
 }
 
 void ksl_udp_shutdown(ksl_udp *u) {
-    if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_ACQ_REL)) return;   /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD */
-    if (u->wake[1] >= 0) { uint8_t b = 1; ssize_t w = write(u->wake[1], &b, 1); (void)w; }
-    if (u->fd >= 0) { shutdown(u->fd, SHUT_RDWR); }
+    if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_ACQ_REL))
+        return; /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD */
+    if (u->wake[1] >= 0) {
+        uint8_t b = 1;
+        ssize_t w = write(u->wake[1], &b, 1);
+        (void)w;
+    }
+    if (u->fd >= 0) {
+        shutdown(u->fd, SHUT_RDWR);
+    }
 }
 void ksl_udp_close(ksl_udp *u) {
-    if (!u) return;
+    if (!u)
+        return;
     ksl_udp_shutdown(u);
-    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) { struct timespec ts = { 0, 1000000 }; nanosleep(&ts, NULL); }   /* a receiver woke up and leaves the object */
-    ksl_live_add(KSL_LIVE_UDP, -1); ksl_live_add(KSL_LIVE_WAKE, -((u->wake[0] >= 0) + (u->wake[1] >= 0)));
-    if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
-    pthread_mutex_destroy(&u->err_mu); pthread_mutex_destroy(&u->ptb_mu); free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
+    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) {
+        struct timespec ts = {0, 1000000};
+        nanosleep(&ts, NULL);
+    } /* a receiver woke up and leaves the object */
+    ksl_live_add(KSL_LIVE_UDP, -1);
+    ksl_live_add(KSL_LIVE_WAKE, -((u->wake[0] >= 0) + (u->wake[1] >= 0)));
+    if (u->fd >= 0)
+        close(u->fd);
+    if (u->wake[0] >= 0)
+        close(u->wake[0]);
+    if (u->wake[1] >= 0)
+        close(u->wake[1]);
+    pthread_mutex_destroy(&u->err_mu);
+    pthread_mutex_destroy(&u->ptb_mu);
+    free(u->scratch);
+    free(u->tx);
+    memset(u, 0, sizeof *u);
+    free(u);
 }
 
-int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t *mtu) {
-    if (!u || !quote_len || !dst || !mtu || (cap && !quote)) return 0;
+int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN],
+                     uint32_t *mtu) {
+    if (!u || !quote_len || !dst || !mtu || (cap && !quote))
+        return 0;
     pthread_mutex_lock(&u->ptb_mu);
-    if (!u->ptb_count) { pthread_mutex_unlock(&u->ptb_mu); return 0; }
+    if (!u->ptb_count) {
+        pthread_mutex_unlock(&u->ptb_mu);
+        return 0;
+    }
     const struct ksl_ptb *p = &u->ptb[u->ptb_head];
-    uint32_t n = p->quote_len < cap ? p->quote_len : cap; memcpy(quote, p->quote, n); *quote_len = n; memcpy(dst, p->dst, KSL_UDP_ADDR_LEN); *mtu = p->mtu;
-    u->ptb_head = (u->ptb_head + 1) % PTB_RING; u->ptb_count--;
-    pthread_mutex_unlock(&u->ptb_mu); return 1;
+    uint32_t n = p->quote_len < cap ? p->quote_len : cap;
+    memcpy(quote, p->quote, n);
+    *quote_len = n;
+    memcpy(dst, p->dst, KSL_UDP_ADDR_LEN);
+    *mtu = p->mtu;
+    u->ptb_head = (u->ptb_head + 1) % PTB_RING;
+    u->ptb_count--;
+    pthread_mutex_unlock(&u->ptb_mu);
+    return 1;
 }
 uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
-    if (!u) return 0;
-    if (last_size) *last_size = __atomic_load_n(&u->emsgsize_last, __ATOMIC_RELAXED);
+    if (!u)
+        return 0;
+    if (last_size)
+        *last_size = __atomic_load_n(&u->emsgsize_last, __ATOMIC_RELAXED);
     return __atomic_load_n(&u->emsgsize, __ATOMIC_RELAXED);
 }
 /* the receiver's side of the ring (ksl_udp_recv.c): a full ring keeps the older messages, a flood only costs the newest */
-void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu) {
+void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
+                      uint32_t mtu) {
     pthread_mutex_lock(&u->ptb_mu);
-    if (u->ptb_count == PTB_RING) { u->ptb_dropped++; pthread_mutex_unlock(&u->ptb_mu); return; }
+    if (u->ptb_count == PTB_RING) {
+        u->ptb_dropped++;
+        pthread_mutex_unlock(&u->ptb_mu);
+        return;
+    }
     struct ksl_ptb *p = &u->ptb[(u->ptb_head + u->ptb_count) % PTB_RING];
-    p->quote_len = len < KSL_UDP_PTB_QUOTE ? len : KSL_UDP_PTB_QUOTE; memcpy(p->quote, quote, p->quote_len); memcpy(p->dst, dst, KSL_UDP_ADDR_LEN); p->mtu = mtu;
-    u->ptb_count++; pthread_mutex_unlock(&u->ptb_mu);
+    p->quote_len = len < KSL_UDP_PTB_QUOTE ? len : KSL_UDP_PTB_QUOTE;
+    memcpy(p->quote, quote, p->quote_len);
+    memcpy(p->dst, dst, KSL_UDP_ADDR_LEN);
+    p->mtu = mtu;
+    u->ptb_count++;
+    pthread_mutex_unlock(&u->ptb_mu);
 }
 
 #ifdef KSL_TEST
-void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu) { ksl_udp_push_ptb(u, quote, len, dst, mtu); }
-uint32_t ksl_udp_ptb_dropped_for_test(ksl_udp *u) { pthread_mutex_lock(&u->ptb_mu); uint32_t d = u->ptb_dropped; pthread_mutex_unlock(&u->ptb_mu); return d; }
-uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) { return KSL_RELAXED(u->errqueue_reads); }
-int ksl_udp_recverr_for_test(ksl_udp *u) { return u->recverr; }
-uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return KSL_RELAXED(u->sends); }
-uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { return KSL_RELAXED(u->recvs) + KSL_RELAXED(u->polls); }
-void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { u->fail_next_gso = err; }
-void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { u->fail_next_send = err; }
-void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) { set_err(u, e, what); }
+void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
+                               uint32_t mtu) {
+    ksl_udp_push_ptb(u, quote, len, dst, mtu);
+}
+uint32_t ksl_udp_ptb_dropped_for_test(ksl_udp *u) {
+    pthread_mutex_lock(&u->ptb_mu);
+    uint32_t d = u->ptb_dropped;
+    pthread_mutex_unlock(&u->ptb_mu);
+    return d;
+}
+uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) {
+    return KSL_RELAXED(u->errqueue_reads);
+}
+int ksl_udp_recverr_for_test(ksl_udp *u) {
+    return u->recverr;
+}
+uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) {
+    return KSL_RELAXED(u->sends);
+}
+uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) {
+    return KSL_RELAXED(u->recvs) + KSL_RELAXED(u->polls);
+}
+void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) {
+    u->fail_next_gso = err;
+}
+void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) {
+    u->fail_next_send = err;
+}
+void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) {
+    set_err(u, e, what);
+}
 #ifdef __APPLE__
-int ksl_udp_df_mode_for_test(int fd) { int v = -1; socklen_t l = sizeof v; if (getsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &v, &l) != 0 && getsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &v, (l = sizeof v, &l)) != 0) return -1; return v; }   /* AF_INET6: IPV6_DONTFRAG */
+int ksl_udp_df_mode_for_test(int fd) {
+    int v = -1;
+    socklen_t l = sizeof v;
+    if (getsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &v, &l) != 0 &&
+        getsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &v, (l = sizeof v, &l)) != 0)
+        return -1;
+    return v;
+} /* AF_INET6: IPV6_DONTFRAG */
 #else
-int ksl_udp_df_mode_for_test(int fd) { int v = -1; socklen_t l = sizeof v; if (getsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &v, &l) != 0) return -1; return v; }
+int ksl_udp_df_mode_for_test(int fd) {
+    int v = -1;
+    socklen_t l = sizeof v;
+    if (getsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &v, &l) != 0)
+        return -1;
+    return v;
+}
 #endif
-static void *blocked_recv(void *arg) { ksl_udp *u = arg; uint8_t buf[64]; uint8_t *bufs[1] = { buf }; uint32_t caps[1] = { 64 }, lens[1], got; uint8_t a[KSL_UDP_ADDR_LEN], e[1]; ksl_udp_recv(u, bufs, caps, lens, a, e, 1, &got, 5000); return NULL; }
+static void *blocked_recv(void *arg) {
+    ksl_udp *u = arg;
+    uint8_t buf[64];
+    uint8_t *bufs[1] = {buf};
+    uint32_t caps[1] = {64}, lens[1], got;
+    uint8_t a[KSL_UDP_ADDR_LEN], e[1];
+    ksl_udp_recv(u, bufs, caps, lens, a, e, 1, &got, 5000);
+    return NULL;
+}
 int ksl_udp_close_wakes_for_test(ksl_udp *u) {
-    pthread_t t; if (pthread_create(&t, NULL, blocked_recv, u) != 0) return 100000;
-    struct timespec ts = { 0, 20000000 }; nanosleep(&ts, NULL);
-    struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0); ksl_udp_shutdown(u); pthread_join(t, NULL); clock_gettime(CLOCK_MONOTONIC, &t1); ksl_udp_close(u);
+    pthread_t t;
+    if (pthread_create(&t, NULL, blocked_recv, u) != 0)
+        return 100000;
+    struct timespec ts = {0, 20000000};
+    nanosleep(&ts, NULL);
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    ksl_udp_shutdown(u);
+    pthread_join(t, NULL);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    ksl_udp_close(u);
     return (int)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000);
 }
 #endif
 
 #elif !defined(_WIN32) /* neither Linux, Apple nor Windows (ksl_udp_win.c): the portable DatagramIo does the work */
-ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) { (void)addr; (void)flags; if (err) *err = KSL_E_NOT_SUPPORTED; if (msg && msglen) snprintf(msg, msglen, "ksl_udp: accelerated UDP needs Linux, Apple or Windows"); return NULL; }
-int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) { (void)u; (void)what; (void)out; (void)cap; (void)len; return KSL_ERROR; }
-void ksl_udp_shutdown(ksl_udp *u) { (void)u; }
-void ksl_udp_close(ksl_udp *u) { (void)u; }
-int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t *mtu) { (void)u; (void)quote; (void)cap; (void)quote_len; (void)dst; (void)mtu; return 0; }
-uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) { (void)u; if (last_size) *last_size = 0; return 0; }
+ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) {
+    (void)addr;
+    (void)flags;
+    if (err)
+        *err = KSL_E_NOT_SUPPORTED;
+    if (msg && msglen)
+        snprintf(msg, msglen, "ksl_udp: accelerated UDP needs Linux, Apple or Windows");
+    return NULL;
+}
+int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
+    (void)u;
+    (void)what;
+    (void)out;
+    (void)cap;
+    (void)len;
+    return KSL_ERROR;
+}
+void ksl_udp_shutdown(ksl_udp *u) {
+    (void)u;
+}
+void ksl_udp_close(ksl_udp *u) {
+    (void)u;
+}
+int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN],
+                     uint32_t *mtu) {
+    (void)u;
+    (void)quote;
+    (void)cap;
+    (void)quote_len;
+    (void)dst;
+    (void)mtu;
+    return 0;
+}
+uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
+    (void)u;
+    if (last_size)
+        *last_size = 0;
+    return 0;
+}
 #ifdef KSL_TEST
-void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu) { (void)u; (void)quote; (void)len; (void)dst; (void)mtu; }
-uint32_t ksl_udp_ptb_dropped_for_test(ksl_udp *u) { (void)u; return 0; }
-uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) { (void)u; return 0; }
-int ksl_udp_recverr_for_test(ksl_udp *u) { (void)u; return 0; }
-uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
-uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
-void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { (void)u; (void)err; }
-void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { (void)u; (void)err; }
-void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) { (void)u; (void)e; (void)what; }
-int ksl_udp_df_mode_for_test(int fd) { (void)fd; return -1; }
-int ksl_udp_close_wakes_for_test(ksl_udp *u) { (void)u; return 0; }
-void ksl_udp_no_ipv6_for_test(int on) { (void)on; }
+void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
+                               uint32_t mtu) {
+    (void)u;
+    (void)quote;
+    (void)len;
+    (void)dst;
+    (void)mtu;
+}
+uint32_t ksl_udp_ptb_dropped_for_test(ksl_udp *u) {
+    (void)u;
+    return 0;
+}
+uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) {
+    (void)u;
+    return 0;
+}
+int ksl_udp_recverr_for_test(ksl_udp *u) {
+    (void)u;
+    return 0;
+}
+uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) {
+    (void)u;
+    return 0;
+}
+uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) {
+    (void)u;
+    return 0;
+}
+void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) {
+    (void)u;
+    (void)err;
+}
+void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) {
+    (void)u;
+    (void)err;
+}
+void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) {
+    (void)u;
+    (void)e;
+    (void)what;
+}
+int ksl_udp_df_mode_for_test(int fd) {
+    (void)fd;
+    return -1;
+}
+int ksl_udp_close_wakes_for_test(ksl_udp *u) {
+    (void)u;
+    return 0;
+}
+void ksl_udp_no_ipv6_for_test(int on) {
+    (void)on;
+}
 #endif
 #endif
