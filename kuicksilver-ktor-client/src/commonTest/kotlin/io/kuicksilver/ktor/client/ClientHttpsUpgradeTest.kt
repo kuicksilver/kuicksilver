@@ -6,6 +6,8 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
@@ -119,6 +121,16 @@ class ClientHttpsUpgradeTest {
                 }
             } finally {
                 plain.stopSuspend(0, 0)
+            }
+        }
+
+    @Test fun postSeesThe307WithKtorsDefaultRedirectRules() =
+        clientTest {
+            // HttpRedirect's checkHttpMethod (default on) follows GET and HEAD only: documented in the guide
+            client(mapOf("server.test" to listOf(rec("server.test", 0, "cdn.example")))).use { c ->
+                val r = c.post("http://server.test/a") { setBody("x") }
+                assertEquals(307, r.status.value)
+                assertEquals("https://server.test/a", r.headers[HttpHeaders.Location])
             }
         }
 

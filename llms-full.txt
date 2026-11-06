@@ -2223,7 +2223,9 @@ with `https` (port 80 becomes 443), waiting for the answer as an `https` request
 resolve and `httpsRecordExtraWait` longer; the whole lookup with a secure source); when the origin
 has an AliasMode record or a ServiceMode record the engine could use, the engine answers `307 Temporary Redirect` to the
 `https` URL itself, without connecting (RFC 9460 section 9.5). Ktor's `HttpRedirect` (on by default) follows it like any
-307; with `followRedirects = false` the call sees the 307. The upgrade is no more trusted than a 307 over cleartext:
+307; with `followRedirects = false` the call sees the 307, and so does a POST, PUT or other unsafe request while
+`HttpRedirect`'s `checkHttpMethod` is on (its default follows GET and HEAD only): set `checkHttpMethod = false` to have
+those repeated over `https` too. An AliasMode record whose target is no host name counts as "." and does not upgrade. The upgrade is no more trusted than a 307 over cleartext:
 nothing is remembered for the origin beyond the records' TTL. An origin that publishes HTTPS records but serves
 different content on `http://` cannot be reached over `http://` by such a client.
 
