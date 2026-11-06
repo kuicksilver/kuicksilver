@@ -12,6 +12,24 @@ brackets. Every option is listed with its default in the [configuration referenc
 Start with [Getting more information](#getting-more-information): most questions are answered faster by a log line, a
 counter or a qlog trace than by guessing.
 
+## Find your symptom
+
+Search this page for the exact text or code you see; the table sends you to the entry.
+
+| What you see | Entry |
+|---|---|
+| `"Handshake timeout after 10s"`, `ConnectionLost.Timeout` with `TimeoutKind.Handshake`, `fallback = HandshakeTimeout` | [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
+| `TransportClosed(code = 0x02)`, `CONNECTION_REFUSED`, `fallback = Refused` | [CONNECTION_REFUSED](#connect-fails-at-once-with-transportclosedcode--0x02) and [refusals and limits](#connections-are-refused-or-dropped) |
+| `TlsException.Verify`, `VerifyReason.UnknownIssuer`, TLS alert 48 (`TransportClosed(code = 0x0130)`), alerts 42, 45 | [certificate errors](#the-handshake-fails-with-a-certificate-error) |
+| `no_application_protocol`, TLS alert 120 (`TransportClosed(code = 0x0178)`), `the server chose ALPN`, `ALPN h3 required` | [ALPN mismatch](#the-handshake-fails-with-an-alpn-mismatch) |
+| `"Idle timeout after 30s"`, `StatelessReset`, `ApplicationClosed` | [connections that end](#connections-that-end) |
+| `ConnectionLost.ZeroRttRejected`, `StreamError.EarlyDataRejected`, `fallback = ZeroRttRejected` | [0-RTT is rejected](#0-rtt-is-rejected) |
+| `Http11RequiredException`, `fallback = H2Refused`, `Http2Exception` | [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
+| `kuicksilverDiagnostics.fallback`, `ProtocolReason`, `FallbackReason` (every value) | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
+| `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
+| `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
+| `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
+
 ## Getting more information
 
 | Tool | How to turn it on | What it tells you |
@@ -89,9 +107,43 @@ Decide on `reason`, not on the message text ("certificate verification failed: <
 | `Custom(text)` | 46 | your `CertificateVerifier` or the platform said `text` |
 
 Linux Kotlin/Native without a CA store (distroless or `scratch` images) fails earlier, when the client configuration
-is built: `TlsException.Config` "invalid TLS configuration: ksl: no CA certificates for TrustConfig.Platform; searched
-<paths>; install ca-certificates, set SSL_CERT_FILE or SSL_CERT_DIR, or use AnchoredCa". When `SSL_CERT_FILE` or
+is built: `TlsException.Config` "invalid TLS configuration: <native message>", the native message being "ksl: no CA
+certificates for TrustConfig.Platform; searched <paths>; install ca-certificates, set SSL_CERT_FILE or SSL_CERT_DIR, or
+use AnchoredCa". When `SSL_CERT_FILE` or
 `SSL_CERT_DIR` is set, only those are searched ([TLS: Linux trust store](tls.md#linux-trust-store)).
+
+### The handshake fails with an ALPN mismatch
+
+QUIC needs both sides to agree on an application protocol (RFC 9001 section 8.1). Without a common one the server
+closes with the TLS alert `no_application_protocol` (120): the client sees `TransportClosed(code = 0x0178, initiator =
+Peer)`, and the server counts it in `handshakesFailedTls`.
+
+| Where | What you see | Cause and fix |
+|---|---|---|
+| Ktor client, `fallback = TlsFailure` | the HTTP/3 attempt fails, the call goes over HTTP/1.1 | the server does not speak `h3` on that UDP port (another QUIC service, an HTTP/3 proxy for other protocols, or a server without HTTP/3); the Ktor engines offer `h3` themselves, check what runs on the port |
+| `Http3Endpoint.connect` with your own `TlsConfig` | `IllegalArgumentException` `"the TLS configuration must offer ALPN \"h3\""` | add `h3` to `TlsConfig.alpn` (also `Http3Endpoint.bind`: `"the server TLS configuration must offer ALPN \"h3\""`) |
+| Raw `QuicEndpoint` against an HTTP/3 server | `no_application_protocol`, or the server closes with "ALPN h3 required" | the client's `TlsConfig.alpn` must list `h3`; an `alpn` that is empty is refused when the config is built |
+| Server accepts the connection but closes it at once with "ALPN h3 required" | `Http3Endpoint.accept` only keeps connections that negotiated `h3` | your client offered another protocol; use `Http3Endpoint.connect` or add `h3` |
+| `Http3Endpoint.connect` fails with `"the server chose ALPN \"<alpn>\", not \"h3\""` | the HTTP/3 session ends with `GENERAL_PROTOCOL_ERROR` when the server picked another protocol | the server's `TlsConfig.alpn` lists it ahead of `h3` for this client; the order is the server's preference |
+| Over TCP (Ktor client) | HTTP/1.1 where HTTP/2 was expected | the server did not pick `h2`: it is not offered by the server (`http2 = false` on the Kuicksilver server), or `http2 { enabled = false }` on the client |
+
+### Connections are refused or dropped
+
+A server endpoint answers a new client in one of three ways: it accepts, it refuses with CONNECTION_REFUSED (0x2, the
+client knows at once), or it drops the Initial silently (the client waits for its handshake timeout). The counters of
+`QuicEndpoint.stats` / `Http3Endpoint.stats` (`EndpointStats`) tell which:
+
+| Counter | The client sees | Cause | Action |
+|---|---|---|---|
+| `connectionsRefusedAcceptQueue` | `TransportClosed(code = 0x02)` | `acceptQueue` (128) handshaken connections wait for `accept()` | accept faster, or raise `acceptQueue` |
+| `connectionsRefusedShutdown` | `TransportClosed(code = 0x02)` | the endpoint is shutting down, or the Ktor server is in `Drain` | connect to another instance; wait for the new one |
+| `connectionsRefusedLimits`, `initialsDropped` | nothing, then "Handshake timeout after 10s" | `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached, `initialQueueCap` overflow, or an Initial from a reflective source port (53, 123, 1900, 5353, 11211) | raise the limit in `quicEndpointConfig { }`, or find the client that holds the connections; a NAT puts many users behind one IP |
+| `connectionsRefusedAdmission` | nothing, or the `ConnectionAdmission` close code | your `ConnectionAdmission` said `Drop` or `Close(code)`; the default asks an unvalidated client for a Retry (it does not drop it) above 256 handshakes in flight or 8 MiB of handshake data | check the admission policy and its `maxInflightHandshakes` |
+| `statelessRateLimited` | nothing | Retry, Version Negotiation, Stateless Reset or refusals withheld by `statelessPerAddressPerSecond` (8) or `statelessTotalPerSecond` (1000) | a flood or a scan; raise the limits only if real clients are hit |
+| `invalidTokens`, `retriesSent` | `INVALID_TOKEN` | a Retry token that expired or came from another address (the client moved, or a load balancer sent the second Initial to another server) | keep a client's packets on one server; see [Deploying](deployment.md) |
+
+The Ktor engines have their own limits: the client waits for a free connection beyond `maxConnectionsCount` or
+`maxConnectionsPerRoute` and fails with `ConnectTimeoutException` when the connect timeout runs out first ([below](#requests-wait-and-then-fail-with-connecttimeoutexception)).
 
 ### `QuicClientConfig` or `QuicServerConfig` cannot be built
 
@@ -375,6 +427,34 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 | `NoAlternative` | `Auto` mode and the origin has not announced `h3` in `Alt-Svc` yet, or the entry expired; the first request always goes over HTTP/1.1. Use `quicHints` or `Preferred` for origins you know speak HTTP/3, and `FileAltSvcStore` to keep alternatives across restarts |
 | `BrokenAlternative` | HTTP/3 to this origin failed while HTTP/1.1 worked (UDP blocked, a QUIC error), so the alternative is skipped for 5 minutes, doubling per repeat up to 2 days; `altSvcMarkedBroken` reported it. Set `networkId` so a network change forgets the marks |
 | `Race` | the race went to HTTP/1.1: QUIC did not finish within its head start (1.5 x the origin's smoothed RTT, 250 ms without history, 100 ms..2 s; `hardDelay` overrides it), and on a network where QUIC was never seen working HTTP/1.1 starts after 10 ms. The QUIC setup goes on and serves the next requests |
+| `ExistingConnection` | an HTTP/3 connection to the origin was already open and carries the call |
+| `WebSocket` | a WebSocket starts on HTTP/1.1 until the origin has an HTTP/3 connection that allows Extended CONNECT (RFC 9220) |
+| `Fallback` | HTTP/3 failed for this request and it is repeated over TCP; `fallback` says why (below) |
+
+`response.kuicksilverDiagnostics?.fallback` (`FallbackReason`, also `fallback=` in the engine's log line) names the cause
+when a call that could have used HTTP/3 went over TCP; `null` when it went over HTTP/3. Every value:
+
+| `FallbackReason` | Cause and action |
+|---|---|
+| `NotSecure` | an `http://` or `ws://` URL; HTTP/3 needs TLS |
+| `Proxy` | a proxy applies; exempt the host for HTTP/3 |
+| `Configuration` | `discovery = H1Only` |
+| `Http3Disabled` | `http3Allowed` returned false |
+| `NoAlternative` | `Auto` mode without `Alt-Svc` for the origin yet; see `quicHints`, `Preferred` |
+| `MisdirectedRequest` | the HTTP/3 alternative answered 421; it was dropped from the origin's alternatives (RFC 7838 section 6) and the call went over HTTP/1.1. The server's virtual host does not cover this authority on that port |
+| `BrokenAlternative` | HTTP/3 failed earlier on this network while TCP worked; skipped for 5 minutes, doubling |
+| `WebSocket` | a WebSocket without an Extended CONNECT HTTP/3 connection |
+| `HandshakeTimeout` | QUIC got no answer within the connect timeout: UDP blocked, see [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
+| `UdpUnreachable` | ICMP port or host unreachable: nothing listens on UDP there (the server has no HTTP/3, or its UDP port differs from `Alt-Svc`) |
+| `H3NotReady` | HTTP/1.1 won the race before HTTP/3 answered; not a failure, the QUIC setup goes on |
+| `Refused` | CONNECTION_REFUSED (0x2): the server is draining or its accept queue is full; transient, the next call tries HTTP/3 again ([refusals](#connections-are-refused-or-dropped)). Any other close code marks the alternative broken |
+| `TlsFailure` | a TLS alert or a local verification failure in the QUIC handshake: [certificate errors](#the-handshake-fails-with-a-certificate-error), [ALPN mismatch](#the-handshake-fails-with-an-alpn-mismatch) |
+| `Http3Error` | the HTTP/3 connection failed as a whole: an HTTP/3 or QPACK error, a stateless reset, an idle timeout, no viable path |
+| `ZeroRttRejected` | the server rejected 0-RTT: [0-RTT is rejected](#0-rtt-is-rejected) |
+| `GoAway` | the server did not process the request (GOAWAY, `H3_REQUEST_REJECTED`) on any attempt |
+| `StreamFailed` | one request stream failed (reset, malformed response) and the idempotent request was repeated over HTTP/1.1 |
+| `Other` | any other HTTP/3 failure; `h3Failure` has the exception |
+| `H2Refused` | the server answered HTTP/2 with `HTTP_1_1_REQUIRED`: [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
 
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
 alternatives over verified TLS count ([Ktor: Discovery and Alt-Svc](ktor.md#discovery-and-alt-svc)).
