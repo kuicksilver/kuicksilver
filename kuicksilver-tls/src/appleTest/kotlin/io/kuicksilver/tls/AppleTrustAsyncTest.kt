@@ -180,4 +180,4 @@ class AppleTrustAsyncTest {
 }
 
 /** What SecTrust answers in a standalone simulator process (undocumented OSStatus, observed on the iOS 27 simulator). */
-private const val SEC_TRUST_UNAVAILABLE = -26276L
+internal const val SEC_TRUST_UNAVAILABLE = -26276L
