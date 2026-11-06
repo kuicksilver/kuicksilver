@@ -133,6 +133,8 @@ step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py
 step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check
 step "lint: links (Markdown, llms.txt)"         bash tools/check/links.sh
 step "lint: guide samples (guide-sync)"          bash tools/check/guide-sync.sh
+step "lint: configuration tables vs the code"    bash tools/check/config-table.sh
+step "lint: config-table negative controls"      bash tools/check/config-table-test.sh
 step "lint: ktlint"                            $G lintKotlin
 step "check: dependency verification (every configuration)"  $G -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue :build-logic:ksResolveAll ksResolveAll   # a metadata gap fails here, not in the late step resolving it
 # shellcheck disable=SC2086
