@@ -163,6 +163,7 @@ step "check: local-release refusals"             bash tools/release/local-releas
 step "check: verify-release negative controls"   bash tools/verify/verify-release-test.sh   # offline fixtures: signatures, provenance, rebuilt libraries
 if [ "$skip_android" = 0 ]; then
 step "android: device tests (emulator)"         $G androidConnectedCheck
+step "android: connection migration (emulator, host peer)" $G :kuicksilver-ktor-client:androidMigrationDeviceTest   # a server on the host, reached as 10.0.2.2 across the emulator's own network
 fi
 # shellcheck disable=SC2086
 step "native: macosArm64 tests"                 $G $KSL_MACOS_TESTS
