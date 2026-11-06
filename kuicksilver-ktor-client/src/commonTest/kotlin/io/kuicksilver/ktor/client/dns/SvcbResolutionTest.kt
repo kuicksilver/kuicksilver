@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client.dns
 
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.test.Test
@@ -180,6 +181,31 @@ class SvcbResolutionTest {
             val rs = resolver(mapOf("a.example" to listOf(rec("a.example", 0, "cdn.example"))), backgroundScope)
             rs.resolve("a.example", 443, all) { prefetched += it }
             assertEquals(listOf("cdn.example"), prefetched)
+        }
+
+    @Test fun failureAfterAnAliasKeepsTheAliasEndpoint() =
+        runTest {
+            // section 3: "whether successful or not", the processed AliasMode gives the final $QNAME as an endpoint
+            val rs = resolver(mapOf("a.example" to listOf(rec("a.example", 0, "cdn.example")), "cdn.example" to null), backgroundScope)
+            val r = assertIs<HttpsResolution.Failed>(rs.resolve("a.example", 443, all))
+            assertEquals(HttpsEndpoint("cdn.example", 443, quic = false, tcp = true), r.aliasEndpoint)
+        }
+
+    @Test fun progressNamesTheAliasEndpointWhileTheChainRuns() =
+        runTest {
+            // a resolution cut short (the extra wait) still knows the AliasMode it processed
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val rs =
+                HttpsRecords({ n ->
+                    if (n == "cdn.example") gate.await()
+                    DnsAnswer(if (n == "a.example") listOf(rec("a.example", 0, "cdn.example")) else emptyList())
+                }, backgroundScope, 10.seconds, { 0L })
+            val progress = AliasProgress()
+            val job = backgroundScope.launch { rs.resolve("a.example", 443, all, progress = progress) }
+            testScheduler.runCurrent()
+            assertEquals(HttpsEndpoint("cdn.example", 443, quic = false, tcp = true), progress.endpoint)
+            job.cancel()
+            gate.complete(Unit)
         }
 
     @Test fun failedLookupIsFailed() =

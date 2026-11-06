@@ -127,6 +127,31 @@ class ClientHttpsEndpointsTest {
             }
         }
 
+    @Test fun negative_hangingOriginLookupDoesNotHoldUpTheRecords() =
+        h3Test {
+            coroutineScope {
+                val ep = h3Origin()
+                try {
+                    val name = "_8443._https.server.test"
+                    val records = listOf(rec(name, 1, "q.server.test", "h3", port = ep.localAddress.port, noDefaultAlpn = true))
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        // the origin's own addresses never come: the records alone say where to go
+                        resolverForTest = { host, p ->
+                            if (host == "server.test") kotlinx.coroutines.awaitCancellation()
+                            listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p))
+                        }
+                        connectTimeout = 30.seconds
+                        http3 { httpsRecords = HttpsRecordsForTest { if (it == name) records else emptyList() } }
+                    }).use { c ->
+                        val r = kotlinx.coroutines.withTimeout(10.seconds) { c.get("https://server.test:8443/") }
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                    }
+                } finally {
+                    ep.close()
+                }
+            }
+        }
+
     @Test fun quicOnlyEndpointIsNotTriedOverTcp() =
         h3Test {
             coroutineScope {

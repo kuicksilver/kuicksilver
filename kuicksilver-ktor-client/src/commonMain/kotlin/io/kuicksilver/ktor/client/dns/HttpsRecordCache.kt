@@ -89,6 +89,12 @@ internal class HttpsRecordCache(
     }
 }
 
+/** How far a running resolution got: the endpoint RFC 9460 section 3 appends after an AliasMode record, if any. */
+internal class AliasProgress {
+    @kotlin.concurrent.Volatile
+    var endpoint: HttpsEndpoint? = null
+}
+
 /** The outcome of SVCB resolution for one service (RFC 9460 section 3). */
 internal sealed interface HttpsResolution {
     /** The endpoints to try in order (section 3, steps 4 and the appended AliasMode endpoint); never empty. */
@@ -104,8 +110,14 @@ internal sealed interface HttpsResolution {
      */
     data object None : HttpsResolution
 
-    /** A lookup failed (an error answer, a transport error or a timeout): section 3.1 decides what that means. */
-    data object Failed : HttpsResolution
+    /**
+     * A lookup failed (an error answer, a transport error or a timeout): section 3.1 decides what that means. When an
+     * AliasMode record was processed before it, [aliasEndpoint] is the final $QNAME with the authority's port, which
+     * section 3 appends "whether successful or not".
+     */
+    data class Failed(
+        val aliasEndpoint: HttpsEndpoint? = null,
+    ) : HttpsResolution
 }
 
 /**
@@ -218,6 +230,8 @@ internal class HttpsRecords(
         host: String,
         port: Int,
         supported: Set<String>,
+        // the endpoint section 3 appends, as far as the chain got: for a resolution that is cut short (the extra wait)
+        progress: AliasProgress = AliasProgress(),
         // a name the next query will ask for, whose A/AAAA may be looked up meanwhile (section 5, speculative queries)
         prefetch: (String) -> Unit = {},
     ): HttpsResolution {
@@ -229,7 +243,8 @@ internal class HttpsRecords(
         val related = HashMap<String, List<SvcbRecord>>()
         val addresses = HashMap<String, List<ByteArray>>()
         while (true) {
-            val a = related[name]?.let { DnsAnswer(it) } ?: answer(name) ?: return HttpsResolution.Failed
+            val a =
+                related[name]?.let { DnsAnswer(it) } ?: answer(name) ?: return HttpsResolution.Failed(progress.endpoint)
             for ((owner, rs) in a.related) if (rs.isNotEmpty()) related.getOrPut(owner) { rs }
             for ((owner, ad) in a.addresses) addresses.getOrPut(owner) { ad.first }
             val rs = a.records
@@ -260,9 +275,13 @@ internal class HttpsRecords(
                         }.toMap()
                 return HttpsResolution.Endpoints(usable, known)
             }
-            if (++aliases > MAX_ALIASES || !seen.add(alias)) return HttpsResolution.None
+            if (++aliases > MAX_ALIASES || !seen.add(alias)) {
+                progress.endpoint = null // section 3.1: the chain limit falls back to the authority, as if there were no record
+                return HttpsResolution.None
+            }
             aliased = true
             name = alias
+            progress.endpoint = HttpsEndpoint(name, port, quic = false, tcp = HTTPS_DEFAULT_ALPN in supported).takeIf { it.tcp }
             // the alias target is the likely TargetName ("." in its ServiceMode records) and the appended endpoint's name
             if (name !in addresses) prefetch(name)
         }

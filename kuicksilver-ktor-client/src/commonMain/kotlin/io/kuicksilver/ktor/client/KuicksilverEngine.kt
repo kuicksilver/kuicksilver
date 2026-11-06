@@ -20,6 +20,7 @@ import io.ktor.http.isSecure
 import io.ktor.util.date.getTimeMillis
 import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.http3.Http3Exception
+import io.kuicksilver.ktor.client.dns.AliasProgress
 import io.kuicksilver.ktor.client.dns.HTTPS_DEFAULT_ALPN
 import io.kuicksilver.ktor.client.dns.HttpsEndpoint
 import io.kuicksilver.ktor.client.dns.HttpsRecords
@@ -788,14 +789,22 @@ internal class KuicksilverEngine(
         val (origin, altResolution) = awaitResolutions(records, url, dns, supported, secure, altAuthority)
         // the addresses the answers carried for endpoint names: no follow-up query for them (section 5)
         for (r in listOf(origin, altResolution)) (r as? HttpsResolution.Endpoints)?.addresses?.forEach { (h, a) -> dns.seed(h, a) }
-        if (origin == HttpsResolution.Failed && secure) {
+        if (origin is HttpsResolution.Failed && secure) {
             // section 3.1: "the client SHOULD abandon its attempt to reach the service, even if the client is SVCB-optional"
             throw kotlinx.io.IOException(
                 "the HTTPS records of ${url.host} could not be resolved over the secure DNS source (an error answer, a transport " +
                     "error or a timeout): the request is abandoned (RFC 9460 section 3.1)",
             )
         }
-        val originEndpoints = (origin as? HttpsResolution.Endpoints)?.endpoints.orEmpty()
+        val originEndpoints =
+            when (origin) {
+                is HttpsResolution.Endpoints -> origin.endpoints
+
+                // section 3: the AliasMode endpoint is appended "whether successful or not"
+                is HttpsResolution.Failed -> listOfNotNull(origin.aliasEndpoint)
+
+                HttpsResolution.None -> emptyList()
+            }
         val attempts = ArrayList<Attempt>()
         if (altAuthority != null) {
             // section 9.3: a connection based on a cached Alt-Svc SHOULD be consistent with the alt-authority's HTTPS
@@ -808,7 +817,9 @@ internal class KuicksilverEngine(
                     HttpsResolution.None -> asIs
 
                     // section 3.1: the alternative service is not reached when its protected resolution failed
-                    HttpsResolution.Failed -> if (secure) emptyList() else asIs
+                    // section 3.1: the alternative service is not reached when its protected resolution failed; after an
+                    // AliasMode, the appended endpoint (section 3) is TCP only, so no h3 is consistent with it (section 9.3)
+                    is HttpsResolution.Failed -> if (secure) emptyList() else altResolution.aliasEndpoint?.let { emptyList() } ?: asIs
                 }
             val firstTcp = originEndpoints.firstOrNull { it.tcp }
             altQuic.forEachIndexed { i, e ->
@@ -1010,38 +1021,30 @@ internal class KuicksilverEngine(
         // an Alt-Svc alt-authority to resolve as well (section 9.3)
         altAuthority: Pair<String, Int>?,
     ): Pair<HttpsResolution, HttpsResolution> {
-        val unanswered = if (secure) HttpsResolution.Failed else HttpsResolution.None
+        // section 5: "clients SHOULD issue speculative A and/or AAAA queries in parallel with each SVCB query, based on a
+        // predicted value of TargetName": an alias target, looked up into the request's resolution
+        val prefetch: (String) -> Unit = { name -> engineScope.launch { lookupQuietly(dns, name, url.port) } }
+        // the origin's addresses, for the TCP side: in the background, so records that are in do not wait for them
+        val addresses = engineScope.launch { lookupQuietly(dns, url.host, url.port) }
+        val originProgress = AliasProgress()
+        val altProgress = AliasProgress()
+
+        // a resolution this request stops waiting for: what it got so far (section 3: the AliasMode endpoint)
+        fun cut(progress: AliasProgress): HttpsResolution =
+            if (secure) {
+                HttpsResolution.Failed(progress.endpoint)
+            } else {
+                progress.endpoint?.let { HttpsResolution.Endpoints(listOf(it)) }
+                    ?: HttpsResolution.None
+            }
         return withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
-                // section 5: "clients SHOULD issue speculative A and/or AAAA queries in parallel with each SVCB query, based
-                // on a predicted value of TargetName": an alias target, looked up into the request's resolution
-                val prefetch: (String) -> Unit = { name ->
-                    engineScope.launch {
-                        try {
-                            dns.lookup(name, url.port)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Throwable) {
-                            // kept in dns for the connection that may need it
-                        }
-                    }
-                }
-                val originJob = async { records.resolve(url.host, url.port, supported, prefetch) }
-                val altJob = altAuthority?.let { (h, p) -> async { records.resolve(h, p, supported, prefetch) } }
+                val originJob = async { records.resolve(url.host, url.port, supported, originProgress, prefetch) }
+                val altJob = altAuthority?.let { (h, p) -> async { records.resolve(h, p, supported, altProgress, prefetch) } }
                 val https =
                     launch {
                         originJob.join()
                         altJob?.join()
-                    }
-                val addresses =
-                    launch {
-                        try {
-                            dns.lookup(url.host, url.port)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Throwable) {
-                            // kept in dns: the TCP side reports it
-                        }
                     }
                 select {
                     https.onJoin {}
@@ -1053,14 +1056,32 @@ internal class KuicksilverEngine(
                     withTimeoutOrNull(config.http3.httpsRecordExtraWait) { https.join() }
                 }
 
-                fun outcome(j: kotlinx.coroutines.Deferred<HttpsResolution>): HttpsResolution =
-                    if (j.isCompleted && !j.isCancelled) j.getCompleted() else HttpsResolution.None
-                val result = outcome(originJob) to (altJob?.let { outcome(it) } ?: HttpsResolution.None)
+                fun outcome(
+                    j: kotlinx.coroutines.Deferred<HttpsResolution>,
+                    progress: AliasProgress,
+                ): HttpsResolution = if (j.isCompleted && !j.isCancelled) j.getCompleted() else cut(progress)
+                val result = outcome(originJob, originProgress) to (altJob?.let { outcome(it, altProgress) } ?: HttpsResolution.None)
                 originJob.cancel()
                 altJob?.cancel()
                 result
             }
-        } ?: (unanswered to unanswered)
+        } ?: (cut(originProgress) to (if (altAuthority == null) HttpsResolution.None else cut(altProgress)))
+    }
+
+    /** [dns]'s answer for [name], within the connect timeout; a failure stays in [dns] for the connection that needs it. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    private suspend fun lookupQuietly(
+        dns: RequestDns,
+        name: String,
+        port: Int,
+    ) {
+        try {
+            withTimeoutOrNull(config.connectTimeout) { dns.lookup(name, port) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            // kept in dns: the connection that needs it reports it
+        }
     }
 
     /**
