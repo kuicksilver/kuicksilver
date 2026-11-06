@@ -4,7 +4,7 @@
 # Cases for tools/report/reliability.sh on fixture artifacts in a temporary directory (no Gradle, no network, no real gate):
 # an empty artifact directory gives an error and no page (negative_noArtifactsNoPage), a missing source degrades to
 # "not available" without --check, the numbers come from the fixtures, and two runs give the same page.
-# Usage: tools/report/test-reliability.sh
+# Usage: tools/report/reliability-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/reliability.sh"
@@ -22,8 +22,8 @@ expect() {  # name pattern file
 }
 
 # an empty set of artifacts
-mkdir -p "$tmp/empty/src" "$tmp/empty/gate" "$tmp/empty/testdata"
-empty=(--interop "$tmp/empty/none.md" --testdata "$tmp/empty/testdata" --fuzz "$tmp/empty/stats.tsv" --gate "$tmp/empty/gate"
+mkdir -p "$tmp/empty/src" "$tmp/empty/gate"
+empty=(--interop "$tmp/empty/none.md"  --fuzz "$tmp/empty/stats.tsv" --gate "$tmp/empty/gate"
        --src "$tmp/empty/src" --out "$tmp/empty/page.md")
 check negative_noArtifactsNoPage 1 "no fuzz stats at" -- bash "$script" --check "${empty[@]}"
 [ ! -e "$tmp/empty/page.md" ] && echo "ok   negative_noArtifactsNoPage writes nothing" || { echo "FAIL a page was written"; fails=$((fails + 1)); }
@@ -38,7 +38,7 @@ expect degradedGate "Gate record: not available." "$tmp/empty/page.md"
 expect degradedInterop "Interop matrix: not available." "$tmp/empty/page.md"
 
 # fixtures
-fx="$tmp/fx"; mkdir -p "$fx/gate" "$fx/testdata" "$fx/soak" "$fx/fuzz/crashes/t" "$fx/src/kuicksilver-a/src/commonTest"
+fx="$tmp/fx"; mkdir -p "$fx/gate" "$fx/soak" "$fx/fuzz/crashes/t" "$fx/src/kuicksilver-a/src/commonTest"
 cat > "$fx/gate/aaaa.stamp" <<'S'
 commit=aaaa
 result=pass
@@ -82,11 +82,12 @@ JVM image (2 peers × 2 cases × 2 roles: 5 of the 6 cells both sides support ar
 
 JVM image (1 peer: 1 of 1 cells both sides support are green):
 S
-printf '{\n  "pair": "x_y",\n  "case": "retry",\n  "exits": {}\n}\n' > "$fx/testdata/one.json"
 printf '2026-01-01T00:00:00\tfoo.bar\t3600\t1000\t10\t10\t5\tok\n2026-01-01T01:00:00\tfoo.bar\t3600\t500\t10\t10\t5\tcrashed\n2026-01-01T02:00:00\tbaz\t1800\t7\t1\t1\t1\tload-timeout\n' > "$fx/fuzz/stats.tsv"
 touch "$fx/fuzz/crashes/t/crash-abc"
 cat > "$fx/soak/s.md" <<'S'
 # Soak `s`: PASS
+
+Run: 2026-01-01T00:00:00Z, commit deadbeef.
 
 Duration 3h, 4 clients, rate ceiling 1/s.
 
@@ -98,6 +99,7 @@ Iterations 100, unexpected failures 0 (0%; limit 0.5%).
 |---|---:|---:|---:|---:|---:|---|
 | proc.rssKiB | 10 | 20 | 1 | 2 | 30 | flat |
 | jvm.threads | 5 | 6 | 0 | 0 | 8 | GROWING |
+| soak.serverJobs | 2 | 3 | 0 | 0 | 5 | flat |
 
 ## Return to the idle baseline (quiet period 59 s)
 
@@ -112,7 +114,7 @@ Memory at idle (informational):
 | proc.rssKiB | 1 | 2 | 1 |
 S
 printf 'class T {\n  @Test fun negative_one() {}\n  @Test fun `negative_two`() {}\n  @Test fun positive() {}\n}\n' > "$fx/src/kuicksilver-a/src/commonTest/T.kt"
-args=(--interop "$fx/interop.md" --testdata "$fx/testdata" --fuzz "$fx/fuzz/stats.tsv" --gate "$fx/gate" --soak "$fx/soak/s.md" --src "$fx/src")
+args=(--interop "$fx/interop.md" --fuzz "$fx/fuzz/stats.tsv" --gate "$fx/gate" --soak "$fx/soak/s.md" --src "$fx/src")
 check fixturesComplete 0 "all sources present" -- bash "$script" --check "${args[@]}"
 bash "$script" "${args[@]}" --out "$fx/page1.md" 2>/dev/null; bash "$script" "${args[@]}" --out "$fx/page2.md" 2>/dev/null
 cmp -s "$fx/page1.md" "$fx/page2.md" && echo "ok   deterministic" || { echo "FAIL two runs differ"; fails=$((fails + 1)); }
@@ -122,13 +124,20 @@ if grep -q bbbb "$p"; then echo "FAIL a failed gate record was used"; fails=$((f
 expect firstMatrixOnly "9.9.9, QUIC Interop Runner abc1234, 2026-01-01" "$p"
 expect matrixSummary "JVM image: 5 of the 6 cells both sides support are green" "$p"
 expect matrixCells "5 green, 1 red, 2 not supported" "$p"
-expect testdata "one.json\`: x_y, case retry" "$p"
 expect fuzzRow "| foo.bar | 2 | 2.00 | 1500 | crashed |" "$p"
 expect fuzzTotal "| **total** | 3 | 2.50 | 1507 | |" "$p"
-expect fuzzCrashes "crashes directory: 1." "$p"
-expect soakRow "| s | PASS | Duration 3h, 4 clients | 100 (0 unexpected) | 1 of 2 | 1 of 1 |" "$p"
+expect fuzzCrashes "the artifacts do not say which are open): 1." "$p"
+expect soakRow "| s | 2026-01-01T00:00:00Z, commit deadbeef | PASS | Duration 3h, 4 clients | 100 (0 unexpected) | 2 of 3 | 1 of 1 |" "$p"
 expect soakMetric "| s | proc.rssKiB | 10 | 20 | 2 | 30 | flat |" "$p"
-expect soakMissingMetric "| s | proc.fds | not measured in this gate |" "$p"
+expect soakMissingMetric "| s | proc.fds | not sampled by this report |" "$p"
+expect coroutineJobs "| s | soak.serverJobs | 2 | 3 | 0 | 5 | flat |" "$p"
+if grep -qi "testdata\|Coroutine counts are not" "$p"; then echo "FAIL a removed section is back"; fails=$((fails + 1)); else echo "ok   noTestdataNoHandTypedCoroutineClaim"; fi
+expect reproducers "fixed ones included" "$p"
+# a report without the Run line, and a gate record for another commit only warns
+sed '/^Run: /,+1d' "$fx/soak/s.md" > "$fx/soak/old.md"
+bash "$script" "${args[@]}" --soak "$fx/soak/old.md" --out "$fx/page3.md" 2>/dev/null
+expect soakRunNotRecorded "run date/commit: not recorded" "$fx/page3.md"
+check checkWarnsOnForeignCommit 0 "warning: the gate record is for cccc" -- bash "$script" --check "${args[@]}"
 expect negativeCount "| kuicksilver-a | 2 |" "$p"
 if grep -q "$tmp" "$p"; then echo "FAIL an absolute path is in the page"; fails=$((fails + 1)); else echo "ok   no absolute path"; fi
 

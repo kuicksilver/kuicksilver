@@ -76,14 +76,16 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `docs/guide/ios.md` (the dependency line, the xcframework URL) name the version itself (a prerelease such as
    0.3.0-rc1 leaves them at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks). For a final version of
    the newest line, the supported-versions table of `SECURITY.md` names it too ("0.2.1 today"; the script does not check
-   this). Commit, then run the gate (step 1) on that commit. The 24–72 hour soak of CONTRIBUTING ("Soak and churn")
+   this). The same commit carries the regenerated reliability page [reliability.md](reliability.md): its numbers are
+   never typed by hand. Generate it before the commit, from the artifacts that exist then: the gate record of the last
+   commit before this one (the gate that already passed on the branch), the fuzz campaign statistics and the soak reports
+   (which name their own run date and commit). Run `tools/report/reliability.sh --check` (it names every missing
+   source, e.g. "no fuzz stats at build/fuzz-campaign/stats.tsv", and warns when the gate record is not for `HEAD`,
+   which is expected here), then `tools/report/reliability.sh`. The page's Gate section therefore names that earlier
+   commit, not the release commit, and says so; the page cannot name the gate of its own commit, because the gate runs
+   after it is written. Commit, then run the gate (step 1) on that commit. The 24–72 hour soak of CONTRIBUTING ("Soak and churn")
    precedes a planned release; a patch release that only moves OpenSSL to a fixed 3.5.x release (SECURITY.md, OpenSSL)
    needs the full gate but not the long soak.
-   The reliability page [reliability.md](reliability.md) is generated from the artifacts of that gate and soak, and
-   its numbers are never typed by hand: with the artifacts in place run `tools/report/reliability.sh --check` (it fails
-   with the name of every missing source, e.g. "no fuzz stats at build/fuzz-campaign/stats.tsv"), then
-   `tools/report/reliability.sh`, and commit the page with the release commit. The cases of the script are in
-   `tools/report/test-reliability.sh`.
 3. Dry run, then the release, from the same commit:
    ```
    tools/release/local-release.sh <version> --dry-run      # everything but the upload; refusals become warnings

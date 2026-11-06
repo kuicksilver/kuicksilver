@@ -22,6 +22,8 @@ the negative tests. Every number below is read from an artifact by `tools/report
 | Interop images | not run in this gate (see the matrix below) |
 | Windows VM | run |
 
+This is the gate record the page was generated from. The commit that carries the page is a later one, whose own gate runs after the page is written.
+
 ## Interop
 
 Latest matrix in [spec/interop.md](spec/interop.md): 0.2.0, QUIC Interop Runner 740c05a, 2026-10-13. A matrix is a release artifact: it is the run recorded there, not necessarily of the commit above.
@@ -31,36 +33,20 @@ Latest matrix in [spec/interop.md](spec/interop.md): 0.2.0, QUIC Interop Runner 
 
 First table (JVM image), cells counted from the table: 227 green, 10 red, 15 not supported by one of the sides.
 
-Saved runner results in `tools/interop/testdata/`: 13.
-
-- `clienthello-lost-quiche-handshakeloss-open.json`: kuicksilver_quiche, case handshakeloss
-- `clienthello-lost-quiche-handshakeloss.json`: kuicksilver_quiche, case handshakeloss
-- `closing-challenge-quiche-rebind-addr.json`
-- `closing-challenge-quinn-rebind-addr.json`
-- `closing-rebind-msquic-native-rebind-port.json`
-- `closing-rebind-msquic-rebind-addr.json`
-- `handshake-challenge-mirrored-flight.json`
-- `handshake-challenge-quiche-rebind-addr-undecryptable.json`
-- `handshake-challenge-quiche-rebind-addr.json`
-- `perf-result-regression.json`
-- `perf-result-sample-client.json`
-- `perf-result-sample.json`
-- `prohibited-port-rebind-ngtcp2-rebind-addr.json`: ngtcp2_kuicksilver, case rebind-addr
-
 ## Fuzzing
 
 Fuzz campaign statistics: not available. Fuzzing hours: not measured in this gate.
 
 ## Soak
 
-From the Markdown reports of `SoakResult.write()`. A report does not name the commit it ran on; the soak is run for a release (see [release.md](release.md)), not in every gate. Growth is the Theil–Sen slope over the window after warm-up; a metric is flat while its growth stays within the bound the report lists.
+From the Markdown reports of `SoakResult.write()`. The run line (UTC start and commit) is the report's own; a report from before that line existed says "not recorded". The soak is run for a release, not in every gate, so its commit can differ from the gate's. Growth is the Theil–Sen slope over the window after warm-up; a metric is flat while its growth stays within the bound the report lists.
 
-| Report | Verdict | Duration | Iterations | Flat metrics | Back to idle baseline |
-|---|---|---|---|---:|---:|
-| soak | PASS | Duration 2h, 8 clients | 186186 (0 unexpected) | 43 of 43 | 26 of 26 |
-| linux-arm64 | PASS | Duration 2h, 8 clients | 201095 (0 unexpected) | 40 of 40 | 25 of 25 |
+| Report | Run (UTC start, commit) | Verdict | Duration | Iterations | Flat metrics | Back to idle baseline |
+|---|---|---|---|---|---:|---:|
+| soak | run date/commit: not recorded | PASS | Duration 2h, 8 clients | 186186 (0 unexpected) | 43 of 43 | 26 of 26 |
+| linux-arm64 | run date/commit: not recorded | PASS | Duration 2h, 8 clients | 201095 (0 unexpected) | 40 of 40 | 25 of 25 |
 
-Resource trend after warm-up (baseline, median over the window, growth over the window, bound):
+Resource trend after warm-up (baseline, median over the window, growth over the window, bound). The coroutine job counts are `soak.serverJobs`, `quic.loopJobs`, `server.h3Jobs` and `server.tcpJobs`; a metric the run did not sample is marked so.
 
 | Report | Metric | Baseline | Median | Growth | Bound | Verdict |
 |---|---|---:|---:|---:|---:|---|
@@ -69,13 +55,17 @@ Resource trend after warm-up (baseline, median over the window, growth over the 
 | soak | jvm.heapAfterGcKiB | 8609 | 22426.5 | -1395.47 | 16384 | flat |
 | soak | jvm.threads | 24 | 49 | 0 | 8 | flat |
 | soak | soak.serverJobs | 2 | 26 | 0 | 6.5 | flat |
+| soak | quic.loopJobs | 12 | 44 | 0 | 11 | flat |
+| soak | server.h3Jobs | 0 | 1 | 0 | 5 | flat |
+| soak | server.tcpJobs | 0 | 4 | 0 | 5 | flat |
 | linux-arm64 | proc.rssKiB | 38092 | 148424 | 15656.23 | 32768 | flat |
 | linux-arm64 | proc.fds | 15 | 35 | 0 | 8 | flat |
-| linux-arm64 | jvm.heapAfterGcKiB | not measured in this gate | | | | |
-| linux-arm64 | jvm.threads | not measured in this gate | | | | |
+| linux-arm64 | jvm.heapAfterGcKiB | not sampled by this report | | | | |
+| linux-arm64 | jvm.threads | not sampled by this report | | | | |
 | linux-arm64 | soak.serverJobs | 2 | 20 | 0 | 5 | flat |
-
-Coroutine counts are not sampled by the soak: not measured in this gate.
+| linux-arm64 | quic.loopJobs | 12 | 42 | 0 | 10.5 | flat |
+| linux-arm64 | server.h3Jobs | 0 | 1 | 0 | 5 | flat |
+| linux-arm64 | server.tcpJobs | 0 | 4 | 0 | 5 | flat |
 
 ## Benchmarks
 
