@@ -78,8 +78,8 @@ static void alloc_window_open(void) {}
 static int alloc_window_close(void) { return -1; }
 #endif
 
-/* ksl_open decrypts in the packet's own buffer: no heap copy per packet (P.2), and a packet whose tag fails keeps its
-   ciphertext byte for byte, never any plaintext, for every AEAD (AES-128-GCM, AES-256-GCM through the token key, ChaCha20-Poly1305). */
+/* ksl_open decrypts in the packet's own buffer: no heap copy per packet (P.2), and a packet whose tag fails has its
+   payload wiped (its tag untouched), never any plaintext, for every AEAD (AES-128-GCM, AES-256-GCM through the token key, ChaCha20-Poly1305). */
 static void open_in_place(const char *name, ksl_key *w, ksl_key *r) {
     uint8_t hdr[8] = {0x40, 1, 2, 3, 4, 5, 6, 7}, pl[1300], sealed[1300], plain[1300];
     for (size_t i = 0; i < sizeof plain; i++) plain[i] = (uint8_t)(i * 7 + 1);
@@ -97,7 +97,9 @@ static void open_in_place(const char *name, ksl_key *w, ksl_key *r) {
             uint8_t before[1300]; memcpy(before, pl, (size_t)n);
             alloc_window_open(); int bad = ksl_open(r, 77, h2, sizeof h2, pl, (size_t)n); allocs = alloc_window_close();
             CHECK(bad == KSL_ERROR, "negative: a forged packet is rejected");
-            CHECK(!memcmp(pl, before, (size_t)n), "negative: a rejected packet keeps its ciphertext, no plaintext left behind");
+            int wiped = 1; for (size_t i = 0; i < len; i++) wiped &= pl[i] == 0;
+            CHECK(wiped, "negative: a rejected packet's payload is wiped, no plaintext left behind");
+            CHECK(!memcmp(pl + len, before + len, 16), "a rejected packet's tag is left as it came (a Stateless Reset check reads it)");
             if (allocs >= 0) CHECK(allocs == 0, "a rejected packet allocates nothing either");
         }
         /* the key still opens the genuine packet after the failures (the cipher context was left reusable) */
@@ -118,7 +120,7 @@ void run_key(void) {
     CHECK(ksl_key_initial(RFC9001_DCID, 8, 0, KSL_DIR_WRITE, 0xdeadbeefu) == NULL, "negative: unknown version");
     ksl_key_free(k); END();
 
-    { SECTION("open_in_place_no_alloc_ciphertext_kept_on_failure");
+    { SECTION("open_in_place_no_alloc_wiped_on_failure");
     ksl_key *cw = ksl_key_initial(RFC9001_DCID, 8, 0, KSL_DIR_WRITE, 0x00000001u), *sr = ksl_key_initial(RFC9001_DCID, 8, 1, KSL_DIR_READ, 0x00000001u);
     open_in_place("aes-128-gcm", cw, sr); ksl_key_free(cw); ksl_key_free(sr);
     ksl_key *ch = ksl_key_from_secret_for_test(KSL_AEAD_CHACHA20_POLY1305, RFC9001_A5_SECRET, 32, 0x00000001u);

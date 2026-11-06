@@ -482,9 +482,9 @@ host (load average 2-9), local; single runs, before = `614733d0d` (P.5), after =
 
 What went, by commit (each measured on its own, JVM loopback UDP; the order is the order they landed):
 
-- `ksl_open` decrypts in the packet's buffer; a packet whose tag fails gets its ciphertext back (the same keystream run
-  over it again) and so still leaves no plaintext behind. Not visible in the JVM figure (C heap), counted by the C tests
-  through the sanitizers' malloc hooks.
+- `ksl_open` decrypts in the packet's buffer; a packet whose tag fails has its payload wiped, so it still leaves no
+  plaintext behind (one pass, cheaper under a forged-packet flood than restoring the ciphertext). Not visible in the JVM
+  figure (C heap), counted by the C tests through the sanitizers' malloc hooks.
 - The connection ID table routes each datagram without boxing its SipHash key (an open-addressed table on the hash):
   one 16-byte object per datagram, 7.3 % of the figure before; 234-259 -> 219 MiB.
 - The loop takes a flowing socket's batch without a coroutine frame, a boxed `TimeMark` and two boxed `Duration`s: within
