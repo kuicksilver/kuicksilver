@@ -710,6 +710,9 @@ public class EndpointCore internal constructor(
             // the endpoint's own buffers and keys even when a connection's release failed
             connections.clear()
             accepted.clear()
+            byRemote.clear() // with the lists above: nothing keeps a released connection reachable through a closed endpoint
+            dirty.clear()
+            earlyPending.clear()
             perIp.clear()
             registry.clear()
             r.release { vnBuffer.close() }

@@ -436,6 +436,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a closed endpoint no longer keeps its connections reachable. `close()` released every connection's native state, but
+  the endpoint's timer heap and its table of connections by peer address still referenced each `ConnectionCore` (about
+  40 KB of Kotlin state per connection), so an application that kept a reference to a closed endpoint kept all of them.
+
 - Ktor client: a QUIC setup the server refuses with CONNECTION_REFUSED (a server in `Drain`, stopping, or with a full
   accept queue; RFC 9000 sections 5.2.2 and 20.1) no longer marks the HTTP/3 alternative broken. The call falls back to
   HTTP/1.1 once (`ProtocolDiagnostics.fallback = Refused`), the alternative stays cached (RFC 7838 sections 2.2 and 3),

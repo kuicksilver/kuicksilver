@@ -1177,6 +1177,9 @@ internal class EndpointLoop private constructor(
                     // also the happens-before edge for a dispatcher with more than one thread
                     r.release { withContext(kotlinx.coroutines.NonCancellable) { flushLock.withLock { released = true } } }
                     r.release { core.close() }
+                    // the timer coroutine is gone: the heap would otherwise keep every released connection reachable through
+                    // this endpoint for as long as the application holds it
+                    timers.clear()
                     r.release { inBatch.close() }
                     r.release { outBatch.close() }
                     r.release { single.close() }

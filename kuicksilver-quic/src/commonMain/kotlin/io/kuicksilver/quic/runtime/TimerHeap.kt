@@ -50,6 +50,18 @@ internal class TimerHeap {
         if (deadline < old) up(c.heapIndex) else down(c.heapIndex)
     }
 
+    /** Empties the heap and lets go of every connection in it (the endpoint closed: nothing is to fire again). */
+    fun clear() {
+        for (i in 0 until size) {
+            items[i]!!.let {
+                it.heapIndex = -1
+                it.heapDeadline = TimeMark.NEVER
+            }
+            items[i] = null
+        }
+        size = 0
+    }
+
     fun remove(c: ConnectionCore) {
         val i = c.heapIndex
         if (i < 0) return
