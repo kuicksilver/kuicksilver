@@ -8,7 +8,8 @@
 #   - every `…Exception` / `…Error` in backticks occurs in the code (its own class, or a library's it throws or wraps);
 #   - every `UPPER_SNAKE` code in backticks (CONNECTION_REFUSED, H3_EXCESSIVE_LOAD, SETTINGS_TIMEOUT) occurs in the
 #     main sources;
-#   - every entry of the enums listed below (FallbackReason, ProtocolReason) is mentioned in backticks on the page.
+#   - every entry of the enums listed below (FallbackReason, ProtocolReason) has a row of its own, named in backticks in the first cell, in the table headed by the enum's
+#     heading cell (`Reason`, `FallbackReason`).
 # A quote that is not a message of the code (a config value, a hint) goes in the `quote` list of the allowlist file
 # tools/check/troubleshooting-msgs.allow (one text per line, `#` comments), with the reason on the line above.
 # Needs python3. Usage: tools/check/troubleshooting-msgs.sh [root]   (exit 1, one `file:line: message` per finding)
@@ -20,8 +21,8 @@ import os, re, sys
 root = sys.argv[1]
 doc_rel = os.environ.get("TROUBLESHOOTING_DOC", "docs/guide/troubleshooting.md")
 allow_path = os.path.join(root, "tools", "check", "troubleshooting-msgs.allow")
-ENUMS = [("kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/ProtocolDiagnostics.kt", "FallbackReason"),
-         ("kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEventListener.kt", "ProtocolReason")]
+ENUMS = [("kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/ProtocolDiagnostics.kt", "FallbackReason", "`FallbackReason`"),
+         ("kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEventListener.kt", "ProtocolReason", "Reason")]
 if os.environ.get("TROUBLESHOOTING_ENUMS") is not None:
     ENUMS = [tuple(x.split(":")) for x in os.environ["TROUBLESHOOTING_ENUMS"].split(",") if x]
 findings = []
@@ -48,6 +49,7 @@ templ = TEMPLATE.sub("\x00", corpus)
 # string literals nested in a ${...} are messages too
 templ += "\n" + "\n".join(lit for m in re.finditer(r"\$\{[^}]*\}", corpus) for lit in re.findall(r'"([^"\n]*)"', m.group(0)))
 
+IDENTS = set(re.findall(r"\b[A-Za-z_]\w*\b", corpus))
 NUM = re.compile(r"0x[0-9A-Fa-f]+|\d+(?:\.\d+)?(?:ms|min|s|h|%)?")
 def word_regex(w, wild):
     m = re.match(r"^(.*?)([.:;,)]*)$", w, re.S)
@@ -60,20 +62,25 @@ def word_regex(w, wild):
     return ("(?:\x00|" + body + ")" if wild else body) + re.escape(punct)
 def present(msg):
     """The first literal piece of msg found in no message of the source, or None. A word of a piece may stand for a
-    `$value` of the source when it is a number, capitalised (an enum or a name), or the first or last word."""
+    `$value` of the source when it is a number or an identifier of the source (the first or last word, or capitalised)."""
     for p in re.split(r"<[^>]*>|…|\.\.\.|[\[\]]", msg):
         p = p.strip()
         if len(p) < 4 or not re.search(r"[A-Za-z]{3}", p): continue
         words = p.split()
         parts = []
         for i, w in enumerate(words):
-            wild = len(words) > 1 and (i in (0, len(words) - 1) or w[:1].isupper() or bool(NUM.match(w)))
+            # only a number, or a word that is an identifier of the source (an enum entry the message prints: `Handshake`
+            # in `$kind timeout after $d`), may stand for a `$value`; any other word must be literal text of a message
+            wild = len(words) > 1 and (bool(NUM.match(w)) or (w.rstrip(".:;,)") in IDENTS and (i in (0, len(words) - 1) or w[:1].isupper())))
             parts.append(word_regex(w, wild))
         if not re.search(r"\s+".join(parts), templ): return p
     return None
 
 lines = open(os.path.join(root, doc_rel), encoding="utf-8").read().split("\n")
 in_code, mentioned = False, set()
+last_row = last_hdr = -9
+rows_of = {}   # heading cell of a table -> the identifiers in backticks in the first cells of its rows
+head = None
 blocks, cur = [], None   # (first line, text): consecutive prose lines form one paragraph, a table row or a list item starts a new one
 for no, line in enumerate(lines, 1):
     if line.lstrip().startswith("```"): in_code = not in_code; cur = None; continue
@@ -86,6 +93,14 @@ for no, line in enumerate(lines, 1):
     if cur is None: blocks.append([no, line]); cur = blocks[-1]
     else: cur[1] += " " + line.strip()
 for no, line in blocks:
+    if line.startswith("|"):
+        first = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))][0]
+        if not line.lstrip("|").strip().startswith(("-", ":")):
+            if head is None or last_row != no - 1 and last_hdr != no - 2: head = first; last_hdr = no
+            else: rows_of.setdefault(head, set()).update(re.findall(r"`([^`]+)`", first))
+        last_row = no
+    else:
+        head = None
     text = line.replace("\\|", "\x01").replace('\\"', "\x02")   # `\"` inside a quoted message is a quote of the message
     for t in re.findall(r"`([^`]+)`", text): mentioned.add(t.replace("\x01", "|"))
     plain = text.replace("`", "")
@@ -106,7 +121,7 @@ for no, line in blocks:
             if not re.search(r"\b" + code + r"\b", corpus):
                 fail(f"{doc_rel}:{no}", f"`{code}` occurs nowhere in the source")
 
-for path, enum in ENUMS:
+for path, enum, heading in ENUMS:
     p = os.path.join(root, path)
     if not os.path.exists(p): fail(path, f"enum {enum} not found (tools/check/troubleshooting-msgs.sh)"); continue
     code = re.sub(r"/\*.*?\*/", "", open(p, encoding="utf-8").read(), flags=re.S)
@@ -122,7 +137,7 @@ for path, enum in ENUMS:
     head = body.split(";")[0]
     entries = [e for e in re.findall(r"(?:^|,)\s*([A-Z][A-Za-z0-9]*)\b(?:\([^)]*\))?", head)]
     for e in entries:
-        if e not in mentioned: fail(f"{doc_rel}", f"{enum}.{e} ({path}) is not mentioned on the page")
+        if e not in rows_of.get(heading, set()): fail(f"{doc_rel}", f"{enum}.{e} ({path}) has no row in the table headed {heading}")
 
 for f in findings: print(f)
 print(f"troubleshooting-msgs: {len(findings)} finding(s)")

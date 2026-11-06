@@ -16,6 +16,7 @@ public const val CODE = "H3_EXCESSIVE_LOAD"
 fun f(kind: Kind, d: Duration) = WidgetException("$kind timeout after $d")
 fun g(i: Int) = WidgetException("stream $i exceeds the limit of ${limit(i)}")
 fun h() = WidgetException("closed${if (done) "" else " before its handshake completed"}: gone")
+public enum class Kind { Handshake, Idle }
 public enum class Why {
     /** First. */
     First,
@@ -36,11 +37,15 @@ Intro.
 | `WidgetException` "Handshake timeout after 10s" | wait |
 | "stream 4 exceeds the limit of 3" | raise |
 | "closed[ before its handshake completed]: gone" | x |
+| "Handshake timeout after 10s" | y |
 | `H3_EXCESSIVE_LOAD` | y |
 
-`First` and `Second` are the reasons.
+| Reason | Meaning |
+|---|---|
+| `First` | a |
+| `Second` | b |
 '
-run() { printf '%s\n' "$1" > "$tmp/t.md"; TROUBLESHOOTING_DOC=t.md TROUBLESHOOTING_ENUMS="mod/src/commonMain/E.kt:Why" bash "$here/troubleshooting-msgs.sh" "$tmp" 2>&1; }
+run() { printf '%s\n' "$1" > "$tmp/t.md"; TROUBLESHOOTING_DOC=t.md TROUBLESHOOTING_ENUMS="mod/src/commonMain/E.kt:Why:Reason" bash "$here/troubleshooting-msgs.sh" "$tmp" 2>&1; }
 expect() {
   local want="$1" name="$2" out rc=0
   out="$(run "$3")" || rc=$?
@@ -49,10 +54,12 @@ expect() {
 }
 expect pass good "$good"
 expect fail invented-message "${good/stream 4 exceeds the limit of 3/stream 4 is over the limit of 3}" 'is in no message'
+expect fail invented-words "${good/Handshake timeout after 10s/frobnicated widgets}" 'is in no message'
+expect fail wrong-leading-word "${good/Handshake timeout after 10s/Wrong timeout after 10s}" 'is in no message'
+expect fail enum-only-in-prose "${good/| \`Second\` | b |/Second is prose.}" 'Why.Second'
 expect fail test-only-message "${good/wait/see \"a message only a test knows\"}" 'is in no message'
 expect fail invented-class "${good/WidgetException/GadgetException}" 'GadgetException'
 expect fail invented-code "${good/H3_EXCESSIVE_LOAD/H3_NOT_A_CODE}" 'H3_NOT_A_CODE'
-expect fail missing-enum-entry "${good/ and \`Second\`/}" 'Why.Second'
 expect fail unpaired-quote "${good/| raise |/| raise \"it |}" 'odd number'
 printf '%s\n' 'stream 4 is over the limit of 3' > "$tmp/tools/check/troubleshooting-msgs.allow"
 expect pass allowlisted "${good/stream 4 exceeds the limit of 3/stream 4 is over the limit of 3}"

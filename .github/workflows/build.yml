@@ -60,6 +60,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
+      - name: 'lint: fetch the release tags (config-table.sh checks Since against them)'
+        run: git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'
       - name: 'lint: action/image pins'
         run: bash tools/check/pins.sh .
       - name: 'lint: documentation references'

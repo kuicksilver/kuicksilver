@@ -8,8 +8,9 @@
 #   - the table has a Default column and a Since column; the Default cell agrees with the source when the source default
 #     is a number, a Duration (`30.seconds`), a Boolean or null (other defaults must show the expression, minus its
 #     qualifiers and `()`);
-#   - the Since cell is a version (`0.2.0`); when the git tags v0.2.0 / v0.2.1 exist it must agree with the first tag
-#     whose source has the option (an option in neither is 0.3.0 or later).
+#   - the Since cell is a version (`0.2.0`); with git tags (`v<version>`) it must agree with the first tag whose class has
+#     the option (an option in no tag is later than the newest tag); without tags only the format is checked;
+#   - a row of a checked section that names no option of its classes is stale (inherited options: `#allow` in the spec).
 # Needs python3 (and git, for the Since check). Parses the Kotlin source with regular expressions and brace counting
 # only: a default it cannot reduce is only compared as text, an option without an inline default is only looked up.
 # Usage: tools/check/config-table.sh [root]   (exit 1 and one line per finding as `file:line: message`)
@@ -91,20 +92,18 @@ def ctor_params(code, name):
         k += 1
     return j + 1, k
 
-def options(path, scope, kind):
-    """name -> (line, type, default-or-None) for the options of a class."""
-    raw = open(os.path.join(root, path), encoding="utf-8").read()
+def options_in(raw, scope, kind):
+    """name -> (line, type, default-or-None) for the options of a class in Kotlin source text; None when the class is absent."""
     code = strip_comments(raw, keep_strings=False)
     kept = strip_comments(raw)
     if kind == "ctor":
         span = ctor_params(code, scope.split(".")[-1])
-        pat = re.compile(r"^[ \t]*public\s+val\s+(\w+)\s*:\s*([^=\n,]+?)\s*(?:=\s*(.+?))?,?\s*$", re.M)
+        pat = re.compile(r"^[ \t]*(?:@[\w.]+(?:\([^)]*\))?\s+)*public\s+val\s+(\w+)\s*:\s*([^=\n,]+?)\s*(?:=\s*(.+?))?,?\s*$", re.M)
     else:
         span = class_body(code, scope)
-        pat = re.compile(r"^[ \t]*public\s+var\s+(\w+)\s*:\s*([^=\n]+?)\s*(?:=\s*(.*?))?\s*$", re.M)
+        pat = re.compile(r"^[ \t]*(?:@[\w.]+(?:\([^)]*\))?\s+)*public\s+var\s+(\w+)\s*:\s*([^=\n]+?)\s*(?:=\s*(.*?))?\s*$", re.M)
     if span is None:
-        fail(path, f"class {scope} not found (tools/check/config-table.spec)")
-        return {}
+        return None
     out = {}
     for m in pat.finditer(code, span[0], span[1]):
         line = code.count("\n", 0, m.start()) + 1
@@ -115,6 +114,13 @@ def options(path, scope, kind):
                 default = kept.split("\n")[line].strip()
         out[m.group(1)] = (line, m.group(2).strip(), default)
     return out
+
+def options(path, scope, kind):
+    found = options_in(open(os.path.join(root, path), encoding="utf-8").read(), scope, kind)
+    if found is None:
+        fail(path, f"class {scope} not found (tools/check/config-table.spec)")
+        return {}
+    return found
 
 # ---------------------------------------------------------------- Kotlin default -> canonical value
 UNIT = {"nanoseconds": 1e-9, "milliseconds": 1e-3, "seconds": 1.0, "minutes": 60.0, "hours": 3600.0, "days": 86400.0}
@@ -214,32 +220,36 @@ def column(hdr, name):
     return None
 
 # ---------------------------------------------------------------- git: first tag with an option
-TAGS = ["v0.2.0", "v0.2.1"]
 def git(*args):
     try:
         return subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, check=True).stdout
     except Exception:
         return None
-have_tags = [t for t in TAGS if git("rev-parse", "-q", "--verify", f"refs/tags/{t}") is not None]
-def first_tag(path, name, kind):
-    """'0.2.0', '0.2.1' or '0.3.0' (not in a tag); None when tags are unavailable."""
-    if len(have_tags) < len(TAGS): return None
-    kw = "var" if kind == "var" else "val"
-    pat = re.compile(r"\bpublic\s+" + kw + r"\s+" + re.escape(name) + r"\s*:")
+def vkey(v): return tuple(int(x) for x in v.split("."))
+TAGS = sorted((t for t in (git("tag", "-l", "v[0-9]*") or "").split() if re.fullmatch(r"v\d+\.\d+\.\d+", t)), key=lambda t: vkey(t[1:]))
+def first_tag(path, scope, name, kind):
+    """The version of the first tag whose class `scope` has the option, or "unreleased"."""
+    last = scope.split(".")[-1]
     for t in TAGS:
         src = git("show", f"{t}:{path}")
-        if src is None:   # the file did not exist then: look in the same module's other files
-            grep = git("grep", "-lE", r"public\s+" + kw + r"\s+" + name + r"\s*:", t, "--", path.split("/src/")[0])
-            if grep and any(True for _ in grep.split("\n") if _): return t[1:]
-            continue
-        if pat.search(src): return t[1:]
-    return "0.3.0"
+        cands = [src] if src is not None else []
+        if src is None:   # the file did not exist then: the class may have lived in another file of the module
+            listed = git("grep", "-lE", r"\bclass\s+" + last + r"\b", t, "--", path.split("/src/")[0]) or ""
+            cands = [git("show", l) for l in listed.split("\n") if l.strip()]
+        for text in cands:
+            found = options_in(text or "", scope, kind)
+            if found and name in found: return t[1:]
+    return "unreleased"
 
 # ---------------------------------------------------------------- run
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 total = 0
+seen, allowed = {}, {}
 for spec_no, spec in enumerate(open(spec_path, encoding="utf-8").read().split("\n"), 1):
     spec = spec.strip()
+    if spec.startswith("#allow "):   # `#allow <heading> | name, name`: rows of options the classes inherit
+        h, _, names = spec[7:].partition("|")
+        allowed.setdefault(h.strip(), set()).update(n.strip() for n in names.split(",") if n.strip()); continue
     if not spec or spec.startswith("#"): continue
     parts = [p.strip() for p in spec.split("|")]
     if len(parts) != 4:
@@ -247,7 +257,9 @@ for spec_no, spec in enumerate(open(spec_path, encoding="utf-8").read().split("\
     section, src, scope, kind = parts
     if section not in sections:
         fail(doc_rel, f"no section `{section}` (tools/check/config-table.spec:{spec_no})"); continue
-    for name, (line, typ, default) in options(src, scope, kind).items():
+    opts = options(src, scope, kind)
+    seen.setdefault(section, set()).update(opts)
+    for name, (line, typ, default) in opts.items():
         total += 1
         hint = "client" if "Client" in scope else "server" if "Server" in scope else ""
         row = row_for(section, name, hint)
@@ -267,13 +279,21 @@ for spec_no, spec in enumerate(open(spec_path, encoding="utf-8").read().split("\
         if not VERSION.match(since):
             fail(f"{doc_rel}:{no}", f"`{name}`: Since is `{since}`, expected a version such as 0.2.0")
         else:
-            want = first_tag(src, name, kind)
-            if want == "0.3.0":
-                if tuple(map(int, since.split("."))) < (0, 3, 0):
-                    fail(f"{doc_rel}:{no}", f"`{name}`: Since {since}, but no tag has it in {src}: 0.3.0 or later")
+            want = first_tag(src, scope, name, kind) if TAGS else None
+            if want == "unreleased":
+                if vkey(since) <= vkey(TAGS[-1][1:]):
+                    fail(f"{doc_rel}:{no}", f"`{name}`: Since {since}, but no tag has it in {scope} ({src}): later than {TAGS[-1][1:]}")
             elif want is not None and want != since:
-                fail(f"{doc_rel}:{no}", f"`{name}`: Since {since}, but v{want} is the first tag with it in {src}")
+                fail(f"{doc_rel}:{no}", f"`{name}`: Since {since}, but {want} is the first tag with it in {scope} ({src})")
 
+# stale rows: a plain-identifier row of a spec'd section that matches no option of the section's classes
+for section, names in seen.items():
+    for no, c, hdr in sections.get(section, []):
+        mm = re.fullmatch(r"(?:(?:client|server)\s+)?`([A-Za-z_]\w*)`(?:\s*\([^)]*\))*", c[0].strip())
+        if mm and mm.group(1) not in names and mm.group(1) not in allowed.get(section, set()):
+            fail(f"{doc_rel}:{no}", f"row `{mm.group(1)}` of `{section}` matches no option of its classes (stale? inherited options go in a `#allow` line of the spec)")
+
+if not TAGS: print("Since: tags absent, format only")
 for f in findings: print(f)
 print(f"config-table: {total} options checked, {len(findings)} finding(s)")
 sys.exit(1 if findings else 0)

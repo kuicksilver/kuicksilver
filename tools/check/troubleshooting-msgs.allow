@@ -11,3 +11,5 @@ work directory <dir> is a symbolic link / is not a directory / is owned by <owne
 OpenSSL <found> found, OpenSSL 3.5+ (not 4.x) required
 # Http3Endpoint.kt:122 interpolates the constant: "the server chose ALPN \"$alpn\", not \"$H3\"".
 the server chose ALPN \"<alpn>\", not \"h3\"
+# KslLoader.jvm.kt:338 builds "resource ${RESOURCE_DIR}$name not on the classpath" (RESOURCE_DIR is META-INF/native/).
+resource META-INF/native/<name> not on the classpath
