@@ -80,8 +80,11 @@ whose call takes no timeout: Kotlin stops waiting and lets it end, at most four 
 
 QUIC-LB block key, additive under 7 (routable server connection IDs, draft-ietf-quic-load-balancers-21 section 5.4):
 `KSL_EKEY_LB`, `ksl_key_lb(key[16])` copies a configured AES-128 key into a `ksl_key` (the JNI copy and the Kotlin array are
-wiped; the object is cleansed on `ksl_key_free`), `ksl_key_random(KSL_EKEY_LB)` makes a random one inside `ksl` (the local
-key that permutes the nonce counter), and `ksl_key_ecb16(key, decrypt, in, out)` runs one AES-128-ECB block. Like
-`ksl_key_mac16` it takes a cipher context per call, so the key object is immutable and the loops of a group share it; an LB
-key has no AEAD or header-protection context, so `ksl_seal`, `ksl_open`, `ksl_header_mask`, `ksl_key_mac16` and
-`ksl_key_next` refuse it. Kotlin: `QuicCrypto.newLoadBalancerKey` (`LoadBalancerKey`), `KslLbKey` (internal). 78 functions.
+wiped; the object is cleansed on `ksl_key_free`), `ksl_key_random(KSL_EKEY_LB)` makes a random one inside `ksl` (the key
+that permutes plaintext nonces), `ksl_key_lb_derive(key, label[16])` makes the key whose bytes are `key`'s encryption of
+`label` (the nonce permutation key of an encrypted configuration, so its bytes never reach Kotlin either), and
+`ksl_key_ecb16(key, decrypt, in, out)` runs one AES-128-ECB block. The key schedule is expanded once into two template
+contexts at creation; each call runs on an `EVP_CIPHER_CTX_copy` of one, so the key object is immutable and the loops of a
+group share it, and an attacker-triggered check (the Stateless Reset gate) costs no key expansion. An LB key has no AEAD or
+header-protection context, so `ksl_seal`, `ksl_open`, `ksl_header_mask`, `ksl_key_mac16` and `ksl_key_next` refuse it.
+Kotlin: `QuicCrypto.newLoadBalancerKey` (`LoadBalancerKey`, with `derive`), `KslLbKey` (internal). 79 functions.

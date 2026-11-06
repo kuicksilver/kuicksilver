@@ -451,6 +451,12 @@ public interface LoadBalancerKey : AutoCloseable {
         out: ByteArray,
         outOffset: Int,
     )
+
+    /**
+     * A new key (the caller closes it) whose 16 bytes are this key's encryption of the 16-byte [label]; the bytes stay in the
+     * provider. The default throws [UnsupportedOperationException].
+     */
+    public fun derive(label: ByteArray): LoadBalancerKey = throw UnsupportedOperationException("this LoadBalancerKey cannot derive keys")
 }
 
 /** The crypto provider the QUIC core sees (ADR-0002). */

@@ -105,7 +105,8 @@ ksl_key *ksl_key_initial(const uint8_t *dcid, size_t len, int is_server, int dir
     OPENSSL_cleanse(sec, 32);
     return k;
 }
-/* A QUIC-LB block key: the 16 bytes in k->key, no cipher context of its own (ksl_key_ecb16 makes one per call). */
+/* A QUIC-LB block key: the 16 bytes in k->key and two contexts that hold its key schedule (encrypt, decrypt), built once.
+   Calls never touch them: ksl_key_ecb16 copies one (no key expansion), so the object stays immutable and shareable. */
 static ksl_key *lb_build(const uint8_t key[16]) {
     ksl_key *k = calloc(1, sizeof *k);
     if (!k)
@@ -114,6 +115,18 @@ static ksl_key *lb_build(const uint8_t key[16]) {
     k->kind = KSL_EKEY_LB;
     k->key_len = 16;
     memcpy(k->key, key, 16);
+    const EVP_CIPHER *ecb = ksl_cipher(KSL_CIPHER_AES_128_ECB, EVP_aes_128_ecb());
+    k->lb_enc = EVP_CIPHER_CTX_new();
+    k->lb_dec = EVP_CIPHER_CTX_new();
+    int ok = k->lb_enc && k->lb_dec && EVP_EncryptInit_ex(k->lb_enc, ecb, NULL, k->key, NULL) == 1 &&
+             EVP_CIPHER_CTX_set_padding(k->lb_enc, 0) == 1 &&
+             EVP_DecryptInit_ex(k->lb_dec, ecb, NULL, k->key, NULL) == 1 &&
+             EVP_CIPHER_CTX_set_padding(k->lb_dec, 0) == 1;
+    if (!ok) {
+        ERR_clear_error();
+        ksl_key_free(k);
+        return NULL;
+    }
     return k;
 }
 ksl_key *ksl_key_lb(const uint8_t key[16]) {
@@ -124,13 +137,20 @@ int ksl_key_ecb16(ksl_key *k, int decrypt, const uint8_t in[16], uint8_t out[16]
         return KSL_ERROR;
     EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new();
     int n = 0, ok = c != NULL;
-    const EVP_CIPHER *ecb = ksl_cipher(KSL_CIPHER_AES_128_ECB, EVP_aes_128_ecb());
-    ok = ok && EVP_CipherInit_ex(c, ecb, NULL, k->key, NULL, decrypt ? 0 : 1) == 1 &&
-         EVP_CIPHER_CTX_set_padding(c, 0) == 1 && EVP_CipherUpdate(c, out, &n, in, 16) == 1 && n == 16;
-    EVP_CIPHER_CTX_free(c); /* frees the expanded key with the context */
+    ok = ok && EVP_CIPHER_CTX_copy(c, decrypt ? k->lb_dec : k->lb_enc) == 1 &&
+         EVP_CipherUpdate(c, out, &n, in, 16) == 1 && n == 16;
+    EVP_CIPHER_CTX_free(c); /* frees the copied key schedule with the context */
     if (!ok)
         ERR_clear_error();
     return ok ? KSL_OK : KSL_ERROR;
+}
+ksl_key *ksl_key_lb_derive(ksl_key *k, const uint8_t label[16]) {
+    uint8_t derived[16];
+    if (!label || ksl_key_ecb16(k, 0, label, derived) != KSL_OK)
+        return NULL;
+    ksl_key *d = lb_build(derived);
+    OPENSSL_cleanse(derived, sizeof derived);
+    return d;
 }
 ksl_key *ksl_key_random(int kind) {
     uint8_t secret[32];
@@ -193,6 +213,8 @@ void ksl_key_free(ksl_key *k) {
     EVP_CIPHER_CTX_free(k->enc);
     EVP_CIPHER_CTX_free(k->dec);
     EVP_CIPHER_CTX_free(k->hp_ctx);
+    EVP_CIPHER_CTX_free(k->lb_enc);
+    EVP_CIPHER_CTX_free(k->lb_dec);
     OPENSSL_cleanse(k, sizeof *k);
     free(k);
 }

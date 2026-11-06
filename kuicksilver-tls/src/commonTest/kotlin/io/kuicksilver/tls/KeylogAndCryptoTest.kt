@@ -164,6 +164,23 @@ class KslCryptoTest {
         }
     }
 
+    @Test fun lbKeyDerivedIsTheEncryptedLabel() {
+        val label = ByteArray(16) { (0x40 + it).toByte() }
+        KslLbKey.of(unhex("000102030405060708090a0b0c0d0e0f")).use { k ->
+            val bytes = ByteArray(16)
+            k.encrypt(label, bytes)
+            k.derive(label).use { d ->
+                KslLbKey.of(bytes).use { expect ->
+                    val a = ByteArray(16)
+                    val b = ByteArray(16)
+                    d.encrypt(ByteArray(16), 0, a, 0)
+                    expect.encrypt(ByteArray(16), b)
+                    assertContentEquals(b, a)
+                }
+            }
+        }
+    }
+
     @Test fun negative_lbKeySourceArrayWiped() {
         val k = unhex("8f95f09245765f80256934e50c66207f")
         KslLbKey.of(k).close()

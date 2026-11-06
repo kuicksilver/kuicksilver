@@ -269,6 +269,12 @@ public expect object Ksl {
     /** A QUIC-LB block key ([KslConst.EKEY_LB]) from the 16 bytes of [key], copied into native memory; the caller wipes its array. */
     public fun keyLb(key: ByteArray): Long
 
+    /** A new QUIC-LB key whose bytes are [key]'s encryption of the 16-byte [label]; the bytes never leave ksl. */
+    public fun keyLbDerive(
+        key: Long,
+        label: ByteArray,
+    ): Long
+
     /**
      * One AES-128-ECB block with a QUIC-LB key ([KslConst.EKEY_LB]): `input[inOffset, +16)` encrypted (or with [decrypt]
      * decrypted) into `out[outOffset, +16)`; the two ranges may be the same. Safe to call concurrently on one key.

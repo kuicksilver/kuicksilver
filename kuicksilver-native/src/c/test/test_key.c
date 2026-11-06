@@ -353,6 +353,19 @@ void run_key(void) {
         CHECK(ksl_key_ecb16(r, 0, pt, a) == KSL_OK && ksl_key_ecb16(r2, 0, pt, b) == KSL_OK && memcmp(a, b, 16) != 0,
               "two random lb keys differ");
         CHECK(ksl_key_ecb16(r, 1, a, b) == KSL_OK && !memcmp(b, pt, 16), "a random lb key decrypts what it encrypted");
+        /* a derived key is the key whose bytes are k's encryption of the label */
+        uint8_t label[16] = {'l', 'a', 'b', 'e', 'l'}, kb[16], c1[16], c2[16];
+        CHECK(ksl_key_ecb16(k, 0, label, kb) == KSL_OK, "label encrypted");
+        ksl_key *d = ksl_key_lb_derive(k, label), *expect = ksl_key_lb(kb);
+        CHECK(d && expect && ksl_key_ecb16(d, 0, pt, c1) == KSL_OK && ksl_key_ecb16(expect, 0, pt, c2) == KSL_OK &&
+                  !memcmp(c1, c2, 16),
+              "lb_key_derive: AES_k(label) as the new key");
+        CHECK(ksl_key_lb_derive(r, NULL) == NULL, "negative: no label");
+        ksl_key *reset = ksl_key_random(KSL_EKEY_RESET);
+        CHECK(ksl_key_lb_derive(reset, label) == NULL, "negative: derive from a reset key");
+        ksl_key_free(reset);
+        ksl_key_free(d);
+        ksl_key_free(expect);
         ksl_key_free(r);
         ksl_key_free(r2);
         ksl_key_free(k);

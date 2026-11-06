@@ -183,7 +183,12 @@ public final class io/kuicksilver/tls/KslQuicCrypto : io/kuicksilver/tls/QuicCry
 
 public abstract interface class io/kuicksilver/tls/LoadBalancerKey : java/lang/AutoCloseable {
 	public abstract fun decrypt ([BI[BI)V
+	public fun derive ([B)Lio/kuicksilver/tls/LoadBalancerKey;
 	public abstract fun encrypt ([BI[BI)V
+}
+
+public final class io/kuicksilver/tls/LoadBalancerKey$DefaultImpls {
+	public static fun derive (Lio/kuicksilver/tls/LoadBalancerKey;[B)Lio/kuicksilver/tls/LoadBalancerKey;
 }
 
 public final class io/kuicksilver/tls/PacketProtectionException : java/io/IOException {

@@ -511,6 +511,14 @@ static jlong j_key_lb(JNIEnv *e, jclass c, jbyteArray k) {
     wipe(key, sizeof key);
     return h;
 }
+static jlong j_key_lb_derive(JNIEnv *e, jclass c, jlong k, jbyteArray label) {
+    (void)c;
+    uint8_t l[16];
+    if (!label || (*e)->GetArrayLength(e, label) != 16)
+        return 0;
+    (*e)->GetByteArrayRegion(e, label, 0, 16, (jbyte *)l);
+    return H(ksl_key_lb_derive(P(ksl_key, k), l));
+}
 static jint j_key_ecb16(JNIEnv *e, jclass c, jlong k, jboolean dec, jbyteArray in, jint off, jbyteArray out,
                         jint outOff) {
     (void)c;
@@ -866,6 +874,7 @@ static const JNINativeMethod methods[] = {
     {"keyRandom", "(I)J", (void *)j_key_random},
     {"keyMac16", "(J" S_BB "II[BI)I", (void *)j_key_mac16},
     {"keyLb", "([B)J", (void *)j_key_lb},
+    {"keyLbDerive", "(J[B)J", (void *)j_key_lb_derive},
     {"keyEcb16", "(JZ[BI[BI)I", (void *)j_key_ecb16},
     {"seal", "(JJ" S_BB "II" S_BB "III)I", (void *)j_seal},
     {"open", "(JJ" S_BB "II" S_BB "II)I", (void *)j_open},

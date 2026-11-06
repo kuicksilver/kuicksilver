@@ -156,6 +156,7 @@ abstract interface io.kuicksilver.tls/EarlyDataAdmission { // io.kuicksilver.tls
 abstract interface io.kuicksilver.tls/LoadBalancerKey : kotlin/AutoCloseable { // io.kuicksilver.tls/LoadBalancerKey|null[0]
     abstract fun decrypt(kotlin/ByteArray, kotlin/Int, kotlin/ByteArray, kotlin/Int) // io.kuicksilver.tls/LoadBalancerKey.decrypt|decrypt(kotlin.ByteArray;kotlin.Int;kotlin.ByteArray;kotlin.Int){}[0]
     abstract fun encrypt(kotlin/ByteArray, kotlin/Int, kotlin/ByteArray, kotlin/Int) // io.kuicksilver.tls/LoadBalancerKey.encrypt|encrypt(kotlin.ByteArray;kotlin.Int;kotlin.ByteArray;kotlin.Int){}[0]
+    open fun derive(kotlin/ByteArray): io.kuicksilver.tls/LoadBalancerKey // io.kuicksilver.tls/LoadBalancerKey.derive|derive(kotlin.ByteArray){}[0]
 }
 
 abstract interface io.kuicksilver.tls/PacketProtector : kotlin/AutoCloseable { // io.kuicksilver.tls/PacketProtector|null[0]

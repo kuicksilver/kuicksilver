@@ -39,17 +39,21 @@ public enum class SignatureAlgorithm(
 
 /**
  * An AES-128-ECB block key for QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4) held in `ksl`: the 16
- * key bytes are copied into native memory once and wiped there on [close]; Kotlin keeps only the handle. Immutable, so
- * [encrypt] and [decrypt] may run on several threads at once (one cipher context per call).
+ * key bytes are copied into native memory once and wiped there on [close]; Kotlin keeps only the handle. Immutable (the key
+ * schedule is expanded once and copied per call), so [encrypt], [decrypt] and [derive] may run on several threads at once.
+ * [close] is idempotent and safe from any thread, but it frees the native key: call it once no call on the key is running or
+ * can start (an endpoint closes its keys after its loops stopped); a call after it throws IllegalStateException.
  */
 @InternalKuicksilverApi
-@OptIn(ExperimentalKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 public class KslLbKey internal constructor(
     handle: Long,
 ) : LoadBalancerKey {
-    private var h: Long = handle
+    private val h = kotlin.concurrent.atomics.AtomicLong(handle)
 
-    private fun k(): Long = h.also { if (it == 0L) throw IllegalStateException("KslLbKey is closed") }
+    private fun k(): Long = h.load().also { if (it == 0L) throw IllegalStateException("KslLbKey is closed") }
+
+    override fun derive(label: ByteArray): LoadBalancerKey = KslLbKey(Ksl.keyLbDerive(k(), label))
 
     override fun encrypt(
         input: ByteArray,
@@ -78,11 +82,8 @@ public class KslLbKey internal constructor(
     ): Unit = decrypt(in16, 0, out16, 0)
 
     override fun close() {
-        val k = h
-        if (k != 0L) {
-            h = 0L
-            Ksl.keyFree(k)
-        }
+        val k = h.exchange(0L)
+        if (k != 0L) Ksl.keyFree(k)
     }
 
     public companion object {

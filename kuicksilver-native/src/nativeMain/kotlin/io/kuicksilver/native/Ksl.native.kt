@@ -479,6 +479,16 @@ public actual object Ksl {
         }
     }
 
+    public actual fun keyLbDerive(
+        key: Long,
+        label: ByteArray,
+    ): Long {
+        require(label.size == 16) { "a derivation label is 16 bytes, not ${label.size}" }
+        return label.pin { p, _ -> ksl_key_lb_derive(key(key), p) }.h().also {
+            if (it == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_key_lb_derive failed: not a QUIC-LB key?")
+        }
+    }
+
     public actual fun keyEcb16(
         key: Long,
         decrypt: Boolean,
