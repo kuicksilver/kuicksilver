@@ -120,7 +120,8 @@ internal object DnsMessage {
 /**
  * The HTTPS records of [name] in an answer of the system resolver: a whole message goes through [DnsMessage.answers];
  * a record list (Apple, Windows, which hand out records) through [SvcbCodec.parseRdata], each with its owner and TTL.
- * Null when the answer cannot be used, a malformed record included (RFC 9460 section 2.2: the RRSet is rejected).
+ * Empty for a malformed RRset (RFC 9460 section 2.2: rejected, the connection goes on without SVCB); null when the
+ * answer cannot be used.
  */
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 internal fun httpsRecordsOf(
@@ -145,6 +146,8 @@ internal fun httpsRecordsOf(
                 }
             }
         }
+    } catch (_: SvcbMalformedException) {
+        emptyList() // RFC 9460 section 2.2: the RRset is rejected, the connection goes on without SVCB
     } catch (_: DnsException) {
         null
     }

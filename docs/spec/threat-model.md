@@ -255,7 +255,9 @@ Status (core review): skipped packet numbers, all CIDs (the client's ODCID/SCID,
   (`ClientHttpsRecordTest.negative_wrongCertificateAtTargetFallsBackAndMarksBroken`). Lookups are bounded: one per name
   at a time, each at most the connect timeout (30 s at most), at most 8 AliasMode steps with loop detection
   (`.negative_aliasLoopStops`), 1000 cached names, and a request waits at most `httpsRecordExtraWait` after its addresses
-  resolved (`.negative_hangingSourceDoesNotDelayBeyondExtraWait`).
+  resolved (`.negative_hangingSourceDoesNotDelayBeyondExtraWait`). An attacker who drops the HTTPS answers can only make
+  the client connect as without records; with `Exchange(secure = true)` (protected answers) a failed lookup abandons the
+  request instead (RFC 9460 section 3.1; `ClientHttpsFailureTest.negative_failureOverSecureDnsAbandonsTheRequest`).
 - **Residue:** only IP literals are classified: an alternative named by a DNS name that resolves to a local address is not caught (the resolver runs in the QUIC connect, and a check before it could be raced by DNS rebinding). That exposure equals a redirect to such a name, which the HTTP client follows anyway.
 - **Verification:** `negative_altSvcFromUnverifiedTls`, `AltSvcDestinationTest.negative_altSvcToLocalNetworkFromPublicOrigin`, `.negative_altSvcToUnspecifiedOrMulticastAlwaysRefused`, `.negative_shorthandIpv4AltSvcToLocalNetworkRefused`, `.negative_ambiguousOrInvalidNumericAltSvcHostRefused`, `.localOriginMayPointToLocalAlternatives`, `negative_preferredAddressIgnored` (the zero-address hook), `PreferredAddressTest.negative_preferredAddressToLoopbackFromPublicServerIgnored`, `.negative_preferredAddressUnspecifiedOrMulticastIgnored`, `.negative_preferredAddressOnReflectionPortIgnored` (a server cannot aim the client's probes at a DNS, NTP, SSDP, mDNS or memcached port either).
 

@@ -157,8 +157,10 @@ public abstract interface class io/kuicksilver/ktor/client/HttpsRecordSource {
 }
 
 public final class io/kuicksilver/ktor/client/HttpsRecordSource$Exchange : io/kuicksilver/ktor/client/HttpsRecordSource {
-	public fun <init> (Lkotlin/jvm/functions/Function2;)V
+	public fun <init> (ZLkotlin/jvm/functions/Function2;)V
+	public synthetic fun <init> (ZLkotlin/jvm/functions/Function2;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getExchange ()Lkotlin/jvm/functions/Function2;
+	public final fun getSecure ()Z
 }
 
 public final class io/kuicksilver/ktor/client/HttpsRecordSource$Off : io/kuicksilver/ktor/client/HttpsRecordSource {

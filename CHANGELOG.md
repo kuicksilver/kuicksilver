@@ -20,7 +20,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   records (following AliasMode) and connects to their endpoints in priority order over the transports each allows
   (RFC 9460 section 3): a record with `alpn=h3` lets the first request race HTTP/3 at once, TCP goes to the record's
   target and port, and an endpoint that fails is followed by the next, then by the origin; the certificate is still
-  checked against the origin's name. The request waits for
+  checked against the origin's name. `Exchange(secure = true)` declares answers protected (DoH, DoT, DNSSEC): a failed
+  lookup then abandons the request (RFC 9460 section 3.1). The request waits for
   the records at most `httpsRecordExtraWait` (50 ms) after the origin's addresses resolved; answers are cached by TTL
   and dropped on a network change. New `KuicksilverEventListener.httpsRecordUsed` and `AlternativeSource.HttpsRecord`
   (reserved before). `HttpsRecordSource.System` asks the system resolver: `res_nquery` on Linux, `DNSServiceQueryRecord`

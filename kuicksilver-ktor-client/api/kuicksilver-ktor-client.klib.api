@@ -101,10 +101,12 @@ abstract interface io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.kt
 
 sealed interface io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource|null[0]
     final class Exchange : io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange|null[0]
-        constructor <init>(kotlin.coroutines/SuspendFunction1<kotlin/ByteArray, kotlin/ByteArray>) // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.<init>|<init>(kotlin.coroutines.SuspendFunction1<kotlin.ByteArray,kotlin.ByteArray>){}[0]
+        constructor <init>(kotlin/Boolean = ..., kotlin.coroutines/SuspendFunction1<kotlin/ByteArray, kotlin/ByteArray>) // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.<init>|<init>(kotlin.Boolean;kotlin.coroutines.SuspendFunction1<kotlin.ByteArray,kotlin.ByteArray>){}[0]
 
         final val exchange // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.exchange|{}exchange[0]
             final fun <get-exchange>(): kotlin.coroutines/SuspendFunction1<kotlin/ByteArray, kotlin/ByteArray> // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.exchange.<get-exchange>|<get-exchange>(){}[0]
+        final val secure // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.secure|{}secure[0]
+            final fun <get-secure>(): kotlin/Boolean // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.secure.<get-secure>|<get-secure>(){}[0]
     }
 
     final object Off : io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource.Off|null[0]

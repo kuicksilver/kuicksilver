@@ -732,7 +732,15 @@ internal class KuicksilverEngine(
         val url = data.url
         val dns = config.newRequestDns()
         val supported = supportedAlpn(webSocket)
-        val origin = awaitResolution(records, url, dns, supported)
+        val secure = config.http3.httpsRecords.secure
+        val origin = awaitResolution(records, url, dns, supported, secure)
+        if (origin == HttpsResolution.Failed && secure) {
+            // section 3.1: "the client SHOULD abandon its attempt to reach the service, even if the client is SVCB-optional"
+            throw kotlinx.io.IOException(
+                "the HTTPS records of ${url.host} could not be resolved over the secure DNS source (an error answer, a transport " +
+                    "error or a timeout): the request is abandoned (RFC 9460 section 3.1)",
+            )
+        }
         val originEndpoints = (origin as? HttpsResolution.Endpoints)?.endpoints.orEmpty()
         val attempts = ArrayList<Attempt>()
         if (alt != null) {
@@ -927,6 +935,8 @@ internal class KuicksilverEngine(
         url: io.ktor.http.Url,
         dns: RequestDns,
         supported: Set<String>,
+        // protected answers (section 3.1): wait for the resolution itself, and a timeout is a failure
+        secure: Boolean,
     ): HttpsResolution =
         withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
@@ -945,12 +955,16 @@ internal class KuicksilverEngine(
                     https.onJoin {}
                     addresses.onJoin {}
                 }
-                if (!https.isCompleted) withTimeoutOrNull(config.http3.httpsRecordExtraWait) { https.join() }
+                if (secure) {
+                    https.join()
+                } else if (!https.isCompleted) {
+                    withTimeoutOrNull(config.http3.httpsRecordExtraWait) { https.join() }
+                }
                 val resolution = if (https.isCompleted && !https.isCancelled) https.getCompleted() else HttpsResolution.None
                 https.cancel()
                 resolution
             }
-        } ?: HttpsResolution.None
+        } ?: if (secure) HttpsResolution.Failed else HttpsResolution.None
 
     /**
      * HTTP/3, falling back to HTTP/1.1 when it fails before the response headers: always if the request cannot have been

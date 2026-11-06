@@ -7,7 +7,6 @@ package io.kuicksilver.ktor.client.dns
 import io.kuicksilver.tls.KslDnsAnswer
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 
 /** The system resolver's two answer forms (`ksl_dns_query`) into HTTPS records. */
 class HttpsRecordsOfTest {
@@ -27,7 +26,9 @@ class HttpsRecordsOfTest {
 
     @Test fun negative_malformedRecordInTheListRejectsTheRrset() {
         val bad = hex("0001 00 0003 0003 0001bb")
-        assertNull(
+        // rejected as a whole, and no failure either: the connection goes on without SVCB (section 2.2)
+        assertEquals(
+            emptyList(),
             httpsRecordsOf(
                 KslDnsAnswer.Records(listOf(KslDnsAnswer.Record("a.example", 60, h3), KslDnsAnswer.Record("a.example", 60, bad))),
                 "a.example",

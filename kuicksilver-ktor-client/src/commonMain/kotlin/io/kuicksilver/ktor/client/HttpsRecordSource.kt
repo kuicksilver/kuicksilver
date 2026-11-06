@@ -5,6 +5,7 @@ package io.kuicksilver.ktor.client
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.client.dns.DnsException
 import io.kuicksilver.ktor.client.dns.DnsMessage
+import io.kuicksilver.ktor.client.dns.SvcbMalformedException
 import io.kuicksilver.ktor.client.dns.SvcbRecord
 import kotlinx.coroutines.CancellationException
 import kotlin.time.Duration
@@ -36,6 +37,14 @@ public sealed interface HttpsRecordSource {
      * throws, or returns something that is not the response to the query, counts as a failed lookup.
      */
     public class Exchange(
+        /**
+         * Whether the exchange's answers are cryptographically protected (DNS over HTTPS or TLS, or DNSSEC-validated). Then
+         * a resolution that fails (an error answer such as SERVFAIL, a transport error, a timeout) abandons the request
+         * instead of going on without records, as RFC 9460 section 3.1 asks, so an active attacker who drops the answers
+         * cannot downgrade the connection; the request also waits for the answer (up to the connect timeout, 30 s at most)
+         * instead of [Http3ClientConfig.httpsRecordExtraWait]. False (the default) treats failures as "no records".
+         */
+        public val secure: Boolean = false,
         /** Sends one DNS query and returns its response. */
         public val exchange: suspend (query: ByteArray) -> ByteArray,
     ) : HttpsRecordSource
@@ -56,6 +65,10 @@ internal expect suspend fun platformHttpsQuery(
     timeout: Duration,
 ): List<SvcbRecord>?
 
+/** Whether this source's answers are cryptographically protected (RFC 9460 section 3.1). */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal val HttpsRecordSource.secure: Boolean get() = this is HttpsRecordSource.Exchange && secure
+
 /** The lookup function of this source, or null for [HttpsRecordSource.Off]: null from it is a failed lookup. */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> List<SvcbRecord>?)? =
@@ -74,6 +87,8 @@ internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> L
                     DnsMessage.answers(exchange(DnsMessage.query(name)), name)
                 } catch (e: CancellationException) {
                     throw e
+                } catch (_: SvcbMalformedException) {
+                    emptyList() // RFC 9460 section 2.2: the RRset is rejected, the connection goes on without SVCB
                 } catch (_: DnsException) {
                     null
                 } catch (_: Exception) {

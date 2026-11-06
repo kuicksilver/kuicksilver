@@ -10,9 +10,17 @@ internal open class DnsException(
 ) : Exception(message)
 
 /** A DNS message or SVCB RDATA that breaks its wire format (RFC 1035 section 4.1, RFC 9460 section 2.2). */
-internal class DnsFormatException(
+internal open class DnsFormatException(
     message: String,
 ) : DnsException(message)
+
+/**
+ * A malformed SVCB/HTTPS RR (RFC 9460 section 2.2): "the client MUST reject the entire RRset and fall back to non-SVCB
+ * connection establishment", so it is no failed resolution (section 3.1) but one without records.
+ */
+internal class SvcbMalformedException(
+    message: String,
+) : DnsFormatException(message)
 
 /**
  * One SVCB or HTTPS resource record (RFC 9460 section 2.2) as this client reads it.
@@ -86,6 +94,21 @@ internal object SvcbCodec {
      * whole RRSet unusable: the caller drops it.
      */
     fun parseRdata(
+        b: ByteArray,
+        off: Int,
+        len: Int,
+        owner: String,
+        ttl: Long,
+    ): SvcbRecord? =
+        try {
+            parse(b, off, len, owner, ttl)
+        } catch (e: SvcbMalformedException) {
+            throw e
+        } catch (e: DnsFormatException) {
+            throw SvcbMalformedException(e.message ?: "malformed RR")
+        }
+
+    private fun parse(
         b: ByteArray,
         off: Int,
         len: Int,
