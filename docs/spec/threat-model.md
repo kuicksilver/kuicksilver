@@ -102,6 +102,11 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 - **Mitigations:** `ksl` — minimal code, all buffers with lengths, no `strlen`; Kotlin — bounds checks; fuzzing with Jazzer and libFuzzer; size limits.
 - **Verification:** the committed fuzzing corpora run as regression tests in `jvmTest`, and `tools/c-test.sh` runs `ksl` under ASan/UBSan, both in the local gate (`tools/ci/local-matrix.sh`).
 
+0.3.0: the DNS parser of the HTTPS records (RFC 9460, `kuicksilver-ktor-client/.../dns/`) reads answers from the system
+resolver or a DNS-over-HTTPS exchange, which may be on the attacker's path: every read is bounds-checked, a name follows
+at most 128 compression pointers and each must point back, names are at most 255 bytes, and nothing is allocated beyond
+the message's length. New fuzz target `client.svcb` (`SvcbFuzzTest.svcbMessage`, seeds from `tools/fuzz/gen-svcb-seeds.py`).
+
 0.2.0 status (fuzzing campaigns, 2026-10-13/14): local campaigns replace ClusterFuzzLite (`tools/fuzz/campaign.sh`,
 CONTRIBUTING "Fuzzing"): every target runs in slices of at most 20 minutes at background priority, one at a time, and the
 grown corpora are minimized into `tools/fuzz/corpus/<target>/`. New targets: `ConnectionFuzzTest.connectionNull` and

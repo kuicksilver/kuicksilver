@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Local fuzzing campaigns for the Jazzer targets of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3, kuicksilver-http2 and kuicksilver-ktor-network and the libFuzzer harness of
+# Local fuzzing campaigns for the Jazzer targets of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3, kuicksilver-http2, kuicksilver-ktor-network and
+# kuicksilver-ktor-client and the libFuzzer harness of
 # ksl (tools/fuzz/ksl/). It replaces the ClusterFuzzLite path for this project: the laptop stays usable, so by default
 # every run is a slice of at most 20 minutes at background priority (taskpolicy -b, nice 19, one fuzzing thread, the
 # serial collector), with a pause between slices so other builds get the machine. Progress is resumable: the growing
@@ -137,6 +138,7 @@ http2.connectionClient jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.H2ClientC
 http2.hpackRoundTrip jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.HpackRoundTripFuzzTest hpackRoundTrip
 ktor-network.inflate jvm kuicksilver-ktor-network io.kuicksilver.ktor.network.fuzz.InflateFuzzTest inflate
 ktor-network.wsGuard jvm kuicksilver-ktor-network io.kuicksilver.ktor.network.fuzz.WsGuardFuzzTest wsGuard
+client.svcb jvm kuicksilver-ktor-client io.kuicksilver.ktor.client.fuzz.SvcbFuzzTest svcbMessage
 ksl.parsers c kuicksilver-native ksl_fuzz parsers
 EOF
 }
@@ -216,10 +218,10 @@ snapshot_classpath() {
     tmp=$(mktemp "$state/cp-print.XXXXXX")
     if [ -x "$HOME/.kuicksilver-tools/quiet-gradle" ]; then
       (cd "$root" && "$HOME/.kuicksilver-tools/quiet-gradle" -q -I tools/fuzz/classpath.init.gradle \
-        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath :kuicksilver-ktor-network:printFuzzClasspath) > "$tmp"
+        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath :kuicksilver-ktor-network:printFuzzClasspath :kuicksilver-ktor-client:printFuzzClasspath) > "$tmp"
     else
       (cd "$root" && quiet ./gradlew --max-workers=2 -q -I tools/fuzz/classpath.init.gradle \
-        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath :kuicksilver-ktor-network:printFuzzClasspath) > "$tmp"
+        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath :kuicksilver-ktor-network:printFuzzClasspath :kuicksilver-ktor-client:printFuzzClasspath) > "$tmp"
     fi
     rm -rf "$out.new"; mkdir -p "$out.new"
     while IFS= read -r line; do
@@ -240,7 +242,7 @@ snapshot_classpath() {
       [ -z "$new" ] || printf '%s\n' "$new" > "$out.new/$module.cp"
     done < "$tmp"
     rm -f "$tmp"
-    for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3 kuicksilver-http2 kuicksilver-ktor-network; do [ -s "$out.new/$m.cp" ] || die "Gradle printed no classpath for $m"; done
+    for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3 kuicksilver-http2 kuicksilver-ktor-network kuicksilver-ktor-client; do [ -s "$out.new/$m.cp" ] || die "Gradle printed no classpath for $m"; done
     rm -rf "$out"; mv "$out.new" "$out"
     head_rev > "$out/HEAD"
     [ -x "$root/build/fuzz-ksl/ksl_fuzz" ] && quiet bash "$root/tools/fuzz/ksl/build.sh" >/dev/null || true

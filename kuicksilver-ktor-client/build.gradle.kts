@@ -33,6 +33,7 @@ kotlin {
         jvmTest.dependencies {
             implementation(kotlin("test-junit5"))
             implementation(libs.netty.codec.http2) // H2InteropTest: an HTTP/2 server that is not ours
+            implementation(libs.jazzer.junit) // the HTTPS record parser's fuzz target (fuzz/SvcbFuzzTest.kt)
         }
     }
 }
