@@ -8,25 +8,28 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
-import io.ktor.server.request.httpVersion
-import io.ktor.server.response.respondBytesWriter
-import io.ktor.server.routing.get
-import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.MigrationEvent
+import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,11 +39,14 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on an emulator: a download over HTTP/3 from a server in the
- * same process (loopback) while the default network is switched off (`svc wifi disable`, or `svc data disable` when the
- * mobile network is the default) and the other one takes over. The connection moves to a socket bound to the new default
- * network and the download completes. Needs a device with Wi-Fi and a mobile network (the stock emulator); skipped
- * elsewhere. The network is switched on again at the end.
+ * `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on an emulator, against a server on the host
+ * (`AndroidMigrationPeerMain`) that the emulator reaches as 10.0.2.2 through its own Wi-Fi or mobile network: a download over
+ * HTTP/3 while the default network is switched off (`svc wifi disable`, or `svc data disable` when the mobile network is
+ * the default) and the other one takes over. Run it with `:kuicksilver-ktor-client:androidMigrationDeviceTest`, which starts
+ * the server and passes its port as the instrumentation argument `kslMigrationPeerPort`; without it (a plain
+ * `connectedAndroidDeviceTest`) the tests are skipped, because a server inside the device is reached over loopback whatever
+ * network the client's socket is bound to, which would prove nothing about routing. Needs Wi-Fi and a mobile network (the
+ * stock emulator). The network is switched on again at the end.
  */
 @RunWith(AndroidJUnit4::class)
 class ClientMigrationAndroidTest {
@@ -55,38 +61,74 @@ class ClientMigrationAndroidTest {
     private fun hasTransport(transport: Int): Boolean =
         connectivity.allNetworks.any { connectivity.getNetworkCapabilities(it)?.hasTransport(transport) == true }
 
+    /** The host server's port, or a skipped test. */
+    private suspend fun peerPort(): Int {
+        val port = InstrumentationRegistry.getArguments().getString("kslMigrationPeerPort")?.toIntOrNull()
+        assumeTrue("run :kuicksilver-ktor-client:androidMigrationDeviceTest (a server on the host, 10.0.2.2)", port != null)
+        // a network switched on again by the previous test may still be coming up
+        withTimeoutOrNull(60.seconds) {
+            while (!hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || !hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) delay(200)
+        }
+        assumeTrue(
+            "the device has Wi-Fi and a mobile network",
+            connectivity.activeNetwork != null && hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+        )
+        return port!!
+    }
+
+    /** `svc wifi` when Wi-Fi is the default network, `svc data` otherwise: the radio that switching off moves the default. */
+    private fun defaultRadio(): String =
+        if (connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+            "wifi"
+        } else {
+            "data"
+        }
+
+    /** Reads the body; [atTwo] completes once 2 MiB arrived (the server waits there for `/resume`). */
+    private suspend fun download(
+        c: HttpClient,
+        url: String,
+        atTwo: CompletableDeferred<Unit>,
+    ): Long =
+        c.prepareGet(url).execute { r ->
+            assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+            val ch = r.bodyAsChannel()
+            val b = ByteArray(64 * 1024)
+            var n = 0L
+            while (true) {
+                val k = ch.readAvailable(b, 0, b.size)
+                if (k < 0) break
+                n += k
+                if (n >= MIB_2) atTwo.complete(Unit)
+            }
+            ch.closedCause?.let { throw it }
+            n
+        }
+
+    private fun client(
+        listener: KuicksilverEventListener,
+        migrate: Boolean,
+    ) = testClient(Http3DiscoveryMode.Preferred, engine = {
+        trust = TrustConfig.ExpectedName("server.test", ClientFixtures.trust) // the test certificate, reached as 10.0.2.2
+        quic = quicConfig { maxIdleTimeout = 10.seconds }
+        eventListener = listener
+        http3 {
+            hardDelay = Duration.INFINITE // HTTP/1.1 only after HTTP/3 failed
+            if (migrate) {
+                // guide:ktor:android-migration
+                connectionMigration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
+                networkId = { connectivity.activeNetwork?.toString() }
+            }
+        }
+    })
+
     @Test fun followsDefaultNetworkOnEmulator() =
         runBlocking {
             KslLoader.ensureLoaded()
+            val port = peerPort()
             val default = connectivity.activeNetwork
-            assumeTrue(
-                "the device has Wi-Fi and a mobile network",
-                default != null && hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
-            )
-            // the default network goes away: Wi-Fi off when it is the default, mobile data off otherwise
-            val onWifi = connectivity.getNetworkCapabilities(default)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-            val radio = if (onWifi) "wifi" else "data"
-            val atTwo = CompletableDeferred<Unit>()
-            val resume = CompletableDeferred<Unit>()
-            val (server, port) =
-                testServer {
-                    routing {
-                        get("/big") {
-                            call.respondBytesWriter {
-                                val chunk = ByteArray(64 * 1024) { 7 }
-                                var sent = 0
-                                while (sent < MIB_8) {
-                                    if (sent == MIB_2 && call.request.httpVersion == "HTTP/3") {
-                                        atTwo.complete(Unit)
-                                        resume.await()
-                                    }
-                                    writeFully(chunk)
-                                    sent += chunk.size
-                                }
-                            }
-                        }
-                    }
-                }
+            val radio = defaultRadio()
             val migrated = Channel<MigrationEvent.Migrated<*>>(Channel.UNLIMITED)
             val listener =
                 object : KuicksilverEventListener() {
@@ -94,49 +136,67 @@ class ClientMigrationAndroidTest {
                         origin: String,
                         event: MigrationEvent<*>,
                     ) {
+                        Log.i("kuicksilver", "migration of $origin: $event")
                         if (event is MigrationEvent.Migrated) migrated.trySend(event)
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    eventListener = listener
-                    http3 {
-                        hardDelay = Duration.INFINITE // HTTP/1.1 only after HTTP/3 failed
-                        // guide:ktor:android-migration
-                        connectionMigration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
-                        networkId = { connectivity.activeNetwork?.toString() }
-                    }
-                }).use { c ->
+                client(listener, migrate = true).use { c ->
                     withTimeout(120.seconds) {
-                        val download =
-                            async {
-                                c.prepareGet("https://127.0.0.1:$port/big").execute { r ->
-                                    assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
-                                    val ch = r.bodyAsChannel()
-                                    val b = ByteArray(64 * 1024)
-                                    var n = 0L
-                                    while (true) {
-                                        val k = ch.readAvailable(b, 0, b.size)
-                                        if (k < 0) break
-                                        n += k
-                                    }
-                                    ch.closedCause?.let { throw it }
-                                    n
-                                }
-                            }
+                        val atTwo = CompletableDeferred<Unit>()
+                        val body = async { download(c, "https://10.0.2.2:$port/big", atTwo) }
                         atTwo.await()
                         shell("svc $radio disable")
                         val e = migrated.receive()
                         assertEquals(default, e.old)
                         assertNotEquals(default, e.new)
-                        resume.complete(Unit)
-                        assertEquals(MIB_8.toLong(), download.await())
+                        // the rest of the body, and a new request, cross the new network on the same connection
+                        assertEquals("HTTP/3", c.get("https://10.0.2.2:$port/resume").bodyAsText())
+                        assertEquals(MIB_8.toLong(), body.await())
                     }
                 }
             } finally {
-                resume.complete(Unit)
                 shell("svc $radio enable")
-                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Without `connectionMigration` (0.2's behaviour), on the same switch: logs what happens to the download, for the guide's
+     * claim about connections that do not migrate, and checks that nothing migrates. The engine's endpoint socket is bound
+     * to no network, so the system may route it over the new default network and the server follow that as a NAT
+     * rebinding: on the API 32 emulator (2026-11-06) the download completed that way, which is why the guide says such a
+     * connection "may" die rather than that it does.
+     */
+    @Test fun withoutMigrationOnEmulator() =
+        runBlocking {
+            KslLoader.ensureLoaded()
+            val port = peerPort()
+            val radio = defaultRadio()
+            val migrations = Channel<MigrationEvent<*>>(Channel.UNLIMITED)
+            val listener =
+                object : KuicksilverEventListener() {
+                    override fun connectionMigrated(
+                        origin: String,
+                        event: MigrationEvent<*>,
+                    ) {
+                        migrations.trySend(event)
+                    }
+                }
+            try {
+                client(listener, migrate = false).use { c ->
+                    withTimeout(120.seconds) {
+                        val atTwo = CompletableDeferred<Unit>()
+                        val body = async { runCatching { download(c, "https://10.0.2.2:$port/big", atTwo) } }
+                        atTwo.await()
+                        shell("svc $radio disable")
+                        val resumed = runCatching { c.get("https://10.0.2.2:$port/resume") }
+                        val outcome = body.await()
+                        Log.i("kuicksilver", "without migration: resume=${resumed.map { it.version }} body=$outcome")
+                        assertEquals(true, migrations.tryReceive().isFailure, "nothing migrates without the option")
+                    }
+                }
+            } finally {
+                shell("svc $radio enable")
             }
         }
 

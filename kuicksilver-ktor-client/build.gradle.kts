@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Ktor client engine: HttpClient(Kuicksilver) — HTTP/3, HTTP/2 and HTTP/1.1 over TLS 1.3, Alt-Svc discovery (docs/guide/ktor.md).
+import java.util.Properties
 import java.util.concurrent.TimeUnit
 
 plugins {
@@ -50,6 +51,8 @@ abstract class HostPeer : BuildService<HostPeer.Params>, AutoCloseable {
         val classpath: ConfigurableFileCollection
         val java: RegularFileProperty
         val workDir: DirectoryProperty
+        /** The main class to run; HostPeerMain unless set. */
+        val mainClass: Property<String>
     }
 
     private var process: Process? = null
@@ -64,7 +67,7 @@ abstract class HostPeer : BuildService<HostPeer.Params>, AutoCloseable {
         val p =
             ProcessBuilder(
                 parameters.java.get().asFile.path, "-cp", parameters.classpath.asPath,
-                "io.kuicksilver.ktor.client.HostPeerMain", portFile.path,
+                parameters.mainClass.getOrElse("io.kuicksilver.ktor.client.HostPeerMain"), portFile.path,
             ).redirectErrorStream(true).redirectOutput(log).start()
         process = p
         val deadline = System.nanoTime() + 60_000_000_000L
@@ -112,4 +115,51 @@ tasks.register("iosHostInteropTest") {
     group = "verification"
     description = "The simulator host-interop tests with the host peer running (alias of iosSimulatorArm64HostInteropTest)"
     dependsOn(hostInteropRun)
+}
+
+// ---- Android connection migration on an emulator (docs/guide/ktor.md, "Connection migration"): `androidMigrationDeviceTest`
+// starts AndroidMigrationPeerMain (jvmTest) on the host's 127.0.0.1, installs the device tests and runs
+// ClientMigrationAndroidTest with the server's port, so the download crosses the emulator's own network to 10.0.2.2 (a
+// server inside the device would be reached over its loopback whatever network a socket is bound to). Set ANDROID_SERIAL
+// to pick the emulator; the test switches its default network off and on again.
+
+val androidMigrationPeer = gradle.sharedServices.registerIfAbsent("kuicksilverAndroidMigrationPeer", HostPeer::class) {
+    val jvmTest = kotlin.jvm().compilations.getByName("test")
+    parameters.classpath.from(jvmTest.output.allOutputs, jvmTest.runtimeDependencyFiles)
+    parameters.java.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) }.map { it.executablePath })
+    parameters.workDir.set(layout.buildDirectory.dir("android-migration-peer"))
+    parameters.mainClass.set("io.kuicksilver.ktor.client.AndroidMigrationPeerMain")
+}
+
+val androidSdkDir: String? =
+    rootProject.file("local.properties").takeIf { it.isFile }
+        ?.let { f -> Properties().apply { f.inputStream().use { load(it) } }.getProperty("sdk.dir") }
+        ?: System.getenv("ANDROID_HOME")
+
+tasks.register("androidMigrationDeviceTest") {
+    group = "verification"
+    description = "Runs ClientMigrationAndroidTest on a connected emulator (ANDROID_SERIAL) against a server on the host (10.0.2.2)"
+    usesService(androidMigrationPeer)
+    dependsOn("jvmTestClasses", "installAndroidDeviceTest")
+    outputs.upToDateWhen { false } // the peer and the device are outside Gradle's inputs: always run
+    val adb = androidSdkDir?.let { "$it/platform-tools/adb" } ?: "adb"
+    doLast {
+        val port = androidMigrationPeer.get().start()
+        try {
+            val p =
+                ProcessBuilder(
+                    adb, "shell", "am", "instrument", "-w",
+                    "-e", "class", "io.kuicksilver.ktor.client.ClientMigrationAndroidTest",
+                    "-e", "kslMigrationPeerPort", port.toString(),
+                    "io.kuicksilver.ktor.client.test/androidx.test.runner.AndroidJUnitRunner",
+                ).redirectErrorStream(true).start()
+            val out = p.inputStream.bufferedReader().readText()
+            p.waitFor()
+            logger.lifecycle(out)
+            // a run with failures prints "FAILURES!!!"; one that crashed prints neither line
+            if (!Regex("""OK \(\d+ tests?\)""").containsMatchIn(out)) throw GradleException("ClientMigrationAndroidTest failed on the device")
+        } finally {
+            androidMigrationPeer.get().stop()
+        }
+    }
 }
