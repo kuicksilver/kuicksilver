@@ -475,6 +475,9 @@ internal object QuicLbNonceSpaces {
         return b.copyOf(nonceLength).also { b.fill(0) }
     }
 
-    /** Test hook: a new process, as far as nonce spaces go (the plaintext permutation keys are dropped, not freed). */
-    internal fun forgetForTest() = lock.locked { spaces.clear() }
+    /** Test hook: a new process, as far as nonce spaces go; the plaintext permutation keys are freed (no endpoint may use them). */
+    internal fun forgetForTest() {
+        val dropped = lock.locked { spaces.values.toList().also { spaces.clear() } }
+        for (s in dropped) s.plainPermute?.close()
+    }
 }

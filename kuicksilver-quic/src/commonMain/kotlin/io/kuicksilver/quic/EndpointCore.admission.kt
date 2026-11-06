@@ -192,7 +192,15 @@ private fun EndpointCore.admitValidated(
             if (known != null && !(known == CidIssuance.SingleNoMigration && route.canIssueRoutable())) {
                 IssuedCid(rs, known)
             } else {
-                route.issue(random, client = false)
+                testBetweenRetryChecks?.invoke()
+                val fresh = route.issue(random, client = false)
+                // the nonces ran out again in between: a second unroutable ID would be a second server ID for the client
+                // (section 3.2: exactly one); keep the Retry SCID, which the change below moves to a routable one later
+                if (known == CidIssuance.SingleNoMigration && fresh.issuance == CidIssuance.SingleNoMigration) {
+                    IssuedCid(rs, CidIssuance.SingleNoMigration)
+                } else {
+                    fresh
+                }
             }
         } // our Retry SCID is this connection's ID
         else {

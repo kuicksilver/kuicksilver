@@ -45,6 +45,9 @@ import kotlin.time.Duration.Companion.milliseconds
 class StatelessResetTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /** Each test starts with no nonce space of an earlier one (and frees their plaintext keys). */
+    @kotlin.test.AfterTest fun forgetNonceSpaces() = QuicLbNonceSpaces.forgetForTest()
+
     private val clientAddr = InetSocketAddress("10.0.0.1", 40000)
     private val serverAddr = InetSocketAddress("10.0.0.2", 443)
 

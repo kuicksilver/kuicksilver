@@ -45,6 +45,9 @@ import kotlin.time.Duration.Companion.seconds
 class EndpointCoreTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /** Each test starts with no nonce space of an earlier one (and frees their plaintext keys). */
+    @kotlin.test.AfterTest fun forgetNonceSpaces() = QuicLbNonceSpaces.forgetForTest()
+
     private val now = TimeMark(1_000_000_000L)
     private val a1 = InetSocketAddress("10.0.0.1", 1111)
     private val a2 = InetSocketAddress("10.0.0.2", 2222)
@@ -1597,6 +1600,63 @@ class EndpointCoreTest {
             }
         } finally {
             for (c in cores) c.close()
+            state.close()
+        }
+    }
+
+    /**
+     * Section 3.2: an unroutable Retry SCID whose replacement would be unroutable again (the reservation ran out between the
+     * two looks) stays the connection's one server ID: initial_source_connection_id == retry_source_connection_id.
+     */
+    @Test fun quicLbUnroutableRetryScidStaysWhenNoncesRunOutAgain() {
+        val reservation = FlakyReservation()
+        val key = QuicLbFixtures.key("0f0e0d0c0b0a0908070605040302010b")
+        val p =
+            LbPair(
+                QuicLbConfig(2, QuicLbFixtures.SID, 4, key, reservation),
+                admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry,
+            )
+        try {
+            val space =
+                p.server.lb!!
+                    .routes.current!!
+                    .space
+            reservation.fail = true
+            space.useUpReservationForTest()
+            val c = p.connect()
+            p.step()
+            val retryScid = assertNotNull(c.retryScid)
+            assertEquals(7, (retryScid[0].toInt() and 0xff) ushr 5)
+            reservation.fail = false
+            p.server.testBetweenRetryChecks = {
+                reservation.fail = true
+                space.useUpReservationForTest()
+                p.server.testBetweenRetryChecks = null
+            }
+            p.step()
+            reservation.fail = false
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            assertEquals(retryScid, s.localCid, "the Retry SCID stays")
+            assertEquals(c.peerTp?.retrySourceConnectionId, c.peerTp?.initialSourceConnectionId, "one server ID")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A change prepared with an entry another change retired meanwhile is refused as stale; preparing again works. */
+    @Test fun quicLbStalePreparedConfigurationIsRefused() {
+        val a = QuicLbFixtures.config(configId = 1)
+        val state = QuicLbState(LbNullCrypto, Random(1), a, 1, 8)
+        try {
+            state.update(QuicLbFixtures.config(configId = 2))
+            val reusing = state.prepare(a) // the previous configuration's entry
+            state.update(QuicLbFixtures.config(configId = 3)) // retires it
+            assertFailsWith<QuicLbState.StaleConfiguration> { state.commit(reusing) }
+            assertTrue(state.update(a))
+            val cid = QuicLbRoute(state, 0).newCid(Random(2), client = false)
+            assertEquals(1, (cid[0].toInt() and 0xff) ushr 5, "issues under the configuration prepared again")
+        } finally {
             state.close()
         }
     }

@@ -29,6 +29,7 @@ import io.kuicksilver.quic.endpoint.QuicLbFixtures
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -57,6 +58,11 @@ import kotlin.time.Duration.Companion.seconds
 )
 class LoopGroupTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /** Each test starts with no nonce space of an earlier one (and frees their plaintext keys). */
+    @kotlin.test.AfterTest fun forgetNonceSpaces() =
+        io.kuicksilver.quic.endpoint.QuicLbNonceSpaces
+            .forgetForTest()
 
     private class FailingIo(
         val inner: MemoryDatagramIo,
@@ -696,6 +702,63 @@ class LoopGroupTest {
                 } finally {
                     client.close()
                     group.close()
+                }
+            }
+        }
+
+    private fun lbEndpointConfig(net: MemoryNetwork) =
+        QuicEndpointConfig
+            .Builder()
+            .apply {
+                server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                crypto = LbNullCrypto
+                loadBalancer = QuicLbFixtures.config(configId = 1)
+                io = { net.open(serverAddr) }
+            }.build()
+
+    /** A caller cancelled right after its configuration was committed does not undo it: the endpoint still issues routable IDs. */
+    @Test fun quicLbCancelledUpdateKeepsTheCommittedConfiguration() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val ep = QuicEndpoint.bind(serverAddr, lbEndpointConfig(MemoryNetwork())) as EndpointLoop
+                try {
+                    val caller = kotlinx.coroutines.CompletableDeferred<kotlinx.coroutines.Job>()
+                    ep.afterLbCommitForTest = { caller.getCompleted().cancel() }
+                    val job = launch { ep.updateLoadBalancer(QuicLbFixtures.config(configId = 3)) }
+                    caller.complete(job)
+                    job.join()
+                    assertTrue(job.isCancelled)
+                    ep.afterLbCommitForTest = null
+                    val cid = ep.runOnLoop { ep.core.route.newCid(kotlin.random.Random(1), client = false) }
+                    assertEquals(3, (cid[0].toInt() and 0xff) ushr 5, "the committed configuration is in force")
+                } finally {
+                    ep.closeAndJoin()
+                }
+            }
+        }
+
+    /** Concurrent changes on one endpoint are serialised: whatever wins, the configuration in force is a live one. */
+    @Test fun quicLbConcurrentUpdatesNeverInstallARetiredConfiguration() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val ep = QuicEndpoint.bind(serverAddr, lbEndpointConfig(MemoryNetwork())) as EndpointLoop
+                try {
+                    val configs = List(4) { QuicLbFixtures.config(configId = it + 2) }
+                    repeat(10) { round ->
+                        (0 until 4)
+                            .map { i -> async(Dispatchers.Default) { ep.updateLoadBalancer(configs[(i + round) % 4]) } }
+                            .awaitAll()
+                        val cid = ep.runOnLoop { ep.core.route.newCid(kotlin.random.Random(round), client = false) }
+                        val cr = (cid[0].toInt() and 0xff) ushr 5
+                        assertTrue(cr in 2..5, "round $round: a routable ID of one of the configurations, not $cr")
+                        assertTrue(
+                            ep.core.lb!!
+                                .routes.current
+                                ?.retired == false,
+                        )
+                    }
+                } finally {
+                    ep.closeAndJoin()
                 }
             }
         }

@@ -102,14 +102,8 @@ internal class LoopGroup private constructor(
             val first = loops[0]
             // built off the loops (a nonce reservation's first store may fsync), switched to on loop 0
             val lb = first.core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
-            val prepared = lb.prepare(config)
-            try {
-                first.runOnLoop { first.core.commitLoadBalancer(prepared) }
-            } catch (e: Throwable) {
-                lb.discard(prepared)
-                throw e
-            }
-            for (l in loops) l.runOnLoop { l.core.reissueForLoadBalancer() }
+            applyLoadBalancer(lb, config, first)
+            for (l in loops) if (l !== first) l.runOnLoop { l.core.reissueForLoadBalancer() }
         } finally {
             lbLock.unlock()
         }

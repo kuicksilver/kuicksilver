@@ -71,8 +71,9 @@ Stateless Resets.
   reservation's stored `secret()`), and the counter goes on past the mark the last process stored: nonces are used only
   below the stored mark, the next block of 65,536 is stored ahead of need outside any lock, and a crash skips, never
   reuses. Only the space instance the registry keeps ever stores, so the stored mark only moves up; the first block is
-  stored when an update builds the configuration, off the loops. A failed store is retried after a back-off counted in
-  receive batches (at most one store a batch) and counted apart (`loadBalancerReservationFailures`); while no nonce is
+  stored when an update builds the configuration, on `Dispatchers.IO`, off the loops (one update at a time; a stale
+  reuse is prepared again; a caller cancelled after the commit leaves it in force). A failed store is retried after a
+  back-off counted in the receive batches of the endpoint's loop 0 (at most one store a batch for the group) and counted apart (`loadBalancerReservationFailures`); while no nonce is
   reserved nothing is drawn, and a request gets an unroutable ID for itself only. The derivation blocks end in 0x80..0x82, never a Feistel
   pass number, so none is an `expand` block under the same key. Once 2^(8 x nonce length) values are drawn the endpoint
   issues unroutable IDs, counts it in `loadBalancerNoncesExhausted` and logs it.

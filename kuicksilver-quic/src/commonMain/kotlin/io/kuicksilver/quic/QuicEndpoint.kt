@@ -85,7 +85,8 @@ public interface QuicEndpoint : AutoCloseable {
      * NEW_CONNECTION_ID of it that retires its earlier IDs, which keep routing (and may be answered with a Stateless Reset)
      * until the next change. With null the endpoint issues unroutable IDs (codepoint 0b111, section 3.2): new connections
      * get one ID and `disable_active_migration`, live ones keep theirs. Deliver the configuration to the load balancers
-     * first (section 3.1).
+     * first (section 3.1). The configuration is built on `Dispatchers.IO` (a nonce reservation's first store may fsync) and
+     * switched to on the endpoint's loops, one update at a time; once switched, cancelling the caller does not undo it.
      *
      * IllegalArgumentException for a configuration of another connection ID length, a plaintext one while a
      * `preferredAddress` is offered, or one that uses a server ID in clear that an encrypted configuration used, or the

@@ -24,6 +24,9 @@ import kotlin.test.assertTrue
 class QuicLbTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /** Each test starts with no nonce space of an earlier one (and frees their plaintext keys). */
+    @kotlin.test.AfterTest fun forgetNonceSpaces() = QuicLbNonceSpaces.forgetForTest()
+
     private fun hex(s: String) = ByteArray(s.length / 2) { s.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
 
     private fun hexOf(b: ByteArray) = b.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }

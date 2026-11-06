@@ -222,6 +222,9 @@ internal class QuicLbState(
         /** True the first time any loop finds this configuration's nonces spent. */
         fun firstExhaustion(): Boolean = exhaustNoticed.compareAndSet(0, 1)
 
+        /** Out of current and previous for good: never committed again ([commit] checks it). */
+        val retired: Boolean get() = users.load() < 0
+
         fun enter(): Boolean {
             while (true) {
                 val n = users.load()
@@ -380,7 +383,19 @@ internal class QuicLbState(
      * [config] is the current one already (nothing changes). Throws as [validate]. One caller at a time. [prepare] and
      * [commit] split it so the slow part runs off the loops.
      */
-    fun update(config: QuicLbConfig?): Boolean = commit(prepare(config))
+    fun update(config: QuicLbConfig?): Boolean {
+        repeat(STALE_RETRIES - 1) {
+            try {
+                return commit(prepare(config))
+            } catch (_: StaleConfiguration) {
+                // the entry it reused was retired meanwhile: prepare again
+            }
+        }
+        return commit(prepare(config))
+    }
+
+    /** [commit] of a [Prepared] whose reused entry was retired after [prepare]: prepare again. */
+    class StaleConfiguration : IllegalStateException("the configuration changed meanwhile: prepare again")
 
     /** A configuration [prepare]d for [commit]: its entry built (a new one, or the current or previous one again). */
     inner class Prepared internal constructor(
@@ -407,12 +422,17 @@ internal class QuicLbState(
         return if (config == null || reuse != null) Prepared(config, reuse, false) else Prepared(config, Entry(config), true)
     }
 
-    /** Drops a [prepare]d configuration that will not be committed. */
+    /** Drops a [prepare]d configuration that will not be committed; nothing when it is in use (it was committed after all). */
     fun discard(p: Prepared) {
-        if (p.fresh) p.entry?.retire()
+        if (!p.fresh) return
+        val inUse = lock.locked { routes.let { p.entry === it.current || p.entry === it.previous } }
+        if (!inUse) p.entry?.retire()
     }
 
-    /** Switches to [p]: false when it is the current configuration already. Throws when the endpoint closed meanwhile. */
+    /**
+     * Switches to [p]: false when it is the current configuration already. Throws when the endpoint closed meanwhile, and
+     * [StaleConfiguration] when the entry [p] reuses was retired since [prepare] (another change came between).
+     */
     fun commit(p: Prepared): Boolean {
         val r = routes
         val next = p.entry
@@ -424,6 +444,7 @@ internal class QuicLbState(
         val committed =
             lock.locked {
                 if (closed) return@locked false
+                if (next != null && next.retired) throw StaleConfiguration()
                 routes = Routes(next, previous)
                 p.config?.let { history += sidHex(it) to it.encrypted }
                 true
@@ -464,6 +485,9 @@ internal class QuicLbState(
 
         /** IDs kept per loop for when it needs one: about 30 KiB per loop. */
         const val POOL = 1024
+
+        /** [update]'s tries when another change retires the entry it prepared. */
+        const val STALE_RETRIES = 3
 
         /** Live IDs issued off their hash: about 4 MiB at most; past that a nonce whose pool is full is spent unused. */
         const val MAX_EXCEPTIONS = 65_536

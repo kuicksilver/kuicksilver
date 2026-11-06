@@ -849,7 +849,7 @@ public class EndpointCore internal constructor(
      * configuration changes go out once nonces are reserved; while none are, nothing is drawn for them.
      */
     private fun retryPendingReissues() {
-        route.tick()
+        if (loopIndex == 0) route.tick() // the one loop that paces a group's store retries: one try a batch for the endpoint
         if (reissueRetry.isEmpty() || !route.canIssueRoutable()) return
         val it = reissueRetry.iterator()
         while (it.hasNext()) {
@@ -890,6 +890,9 @@ public class EndpointCore internal constructor(
         }
         if (state.commit(p)) reissueForLoadBalancer()
     }
+
+    /** Test hook: runs between the admission's two looks at the nonce reservation (an unroutable Retry SCID). */
+    internal var testBetweenRetryChecks: (() -> Unit)? = null
 
     /**
      * Sans IO, for an endpoint that is not one loop of a group (whose loops change together through

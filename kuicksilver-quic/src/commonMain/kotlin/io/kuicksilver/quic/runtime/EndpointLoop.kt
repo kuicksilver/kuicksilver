@@ -41,6 +41,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
@@ -584,16 +585,15 @@ internal class EndpointLoop private constructor(
 
     override suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
         if (group != null) return group.updateLoadBalancer(config)
-        // built off the loop (a nonce reservation's first store may fsync), switched to on it
         val lb = core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
-        val prepared = lb.prepare(config)
-        try {
-            runOnLoop { core.commitLoadBalancer(prepared) }
-        } catch (e: Throwable) {
-            lb.discard(prepared)
-            throw e
-        }
+        lbLock.withLock { applyLoadBalancer(lb, config, this) }
     }
+
+    /** One configuration change at a time: a second one prepared meanwhile could reuse an entry the first retires. */
+    private val lbLock = Mutex()
+
+    /** Test hook: runs on the loop right after a configuration was committed (a caller cancelled there must not undo it). */
+    internal var afterLbCommitForTest: (() -> Unit)? = null
 
     /** [block] on the loop's dispatcher while the endpoint is open (the core is alive there); [QuicException.EndpointClosing] once it closes. */
     internal suspend fun <T> runOnLoop(block: () -> T): T {
@@ -901,5 +901,36 @@ internal class EndpointLoop private constructor(
                 pending.decrementAndFetch()
                 c.close() // CONNECTION_CLOSE with application code 0, on the connection's loop
             }
+    }
+}
+
+/**
+ * Prepares [config] on `Dispatchers.IO` (the configuration's key copy, derived key and nonce space; a nonce reservation's
+ * first `store` may fsync), commits it on [loop]'s dispatcher, and prepares again when another change retired the entry it
+ * reused ([QuicLbState.StaleConfiguration]). A prepared configuration is discarded only when it was not committed: a caller
+ * cancelled after the commit leaves it in force.
+ */
+internal suspend fun applyLoadBalancer(
+    lb: io.kuicksilver.quic.endpoint.QuicLbState,
+    config: io.kuicksilver.quic.QuicLbConfig?,
+    loop: EndpointLoop,
+) {
+    var tries = 0
+    while (true) {
+        val prepared = withContext(Dispatchers.IO) { lb.prepare(config) }
+        var committed = false
+        try {
+            loop.runOnLoop {
+                loop.core.commitLoadBalancer(prepared)
+                committed = true
+                loop.afterLbCommitForTest?.invoke()
+            }
+            return
+        } catch (e: io.kuicksilver.quic.endpoint.QuicLbState.StaleConfiguration) {
+            if (++tries >= 3) throw e
+        } catch (e: Throwable) {
+            if (!committed) lb.discard(prepared)
+            throw e
+        }
     }
 }
