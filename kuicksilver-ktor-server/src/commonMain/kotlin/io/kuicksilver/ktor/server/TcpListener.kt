@@ -255,8 +255,10 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             limits = limits,
                             ipKeyOf = { peerIpKey(it.remoteAddress as? InetSocketAddress) },
                             refuse = { client ->
-                                client.abort()
+                                // the address before the abort: on the JVM and Android it is read from the channel, which
+                                // throws once closed (the listener then got a null address for a known client)
                                 val from = runCatching { client.remoteAddress as? InetSocketAddress }.getOrNull()
+                                client.abort()
                                 perIpRefusals.report(
                                     from?.let { peerAddressBytes(it) }?.let { describeIp(it) } ?: "an unknown address",
                                     "it holds ${limits.maxPerIp} connections already (maxTcpConnectionsPerIp)",
