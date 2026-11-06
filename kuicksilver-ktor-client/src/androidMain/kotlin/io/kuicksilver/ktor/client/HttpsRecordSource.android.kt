@@ -6,9 +6,10 @@ import android.annotation.TargetApi
 import android.net.DnsResolver
 import android.os.Build
 import android.os.CancellationSignal
+import io.kuicksilver.ktor.client.dns.DnsAnswer
 import io.kuicksilver.ktor.client.dns.DnsException
 import io.kuicksilver.ktor.client.dns.DnsMessage
-import io.kuicksilver.ktor.client.dns.SvcbRecord
+import io.kuicksilver.ktor.client.dns.SvcbMalformedException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executor
@@ -23,13 +24,13 @@ import kotlin.time.Duration
 internal actual suspend fun platformHttpsQuery(
     name: String,
     timeout: Duration,
-): List<SvcbRecord>? = if (Build.VERSION.SDK_INT < 29) null else withTimeoutOrNull(timeout) { rawQuery(name) }
+): DnsAnswer? = if (Build.VERSION.SDK_INT < 29) null else withTimeoutOrNull(timeout) { rawQuery(name) }
 
 /** The callback runs on the resolver's own thread: parsing an answer is short and needs no other executor. */
 private val direct = Executor { it.run() }
 
 @TargetApi(29)
-private suspend fun rawQuery(name: String): List<SvcbRecord>? =
+private suspend fun rawQuery(name: String): DnsAnswer? =
     suspendCancellableCoroutine { cont ->
         val cancel = CancellationSignal()
         cont.invokeOnCancellation { cancel.cancel() }
@@ -48,7 +49,9 @@ private suspend fun rawQuery(name: String): List<SvcbRecord>? =
                 ) {
                     val records =
                         try {
-                            DnsMessage.answers(answer, name)
+                            DnsMessage.read(answer, name)
+                        } catch (_: SvcbMalformedException) {
+                            DnsAnswer(emptyList()) // RFC 9460 section 2.2: rejected, the connection goes on without SVCB
                         } catch (_: DnsException) {
                             null
                         }

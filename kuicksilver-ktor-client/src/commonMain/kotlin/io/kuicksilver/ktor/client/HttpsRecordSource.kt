@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.client
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.ktor.client.dns.DnsAnswer
 import io.kuicksilver.ktor.client.dns.DnsException
 import io.kuicksilver.ktor.client.dns.DnsMessage
 import io.kuicksilver.ktor.client.dns.SvcbMalformedException
@@ -63,7 +64,7 @@ internal class HttpsRecordsForTest(
 internal expect suspend fun platformHttpsQuery(
     name: String,
     timeout: Duration,
-): List<SvcbRecord>?
+): DnsAnswer?
 
 /** Whether this source's answers are cryptographically protected (RFC 9460 section 3.1). */
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -71,7 +72,7 @@ internal val HttpsRecordSource.secure: Boolean get() = this is HttpsRecordSource
 
 /** The lookup function of this source, or null for [HttpsRecordSource.Off]: null from it is a failed lookup. */
 @OptIn(ExperimentalKuicksilverApi::class)
-internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> List<SvcbRecord>?)? =
+internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> DnsAnswer?)? =
     when (this) {
         HttpsRecordSource.Off -> {
             null
@@ -84,11 +85,11 @@ internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> L
         is HttpsRecordSource.Exchange -> {
             { name ->
                 try {
-                    DnsMessage.answers(exchange(DnsMessage.query(name)), name)
+                    DnsMessage.read(exchange(DnsMessage.query(name)), name)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: SvcbMalformedException) {
-                    emptyList() // RFC 9460 section 2.2: the RRset is rejected, the connection goes on without SVCB
+                    DnsAnswer(emptyList()) // RFC 9460 section 2.2: the RRset is rejected, the connection goes on without SVCB
                 } catch (_: DnsException) {
                     null
                 } catch (_: Exception) {
@@ -98,6 +99,6 @@ internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> L
         }
 
         is HttpsRecordsForTest -> {
-            fn
+            { name -> fn(name)?.let { DnsAnswer(it) } }
         }
     }

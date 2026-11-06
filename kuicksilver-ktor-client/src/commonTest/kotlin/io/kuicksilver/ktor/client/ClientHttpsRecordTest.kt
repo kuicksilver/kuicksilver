@@ -31,6 +31,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -389,7 +390,7 @@ class ClientHttpsRecordTest {
         }
 
     @Test fun negative_extraWaitOutOfRangeFailsTheEngine() {
-        for (bad in listOf((-1).seconds, 2.seconds)) {
+        for (bad in listOf((-1).seconds, 0.seconds, 49.milliseconds, 2.seconds)) { // 50 ms..1 s (RFC 9460 section 5.1)
             kotlin.test.assertFailsWith<IllegalArgumentException> {
                 testClient(Http3DiscoveryMode.Auto, engine = { http3 { httpsRecordExtraWait = bad } }).close()
             }

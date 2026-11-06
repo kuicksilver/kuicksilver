@@ -79,8 +79,8 @@ public class Http3ClientConfig {
      * alternative is tried first. No lookup is made for [Http3DiscoveryMode.Preferred],
      * [Http3DiscoveryMode.H3Only], [quicHints], IP addresses, requests through a proxy, or while [http3Allowed] says no.
      * An `http://` request (in every discovery mode) first asks for the records of its `https` URL and, when the origin has
-     * any usable one, gets a `307` to that URL from the engine instead (RFC 9460 section 9.5). Answers are cached by their TTL (60 s to
-     * 1 day; 5 minutes for "no records"; at most 1000 names) until [networkId] changes, and only when [networkId] is set
+     * any usable one, gets a `307` to that URL from the engine instead (RFC 9460 section 9.5). Answers are cached for their TTL (at most
+     * 1 day; "no records" for the SOA's negative TTL, not at all without one; at most 1000 names) until [networkId] changes, and only when [networkId] is set
      * (RFC 9460 section 12); a failed lookup is not cached.
      */
     @ExperimentalKuicksilverApi
@@ -88,7 +88,8 @@ public class Http3ClientConfig {
 
     /**
      * How long a request waits for the HTTPS records after the origin's addresses resolved (50 ms by default, as Chromium):
-     * an answer that comes later is cached for the next request, and this one goes on without records. 0 to 1 s;
+     * an answer that comes later is cached for the next request, and this one goes on without records. 50 ms (RFC 9460
+     * section 5.1: an optimistic connection SHOULD wait that long) to 1 s;
      * any other value fails the engine's creation with [IllegalArgumentException]. The connect timeout bounds the whole wait.
      */
     @ExperimentalKuicksilverApi

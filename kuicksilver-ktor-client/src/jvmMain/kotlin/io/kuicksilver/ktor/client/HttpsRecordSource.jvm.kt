@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.kuicksilver.ktor.client.dns.DnsAnswer
 import io.kuicksilver.ktor.client.dns.DnsMessage
-import io.kuicksilver.ktor.client.dns.SvcbRecord
 import io.kuicksilver.ktor.client.dns.httpsRecordsOf
 import io.kuicksilver.tls.KslDns
 import kotlin.time.Duration
@@ -13,4 +13,4 @@ import kotlin.time.Duration
 internal actual suspend fun platformHttpsQuery(
     name: String,
     timeout: Duration,
-): List<SvcbRecord>? = KslDns.query(name, DnsMessage.TYPE_HTTPS, timeout)?.let { httpsRecordsOf(it, name) }
+): DnsAnswer? = KslDns.query(name, DnsMessage.TYPE_HTTPS, timeout)?.let { httpsRecordsOf(it, name) }

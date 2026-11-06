@@ -2193,12 +2193,16 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   alternative);
 - the request waits for the records while the origin's addresses resolve and at most `httpsRecordExtraWait` (50 ms)
   longer; a lookup that answers later, fails or times out leaves the request on the origin as without records, and a
-  late answer is cached for the next request. A malformed answer always counts as "no records". With
+  late answer is cached for the next request (`httpsRecordExtraWait` is 50 ms to 1 s: RFC 9460 section 5.1 asks for at
+  least 50 ms before connecting without the records). While an AliasMode chain is followed, the addresses of each
+  alias target are looked up in parallel (section 5). A malformed answer always counts as "no records". With
   `HttpsRecordSource.Exchange(secure = true) { ... }` (an exchange whose answers are protected: DNS over HTTPS or TLS, or
   validated DNSSEC) the request waits for the records instead, up to the connect timeout, and a failed lookup (an error
   answer such as SERVFAIL, a transport error, a timeout) abandons it with an `IOException`, so an attacker who drops the
   answers cannot downgrade the connection (RFC 9460 section 3.1);
-- answers are cached by their TTL (60 s to a day; "no records" for 5 minutes; at most 1000 names) and forgotten when
+- answers are cached for their TTL, never longer (at most a day; "no records" for the negative TTL of the answer's SOA
+  record, RFC 2308, and not at all without one; at most 1000 names), together with the other HTTPS records and the
+  A/AAAA records the answer carried, which spare follow-up queries (RFC 9460 section 5), and forgotten when
   `networkId()` reports a new network; without `networkId` the engine cannot see a network change and keeps no answers
   of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
   asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at
@@ -3636,7 +3640,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | 0.2.0 | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
 | `clearOnNetworkChange` | `Boolean` | `true` | 0.2.0 | drop alternatives without `persist=1` when `networkId` changes (RFC 7838 section 2.2); `false` keeps them |
 | `httpsRecords` (*experimental*) | `HttpsRecordSource` | `HttpsRecordSource.Off` | 0.3.0 | HTTPS resource records (RFC 9460) as a source of HTTP/3 in `Auto`: `System` (the OS resolver) or `Exchange { query -> response }` (your DNS-over-HTTPS client) ([HTTPS records](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#https-records-experimental)) |
-| `httpsRecordExtraWait` (*experimental*) | `Duration` | 50 ms | 0.3.0 | how long a request waits for the HTTPS records after the origin's addresses resolved; 0 to 1 s, else the engine's creation fails with `IllegalArgumentException` |
+| `httpsRecordExtraWait` (*experimental*) | `Duration` | 50 ms | 0.3.0 | how long a request waits for the HTTPS records after the origin's addresses resolved; 50 ms (RFC 9460 section 5.1) to 1 s, else the engine's creation fails with `IllegalArgumentException` |
 | `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | 0.2.0 | head start of HTTP/3 over HTTP/1.1 in a race on a network where QUIC was confirmed (10 ms elsewhere); an explicit value must be 10 ms..2 s or `Duration.INFINITE` (RFC 8305 section 5; INFINITE starts HTTP/1.1 only after HTTP/3 failed, on every network), else the engine's creation fails with `IllegalArgumentException` |
 | `networkId` | `() -> String?` | `{ null }` (one network) | 0.2.0 | identifies the current network; a change forgets broken marks, QUIC confirmation and HTTPS records; the engine caches HTTPS records only when it is set |
 | `settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings of the engine's connections |

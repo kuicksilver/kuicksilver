@@ -3,10 +3,28 @@
 package io.kuicksilver.ktor.client.dns
 
 /**
+ * What a DNS response says for the HTTPS record client ([DnsMessage.read]).
+ *
+ * @property records the RRset of the name asked for, after CNAMEs (empty: none).
+ * @property negativeTtl how long "none" may be cached (RFC 2308 section 5), null when the response gives no SOA.
+ * @property related other HTTPS RRsets of the response, by owner (an alias target's, for example).
+ * @property addresses A and AAAA addresses of the response by owner, 4 or 16 bytes each, with their smallest TTL.
+ */
+internal class DnsAnswer(
+    val records: List<SvcbRecord>,
+    val negativeTtl: Long? = null,
+    val related: Map<String, List<SvcbRecord>> = emptyMap(),
+    val addresses: Map<String, Pair<List<ByteArray>, Long>> = emptyMap(),
+)
+
+/**
  * DNS messages for the HTTPS records (RFC 1035 section 4.1), sans-IO: the query and the records of its answer.
  */
 internal object DnsMessage {
+    const val TYPE_A = 1
+    const val TYPE_SOA = 6
     const val TYPE_CNAME = 5
+    const val TYPE_AAAA = 28
     const val TYPE_HTTPS = 65
     private const val CLASS_IN = 1
     private const val RCODE_NXDOMAIN = 3
@@ -56,14 +74,28 @@ internal object DnsMessage {
         msg: ByteArray,
         qname: String,
         type: Int = TYPE_HTTPS,
-    ): List<SvcbRecord> {
+    ): List<SvcbRecord> = read(msg, qname, type).records
+
+    /**
+     * Everything in the response [msg] to [qname]/[type] that the HTTPS record client uses: the records of the name after
+     * its CNAME chain ([answers]), the negative-caching TTL of an answer without them (RFC 2308 section 5: the smaller of
+     * the SOA record's TTL and its MINIMUM, null without an SOA in the authority section), and the other records of
+     * [type] and the A/AAAA records the answer and additional sections carry for other names (RFC 9460 section 5: they
+     * "SHOULD be placed in cache before performing any follow-up queries"; an RRset of [type] that is malformed is left
+     * out, section 2.2). Throws as [answers].
+     */
+    fun read(
+        msg: ByteArray,
+        qname: String,
+        type: Int = TYPE_HTTPS,
+    ): DnsAnswer {
         val r = DnsReader(msg, 0, msg.size)
         r.u16() // ID: matched by the transport (the system resolver, or the DoH exchange that carried it)
         val flags = r.u16()
         val qd = r.u16()
         val an = r.u16()
-        r.u16() // NSCOUNT, ARCOUNT: not read
-        r.u16()
+        val ns = r.u16()
+        val ar = r.u16()
         if (flags and 0x8000 == 0) throw DnsFormatException("not a response")
         if ((flags shr 11) and 0xf != 0) throw DnsFormatException("opcode ${(flags shr 11) and 0xf}")
         val want = normalize(qname)
@@ -73,44 +105,88 @@ internal object DnsMessage {
         val qc = r.u16()
         if (qn != want || qt != type || qc != CLASS_IN) throw DnsFormatException("the answer to another question ($qn $qt)")
         val cnames = HashMap<String, Pair<String, Long>>()
-        val found = ArrayList<Triple<String, Long, IntRange>>() // owner, TTL, RDATA
-        repeat(an) {
-            val owner = r.name(compression = true)
-            val t = r.u16()
-            val c = r.u16()
-            val ttl = r.u32().let { if (it > Int.MAX_VALUE) 0L else it } // RFC 2181 section 8: a TTL with the top bit set is 0
-            val len = r.u16()
-            val at = r.pos
-            r.skip(len)
-            if (c != CLASS_IN) return@repeat
-            when (t) {
-                type -> {
-                    found += Triple(owner, ttl, at until at + len)
+        val found = ArrayList<Triple<String, Long, IntRange>>() // owner, TTL, RDATA of [type], answer and additional sections
+        val addresses = LinkedHashMap<String, MutableList<Pair<ByteArray, Long>>>()
+        var negativeTtl: Long? = null
+        for (section in 0 until 3) {
+            val count =
+                if (section == 0) {
+                    an
+                } else if (section == 1) {
+                    ns
+                } else {
+                    ar
                 }
+            repeat(count) {
+                val owner = r.name(compression = true)
+                val t = r.u16()
+                val c = r.u16()
+                val ttl = r.u32().let { if (it > Int.MAX_VALUE) 0L else it } // RFC 2181 section 8: a TTL with the top bit set is 0
+                val len = r.u16()
+                val at = r.pos
+                r.skip(len)
+                if (c != CLASS_IN) return@repeat
+                when {
+                    section == 1 && t == TYPE_SOA -> {
+                        val soa = DnsReader(msg, at, at + len)
+                        soa.name(compression = true)
+                        soa.name(compression = true)
+                        repeat(4) { soa.u32() }
+                        val minimum = soa.u32().let { if (it > Int.MAX_VALUE) 0L else it }
+                        negativeTtl = minOf(ttl, minimum)
+                    }
 
-                TYPE_CNAME -> {
-                    val target = DnsReader(msg, at, at + len).name(compression = true)
-                    cnames.getOrPut(owner) { target to ttl }
+                    section == 1 -> {}
+
+                    t == type -> {
+                        found += Triple(owner, ttl, at until at + len)
+                    }
+
+                    t == TYPE_CNAME && section == 0 -> {
+                        val target = DnsReader(msg, at, at + len).name(compression = true)
+                        cnames.getOrPut(owner) { target to ttl }
+                    }
+
+                    (t == TYPE_A && len == 4) || (t == TYPE_AAAA && len == 16) -> {
+                        addresses.getOrPut(owner) { ArrayList() } += msg.copyOfRange(at, at + len) to ttl
+                    }
                 }
             }
         }
         // after the sections are read: a cut message fails whatever it answers
         if (flags and 0x0200 != 0) throw DnsException("truncated response (TC)")
         val rcode = flags and 0xf
-        if (rcode == RCODE_NXDOMAIN) return emptyList()
-        if (rcode != 0) throw DnsException("RCODE $rcode")
+        if (rcode != 0 && rcode != RCODE_NXDOMAIN) throw DnsException("RCODE $rcode")
         var name = want
         var ttl = Long.MAX_VALUE
         var steps = 0
-        while (found.none { it.first == name }) {
-            val next = cnames[name] ?: return emptyList()
-            if (++steps > MAX_CNAMES) return emptyList()
+        var chainEnds = rcode != RCODE_NXDOMAIN
+        while (chainEnds && found.none { it.first == name }) {
+            val next = cnames[name]
+            if (next == null || ++steps > MAX_CNAMES) {
+                chainEnds = false
+                break
+            }
             ttl = minOf(ttl, next.second)
             name = next.first
         }
-        return found.filter { it.first == name }.mapNotNull { (owner, t, rd) ->
-            SvcbCodec.parseRdata(msg, rd.first, rd.last - rd.first + 1, owner, minOf(t, ttl))
+
+        fun rrset(owner: String): List<SvcbRecord> =
+            found.filter { it.first == owner }.mapNotNull { (o, t, rd) ->
+                SvcbCodec.parseRdata(msg, rd.first, rd.last - rd.first + 1, o, minOf(t, if (o == name) ttl else Long.MAX_VALUE))
+            }
+        val records = if (chainEnds) rrset(name) else emptyList()
+        val related = LinkedHashMap<String, List<SvcbRecord>>()
+        for (owner in found.map { it.first }.distinct()) {
+            if (chainEnds && owner == name) continue
+            try {
+                related[owner] = rrset(owner)
+            } catch (_: SvcbMalformedException) {
+                // section 2.2: that RRset is rejected; it does not spoil the one asked for
+            }
         }
+        val addrs = addresses.mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
+        return DnsAnswer(records, negativeTtl, related, addrs)
     }
 
     /** [name] as [DnsReader.name] writes it: lower case, no final dot. */
@@ -127,27 +203,28 @@ internal object DnsMessage {
 internal fun httpsRecordsOf(
     answer: io.kuicksilver.tls.KslDnsAnswer,
     name: String,
-): List<SvcbRecord>? =
+): DnsAnswer? =
     try {
         when (answer) {
             is io.kuicksilver.tls.KslDnsAnswer.Message -> {
-                DnsMessage.answers(answer.bytes, name)
+                DnsMessage.read(answer.bytes, name)
             }
 
             is io.kuicksilver.tls.KslDnsAnswer.Records -> {
-                answer.records.mapNotNull {
-                    SvcbCodec.parseRdata(
-                        it.rdata,
-                        0,
-                        it.rdata.size,
-                        it.owner.trimEnd('.').lowercase(),
-                        it.ttlSeconds.coerceIn(0, Int.MAX_VALUE.toLong()),
-                    )
-                }
+                answer.records
+                    .mapNotNull {
+                        SvcbCodec.parseRdata(
+                            it.rdata,
+                            0,
+                            it.rdata.size,
+                            it.owner.trimEnd('.').lowercase(),
+                            it.ttlSeconds.coerceIn(0, Int.MAX_VALUE.toLong()),
+                        )
+                    }.let { DnsAnswer(it) } // no SOA reaches us this way: "none" is not cached (RFC 2308 section 5)
             }
         }
     } catch (_: SvcbMalformedException) {
-        emptyList() // RFC 9460 section 2.2: the RRset is rejected, the connection goes on without SVCB
+        DnsAnswer(emptyList()) // RFC 9460 section 2.2: the RRset is rejected, the connection goes on without SVCB
     } catch (_: DnsException) {
         null
     }

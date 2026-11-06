@@ -19,47 +19,73 @@ import kotlin.random.Random
 import kotlin.time.Duration
 
 /**
- * The HTTPS records of query names, by the records' TTL: at most [MAX_NAMES] names, the least recently used dropped
- * first; a TTL is clamped to [MIN_TTL_S]..[MAX_TTL_S] seconds, and a name without records (NXDOMAIN, NODATA) is
- * remembered for [NEGATIVE_TTL_S] seconds. A failed lookup is never stored. Not thread-safe: [HttpsRecords] locks it.
+ * The HTTPS records of query names, and addresses of names, by their TTL (never longer: RFC 1035 section 3.2.1 lets a
+ * record be cached for its TTL; capped at [MAX_TTL_S]): at most [MAX_NAMES] names each, the least recently used dropped
+ * first. A name without records (NXDOMAIN, NODATA) is remembered for the SOA's negative TTL (RFC 2308 section 5), and not
+ * at all without one ("Negative responses without SOA records SHOULD NOT be cached"). A failed lookup is never stored.
+ * Not thread-safe: [HttpsRecords] locks it.
  */
 internal class HttpsRecordCache(
     private val nowMillis: () -> Long,
 ) {
-    private class Entry(
-        val records: List<SvcbRecord>,
+    private class Entry<T>(
+        val value: T,
         val expiresAt: Long,
     )
 
-    private val map = LinkedHashMap<String, Entry>()
+    private val map = LinkedHashMap<String, Entry<List<SvcbRecord>>>()
+    private val addresses = LinkedHashMap<String, Entry<List<ByteArray>>>()
 
     val size: Int get() = map.size
 
     /** The fresh records of [name] (empty: known to have none), or null when nothing fresh is stored. */
-    fun get(name: String): List<SvcbRecord>? {
-        val e = map.remove(name) ?: return null
-        if (nowMillis() >= e.expiresAt) return null
-        map[name] = e
-        return e.records
-    }
+    fun get(name: String): List<SvcbRecord>? = map.fresh(name)
+
+    /** The fresh A/AAAA addresses of [name] from an earlier answer's sections (RFC 9460 section 5), or null. */
+    fun addressesOf(name: String): List<ByteArray>? = addresses.fresh(name)
 
     fun put(
         name: String,
         records: List<SvcbRecord>,
+        negativeTtl: Long?,
     ) {
-        val ttl = if (records.isEmpty()) NEGATIVE_TTL_S else records.minOf { it.ttlSeconds }.coerceIn(MIN_TTL_S, MAX_TTL_S)
-        map.remove(name)
-        map[name] = Entry(records, nowMillis() + ttl * 1000)
-        while (map.size > MAX_NAMES) map.remove(map.keys.first())
+        val ttl = if (records.isEmpty()) negativeTtl ?: return else records.minOf { it.ttlSeconds }
+        map.store(name, records, ttl)
     }
 
-    fun clear() = map.clear()
+    fun putAddresses(
+        name: String,
+        list: List<ByteArray>,
+        ttl: Long,
+    ) = addresses.store(name, list, ttl)
+
+    fun clear() {
+        map.clear()
+        addresses.clear()
+    }
+
+    private fun <T> LinkedHashMap<String, Entry<T>>.fresh(name: String): T? {
+        val e = remove(name) ?: return null
+        if (nowMillis() >= e.expiresAt) return null
+        this[name] = e
+        return e.value
+    }
+
+    private fun <T> LinkedHashMap<String, Entry<T>>.store(
+        name: String,
+        value: T,
+        ttlSeconds: Long,
+    ) {
+        val ttl = ttlSeconds.coerceAtMost(MAX_TTL_S)
+        remove(name)
+        if (ttl <= 0) return
+        this[name] = Entry(value, nowMillis() + ttl * 1000)
+        while (size > MAX_NAMES) remove(keys.first())
+    }
 
     companion object {
         const val MAX_NAMES = 1000
-        const val MIN_TTL_S = 60L
         const val MAX_TTL_S = 86_400L
-        const val NEGATIVE_TTL_S = 300L
     }
 }
 
@@ -68,6 +94,8 @@ internal sealed interface HttpsResolution {
     /** The endpoints to try in order (section 3, steps 4 and the appended AliasMode endpoint); never empty. */
     data class Endpoints(
         val endpoints: List<HttpsEndpoint>,
+        /** A/AAAA addresses of endpoint names that came with the answers (RFC 9460 section 5), 4 or 16 bytes each. */
+        val addresses: Map<String, List<ByteArray>> = emptyMap(),
     ) : HttpsResolution
 
     /**
@@ -86,7 +114,7 @@ internal sealed interface HttpsResolution {
  * one, bounded by [queryTimeout], and at most one per name at a time.
  */
 internal class HttpsRecords(
-    private val lookup: suspend (String) -> List<SvcbRecord>?,
+    private val lookup: suspend (String) -> DnsAnswer?,
     parent: CoroutineScope,
     private val queryTimeout: Duration,
     nowMillis: () -> Long,
@@ -107,7 +135,7 @@ internal class HttpsRecords(
 
     private val lock = Mutex()
     private val cache = HttpsRecordCache(nowMillis)
-    private val inFlight = HashMap<String, Deferred<List<SvcbRecord>?>>()
+    private val inFlight = HashMap<String, Deferred<DnsAnswer?>>()
     private var generation = 0L
 
     /** Called once a lookup's answer is settled (stored or not), with the name (tests). */
@@ -123,11 +151,16 @@ internal class HttpsRecords(
 
     suspend fun cachedNames(): Int = lock.withLock { cache.size }
 
+    private suspend fun cachedAddresses(name: String): List<ByteArray>? = lock.withLock { cache.addressesOf(name) }
+
     /** The records of [name]: cached, or from a lookup (shared with other callers of the same name); null when it failed. */
-    suspend fun records(name: String): List<SvcbRecord>? {
+    suspend fun records(name: String): List<SvcbRecord>? = answer(name)?.records
+
+    /** [records] with the rest of the answer ([DnsAnswer]); a cached answer has its records only. */
+    private suspend fun answer(name: String): DnsAnswer? {
         val pending =
             lock.withLock {
-                cache.get(name)?.let { return it }
+                cache.get(name)?.let { return DnsAnswer(it) }
                 inFlight.getOrPut(name) { start(name, generation) }
             }
         return try {
@@ -141,9 +174,9 @@ internal class HttpsRecords(
     private fun start(
         name: String,
         gen: Long,
-    ): Deferred<List<SvcbRecord>?> =
+    ): Deferred<DnsAnswer?> =
         scope.async {
-            var answer: List<SvcbRecord>? = null
+            var answer: DnsAnswer? = null
             try {
                 answer = withTimeoutOrNull(queryTimeout) { lookup(name) }
             } catch (e: CancellationException) {
@@ -156,7 +189,13 @@ internal class HttpsRecords(
                     lock.withLock {
                         if (gen == generation) {
                             inFlight.remove(name)
-                            if (caching) answer?.let { cache.put(name, it) }
+                            val a = answer
+                            if (caching && a != null) {
+                                cache.put(name, a.records, a.negativeTtl)
+                                // RFC 9460 section 5: other RRsets and addresses of the answer go to the cache as well
+                                for ((owner, rs) in a.related) if (rs.isNotEmpty()) cache.put(owner, rs, null)
+                                for ((owner, ad) in a.addresses) cache.putAddresses(owner, ad.first, ad.second)
+                            }
                         }
                     }
                 }
@@ -179,13 +218,21 @@ internal class HttpsRecords(
         host: String,
         port: Int,
         supported: Set<String>,
+        // a name the next query will ask for, whose A/AAAA may be looked up meanwhile (section 5, speculative queries)
+        prefetch: (String) -> Unit = {},
     ): HttpsResolution {
         var name = httpsQueryName(host, port)
         val seen = hashSetOf(name)
         var aliased = false
         var aliases = 0
+        // what earlier answers of this resolution carried, used before any follow-up query (section 5)
+        val related = HashMap<String, List<SvcbRecord>>()
+        val addresses = HashMap<String, List<ByteArray>>()
         while (true) {
-            val rs = records(name) ?: return HttpsResolution.Failed
+            val a = related[name]?.let { DnsAnswer(it) } ?: answer(name) ?: return HttpsResolution.Failed
+            for ((owner, rs) in a.related) if (rs.isNotEmpty()) related.getOrPut(owner) { rs }
+            for ((owner, ad) in a.addresses) addresses.getOrPut(owner) { ad.first }
+            val rs = a.records
             val alias = aliasTarget(rs, random)
             if (alias == null || !isHostName(alias)) {
                 // no AliasMode record, or one to "." (ignored): this RRset's ServiceMode records, if any (section 3, step 4)
@@ -203,11 +250,21 @@ internal class HttpsRecords(
                         endpoints
                     }
                 val usable = all.filter { it.quic || it.tcp }
-                return if (usable.isEmpty()) HttpsResolution.None else HttpsResolution.Endpoints(usable)
+                if (usable.isEmpty()) return HttpsResolution.None
+                val known =
+                    usable
+                        .map { it.host }
+                        .distinct()
+                        .mapNotNull { h ->
+                            (addresses[h] ?: cachedAddresses(h))?.let { h to it }
+                        }.toMap()
+                return HttpsResolution.Endpoints(usable, known)
             }
             if (++aliases > MAX_ALIASES || !seen.add(alias)) return HttpsResolution.None
             aliased = true
             name = alias
+            // the alias target is the likely TargetName ("." in its ServiceMode records) and the appended endpoint's name
+            if (name !in addresses) prefetch(name)
         }
     }
 

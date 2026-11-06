@@ -152,6 +152,31 @@ class DnsMessageTest {
         }
     }
 
+    @Test fun negativeTtlComesFromTheSoa() { // RFC 2308 section 5: min(SOA TTL, MINIMUM); none without an SOA
+        val soa =
+            SvcbTestEncoder.name("ns.example") + SvcbTestEncoder.name("host.example") + hex("00000001 00000e10 00000384 00093a80 0000003c")
+        val withSoa = response("a.example", emptyList(), rcode = 3).let { it.copyOf().also { m -> m[9] = 1 } } + rr("example", 6, 900, soa)
+        assertEquals(60, DnsMessage.read(withSoa, "a.example").negativeTtl)
+        assertNull(DnsMessage.read(response("a.example", emptyList(), rcode = 3), "a.example").negativeTtl)
+    }
+
+    @Test fun otherRrsetsAndAddressesOfTheAnswerAreKept() { // RFC 9460 section 5: for the cache, before follow-up queries
+        val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val bad = hex("0001 00 0003 0003 0001bb")
+        val msg =
+            response("a.example", listOf(rr("a.example", 65, 300, alias))).let { it.copyOf().also { m -> m[11] = 4 } } +
+                rr("cdn.example", 65, 200, h3Here) + rr("cdn.example", 1, 30, hex("c0000201")) +
+                rr("cdn.example", 28, 60, hex("20010db8000000000000000000000001")) +
+                rr("bad.example", 65, 200, bad)
+        val a = DnsMessage.read(msg, "a.example")
+        assertEquals("cdn.example", a.records.single().target)
+        assertEquals(listOf("h3"), a.related["cdn.example"]?.single()?.alpn)
+        assertTrue("bad.example" !in a.related) // its malformed RRset is dropped, the one asked for stands
+        val (addrs, ttl) = a.addresses.getValue("cdn.example")
+        assertEquals(listOf(4, 16), addrs.map { it.size })
+        assertEquals(30, ttl)
+    }
+
     @Test fun ttlWithTopBitIsZero() { // RFC 2181 section 8
         val msg = response("a.example", listOf(rr("a.example", 65, 0x80000001L, h3Here)))
         assertEquals(0, DnsMessage.answers(msg, "a.example").single().ttlSeconds)

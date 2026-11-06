@@ -35,6 +35,18 @@ internal class RequestDns private constructor(
         port: Int,
     ): RequestDns = RequestDns(resolve, lock, answers, host to port)
 
+    /**
+     * Takes [addresses] (4 or 16 bytes each) as the answer for [host] unless it was looked up already: the A/AAAA records
+     * an HTTPS answer carried, used instead of a follow-up query (RFC 9460 section 5).
+     */
+    suspend fun seed(
+        host: String,
+        addresses: List<ByteArray>,
+    ) {
+        if (addresses.isEmpty()) return
+        lock.withLock { answers.getOrPut(socketHost(host)) { Result.success(addresses.map { TcpAddress(it, 0) }) } }
+    }
+
     /** The addresses of [host] with [port]; [host] is a URL host, an IPv6 literal with or without its brackets. */
     suspend fun lookup(
         host: String,

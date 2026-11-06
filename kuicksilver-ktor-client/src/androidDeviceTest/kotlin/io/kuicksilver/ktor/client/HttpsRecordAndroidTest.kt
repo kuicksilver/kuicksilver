@@ -17,7 +17,7 @@ class HttpsRecordAndroidTest {
             assumeTrue(Build.VERSION.SDK_INT >= 29)
             // localhost has no HTTPS records: a failed lookup (null) or none (empty), never an exception
             val answer = platformHttpsQuery("localhost", 5.seconds)
-            assertTrue(answer == null || answer.isEmpty(), "localhost answered $answer")
+            assertTrue(answer == null || answer.records.isEmpty(), "localhost answered ${answer?.records}")
         }
 
     @Test fun nullBelowApi29(): Unit =

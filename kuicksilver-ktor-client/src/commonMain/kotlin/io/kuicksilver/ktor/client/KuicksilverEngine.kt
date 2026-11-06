@@ -78,8 +78,9 @@ internal class KuicksilverEngine(
     init {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val extraWait = config.http3.httpsRecordExtraWait
-        require(extraWait >= Duration.ZERO && extraWait <= MAX_HTTPS_RECORD_EXTRA_WAIT) {
-            "httpsRecordExtraWait must be 0..1 s, was $extraWait"
+        // RFC 9460 section 5.1: "Clients implementing this optimization SHOULD wait for 50 milliseconds"
+        require(extraWait >= MIN_HTTPS_RECORD_EXTRA_WAIT && extraWait <= MAX_HTTPS_RECORD_EXTRA_WAIT) {
+            "httpsRecordExtraWait must be 50 ms..1 s, was $extraWait"
         }
     }
 
@@ -783,6 +784,8 @@ internal class KuicksilverEngine(
         val secure = config.http3.httpsRecords.secure
         val altAuthority = alt?.let { (it.host ?: url.host) to it.port }
         val (origin, altResolution) = awaitResolutions(records, url, dns, supported, secure, altAuthority)
+        // the addresses the answers carried for endpoint names: no follow-up query for them (section 5)
+        for (r in listOf(origin, altResolution)) (r as? HttpsResolution.Endpoints)?.addresses?.forEach { (h, a) -> dns.seed(h, a) }
         if (origin == HttpsResolution.Failed && secure) {
             // section 3.1: "the client SHOULD abandon its attempt to reach the service, even if the client is SVCB-optional"
             throw kotlinx.io.IOException(
@@ -1008,8 +1011,21 @@ internal class KuicksilverEngine(
         val unanswered = if (secure) HttpsResolution.Failed else HttpsResolution.None
         return withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
-                val originJob = async { records.resolve(url.host, url.port, supported) }
-                val altJob = altAuthority?.let { (h, p) -> async { records.resolve(h, p, supported) } }
+                // section 5: "clients SHOULD issue speculative A and/or AAAA queries in parallel with each SVCB query, based
+                // on a predicted value of TargetName": an alias target, looked up into the request's resolution
+                val prefetch: (String) -> Unit = { name ->
+                    engineScope.launch {
+                        try {
+                            dns.lookup(name, url.port)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            // kept in dns for the connection that may need it
+                        }
+                    }
+                }
+                val originJob = async { records.resolve(url.host, url.port, supported, prefetch) }
+                val altJob = altAuthority?.let { (h, p) -> async { records.resolve(h, p, supported, prefetch) } }
                 val https =
                     launch {
                         originJob.join()
@@ -1156,6 +1172,9 @@ internal fun isTransientRefusal(e: Throwable): Boolean {
 internal class EndpointUnreachable(
     cause: Throwable,
 ) : Exception(cause.message, cause)
+
+/** The shortest `httpsRecordExtraWait` allowed (RFC 9460 section 5.1). */
+internal val MIN_HTTPS_RECORD_EXTRA_WAIT = kotlin.time.Duration.parse("50ms")
 
 /** The longest `httpsRecordExtraWait` allowed. */
 internal val MAX_HTTPS_RECORD_EXTRA_WAIT = 1.seconds

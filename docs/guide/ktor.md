@@ -646,12 +646,16 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   alternative);
 - the request waits for the records while the origin's addresses resolve and at most `httpsRecordExtraWait` (50 ms)
   longer; a lookup that answers later, fails or times out leaves the request on the origin as without records, and a
-  late answer is cached for the next request. A malformed answer always counts as "no records". With
+  late answer is cached for the next request (`httpsRecordExtraWait` is 50 ms to 1 s: RFC 9460 section 5.1 asks for at
+  least 50 ms before connecting without the records). While an AliasMode chain is followed, the addresses of each
+  alias target are looked up in parallel (section 5). A malformed answer always counts as "no records". With
   `HttpsRecordSource.Exchange(secure = true) { ... }` (an exchange whose answers are protected: DNS over HTTPS or TLS, or
   validated DNSSEC) the request waits for the records instead, up to the connect timeout, and a failed lookup (an error
   answer such as SERVFAIL, a transport error, a timeout) abandons it with an `IOException`, so an attacker who drops the
   answers cannot downgrade the connection (RFC 9460 section 3.1);
-- answers are cached by their TTL (60 s to a day; "no records" for 5 minutes; at most 1000 names) and forgotten when
+- answers are cached for their TTL, never longer (at most a day; "no records" for the negative TTL of the answer's SOA
+  record, RFC 2308, and not at all without one; at most 1000 names), together with the other HTTPS records and the
+  A/AAAA records the answer carried, which spare follow-up queries (RFC 9460 section 5), and forgotten when
   `networkId()` reports a new network; without `networkId` the engine cannot see a network change and keeps no answers
   of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
   asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at

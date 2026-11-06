@@ -31,7 +31,7 @@ class SvcbResolutionTest {
         asked: MutableList<String> = ArrayList(),
     ) = HttpsRecords({ name ->
         asked += name
-        if (name in answers) answers[name] else emptyList()
+        (if (name in answers) answers[name] else emptyList())?.let { DnsAnswer(it) }
     }, scope, 10.seconds, { 0L })
 
     @Test fun endpointsInPriorityOrderWithTheirTransports() =
@@ -78,10 +78,12 @@ class SvcbResolutionTest {
             repeat(40) { seed ->
                 val rs =
                     HttpsRecords({ n ->
-                        listOf(
-                            rec(n, 1, "b.example", "h2"),
-                            rec(n, 1, "c.example", "h2"),
-                            rec(n, 2, "z.example", "h2"),
+                        DnsAnswer(
+                            listOf(
+                                rec(n, 1, "b.example", "h2"),
+                                rec(n, 1, "c.example", "h2"),
+                                rec(n, 2, "z.example", "h2"),
+                            ),
                         )
                     }, backgroundScope, 10.seconds, {
                         0L
@@ -144,6 +146,40 @@ class SvcbResolutionTest {
             // section 12: clients that might be subject to forged "." records SHOULD ignore them
             val rs = resolver(mapOf("a.example" to listOf(rec("a.example", 0, "."))), backgroundScope)
             assertSame(HttpsResolution.None, rs.resolve("a.example", 443, all))
+        }
+
+    @Test fun recordsCarriedByAnEarlierAnswerAreUsedWithoutAQuery() =
+        runTest {
+            // section 5: the Additional section goes to the cache before any follow-up query
+            val asked = ArrayList<String>()
+            val prefetched = ArrayList<String>()
+            val rs =
+                HttpsRecords({ name ->
+                    asked += name
+                    if (name != "a.example") {
+                        DnsAnswer(emptyList())
+                    } else {
+                        DnsAnswer(
+                            listOf(rec("a.example", 0, "cdn.example")),
+                            related = mapOf("cdn.example" to listOf(rec("cdn.example", 1, ".", "h3"))),
+                            addresses = mapOf("cdn.example" to (listOf(byteArrayOf(192.toByte(), 0, 2, 1)) to 60L)),
+                        )
+                    }
+                }, backgroundScope, 10.seconds, { 0L })
+            val r = assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 443, all) { prefetched += it })
+            assertEquals(listOf("a.example"), asked)
+            assertEquals("cdn.example", r.endpoints.first().host)
+            assertEquals(listOf(4), r.addresses["cdn.example"]?.map { it.size })
+            assertEquals(emptyList(), prefetched) // its addresses came with the answer
+        }
+
+    @Test fun aliasTargetIsPrefetched() =
+        runTest {
+            // section 5: speculative A/AAAA queries in parallel with each SVCB query
+            val prefetched = ArrayList<String>()
+            val rs = resolver(mapOf("a.example" to listOf(rec("a.example", 0, "cdn.example"))), backgroundScope)
+            rs.resolve("a.example", 443, all) { prefetched += it }
+            assertEquals(listOf("cdn.example"), prefetched)
         }
 
     @Test fun failedLookupIsFailed() =
