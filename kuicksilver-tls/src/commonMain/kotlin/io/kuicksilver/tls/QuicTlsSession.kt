@@ -430,6 +430,29 @@ public interface ResetKey : AutoCloseable {
     )
 }
 
+/**
+ * An AES-128 block key for QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4, experimental): the material
+ * lives inside the native layer (ADR-0003). One block per call; safe to call from several threads at once.
+ */
+@SubclassOptInRequired(ExperimentalKuicksilverApi::class)
+public interface LoadBalancerKey : AutoCloseable {
+    /** Encrypts the 16 bytes at `input[inOffset]` into `out[outOffset, +16)`; the two ranges may be the same. */
+    public fun encrypt(
+        input: ByteArray,
+        inOffset: Int,
+        out: ByteArray,
+        outOffset: Int,
+    )
+
+    /** Decrypts the 16 bytes at `input[inOffset]` into `out[outOffset, +16)`; the two ranges may be the same. */
+    public fun decrypt(
+        input: ByteArray,
+        inOffset: Int,
+        out: ByteArray,
+        outOffset: Int,
+    )
+}
+
 /** The crypto provider the QUIC core sees (ADR-0002). */
 @SubclassOptInRequired(ExperimentalKuicksilverApi::class)
 public interface QuicCrypto {
@@ -454,6 +477,15 @@ public interface QuicCrypto {
 
     /** A fresh random stateless-reset key, independent of the connection ID generator (RFC 9000 section 10.3, ADR-0003). */
     public fun newResetKey(): ResetKey
+
+    /**
+     * A QUIC-LB block key (draft-ietf-quic-load-balancers-21 section 5.4): from the 16 bytes of [key], which are wiped once
+     * copied in, or a fresh random one made inside the provider when [key] is null. A provider without AES throws
+     * [UnsupportedOperationException], the default.
+     */
+    @ExperimentalKuicksilverApi
+    public fun newLoadBalancerKey(key: ByteArray?): LoadBalancerKey =
+        throw UnsupportedOperationException("this QuicCrypto provider has no QUIC-LB keys")
 
     /** (read, write) Initial protectors for [role] derived from the client's first Destination Connection ID. */
     public fun initialProtectors(

@@ -263,8 +263,24 @@ public expect object Ksl {
 
     public fun keyFree(key: Long)
 
-    /** An endpoint key made inside ksl: [KslConst.EKEY_TOKEN] (AES-256-GCM for Retry tokens, used with [seal]/[open]) or [KslConst.EKEY_RESET] (HMAC-SHA256 for stateless reset tokens). */
+    /** An endpoint key made inside ksl: [KslConst.EKEY_TOKEN] (AES-256-GCM for Retry tokens, used with [seal]/[open]), [KslConst.EKEY_RESET] (HMAC-SHA256 for stateless reset tokens) or [KslConst.EKEY_LB] (AES-128 for [keyEcb16]). */
     public fun keyRandom(kind: Int): Long
+
+    /** A QUIC-LB block key ([KslConst.EKEY_LB]) from the 16 bytes of [key], copied into native memory; the caller wipes its array. */
+    public fun keyLb(key: ByteArray): Long
+
+    /**
+     * One AES-128-ECB block with a QUIC-LB key ([KslConst.EKEY_LB]): `input[inOffset, +16)` encrypted (or with [decrypt]
+     * decrypted) into `out[outOffset, +16)`; the two ranges may be the same. Safe to call concurrently on one key.
+     */
+    public fun keyEcb16(
+        key: Long,
+        decrypt: Boolean,
+        input: ByteArray,
+        inOffset: Int,
+        out: ByteArray,
+        outOffset: Int,
+    )
 
     /** First 16 bytes of HMAC-SHA256 over `input[offset, +length)` with a reset key, written at `out[outOffset]`. */
     public fun keyMac16(

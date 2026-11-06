@@ -33,7 +33,8 @@ extern "C" {
 /* 7: ICMP hints for DPLPMTUD (ADR-0006) — ksl_udp_take_ptb (Packet Too Big read from the Linux error queue, IP_RECVERR with DF) and
    ksl_udp_emsgsize (sends the kernel refused as too large); a queued ICMP error no longer fails ksl_udp_recv. The one ABI bump of 0.3.0:
    later 0.3.0 additions go under 7; additive under 7: ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
-   path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records) */
+   path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
+   ksl_key_lb and ksl_key_ecb16 (QUIC-LB connection IDs) */
 
 /* return codes */
 #define KSL_OK 0
@@ -317,6 +318,14 @@ ksl_key *ksl_key_random(
 int ksl_key_mac16(
     ksl_key *, const uint8_t *in, size_t len,
     uint8_t out[16]); /* KSL_EKEY_RESET only: first 16 bytes of HMAC-SHA256; KSL_ERROR for any other key */
+#define KSL_EKEY_LB                                                                                                    \
+    3 /* AES-128 block key for QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4): ksl_key_lb, or random
+         via ksl_key_random; used only with ksl_key_ecb16. Additive in ABI 7 */
+ksl_key *ksl_key_lb(const uint8_t key[16]); /* copies the 16 key bytes in (the caller wipes its copy); NULL on NULL */
+int ksl_key_ecb16(
+    ksl_key *, int decrypt, const uint8_t in[16],
+    uint8_t out[16]); /* KSL_EKEY_LB only: one AES-128-ECB block (in == out allowed); KSL_ERROR for any other key.
+                         A cipher context per call: the key is immutable and calls may run concurrently */
 
 /* ---- accelerated UDP (Linux; ADR-0006): batched send/receive with GSO, GRO, ECN, DF probe mode and SO_REUSEPORT.
  *  Elsewhere ksl_udp_open answers NULL with KSL_E_NOT_SUPPORTED. Addresses are KSL_UDP_ADDR_LEN bytes: family (4|6), port BE, 16 address bytes

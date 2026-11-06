@@ -4,6 +4,7 @@
 
 package io.kuicksilver.tls
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
@@ -34,6 +35,68 @@ public enum class SignatureAlgorithm(
 
     /** Ed25519 (RFC 8032), signing the message itself. */
     Ed25519(2),
+}
+
+/**
+ * An AES-128-ECB block key for QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4) held in `ksl`: the 16
+ * key bytes are copied into native memory once and wiped there on [close]; Kotlin keeps only the handle. Immutable, so
+ * [encrypt] and [decrypt] may run on several threads at once (one cipher context per call).
+ */
+@InternalKuicksilverApi
+@OptIn(ExperimentalKuicksilverApi::class)
+public class KslLbKey internal constructor(
+    handle: Long,
+) : LoadBalancerKey {
+    private var h: Long = handle
+
+    private fun k(): Long = h.also { if (it == 0L) throw IllegalStateException("KslLbKey is closed") }
+
+    override fun encrypt(
+        input: ByteArray,
+        inOffset: Int,
+        out: ByteArray,
+        outOffset: Int,
+    ): Unit = Ksl.keyEcb16(k(), false, input, inOffset, out, outOffset)
+
+    override fun decrypt(
+        input: ByteArray,
+        inOffset: Int,
+        out: ByteArray,
+        outOffset: Int,
+    ): Unit = Ksl.keyEcb16(k(), true, input, inOffset, out, outOffset)
+
+    /** One-block convenience: [encrypt] of `in16` into `out16`. */
+    public fun encrypt(
+        in16: ByteArray,
+        out16: ByteArray,
+    ): Unit = encrypt(in16, 0, out16, 0)
+
+    /** One-block convenience: [decrypt] of `in16` into `out16`. */
+    public fun decrypt(
+        in16: ByteArray,
+        out16: ByteArray,
+    ): Unit = decrypt(in16, 0, out16, 0)
+
+    override fun close() {
+        val k = h
+        if (k != 0L) {
+            h = 0L
+            Ksl.keyFree(k)
+        }
+    }
+
+    public companion object {
+        /** A key from the 16 bytes of [key]; [key] is wiped whether or not this succeeds. */
+        public fun of(key: ByteArray): KslLbKey {
+            try {
+                require(key.size == 16) { "a QUIC-LB key is 16 bytes, not ${key.size}" }
+                KslLoader.ensureLoaded()
+                return KslLbKey(Ksl.keyLb(key))
+            } finally {
+                key.fill(0)
+            }
+        }
+    }
 }
 
 /** The small set of primitives the stack exposes from OpenSSL: random bytes, SHA-2, HKDF-Expand-Label, ECDSA P-256 and Ed25519. */

@@ -237,6 +237,17 @@ internal object KslNative {
 
     @JvmStatic external fun keyRandom(kind: Int): Long
 
+    @JvmStatic external fun keyLb(key: ByteArray): Long
+
+    @JvmStatic external fun keyEcb16(
+        key: Long,
+        decrypt: Boolean,
+        input: ByteArray,
+        inOffset: Int,
+        out: ByteArray,
+        outOffset: Int,
+    ): Int
+
     @JvmStatic external fun keyMac16(
         key: Long,
         input: ByteBuffer,

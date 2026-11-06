@@ -105,13 +105,45 @@ ksl_key *ksl_key_initial(const uint8_t *dcid, size_t len, int is_server, int dir
     OPENSSL_cleanse(sec, 32);
     return k;
 }
+/* A QUIC-LB block key: the 16 bytes in k->key, no cipher context of its own (ksl_key_ecb16 makes one per call). */
+static ksl_key *lb_build(const uint8_t key[16]) {
+    ksl_key *k = calloc(1, sizeof *k);
+    if (!k)
+        return NULL;
+    ksl_live_add(KSL_LIVE_KEY, 1);
+    k->kind = KSL_EKEY_LB;
+    k->key_len = 16;
+    memcpy(k->key, key, 16);
+    return k;
+}
+ksl_key *ksl_key_lb(const uint8_t key[16]) {
+    return key ? lb_build(key) : NULL;
+}
+int ksl_key_ecb16(ksl_key *k, int decrypt, const uint8_t in[16], uint8_t out[16]) {
+    if (!k || k->kind != KSL_EKEY_LB || !in || !out)
+        return KSL_ERROR;
+    EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new();
+    int n = 0, ok = c != NULL;
+    const EVP_CIPHER *ecb = ksl_cipher(KSL_CIPHER_AES_128_ECB, EVP_aes_128_ecb());
+    ok = ok && EVP_CipherInit_ex(c, ecb, NULL, k->key, NULL, decrypt ? 0 : 1) == 1 &&
+         EVP_CIPHER_CTX_set_padding(c, 0) == 1 && EVP_CipherUpdate(c, out, &n, in, 16) == 1 && n == 16;
+    EVP_CIPHER_CTX_free(c); /* frees the expanded key with the context */
+    if (!ok)
+        ERR_clear_error();
+    return ok ? KSL_OK : KSL_ERROR;
+}
 ksl_key *ksl_key_random(int kind) {
     uint8_t secret[32];
-    if (kind != KSL_EKEY_TOKEN && kind != KSL_EKEY_RESET)
+    if (kind != KSL_EKEY_TOKEN && kind != KSL_EKEY_RESET && kind != KSL_EKEY_LB)
         return NULL;
     if (RAND_bytes(secret, 32) != 1)
         return NULL;
     ksl_key *k;
+    if (kind == KSL_EKEY_LB) {
+        k = lb_build(secret); /* the first 16 of the 32 random bytes */
+        OPENSSL_cleanse(secret, 32);
+        return k;
+    }
     if (kind == KSL_EKEY_TOKEN)
         k = key_build(KSL_AEAD_AES_256_GCM, V1, secret, 32);
     else {

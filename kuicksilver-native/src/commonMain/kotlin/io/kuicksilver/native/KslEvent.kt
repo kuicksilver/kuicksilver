@@ -19,6 +19,9 @@ public object KslConst {
     public const val MODE_QUIC: Int = 0
     public const val EKEY_TOKEN: Int = 1
     public const val EKEY_RESET: Int = 2
+
+    /** AES-128 block key for QUIC-LB connection IDs ([Ksl.keyLb], or random via [Ksl.keyRandom]); used with [Ksl.keyEcb16]. */
+    public const val EKEY_LB: Int = 3
     public const val MODE_TCP: Int = 1
     public const val VERIFY_NONE: Int = 0
     public const val VERIFY_PAUSE: Int = 1

@@ -323,4 +323,51 @@ void run_key(void) {
         ksl_ctx_free(sc);
         END();
     }
+
+    /* QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4): one AES-128-ECB block per call, the key copied in */
+    {
+        SECTION("lb_key_fips197");
+        /* FIPS-197 Appendix C.1 (AES-128) */
+        uint8_t key[16], pt[16], ct[16], back[16];
+        static const uint8_t want[16] = {0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30,
+                                         0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a};
+        for (int i = 0; i < 16; i++) {
+            key[i] = (uint8_t)i;
+            pt[i] = (uint8_t)(i * 0x11);
+        }
+        ksl_key *k = ksl_key_lb(key);
+        CHECK(k != NULL, "lb key from 16 bytes");
+        CHECK(ksl_key_ecb16(k, 0, pt, ct) == KSL_OK && !memcmp(ct, want, 16), "lb_key_fips197: encrypts to C.1");
+        CHECK(ksl_key_ecb16(k, 1, ct, back) == KSL_OK && !memcmp(back, pt, 16), "lb_key_fips197: decrypts back");
+        memcpy(back, pt, 16);
+        CHECK(ksl_key_ecb16(k, 0, back, back) == KSL_OK && !memcmp(back, want, 16), "lb key encrypts in place");
+        uint8_t junk[32] = {0}, mask[5];
+        CHECK(ksl_seal(k, 1, junk, 1, junk, 8, sizeof junk) == KSL_ERROR, "negative: lb key rejects seal");
+        CHECK(ksl_open(k, 1, junk, 1, junk, 16) == KSL_ERROR, "negative: lb key rejects open");
+        CHECK(ksl_header_mask(k, junk, mask) == KSL_ERROR, "negative: lb key rejects header mask");
+        CHECK(ksl_key_mac16(k, junk, 8, junk) == KSL_ERROR, "negative: lb key rejects mac16");
+        CHECK(ksl_key_next(k) == NULL, "negative: lb key has no next generation");
+        ksl_key *r = ksl_key_random(KSL_EKEY_LB), *r2 = ksl_key_random(KSL_EKEY_LB);
+        CHECK(r && r2, "random lb keys made inside ksl");
+        uint8_t a[16], b[16];
+        CHECK(ksl_key_ecb16(r, 0, pt, a) == KSL_OK && ksl_key_ecb16(r2, 0, pt, b) == KSL_OK && memcmp(a, b, 16) != 0,
+              "two random lb keys differ");
+        CHECK(ksl_key_ecb16(r, 1, a, b) == KSL_OK && !memcmp(b, pt, 16), "a random lb key decrypts what it encrypted");
+        ksl_key_free(r);
+        ksl_key_free(r2);
+        ksl_key_free(k);
+        END();
+    }
+    {
+        SECTION("negative_lb_key_wrong_kind");
+        ksl_key *reset = ksl_key_random(KSL_EKEY_RESET), *tok = ksl_key_random(KSL_EKEY_TOKEN);
+        uint8_t in[16] = {0}, out[16];
+        CHECK(ksl_key_ecb16(reset, 0, in, out) == KSL_ERROR, "negative_lb_key_wrong_kind: a reset key");
+        CHECK(ksl_key_ecb16(tok, 1, in, out) == KSL_ERROR, "negative_lb_key_wrong_kind: a token key");
+        CHECK(ksl_key_ecb16(NULL, 0, in, out) == KSL_ERROR, "negative: no key");
+        CHECK(ksl_key_lb(NULL) == NULL, "negative: no key bytes");
+        ksl_key_free(reset);
+        ksl_key_free(tok);
+        END();
+    }
 }

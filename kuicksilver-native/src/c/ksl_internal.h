@@ -130,7 +130,7 @@ extern int64_t ksl_test_ticket_clock_skew;
 #endif
 
 struct ksl_key {
-    int kind; /* 0 packet key; KSL_EKEY_TOKEN; KSL_EKEY_RESET (no cipher contexts, secret = HMAC key) */
+    int kind; /* 0 packet key; KSL_EKEY_TOKEN; KSL_EKEY_RESET (no cipher contexts, secret = HMAC key); KSL_EKEY_LB (key[16], no contexts) */
     EVP_CIPHER_CTX *enc, *dec;
     EVP_CIPHER_CTX *hp_ctx;
     int aead, hash;

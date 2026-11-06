@@ -74,6 +74,14 @@ public object KslQuicCrypto : QuicCrypto {
         KslLoader.ensureLoaded()
         return KslResetKey(Ksl.keyRandom(KslConst.EKEY_RESET))
     }
+
+    override fun newLoadBalancerKey(key: ByteArray?): LoadBalancerKey =
+        if (key == null) {
+            KslLoader.ensureLoaded()
+            KslLbKey(Ksl.keyRandom(KslConst.EKEY_LB))
+        } else {
+            KslLbKey.of(key)
+        }
 }
 
 internal class KslTokenKey(
