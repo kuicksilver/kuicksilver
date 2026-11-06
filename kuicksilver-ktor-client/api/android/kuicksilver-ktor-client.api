@@ -157,7 +157,15 @@ public final class io/kuicksilver/ktor/client/Http3SwitchKt {
 	public static final fun closeHttp3Connections (Lio/ktor/client/HttpClient;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public final class io/kuicksilver/ktor/client/HttpsRecordPrivateDns_androidKt {
+	public static final fun followingPrivateDns (Lio/kuicksilver/ktor/client/HttpsRecordSource$Companion;Landroid/net/ConnectivityManager;)Lio/kuicksilver/ktor/client/HttpsRecordSource;
+}
+
 public abstract interface class io/kuicksilver/ktor/client/HttpsRecordSource {
+	public static final field Companion Lio/kuicksilver/ktor/client/HttpsRecordSource$Companion;
+}
+
+public final class io/kuicksilver/ktor/client/HttpsRecordSource$Companion {
 }
 
 public final class io/kuicksilver/ktor/client/HttpsRecordSource$Exchange : io/kuicksilver/ktor/client/HttpsRecordSource {
@@ -172,6 +180,11 @@ public final class io/kuicksilver/ktor/client/HttpsRecordSource$Off : io/kuicksi
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/HttpsRecordSource$ProtectedSystem : io/kuicksilver/ktor/client/HttpsRecordSource {
+	public fun <init> (Lkotlin/jvm/functions/Function0;)V
+	public final fun isProtected ()Lkotlin/jvm/functions/Function0;
 }
 
 public final class io/kuicksilver/ktor/client/HttpsRecordSource$System : io/kuicksilver/ktor/client/HttpsRecordSource {

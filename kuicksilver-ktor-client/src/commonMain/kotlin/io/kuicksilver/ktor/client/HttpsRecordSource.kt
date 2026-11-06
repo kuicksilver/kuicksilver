@@ -32,6 +32,19 @@ public sealed interface HttpsRecordSource {
     public data object System : HttpsRecordSource
 
     /**
+     * The operating system's resolver, as [System], whose answers are cryptographically protected whenever [isProtected]
+     * says so: then a failed lookup abandons the request (RFC 9460 section 3.1), as with `Exchange(secure = true)`.
+     * Called once per request, on the call's coroutine; it must be quick, and one that throws counts as false. On Android
+     * `HttpsRecordSource.followingPrivateDns(connectivity)` builds one that reports Android's strict Private DNS (DNS over
+     * TLS with a configured server). On Apple platforms, Linux and Windows no public API tells whether the system's DNS is
+     * encrypted: give a check of your own (an MDM profile you deploy, say) or use [System].
+     */
+    public class ProtectedSystem(
+        /** Whether the system resolver's answers are cryptographically protected now. */
+        public val isProtected: () -> Boolean,
+    ) : HttpsRecordSource
+
+    /**
      * Lookups through [exchange]: it gets a DNS query in wire format (RFC 1035 section 4.1, ID 0 and RD set, as RFC 8484
      * section 4.1 asks for DNS over HTTPS) and returns the response in wire format, for example the body of a POST to a
      * DoH server with `Content-Type: application/dns-message`. The engine has no DoH client of its own. An exchange that
@@ -49,6 +62,9 @@ public sealed interface HttpsRecordSource {
         /** Sends one DNS query and returns its response. */
         public val exchange: suspend (query: ByteArray) -> ByteArray,
     ) : HttpsRecordSource
+
+    /** Builders of sources; on Android also `followingPrivateDns`. */
+    public companion object
 }
 
 /** Tests: lookups answered by [fn] (null for a failed lookup, empty for none). */
@@ -66,9 +82,28 @@ internal expect suspend fun platformHttpsQuery(
     timeout: Duration,
 ): DnsAnswer?
 
-/** Whether this source's answers are cryptographically protected (RFC 9460 section 3.1). */
+/** Whether this source's answers are cryptographically protected now (RFC 9460 section 3.1); read once per request. */
 @OptIn(ExperimentalKuicksilverApi::class)
-internal val HttpsRecordSource.secure: Boolean get() = this is HttpsRecordSource.Exchange && secure
+internal fun HttpsRecordSource.isSecure(): Boolean =
+    when (this) {
+        is HttpsRecordSource.Exchange -> {
+            secure
+        }
+
+        is HttpsRecordSource.ProtectedSystem -> {
+            try {
+                isProtected()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        else -> {
+            false
+        }
+    }
 
 /** The lookup function of this source, or null for [HttpsRecordSource.Off]: null from it is a failed lookup. */
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -78,7 +113,7 @@ internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> D
             null
         }
 
-        HttpsRecordSource.System -> {
+        HttpsRecordSource.System, is HttpsRecordSource.ProtectedSystem -> {
             { platformHttpsQuery(it, timeout) }
         }
 

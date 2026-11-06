@@ -5,6 +5,7 @@
 package io.kuicksilver.ktor.client.dns
 
 import io.kuicksilver.ktor.client.HttpsRecordSource
+import io.kuicksilver.ktor.client.isSecure
 import io.kuicksilver.ktor.client.lookup
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -103,6 +104,17 @@ class HttpsRecordCacheTest {
             // ID 0, RD, one question for a.example HTTPS IN (RFC 8484 section 4.1)
             assertContentEquals(hex("0000 0100 0001 0000 0000 0000 0161 076578616d706c65 00 0041 0001"), query)
         }
+
+    @Test fun protectedSystemIsSecureWhenItsCheckSaysSo() { // RFC 9460 section 3.1, per request
+        var strict = false
+        val source = HttpsRecordSource.ProtectedSystem { strict }
+        assertEquals(false, source.isSecure())
+        strict = true
+        assertEquals(true, source.isSecure())
+        assertEquals(false, HttpsRecordSource.ProtectedSystem { throw IllegalStateException("no network") }.isSecure())
+        assertEquals(false, HttpsRecordSource.System.isSecure())
+        assertEquals(true, HttpsRecordSource.Exchange(secure = true) { it }.isSecure())
+    }
 
     @Test fun negative_exchangeThatFailsOrAnswersAnotherQuestionIsAFailedLookup() =
         runTest {

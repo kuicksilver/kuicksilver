@@ -21,7 +21,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (RFC 9460 section 3): a record with `alpn=h3` lets the first request race HTTP/3 at once, TCP goes to the record's
   target and port, and an endpoint that fails is followed by the next, then by the origin; the certificate is still
   checked against the origin's name. `Exchange(secure = true)` declares answers protected (DoH, DoT, DNSSEC): a failed
-  lookup then abandons the request (RFC 9460 section 3.1). A cached `Alt-Svc` alternative's own HTTPS records decide
+  lookup then abandons the request (RFC 9460 section 3.1); `ProtectedSystem { ... }` and, on Android,
+  `HttpsRecordSource.followingPrivateDns(connectivity)` (strict Private DNS) do the same for the system resolver. A cached `Alt-Svc` alternative's own HTTPS records decide
   where its HTTP/3 goes (section 9.3). An `http://` request to an origin with HTTPS records is answered by the engine
   with a 307 to its `https` URL, which Ktor follows (section 9.5). The request waits for
   the records at most `httpsRecordExtraWait` (50 ms) after the origin's addresses resolved; answers are cached by TTL

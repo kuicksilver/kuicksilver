@@ -109,6 +109,15 @@ sealed interface io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilve
             final fun <get-secure>(): kotlin/Boolean // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.secure.<get-secure>|<get-secure>(){}[0]
     }
 
+    final class ProtectedSystem : io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource.ProtectedSystem|null[0]
+        constructor <init>(kotlin/Function0<kotlin/Boolean>) // io.kuicksilver.ktor.client/HttpsRecordSource.ProtectedSystem.<init>|<init>(kotlin.Function0<kotlin.Boolean>){}[0]
+
+        final val isProtected // io.kuicksilver.ktor.client/HttpsRecordSource.ProtectedSystem.isProtected|{}isProtected[0]
+            final fun <get-isProtected>(): kotlin/Function0<kotlin/Boolean> // io.kuicksilver.ktor.client/HttpsRecordSource.ProtectedSystem.isProtected.<get-isProtected>|<get-isProtected>(){}[0]
+    }
+
+    final object Companion // io.kuicksilver.ktor.client/HttpsRecordSource.Companion|null[0]
+
     final object Off : io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource.Off|null[0]
         final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/HttpsRecordSource.Off.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/HttpsRecordSource.Off.hashCode|hashCode(){}[0]

@@ -736,7 +736,7 @@ internal class KuicksilverEngine(
                     protocol = io.ktor.http.URLProtocol.HTTPS
                     port = if (url.specifiedPort == 0 || url.specifiedPort == 80) io.ktor.http.DEFAULT_PORT else url.specifiedPort
                 }.build()
-        val secure = config.http3.httpsRecords.secure
+        val secure = config.http3.httpsRecords.isSecure()
         // waited for as before an https request: while the origin's addresses resolve and the extra wait after them
         // (section 5.1), all of it for a secure source (section 3.1); an answer that comes later is cached for the next
         val upgrade =
@@ -816,7 +816,7 @@ internal class KuicksilverEngine(
         val url = data.url
         val dns = config.newRequestDns()
         val supported = supportedAlpn(webSocket)
-        val secure = config.http3.httpsRecords.secure
+        val secure = config.http3.httpsRecords.isSecure()
         val altAuthority = alt?.let { (it.host ?: url.host) to it.port }
         val (origin, altResolution) = awaitResolutions(records, url, dns, supported, secure, altAuthority)
         // the addresses the answers carried for endpoint names: no follow-up query for them (section 5)
