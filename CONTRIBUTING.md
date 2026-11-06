@@ -209,14 +209,17 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   ./gradlew --max-workers=2 :kuicksilver-soak:jvmTest -Pkuicksilver.soak.minutes=30          # JVM
   ./gradlew --max-workers=2 :kuicksilver-soak:macosArm64Test -Pkuicksilver.soak.minutes=30   # Kotlin/Native, macOS
   ./gradlew --max-workers=2 :kuicksilver-soak:linkDebugTestLinuxArm64                        # then, in a container:
-  docker run --rm -v "$PWD/kuicksilver-soak/build:/b" -e KSL_SOAK_MINUTES=30 -e KSL_SOAK_REPORT=/b/soak ubuntu:24.04 /b/bin/linuxArm64/debugTest/test.kexe
+  docker run --rm -v "$PWD/kuicksilver-soak/build:/b" -e KSL_SOAK_MINUTES=30 -e KSL_SOAK_REPORT=/b/soak \
+    -e KSL_SOAK_COMMIT="$(git rev-parse HEAD)" -e KSL_SOAK_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" ubuntu:24.04 /b/bin/linuxArm64/debugTest/test.kexe
   ```
 
   Options: `-Pkuicksilver.soak.clients=8`, `.rate=40` (iterations per second, a ceiling), `.sampleSeconds=15`,
   `.warmupMinutes` (default a fifth of the run, at least 2), `.label`, `.report=<dir>` (default
   `kuicksilver-soak/build/soak`), `.scenarios=KtorH3,KtorAbort` (only these scenarios of the mix, each with its weight),
   `.qlog=<dir>` (every Ktor HTTP/3 connection keeps its last qlog records in memory; one that ends by a timeout or an
-  internal failure is written to `<dir>` with its peer's trace); the container takes the same as `KSL_SOAK_*` variables.
+  internal failure is written to `<dir>` with its peer's trace); the container takes the same as `KSL_SOAK_*` variables,
+  plus `KSL_SOAK_COMMIT` and `KSL_SOAK_DATE`, which Gradle sets for its own runs and which the report names as the run's
+  commit and start (the column `tools/report/reliability.sh` shows).
   Each unexpected failure is printed with its time and scenario. A run **passes** when, after
   warm-up, every sampled series is flat — its Theil–Sen slope (the median of all pairwise slopes, robust to GC
   saw-teeth and in-flight bursts; beyond 2,048 samples the median of 2²¹ pairs drawn from a fixed seed, so a 72-hour or

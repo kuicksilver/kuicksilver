@@ -84,7 +84,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    which is expected here), then `tools/report/reliability.sh`. The page's Gate section therefore names that earlier
    commit, not the release commit, and says so; the page cannot name the gate of its own commit, because the gate runs
    after it is written. Commit, then run the gate (step 1) on that commit. The 24–72 hour soak of CONTRIBUTING ("Soak and churn")
-   precedes a planned release; a patch release that only moves OpenSSL to a fixed 3.5.x release (SECURITY.md, OpenSSL)
+   precedes a planned release and runs before the page is generated, so the page shows it; a patch release that only moves OpenSSL to a fixed 3.5.x release (SECURITY.md, OpenSSL)
    needs the full gate but not the long soak.
 3. Dry run, then the release, from the same commit:
    ```
