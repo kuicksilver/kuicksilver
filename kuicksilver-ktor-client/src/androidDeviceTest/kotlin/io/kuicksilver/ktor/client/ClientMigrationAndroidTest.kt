@@ -60,16 +60,28 @@ class ClientMigrationAndroidTest {
         ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
     }
 
-    private fun hasTransport(transport: Int): Boolean =
-        connectivity.allNetworks.any { connectivity.getNetworkCapabilities(it)?.hasTransport(transport) == true }
+    private fun hasTransport(
+        transport: Int,
+        validated: Boolean = false,
+    ): Boolean =
+        connectivity.allNetworks.any {
+            val caps = connectivity.getNetworkCapabilities(it)
+            caps?.hasTransport(transport) == true && (!validated || caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+        }
 
     /** The host server's port; skipped without one, failed when the device cannot switch between Wi-Fi and mobile data. */
     private suspend fun peerPort(): Int {
         val port = InstrumentationRegistry.getArguments().getString("kslMigrationPeerPort")?.toIntOrNull()
         assumeTrue("run :kuicksilver-ktor-client:androidMigrationDeviceTest (a server on the host, 10.0.2.2)", port != null)
-        // a network switched on again by the previous test may still be coming up
+        // a network switched on again by the previous test may still be coming up; mobile data until validated, since the
+        // system makes it the default then when Wi-Fi is not validated (the emulator's often is not), which once moved the
+        // default after the test had picked the radio to switch off (2026-11-06)
         withTimeoutOrNull(60.seconds) {
-            while (!hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || !hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) delay(200)
+            while (!hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                !hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR, validated = true)
+            ) {
+                delay(200)
+            }
         }
         // asked for on purpose (the gate passes the port): a device that cannot switch networks fails instead of passing silently
         assertTrue(
@@ -132,8 +144,7 @@ class ClientMigrationAndroidTest {
         runBlocking {
             KslLoader.ensureLoaded()
             val port = peerPort()
-            val default = connectivity.activeNetwork
-            val radio = defaultRadio()
+            var radio: String? = null
             val migrated = Channel<MigrationEvent.Migrated<*>>(Channel.UNLIMITED)
             val listener =
                 object : KuicksilverEventListener() {
@@ -151,7 +162,9 @@ class ClientMigrationAndroidTest {
                         val atTwo = CompletableDeferred<Unit>()
                         val body = async { download(c, "https://10.0.2.2:$port/big", atTwo) }
                         atTwo.await()
-                        shell("svc $radio disable")
+                        // read when switching: the default the connection is on now
+                        val default = connectivity.activeNetwork
+                        radio = defaultRadio().also { shell("svc $it disable") }
                         val e = migrated.receive()
                         assertEquals(default, e.old)
                         assertNotEquals(default, e.new)
@@ -161,7 +174,7 @@ class ClientMigrationAndroidTest {
                     }
                 }
             } finally {
-                shell("svc $radio enable")
+                radio?.let { shell("svc $it enable") }
             }
         }
 
@@ -176,7 +189,7 @@ class ClientMigrationAndroidTest {
         runBlocking {
             KslLoader.ensureLoaded()
             val port = peerPort()
-            val radio = defaultRadio()
+            var radio: String? = null
             val migrations = Channel<MigrationEvent<*>>(Channel.UNLIMITED)
             val listener =
                 object : KuicksilverEventListener() {
@@ -193,7 +206,7 @@ class ClientMigrationAndroidTest {
                         val atTwo = CompletableDeferred<Unit>()
                         val body = async { runCatching { download(c, "https://10.0.2.2:$port/big", atTwo) } }
                         atTwo.await()
-                        shell("svc $radio disable")
+                        radio = defaultRadio().also { shell("svc $it disable") }
                         val resumed = runCatching { c.get("https://10.0.2.2:$port/resume") }
                         val outcome = body.await()
                         Log.i("kuicksilver", "without migration: resume=${resumed.map { it.version }} body=$outcome")
@@ -201,7 +214,7 @@ class ClientMigrationAndroidTest {
                     }
                 }
             } finally {
-                shell("svc $radio enable")
+                radio?.let { shell("svc $it enable") }
             }
         }
 
