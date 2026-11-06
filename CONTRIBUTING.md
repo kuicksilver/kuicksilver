@@ -190,7 +190,14 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
 - **Determinism, no sleeps.** Do not wait with `sleep` or `delay` for something to happen. Use virtual time
   (`kotlinx-coroutines-test`, the sans-IO core takes time as a parameter), the network simulator in
   `kuicksilver-testing` (seeded and reproducible), `MemoryNetwork` for in-memory UDP, or wait for an explicit event with
-  a generous timeout. A test that is flaky is a bug; report the seed.
+  a generous timeout. A new test never uses `delay()` (or `Thread.sleep`) as synchronization, that is, to let another
+  coroutine, thread or the peer get somewhere first: it waits on the event itself, a `CompletableDeferred` completed
+  where the thing happens, a `Channel`, a `Job` or a state flow. `delay()` stays fine where the delay is the subject,
+  such as a slow peer under virtual time. A test that is flaky is a bug; report the seed.
+- **Flake hunting.** `tools/ci/flake-hunt.sh` runs the chosen modules' tests N times (default 20) under CPU load and
+  prints the failures by test, for example
+  `tools/ci/flake-hunt.sh -n 20 -b 8 http3 quic` for the JVM or `tools/ci/flake-hunt.sh -t macos -n 5 quic` for
+  Kotlin/Native; `-Pkuicksilver.test.repeat=N` alone repeats a module's `jvmTest` N times in one build.
 - **Platforms.** Common behaviour is tested in `commonTest` so it runs on the JVM, Android and Native. Tests that need a
   Linux-only facility (GSO/GRO, `SO_REUSEPORT` flow hashing) skip themselves elsewhere and run in the Docker steps; the
   accelerated UDP socket itself also runs on macOS and Windows (Windows tests need a Windows host or VM:

@@ -24,7 +24,9 @@ A bug fix starts with a test that fails for the reason of the bug (RED), then th
 request or the commit message names the test and how it failed ([CONTRIBUTING.md, Tests](../CONTRIBUTING.md#tests)). Every security check has a `negative_*` test that fails when the check is removed; the
 threat model lists them. The rule for new tests is no waiting with `sleep` or `delay`: virtual time, the seeded
 network simulator in `kuicksilver-testing` or `MemoryNetwork`, so a failure reproduces from its seed; some older tests
-still poll with a deadline.
+still poll with a deadline. A new test never uses `delay()` as synchronization: it waits for the event itself (a
+`CompletableDeferred`, a channel, a job), and `tools/ci/flake-hunt.sh` reruns a suite 20 times under CPU load to find
+the tests that do not.
 
 No tool checks that a test failed before the fix; reviewers ask for it, and the pull request template has a box for it
 ([`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)). A failing existing test is first treated
