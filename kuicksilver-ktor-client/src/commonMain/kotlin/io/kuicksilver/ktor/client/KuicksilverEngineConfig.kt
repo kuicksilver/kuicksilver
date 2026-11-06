@@ -77,8 +77,9 @@ public class Http3ClientConfig {
      * `port`), then to the origin as without records; the certificate is checked against the origin's name whatever the
      * target. The address hints are not used, nor is `ech` (a record that requires it is skipped). A cached `Alt-Svc`
      * alternative is tried first. No lookup is made for [Http3DiscoveryMode.Preferred],
-     * [Http3DiscoveryMode.H3Only], [quicHints], `http://` URLs, IP addresses, requests through a proxy, or while
-     * [http3Allowed] says no. Answers are cached by their TTL (60 s to
+     * [Http3DiscoveryMode.H3Only], [quicHints], IP addresses, requests through a proxy, or while [http3Allowed] says no.
+     * An `http://` request (in every discovery mode) first asks for the records of its `https` URL and, when the origin has
+     * any usable one, gets a `307` to that URL from the engine instead (RFC 9460 section 9.5). Answers are cached by their TTL (60 s to
      * 1 day; 5 minutes for "no records"; at most 1000 names) until [networkId] changes; a failed lookup is not cached.
      */
     @ExperimentalKuicksilverApi

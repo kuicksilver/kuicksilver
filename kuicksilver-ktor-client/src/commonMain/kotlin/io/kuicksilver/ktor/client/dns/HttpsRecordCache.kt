@@ -205,6 +205,22 @@ internal class HttpsRecords(
         }
     }
 
+    /**
+     * Whether an `http` request must go to `https://host:port` instead (RFC 9460 section 9.5): the HTTPS RRset of that
+     * URL's query name has an AliasMode record (one to "." is ignored, section 12) or a compatible ServiceMode record
+     * (section 8; one whose ALPN set has nothing in [supported] cannot be connected to, so it is not compatible). Null
+     * when the lookup failed.
+     */
+    suspend fun upgradesToHttps(
+        host: String,
+        port: Int,
+        supported: Set<String>,
+    ): Boolean? {
+        val rs = records(httpsQueryName(host, port)) ?: return null
+        val alias = aliasTarget(rs, random)
+        return if (alias != null) isHostName(alias) else serviceEndpoints(rs, port, supported, random).isNotEmpty()
+    }
+
     companion object {
         /** AliasMode steps followed at most (RFC 9460 sections 2.4.2 and 3.1: a limit, not zero, and loop detection). */
         const val MAX_ALIASES = 8

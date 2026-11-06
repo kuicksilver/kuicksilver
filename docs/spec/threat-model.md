@@ -258,6 +258,10 @@ Status (core review): skipped packet numbers, all CIDs (the client's ODCID/SCID,
   resolved (`.negative_hangingSourceDoesNotDelayBeyondExtraWait`). An attacker who drops the HTTPS answers can only make
   the client connect as without records; with `Exchange(secure = true)` (protected answers) a failed lookup abandons the
   request instead (RFC 9460 section 3.1; `ClientHttpsFailureTest.negative_failureOverSecureDnsAbandonsTheRequest`).
+  The `http`-to-`https` upgrade from a record (section 9.5) is a synthesized 307: DNS is unauthenticated, so it is
+  trusted exactly as much as a 307 over cleartext HTTP, which the same attacker could send, and nothing about the origin
+  is remembered beyond the TTL; an attacker who drops the answer keeps the request on `http` as without records
+  (`ClientHttpsUpgradeTest.*`; with `Exchange(secure = true)` the request is abandoned instead).
 - **Residue:** only IP literals are classified: an alternative named by a DNS name that resolves to a local address is not caught (the resolver runs in the QUIC connect, and a check before it could be raced by DNS rebinding). That exposure equals a redirect to such a name, which the HTTP client follows anyway.
 - **Verification:** `negative_altSvcFromUnverifiedTls`, `AltSvcDestinationTest.negative_altSvcToLocalNetworkFromPublicOrigin`, `.negative_altSvcToUnspecifiedOrMulticastAlwaysRefused`, `.negative_shorthandIpv4AltSvcToLocalNetworkRefused`, `.negative_ambiguousOrInvalidNumericAltSvcHostRefused`, `.localOriginMayPointToLocalAlternatives`, `negative_preferredAddressIgnored` (the zero-address hook), `PreferredAddressTest.negative_preferredAddressToLoopbackFromPublicServerIgnored`, `.negative_preferredAddressUnspecifiedOrMulticastIgnored`, `.negative_preferredAddressOnReflectionPortIgnored` (a server cannot aim the client's probes at a DNS, NTP, SSDP, mDNS or memcached port either).
 

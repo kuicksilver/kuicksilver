@@ -298,6 +298,12 @@ internal class KuicksilverEngine(
         d: ProtocolDiagnostics,
     ): HttpResponseData {
         val url = data.url
+        // RFC 9460 section 9.5: an http request first asks for the HTTPS records of its https URL (not through a proxy:
+        // section 3.2, the engine does no SVCB resolution there)
+        val records = httpsRecords
+        if (records != null && url.protocol == io.ktor.http.URLProtocol.HTTP && !isIpLiteral(url.host) && proxyFor(url) == null) {
+            httpsUpgrade(records, data, callContext)?.let { return it }
+        }
         // H3Only promises HTTP/3 or a failure, never TCP: through a proxy there is no HTTP/3 (UDP would need CONNECT-UDP,
         // RFC 9298, or SOCKS5 UDP ASSOCIATE, neither supported), so the request fails instead of going over HTTP/1.1
         // HTTP/3 is only for https (RFC 9114 section 3.1): an http:// or ws:// request fails too, never goes over TCP
@@ -697,6 +703,47 @@ internal class KuicksilverEngine(
             altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
         }
         return r
+    }
+
+    /**
+     * RFC 9460 section 9.5 for an `http` [data]: the `https` URL is the same one with the scheme replaced and port 80 made
+     * 443; when the HTTPS records of that URL have an AliasMode or a compatible ServiceMode record, the answer is a 307
+     * (Temporary Redirect) to it, made here without any connection, which Ktor's `HttpRedirect` follows as it follows a
+     * 307 from a server, and a client without it sees. It carries no more trust than a cleartext 307 (section 9.5, MUST
+     * NOT): nothing is remembered beyond the records' TTL. Null to go on over http (no records, or a failed lookup over
+     * plain DNS); a failed lookup over protected DNS abandons the request (section 3.1).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, InternalAPI::class)
+    private suspend fun httpsUpgrade(
+        records: HttpsRecords,
+        data: HttpRequestData,
+        callContext: CoroutineContext,
+    ): HttpResponseData? {
+        val url = data.url
+        val https =
+            io.ktor.http
+                .URLBuilder(url)
+                .apply {
+                    protocol = io.ktor.http.URLProtocol.HTTPS
+                    port = if (url.specifiedPort == 0 || url.specifiedPort == 80) io.ktor.http.DEFAULT_PORT else url.specifiedPort
+                }.build()
+        val upgrade = records.upgradesToHttps(https.host, https.port, supportedAlpn(webSocket = false))
+        if (upgrade == null && config.http3.httpsRecords.secure) {
+            throw kotlinx.io.IOException(
+                "the HTTPS records of ${https.host} could not be resolved over the secure DNS source before an http request: " +
+                    "the request is abandoned (RFC 9460 sections 3.1 and 9.5)",
+            )
+        }
+        if (upgrade != true) return null
+        return HttpResponseData(
+            io.ktor.http.HttpStatusCode.TemporaryRedirect,
+            io.ktor.util.date
+                .GMTDate(),
+            io.ktor.http.headersOf(HttpHeaders.Location, https.toString()),
+            HttpProtocolVersion.HTTP_1_1,
+            io.ktor.utils.io.ByteReadChannel.Empty,
+            callContext,
+        )
     }
 
     /** One connection attempt of [autoWithRecords]: QUIC to [h3] and TCP to [tcp] (the origin itself with [tcpToOrigin]). */

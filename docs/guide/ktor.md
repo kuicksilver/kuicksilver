@@ -660,7 +660,15 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 `DnsResolver.rawQuery` on the default network (Private DNS included) on Android from API 29. On Android API 24 to 28 there
 is no public way to ask for a record type (and a resolver of the engine's own would bypass Private DNS), so every lookup
 counts as failed there and requests behave as without records. At most four system lookups run at once per process.
-`HttpsRecordSource.Exchange` works everywhere. An `http://` URL is not upgraded to `https://` because of a record (RFC 9460 section 9.5 is not done).
+`HttpsRecordSource.Exchange` works everywhere.
+
+An `http://` request (not `ws://`, not through a proxy, not to an IP address) first looks up the records of the same URL
+with `https` (port 80 becomes 443) and waits for the answer, up to the connect timeout (30 s at most); when the origin
+has an AliasMode record or a ServiceMode record the engine could use, the engine answers `307 Temporary Redirect` to the
+`https` URL itself, without connecting (RFC 9460 section 9.5). Ktor's `HttpRedirect` (on by default) follows it like any
+307; with `followRedirects = false` the call sees the 307. The upgrade is no more trusted than a 307 over cleartext:
+nothing is remembered for the origin beyond the records' TTL. An origin that publishes HTTPS records but serves
+different content on `http://` cannot be reached over `http://` by such a client.
 
 ### Racing and fallback
 
