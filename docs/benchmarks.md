@@ -376,6 +376,85 @@ Where the Native endpoint benchmark's busy CPU went (`sample`, 10 s, about 7 000
   with `HandshakeBenchmark -prof gc`) and `:kuicksilver-bench:macosArm64HandshakeBenchmark`, with `sample <pid> 10 1`
   on `macosArm64Benchmark.kexe`.
 
+### Memory (P.5, 2026-11-06)
+
+`tools/bench/memory.sh [connections] [MiB]` runs the memory benchmark (`MemoryBench` in `kuicksilver-bench`) on the JVM
+and on Kotlin/Native, each section in a process of its own: the idle process; 1000 idle connections through the QUIC core
+alone (`ConnectionCore` pairs under virtual time), through two `QuicEndpoint`s over a `MemoryNetwork`, and as HTTP/3
+connections that each carried one GET (control and QPACK streams open, an `acceptRequest` loop per server connection);
+then the managed heap allocated per GiB moved. Each idle measurement is taken with both sides, then again after the client
+sides closed without telling the server, which leaves the server's share. Client and server run in one process, without
+sockets, so the numbers are the library's, not the kernel's. M4 Max, macOS, JVM 21 (`-Xmx1g`), loaded host (load average
+3–5), local; single runs, before = `9ed03deb0` (the benchmark), after = `2c0dae80c` (the three `perf(quic)` commits below).
+
+| per idle connection (KB = 1000 bytes) | before | after |
+|---|---|---|
+| QUIC core, server side, JVM heap | 37.1 KB | 36.1 KB |
+| QUIC endpoint, server side, JVM heap | 41.0 KB | 39.9 KB |
+| HTTP/3, server side, JVM heap | 291.9 KB | 80.6 KB |
+| HTTP/3, client and server, JVM heap | 572.3 KB | 166.6 KB |
+| QUIC core, client and server, Native RSS | 198.4 KB | 195.4 KB |
+| QUIC endpoint, client and server, Native RSS | 225.8 KB | 222.2 KB |
+| HTTP/3, client and server, Native RSS | 1023.6 KB | 488.6 KB |
+| OpenSSL (C heap, Native), server / client side | 36.7 / 56.1 KB | 36.7 / 56.1 KB |
+
+- **Per 1000 idle connections** (after): HTTP/3 on the JVM, 77 MiB of heap for the server's side and 159 MiB for client
+  and server; on Kotlin/Native 466 MiB of RSS for 1000 client-and-server pairs (212 MiB for plain QUIC). Native RSS is only
+  measured for both sides together: memory the client sides give back stays in the process. The JVM's RSS per
+  connection is not given: its heap grows with garbage and does not shrink, so it says nothing per connection.
+- **Idle process:** JVM 74 MiB RSS at start, 106 MiB after one connection (classes, JIT, OpenSSL loaded), 3 MiB live
+  heap; Native 7.6 MiB RSS at start, 14.9 MiB after one connection.
+- **Kotlin/Native heap:** the default allocator's figure counts pages, which per-connection objects allocated in turn
+  keep partly filled (HTTP/3: 392 KB per pair). Linked with `-Pkuicksilver.memory.allocator=std` the figure is the live
+  objects: 46 KB (core), 55 KB (endpoint) and 118 KB (HTTP/3) per server connection, 1.3 to 1.5 times the JVM's (8-byte
+  references and headers).
+- **Allocation per GiB moved:** the core with ksl crypto allocates nothing (0 bytes over 256 MiB, as `CoreAllocationTest`
+  gates); through the endpoints, client and server together, the JVM allocates 2.5–2.9 GiB per GiB (four runs) and
+  Kotlin/Native 0.5–1.0 GiB per GiB (its counter forces a collection every 256 KiB and is a lower bound when the
+  collector ran one of its own). On the JVM 47 % of it is the `MemoryNetwork` copying each datagram (a socket would not)
+  and 17 % the kotlinx-io segments `StreamInput` fills: P.2's work.
+- **Fixed on the way:** a closed endpoint kept every connection it had reachable through its timer heap and its table by
+  peer address (`7811c150f`).
+
+What one idle connection holds, from the benchmark's inventory (JVM; every object the connection reaches that a second
+connection does not share, charged to the first field path that reaches it; `jvmMemory` prints the whole list):
+
+| | bytes | what |
+|---|---|---|
+| server core, total | 35 104 | |
+| `loss.spaces[*]` | ~13 000 | per packet-number space: ACK ranges (128 longs), the last 64 lost packets (five arrays), the last 32 acknowledged ranges, the sent-packet ring and pool; Initial and Handshake are kept after their keys are discarded |
+| `cryptoStreams.send[*].ring` | 3 104 | the Initial and Handshake CRYPTO send rings (2 KiB each), kept after the handshake |
+| `builder.scratch`, `streams.scratch` | 4 128 | 2 KiB scratch each (packet building, stream retransmission) |
+| `cryptoStreams.scratch` | 1 176 | what TLS was last handed |
+| `receiver.ackView.ranges` | 1 040 | the peer's ACK ranges, decoded |
+| HTTP/3 server connection, total | 77 224 | the core above plus |
+| the six control and QPACK streams in the core | ~6 000 | send rings (1 KiB minimum) on the three local ones, reassembly windows (512 bytes now, 4 KiB before) on the peer's, range arrays |
+| the HTTP/3 session and the runtime's streams | ~36 000 | not broken down further: two channels per stream (`readable`, ticker: a 64-slot segment each), coroutine state, kotlinx-io buffers, QPACK state |
+| removed by the commits above | 193 000 + 11 000 + 1 000 | a 16 KiB staging array per stream half and 64 KiB for the datagram flow (now one scratch per endpoint loop); 4 KiB reassembly windows; the DATAGRAM ring |
+
+Still to reduce, by estimated bytes per connection (each side):
+
+1. **OpenSSL's per-connection state**, 37 KB (server) and 56 KB (client) of C heap after the handshake: the largest item
+   of a QUIC connection on Kotlin/Native and invisible to the JVM heap. Not yet broken down: what the `SSL` object keeps
+   after the handshake (the handshake transcript and buffers, the peer's chain on the client) has to be measured with
+   OpenSSL's allocation hooks before anything is freed early.
+2. **Discarded packet-number spaces**, about 8 KB: the Initial and Handshake spaces keep their loss-detection arrays after
+   their keys are discarded (RFC 9001 section 4.9); release them there, and start the arrays of every space small (the
+   application space's 128 ACK ranges and 64-entry loss history grow only under loss): about 2 KB more.
+3. **Scratch arrays in the core**, about 6 KB: packet building, stream retransmission, ACK decoding and the CRYPTO hand-off
+   each keep their own array; one set per endpoint loop (the loop runs one connection at a time) or released after the
+   handshake.
+4. **CRYPTO send rings of discarded levels**, about 3 KB: released when the level's keys are.
+5. **HTTP/3 streams**: the three control and QPACK send rings start at 1 KiB for a few bytes (start smaller, as the
+   reassembly window now does: about 2 KB); the session and the runtime's streams (about 36 KB) are the next inventory
+   to break down.
+6. **Allocation per GiB through the runtime** (not per connection): `StreamInput` copies through a kotlinx-io buffer whose
+   segments are allocated as data arrives; writing into the segments directly would also save the copy (P.2).
+
+Not measured here: the HTTP/2 and HTTP/1.1 servers. Their connections are TCP sockets in the Ktor engine, which this
+in-process benchmark does not drive; the soak harness (`kuicksilver-soak`) runs them and samples RSS, but not per
+connection.
+
 ## msquic's goodput outlier
 
 Some repetitions are 2–6 % slower, with either client (2026-10-20: four of five JVM, two of five

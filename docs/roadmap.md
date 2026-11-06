@@ -154,7 +154,7 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
     list index checks in `ConnectionIdManager`, and varints read and written byte by byte;
   - per connection, buffers allocated up front: the crypto streams' rings and scratch grow on first use and the stream
     halves' 16 KiB and the datagram flow's 64 KiB are one scratch per endpoint loop (0.3.0); what is left is listed in
-    [docs/benchmarks.md](benchmarks.md).
+    [docs/benchmarks.md](benchmarks.md#memory-p5-2026-11-06).
 
 ### 0.3.x
 
