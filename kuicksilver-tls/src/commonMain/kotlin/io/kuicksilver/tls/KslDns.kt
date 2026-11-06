@@ -81,8 +81,10 @@ public object KslDns {
             scope.async {
                 try {
                     call(name, type, server, ms)
-                } catch (_: Exception) {
-                    null // the native library could not be loaded: no answer
+                } catch (e: Throwable) {
+                    // the native library could not be loaded, or is one without the call (UnsatisfiedLinkError): no answer
+                    if (e !is Exception && !isLinkageError(e)) throw e
+                    null
                 } finally {
                     slots.release()
                 }
@@ -127,3 +129,6 @@ public object KslDns {
         }
     }
 }
+
+/** Whether [e] says native code could not be linked (the JVM's LinkageError: UnsatisfiedLinkError and the like). */
+internal expect fun isLinkageError(e: Throwable): Boolean

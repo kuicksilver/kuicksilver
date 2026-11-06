@@ -74,6 +74,13 @@ class KslDnsTest {
             }
         }
 
+    @Test fun negative_aLibraryWithoutTheCallAnswersNothing() =
+        runBlocking {
+            // an older native library without dnsQuery: UnsatisfiedLinkError, which must not reach the request
+            KslDns.queryForTest = { _, _, _, _ -> throw UnsatisfiedLinkError("dnsQuery") }
+            assertNull(KslDns.query("a.example", 65, 1.seconds))
+        }
+
     @Test fun answerForms() {
         assertEquals(emptyList(), assertIs<KslDnsAnswer.Records>(KslDns.decode(byteArrayOf())).records)
         assertContentEquals(
