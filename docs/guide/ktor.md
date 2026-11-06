@@ -640,7 +640,10 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   checked against the origin's name whatever the record says; a QUIC endpoint that fails is marked broken like an
   alternative (`httpsRecordUsed` and `altSvcMarkedBroken` report both). The address hints are not used, `ech` is not (a
   record that requires it is skipped), and a malformed record makes the whole answer unusable (section 2.2);
-- a cached `Alt-Svc` alternative is tried first, its TCP side going to the origin's first TCP endpoint;
+- a cached `Alt-Svc` alternative is tried first, its TCP side going to the origin's first TCP endpoint; the
+  alternative's own HTTPS records are looked up too (RFC 9460 section 9.3), and when it has some, HTTP/3 goes to their
+  targets and ports that offer `h3`, and not to the alternative at all when none does (`Alt-Used` still names the
+  alternative);
 - the request waits for the records while the origin's addresses resolve and at most `httpsRecordExtraWait` (50 ms)
   longer; a lookup that answers later, fails or times out leaves the request on the origin as without records, and a
   late answer is cached for the next request. A malformed answer always counts as "no records". With

@@ -733,7 +733,8 @@ internal class KuicksilverEngine(
         val dns = config.newRequestDns()
         val supported = supportedAlpn(webSocket)
         val secure = config.http3.httpsRecords.secure
-        val origin = awaitResolution(records, url, dns, supported, secure)
+        val altAuthority = alt?.let { (it.host ?: url.host) to it.port }
+        val (origin, altResolution) = awaitResolutions(records, url, dns, supported, secure, altAuthority)
         if (origin == HttpsResolution.Failed && secure) {
             // section 3.1: "the client SHOULD abandon its attempt to reach the service, even if the client is SVCB-optional"
             throw kotlinx.io.IOException(
@@ -743,16 +744,23 @@ internal class KuicksilverEngine(
         }
         val originEndpoints = (origin as? HttpsResolution.Endpoints)?.endpoints.orEmpty()
         val attempts = ArrayList<Attempt>()
-        if (alt != null) {
+        if (altAuthority != null) {
+            // section 9.3: a connection based on a cached Alt-Svc SHOULD be consistent with the alt-authority's HTTPS
+            // records: their TargetName and port are used, and only where their ALPN set has h3 (Alt-Svc offers h3 only)
+            val asIs = listOf(HttpsEndpoint(altAuthority.first, altAuthority.second, quic = true, tcp = false))
+            val altQuic =
+                when (altResolution) {
+                    is HttpsResolution.Endpoints -> altResolution.endpoints.filter { it.quic }
+
+                    HttpsResolution.None -> asIs
+
+                    // section 3.1: the alternative service is not reached when its protected resolution failed
+                    HttpsResolution.Failed -> if (secure) emptyList() else asIs
+                }
             val firstTcp = originEndpoints.firstOrNull { it.tcp }
-            attempts +=
-                Attempt(
-                    HttpsEndpoint(alt.host ?: url.host, alt.port, quic = true, tcp = false),
-                    firstTcp,
-                    firstTcp == null,
-                    altSvc = true,
-                    fromRecords = false,
-                )
+            altQuic.forEachIndexed { i, e ->
+                attempts += Attempt(e, firstTcp.takeIf { i == 0 }, i == 0 && firstTcp == null, altSvc = true, fromRecords = false)
+            }
         }
         for (e in originEndpoints) attempts += Attempt(e.takeIf { it.quic }, e.takeIf { it.tcp }, false, altSvc = false, fromRecords = true)
         val triedQuic = HashSet<String>()
@@ -777,7 +785,7 @@ internal class KuicksilverEngine(
             if (h3t != null) triedQuic += "${h3t.host}:${h3t.port}"
             if (tcpDns != null) triedTcp += tcpKey!!
             try {
-                val r = attempt(a, h3t, tcpDns, data, callContext, network, d, dns, webSocket)
+                val r = attempt(a, h3t, tcpDns, data, callContext, network, d, dns, webSocket, altAuthority)
                 altSvcUpdate {
                     altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
                 }
@@ -821,8 +829,17 @@ internal class KuicksilverEngine(
         d: ProtocolDiagnostics,
         dns: RequestDns,
         webSocket: Boolean,
+        altAuthority: Pair<String, Int>?,
     ): HttpResponseData {
-        val extra = if (a.altSvc && h3t != null) listOf("alt-used" to "${uriHost(h3t.host)}:${h3t.port}") else emptyList()
+        // Alt-Used names the alt-authority of the Alt-Svc entry (RFC 7838 section 5), not an HTTPS record's TargetName
+        val extra =
+            if (a.altSvc &&
+                altAuthority != null
+            ) {
+                listOf("alt-used" to "${uriHost(altAuthority.first)}:${altAuthority.second}")
+            } else {
+                emptyList()
+            }
         if (h3t != null) {
             d.alternative(h3t.host, h3t.port, if (a.altSvc) AlternativeSource.AltSvc else AlternativeSource.HttpsRecord)
             if (a.altSvc) events.emit("altSvcUsed") { altSvcUsed(data, "${uriHost(h3t.host)}:${h3t.port}") }
@@ -923,24 +940,33 @@ internal class KuicksilverEngine(
         }
 
     /**
-     * SVCB resolution of [url]'s origin, waited for while its addresses resolve (into [dns], for the TCP side: section 3,
+     * SVCB resolution of [url]'s origin and of [altAuthority], waited for while its addresses resolve (into [dns], for the TCP side: section 3,
      * "SVCB-optional clients SHOULD issue in parallel any other DNS queries that might be needed") and at most
      * `httpsRecordExtraWait` longer (section 5.1: an address answer first lets the client connect as if the HTTPS query
      * returned NODATA), all within the connect timeout. A resolution still running goes on, and its records are cached
      * for the next request; this one counts it as [HttpsResolution.None].
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
-    private suspend fun awaitResolution(
+    private suspend fun awaitResolutions(
         records: HttpsRecords,
         url: io.ktor.http.Url,
         dns: RequestDns,
         supported: Set<String>,
         // protected answers (section 3.1): wait for the resolution itself, and a timeout is a failure
         secure: Boolean,
-    ): HttpsResolution =
-        withTimeoutOrNull(config.connectTimeout) {
+        // an Alt-Svc alt-authority to resolve as well (section 9.3)
+        altAuthority: Pair<String, Int>?,
+    ): Pair<HttpsResolution, HttpsResolution> {
+        val unanswered = if (secure) HttpsResolution.Failed else HttpsResolution.None
+        return withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
-                val https = async { records.resolve(url.host, url.port, supported) }
+                val originJob = async { records.resolve(url.host, url.port, supported) }
+                val altJob = altAuthority?.let { (h, p) -> async { records.resolve(h, p, supported) } }
+                val https =
+                    launch {
+                        originJob.join()
+                        altJob?.join()
+                    }
                 val addresses =
                     launch {
                         try {
@@ -960,11 +986,16 @@ internal class KuicksilverEngine(
                 } else if (!https.isCompleted) {
                     withTimeoutOrNull(config.http3.httpsRecordExtraWait) { https.join() }
                 }
-                val resolution = if (https.isCompleted && !https.isCancelled) https.getCompleted() else HttpsResolution.None
-                https.cancel()
-                resolution
+
+                fun outcome(j: kotlinx.coroutines.Deferred<HttpsResolution>): HttpsResolution =
+                    if (j.isCompleted && !j.isCancelled) j.getCompleted() else HttpsResolution.None
+                val result = outcome(originJob) to (altJob?.let { outcome(it) } ?: HttpsResolution.None)
+                originJob.cancel()
+                altJob?.cancel()
+                result
             }
-        } ?: if (secure) HttpsResolution.Failed else HttpsResolution.None
+        } ?: (unanswered to unanswered)
+    }
 
     /**
      * HTTP/3, falling back to HTTP/1.1 when it fails before the response headers: always if the request cannot have been

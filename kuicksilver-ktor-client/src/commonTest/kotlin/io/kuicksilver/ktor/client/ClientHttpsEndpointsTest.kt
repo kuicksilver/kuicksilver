@@ -149,3 +149,117 @@ class ClientHttpsEndpointsTest {
             }
         }
 }
+
+/** Alt-Svc and HTTPS records together (RFC 9460 section 9.3): the alt-authority's records decide where its QUIC goes. */
+class ClientHttpsAltSvcTest {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    private fun rec(
+        owner: String,
+        priority: Int,
+        target: String,
+        vararg alpn: String,
+        port: Int? = null,
+    ) = SvcbRecord(priority, target, alpn.toList(), false, port, emptyList(), emptyList(), 300, owner)
+
+    private class Used : KuicksilverEventListener() {
+        val altSvc = ArrayList<String>()
+
+        override fun altSvcUsed(
+            request: io.ktor.client.request.HttpRequestData,
+            alternative: String,
+        ) {
+            altSvc += alternative
+        }
+    }
+
+    private fun client(
+        answers: Map<String, List<SvcbRecord>>,
+        store: AltSvcStore,
+        used: Used,
+    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+        resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
+        connectTimeout = 30.seconds
+        eventListener = used
+        http3 {
+            httpsRecords = HttpsRecordsForTest { answers[it] ?: emptyList() }
+            altSvcStore = store
+            hardDelay = kotlin.time.Duration.INFINITE // TCP only after QUIC failed: the race's outcome is QUIC's
+        }
+    })
+
+    private fun storeWith(
+        origin: String,
+        altHost: String,
+        altPort: Int,
+    ) = InMemoryAltSvcStore().also {
+        it.put(
+            origin,
+            listOf(
+                AltSvcEntry(
+                    "h3",
+                    altHost,
+                    altPort,
+                    io.ktor.util.date
+                        .getTimeMillis() + 3_600_000,
+                    false,
+                ),
+            ),
+        )
+    }
+
+    @Test fun altAuthorityRecordsGiveTheQuicTarget() =
+        h3Test {
+            coroutineScope {
+                val q = h3Origin()
+                val (origin, port) =
+                    testServer(configure = {
+                        http3 = false
+                        altSvc = false
+                    }) { routing { get("/") { call.respondText("origin") } } }
+                try {
+                    // the alternative alt.server.test:<port> has no QUIC listener; its HTTPS record moves it to q's port
+                    val alt = "_$port._https.alt.server.test"
+                    val used = Used()
+                    client(
+                        mapOf(alt to listOf(rec(alt, 1, "q.server.test", "h3", port = q.localAddress.port))),
+                        storeWith("https://server.test:$port", "alt.server.test", port),
+                        used,
+                    ).use { c ->
+                        val r = c.get("https://server.test:$port/")
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        assertEquals("h3", r.bodyAsText())
+                    }
+                    assertEquals(listOf("q.server.test:${q.localAddress.port}"), used.altSvc)
+                } finally {
+                    origin.stopSuspend(0, 0)
+                    q.close()
+                }
+            }
+        }
+
+    @Test fun negative_altAuthorityWithoutH3IsNotUsed() =
+        clientTest {
+            // section 9.3: no ALPN consistent with both the record and Alt-Svc: no connection to the alternative
+            val (origin, port) =
+                testServer(configure = {
+                    http3 = false
+                    altSvc = false
+                }) { routing { get("/") { call.respondText("origin") } } }
+            try {
+                val alt = "_$port._https.alt.server.test"
+                val used = Used()
+                client(
+                    mapOf(alt to listOf(rec(alt, 1, "alt2.server.test", "h2"))),
+                    storeWith("https://server.test:$port", "alt.server.test", port),
+                    used,
+                ).use { c ->
+                    val r = c.get("https://server.test:$port/")
+                    assertEquals("origin", r.bodyAsText())
+                }
+                assertEquals(emptyList(), used.altSvc)
+            } finally {
+                origin.stopSuspend(0, 0)
+            }
+        }
+}
