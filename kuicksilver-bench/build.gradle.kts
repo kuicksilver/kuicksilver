@@ -49,6 +49,9 @@ benchmark {
 }
 tasks.named<Test>("jvmTest") {
     useJUnitPlatform(); maxHeapSize = "1g"
+    // IdleFootprintTest walks a connection reflectively, java.base collections included
+    jvmArgs("--add-opens=java.base/java.util=ALL-UNNAMED", "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED", "--add-opens=java.base/java.lang=ALL-UNNAMED")
     // -Pkuicksilver.jfr=<file> records the allocation gate with JFR (inspect with `jfr view allocation-by-site <file>`)
     providers.gradleProperty("kuicksilver.jfr").orNull?.let { jvmArgs("-XX:StartFlightRecording=filename=$it,settings=profile") }
     // -Pkuicksilver.jfrExact=<file> records every allocation (TLABs off) so rare sites show up; pair it with allocTrace for the window bounds

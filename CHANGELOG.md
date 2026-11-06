@@ -279,6 +279,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC: a stream no longer holds two 16 KiB staging arrays (one per direction) and a connection's datagram flow no longer
+  holds a 64 KiB one; the copies between the core and the application's channels go through one scratch array per endpoint
+  loop. An idle HTTP/3 server connection holds 89 KB of heap instead of 285 KB (JVM), and an idle HTTP/3 connection pair
+  takes about half the resident memory on Kotlin/Native (docs/benchmarks.md, "Memory").
+
 - TLS (breaking): a peer's certificate chain below OpenSSL security level 2 (RFC 9325 section 4.5) is refused under
   every trust configuration, not only where OpenSSL verifies the chain (`docs/guide/tls.md`, "Platform trust"). Before
   the platform verifier, a `Custom` verifier or `Tofu` is asked, `ksl` checks the certificates the peer sent: every key on

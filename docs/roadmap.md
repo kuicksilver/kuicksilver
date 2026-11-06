@@ -152,8 +152,9 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
     after the `PacketBuffer` fix (`CoreThroughputBenchmark`); next in its profile are `Duration` arithmetic on the
     per-packet paths (pacer, PTO, ACK delay; nanoseconds as `Long` instead), enum `==` compiled to a virtual `equals`,
     list index checks in `ConnectionIdManager`, and varints read and written byte by byte;
-  - per connection, about 80 KiB of buffers allocated up front (16 KiB in each direction per stream, the crypto streams'
-    16 KiB scratch and four 4 KiB send rings): allocate on first use.
+  - per connection, buffers allocated up front: the crypto streams' rings and scratch grow on first use and the stream
+    halves' 16 KiB and the datagram flow's 64 KiB are one scratch per endpoint loop (0.3.0); what is left is listed in
+    [docs/benchmarks.md](benchmarks.md).
 
 ### 0.3.x
 

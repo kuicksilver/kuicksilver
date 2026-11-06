@@ -461,12 +461,20 @@ internal class ConnectionRuntime(
     /** Pull-based: the core's own 128-entry queue is the only buffer, so what nobody collects is dropped there and counted. */
     override val datagrams: Flow<Datagram> get() =
         flow {
-            val buf = ByteArray(65_535)
             while (true) {
-                val n = withContext(loop.dispatcher) { if (finished) -2 else core.readDatagram(buf, 0) }
-                if (n == -2) throw closedDeferred.await()
-                if (n >= 0) {
-                    emit(Datagram(buf.copyOf(n)))
+                // read into the loop's scratch and copied out on the loop, in one task (EndpointLoop.scratch)
+                val d =
+                    withContext(loop.dispatcher) {
+                        if (finished) {
+                            CLOSED
+                        } else {
+                            val n = core.readDatagram(loop.scratch, 0)
+                            if (n >= 0) loop.scratch.copyOf(n) else null
+                        }
+                    }
+                if (d === CLOSED) throw closedDeferred.await()
+                if (d != null) {
+                    emit(Datagram(d))
                 } else if (datagramSignal.receiveCatching().isClosed) {
                     throw closedDeferred.await() // failed() closes the signal without a cause
                 }
@@ -827,6 +835,9 @@ internal class ConnectionRuntime(
 
     private companion object {
         val NO_BYTES = ByteArray(0)
+
+        /** The datagram flow's "the connection is gone" from the loop (a zero-length datagram is a new array, never this one). */
+        val CLOSED = ByteArray(0)
 
         /** [datagramLimit] while the peer takes no DATAGRAM frames. */
         const val NO_DATAGRAMS = Int.MIN_VALUE

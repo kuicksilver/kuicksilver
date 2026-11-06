@@ -37,7 +37,6 @@ internal class StreamInput(
     private val stream: StreamRuntime,
 ) : ByteReadChannel {
     private val buffer = Buffer()
-    private val tmp = ByteArray(16384)
 
     /** The FIN was taken from the core: all the peer's data is in [buffer] or was read; a later cause changes nothing. */
     @Volatile private var eof = false
@@ -83,7 +82,9 @@ internal class StreamInput(
                 while (buffer.size < maxOf(min.toLong(), PULL_TARGET) &&
                     pulled < PULL_TARGET
                 ) {
-                    val n = stream.conn.core.readStream(stream.id, tmp, 0, tmp.size)
+                    // the loop's scratch: filled and emptied here, with no suspension in between (EndpointLoop.scratch)
+                    val tmp = stream.loop.scratch
+                    val n = stream.conn.core.readStream(stream.id, tmp, 0, EndpointLoop.STREAM_CHUNK)
                     if (n >
                         0
                     ) {
@@ -177,7 +178,6 @@ internal class StreamOutput(
     private val stream: StreamRuntime,
 ) : ByteWriteChannel {
     private val buffer = Buffer()
-    private val tmp = ByteArray(16384)
     override val autoFlush: Boolean get() = true
 
     @Volatile override var isClosedForWrite: Boolean = false
@@ -213,7 +213,9 @@ internal class StreamOutput(
         while (!buffer.exhausted()) {
             closedCause?.let { throw ClosedWriteChannelException(it) }
             // copied, not consumed: only what the core accepted leaves the buffer, so a flush cancelled while waiting loses nothing
-            val n = buffer.peek().readAtMostTo(tmp, 0, tmp.size)
+            // through the loop's scratch: filled and handed to the core with no suspension in between (EndpointLoop.scratch)
+            val tmp = stream.loop.scratch
+            val n = buffer.peek().readAtMostTo(tmp, 0, EndpointLoop.STREAM_CHUNK)
             val w = writeToCore(tmp, 0, n, false)
             if (w > 0) {
                 buffer.skip(w.toLong())
@@ -247,7 +249,7 @@ internal class StreamOutput(
             drain()
             isClosedForWrite = true
             closedCause?.let { throw ClosedWriteChannelException(it) }
-            writeToCore(tmp, 0, 0, fin = true)
+            writeToCore(stream.loop.scratch, 0, 0, fin = true)
             // the data and the FIN are the core's now: the send must not be lost to a cancellation. Yielding first lets the
             // closes already queued on the loop hand over theirs, so concurrent requests share packets instead of taking one
             // each (interop zerortt: one packet per request filled the initial window before the last 0-RTT requests left)

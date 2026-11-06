@@ -147,6 +147,15 @@ internal class EndpointLoop private constructor(
     private val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
     internal val timers = TimerHeap()
+
+    /**
+     * Staging bytes between the cores and the application's channels: a stream's input reads the core's data through it into
+     * its buffer, a stream's output copies its buffer through it into the core, the datagram flow reads a datagram into it.
+     * Each use fills and empties it within one task on [dispatcher], which runs one task at a time and never suspends in
+     * between, so one array serves every stream and connection of this loop (it was 16 KiB per stream half and 64 KiB per
+     * datagram collector).
+     */
+    internal val scratch = ByteArray(SCRATCH)
     private val start = TimeSource.Monotonic.markNow()
     private val closingFlag = AtomicInt(0) // set once, by compare-and-set: two concurrent close() calls must not both tear down
     private val closing: Boolean get() = closingFlag.load() != 0
@@ -1245,6 +1254,12 @@ internal class EndpointLoop private constructor(
             QuicException.ConnectionLost.ApplicationClosed(0, "-", io.kuicksilver.quic.Initiator.Local)
             QuicException.ConnectionLost.TransportClosed(0, 0, "-", ByteArray(0), io.kuicksilver.quic.Initiator.Local, null)
         }
+
+        /** [scratch]: the largest DATAGRAM payload a QUIC packet in a UDP datagram can carry, and room for a stream's 16 KiB chunk. */
+        const val SCRATCH: Int = 65_535
+
+        /** What a stream's input or output moves through [scratch] at a time. */
+        const val STREAM_CHUNK: Int = 16_384
 
         /** Forwarded datagrams handled before admission, flush and a yield. */
         const val FORWARD_BATCH: Int = 16
