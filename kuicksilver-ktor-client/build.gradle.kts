@@ -143,6 +143,7 @@ tasks.register("androidMigrationDeviceTest") {
     dependsOn("jvmTestClasses", "installAndroidDeviceTest")
     outputs.upToDateWhen { false } // the peer and the device are outside Gradle's inputs: always run
     val adb = androidSdkDir?.let { "$it/platform-tools/adb" } ?: "adb"
+    val log = layout.buildDirectory.file("android-migration-peer/instrument.log")
     doLast {
         val port = androidMigrationPeer.get().start()
         try {
@@ -152,9 +153,13 @@ tasks.register("androidMigrationDeviceTest") {
                     "-e", "class", "io.kuicksilver.ktor.client.ClientMigrationAndroidTest",
                     "-e", "kslMigrationPeerPort", port.toString(),
                     "io.kuicksilver.ktor.client.test/androidx.test.runner.AndroidJUnitRunner",
-                ).redirectErrorStream(true).start()
-            val out = p.inputStream.bufferedReader().readText()
-            p.waitFor()
+                ).redirectErrorStream(true).redirectOutput(log.get().asFile).start()
+            // bounded: a device that hangs (an instrumentation that never reports) must not hold the gate
+            if (!p.waitFor(10, TimeUnit.MINUTES)) {
+                p.destroyForcibly().waitFor()
+                throw GradleException("ClientMigrationAndroidTest did not finish within 10 minutes; see ${log.get().asFile}")
+            }
+            val out = log.get().asFile.readText()
             logger.lifecycle(out)
             // a run with failures prints "FAILURES!!!"; one that crashed prints neither line
             if (!Regex("""OK \(\d+ tests?\)""").containsMatchIn(out)) throw GradleException("ClientMigrationAndroidTest failed on the device")
