@@ -84,6 +84,10 @@ jobs:
         run: |
           bash tools/check/config-table.sh
           bash tools/check/config-table-test.sh
+      - name: 'lint: troubleshooting messages exist in the source'
+        run: |
+          bash tools/check/troubleshooting-msgs.sh
+          bash tools/check/troubleshooting-msgs-test.sh
       - name: 'lint: SPDX headers'
         run: bash tools/check/spdx.sh .
       - name: 'lint: shell syntax'
