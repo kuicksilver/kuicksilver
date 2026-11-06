@@ -100,7 +100,7 @@ jobs:
         # the output is only stable per major version: tools/check/clang-format.sh pins it (CLANG_FORMAT_VERSION)
         run: |
           python3 -m venv "$RUNNER_TEMP/clang-format-venv"
-          "$RUNNER_TEMP/clang-format-venv/bin/pip" install --quiet 'clang-format==19.1.7'
+          "$RUNNER_TEMP/clang-format-venv/bin/pip" install --quiet --require-hashes -r tools/check/clang-format-requirements.txt
           CLANG_FORMAT="$RUNNER_TEMP/clang-format-venv/bin/clang-format" bash tools/check/clang-format.sh
       - name: 'lint: shell syntax'
         run: |
