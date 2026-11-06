@@ -660,12 +660,13 @@ Nonces come from a counter, permuted with a key derived from the configuration k
 so they show no pattern and none repeats: every endpoint of the process that uses the same key and nonce length (in
 clear, the same nonce length), with any server ID, draws from one counter. These counters live as long as the process.
 The draft forbids reusing a nonce (section 9.6), and a new process knows nothing of the last one's counter, so either
-give the configuration a `nonceReservation`, or give each process start a configuration whose nonces no earlier process
-drew: a key no earlier process used (a fresh key per start and per instance), or in clear a server ID no earlier process
-used. A reservation stores a high-water mark durably (`load()`, `store(mark)`, for instance an fsync'd file per key),
+give the configuration a `nonceReservation`, or give each process start a key no earlier process used (a fresh key per
+start and per instance). A plaintext configuration (no key) must have a reservation: its nonces travel in clear, and
+`QuicLbConfig` refuses one without. A reservation stores a high-water mark durably (`load()`, `store(mark)`, for instance an fsync'd file per key),
 one block of 65,536 nonces ahead of need, and the next process starts past it; in clear it also keeps a 16-byte random
 `secret()` that keys the permutation. A crash skips the rest of a block and never reuses one. A failed `store` is
-retried after a back-off (64 requests for a new ID, doubling to 65,536) and counted in `EndpointStats.loadBalancerReservationFailures`; once
+retried after a back-off (64 requests for a new ID, doubling to 65,536) and counted in
+`EndpointStats.loadBalancerReservationFailures`; once
 the reserved nonces are used up, the requests in between get an unroutable ID.
 
 To roll out a new configuration (a new key, say), give it to the load balancers first, then to each server:
@@ -698,8 +699,10 @@ sans-IO endpoint driven by your own loop.
 With several loops on one port, every loop issues IDs of the same configuration; the loop that owns an ID is the one it
 hashes to under a key the loops share (whatever the ID's codepoint), so a datagram that lands on another loop is still
 forwarded to its owner. A loop that draws a nonce whose ID hashes to another loop keeps it for that loop (up to 1,024 per
-loop); past that it issues the ID itself and the group records the exception (up to 65,536 live IDs), so nonces are
-spent unused (`EndpointStats.loadBalancerNoncesWasted`) only when both are full. The hash also takes a client's random
+loop); past that it issues the ID itself and the group records the exception (up to 65,536 live IDs, the oldest
+dropped past that; each leaves with its ID). The SCID of a Retry takes no exception (a client that never comes back would
+never release it): its nonce is spent unused past a full pool, counted in `EndpointStats.loadBalancerNoncesWasted`. After
+a Retry the connection keeps that SCID as its one server ID. The hash also takes a client's random
 first Initial DCID for one of ours one time in 32 (when its first octet happens to encode our length); that client's
 datagrams then all go to the loop the DCID hashes to: an extra copy between loops for about 1 in 32 new connections. The
 Stateless Reset rule stays: a loop answers an unknown connection ID only when the stateless rate limit would let the

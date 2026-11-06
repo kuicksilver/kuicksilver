@@ -44,6 +44,20 @@ internal object QuicLbFixtures {
 
     private val keys = HashMap<String, LoadBalancerKey>()
 
+    /** The nonce reservation of every plaintext configuration of the tests (one nonce space per nonce length, one instance). */
+    val plainReservation: io.kuicksilver.quic.QuicLbNonceReservation =
+        object : io.kuicksilver.quic.QuicLbNonceReservation {
+            private var mark = 0L
+
+            override fun load(): Long = mark
+
+            override fun store(mark: Long) {
+                this.mark = mark
+            }
+
+            override fun secret(): ByteArray = ByteArray(16) { (it * 13 + 5).toByte() }
+        }
+
     /** One native key per hex string for the test process (never closed: configurations may outlive a test's endpoints). */
     fun key(hexKey: String = KEY): LoadBalancerKey = keys.getOrPut(hexKey) { KslQuicCrypto.newLoadBalancerKey(hex(hexKey)) }
 
@@ -53,7 +67,7 @@ internal object QuicLbFixtures {
         sid: ByteArray = SID,
         plaintext: Boolean = false,
         keyHex: String = KEY,
-    ) = QuicLbConfig(configId, sid, 4, if (plaintext) null else key(keyHex))
+    ) = if (plaintext) QuicLbConfig(configId, sid, 4, null, plainReservation) else QuicLbConfig(configId, sid, 4, key(keyHex))
 
     fun endpointConfig(
         lb: QuicLbConfig?,

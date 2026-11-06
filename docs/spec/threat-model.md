@@ -524,7 +524,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
 ## 4. What we do not protect against
 
 - Traffic analysis by sizes/timings (no padding except Initial); DATAGRAM frames are distinguishable by their reaction to loss.
-- Correlation by address on a migration without a CID change on the peer's side; the routing field in the server CID is sent in clear unless `QuicEndpointConfig.loadBalancer` has a key (QUIC-LB; the key lives in `ksl`, each endpoint with its own copy, the server ID in the Kotlin heap; without a `nonceReservation` the operator must give each process start a fresh key, or in clear a fresh server ID, draft-ietf-quic-load-balancers-21 section 9.6).
+- Correlation by address on a migration without a CID change on the peer's side; the routing field in the server CID is sent in clear unless `QuicEndpointConfig.loadBalancer` has a key (QUIC-LB; the key lives in `ksl`, each endpoint with its own copy, the server ID in the Kotlin heap; without a `nonceReservation` the operator must give each process start a fresh key, and a plaintext configuration must have one, draft-ietf-quic-load-balancers-21 section 9.6).
 - An on-path attacker aborting the handshake (RFC 9000 §21.1.1.3) — an accepted risk.
 - Linking sessions of one client through TCP-TLS tickets (RFC 9001 §9.1).
 - Attacks on OpenSSL itself (we track CVEs) and side channels on the host.

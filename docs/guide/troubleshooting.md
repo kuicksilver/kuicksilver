@@ -323,7 +323,8 @@ above 0, with the `Warn` line "QUIC-LB: the nonces of configuration … are spen
 roll out a configuration with a new key. `loadBalancerReservationFailures` above 0, with the `Warn` line "QUIC-LB: the nonce
 reservation could not be stored", means `QuicLbNonceReservation.store` threw (a full disk, say): fix the store; it is
 retried after a back-off. `IllegalArgumentException` "every configuration with this key … must bring the same
-nonceReservation" means two configurations of one key (or, in clear, one nonce length) disagree about the reservation. See [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer).
+nonceReservation" means two configurations of one key (or, in clear, one nonce length) disagree about the reservation. "a plaintext configuration needs a nonceReservation" means a `QuicLbConfig` without a key and without a reservation:
+plaintext nonces must survive a restart (draft section 9.6), so give it a `QuicLbNonceReservation`, or a key. See [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer).
 
 ### `UnsupportedOperationException` for `loops > 1`
 

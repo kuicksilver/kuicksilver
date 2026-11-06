@@ -143,8 +143,9 @@ public class EndpointStats internal constructor(
     @property:ExperimentalKuicksilverApi
     public val loadBalancerReservationFailures: Long = 0,
     /**
-     * QUIC-LB nonces drawn and spent unused: their ID hashed to another loop of the group whose pool (1,024 IDs) and the
-     * owner exceptions (65,536 live IDs) were full. Stays 0 unless the loops issue IDs very unevenly.
+     * QUIC-LB nonces drawn and spent unused: drawn for a Retry's SCID, their ID hashed to another loop of the group whose
+     * pool (1,024 IDs) was full (a Retry's SCID takes no owner exception). Stays near 0 unless one loop sends far more
+     * Retries than the others issue IDs.
      */
     @property:ExperimentalKuicksilverApi
     public val loadBalancerNoncesWasted: Long = 0,

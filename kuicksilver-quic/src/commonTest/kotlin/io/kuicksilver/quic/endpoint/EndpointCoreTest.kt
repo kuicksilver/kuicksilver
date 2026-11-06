@@ -1266,8 +1266,13 @@ class EndpointCoreTest {
                 connectionIdLength = cidLength
                 loadBalancer = lb
             }.build()
-        assertFailsWith<IllegalArgumentException> { build(QuicLbConfig(0, ByteArray(3), 5, null)) }
-        assertFailsWith<IllegalArgumentException> { build(QuicLbConfig(0, ByteArray(1), 4, null), cidLength = 6) }
+        assertFailsWith<IllegalArgumentException> { build(QuicLbConfig(0, ByteArray(3), 5, null, QuicLbFixtures.plainReservation)) }
+        assertFailsWith<IllegalArgumentException> {
+            build(
+                QuicLbConfig(0, ByteArray(1), 4, null, QuicLbFixtures.plainReservation),
+                cidLength = 6,
+            )
+        }
         assertFailsWith<IllegalArgumentException> { build(QuicLbFixtures.config(), server = false) }
         build(QuicLbFixtures.config())
     }
@@ -1281,7 +1286,7 @@ class EndpointCoreTest {
                 p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 3))
             }
             assertFailsWith<IllegalArgumentException>("another length") {
-                p.server.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(9), 7, null))
+                p.server.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(9), 7, null, QuicLbFixtures.plainReservation))
             }
             val q = LbPair(QuicLbFixtures.config(configId = 2))
             try {
@@ -1346,20 +1351,119 @@ class EndpointCoreTest {
         }
     }
 
-    /** After a Retry, the connection's issuance comes from the ID it was actually given, not from a codepoint lookup. */
-    @Test fun quicLbRetriedConnectionIssuesByItsOwnId() {
-        val p =
-            LbPair(
-                QuicLbFixtures.config(configId = 2, sid = byteArrayOf(5, 5, 5), plaintext = true),
-                admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry,
-            )
+    /**
+     * After a Retry the connection keeps the Retry's SCID as its one server ID (draft sections 3.2 and 9: one ID, plaintext
+     * only for the server's Initial), for a plaintext configuration and for an unroutable endpoint.
+     */
+    @Test fun quicLbRetriedConnectionKeepsTheRetryScid() {
+        for (unroutable in listOf(false, true)) {
+            val config =
+                if (unroutable) {
+                    QuicLbFixtures.config(
+                        configId = 2,
+                    )
+                } else {
+                    QuicLbFixtures.config(configId = 2, sid = byteArrayOf(5, 5, 5), plaintext = true)
+                }
+            val p = LbPair(config, admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
+            try {
+                if (unroutable) p.server.updateLoadBalancer(null)
+                val c = p.connect()
+                assertTrue(p.handshake(c), "unroutable=$unroutable")
+                assertEquals(1L, p.server.stats.retriesSent)
+                val s = p.server.connections().single()
+                assertEquals(assertNotNull(c.retryScid), s.localCid, "the Retry SCID is the connection's ID")
+                assertEquals(
+                    listOf(s.localCid),
+                    localCids(s).map {
+                        io.kuicksilver.quic.wire
+                            .ConnectionId(it)
+                    },
+                    "one server ID",
+                )
+                assertEquals(listOf(0L), c.cids.peerSeqsForTest(), "the client knows one server ID")
+                assertEquals(if (unroutable) 7 else 2, (s.localCid[0].toInt() and 0xff) ushr 5)
+                assertEquals(unroutable, c.peerTp?.disableActiveMigration == true)
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /**
+     * A flood of Retries on one loop of four takes no owner exception (a client that never returns would never release it);
+     * ordinary IDs past full pools do, bounded, and drain as the IDs leave.
+     */
+    @Test fun quicLbOwnerExceptionsStayBoundedAndDrain() {
+        val cfg = QuicLbFixtures.config(keyHex = "0f0e0d0c0b0a09080706050403020106")
+        val ec = QuicLbFixtures.endpointConfig(cfg, loops = 4, admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
+        val state = QuicLbState(LbNullCrypto, Random(1), cfg, 4, 8, poolSize = 2, maxExceptions = 8)
+        val cores = List(4) { EndpointCore(ec, Random(10L + it), it, null, state) }
+        val client = EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), Random(6))
+        try {
+            repeat(120) {
+                val from = InetSocketAddress("10.1.${it / 200}.${it % 200 + 1}", 4000 + it)
+                val b = PacketBuffer.of(firstInitial(client.connect(clientConfig(), a1, now)))
+                try {
+                    cores[0].handleDatagram(b, b.capacity, from, Ecn.NotEct, now)
+                } finally {
+                    b.close()
+                }
+                cores[0].processPending(now)
+            }
+            // a few client DCIDs hash to another loop (1 in 32 encode our length): the group forwards those, the rest get a Retry here
+            assertTrue(cores[0].stats.retriesSent > 100, "${cores[0].stats.retriesSent} Retries")
+            assertEquals(0, state.exceptions.size, "Retry SCIDs never take an owner exception")
+            val r = Random(3)
+            val ids = List(200) { cores[0].route.newCid(r, client = false) }
+            assertTrue(state.exceptions.size in 1..8, "bounded: ${state.exceptions.size}")
+            for (id in ids) cores[0].route.release(id)
+            assertEquals(0, state.exceptions.size, "released with their IDs")
+        } finally {
+            client.close()
+            for (c in cores) c.close()
+            state.close()
+        }
+    }
+
+    private class FlakyReservation : io.kuicksilver.quic.QuicLbNonceReservation {
+        var mark = 0L
+        var fail = false
+
+        override fun load(): Long = mark
+
+        override fun store(mark: Long) {
+            if (fail) throw kotlinx.io.IOException("disk full")
+            this.mark = mark
+        }
+
+        override fun secret(): ByteArray = ByteArray(16)
+    }
+
+    /** A configuration change that met a failed reservation store goes out once the store works again. */
+    @Test fun quicLbPendingChangeRetriedAfterAStoreOutage() {
+        val reservation = FlakyReservation()
+        val key = QuicLbFixtures.key("0f0e0d0c0b0a09080706050403020107")
+        val p = LbPair(QuicLbConfig(2, QuicLbFixtures.SID, 4, key, reservation))
         try {
             val c = p.connect()
             assertTrue(p.handshake(c))
-            assertEquals(1L, p.server.stats.retriesSent)
             val s = p.server.connections().single()
-            assertEquals(1, localCids(s).size, "plaintext: one ID")
-            assertEquals(2, (s.localCid[0].toInt() and 0xff) ushr 5)
+            reservation.fail = true
+            p.server.lb!!
+                .routes.current!!
+                .space
+                .useUpReservationForTest()
+            p.server.updateLoadBalancer(QuicLbConfig(3, QuicLbFixtures.SID, 4, key, reservation))
+            assertTrue(s.cids.reissuePendingForTest, "the change waits for a nonce")
+            assertTrue(p.server.stats.loadBalancerReservationFailures >= 1)
+            assertEquals(0L, p.server.stats.loadBalancerNoncesExhausted, "not exhaustion")
+            reservation.fail = false
+            repeat(120) { p.step() }
+            assertFalse(s.cids.reissuePendingForTest, "sent after the back-off")
+            val live = localCids(s)
+            assertTrue(live.isNotEmpty() && live.all { (it[0].toInt() and 0xff) ushr 5 == 3 }, live.map { hexOf(it) }.toString())
+            assertEquals(ConnectionState.Confirmed, c.state)
         } finally {
             p.close()
         }

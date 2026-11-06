@@ -78,8 +78,10 @@ Stateless Resets.
   IDs `0b111 << 5 | (length - 1)` with CSPRNG bytes when there is none, the nonces are spent, or for a client connection
   of a loop group). The owning loop is `SipHash(group key, ID) mod loops` for any ID of our length with a matching
   length octet; a nonce whose ID hashes to another loop waits in that loop's pool (1,024 IDs), past that it is issued
-  where it was drawn with an owner exception (65,536 live IDs, dropped when the ID leaves), and only when both are full
-  is it spent unused (`loadBalancerNoncesWasted`). Stateless Resets: only while the reset limit would let one out (else
+  where it was drawn with an owner exception (`OwnerExceptions`: at most 65,536 live IDs, the oldest dropped past that,
+  each released when its ID leaves or its connection fails to be made; the datagram path checks a per-bucket counter and
+  compares bytes in place, without allocating or a global lock). A Retry's SCID takes no exception: its nonce is spent
+  unused past a full pool (`loadBalancerNoncesWasted`). Stateless Resets: only while the reset limit would let one out (else
   counted as rate limited), for an ID under the current or previous configuration's codepoint that decrypts, within a
   budget of decryptions per address and in total a second, to this server's ID, and hashes to this loop.
   `QuicLbState` holds the current and previous configurations of an endpoint (shared by a group's loops; a group's cores
@@ -93,8 +95,9 @@ Stateless Resets.
   last one asked for waits for those retirements (RFC 9000 5.1.2), one at most. The issuance mode follows the ID actually
   made: a plaintext change sends exactly one ID (fills of a connection that had the full set stop), an unroutable one
   none. `null` switches to unroutable IDs: new connections get one ID and `disable_active_migration`, live ones keep
-  their IDs and stop handing out new ones. After a Retry the connection gets a fresh ID whose issuance is known (the
-  Retry's SCID stays an alias).
+  their IDs and stop handing out new ones. After a Retry the connection keeps the Retry's SCID as its one server ID
+  (sections 3.2 and 9) whenever its first octet still tells what it allows (0b111, or the current or previous codepoint);
+  only a codepoint that went away since the Retry gets a fresh ID, the Retry SCID staying an alias.
 - Plaintext configurations and unroutable IDs: the connection hands out only its handshake ID (`CidIssuance.Single`,
   `ConnectionIdManager.limitToSingle`), no `preferred_address`. A connection whose nonces run out under it keeps the IDs it
   has and issues no unroutable one (3.2).
@@ -140,10 +143,10 @@ output, round trips of lengths 4..19, `nonceCounterNeverRepeats`, `noncesArePerm
   only on a configuration change (draft section 9). The reset token is HMAC(per-loop key, ID), and no ID repeats while
   the process runs, so "the combination of connection ID and static key MUST NOT be used for another connection"
   (section 10.3.2) holds; the endpoint's ID length is fixed, as that section requires of a stateless token design.
-- 9.6 across processes: with a `QuicLbNonceReservation` the endpoint keeps it itself, keyed or in clear. Without one it is
-  the operator's side of the contract, stated in `QuicLbConfig.key` and the guide: every process start needs a
-  configuration whose nonces no earlier process drew (a key no earlier process used; in clear, a server ID no earlier
-  process used).
+- 9.6 across processes: with a `QuicLbNonceReservation` the endpoint keeps it itself, keyed or in clear; a plaintext
+  configuration must have one (`QuicLbConfig` throws IllegalArgumentException otherwise). Without one, an encrypted
+  configuration leaves it to the operator, as `QuicLbConfig.key` and the guide state: every process start needs a key no
+  earlier process used.
 - When the configuration goes away (`updateLoadBalancer(null)`), live connections keep the IDs they have: section 3.1's
   "update the client with CIDs [...] using the new configuration" names a configuration, and the IDs of the last one keep
   routing wherever the load balancer still has it.

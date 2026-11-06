@@ -436,7 +436,12 @@ public class EndpointCore internal constructor(
                     }
 
                     CidIssuance.SingleNoMigration -> {
-                        if (i.temporary) cids.keepReissuePending() else cids.stopIssuing()
+                        if (i.temporary) {
+                            cids.keepReissuePending()
+                            if (core !in reissueRetry) reissueRetry += core
+                        } else {
+                            cids.stopIssuing()
+                        }
                         null
                     }
                 }
@@ -756,6 +761,7 @@ public class EndpointCore internal constructor(
         now: TimeMark,
         max: Int = 64,
     ): Int {
+        retryPendingReissues()
         val q = queue ?: return 0
         if (q.size == 0) return 0
         // one scan per batch, not per attempt: handshakes in flight and the bytes they hold
@@ -834,6 +840,20 @@ public class EndpointCore internal constructor(
 
     private var tokensReleased = false
     private var lbReleased = false
+
+    /** Server connections whose QUIC-LB configuration change waits for a nonce reservation that could not be stored. */
+    private val reissueRetry = ArrayList<ConnectionCore>()
+
+    /** Once per receive batch: the waiting configuration changes try again (each try draws one nonce, the store backs off). */
+    private fun retryPendingReissues() {
+        if (reissueRetry.isEmpty()) return
+        val it = reissueRetry.iterator()
+        while (it.hasNext()) {
+            val c = it.next()
+            if (!c.cids.retryPendingReissue()) it.remove() else continue
+            markDirty(c)
+        }
+    }
 
     /**
      * The endpoint's QUIC-LB configuration changed ([QuicLbState.update] already ran): every server connection gets one ID of
@@ -955,6 +975,7 @@ public class EndpointCore internal constructor(
     public fun remove(core: ConnectionCore) {
         rememberRtt(core)
         core.cids.forEachLocal { route.release(it) }
+        reissueRetry.remove(core)
         registry.removeAll(core)
         connections.remove(core)
         accepted.remove(core)

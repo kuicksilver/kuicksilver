@@ -286,9 +286,15 @@ internal class ConnectionIdManager(
         issueRetiringOlderWith(cid)
     }
 
-    /** Called by [reissueSource] that could not make the ID just now (a nonce reservation not stored): the change waits and is tried again at the next retirement or change. */
+    /** Called by [reissueSource] that could not make the ID just now (a nonce reservation not stored): the change waits ([retryPendingReissue]). */
     fun keepReissuePending() {
         reissuePending = true
+    }
+
+    /** Tries a waiting configuration change again (the endpoint calls it once per receive batch); true while it still waits. */
+    fun retryPendingReissue(): Boolean {
+        if (reissuePending && !retiringOutstanding()) fireReissue()
+        return reissuePending
     }
 
     /** Every ID of ours this connection holds, live or still routing after retirement. */

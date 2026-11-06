@@ -111,6 +111,12 @@ internal sealed interface CidRoute {
 
     /** An ID of ours left the endpoint (retired, or its connection removed). */
     fun release(cid: ConnectionId) {}
+
+    /** A server ID for a stateless answer (a Retry's SCID), which nothing may ever release. */
+    fun issueStateless(random: Random): ConnectionId = issue(random, client = false).cid
+
+    /** What [cid], one of ours made earlier (a Retry's SCID), allows, when its first octet still tells; null otherwise. */
+    fun knownIssuance(cid: ConnectionId): CidIssuance? = CidIssuance.Full
 }
 
 /**
@@ -162,8 +168,8 @@ internal class ByteRoute(
  * the loops. The loop that owns an ID is `SipHash(key, id) mod loops`: an encrypted ID cannot name its loop in clear, and
  * decrypting it for every datagram would cost up to four AES blocks. The price: a nonce whose ID hashes to another loop
  * cannot serve the loop that drew it. It waits in that loop's pool ([POOL] IDs); past that, the drawing loop issues it
- * itself and records the exception in [overrides] (at most [MAX_OVERRIDES] live IDs, released when the ID leaves), so no
- * nonce is spent unused unless both are full ([Entry.issue]).
+ * itself and records the exception in [exceptions] (at most [MAX_EXCEPTIONS] live IDs, released when the ID leaves, the
+ * oldest dropped past that), so no nonce is spent unused; a Retry's SCID takes no exception ([Entry.issue]).
  *
  * The nonce counters live in the process-wide [QuicLbNonceSpaces] (draft section 9.6: no nonce reuse under one key). Each
  * configuration in use holds its own copy of the configuration key (the caller may close theirs) and the permutation key
@@ -176,6 +182,9 @@ internal class QuicLbState(
     initial: QuicLbConfig?,
     val loops: Int,
     val cidLength: Int,
+    /** Test hooks: the pool size per loop and the owner-exception capacity. */
+    private val poolSize: Int = POOL,
+    maxExceptions: Int = MAX_EXCEPTIONS,
 ) : AutoCloseable {
     /** One configuration in use: its own key copy, codec, nonce space and (encrypted) the permutation key of its nonces. */
     inner class Entry(
@@ -188,7 +197,7 @@ internal class QuicLbState(
 
         init {
             try {
-                space = QuicLbNonceSpaces.of(config, crypto, random)
+                space = QuicLbNonceSpaces.of(config, key, crypto, random)
                 permute = key?.derive(QuicLbDerivation.label(QuicLbDerivation.PERMUTE, config.nonceLength))
             } catch (e: Throwable) {
                 Releaser(e).release { key?.close() }
@@ -239,12 +248,14 @@ internal class QuicLbState(
         /**
          * An ID for [loop], from its pool or from new nonces; null when no nonce is to be had ([space] spent, or a reservation
          * not stored). A nonce whose ID hashes to another loop goes to that loop's pool, or, when the pool is full, is issued
-         * here with an owner exception ([overrides]); only when both are full is it spent unused ([onWasted]). Between [enter]
-         * and [exit].
+         * here with an owner exception ([exceptions]). A [stateless] ID (a Retry's SCID: the client may never come back, so nothing
+         * would release an exception) takes no exception: past a full pool its nonce is spent unused ([onWasted]). Between
+         * [enter] and [exit].
          */
         fun issue(
             loop: Int,
-            owner: (ByteArray) -> Int,
+            stateless: Boolean,
+            hashOf: (ByteArray) -> Long,
             onStoreFailed: (Throwable) -> Unit,
             onWasted: () -> Unit,
         ): ByteArray? {
@@ -254,11 +265,12 @@ internal class QuicLbState(
                 val b = ByteArray(cidLength)
                 codec.encode(nonce, b)
                 nonce.fill(0)
-                val o = owner(b)
+                val h = hashOf(b)
+                val o = ownerOfHash(h)
                 if (o == loop) return b
                 val pooled =
                     poolLock.locked {
-                        if (pools[o].size < POOL) {
+                        if (pools[o].size < poolSize) {
                             pools[o].addLast(b)
                             true
                         } else {
@@ -266,7 +278,10 @@ internal class QuicLbState(
                         }
                     }
                 if (pooled) continue
-                if (addOverride(ConnectionId(b), loop)) return b
+                if (!stateless) {
+                    exceptions.add(h, b, loop)
+                    return b
+                }
                 onWasted()
             }
         }
@@ -304,40 +319,16 @@ internal class QuicLbState(
     /** Every server ID this endpoint used, and whether in clear (section 9.7). */
     private val history = ArrayList<kotlin.Pair<String, Boolean>>()
 
-    /** IDs issued by another loop than the one they hash to (pools full): their real owner. */
-    private val overrides = HashMap<ConnectionId, Int>()
-    private val overrideLock = SpinLock()
+    /** IDs issued by another loop than the one they hash to (its pool was full): their real owner. */
+    val exceptions = OwnerExceptions(maxExceptions)
 
-    @Volatile private var overrideCount = 0
+    fun hashOf(b: ByteArray): Long = SipHash.hash24(k0, k1, b)
 
-    private fun addOverride(
-        cid: ConnectionId,
-        loop: Int,
-    ): Boolean =
-        overrideLock.locked {
-            if (overrides.size >= MAX_OVERRIDES) return@locked false
-            overrides[cid] = loop
-            overrideCount = overrides.size
-            true
-        }
-
-    /** The recorded owner of the ID at `buf[off, +len)`, or -1. */
-    fun overrideOf(
-        buf: PacketBuffer,
-        off: Int,
-        len: Int,
-    ): Int {
-        if (overrideCount == 0) return -1
-        val cid = ConnectionId(ByteArray(len).also { buf.copyTo(it, off, 0, len) })
-        return overrideLock.locked { overrides[cid] } ?: -1
-    }
+    fun ownerOfHash(h: Long): Int = if (loops == 1) 0 else ((h ushr 1) % loops).toInt()
 
     fun release(cid: ConnectionId) {
-        if (overrideCount == 0) return
-        overrideLock.locked {
-            overrides.remove(cid)
-            overrideCount = overrides.size
-        }
+        if (exceptions.size == 0) return
+        exceptions.release(hashOf(cid.toByteArray()), cid)
     }
 
     init {
@@ -432,10 +423,7 @@ internal class QuicLbState(
             }
         val rel = Releaser()
         for (e in listOfNotNull(r.current, r.previous)) rel.release { e.retire() }
-        overrideLock.locked {
-            overrides.clear()
-            overrideCount = 0
-        }
+        exceptions.clear()
         rel.finish()
     }
 
@@ -445,8 +433,8 @@ internal class QuicLbState(
         /** IDs kept per loop for when it needs one: about 30 KiB per loop. */
         const val POOL = 1024
 
-        /** Live IDs issued off their hash: about 4 MiB at most. */
-        const val MAX_OVERRIDES = 65_536
+        /** Live IDs issued off their hash: about 4 MiB at most; past that the oldest goes. */
+        const val MAX_EXCEPTIONS = 65_536
     }
 }
 
@@ -470,11 +458,19 @@ internal class QuicLbRoute(
     var wasted = 0L
         private set
 
-    private fun owner(b: ByteArray): Int = if (loops == 1) 0 else ((SipHash.hash24(state.k0, state.k1, b) ushr 1) % loops).toInt()
+    private fun owner(b: ByteArray): Int = state.ownerOfHash(state.hashOf(b))
 
     override fun issue(
         random: Random,
         client: Boolean,
+    ): IssuedCid = issue(random, client, stateless = false)
+
+    override fun issueStateless(random: Random): ConnectionId = issue(random, client = false, stateless = true).cid
+
+    private fun issue(
+        random: Random,
+        client: Boolean,
+        stateless: Boolean,
     ): IssuedCid {
         var temporary = false
         if (!client) {
@@ -485,7 +481,7 @@ internal class QuicLbRoute(
                     continue // replaced meanwhile: the new one
                 }
                 try {
-                    val b = e.issue(loopIndex, ::owner, onStoreFailed) { wasted++ }
+                    val b = e.issue(loopIndex, stateless, state::hashOf, onStoreFailed) { wasted++ }
                     if (b != null) return IssuedCid(ConnectionId(b), if (e.config.encrypted) CidIssuance.Full else CidIssuance.Single)
                     if (e.space.exhausted) {
                         if (e.firstExhaustion()) onExhausted()
@@ -520,8 +516,9 @@ internal class QuicLbRoute(
     ): Int {
         if (len != length || (buf[off].toInt() and 0x1f) != length - 1) return -1
         if (loops == 1) return 0
-        state.overrideOf(buf, off, len).let { if (it >= 0) return it }
-        return ((SipHash.hash24(state.k0, state.k1, buf, off, len) ushr 1) % loops).toInt()
+        val h = SipHash.hash24(state.k0, state.k1, buf, off, len)
+        state.exceptions.ownerOf(h, buf, off, len).let { if (it >= 0) return it }
+        return state.ownerOfHash(h)
     }
 
     override fun resetCandidate(
@@ -553,6 +550,16 @@ internal class QuicLbRoute(
     }
 
     override fun release(cid: ConnectionId) = state.release(cid)
+
+    /** The current or previous configuration's codepoint: Full or Single by its key; 0b111: SingleNoMigration; else null. */
+    override fun knownIssuance(cid: ConnectionId): CidIssuance? {
+        if (cid.length != length || (cid[0].toInt() and 0x1f) != length - 1) return null
+        val cr = (cid[0].toInt() and 0xff) ushr 5
+        if (cr == UNROUTABLE) return CidIssuance.SingleNoMigration
+        val r = state.routes
+        val e = if (r.current?.config?.configId == cr) r.current else r.previous?.takeIf { it.config.configId == cr }
+        return e?.let { if (it.config.encrypted) CidIssuance.Full else CidIssuance.Single }
+    }
 
     companion object {
         /** The config rotation codepoint of unroutable IDs (section 3.1: "MUST NOT use the reserved identifier 0b111"). */

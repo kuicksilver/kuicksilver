@@ -23,7 +23,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   gets one NEW_CONNECTION_ID under it that retires its earlier IDs, a second change waits for those retirements, and
   `null` issues unroutable `0b111` IDs. Nonces never repeat within a process for a key (shared by every endpoint and
   server ID using it); `QuicLbConfig.nonceReservation` carries the counter (and in clear a permutation secret) across
-  restarts, otherwise each process start needs a fresh key (in clear, a fresh server ID). Spent nonces turn the endpoint
+  restarts (a plaintext configuration must have one), otherwise each process start needs a fresh key. After a Retry the
+  connection keeps the Retry's SCID as its one server ID. Spent nonces turn the endpoint
   unroutable, counted in `EndpointStats.loadBalancerNoncesExhausted`; failed reservations and nonces spent unused have
   their own counters. Every endpoint keeps its own copy of the configuration key.
   Plaintext and unroutable connections hand out only their handshake ID, unroutable ones with

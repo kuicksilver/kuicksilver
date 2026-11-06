@@ -161,7 +161,9 @@ private fun EndpointCore.admitValidated(
             }
             val clientDcid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
             val clientScid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
-            val ourScid = route.newCid(random, client = false) // one ID this connection will use, if the client comes back
+            // the ID this connection will use if the client comes back: a stateless one, which takes no owner exception (nothing
+            // would release it if the client never returns)
+            val ourScid = route.issueStateless(random)
             val token =
                 tokens.mint(clientDcid, ourScid, from, hv.version, now) ?: run {
                     initialsDropped++ // this key's nonces are spent (2^55 tokens or more): no Retry rather than a repeated nonce
@@ -181,32 +183,41 @@ private fun EndpointCore.admitValidated(
             originalDcid = check.odcid
             val rs = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
             retryScid = rs
-            // with QUIC-LB a fresh ID, whose issuance is known (the Retry's is not carried by the stateless round trip); the
-            // Retry SCID stays an alias for the client's Initials
-            if (testFreshCidAfterRetry || route is QuicLbRoute) route.issue(random, client = false) else IssuedCid(rs, CidIssuance.Full)
+            // the Retry SCID is the connection's ID (one server ID for the client: draft-ietf-quic-load-balancers-21 sections
+            // 3.2 and 9) when its first octet still tells what it allows: 0b111, or the current or previous codepoint. A
+            // codepoint that went away since the Retry gets a fresh ID, the Retry SCID staying an alias for the client's Initials
+            val known = if (testFreshCidAfterRetry) null else route.knownIssuance(rs)
+            if (known != null) IssuedCid(rs, known) else route.issue(random, client = false)
         } // our Retry SCID is this connection's ID
         else {
             route.issue(random, client = false)
         }
     val cid = issued.cid
     val core =
-        ConnectionCore.serverWithKeys(
-            server.quic,
-            server.tls,
-            config.crypto,
-            from,
-            random,
-            now,
-            data,
-            length,
-            cid.toByteArray(),
-            resetKey,
-            originalDcid,
-            retryScid,
-            serverEarly,
-            tokenValidated = check is TokenCheck.NewTokenValid,
-        )
-            ?: return false
+        try {
+            ConnectionCore.serverWithKeys(
+                server.quic,
+                server.tls,
+                config.crypto,
+                from,
+                random,
+                now,
+                data,
+                length,
+                cid.toByteArray(),
+                resetKey,
+                originalDcid,
+                retryScid,
+                serverEarly,
+                tokenValidated = check is TokenCheck.NewTokenValid,
+            )
+        } catch (e: Throwable) {
+            route.release(cid) // an owner exception taken for it goes with it
+            throw e
+        } ?: run {
+            route.release(cid)
+            return false
+        }
     // the address the client's Initial reached: every reply leaves from it. Unknown (a socket that does not report destinations, or one
     // that is no address to answer from, such as a broadcast) leaves the connection on the route's choice of source, as before 0.3.0
     core.paths.active.local = core.serverLocal(rxLocal)

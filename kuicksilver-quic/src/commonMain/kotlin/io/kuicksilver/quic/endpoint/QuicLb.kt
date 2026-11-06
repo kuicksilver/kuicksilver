@@ -274,6 +274,29 @@ internal class QuicLbNonceSpace(
     private val retryAt = AtomicLong(Long.MIN_VALUE)
     private var backoffDraws = FIRST_BACKOFF_DRAWS // the refilling thread only
 
+    /** The store made when the space was made failed; reported to the first drawer (no listener exists yet). */
+    private var initialFailure: Throwable? = null
+    private val initialReported = AtomicInt(0)
+
+    init {
+        // the first block before the first draw: no request races a store at start
+        if (reservation != null) {
+            val start0 = drawn.load()
+            try {
+                val mark = minOf(limit, start0 + BLOCK)
+                reservation.store(mark)
+                reservedUpTo.store(mark)
+            } catch (e: Exception) {
+                initialFailure = e
+                retryAt.store(start0 + backoffDraws)
+                backoffDraws = minOf(backoffDraws * 2, MAX_BACKOFF_DRAWS)
+            }
+        }
+    }
+
+    /** Test hook: the reserved nonces are used up (the next draw needs a store). */
+    internal fun useUpReservationForTest() = reservedUpTo.store(drawn.load())
+
     /** Test hook: every nonce drawn. */
     internal fun spendForTest() = drawn.store(limit)
 
@@ -290,7 +313,8 @@ internal class QuicLbNonceSpace(
         if (reserved >= limit || n < reserved - BLOCK / 2) return
         if (n < retryAt.load() || !refilling.compareAndSet(0, 1)) return
         try {
-            val mark = minOf(limit, reservedUpTo.load() + BLOCK)
+            // after an outage the draws ran past the mark: the next block starts at the draw, not at the stale mark
+            val mark = minOf(limit, maxOf(reservedUpTo.load(), n + 1) + BLOCK)
             if (mark <= reservedUpTo.load()) return
             r.store(mark)
             reservedUpTo.store(mark)
@@ -318,6 +342,7 @@ internal class QuicLbNonceSpace(
             return null
         }
         if (reservation != null) {
+            initialFailure?.let { e -> if (initialReported.compareAndSet(0, 1)) onStoreFailed(e) }
             refill(n, onStoreFailed)
             if (n >= reservedUpTo.load()) return null
         }
@@ -374,15 +399,16 @@ internal object QuicLbNonceSpaces {
         lock.locked { spaces[idOf(config)] }?.let { checkSame(it, config) }
     }
 
+    /** The space of [config]; [key] is the caller's own copy of the configuration key (a seed may be derived from it). */
     fun of(
         config: QuicLbConfig,
+        key: LoadBalancerKey?,
         crypto: io.kuicksilver.tls.QuicCrypto,
         random: Random,
     ): QuicLbNonceSpace {
         val id = idOf(config)
         lock.locked { spaces[id] }?.let { return checkSame(it, config) }
-        // made outside the lock (a key, a reservation's load and secret); the first one in wins
-        val key = config.key
+        // made outside the lock (a key, a reservation's load, store and secret); the first one in wins
         val r = config.nonceReservation
         val made =
             if (key != null) {

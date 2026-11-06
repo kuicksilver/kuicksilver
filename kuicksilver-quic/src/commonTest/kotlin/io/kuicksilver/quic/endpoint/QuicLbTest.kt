@@ -37,7 +37,23 @@ class QuicLbTest {
     ): T {
         val k = key?.let { KslQuicCrypto.newLoadBalancerKey(hex(it)) }
         try {
-            return block(QuicLbCodec(QuicLbConfig(configId, hex(sid), nonceLength, k)))
+            return block(
+                QuicLbCodec(
+                    QuicLbConfig(
+                        configId,
+                        hex(sid),
+                        nonceLength,
+                        k,
+                        if (k ==
+                            null
+                        ) {
+                            QuicLbFixtures.plainReservation
+                        } else {
+                            null
+                        },
+                    ),
+                ),
+            )
         } finally {
             k?.close()
         }
@@ -298,6 +314,15 @@ class QuicLbTest {
         r.fail = false
         assertNotNull(space.next(null), "stored after the back-off")
         assertEquals(2, r.stores.size)
+        assertEquals(64L + 1 + 65_536, r.stores.last(), "the block after an outage starts at the draw, not at the stale mark")
+    }
+
+    /** The first block is stored when the space is made: no draw races a store at start. */
+    @Test fun reservationStoredBeforeTheFirstDraw() {
+        val r = MemoryReservation()
+        val space = QuicLbNonceSpace(4, ByteArray(4), null, r, 0)
+        assertEquals(listOf(65_536L), r.stores)
+        assertNotNull(space.next(null))
     }
 
     @Test fun negative_reservationMustMatchTheNonceSpace() {
@@ -344,20 +369,25 @@ class QuicLbTest {
     }
 
     @Test fun negative_configIdSevenRejected() {
-        assertFailsWith<IllegalArgumentException> { QuicLbConfig(7, byteArrayOf(1), 4, null) }
-        assertFailsWith<IllegalArgumentException> { QuicLbConfig(-1, byteArrayOf(1), 4, null) }
-        QuicLbConfig(6, byteArrayOf(1), 4, null)
+        assertFailsWith<IllegalArgumentException> { QuicLbConfig(7, byteArrayOf(1), 4, null, QuicLbFixtures.plainReservation) }
+        assertFailsWith<IllegalArgumentException> { QuicLbConfig(-1, byteArrayOf(1), 4, null, QuicLbFixtures.plainReservation) }
+        QuicLbConfig(6, byteArrayOf(1), 4, null, QuicLbFixtures.plainReservation)
     }
 
     @Test fun negative_sidPlusNonceOver19Rejected() {
-        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(15), 5, null) }
-        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(1), 19, null) }
-        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(0), 8, null) }
-        assertEquals(20, QuicLbConfig(0, ByteArray(15), 4, null).connectionIdLength)
+        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(15), 5, null, QuicLbFixtures.plainReservation) }
+        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(1), 19, null, QuicLbFixtures.plainReservation) }
+        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(0), 8, null, QuicLbFixtures.plainReservation) }
+        assertEquals(20, QuicLbConfig(0, ByteArray(15), 4, null, QuicLbFixtures.plainReservation).connectionIdLength)
+    }
+
+    /** Section 9.6 in clear: without a stored counter a restart could repeat nonces, so a plaintext configuration needs one. */
+    @Test fun negative_plaintextWithoutReservationRejected() {
+        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(3), 4, null) }
     }
 
     @Test fun negative_nonceUnder4Rejected() {
-        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(3), 3, null) }
+        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(3), 3, null, QuicLbFixtures.plainReservation) }
     }
 
     @Test fun negative_configNeverPrintsTheKey() {

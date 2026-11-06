@@ -30,11 +30,11 @@ import io.kuicksilver.tls.LoadBalancerKey
  * that. Draft section 9.6: "the server MUST NOT reuse a nonce until it switches to a configuration with new keys". Within
  * a process no nonce of a key and nonce length (in clear: of a nonce length) is ever used twice, whatever the endpoints
  * and server IDs that share them. Across processes that holds only with [nonceReservation]; without one, the operator
- * must give every process start a configuration whose nonces no earlier process drew: a key no earlier process used (a
- * fresh key per process start and per instance), or in clear a server ID no earlier process used.
+ * must give every process start a key no earlier process used (a fresh key per process start and per instance). A
+ * plaintext configuration (no key) must have a [nonceReservation]: IllegalArgumentException otherwise.
  * @param nonceReservation Where the nonce counter of this key and nonce length (in clear: of this nonce length, with a
  * stored permutation secret) survives a restart; see [QuicLbNonceReservation]. Every configuration that shares the nonce
- * space must bring the same instance, or none. Null: nonces start at a random point in each process.
+ * space must bring the same instance, or none. Null (with a key only): nonces start at a random point in each process.
  */
 @ExperimentalKuicksilverApi
 public class QuicLbConfig(
@@ -52,6 +52,10 @@ public class QuicLbConfig(
         require(nonceLength >= 4) { "nonceLength must be at least 4, was $nonceLength" }
         require(sid.size + nonceLength <= 19) {
             "serverId (${sid.size}) and nonceLength ($nonceLength) must sum to 19 bytes or less (QUIC v1 connection IDs are at most 20)"
+        }
+        require(key != null || nonceReservation != null) {
+            "a plaintext configuration needs a nonceReservation: its nonces are in clear, and without a stored counter a restart " +
+                "could repeat them (draft-ietf-quic-load-balancers-21 section 9.6)"
         }
     }
 
