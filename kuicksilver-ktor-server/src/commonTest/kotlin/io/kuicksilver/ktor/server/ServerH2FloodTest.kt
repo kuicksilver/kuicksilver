@@ -72,7 +72,20 @@ class ServerH2FloodTest {
         }
     }
 
-    /** Writes [frames] in batches of [batch] until the server stops taking them; returns how many went out. */
+    /**
+     * Writes the [count] frames [frame] makes, in batches of [batch], until the server stops taking them; returns how many
+     * went out.
+     *
+     * Each batch is built by [batchOf], which does not suspend, and this loop makes no call whose target can change.
+     * ART 7.0 (API 24) aborted in the GC here ("Tried to mark 0xebadde09 not contained by any spaces", a root in this
+     * method's interpreted frame) when the batch was built inside the loop. The JIT-compiled loop was deoptimized (its call
+     * of `frame` was compiled for the lambda it had seen, and the next test passes another), which fills every register the
+     * compiled code had found dead with 0xEBADDE09 (kDeadValue). The coroutine state machine copies its locals between
+     * registers with move-object at each resumption and loop turn, copies the compiler drops as dead; the interpreter that
+     * went on from the deoptimization ran them, its move-object copies the raw register into the frame's references, and
+     * the GC found 0xEBADDE09 there. Now the call that deoptimizes is in [batchOf], whose code has no such dead copies,
+     * and this frame has nothing to deoptimize on.
+     */
     private suspend fun RawH2Client.flood(
         count: Int,
         batch: Int = 500,
@@ -81,18 +94,28 @@ class ServerH2FloodTest {
         var sent = 0
         while (sent < count) {
             val n = minOf(batch, count - sent)
-            val bytes = ArrayList<ByteArray>(n)
-            for (i in sent until sent + n) bytes += frame(i)
-            val all = ByteArray(bytes.sumOf { it.size })
-            var at = 0
-            for (b in bytes) {
-                b.copyInto(all, at)
-                at += b.size
-            }
+            val all = batchOf(sent, n, frame)
             if (runCatching { write(all) }.isFailure) return sent
             sent += n
         }
         return sent
+    }
+
+    /** The frames [frame] makes for [from] until [from] + [n], one after another. */
+    private fun batchOf(
+        from: Int,
+        n: Int,
+        frame: (Int) -> ByteArray,
+    ): ByteArray {
+        val bytes = ArrayList<ByteArray>(n)
+        for (i in from until from + n) bytes += frame(i)
+        val all = ByteArray(bytes.sumOf { it.size })
+        var at = 0
+        for (b in bytes) {
+            b.copyInto(all, at)
+            at += b.size
+        }
+        return all
     }
 
     /** Reads to the end of the connection and returns the GOAWAY the client saw, if any. */

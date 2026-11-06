@@ -37,6 +37,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -363,6 +364,40 @@ class TcpWriterTest {
                 assertTrue(scope.async { threadsInSocketWrite() }.await() == 0, "no writer left in SocketChannel.write")
             } finally {
                 release.complete(Unit)
+                scope.cancel()
+                peer.selector.close()
+            }
+        }
+
+    /**
+     * The writer fails (here the application's stream; a reset on the first write does the same) while the reader waits for
+     * the peer, which sends nothing: the writer closes the descriptor, and the reader must end too. Closing a channel the
+     * selector watches only cancels its key, which is never selected again, so the reader waited for good; a TLS client
+     * refused at accept (a reset before its ClientHello went out) waited out its whole handshake timeout.
+     */
+    @Test fun negative_aFailedWriterEndsTheWaitingReader(): Unit =
+        runBlocking {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val peer = neverReadingPeer(scope)
+            try {
+                val c = connectTcp(peer.selector, InetSocketAddress("127.0.0.1", peer.port))
+                peer.accepted.await()
+                val input = c.openReadChannel()
+                val read = scope.async { runCatching { input.readAvailable(ByteArray(16), 0, 16) } }
+                // the reader has found nothing to read and waits in the selector
+                val selectable = (c as KslNioSocket).ktorSocket as Selectable
+                withTimeout(10.seconds) { while (selectable.interestedOps == 0) delay(10) }
+                val out = ByteChannel(autoFlush = true)
+                c.attachForWriting(out)
+                out.close(IOException("the handler failed"))
+                val outcome =
+                    assertNotNull(
+                        withTimeoutOrNull(10.seconds) { read.await() },
+                        "the reader still waits after the writer failed and closed the descriptor",
+                    )
+                assertTrue(outcome.isFailure || outcome.getOrNull() == -1, "the reader read ${outcome.getOrNull()} bytes")
+                assertTrue(!c.isOpen, "and the descriptor is closed")
+            } finally {
                 scope.cancel()
                 peer.selector.close()
             }

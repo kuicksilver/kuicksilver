@@ -524,6 +524,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor network (JVM, Android): a socket whose writer fails or is cancelled now ends the pending read at once. The writer
+  closed the descriptor directly, which only cancels its selection key, so a read waiting in the selector was never woken:
+  a TLS client that the server reset before its ClientHello waited out its whole handshake timeout.
+
 - QUIC: a closed endpoint no longer keeps its connections reachable. `close()` released every connection's native state, but
   the endpoint's timer heap and its table of connections by peer address still referenced each `ConnectionCore` (about
   40 KB of Kotlin state per connection), so an application that kept a reference to a closed endpoint kept all of them.

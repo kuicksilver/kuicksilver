@@ -45,6 +45,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -395,10 +396,16 @@ class ServerH1Test {
             remote: io.ktor.network.sockets.InetSocketAddress?,
         ) = note("opened $protocol")
 
+        /** The client port and cause of each failed handshake. */
+        val failedHandshakes = MutableStateFlow<List<Pair<Int?, Throwable>>>(emptyList())
+
         override fun tlsHandshakeFailed(
             remote: io.ktor.network.sockets.InetSocketAddress?,
             cause: Throwable,
-        ) = note("handshake failed")
+        ) {
+            failedHandshakes.update { it + (remote?.port to cause) }
+            note("handshake failed")
+        }
 
         override fun connectionRefused(
             protocol: HttpProtocolVersion,
@@ -459,8 +466,10 @@ class ServerH1Test {
 
     /**
      * With `maxTcpConnectionsPerIp = 1`, a second connection from 127.0.0.1 while one is held is closed at accept, before
-     * any TLS work (no handshake failure is reported for it), and reported as refused for the per-IP limit; once the
-     * first is gone the address is served again.
+     * any TLS work (no handshake failure is reported for it, and its client sees the close at once, not after its own
+     * handshake timeout), and reported as refused for the per-IP limit; once the first is gone the address is served again.
+     * The held connection never sends a ClientHello: on a slow runner its own handshake may time out (the server's TLS
+     * handshake timeout, 10 s) before the end, which says nothing about the refusal, so only that failure is let through.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
     @Test
@@ -480,13 +489,29 @@ class ServerH1Test {
                         io.ktor.network.sockets
                             .InetSocketAddress("127.0.0.1", port),
                     )
+                val heldPort = (held.localAddress as io.ktor.network.sockets.InetSocketAddress).port
                 withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
-                assertTrue(runCatching { rawHttp(port, get) }.isFailure, "the second connection from 127.0.0.1 was served")
+                // within the client's own TLS handshake timeout (10 s): a client that waited it out never saw the refusal
+                val second =
+                    assertNotNull(
+                        withTimeoutOrNull(5.seconds) { runCatching { rawHttp(port, get) } },
+                        "the refused client did not see its connection closed",
+                    )
+                assertTrue(second.isFailure, "the second connection from 127.0.0.1 was served")
                 withTimeout(10.seconds) { server.engine.refusedPerIp.first { it == 1L } }
-                assertEquals(listOf("refused HTTP/1.1 per-IP limit 127.0.0.1"), rec.events.value)
+                assertEquals(listOf("refused HTTP/1.1 per-IP limit 127.0.0.1"), rec.events.value.filter { it != "handshake failed" })
                 assertEquals(1L, KuicksilverServerProbe.snapshot(server.engine)["server.tcpRefusedPerIp"])
+                val failed = rec.failedHandshakes.value
+                assertEquals(emptyList(), failed.filter { (from, _) -> from != heldPort }, "a handshake failed for the refused client")
+                assertTrue(
+                    failed.all { (_, cause) -> "timed out" in cause.message.orEmpty() },
+                    "the held connection failed before it was closed, not by its own handshake timeout: $failed",
+                )
                 held.close()
                 withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                // every connection has ended: a handshake begun on the refused one would have reported by now
+                val failedAfter = rec.failedHandshakes.value
+                assertEquals(emptyList(), failedAfter.filter { (from, _) -> from != heldPort }, "a handshake failed for the refused client")
                 assertTrue(rawHttp(port, get).startsWith("HTTP/1.1 200"))
             } finally {
                 selector.close()
