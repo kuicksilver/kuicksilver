@@ -43,13 +43,18 @@ tasks.named<Test>("jvmTest") {
     useJUnitPlatform(); maxHeapSize = "1g"
     if (soakRequested) { outputs.upToDateWhen { false }; testLogging.showStandardStreams = true }
 }
+// the report names the commit and the UTC start of the run (only a soak run asks git)
+val soakCommit = providers.exec { commandLine("git", "rev-parse", "HEAD"); isIgnoreExitValue = true }.standardOutput.asText.map { it.trim() }
+val soakDate = providers.exec { commandLine("date", "-u", "+%Y-%m-%dT%H:%M:%SZ") }.standardOutput.asText.map { it.trim() }
 tasks.withType<Test>().configureEach {
+    if (soakRequested) { environment("KSL_SOAK_DATE", soakDate.get()); environment("KSL_SOAK_COMMIT", soakCommit.get()) }
     soak.forEach { (k, env) -> providers.gradleProperty("kuicksilver.soak.$k").orNull?.let { environment(env, it) } }
     environment("KSL_SOAK_DEFAULT_REPORT", layout.buildDirectory.dir("soak").get().asFile.path)
 }
 tasks.withType<KotlinNativeTest>().configureEach {
     enabled = soakRequested
     outputs.upToDateWhen { false }
+    if (soakRequested) { environment("KSL_SOAK_DATE", soakDate.get()); environment("KSL_SOAK_COMMIT", soakCommit.get()) }
     soak.forEach { (k, env) -> providers.gradleProperty("kuicksilver.soak.$k").orNull?.let { environment(env, it) } }
     environment("KSL_SOAK_DEFAULT_REPORT", layout.buildDirectory.dir("soak").get().asFile.path)
 }

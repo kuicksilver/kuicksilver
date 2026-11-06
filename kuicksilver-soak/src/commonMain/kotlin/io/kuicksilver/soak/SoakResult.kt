@@ -79,6 +79,8 @@ internal class SoakResult(
         buildString {
             appendLine("# Soak `${config.label}`: ${if (passed) "PASS" else "FAIL"}")
             appendLine()
+            appendLine("Run: ${config.date ?: "date not recorded"}, commit ${config.commit ?: "not recorded"}.")
+            appendLine()
             appendLine(
                 "Duration ${config.duration}, ${config.clients} clients, rate ceiling ${config.rate}/s, " +
                     "sample every ${config.sampleEvery}, warm-up ${config.warmup}; ${samples.size} samples, ${window.size} after warm-up.",

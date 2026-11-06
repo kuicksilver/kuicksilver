@@ -11,6 +11,16 @@ import kotlin.time.TimeSource
 
 /** The report of a long run: every series judged and written, read column by column without rebuilding maps. */
 class SoakResultTest {
+    @Test fun theReportNamesTheRunDateAndCommit() {
+        fun header(config: SoakConfig) =
+            SoakResult(config, emptyMap(), emptyList(), emptyMap(), emptyList(), 0.seconds, emptyMap()).summary().lines()
+        assertEquals(
+            "Run: 2026-11-06T10:00:00Z, commit abc123.",
+            header(SoakConfig(1.days, date = "2026-11-06T10:00:00Z", commit = "abc123"))[2],
+        )
+        assertEquals("Run: date not recorded, commit not recorded.", header(SoakConfig(1.days))[2])
+    }
+
     @Test fun aSevenDayRunIsJudgedAndWritten() {
         val metrics = List(50) { "m$it" }
         val n = 40_320 // 7 days at 15 s
