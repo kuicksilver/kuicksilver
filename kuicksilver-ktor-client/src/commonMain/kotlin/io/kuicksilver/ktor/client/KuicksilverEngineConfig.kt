@@ -71,12 +71,12 @@ public class Http3ClientConfig {
     /**
      * Where [Http3DiscoveryMode.Auto] looks up HTTPS resource records (RFC 9460; docs/guide/ktor.md, "HTTPS records"):
      * [HttpsRecordSource.Off] (the default), the system resolver ([HttpsRecordSource.System]) or your DNS-over-HTTPS
-     * exchange ([HttpsRecordSource.Exchange]). An `https://` request to a host name with no cached `Alt-Svc` alternative
-     * asks for the origin's records (the name for port 443, `_<port>._https.<name>` otherwise), follows AliasMode records,
-     * and when a ServiceMode record offers `h3` in its `alpn`, races HTTP/3 to its target (the record's `port`, else the
-     * origin's) against TCP to the origin, as for an `Alt-Svc` alternative; the certificate is checked against the origin's
-     * name whatever the target. The address hints are not used, nor is `ech` (a record that requires it is skipped). A
-     * cached `Alt-Svc` alternative wins and no lookup is made, nor is one for [Http3DiscoveryMode.Preferred],
+     * exchange ([HttpsRecordSource.Exchange]). An `https://` request to a host name asks for the origin's records (the
+     * name for port 443, `_<port>._https.<name>` otherwise), follows AliasMode records, and connects to their endpoints in
+     * priority order over the transports each allows (HTTP/3 and TCP racing for `alpn=h3`, TCP to the record's target and
+     * `port`), then to the origin as without records; the certificate is checked against the origin's name whatever the
+     * target. The address hints are not used, nor is `ech` (a record that requires it is skipped). A cached `Alt-Svc`
+     * alternative is tried first. No lookup is made for [Http3DiscoveryMode.Preferred],
      * [Http3DiscoveryMode.H3Only], [quicHints], `http://` URLs, IP addresses, requests through a proxy, or while
      * [http3Allowed] says no. Answers are cached by their TTL (60 s to
      * 1 day; 5 minutes for "no records"; at most 1000 names) until [networkId] changes; a failed lookup is not cached.

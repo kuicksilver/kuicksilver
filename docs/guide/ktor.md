@@ -621,23 +621,29 @@ false` keeps them.
 ### HTTPS records (experimental)
 
 `http3 { httpsRecords = HttpsRecordSource.System }` (or `HttpsRecordSource.Exchange { query -> ... }` for your own
-DNS-over-HTTPS client) also looks up the origin's HTTPS resource records (RFC 9460) in `Auto` mode, so the first request
-to an origin that publishes one with `alpn=h3` races HTTP/3 at once instead of waiting for an `Alt-Svc` header, as
-browsers do. Off by default. The rules:
+DNS-over-HTTPS client) makes the engine an HTTPS-record client (RFC 9460) in `Auto` mode: the origin's records say where
+to connect, so the first request to an origin that publishes one with `alpn=h3` races HTTP/3 at once instead of waiting
+for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 
-- only for an `https://` request to a host name with no cached `Alt-Svc` alternative (a cached one wins and no lookup is
-  made, RFC 9460 section 9.3); never for `Preferred`, `H3Only`, `quicHints`, `http://` URLs, IP addresses, requests
+- for an `https://` request to a host name; never for `Preferred`, `H3Only`, `quicHints`, IP addresses, requests
   through a proxy, or while `http3Allowed` says no;
 - the name asked is the host for port 443, `_<port>._https.<host>` otherwise (section 9.1); AliasMode records are
-  followed (at most 8 steps, a loop stops the chain), then the ServiceMode record with the lowest priority whose `alpn`
-  has `h3` gives the target and its `port` (the origin's when absent); the address hints are not used, `ech` is not
-  (a record that requires it is skipped), and a malformed record makes the whole answer unusable (section 2.2);
+  followed (one at random among several; at most 8 steps; a loop or a longer chain is treated as no record; an AliasMode
+  "." is ignored); the ServiceMode records of the final name, by ascending priority and shuffled within a priority, are
+  the endpoints, each at its target (the record's own name for ".") and `port` (the origin's when absent); after an
+  AliasMode chain the last name with the origin's port is one more endpoint, last (section 3);
+- an endpoint is tried over the transports its ALPN set allows (section 7.1.2; the default set is `http/1.1`, so
+  `alpn=h3` means QUIC and TCP, `alpn=h2` TCP, and `no-default-alpn` with `alpn=h3` QUIC only); QUIC and TCP race as for
+  an `Alt-Svc` alternative ([Racing and fallback](#racing-and-fallback)), TCP connecting to the endpoint's target and
+  port, both offering the engine's usual ALPN lists. An endpoint that cannot be connected to is followed by the next one,
+  and after the last by the origin as without records. TLS and the request still name the origin, and the certificate is
+  checked against the origin's name whatever the record says; a QUIC endpoint that fails is marked broken like an
+  alternative (`httpsRecordUsed` and `altSvcMarkedBroken` report both). The address hints are not used, `ech` is not (a
+  record that requires it is skipped), and a malformed record makes the whole answer unusable (section 2.2);
+- a cached `Alt-Svc` alternative is tried first, its TCP side going to the origin's first TCP endpoint;
 - the request waits for the records while the origin's addresses resolve and at most `httpsRecordExtraWait` (50 ms)
-  longer; a lookup that answers later, fails or times out leaves the request on TCP as without records, and a late
-  answer is cached for the next request;
-- the target races TCP to the origin as an `Alt-Svc` alternative does ([Racing and fallback](#racing-and-fallback)),
-  without `Alt-Used`; the certificate is checked against the origin's name whatever the record says, and a target that
-  fails is marked broken like an alternative (`httpsRecordUsed` and `altSvcMarkedBroken` report both);
+  longer; a lookup that answers later, fails or times out leaves the request on the origin as without records, and a
+  late answer is cached for the next request;
 - answers are cached by their TTL (60 s to a day; "no records" for 5 minutes; at most 1000 names) and forgotten when
   `networkId()` reports a new network; a failed lookup is not cached, and one lookup per name runs at a time, for at
   most the connect timeout (30 s at most); closing the client cancels the lookups still running.
@@ -1036,7 +1042,7 @@ embeddedServer(Kuicksilver, configure = {
 **Client.** `engine { eventListener = ... }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
 `protocolSelected` with a `ProtocolReason` (`Configuration`, `NotSecure`, `ExistingConnection`, `Race`, `NoAlternative`,
-`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
+`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`, `HttpsRecord`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
 `altSvcMarkedBroken`; `fallback` from HTTP/3 to HTTP/1.1; `retry` (a request the server did not process after GOAWAY, a
 stale pooled HTTP/1.1 connection); `connectionAcquired` (reused or new) and `connectionReleased` (kept for the next request
 or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and

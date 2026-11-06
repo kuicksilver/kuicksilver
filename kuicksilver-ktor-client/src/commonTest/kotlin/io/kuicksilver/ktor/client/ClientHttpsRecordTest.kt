@@ -152,7 +152,7 @@ class ClientHttpsRecordTest {
                     client(records.source, more = { http3 { altSvcStore = store } }).use { c ->
                         assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("https://server.test:$port/").version)
                     }
-                    assertEquals(emptyList(), records.asked)
+                    assertEquals(listOf("_$port._https.server.test"), records.asked)
                 } finally {
                     ep.close()
                 }

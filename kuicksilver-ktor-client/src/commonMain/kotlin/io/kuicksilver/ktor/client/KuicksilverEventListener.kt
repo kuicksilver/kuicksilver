@@ -69,8 +69,9 @@ public abstract class KuicksilverEventListener {
     ) {}
 
     /**
-     * [request] races HTTP/3 to [alternative] (`host:port`), the target of the origin's HTTPS resource record (RFC 9460,
-     * [Http3ClientConfig.httpsRecords]). A failure there marks it broken as for an `Alt-Svc` alternative ([altSvcMarkedBroken]).
+     * [request] connects to [alternative] (`host:port`), an endpoint of the origin's HTTPS resource record (RFC 9460,
+     * [Http3ClientConfig.httpsRecords]), over the transports the record allows; once per endpoint tried. A QUIC failure
+     * there marks it broken as for an `Alt-Svc` alternative ([altSvcMarkedBroken]).
      */
     public open fun httpsRecordUsed(
         request: HttpRequestData,
@@ -161,6 +162,12 @@ public enum class ProtocolReason {
 
     /** `Http3ClientConfig.http3Allowed` returned false for this request: TCP (HTTP/1.1 or HTTP/2), as with `H1Only`. */
     Http3Disabled,
+
+    /**
+     * An endpoint of the origin's HTTPS record (RFC 9460) that offers one transport only: TCP, or HTTP/3 without TCP
+     * (`no-default-alpn`), so there was no race.
+     */
+    HttpsRecord,
 }
 
 /** The engine's [KuicksilverEventListener], never failing the call (an exception is logged); a no-op without one. */

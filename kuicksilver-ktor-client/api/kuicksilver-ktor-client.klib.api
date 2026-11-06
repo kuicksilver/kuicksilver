@@ -68,6 +68,7 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
     enum entry ExistingConnection // io.kuicksilver.ktor.client/ProtocolReason.ExistingConnection|null[0]
     enum entry Fallback // io.kuicksilver.ktor.client/ProtocolReason.Fallback|null[0]
     enum entry Http3Disabled // io.kuicksilver.ktor.client/ProtocolReason.Http3Disabled|null[0]
+    enum entry HttpsRecord // io.kuicksilver.ktor.client/ProtocolReason.HttpsRecord|null[0]
     enum entry NoAlternative // io.kuicksilver.ktor.client/ProtocolReason.NoAlternative|null[0]
     enum entry NotSecure // io.kuicksilver.ktor.client/ProtocolReason.NotSecure|null[0]
     enum entry Proxy // io.kuicksilver.ktor.client/ProtocolReason.Proxy|null[0]

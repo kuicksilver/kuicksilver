@@ -16,17 +16,31 @@ import kotlinx.coroutines.sync.withLock
  * name that does not resolve is not asked again. A lookup runs under the caller's deadline; a caller cancelled while it
  * runs leaves no answer behind, and the next caller looks the name up itself.
  */
-internal class RequestDns(
+internal class RequestDns private constructor(
     private val resolve: suspend (String, Int) -> List<TcpAddress>,
+    private val lock: Mutex,
+    private val answers: HashMap<String, Result<List<TcpAddress>>>,
+    /** Every lookup goes to this host and port instead (an HTTPS record's endpoint, [connectTo]). */
+    private val endpoint: Pair<String, Int>?,
 ) {
-    private val lock = Mutex()
-    private val answers = HashMap<String, Result<List<TcpAddress>>>()
+    constructor(resolve: suspend (String, Int) -> List<TcpAddress>) : this(resolve, Mutex(), HashMap(), null)
+
+    /**
+     * A view of this resolution whose every lookup resolves [host] and answers with [port]: the TCP side of a connection to
+     * an endpoint of the origin's HTTPS records (RFC 9460 section 3: the client resolves the TargetName and uses the
+     * endpoint's port; TLS and the request still name the origin). It shares the answers, so a name is still asked once.
+     */
+    fun connectTo(
+        host: String,
+        port: Int,
+    ): RequestDns = RequestDns(resolve, lock, answers, host to port)
 
     /** The addresses of [host] with [port]; [host] is a URL host, an IPv6 literal with or without its brackets. */
     suspend fun lookup(
         host: String,
         port: Int,
     ): List<TcpAddress> {
+        if (endpoint != null) return RequestDns(resolve, lock, answers, null).lookup(endpoint.first, endpoint.second)
         val name = socketHost(host)
         val found =
             lock.withLock {

@@ -288,6 +288,7 @@ public final class io/kuicksilver/ktor/client/ProtocolReason : java/lang/Enum {
 	public static final field ExistingConnection Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Fallback Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Http3Disabled Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field HttpsRecord Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NoAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NotSecure Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Proxy Lio/kuicksilver/ktor/client/ProtocolReason;
