@@ -42,6 +42,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
@@ -914,22 +915,28 @@ internal suspend fun applyLoadBalancer(
     lb: io.kuicksilver.quic.endpoint.QuicLbState,
     config: io.kuicksilver.quic.QuicLbConfig?,
     loop: EndpointLoop,
+    afterCommit: suspend () -> Unit = {},
 ) {
     var tries = 0
     while (true) {
-        val prepared = withContext(Dispatchers.IO) { lb.prepare(config) }
+        // not cancellable: a fresh entry made there is either committed or discarded below, never dropped on the floor
+        val prepared = withContext(Dispatchers.IO + NonCancellable) { lb.prepare(config) }
         var committed = false
         try {
+            currentCoroutineContext().ensureActive()
             loop.runOnLoop {
                 loop.core.commitLoadBalancer(prepared)
                 committed = true
                 loop.afterLbCommitForTest?.invoke()
             }
+            withContext(NonCancellable) { afterCommit() }
             return
         } catch (e: io.kuicksilver.quic.endpoint.QuicLbState.StaleConfiguration) {
+            // defensive: the update mutexes (EndpointLoop.lbLock, LoopGroup.lbLock) already rule this out
             if (++tries >= 3) throw e
         } catch (e: Throwable) {
-            if (!committed) lb.discard(prepared)
+            // committed and then cancelled: the rest of the change still happens ([afterCommit], not cancellable)
+            if (committed) withContext(NonCancellable) { afterCommit() } else lb.discard(prepared)
             throw e
         }
     }

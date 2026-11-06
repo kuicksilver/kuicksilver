@@ -849,7 +849,7 @@ public class EndpointCore internal constructor(
      * configuration changes go out once nonces are reserved; while none are, nothing is drawn for them.
      */
     private fun retryPendingReissues() {
-        if (loopIndex == 0) route.tick() // the one loop that paces a group's store retries: one try a batch for the endpoint
+        route.tick() // every loop: the back-off is scaled by the group's size, so a quiet loop 0 cannot stall the retries
         if (reissueRetry.isEmpty() || !route.canIssueRoutable()) return
         val it = reissueRetry.iterator()
         while (it.hasNext()) {

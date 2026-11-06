@@ -259,7 +259,8 @@ internal class SpinLock {
  * configuration before it switches to it); later blocks are stored ahead of need, once half of the current one is drawn,
  * by the thread that crosses it, outside any lock. While no reserved nonce is left, [next] draws nothing: it tries one
  * store if one is due and returns null otherwise. After a failed store the next try waits [tick]s (one per receive batch of
- * a loop that issues from this space): 1, doubling to 1,024, so at most one store per batch.
+ * every loop that issues from this space, and one per request that finds nothing reserved): 1, doubling to 1,024, times
+ * the group's loops, so the group makes about one try a round of its loops' batches.
  */
 internal class QuicLbNonceSpace(
     val length: Int,
@@ -297,19 +298,23 @@ internal class QuicLbNonceSpace(
     fun hasReserved(): Boolean = !exhausted && (reservation == null || drawn.load() < reservedUpTo.load())
 
     /**
-     * One receive batch of a loop that issues from this space went by: when no nonce is reserved and a store is due (the
-     * back-off's ticks went by), it is tried now, at most one a batch, without drawing.
+     * One receive batch of a loop that issues from this space went by (every loop of a group ticks, so a quiet loop 0 never
+     * stalls the retries): when no nonce is reserved and a store is due (the back-off's ticks went by), it is tried now,
+     * without drawing. [loops] is the group's size: the back-off is scaled by it, so the group makes about one try a round.
      */
-    fun tick(onStoreFailed: (Throwable) -> Unit = {}) {
+    fun tick(
+        onStoreFailed: (Throwable) -> Unit = {},
+        loops: Int = 1,
+    ) {
         if (reservation == null) return
         ticks.incrementAndFetch()
-        if (!exhausted && drawn.load() >= reservedUpTo.load()) refill(drawn.load(), force = true, onStoreFailed = onStoreFailed)
+        if (!exhausted && drawn.load() >= reservedUpTo.load()) refill(drawn.load(), force = true, loops, onStoreFailed)
     }
 
     /** Stores the first block. Called once, by the instance's creator, after it won the registry's insertion. */
     fun prime() {
         if (reservation == null) return
-        refill(drawn.load(), force = true) { primeFailure = it }
+        refill(drawn.load(), force = true, loops = 1) { primeFailure = it }
     }
 
     /**
@@ -320,6 +325,7 @@ internal class QuicLbNonceSpace(
     private fun refill(
         next: Long,
         force: Boolean = false,
+        loops: Int = 1,
         onStoreFailed: (Throwable) -> Unit,
     ) {
         val r = reservation ?: return
@@ -335,7 +341,7 @@ internal class QuicLbNonceSpace(
             retryAtTick.store(Long.MIN_VALUE)
             backoffTicks = FIRST_BACKOFF_TICKS
         } catch (e: Exception) {
-            retryAtTick.store(ticks.load() + backoffTicks)
+            retryAtTick.store(ticks.load() + backoffTicks * loops)
             backoffTicks = minOf(backoffTicks * 2, MAX_BACKOFF_TICKS)
             onStoreFailed(e)
         } finally {
@@ -350,12 +356,14 @@ internal class QuicLbNonceSpace(
     fun next(
         permute: LoadBalancerKey?,
         onStoreFailed: (Throwable) -> Unit = {},
+        loops: Int = 1,
     ): ByteArray? {
         if (reservation != null) {
             primeFailure?.let { e -> if (primeReported.compareAndSet(0, 1)) onStoreFailed(e) }
             if (exhausted) return null
             if (drawn.load() >= reservedUpTo.load()) {
-                refill(drawn.load(), force = true, onStoreFailed)
+                ticks.incrementAndFetch() // a request that finds nothing reserved counts as a tick (a loop with no batches)
+                refill(drawn.load(), force = true, loops, onStoreFailed)
                 if (drawn.load() >= reservedUpTo.load()) return null // nothing drawn while nothing is reserved
             }
         }
@@ -365,7 +373,7 @@ internal class QuicLbNonceSpace(
             return null
         }
         if (reservation != null) {
-            refill(n + 1, onStoreFailed = onStoreFailed) // ahead of need
+            refill(n + 1, loops = loops, onStoreFailed = onStoreFailed) // ahead of need
             if (n >= reservedUpTo.load()) return null // another loop drew the last reserved one first: this one is skipped
         }
         // seed + n, big-endian, modulo 2^(8 x length)

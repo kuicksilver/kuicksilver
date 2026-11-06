@@ -102,8 +102,17 @@ internal class LoopGroup private constructor(
             val first = loops[0]
             // built off the loops (a nonce reservation's first store may fsync), switched to on loop 0
             val lb = first.core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
-            applyLoadBalancer(lb, config, first)
-            for (l in loops) if (l !== first) l.runOnLoop { l.core.reissueForLoadBalancer() }
+            // once committed on loop 0, the other loops' connections move too, even if the caller is cancelled meanwhile
+            applyLoadBalancer(lb, config, first) {
+                for (l in loops) {
+                    if (l === first) continue
+                    try {
+                        l.runOnLoop { l.core.reissueForLoadBalancer() }
+                    } catch (_: io.kuicksilver.quic.QuicException.EndpointClosing) {
+                        // that loop is closing with the group: nothing to move
+                    }
+                }
+            }
         } finally {
             lbLock.unlock()
         }

@@ -273,7 +273,7 @@ internal class QuicLbState(
         ): ByteArray? {
             poolLock.locked { pools[loop].removeFirstOrNull() }?.let { return it }
             while (true) {
-                val nonce = space.next(permute, onStoreFailed) ?: return null
+                val nonce = space.next(permute, onStoreFailed, loops) ?: return null
                 val b = ByteArray(cidLength)
                 codec.encode(nonce, b)
                 nonce.fill(0)
@@ -610,7 +610,7 @@ internal class QuicLbRoute(
     override fun tick() {
         state.routes.current
             ?.space
-            ?.tick(onStoreFailed)
+            ?.tick(onStoreFailed, state.loops)
     }
 
     override fun canIssueRoutable(): Boolean =

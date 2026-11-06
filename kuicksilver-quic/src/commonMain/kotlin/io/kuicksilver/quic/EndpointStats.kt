@@ -138,7 +138,7 @@ public class EndpointStats internal constructor(
     public val loadBalancerNoncesExhausted: Long = 0,
     /**
      * Failed `QuicLbNonceReservation.store` calls: retried after a back-off counted in receive batches (one, doubling to
-     * 1,024; at most one store a batch, nothing drawn meanwhile); once the reserved nonces are used up, the requests in
+     * 1,024, times the loops; about one store a round, nothing drawn meanwhile); once the reserved nonces are used up, the requests in
      * between get unroutable IDs. Not counted as exhaustion.
      */
     @property:ExperimentalKuicksilverApi

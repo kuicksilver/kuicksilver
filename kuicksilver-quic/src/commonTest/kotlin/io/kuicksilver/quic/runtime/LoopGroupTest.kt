@@ -762,4 +762,117 @@ class LoopGroupTest {
                 }
             }
         }
+
+    private class FlakyReservation : io.kuicksilver.quic.QuicLbNonceReservation {
+        @Volatile var mark = 0L
+
+        @Volatile var fail = false
+
+        override fun load(): Long = mark
+
+        override fun store(mark: Long) {
+            if (fail) throw IOException("disk full")
+            this.mark = mark
+        }
+
+        override fun secret(): ByteArray = ByteArray(16)
+    }
+
+    /** Two loops, 9-byte QUIC-LB IDs (an 8-byte client DCID is never one of ours: a connection stays where its Initial lands). */
+    private suspend fun lbGroup(
+        net: MemoryNetwork,
+        lb: QuicLbConfig,
+    ): LoopGroup =
+        LoopGroup.create(
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    server =
+                        QuicServerConfig
+                            .Builder(CoreFixtures.server())
+                            .apply { quic = quicConfig { connectionIdLength = 9 } }
+                            .build()
+                    connectionIdLength = 9
+                    crypto = LbNullCrypto
+                    loops = 2
+                    loadBalancer = lb
+                }.build(),
+            listOf(net.open(serverAddr), net.open(otherAddr)),
+        )
+
+    private suspend fun serverConnectionOf(loop: EndpointLoop): io.kuicksilver.quic.ConnectionCore =
+        loop.runOnLoop { loop.core.connections().single { it.role == io.kuicksilver.tls.TlsRole.Server } }
+
+    /** A group caller cancelled right after loop 0 committed still moves the other loops' connections to the new configuration. */
+    @Test fun quicLbCancelledGroupUpdateStillMovesEveryLoop() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val group = lbGroup(net, QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key()))
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(otherAddr, clientConfig) // loop 1's socket: the connection is loop 1's
+                    accepted.await()
+                    val loop0 = group.loopForTest(0)
+                    val caller = kotlinx.coroutines.CompletableDeferred<kotlinx.coroutines.Job>()
+                    loop0.afterLbCommitForTest = { caller.getCompleted().cancel() }
+                    val job = launch { group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key())) }
+                    caller.complete(job)
+                    job.join()
+                    assertTrue(job.isCancelled)
+                    loop0.afterLbCommitForTest = null
+                    val s = serverConnectionOf(group.loopForTest(1))
+                    val moved = group.loopForTest(1).runOnLoop { (0L..10L).mapNotNull { s.cids.localForTest(it)?.cid } }
+                    assertTrue(moved.any { (it[0].toInt() and 0xff) ushr 5 == 3 }, "loop 1's connection got an ID of the new configuration")
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
+
+    /**
+     * After a failed reservation store, a group whose loop 0 gets no traffic still retries it (every loop ticks): the
+     * change waiting on loop 1 goes out once the store works again.
+     */
+    @Test fun quicLbStoreRetriedWithoutTrafficOnLoopZero() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val reservation = FlakyReservation()
+                val key = QuicLbFixtures.key("0f0e0d0c0b0a0908070605040302010c")
+                val group = lbGroup(net, QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, key, reservation))
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(otherAddr, clientConfig)
+                    val sc = accepted.await()
+                    val loop1 = group.loopForTest(1)
+                    reservation.fail = true
+                    loop1.core.lb!!
+                        .routes.current!!
+                        .space
+                        .useUpReservationForTest()
+                    group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, key, reservation))
+                    val s = serverConnectionOf(loop1)
+                    assertTrue(loop1.runOnLoop { s.cids.reissuePendingForTest }, "the change waits for a nonce")
+                    reservation.fail = false
+                    val st = c.openBidi()
+                    val reader = launch { sc.acceptStream().input.readBuffer() }
+                    while (loop1.runOnLoop { s.cids.reissuePendingForTest }) {
+                        st.output.writeFully(ByteArray(100) { 1 }) // datagrams to loop 1 only: its batches tick
+                        st.output.flush()
+                        delay(5)
+                    }
+                    assertEquals(0L, group.loopForTest(0).stats.datagramsReceived, "loop 0 saw no traffic")
+                    reader.cancel()
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
 }

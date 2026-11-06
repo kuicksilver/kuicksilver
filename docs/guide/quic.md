@@ -665,7 +665,7 @@ start and per instance). A plaintext configuration (no key) must have a reservat
 `QuicLbConfig` refuses one without. A reservation stores a high-water mark durably (`load()`, `store(mark)`, for instance an fsync'd file per key),
 one block of 65,536 nonces ahead of need, and the next process starts past it; in clear it also keeps a 16-byte random
 `secret()` that keys the permutation. A crash skips the rest of a block and never reuses one. A failed `store` is
-retried after a back-off counted in receive batches (one, doubling to 1,024; at most one store a batch, nothing drawn
+retried after a back-off counted in receive batches (one, doubling to 1,024, times the loops; about one store a round, nothing drawn
 meanwhile) and counted in `EndpointStats.loadBalancerReservationFailures`; once the reserved nonces are used up, the
 requests in between get an unroutable ID.
 
@@ -707,7 +707,8 @@ NEW_CONNECTION_ID that retires it, and an unroutable one made only because no no
 update builds the new configuration on `Dispatchers.IO` (a reservation's first `store` may fsync there), off the
 endpoint's loops, and switches to it on them, one update at a time; a caller cancelled after the switch leaves it in force.
 Later stores run on the loop that draws past half a block; after a failed store the retries are paced by the receive
-batches of the endpoint's loop 0, at most one a batch for the whole group. The hash also takes a client's random
+batches of every loop (and the requests that find nothing reserved), with the back-off scaled by the number of loops, so
+the group makes about one try a round however its traffic is spread. The hash also takes a client's random
 first Initial DCID for one of ours one time in 32 (when its first octet happens to encode our length); that client's
 datagrams then all go to the loop the DCID hashes to: an extra copy between loops for about 1 in 32 new connections. The
 Stateless Reset rule stays: a loop answers an unknown connection ID only when the stateless rate limit would let the

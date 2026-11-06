@@ -1540,6 +1540,13 @@ class EndpointCoreTest {
             p.step()
             assertEquals(7, (assertNotNull(c.retryScid)[0].toInt() and 0xff) ushr 5, "an unroutable Retry SCID")
             reservation.fail = false
+            repeat(16) {
+                p.server.lb
+                    .routes.current!!
+                    .space
+                    .tick()
+            } // the back-off passes: the store is made
+            assertTrue(p.server.route.canIssueRoutable())
             assertTrue(p.handshake(c))
             val s = p.server.connections().single()
             assertEquals(2, (s.localCid[0].toInt() and 0xff) ushr 5, "a routable ID instead")
