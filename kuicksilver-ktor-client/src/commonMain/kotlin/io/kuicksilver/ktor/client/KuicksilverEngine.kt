@@ -25,6 +25,7 @@ import io.kuicksilver.ktor.client.dns.HTTPS_DEFAULT_ALPN
 import io.kuicksilver.ktor.client.dns.HttpsEndpoint
 import io.kuicksilver.ktor.client.dns.HttpsRecords
 import io.kuicksilver.ktor.client.dns.HttpsResolution
+import io.kuicksilver.ktor.client.dns.httpsQueryName
 import io.kuicksilver.ktor.client.h1.H1Pool
 import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
@@ -1072,7 +1073,15 @@ internal class KuicksilverEngine(
         return withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
                 val originJob = async { records.resolve(url.host, url.port, supported, originProgress, prefetch) }
-                val altJob = altAuthority?.let { (h, p) -> async { records.resolve(h, p, supported, altProgress, prefetch) } }
+                val altJob =
+                    altAuthority?.let { (h, p) ->
+                        // an alternative on the origin's own name and port is the same service: one resolution
+                        if (httpsQueryName(h, p) == httpsQueryName(url.host, url.port)) {
+                            originJob
+                        } else {
+                            async { records.resolve(h, p, supported, altProgress, prefetch) }
+                        }
+                    }
                 val https =
                     launch {
                         originJob.join()

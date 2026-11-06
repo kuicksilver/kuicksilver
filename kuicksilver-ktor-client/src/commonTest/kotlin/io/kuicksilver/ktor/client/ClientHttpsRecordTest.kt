@@ -140,8 +140,9 @@ class ClientHttpsRecordTest {
             }
         }
 
-    @Test fun cachedAltSvcSkipsDnsQuery() =
-        // RFC 9460 section 9.3 lets a cached Alt-Svc win
+    @Test fun cachedAltSvcComesFirst() =
+        // the origin's records still give the TCP side and the fallback (RFC 9460 section 3); the alt-authority here is
+        // the origin itself, so its records are asked for once
         h3Test {
             coroutineScope {
                 val ep = h3Origin()
