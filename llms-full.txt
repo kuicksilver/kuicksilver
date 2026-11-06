@@ -1046,20 +1046,35 @@ intermediate CA accepts the chains that reach it, without its issuers (OpenSSL `
 shared RFC 9525 matcher afterwards on every platform, so a platform matcher can only make the decision stricter; pins
 (`Pinned`) are compared against the chain the platform built, never against certificates the peer merely sent.
 
-Before the platform is asked, `ksl` holds the certificates the peer sent to OpenSSL's security level 2 (RFC 9325 section
-4.5), on every platform alike. It checks every presented certificate reachable from the leaf through issuers whose key
-verifies the signature (each issuer that verifies is followed, so cross-certificates are all checked): every key needs
-112 security bits (RSA 2048 bits, an elliptic curve 224 bits), and every certificate signature too, except the own
-signature of a certificate that is really self-signed (it verifies under its own key): no SHA-1 or MD5 below that (RFC
-9846 section 4.5.1.3). A weaker chain ends the handshake with `bad_certificate` and `TlsException.Verify` with
-`VerifyReason.WeakKey` or `VerifyReason.WeakSignature`. The JDK, Android and Windows verifiers would accept 1024-bit RSA
-on their own. This reads the presented chain, not the chain the platform builds, so it is stricter than OpenSSL's own
-verifier: an extra cross-certificate the server sends above the anchor the platform trusts (signed with SHA-1 by an old
-root, say) is checked and refuses the chain, where OpenSSL would stop at the trusted anchor. A certificate on no verified
-path from the leaf, and an anchor the platform takes from its own store, are not looked at. The same check runs before a
-`Custom` verifier and `Tofu`; there is no switch to turn it off. The endpoint's own chain is held to the same rules when
-the identity is made (`TlsIdentity.fromDer`, `fromPem` and the JVM key store factories throw `TlsException.Config` for a
-SHA-1- or MD5-signed certificate or a key under 112 bits), for a server and for a client certificate alike.
+Every peer chain is held to OpenSSL's security level 2 (RFC 9325 section 4.5): every key needs 112 security bits (RSA
+2048 bits, an elliptic curve 224 bits), and every certificate signature too, except the trust anchor's: no SHA-1 or MD5
+(RFC 9846 section 4.5.1.3). A weaker chain ends the handshake with `bad_certificate` and `TlsException.Verify` with
+`VerifyReason.WeakKey` or `VerifyReason.WeakSignature`; there is no switch to turn it off. The JDK, Android and Windows
+verifiers would accept 1024-bit RSA on their own. Which certificates count depends on the trust:
+
+- **`Platform`** (also under `Pinned` and `ExpectedName`): the platform is asked first, and after its yes `ksl` checks the
+  path the platform built, leaf first and its trust anchor last (Android's `X509TrustManagerExtensions`, Apple's
+  `SecTrustCopyCertificateChain`, Windows' chain, and on the JVM the path rebuilt with the JDK's PKIX builder to the trust
+  manager's roots), as OpenSSL checks its own path: every key, the anchor's included, and every signature but the
+  anchor's. A certificate the server sends that the platform does not use, such as an extra cross-certificate above the
+  root the platform trusts (signed with SHA-1 by an old root, say), does not count, as with OpenSSL. If the platform does
+  not say which path it took, the certificates the server sent are checked as for `Custom`. When the platform itself
+  refuses a chain with an MD5, SHA-1 or small-key certificate in it (the JDK, Apple and Windows do), the refusal is still
+  reported as `WeakSignature` or `WeakKey` with `bad_certificate`. This holds even when the chain is not trusted at all
+  (RFC 9846 section 4.5.1.3 does not depend on trust; OpenSSL would send `unknown_ca`), and it takes precedence over the
+  platform's own reason: an expired or revoked chain that also has a weak certificate among those sent is reported as
+  `WeakKey` or `WeakSignature`. The chain is refused either way. On Linux Native `Platform` is
+  OpenSSL's own verifier with the system store, which checks its own path the same way.
+- **`AnchoredCa`**: OpenSSL checks the path it builds to your roots.
+- **`Custom` and `Tofu`**: the certificates the peer sent are checked before your verifier or the TOFU store is asked:
+  every presented certificate reachable from the leaf through issuers whose key verifies the signature (each such issuer
+  is followed, so cross-certificates are all checked), only a really self-signed certificate's own signature exempt. This
+  is stricter than OpenSSL for an extra cross-certificate the server sends above the anchor your verifier trusts: it is
+  checked and refuses the chain. A certificate on no verified path from the leaf is not looked at.
+
+The endpoint's own chain is held to the same rules when the identity is made (`TlsIdentity.fromDer`, `fromPem` and the
+JVM key store factories throw `TlsException.Config` for a SHA-1- or MD5-signed certificate or a key under 112 bits), for
+a server and for a client certificate alike.
 
 | Platform | Verifier and store | Revocation |
 |---|---|---|
@@ -1601,12 +1616,46 @@ server.start(wait = true)
   and header fields) above 64 KiB, the HTTP/3 default `maxFieldSectionSize`, gets `431 Request Header Fields Too
   Large` and the connection closes; a single line above 8 KiB gets 400. A failing `accept()` (the descriptor table
   full: EMFILE, ENFILE) is retried after 5 ms, doubling up to 1 s, instead of at once, and logged at most once per
-  10 s with the number of failures left out.
+  10 s with the number of failures left out. How many connections a connector holds, in all and per client address,
+  is bounded too: [Connection limits](#connection-limits).
 - A TLS handshake failure closes only that connection. `resolvedConnectors()` reports the real ports when you bind port
   0; `stop(grace, timeout)` stops accepting, sends GOAWAY to every HTTP/3 connection at once, raises `ApplicationStopPreparing`
   and waits for running calls (HTTP/1.1 and HTTP/3) until the grace period, then cuts what is left at the timeout.
 - Optional whitespace around a response header value is trimmed before the value goes out over HTTP/3 (field values
   carry none); a value HTTP/3 cannot carry (a character above U+00FF, or a control character other than tab) fails the call and resets its stream.
+
+#### Connection limits
+
+Each TCP connector holds at most `maxTcpConnections` (*experimental*, 10,000) connections at once, and, when it is set,
+at most `maxTcpConnectionsPerIp` (*experimental*, off by default) from one client address, HTTP/1.1 and HTTP/2 alike. A
+connection counts from `accept` (its TLS handshake included) until its socket is released (a socket whose release hangs
+is given up after the abort wait, so for that moment the descriptors in use can briefly exceed the limit).
+
+- At `maxTcpConnections` the connector stops accepting, as Go's `netutil.LimitListener`, Jetty's `ConnectionLimit` and
+  nginx's `worker_connections` do: new clients wait in the OS backlog (their connect succeeds, nothing is read from
+  them) and are accepted as connections close; the server spends no descriptor or TLS work on them. Once the backlog is
+  full too (511 on the JVM, 50 on Kotlin/Native), the OS drops further connection attempts (Linux by default, with
+  `tcp_abort_on_overflow` 0: the client's TCP retries its SYN) or resets them. Waiting clients are not reported to the
+  event listener.
+- `maxTcpConnectionsPerIp` is off by default, as in nginx, Caddy, Go, Jetty, Netty, Envoy and HAProxy. Behind a reverse
+  proxy, a load balancer, Kubernetes source NAT or any NAT every client shares one address, and an HTTP/1.1 proxy opens
+  an upstream connection per request in flight (plus one per WebSocket or SSE stream). Enable it (256, say) only when
+  the server faces its clients directly. Over it, a connection is reset right after `accept`, before its TLS handshake
+  (an address is known only then), as nginx's stream `limit_conn` and Envoy's `connection_limit` filter do; a proxy in
+  front reports that as 502 or 503, and its passive health checks may take the server out.
+  `KuicksilverServerEventListener.connectionRefused` hears it with the reason `per-IP limit`; the application log gets
+  one warning, then at most one per 10 s with a count. An address is its bytes, never looked up as a name: an
+  IPv4-mapped client counts as its IPv4 address, an IPv6 client by its whole address, as QUIC's `maxConnectionsPerIp`
+  counts HTTP/3 clients, so a client that holds a /64 gets around it.
+- The checks run cheapest first: the connection slot before `accept`, the per-address count right after it, then
+  `http2RepeatOffenderPenalty` (when on), and only then the TLS handshake.
+- The default 10,000 does not protect a process whose descriptor limit is lower (`ulimit -n`: 256 in a macOS shell,
+  often 1024 on Linux): raise that limit, or set `maxTcpConnections` below it, leaving room for the UDP sockets, files
+  and outgoing connections the application opens. Above it `accept()` fails with EMFILE; the engine then backs off
+  (5 ms doubling to 1 s) instead of spinning, but clients wait until descriptors free up.
+- `EngineMain` keys `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off).
+- HTTP/3 has its own limits in the QUIC endpoint, `maxConnections` and `maxConnectionsPerIp` (the same 10,000 and 256),
+  which the engine does not let you change yet ([deployment guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#security-limits)).
 
 #### HTTP/3 on the server
 
@@ -1886,6 +1935,8 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
+| `kuicksilver.maxTcpConnections` | TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
+| `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
 | `kuicksilver.altSvc` | send `Alt-Svc` on HTTP/1.1 responses (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
@@ -2424,7 +2475,9 @@ is the one described in [QUIC: Observability](https://github.com/kuicksilver/kui
 default; the engine's own messages keep going to the application's log), `connectionListener` hears every QUIC
 connection, `qlog` adds a trace per HTTP/3 connection to `quic`, and `eventListener` takes a
 `KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`
-after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, and `requestStarted` / `requestEnded`
+after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, `connectionRefused` (a
+TCP client closed at accept, before TLS, with the reason: `per-IP limit` or `HTTP/2 repeat offender`; see [Connection
+limits](#connection-limits)), and `requestStarted` / `requestEnded`
 around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
 
 ```kotlin
@@ -2883,7 +2936,8 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   requests to local endpoints, and does not forward traffic to other nodes. This approach preserves the original source
   IP address" ([Kubernetes: Using Source IP](https://kubernetes.io/docs/tutorials/services/source-ip/)). This matters more
   for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`maxConnectionsPerIp`, 256), and
-  that limit cannot be changed from the Ktor engine yet ([Security limits](#security-limits)). Behind a source NAT, every
+  that limit cannot be changed from the Ktor engine yet ([Security limits](#security-limits)); the TCP connectors'
+  per-address limit, `maxTcpConnectionsPerIp`, is off by default and should stay off behind a source NAT. Behind a source NAT, every
   client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
   packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
   tokens are also bound to the address the server sees.
@@ -3087,6 +3141,11 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
   total; what goes beyond is dropped, and such clients see a handshake timeout. The engine does not let you change these
   yet ([configuration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-server-engine)). This is why a source NAT in front of the server matters
   ([Kubernetes](#kubernetes)): every client behind it shares both limits.
+- **TCP connection limits.** `maxTcpConnections` (10 000 per connector: at the limit the connector stops accepting and
+  the OS backlog holds new clients; keep it below `ulimit -n`) and `maxTcpConnectionsPerIp` (off by default: behind a
+  proxy, load balancer, SNAT or NAT every client shares one address; enable it, e.g. 256, only when the server faces
+  clients directly; one more from that address is reset at accept, which a proxy reports as 502/503), HTTP/1.1 and
+  HTTP/2 alike ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)).
 - **Transport and HTTP/3 settings.** `quic` (a `QuicConfig`: idle timeout, windows, congestion control), `http3Settings`,
   and on TCP `requestHeaderTimeoutSeconds` and `connectionIdleTimeoutSeconds` against slow clients
   ([Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#server)).
@@ -3490,6 +3549,8 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `identityReloadInterval` (*experimental*) | `Duration?` | `null` | 0.3.0 | at least 1 s; how often the PEM files `EngineMain` read are checked for a renewed certificate (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation)) |
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | 0.2.0 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | 0.2.1 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#server)) |
+| `maxTcpConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n` ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)) |
+| `maxTcpConnectionsPerIp` (*experimental*) | `Int?` | `null` (off) | 0.3.0 | at least 1, or `null`; TCP connections of one client address (its bytes; IPv6 whole, so a /64 holder gets around it; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS (a proxy in front answers 502/503), and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address: enable it (e.g. 256) only when the server faces clients directly ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)) |
 | `http3` | `Boolean` | `true` | 0.2.0 | serve HTTP/3 on every TLS connector |
 | `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3; no h2c on plain connectors) ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
 | `http2Settings` (*experimental*) | `Http2Settings` | `Http2Settings()` | 0.3.0 | windows, SETTINGS and flood limits of every HTTP/2 connection; its `maxHeaderBlockTime` is bounded by `requestHeaderTimeoutSeconds` |
@@ -3532,7 +3593,7 @@ keep their defaults and are not configurable from the engine. Ktor's `connection
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.http2RepeatOffenderPenalty`,
-`kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
+`kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 ### ktor-network
