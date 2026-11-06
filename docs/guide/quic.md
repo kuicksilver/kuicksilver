@@ -638,6 +638,7 @@ assigned this server:
 ```kotlin
 // guide:quic:load-balancer
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; close it once the endpoint closed
 val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
 val behindLb =
     quicEndpointConfig {
@@ -647,32 +648,53 @@ val behindLb =
 ```
 
 A connection ID is then `first octet || server ID || nonce`: the first octet carries `configId` (0..6) in its three high
-bits and the length of the rest in its five low bits. With a 16-byte AES `key` the server ID and nonce are encrypted
-(one AES block when they are 16 bytes together, a four-pass Feistel network otherwise), so only the load balancer can
-tell which server a connection is on; without one they travel in clear, and the server then hands each connection only
-its handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). Nonces come from a
-counter that starts at random and is permuted with a key of the endpoint's own: none repeats while the process runs.
-`connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration cannot be
-combined with a `preferredAddress`.
+bits and the length of the rest in its five low bits. With an AES `key` the server ID and nonce are encrypted (one AES
+block when they are 16 bytes together, a four-pass Feistel network otherwise), so only the load balancer can tell which
+server a connection is on; without one they travel in clear, and the server then hands each connection only its
+handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). The key bytes go into the
+native layer once (`newLoadBalancerKey` wipes your array); the configuration holds the handle, which you close after
+the endpoint. `connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration
+cannot be combined with a `preferredAddress`.
+
+Nonces come from a counter, permuted with a key derived from the configuration key, so they show no pattern and none
+repeats: every endpoint of the process that uses the same key and nonce length (with any server ID) draws from one
+counter. The draft forbids reusing a nonce under one key (section 9.6), and a new process knows nothing of the last
+one's counter, so either give each process start a key no earlier process used (a fresh key per start and per
+instance), or give the configuration a `nonceReservation`: it stores a high-water mark durably every 65,536 nonces
+(`load()`, `store(mark)`, for instance an fsync'd file per key), and the next process starts past it. A crash then
+skips the rest of a block and never reuses one.
 
 To roll out a new configuration (a new key, say), give it to the load balancers first, then to each server:
 
 ```kotlin
 // guide:quic:load-balancer-update
-endpoint.updateLoadBalancer(QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey))
+val nextKey = KslQuicCrypto.newLoadBalancerKey(nextKeyBytes)
+val next = QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey)
+endpoint.updateLoadBalancer(next)
 ```
 
 New connection IDs use it at once, and every live connection gets one NEW_CONNECTION_ID under it that retires its
-earlier IDs; those keep routing (and can still be answered with a Stateless Reset) until the next change. Pass `null`
-when the server has no valid configuration: it then issues unroutable IDs (codepoint `0b111`, which the balancer routes
-by 4-tuple), gives new connections a single ID and `disable_active_migration`, and leaves live connections as they are.
-The same happens on its own if a configuration's nonces run out (2^32 IDs for a 4-byte nonce). A server ID used in
-clear must never be used encrypted, or the other way round (the call refuses it).
+earlier IDs; those keep routing (and can still be answered with a Stateless Reset) until the client retired them. A
+second change while a connection's client has not yet retired what the first one asked for waits for those retirements
+(RFC 9000 section 5.1.2), then goes out. A codepoint that the current or previous configuration holds can only be given
+that same configuration again. Pass `null` when the server has no valid configuration: it then issues unroutable IDs
+(codepoint `0b111`, which the balancer routes by 4-tuple), gives new connections a single ID and
+`disable_active_migration`, and live connections keep the IDs they have and get no new ones. The same happens on its own
+when a configuration's nonces run out: after 2^(8 x `nonceLength`) nonces of its key (2^32 for 4 bytes, shared by every
+endpoint of the process with that key; Retry packets and connection attempts draw them too, at most at the stateless
+rate limits), counted in `EndpointStats.loadBalancerNoncesExhausted` and logged at `Warn`; then roll out a new key. A
+server ID used in clear must never be used encrypted, or the other way round (the call refuses it).
+
+The Ktor server takes the configuration as `quicLoadBalancer` and changes it with `engine.updateLoadBalancer(next)`;
+`Http3Endpoint.updateLoadBalancer` does the same for an HTTP/3 endpoint, and `EndpointCore.updateLoadBalancer` for a
+sans-IO endpoint driven by your own loop.
 
 With several loops on one port, every loop issues IDs of the same configuration; the loop that owns an ID is the one it
-hashes to under a key the loops share, so a datagram that lands on another loop is still forwarded to its owner.
-The Stateless Reset rule stays: a loop answers an unknown connection ID only when it carries the current or previous
-configuration's codepoint, decrypts to this server's ID and hashes to that loop; unroutable IDs are never answered.
+hashes to under a key the loops share (whatever the ID's codepoint), so a datagram that lands on another loop is still
+forwarded to its owner. A loop that draws a nonce whose ID hashes to another loop keeps it for that loop (up to 1,024 per
+loop) rather than spend it. The Stateless Reset rule stays: a loop answers an unknown connection ID only when the
+stateless rate limit would let the answer out, it carries the current or previous configuration's codepoint, decrypts to
+this server's ID and hashes to that loop; unroutable IDs are never answered.
 
 ## Admission and endpoint limits
 

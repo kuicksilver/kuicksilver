@@ -123,6 +123,13 @@ public class Http3Endpoint private constructor(
     private fun notH3(alpn: String?): String = "the server chose ALPN \"$alpn\", not \"$H3\""
 
     /**
+     * Switches the server's connection IDs to another QUIC-LB configuration (draft-ietf-quic-load-balancers-21, experimental):
+     * [QuicEndpoint.updateLoadBalancer] of the endpoint [bind] made, which must have been given `QuicEndpointConfig.loadBalancer`.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?): Unit = endpoint.updateLoadBalancer(config)
+
+    /**
      * The next server connection that negotiated `h3`. Never waits on a client once its QUIC handshake is done: HTTP/3 starts
      * in the background ([Http3Connection.server]), so one client cannot hold back the ones behind it.
      */

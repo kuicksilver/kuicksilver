@@ -40,57 +40,75 @@ Stateless Resets.
 - 9: "Servers that are encoding their server ID without a key algorithm SHOULD only use it to generate new CIDs for the
   Server Initial Packet and SHOULD NOT send CIDs in QUIC NEW_CONNECTION_ID frames, except that it sends one new
   Connection ID in the event of config rotation".
-- 9.6: "the server MUST NOT reuse a nonce until it switches to a configuration with new keys", "servers SHOULD start with
-  a random nonce value", "A server that has exhausted its nonces MUST either switch to a different configuration, or if
+- 9.6: "Whether or not it implements the counter method, the server MUST NOT reuse a nonce until it switches to a
+  configuration with new keys", "servers SHOULD start with a random nonce value", "A server that has exhausted its nonces MUST either switch to a different configuration, or if
   none exists, use the 4-tuple routing config rotation codepoint."
+- RFC 9000 5.1.2: the endpoint that raises Retire Prior To "SHOULD continue to accept the previously issued connection IDs
+  until they are retired by the peer".
 - 9.7: deployments that mix clear text and encrypted IDs "MUST use different server ID allocations for the clear text and
   the encrypted versions".
 
 **How it is met.**
 
 - `QuicLbConfig` (public, experimental): config rotation codepoint 0..6, server ID of 1..15 bytes, nonce of at least 4,
-  both at most 19 bytes, an optional 16-byte key. `QuicEndpointConfig.loadBalancer` needs a server, a
-  `connectionIdLength` equal to `1 + server ID + nonce` and at least 8, and a key when a `preferredAddress` is offered.
+  both at most 19 bytes, an optional AES key as a `LoadBalancerKey` (the bytes go into `ksl` once through
+  `QuicCrypto.newLoadBalancerKey`, which wipes them; Kotlin keeps a handle and a keyed fingerprint), an optional
+  `QuicLbNonceReservation`. `QuicEndpointConfig.loadBalancer` needs a server, a `connectionIdLength` equal to
+  `1 + server ID + nonce` and at least 8, and a key when a `preferredAddress` is offered. The Ktor engine's
+  `quicLoadBalancer` and `updateLoadBalancer`, `Http3Endpoint.updateLoadBalancer` and the sans-IO
+  `EndpointCore.updateLoadBalancer` reach the same code.
 - `endpoint/QuicLb.kt`: `QuicLbCodec` writes `configId << 5 | (length - 1)` and the server ID and nonce, in clear or
   encrypted by `QuicLbCipher` (one AES-128-ECB block for 16 bytes, else the four-pass Feistel network with `expand` and
-  the nibble split of odd lengths); `decodeServerId` / `matchesServerId` run it backwards. The AES key is a `ksl` key
-  (`ksl_key_lb`, `ksl_key_ecb16`; ADR-0003) behind `QuicCrypto.newLoadBalancerKey`.
-- `QuicLbNonces`: a counter from a random seed, permuted with a random key of the endpoint's own (`ksl_key_random(KSL_EKEY_LB)`),
-  so a nonce never repeats while the process runs and none relates to the previous one, also in clear; once the
-  2^(8 x nonce length) values are drawn it returns nothing and the endpoint issues unroutable IDs.
+  the nibble split of odd lengths); `decodeServerId` / `matchesServerId` run it backwards. AES runs in `ksl`
+  (`ksl_key_ecb16`, the key schedule expanded once; ADR-0003).
+- Nonces (9.6): `QuicLbNonceSpaces` holds one counter per key fingerprint and nonce length (per nonce length in clear) for
+  the life of the process, shared by every endpoint and server ID that uses it. Each value is permuted
+  (`QuicLbCipher` over the nonce length) with a key derived in `ksl` from the configuration key (`ksl_key_lb_derive`; a
+  random per-process key in clear), so nonces show no relation to each other (5.4) and none repeats while the process
+  runs. The counter starts at a random point; with a `QuicLbNonceReservation` the start and the permutation are derived
+  from the key, and the counter goes on past the mark the last process stored, reserving 65,536 nonces per `store`
+  before using them (a crash skips, never reuses). The derivation blocks end in 0x80..0x82, never a Feistel pass number,
+  so none is an `expand` block under the same key. Once 2^(8 x nonce length) values are drawn, or a reservation fails,
+  the endpoint issues unroutable IDs, counts it in `EndpointStats.loadBalancerNoncesExhausted` and logs it.
 - `endpoint/CidRoute.kt`: `QuicLbRoute` makes every ID (server connections under the current configuration; unroutable
   IDs `0b111 << 5 | (length - 1)` with CSPRNG bytes when there is none, the nonces are spent, or for a client connection
-  of a loop group), tells the owning loop (`SipHash(group key, ID) mod loops`) and gates Stateless Resets: only for an ID
-  under the current or previous configuration's codepoint that decrypts to this server's ID and hashes to this loop.
-  `QuicLbState` holds the configurations of an endpoint (shared by a group's loops), keeps the nonce counter of each
-  (server ID, nonce length, key) for the endpoint's life, and refuses a configuration that would use a server ID in clear
-  that an encrypted one used, or the other way round (9.7).
-- `QuicEndpoint.updateLoadBalancer`: new IDs use the new configuration at once; `EndpointCore.reissueForLoadBalancer`
-  gives every live server connection one NEW_CONNECTION_ID under it whose Retire Prior To retires every earlier ID
-  (`ConnectionIdManager.reissueForNewConfiguration`), and the replacements the client's retirements call for come from
-  it too. `null` switches to unroutable IDs: new connections get one ID and `disable_active_migration`, live ones keep
-  their IDs and stop handing out new ones.
+  of a loop group). The owning loop is `SipHash(group key, ID) mod loops` for any ID of our length with a matching
+  length octet; a nonce whose ID hashes to another loop waits in that loop's pool (1,024 IDs) instead of being spent.
+  Stateless Resets: only once the rate limit would let one out, for an ID under the current or previous configuration's
+  codepoint that decrypts to this server's ID and hashes to this loop. `QuicLbState` holds the current and previous
+  configurations of an endpoint (shared by a group's loops; a group's cores cannot be built without it), frees the
+  permutation key of a configuration that is neither, refuses a server ID used in clear and encrypted (9.7, over every
+  configuration the endpoint used) and a codepoint the current or previous configuration holds with another key, server
+  ID or nonce length.
+- `QuicEndpoint.updateLoadBalancer`: new IDs use the new configuration at once; every live server connection gets one
+  NEW_CONNECTION_ID under it whose Retire Prior To retires every earlier ID (`ConnectionIdManager.requestReissue`), and
+  the replacements the client's retirements call for come from it too. A change while the client has not retired what the
+  last one asked for waits for those retirements (RFC 9000 5.1.2), one at most. The issuance mode follows the ID actually
+  made: plaintext hands out one ID per change, an unroutable one none. `null` switches to unroutable IDs: new connections
+  get one ID and `disable_active_migration`, live ones keep their IDs and stop handing out new ones.
 - Plaintext configurations and unroutable IDs: the connection hands out only its handshake ID (`CidIssuance.Single`,
-  `ConnectionIdManager.limitToSingle`), no `preferred_address`; a plaintext connection gets one more ID on a configuration
-  change.
+  `ConnectionIdManager.limitToSingle`), no `preferred_address`. A connection whose nonces run out under it keeps the IDs it
+  has and issues no unroutable one (3.2).
 
 **Tests.** `QuicLbTest.*` (every Appendix B vector encoded and decoded, the 5.4.2.4 example and its expand and AES
 output, round trips of lengths 4..19, `nonceCounterNeverRepeats`, `noncesArePermuted`, `nonceExhaustionReturnsNull`,
-`negative_configIdSevenRejected`, `negative_sidPlusNonceOver19Rejected`, `negative_nonceUnder4Rejected`),
-`EndpointCoreTest.quicLbIssuedCidsDecodeToServerId`, `.quicLbOwnerLoopMatchesIssuingLoop`,
-`.quicLbRotationKeepsOldConnectionsRouting`, `.quicLbExhaustionGoesUnroutable`, `.quicLbPlaintextHandsOutOneCid`,
-`.quicLbUnroutableUpdateStopsIssuing`, `.negative_lengthMismatchWithEndpointRejected`,
-`.negative_updateLoadBalancerRefused`, `StatelessResetTest.quicLbResetForOwnUnknownCid`,
-`.negative_quicLbNoResetForOtherServerId`, `.negative_quicLbNoResetForUnknownConfigId`,
-`.negative_quicLbNoResetForUnroutableCid`, `.negative_quicLbNoResetFromNonOwnerLoop`,
-`LoopGroupTest.quicLbForwardedToOwner`, `GuideSamplesTest.loadBalancerSamples`, `KslCryptoTest.lbKey*`, C
-`lb_key_fips197`, `negative_lb_key_wrong_kind`.
+`nonceSpaceSharedByKeyAcrossServerIdsAndEndpoints`, `nonceReservationSurvivesARestart`,
+`negative_reservationFailureGoesUnroutable`, `negative_configIdSevenRejected`, `negative_sidPlusNonceOver19Rejected`,
+`negative_nonceUnder4Rejected`), `EndpointCoreTest.quicLbIssuedCidsDecodeToServerId`,
+`.quicLbOwnerLoopMatchesIssuingLoop`, `.quicLbOwnerOfAnOlderConfigurationsId`, `.quicLbRotationKeepsOldConnectionsRouting`,
+`.quicLbBackToBackUpdatesWaitForRetirements`, `.quicLbExhaustionGoesUnroutable`, `.quicLbExhaustionAfterHandshakeStopsIssuing`,
+`.quicLbPlaintextHandsOutOneCid`, `.quicLbUnroutableUpdateStopsIssuing`, `.negative_lengthMismatchWithEndpointRejected`,
+`.negative_updateLoadBalancerRefused`, `.negative_quicLbGroupCoresWithoutSharedState`,
+`StatelessResetTest.quicLbResetForOwnUnknownCid`, `.negative_quicLbNoResetForOtherServerId`,
+`.negative_quicLbNoResetForUnknownConfigId`, `.negative_quicLbNoResetForUnroutableCid`,
+`.negative_quicLbNoResetFromNonOwnerLoop`, `LoopGroupTest.quicLbForwardedToOwner`, `GuideSamplesTest.loadBalancerSamples`,
+`KslCryptoTest.lbKey*`, C `lb_key_fips197`, `negative_lb_key_wrong_kind`.
 
 **Notes on the draft text.**
 
-- B.1, second line, prints `1 350d28b420 3487d970b 20a350d28b4203487d970b`: a nine-digit nonce and a first octet that is
-  not cr_bits 1. With the leading zeros restored the nonce is `03487d970b` and the CID `2a350d28b42003487d970b`, which
-  the test checks.
+- B.1, second line, prints `1 350d28b420 3487d970b 20a350d28b4203487d970b`: a nine-digit nonce, and a first octet 0x20
+  whose config rotation bits are 1, as the line says, but whose length bits are 0 instead of 10. With the leading zeros
+  restored the nonce is `03487d970b` and the CID `2a350d28b42003487d970b`, which the test checks.
 - B.2, last line, is labelled cr_bits 3, but its first octet `0x12` is configuration 0 (length 18); the rotation bits are
   not encrypted, so the test uses configuration 0.
 - 5.4.2.4, step 10, XORs with `0xb3e4357c` where the AES output printed above starts `0xb334357c`; the final CID of the
@@ -108,15 +126,15 @@ output, round trips of lengths 4..19, `nonceCounterNeverRepeats`, `noncesArePerm
   only on a configuration change (draft section 9). The reset token is HMAC(per-loop key, ID), and no ID repeats while
   the process runs, so "the combination of connection ID and static key MUST NOT be used for another connection"
   (section 10.3.2) holds; the endpoint's ID length is fixed, as that section requires of a stateless token design.
+- 9.6 across processes is the operator's side of the contract: without a `QuicLbNonceReservation`, a key must not have
+  been used by an earlier process (a fresh key per process start and instance; `QuicLbConfig.key` says so). A plaintext
+  configuration has no key to switch, and its nonces are unique within the process; the reset token key is per process,
+  so a plaintext ID seen again after a restart never carries an earlier process's token.
 - When the configuration goes away (`updateLoadBalancer(null)`), live connections keep the IDs they have: section 3.1's
   "update the client with CIDs [...] using the new configuration" names a configuration, and the IDs of the last one keep
   routing wherever the load balancer still has it.
 - A server answers no Stateless Reset for an unroutable ID: it carries no server ID to check (threat-model 3.4).
+- Nonces drawn for a loop whose pool is full (a loop that issues far fewer IDs than another, by more than 1,024) are spent
+  unused: never reused, only lost to the count.
 
-**Open items.**
-
-- Section 9.6, "the server MUST NOT reuse a nonce until it switches to a configuration with new keys", holds for the
-  life of the process. A restarted server starts from a new random seed and permutation key, so its nonces collide with
-  the previous process's only by chance (about one in 2^(8 x nonce length / 2) after as many draws); keeping the counter
-  across restarts would need persistent state. Rotate the key when the server restarts, or use nonces of 8 bytes or more.
-- The Ktor server engine and `Http3Endpoint` do not expose `updateLoadBalancer` yet ([roadmap](../../roadmap.md)).
+**Open items.** None.

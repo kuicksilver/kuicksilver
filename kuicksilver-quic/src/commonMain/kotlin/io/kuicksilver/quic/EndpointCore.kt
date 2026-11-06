@@ -107,6 +107,12 @@ public class EndpointCore internal constructor(
     /** The layout of our connection IDs: making them, the loop that owns one, the reset gate. */
     internal val route: CidRoute
 
+    /** [lb] is this endpoint's own, not a group's: [updateLoadBalancer] may change it. */
+    private val ownsLb: Boolean
+
+    /** Times a QUIC-LB configuration's nonces ran out on this loop (`EndpointStats.loadBalancerNoncesExhausted`). */
+    internal var lbNoncesExhausted = 0L
+
     init {
         // native memory (the buffers, the keys) is freed only by close(): a constructor that fails part-way frees what it made
         var vn: PacketBuffer? = null
@@ -136,6 +142,10 @@ public class EndpointCore internal constructor(
             q = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
             queue = q
             serverEarly = config.server?.earlySetup(random)
+            // the loops of a group must share one state: one SipHash key names the owner, one view of the configuration
+            require(config.loadBalancer == null || config.loops == 1 || sharedLb != null) {
+                "a loop group's endpoint cores share one QUIC-LB state: bind the endpoint (QuicEndpoint.bind) rather than building its cores"
+            }
             ownLb =
                 if (config.loadBalancer == null) {
                     null
@@ -144,7 +154,19 @@ public class EndpointCore internal constructor(
                         ?: QuicLbState(config.crypto, random, config.loadBalancer, config.loops, config.connectionIdLength)
                 }
             lb = ownLb
-            route = if (ownLb != null) QuicLbRoute(ownLb, loopIndex) else ByteRoute(loopIndex, config.connectionIdLength)
+            ownsLb = sharedLb == null
+            route =
+                if (ownLb != null) {
+                    QuicLbRoute(ownLb, loopIndex) {
+                        lbNoncesExhausted++
+                        config.logger.emit(LogLevel.Warn) {
+                            "QUIC-LB: the nonces of configuration ${lb.routes.current?.config} are spent; " +
+                                "issuing unroutable connection IDs until updateLoadBalancer gives a new configuration"
+                        }
+                    }
+                } else {
+                    ByteRoute(loopIndex, config.connectionIdLength)
+                }
         } catch (e: Throwable) {
             val r = Releaser(e) // what a release throws is suppressed into e
             r.release { ownLb?.close() }
@@ -299,6 +321,7 @@ public class EndpointCore internal constructor(
             ptbAccepted = ptbAccepted,
             ptbIgnored = ptbIgnored,
             preferredAddressFailures = preferredAddressFailures,
+            loadBalancerNoncesExhausted = lbNoncesExhausted,
         )
 
     /** A new client connection to [remote]; its first [ConnectionCore.poll] produces the Initial datagrams. */
@@ -339,27 +362,59 @@ public class EndpointCore internal constructor(
     /** Test hook: server connections hold their NEW_CONNECTION_ID frames (ConnectionIdManager.holdNewCidsForTest). */
     internal var testHoldNewConnectionIds = false
 
-    internal fun attach(core: ConnectionCore) {
+    internal fun attach(
+        core: ConnectionCore,
+        issuance: CidIssuance = CidIssuance.Full,
+    ) {
         core.registrar = registrar
         if (testHoldNewConnectionIds && core.role == TlsRole.Server) core.cids.holdNewCidsForTest = true
         registry.add(core.localCid, core)
         connections += core
         markDirty(core)
         // rotated IDs route and reset like the first one
-        if (core.role == TlsRole.Server || grouped) {
-            val client = core.role == TlsRole.Client
-            core.cids.generator = { r -> route.newCid(r, client) }
-        }
+        if (core.role == TlsRole.Client && grouped) core.cids.generator = { r -> route.newCid(r, client = true) }
         if (core.role == TlsRole.Server) {
-            when (route.issuance(core.localCid)) {
+            val cids = core.cids
+            // an unroutable ID never goes out in a NEW_CONNECTION_ID (draft-ietf-quic-load-balancers-21 section 3.2: one ID
+            // over the life of the connection): once the nonces are spent the connection stops handing out IDs
+            cids.generator = { r ->
+                val i = route.issue(r, client = false)
+                if (i.issuance == CidIssuance.SingleNoMigration && cids.localCount > 0) {
+                    cids.stopIssuing()
+                    null
+                } else {
+                    i.cid
+                }
+            }
+            // a configuration change: the mode follows the ID it actually makes (section 9: plaintext, one per change)
+            cids.reissueSource = { r ->
+                val i = route.issue(r, client = false)
+                when (i.issuance) {
+                    CidIssuance.Full -> {
+                        cids.allowMultiple()
+                        i.cid
+                    }
+
+                    CidIssuance.Single -> {
+                        cids.limitToSingle()
+                        i.cid
+                    }
+
+                    CidIssuance.SingleNoMigration -> {
+                        cids.stopIssuing()
+                        null
+                    }
+                }
+            }
+            when (issuance) {
                 CidIssuance.Full -> {}
 
                 CidIssuance.Single -> {
-                    core.cids.limitToSingle()
+                    cids.limitToSingle()
                 }
 
                 CidIssuance.SingleNoMigration -> {
-                    core.cids.limitToSingle()
+                    cids.limitToSingle()
                     core.unroutableCid = true
                 }
             }
@@ -581,8 +636,10 @@ public class EndpointCore internal constructor(
         } // another loop's: the group forwards it (ownerLoop)
         if (hv.type == PacketType.OneRtt) {
             // only for an ID this loop issued (threat-model 3.4); with QUIC-LB also our server ID under the current or previous
-            // configuration, checked last: it decrypts
-            if (config.server != null && length > StatelessReset.MIN_SIZE && route.mayReset(data, hv.dcidOff, hv.dcidLen)) {
+            // configuration, which decrypts: so only once the rate limit would let the answer out
+            if (config.server != null && length > StatelessReset.MIN_SIZE && limiter.wouldAllow(from, now) &&
+                route.mayReset(data, hv.dcidOff, hv.dcidLen)
+            ) {
                 if (!limiter.allow(from, now)) {
                     statelessRateLimited++
                     droppedStateless++
@@ -753,17 +810,23 @@ public class EndpointCore internal constructor(
             ) {
                 continue
             }
-            if (current == null) c.cids.stopIssuing() else c.cids.reissueForNewConfiguration(single = !current.config.encrypted)
+            if (current == null) c.cids.stopIssuing() else c.cids.requestReissue()
             markDirty(c)
         }
     }
 
-    /** [QuicLbState.update] and [reissueForLoadBalancer] for an endpoint that is not part of a group. Loop thread only. */
-    internal fun updateLoadBalancer(config: QuicLbConfig?) {
+    /**
+     * Sans IO, for an endpoint that is not one loop of a group (whose loops change together through
+     * [QuicEndpoint.updateLoadBalancer]): new IDs use [config] at once, and every live server connection gets an ID of it that
+     * retires the earlier ones ([QuicEndpoint.updateLoadBalancer] has the rules and the exceptions). Call it on the thread
+     * that drives this endpoint, then flush ([dirtyConnections]).
+     */
+    @ExperimentalKuicksilverApi
+    public fun updateLoadBalancer(config: QuicLbConfig?) {
         val state = lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
+        check(ownsLb) { "a loop group's endpoint cores change together: QuicEndpoint.updateLoadBalancer" }
         checkLoadBalancerUpdate(config)
-        state.update(config)
-        reissueForLoadBalancer()
+        if (state.update(config)) reissueForLoadBalancer()
     }
 
     /** What every loop must agree on before a configuration change: the preferred address needs encrypted IDs (section 9). */

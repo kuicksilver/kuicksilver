@@ -200,11 +200,14 @@ internal class ConnectionIdManager(
         if (largestPeerSeq < 1) largestPeerSeq = 1
     }
 
-    /** A server that advertises `preferred_address`: its sequence-1 ID (RFC 9000 section 5.1.1), issued and sent with the transport parameters. */
-    fun preferredAddressLocal(): Local {
+    /**
+     * A server that advertises `preferred_address`: its sequence-1 ID (RFC 9000 section 5.1.1), issued and sent with the transport
+     * parameters; null when the generator has none to give (the endpoint's QUIC-LB nonces are spent).
+     */
+    fun preferredAddressLocal(): Local? {
         local.firstOrNull { it.seq == 1L }?.let { return it }
         check(nextLocalSeq == 1L) { "preferred_address needs sequence 1" }
-        val cid = newLocalCid()
+        val cid = newLocalCid() ?: return null
         val l = Local(nextLocalSeq++, cid, tokenFor(cid))
         l.sent = true
         local += l
@@ -212,10 +215,16 @@ internal class ConnectionIdManager(
         return l
     }
 
-    /** How new local IDs are made; the endpoint sets the server CID format with its routing byte, clients keep random bytes. */
-    var generator: ((Random) -> ConnectionId)? = null
+    /**
+     * How new local IDs are made; the endpoint sets its route (the routing byte, or QUIC-LB), clients keep random bytes. A
+     * generator that returns null has no more to give: nothing is issued (the endpoint went unroutable, [stopIssuing]).
+     */
+    var generator: ((Random) -> ConnectionId?)? = null
 
-    private fun newLocalCid(): ConnectionId = generator?.invoke(random) ?: ConnectionId(ByteArray(cidLength).also { random.nextBytes(it) })
+    private fun newLocalCid(): ConnectionId? {
+        val g = generator ?: return ConnectionId(ByteArray(cidLength).also { random.nextBytes(it) })
+        return g(random)
+    }
 
     /** min(the peer's `active_connection_id_limit`, 8); 1 until the peer's transport parameters arrive. */
     private var peerTarget = 1
@@ -234,24 +243,51 @@ internal class ConnectionIdManager(
         fill()
     }
 
-    /** From the start, the connection hands out only its handshake ID ([singleCid]). */
+    /** The connection hands out only its handshake ID, or one ID per configuration change ([singleCid]). */
     fun limitToSingle() {
         singleCid = true
         target = 1
     }
 
+    /** The connection hands out IDs up to the peer's limit again (an encrypted configuration followed a plaintext one). */
+    fun allowMultiple() {
+        singleCid = false
+        target = peerTarget
+    }
+
     /**
-     * The endpoint's QUIC-LB configuration changed: one new ID from the generator (the new configuration) that retires every
+     * Makes the ID of a configuration change: called by [requestReissue] when it fires; it may switch the issuance mode
+     * ([limitToSingle], [allowMultiple], [stopIssuing]) and returns null when no ID is to be issued.
+     */
+    var reissueSource: ((Random) -> ConnectionId?)? = null
+    private var reissuePending = false
+
+    /** Some of our IDs below the last Retire Prior To are not retired by the peer yet. */
+    private fun retiringOutstanding(): Boolean {
+        for (i in local.indices) if (local[i].seq < issuedRetirePriorTo) return true
+        return false
+    }
+
+    /**
+     * The endpoint's QUIC-LB configuration changed: one new ID from [reissueSource] (the new configuration) that retires every
      * earlier one (draft-ietf-quic-load-balancers-21 section 3.1: servers "MUST use that QUIC version's methods to update the
      * client with CIDs (e.g., NEW_CONNECTION_ID frames) using the new configuration and retire CIDs using the old
-     * configuration"); the replacements the peer's retirements call for come from the new configuration too, up to the
-     * limit, or none with [single].
+     * configuration"); the replacements the peer's retirements call for come from the generator, so from the new configuration
+     * too. While the peer has not yet retired the IDs an earlier change asked it to, the new one waits (one at most) and goes
+     * out once it has: Retire Prior To rises only after the earlier retirements arrived (RFC 9000 section 5.1.2).
      */
-    fun reissueForNewConfiguration(single: Boolean) {
-        singleCid = single
-        target = if (single) 1 else peerTarget
-        issueRetiringOlder()
+    fun requestReissue() {
+        if (retiringOutstanding()) reissuePending = true else fireReissue()
     }
+
+    private fun fireReissue() {
+        reissuePending = false
+        val cid = reissueSource?.invoke(random) ?: return
+        issueRetiringOlderWith(cid)
+    }
+
+    /** A configuration change waits for the peer's retirements ([requestReissue]); tests. */
+    internal val reissuePendingForTest: Boolean get() = reissuePending
 
     /** Stops handing out new IDs past the one in use (the endpoint went unroutable: section 3.2); the live ones stay. */
     fun stopIssuing() {
@@ -261,7 +297,7 @@ internal class ConnectionIdManager(
 
     private fun fill() {
         while (local.size < target) {
-            val cid = newLocalCid()
+            val cid = newLocalCid() ?: break
             local += Local(nextLocalSeq++, cid, tokenFor(cid))
             core?.let { registrar.add(cid, it) }
         }
@@ -297,7 +333,10 @@ internal class ConnectionIdManager(
 
     /** Issues one more ID that asks the peer to retire every earlier one (test hook for retire_prior_to). */
     fun issueRetiringOlder() {
-        val cid = newLocalCid()
+        issueRetiringOlderWith(newLocalCid() ?: return)
+    }
+
+    private fun issueRetiringOlderWith(cid: ConnectionId) {
         val l = Local(nextLocalSeq++, cid, tokenFor(cid))
         l.retirePriorTo = l.seq
         if (l.seq > issuedRetirePriorTo) issuedRetirePriorTo = l.seq
@@ -332,6 +371,7 @@ internal class ConnectionIdManager(
             return
         }
         retireLocal(local.removeAt(i), dropAt)
+        if (reissuePending && !retiringOutstanding()) fireReissue()
         fill()
     }
 
@@ -363,6 +403,7 @@ internal class ConnectionIdManager(
         }
         retireLocal(local.removeAt(i), until)
         retiredByPeer++
+        if (reissuePending && !retiringOutstanding()) fireReissue()
         fill()
         return true
     }

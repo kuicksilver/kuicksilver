@@ -23,6 +23,7 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicLbConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.LoadBalancerKey
 import io.kuicksilver.tls.QuicCrypto
@@ -41,12 +42,18 @@ internal object QuicLbFixtures {
 
     fun hex(s: String) = ByteArray(s.length / 2) { s.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
 
-    /** An 8-byte configuration: a 3-byte server ID and a 4-byte nonce, encrypted unless [plaintext]. */
+    private val keys = HashMap<String, LoadBalancerKey>()
+
+    /** One native key per hex string for the test process (never closed: configurations may outlive a test's endpoints). */
+    fun key(hexKey: String = KEY): LoadBalancerKey = keys.getOrPut(hexKey) { KslQuicCrypto.newLoadBalancerKey(hex(hexKey)) }
+
+    /** An 8-byte configuration: a 3-byte server ID and a 4-byte nonce, encrypted with [keyHex] unless [plaintext]. */
     fun config(
         configId: Int = 2,
         sid: ByteArray = SID,
         plaintext: Boolean = false,
-    ) = QuicLbConfig(configId, sid, 4, if (plaintext) null else hex(KEY))
+        keyHex: String = KEY,
+    ) = QuicLbConfig(configId, sid, 4, if (plaintext) null else key(keyHex))
 
     fun endpointConfig(
         lb: QuicLbConfig?,
@@ -55,7 +62,12 @@ internal object QuicLbFixtures {
         QuicEndpointConfig
             .Builder()
             .apply {
-                server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                server =
+                    QuicServerConfig
+                        .Builder(CoreFixtures.server())
+                        .apply { quic = quicConfig { connectionIdLength = lb?.connectionIdLength ?: 8 } }
+                        .build()
+                connectionIdLength = lb?.connectionIdLength ?: 8
                 crypto = LbNullCrypto
                 loadBalancer = lb
                 this.loops = loops
@@ -78,27 +90,15 @@ internal object QuicLbFixtures {
         config: QuicLbConfig,
         nonce: ByteArray,
     ): ByteArray {
-        val k = config.keyBytes?.let { KslQuicCrypto.newLoadBalancerKey(it.copyOf()) }
-        try {
-            val out = ByteArray(config.connectionIdLength)
-            QuicLbCodec(config, k).encode(nonce, out)
-            return out
-        } finally {
-            k?.close()
-        }
+        val out = ByteArray(config.connectionIdLength)
+        QuicLbCodec(config).encode(nonce, out)
+        return out
     }
 
     fun decodeSid(
         config: QuicLbConfig,
         cid: ByteArray,
-    ): ByteArray? {
-        val k = config.keyBytes?.let { KslQuicCrypto.newLoadBalancerKey(it.copyOf()) }
-        try {
-            return QuicLbCodec(config, k).decodeServerId(cid, 0)
-        } finally {
-            k?.close()
-        }
-    }
+    ): ByteArray? = QuicLbCodec(config).decodeServerId(cid, 0)
 
     fun owner(
         ep: EndpointCore,

@@ -27,7 +27,7 @@ variables](#system-properties-and-environment-variables) · [fixed limits](#fixe
 | Object | Kotlin API | Ktor client | Ktor server | `EngineMain` key |
 |---|---|---|---|---|
 | [`QuicConfig`](#quicconfig) | `quicConfig { }` | `engine { quic = … }` | `quic = …` (`quicMaxIdleTimeout`) | |
-| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicAdmission`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount` |
+| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount` |
 | [`TlsConfig`](#tlsconfig) | `tlsConfig(role) { }` | `engine { trust = …; identity = …; tls { } }` | `tlsConnector(identity) { }` | `kuicksilver.tls.*` |
 | [`Http3Settings`](#http3settings) | `http3Settings { }` | `engine { http3 { settings = … } }` | `http3Settings = …` | `kuicksilver.http3` (on/off) |
 | [`Http2Settings`](#http2settings) | `Http2Settings(…)` | `engine { http2 { settings = … } }` | `http2Settings = …` | `kuicksilver.http2` (on/off) |
@@ -358,6 +358,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `quicMaxIdleTimeout` | `Duration?` | `null` | 0.2.0 | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | 0.2.0 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; more than 1 needs Linux or Android) |
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | 0.2.0 | Retry policy |
+| `quicLoadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | 0.3.0 | QUIC-LB connection IDs of every HTTP/3 listener (`QuicEndpointConfig.loadBalancer`; its length must equal `quic.connectionIdLength`); `engine.updateLoadBalancer(next)` changes it on the running engine ([Behind a load balancer](quic.md#behind-a-load-balancer)) |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings |
 | `webSocketsOverHttp3` | `Boolean` | `true` | 0.2.0 | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on) |
 | `webTransport` (*experimental*) | `Boolean` | `false` | 0.3.0 | serve WebTransport to `webTransport(path) { }` routes (turns `http3Settings.webTransport` and `enableConnectProtocol` on; needs QUIC datagrams) ([WebTransport](ktor.md#webtransport-over-http3-experimental)) |

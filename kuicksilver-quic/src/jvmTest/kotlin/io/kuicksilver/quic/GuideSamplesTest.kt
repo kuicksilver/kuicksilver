@@ -374,9 +374,10 @@ class GuideSamplesTest {
     @Test fun loadBalancerSamples() =
         runBlocking {
             val serverConfig = QuicServerConfig.Builder(tlsServerConfig).build()
-            val lbKey = KslCrypto.randomBytes(16)
-            val nextKey = KslCrypto.randomBytes(16)
+            val keyBytes = KslCrypto.randomBytes(16)
+            val nextKeyBytes = KslCrypto.randomBytes(16)
             // guide:quic:load-balancer
+            val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; close it once the endpoint closed
             val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
             val behindLb =
                 quicEndpointConfig {
@@ -386,9 +387,9 @@ class GuideSamplesTest {
             val endpoint = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), behindLb)
             try {
                 // guide:quic:load-balancer-update
-                endpoint.updateLoadBalancer(
-                    QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey),
-                )
+                val nextKey = KslQuicCrypto.newLoadBalancerKey(nextKeyBytes)
+                val next = QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey)
+                endpoint.updateLoadBalancer(next)
 
                 endpoint.updateLoadBalancer(null) // unroutable IDs
                 val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
@@ -401,7 +402,8 @@ class GuideSamplesTest {
                     client.close()
                 }
             } finally {
-                endpoint.close()
+                endpoint.closeAndJoin()
+                lbKey.close() // the second key is left to the process: a sample
             }
         }
 

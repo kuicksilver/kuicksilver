@@ -637,6 +637,7 @@ assigned this server:
 ```kotlin
 // guide:quic:load-balancer
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; close it once the endpoint closed
 val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
 val behindLb =
     quicEndpointConfig {
@@ -646,32 +647,53 @@ val behindLb =
 ```
 
 A connection ID is then `first octet || server ID || nonce`: the first octet carries `configId` (0..6) in its three high
-bits and the length of the rest in its five low bits. With a 16-byte AES `key` the server ID and nonce are encrypted
-(one AES block when they are 16 bytes together, a four-pass Feistel network otherwise), so only the load balancer can
-tell which server a connection is on; without one they travel in clear, and the server then hands each connection only
-its handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). Nonces come from a
-counter that starts at random and is permuted with a key of the endpoint's own: none repeats while the process runs.
-`connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration cannot be
-combined with a `preferredAddress`.
+bits and the length of the rest in its five low bits. With an AES `key` the server ID and nonce are encrypted (one AES
+block when they are 16 bytes together, a four-pass Feistel network otherwise), so only the load balancer can tell which
+server a connection is on; without one they travel in clear, and the server then hands each connection only its
+handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). The key bytes go into the
+native layer once (`newLoadBalancerKey` wipes your array); the configuration holds the handle, which you close after
+the endpoint. `connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration
+cannot be combined with a `preferredAddress`.
+
+Nonces come from a counter, permuted with a key derived from the configuration key, so they show no pattern and none
+repeats: every endpoint of the process that uses the same key and nonce length (with any server ID) draws from one
+counter. The draft forbids reusing a nonce under one key (section 9.6), and a new process knows nothing of the last
+one's counter, so either give each process start a key no earlier process used (a fresh key per start and per
+instance), or give the configuration a `nonceReservation`: it stores a high-water mark durably every 65,536 nonces
+(`load()`, `store(mark)`, for instance an fsync'd file per key), and the next process starts past it. A crash then
+skips the rest of a block and never reuses one.
 
 To roll out a new configuration (a new key, say), give it to the load balancers first, then to each server:
 
 ```kotlin
 // guide:quic:load-balancer-update
-endpoint.updateLoadBalancer(QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey))
+val nextKey = KslQuicCrypto.newLoadBalancerKey(nextKeyBytes)
+val next = QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey)
+endpoint.updateLoadBalancer(next)
 ```
 
 New connection IDs use it at once, and every live connection gets one NEW_CONNECTION_ID under it that retires its
-earlier IDs; those keep routing (and can still be answered with a Stateless Reset) until the next change. Pass `null`
-when the server has no valid configuration: it then issues unroutable IDs (codepoint `0b111`, which the balancer routes
-by 4-tuple), gives new connections a single ID and `disable_active_migration`, and leaves live connections as they are.
-The same happens on its own if a configuration's nonces run out (2^32 IDs for a 4-byte nonce). A server ID used in
-clear must never be used encrypted, or the other way round (the call refuses it).
+earlier IDs; those keep routing (and can still be answered with a Stateless Reset) until the client retired them. A
+second change while a connection's client has not yet retired what the first one asked for waits for those retirements
+(RFC 9000 section 5.1.2), then goes out. A codepoint that the current or previous configuration holds can only be given
+that same configuration again. Pass `null` when the server has no valid configuration: it then issues unroutable IDs
+(codepoint `0b111`, which the balancer routes by 4-tuple), gives new connections a single ID and
+`disable_active_migration`, and live connections keep the IDs they have and get no new ones. The same happens on its own
+when a configuration's nonces run out: after 2^(8 x `nonceLength`) nonces of its key (2^32 for 4 bytes, shared by every
+endpoint of the process with that key; Retry packets and connection attempts draw them too, at most at the stateless
+rate limits), counted in `EndpointStats.loadBalancerNoncesExhausted` and logged at `Warn`; then roll out a new key. A
+server ID used in clear must never be used encrypted, or the other way round (the call refuses it).
+
+The Ktor server takes the configuration as `quicLoadBalancer` and changes it with `engine.updateLoadBalancer(next)`;
+`Http3Endpoint.updateLoadBalancer` does the same for an HTTP/3 endpoint, and `EndpointCore.updateLoadBalancer` for a
+sans-IO endpoint driven by your own loop.
 
 With several loops on one port, every loop issues IDs of the same configuration; the loop that owns an ID is the one it
-hashes to under a key the loops share, so a datagram that lands on another loop is still forwarded to its owner.
-The Stateless Reset rule stays: a loop answers an unknown connection ID only when it carries the current or previous
-configuration's codepoint, decrypts to this server's ID and hashes to that loop; unroutable IDs are never answered.
+hashes to under a key the loops share (whatever the ID's codepoint), so a datagram that lands on another loop is still
+forwarded to its owner. A loop that draws a nonce whose ID hashes to another loop keeps it for that loop (up to 1,024 per
+loop) rather than spend it. The Stateless Reset rule stays: a loop answers an unknown connection ID only when the
+stateless rate limit would let the answer out, it carries the current or previous configuration's codepoint, decrypts to
+this server's ID and hashes to that loop; unroutable IDs are never answered.
 
 ### Admission and endpoint limits
 
@@ -1723,7 +1745,8 @@ simply a sequence of DATA frames.
 
 Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (transport settings), `quicMaxIdleTimeout`
 (applies while `quic` is not assigned), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
-(Retry policy, Ktor-Netty's `quicTokenHandler`), `http3Settings`. UDP socket buffer sizes are not configurable yet.
+(Retry policy, Ktor-Netty's `quicTokenHandler`), `quicLoadBalancer` (QUIC-LB connection IDs, experimental;
+`engine.updateLoadBalancer` changes them, [QUIC: Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
 ADR-0006); `udpSocketCount > 1` needs Linux or Android. Where a QUIC server cannot run, the engine logs a warning and serves
@@ -3141,7 +3164,7 @@ Notes on specific products (checked 2026-11-05):
   Client IP preservation "can't be disabled for UDP, TCP\_UDP, QUIC, and TCP\_QUIC target groups"
   ([AWS: NLB target groups](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-target-groups.html)),
   so the per-IP limit sees real clients. Use TCP\_UDP with Kuicksilver. The QUIC and TCP\_QUIC listeners route by
-  QUIC connection ID: **not verified** with Kuicksilver, whose QUIC-LB connection IDs (below) are only reachable through the QUIC API.
+  QUIC connection ID: **not verified** with Kuicksilver's QUIC-LB connection IDs (below).
 - **Cloudflare** (proxied hostname): HTTP/3 ends at Cloudflare's edge; "HTTP/3 connection to the origin is not yet
   supported" ([Cloudflare: HTTP/3](https://developers.cloudflare.com/speed/optimization/protocol/http3/)). Cloudflare then
   reaches a Kuicksilver origin over TCP, and the origin's UDP port only serves clients that reach it directly. Set
@@ -3197,10 +3220,10 @@ the 4-tuple does not know this:
   Retry again, at the cost of a round trip.
 
 QUIC-LB (draft-ietf-quic-load-balancers-21) lets a load balancer route by a server ID encoded in the connection ID. Since
-0.3.0 the QUIC API offers it, experimentally: `QuicEndpointConfig.loadBalancer` and `QuicEndpoint.updateLoadBalancer`
-([QUIC: Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)); an HTTP/3 server built on `Http3Endpoint.bind` with such a
-`QuicEndpointConfig` gets it too. The Ktor engine does not expose it yet: there, put one instance behind each address,
-or accept that a client that changes address while connected to a multi-instance pool reconnects. The engine does not offer a QUIC
+0.3.0 the engine offers it, experimentally: `quicLoadBalancer = QuicLbConfig(...)` with the values your load balancer's
+configuration agent assigned each instance, and `engine.updateLoadBalancer(next)` to roll out a new configuration
+([QUIC: Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)). Without a QUIC-LB load balancer, put one instance behind
+each address, or accept that a client that changes address while connected to a multi-instance pool reconnects. The engine does not offer a QUIC
 preferred address (`QuicServerConfig.preferredAddress`, [QUIC: Migration and paths](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#migration-and-paths)) either;
 that needs the QUIC API directly.
 
@@ -3403,7 +3426,7 @@ variables](#system-properties-and-environment-variables) · [fixed limits](#fixe
 | Object | Kotlin API | Ktor client | Ktor server | `EngineMain` key |
 |---|---|---|---|---|
 | [`QuicConfig`](#quicconfig) | `quicConfig { }` | `engine { quic = … }` | `quic = …` (`quicMaxIdleTimeout`) | |
-| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicAdmission`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount` |
+| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount` |
 | [`TlsConfig`](#tlsconfig) | `tlsConfig(role) { }` | `engine { trust = …; identity = …; tls { } }` | `tlsConnector(identity) { }` | `kuicksilver.tls.*` |
 | [`Http3Settings`](#http3settings) | `http3Settings { }` | `engine { http3 { settings = … } }` | `http3Settings = …` | `kuicksilver.http3` (on/off) |
 | [`Http2Settings`](#http2settings) | `Http2Settings(…)` | `engine { http2 { settings = … } }` | `http2Settings = …` | `kuicksilver.http2` (on/off) |
@@ -3734,6 +3757,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `quicMaxIdleTimeout` | `Duration?` | `null` | 0.2.0 | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | 0.2.0 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; more than 1 needs Linux or Android) |
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | 0.2.0 | Retry policy |
+| `quicLoadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | 0.3.0 | QUIC-LB connection IDs of every HTTP/3 listener (`QuicEndpointConfig.loadBalancer`; its length must equal `quic.connectionIdLength`); `engine.updateLoadBalancer(next)` changes it on the running engine ([Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)) |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings |
 | `webSocketsOverHttp3` | `Boolean` | `true` | 0.2.0 | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on) |
 | `webTransport` (*experimental*) | `Boolean` | `false` | 0.3.0 | serve WebTransport to `webTransport(path) { }` routes (turns `http3Settings.webTransport` and `enableConnectProtocol` on; needs QUIC datagrams) ([WebTransport](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#webtransport-over-http3-experimental)) |
@@ -4116,9 +4140,13 @@ datagram per call.
 `QuicEndpointConfig.Builder.build()` refuses a `loadBalancer` whose `1 + serverId + nonceLength` differs from
 `connectionIdLength` ("loadBalancer connection IDs are N bytes…"), a `connectionIdLength` below 8, an endpoint without a
 server, and a plaintext configuration (no `key`) next to a `preferredAddress`. `updateLoadBalancer` throws
-`IllegalStateException` on an endpoint built without `loadBalancer`, and `IllegalArgumentException` for another length or
-for a server ID this endpoint used in clear that is now encrypted, or the other way round (draft-ietf-quic-load-balancers-21
-section 9.7: give the encrypted configuration other server IDs). See [QUIC: Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer).
+`IllegalStateException` on an endpoint built without `loadBalancer` (the Ktor engine: without `quicLoadBalancer`), and
+`IllegalArgumentException` for another length, for a server ID this endpoint used in clear that is now encrypted, or the
+other way round (draft-ietf-quic-load-balancers-21 section 9.7: give the encrypted configuration other server IDs), and for
+a `configId` the current or previous configuration still holds with another key, server ID or nonce length ("configId N
+still names the configuration before it": use another codepoint, or wait one more change). `EndpointStats.loadBalancerNoncesExhausted`
+above 0, with the `Warn` line "QUIC-LB: the nonces of configuration … are spent", means the endpoint issues unroutable IDs:
+roll out a configuration with a new key. See [QUIC: Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer).
 
 #### `UnsupportedOperationException` for `loops > 1`
 

@@ -13,11 +13,13 @@ import io.kuicksilver.tls.LoadBalancerKey
 import io.kuicksilver.tls.QuicCrypto
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.random.Random
 
-/** How many connection IDs a server connection may hand out, by the kind of its first one (draft-ietf-quic-load-balancers-21). */
+/** How many connection IDs a server connection may hand out, by the kind of the ones it gets (draft-ietf-quic-load-balancers-21). */
 internal enum class CidIssuance {
     /** Up to the peer's `active_connection_id_limit` (RFC 9000 section 5.1.1). */
     Full,
@@ -35,6 +37,12 @@ internal enum class CidIssuance {
     SingleNoMigration,
 }
 
+/** A connection ID and what the configuration that made it allows ([CidIssuance]). */
+internal class IssuedCid(
+    val cid: ConnectionId,
+    val issuance: CidIssuance,
+)
+
 /**
  * The one place that knows the layout of this endpoint's connection IDs: it makes them, tells which loop of a group owns one,
  * and whether an unknown one may be answered with a Stateless Reset. Everything that routes by connection ID asks it, so an
@@ -43,15 +51,20 @@ internal enum class CidIssuance {
  * - [ByteRoute]: `[0x01][loop index][random]`, the format without a load balancer.
  * - [QuicLbRoute]: QUIC-LB IDs (draft-ietf-quic-load-balancers-21, experimental) when `QuicEndpointConfig.loadBalancer` is set.
  *
- * One instance per loop. [newCid], [ownerLoop] and [mayReset] keep no state of their own (a QUIC-LB route reads the shared
+ * One instance per loop. [issue], [ownerLoop] and [mayReset] keep no state of their own (a QUIC-LB route reads the shared
  * [QuicLbState]), so [ownerLoop] may also be asked from a thread that is not the loop's.
  */
 internal sealed interface CidRoute {
     /** A new connection ID of ours: for a server connection, or with [client] for a client connection of a loop group. */
+    fun issue(
+        random: Random,
+        client: Boolean,
+    ): IssuedCid
+
     fun newCid(
         random: Random,
         client: Boolean,
-    ): ConnectionId
+    ): ConnectionId = issue(random, client).cid
 
     /**
      * The loop that owns the connection ID at `buf[off, +len)`, or -1 when it is not in our format. A value past the group's
@@ -70,8 +83,8 @@ internal sealed interface CidRoute {
         len: Int,
     ): Boolean
 
-    /** How many IDs a server connection whose handshake ID is [cid] hands out. */
-    fun issuance(cid: ConnectionId): CidIssuance
+    /** What [cid], one of ours made earlier ([issue]; a Retry's SCID), allows, read from its codepoint. */
+    fun issuanceOf(cid: ConnectionId): CidIssuance
 }
 
 /**
@@ -82,15 +95,15 @@ internal class ByteRoute(
     private val loopIndex: Int,
     private val length: Int,
 ) : CidRoute {
-    override fun newCid(
+    override fun issue(
         random: Random,
         client: Boolean,
-    ): ConnectionId {
+    ): IssuedCid {
         val b = ByteArray(length)
         random.nextBytes(b)
         b[0] = FORMAT_VERSION.toByte()
         b[1] = loopIndex.toByte()
-        return ConnectionId(b)
+        return IssuedCid(ConnectionId(b), CidIssuance.Full)
     }
 
     override fun ownerLoop(
@@ -105,7 +118,7 @@ internal class ByteRoute(
         len: Int,
     ): Boolean = ownerLoop(buf, off, len) == loopIndex
 
-    override fun issuance(cid: ConnectionId): CidIssuance = CidIssuance.Full
+    override fun issuanceOf(cid: ConnectionId): CidIssuance = CidIssuance.Full
 
     companion object {
         const val FORMAT_VERSION: Int = 0x01
@@ -114,15 +127,14 @@ internal class ByteRoute(
 
 /**
  * The QUIC-LB state of an endpoint, shared by the loops of a group: the configuration new IDs use ([routes]`.current`, null
- * for unroutable IDs), the one before it, still recognised for owner and reset, and the SipHash key that spreads IDs over the
- * loops. The loop that owns an ID is `SipHash(key, id) mod loops`: an encrypted ID cannot name its loop in clear, and
- * decrypting it for every datagram would cost up to four AES blocks, so each loop keeps only the IDs that hash to it
- * ([QuicLbRoute.newCid] draws until one does).
+ * for unroutable IDs), the one before it, still recognised for Stateless Resets, and the SipHash key that spreads IDs over
+ * the loops. The loop that owns an ID is `SipHash(key, id) mod loops`: an encrypted ID cannot name its loop in clear, and
+ * decrypting it for every datagram would cost up to four AES blocks. A loop that draws a nonce whose ID hashes to another
+ * loop keeps it for that loop ([Entry.issue]) instead of spending it.
  *
- * Every configuration's keys stay until the last owner closes ([retain]/[close]): another loop may be encrypting with one
- * when it is replaced. So do the nonce counters, by nonce space: a configuration that comes back with the same server ID,
- * nonce length and key goes on with its counter instead of starting over (draft section 9.6: no nonce reuse under one key).
- * [update] is called by one caller at a time; [routes] is read from any loop.
+ * The nonce counters live in the process-wide [QuicLbNonceSpaces] (draft section 9.6: no nonce reuse under one key). The
+ * configuration keys belong to the caller; the permutation keys derived from them belong to this state and are freed when
+ * their configuration is neither current nor previous any more and no loop uses it. [update] and [close] take [lock].
  */
 internal class QuicLbState(
     private val crypto: QuicCrypto,
@@ -131,13 +143,78 @@ internal class QuicLbState(
     val loops: Int,
     val cidLength: Int,
 ) : AutoCloseable {
-    class Entry(
+    /** One configuration in use: its codec, its nonce space and (encrypted) the permutation key derived for its nonces. */
+    inner class Entry(
         val config: QuicLbConfig,
-        val codec: QuicLbCodec,
-        val nonces: QuicLbNonces,
-    )
+    ) {
+        val codec = QuicLbCodec(config)
+        val space: QuicLbNonceSpace = QuicLbNonceSpaces.of(config, crypto, random)
+        private val permute: LoadBalancerKey? =
+            config.key?.derive(QuicLbDerivation.label(QuicLbDerivation.PERMUTE, config.nonceLength))
+        private val pools = Array(loops) { ArrayDeque<ByteArray>() }
+        private val poolLock = SpinLock()
+        private val users = AtomicInt(0)
+        private val exhaustNoticed = AtomicInt(0)
 
-    /** The configuration new IDs use (null: unroutable, codepoint 0b111) and the one replaced last (also null when none). */
+        /** IDs drawn for a loop whose pool was full: their nonces are spent unused (a loop that issues far fewer IDs than the others). */
+        val wasted = AtomicLong(0)
+
+        /** True the first time any loop finds this configuration's nonces spent. */
+        fun firstExhaustion(): Boolean = exhaustNoticed.compareAndSet(0, 1)
+
+        fun enter(): Boolean {
+            while (true) {
+                val n = users.load()
+                if (n < 0) return false
+                if (users.compareAndSet(n, n + 1)) return true
+            }
+        }
+
+        fun exit() {
+            if (users.decrementAndFetch() == RETIRED) free()
+        }
+
+        /** Out of current and previous: freed once the last loop using it is done. */
+        fun retire() {
+            while (true) {
+                val n = users.load()
+                if (n < 0) return
+                if (users.compareAndSet(n, n + RETIRED)) {
+                    if (n == 0) free()
+                    return
+                }
+            }
+        }
+
+        private fun free() {
+            permute?.close()
+            poolLock.locked { for (p in pools) p.clear() }
+        }
+
+        /**
+         * An ID that hashes to [loop], from its pool or from new nonces (the ones that hash elsewhere wait in their loop's pool,
+         * at most [POOL] each); null when the nonces are spent. Between [enter] and [exit].
+         */
+        fun issue(
+            loop: Int,
+            owner: (ByteArray) -> Int,
+        ): ByteArray? {
+            poolLock.locked { pools[loop].removeFirstOrNull() }?.let { return it }
+            while (true) {
+                val nonce = space.next(permute) ?: return null
+                val b = ByteArray(cidLength)
+                codec.encode(nonce, b)
+                nonce.fill(0)
+                val o = owner(b)
+                if (o == loop) return b
+                poolLock.locked {
+                    if (pools[o].size < POOL) pools[o].addLast(b) else wasted.incrementAndFetch()
+                }
+            }
+        }
+    }
+
+    /** The configuration new IDs use (null: unroutable, codepoint 0b111) and the one before it (also null when none). */
     class Routes(
         val current: Entry?,
         val previous: Entry?,
@@ -150,56 +227,70 @@ internal class QuicLbState(
         private set
 
     private val owners = AtomicInt(1)
-    private val spaces = ArrayList<Entry>()
-    private val keys = ArrayList<LoadBalancerKey>()
+    private val lock = SpinLock()
     private var closed = false
 
+    /** Every server ID this endpoint used, and whether in clear (section 9.7). */
+    private val history = ArrayList<kotlin.Pair<String, Boolean>>()
+
     init {
-        try {
-            if (initial != null) routes = Routes(entryFor(initial), null)
-        } catch (e: Throwable) {
-            freeKeys(Releaser(e))
-            throw e
+        if (initial != null) {
+            check(initial)
+            routes = Routes(Entry(initial), null)
+            history += sidHex(initial) to initial.encrypted
+        }
+    }
+
+    private fun sidHex(c: QuicLbConfig) = c.serverId.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
+    private fun check(config: QuicLbConfig) {
+        require(config.connectionIdLength == cidLength) {
+            "QuicLbConfig.connectionIdLength (${config.connectionIdLength}) must equal the endpoint's connectionIdLength ($cidLength)"
         }
     }
 
     /**
-     * New IDs use [config] from now on (null: unroutable IDs); the current configuration becomes the previous one. Throws
-     * IllegalArgumentException for a configuration of another connection ID length, or one that would use a server ID in
-     * clear that an encrypted configuration of this endpoint used, or the other way round (draft section 9.7: "Such deployments MUST use
-     * different server ID allocations for the clear text and the encrypted versions").
+     * New IDs use [config] from now on (null: unroutable IDs); the current configuration becomes the previous one. False when
+     * [config] is the current one already (nothing changes). Throws IllegalArgumentException for a configuration of another
+     * connection ID length; for one that would use a server ID in clear that an encrypted configuration of this endpoint used,
+     * or the other way round (draft section 9.7: "Such deployments MUST use different server ID allocations for the clear text
+     * and the encrypted versions"); and for a codepoint the current or previous configuration holds with another key, server
+     * ID or nonce length (section 3.1: a codepoint names one configuration while its IDs are in use).
      */
-    fun update(config: QuicLbConfig?) {
-        check(!closed) { "the endpoint is closed" }
-        val now = routes
-        if (config != null) {
-            require(config.connectionIdLength == cidLength) {
-                "QuicLbConfig.connectionIdLength (${config.connectionIdLength}) must equal the endpoint's connectionIdLength ($cidLength)"
-            }
-            for (e in spaces) { // every configuration this endpoint used, not only the last two
-                require(e.config.encrypted == config.encrypted || !e.config.serverId.contentEquals(config.serverId)) {
-                    "a server ID used in clear must not be used encrypted, or the other way round (draft-ietf-quic-load-balancers-21 section 9.7)"
+    fun update(config: QuicLbConfig?): Boolean =
+        lock.locked {
+            check(!closed) { "the endpoint is closed" }
+            val r = routes
+            if (config != null) {
+                check(config)
+                val sid = sidHex(config)
+                for ((s, enc) in history) {
+                    require(enc == config.encrypted || s != sid) {
+                        "a server ID used in clear must not be used encrypted, or the other way round (draft-ietf-quic-load-balancers-21 section 9.7)"
+                    }
+                }
+                for (e in listOfNotNull(r.current, r.previous)) {
+                    require(e.config.configId != config.configId || e.config.sameAs(config)) {
+                        "configId ${config.configId} still names the configuration before it: use another codepoint (draft-ietf-quic-load-balancers-21 section 3.1)"
+                    }
                 }
             }
+            val next =
+                when {
+                    config == null -> null
+                    r.current?.config?.sameAs(config) == true -> r.current
+                    r.previous?.config?.sameAs(config) == true -> r.previous
+                    else -> Entry(config)
+                }
+            if (next === r.current) return@locked false
+            val previous = r.current ?: r.previous // after a spell of unroutable IDs, the last configuration, whose IDs live on
+            routes = Routes(next, previous)
+            if (config != null) history += sidHex(config) to config.encrypted
+            for (old in listOfNotNull(r.current, r.previous)) if (old !== next && old !== previous) old.retire()
+            true
         }
-        val entry = config?.let { entryFor(it) }
-        // the one replaced; after a spell of unroutable IDs, the last configuration, whose IDs the connections still use
-        routes = Routes(entry, now.current ?: now.previous)
-    }
 
-    private fun entryFor(config: QuicLbConfig): Entry {
-        for (e in spaces) {
-            if (e.config.sameNonceSpace(config)) {
-                return if (e.config.configId == config.configId) e else Entry(config, QuicLbCodec(config, e.codec.key), e.nonces)
-            }
-        }
-        val key = config.keyBytes?.let { crypto.newLoadBalancerKey(it.copyOf()).also { k -> keys += k } }
-        val permute = crypto.newLoadBalancerKey(null).also { keys += it }
-        val seed = ByteArray(config.nonceLength).also { random.nextBytes(it) }
-        return Entry(config, QuicLbCodec(config, key), QuicLbNonces(config.nonceLength, seed, permute)).also { spaces += it }
-    }
-
-    /** One more owner (an endpoint core of the group); false once the keys are freed. */
+    /** One more owner (an endpoint core of the group); false once closed. */
     fun retain(): Boolean {
         while (true) {
             val n = owners.load()
@@ -208,19 +299,24 @@ internal class QuicLbState(
         }
     }
 
-    /** Called once by every owner; the last one frees every key. */
+    /** Called once by every owner; the last one frees the permutation keys. */
     override fun close() {
         if (owners.decrementAndFetch() != 0) return
-        val r = Releaser()
-        freeKeys(r)
-        r.finish()
+        val r =
+            lock.locked {
+                closed = true
+                routes
+            }
+        val rel = Releaser()
+        for (e in listOfNotNull(r.current, r.previous)) rel.release { e.retire() }
+        rel.finish()
     }
 
-    private fun freeKeys(r: Releaser) {
-        closed = true
-        for (k in keys) r.release { k.close() }
-        keys.clear()
-        spaces.clear()
+    private companion object {
+        const val RETIRED = Int.MIN_VALUE / 2
+
+        /** IDs kept per loop for when it needs one: about 30 KiB per loop. */
+        const val POOL = 1024
     }
 }
 
@@ -228,74 +324,73 @@ internal class QuicLbState(
  * QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 sections 3 to 5, experimental) for loop [loopIndex] of
  * [state]'s endpoint: the current configuration's encoding while it has nonces, else unroutable IDs (first octet
  * `0b111 << 5 | (length - 1)`, the rest random: section 3.2), which client connections of a group use as well.
+ * [onExhausted] runs once per configuration, on the loop that first finds its nonces spent.
  */
 internal class QuicLbRoute(
     private val state: QuicLbState,
     private val loopIndex: Int,
+    private val onExhausted: () -> Unit = {},
 ) : CidRoute {
     private val length = state.cidLength
     private val loops = state.loops
 
     private fun owner(b: ByteArray): Int = if (loops == 1) 0 else ((SipHash.hash24(state.k0, state.k1, b) ushr 1) % loops).toInt()
 
-    override fun newCid(
+    override fun issue(
         random: Random,
         client: Boolean,
-    ): ConnectionId {
-        val entry = if (client) null else state.routes.current
-        val b = ByteArray(length)
-        if (entry != null) {
+    ): IssuedCid {
+        if (!client) {
             while (true) {
-                // a nonce whose ID hashes to another loop is dropped: no loop ever issues it, so none repeats across the group
-                val nonce = entry.nonces.next() ?: break // spent: unroutable from now on (section 9.6)
-                entry.codec.encode(nonce, b)
-                nonce.fill(0)
-                if (owner(b) == loopIndex) return ConnectionId(b)
+                val e = state.routes.current ?: break
+                if (!e.enter()) {
+                    if (state.routes.current === e) break // closed
+                    continue // replaced meanwhile: the new one
+                }
+                try {
+                    val b = e.issue(loopIndex, ::owner)
+                    if (b != null) return IssuedCid(ConnectionId(b), if (e.config.encrypted) CidIssuance.Full else CidIssuance.Single)
+                    if (e.firstExhaustion()) onExhausted()
+                } finally {
+                    e.exit()
+                }
+                break // spent: unroutable from now on (section 9.6)
             }
         }
+        val b = ByteArray(length)
         while (true) {
             random.nextBytes(b)
             b[0] = (UNROUTABLE shl 5 or (length - 1)).toByte() // section 3.2: unroutable IDs "MUST self-encode their length"
-            if (owner(b) == loopIndex) return ConnectionId(b)
+            if (owner(b) == loopIndex) return IssuedCid(ConnectionId(b), CidIssuance.SingleNoMigration)
         }
     }
 
-    /** Our length, a self-encoded length that matches it, and a codepoint of ours: the current or previous one, or 0b111. */
-    private fun ours(
-        buf: PacketBuffer,
-        off: Int,
-        len: Int,
-    ): Boolean {
-        if (len != length) return false
-        val first = buf[off].toInt() and 0xff
-        if (first and 0x1f != length - 1) return false
-        val cr = first ushr 5
-        if (cr == UNROUTABLE) return true
-        val r = state.routes
-        return r.current?.config?.configId == cr || r.previous?.config?.configId == cr
-    }
-
+    /**
+     * Any ID of our length whose first octet encodes that length, whatever its codepoint: an ID of a configuration two
+     * changes back can still be in use (RFC 9000 section 5.1.2: retired IDs are accepted until the peer retires them), and
+     * the owner never depends on it.
+     */
     override fun ownerLoop(
         buf: PacketBuffer,
         off: Int,
         len: Int,
     ): Int {
-        if (!ours(buf, off, len)) return -1
+        if (len != length || (buf[off].toInt() and 0x1f) != length - 1) return -1
         return if (loops == 1) 0 else ((SipHash.hash24(state.k0, state.k1, buf, off, len) ushr 1) % loops).toInt()
     }
 
     /**
      * Only for an ID this loop could have issued under the current or previous configuration: its codepoint, our server ID
-     * once decrypted, and a hash that names this loop. Never for an unroutable ID, which carries no server ID to check.
+     * once decrypted (checked last), and a hash that names this loop. Never for an unroutable ID, which carries no server ID.
      */
     override fun mayReset(
         buf: PacketBuffer,
         off: Int,
         len: Int,
     ): Boolean {
-        if (len != length) return false
+        if (ownerLoop(buf, off, len) != loopIndex) return false
         val cr = (buf[off].toInt() and 0xff) ushr 5
-        if (cr == UNROUTABLE || ownerLoop(buf, off, len) != loopIndex) return false
+        if (cr == UNROUTABLE) return false
         val r = state.routes
         for (e in arrayOf(r.current, r.previous)) {
             if (e != null && e.config.configId == cr && e.codec.matchesServerId(buf, off)) return true
@@ -303,7 +398,7 @@ internal class QuicLbRoute(
         return false
     }
 
-    override fun issuance(cid: ConnectionId): CidIssuance {
+    override fun issuanceOf(cid: ConnectionId): CidIssuance {
         val cr = (cid[0].toInt() and 0xff) ushr 5
         if (cr == UNROUTABLE) return CidIssuance.SingleNoMigration
         val r = state.routes

@@ -196,7 +196,7 @@ Notes on specific products (checked 2026-11-05):
   Client IP preservation "can't be disabled for UDP, TCP\_UDP, QUIC, and TCP\_QUIC target groups"
   ([AWS: NLB target groups](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-target-groups.html)),
   so the per-IP limit sees real clients. Use TCP\_UDP with Kuicksilver. The QUIC and TCP\_QUIC listeners route by
-  QUIC connection ID: **not verified** with Kuicksilver, whose QUIC-LB connection IDs (below) are only reachable through the QUIC API.
+  QUIC connection ID: **not verified** with Kuicksilver's QUIC-LB connection IDs (below).
 - **Cloudflare** (proxied hostname): HTTP/3 ends at Cloudflare's edge; "HTTP/3 connection to the origin is not yet
   supported" ([Cloudflare: HTTP/3](https://developers.cloudflare.com/speed/optimization/protocol/http3/)). Cloudflare then
   reaches a Kuicksilver origin over TCP, and the origin's UDP port only serves clients that reach it directly. Set
@@ -252,10 +252,10 @@ the 4-tuple does not know this:
   Retry again, at the cost of a round trip.
 
 QUIC-LB (draft-ietf-quic-load-balancers-21) lets a load balancer route by a server ID encoded in the connection ID. Since
-0.3.0 the QUIC API offers it, experimentally: `QuicEndpointConfig.loadBalancer` and `QuicEndpoint.updateLoadBalancer`
-([QUIC: Behind a load balancer](quic.md#behind-a-load-balancer)); an HTTP/3 server built on `Http3Endpoint.bind` with such a
-`QuicEndpointConfig` gets it too. The Ktor engine does not expose it yet: there, put one instance behind each address,
-or accept that a client that changes address while connected to a multi-instance pool reconnects. The engine does not offer a QUIC
+0.3.0 the engine offers it, experimentally: `quicLoadBalancer = QuicLbConfig(...)` with the values your load balancer's
+configuration agent assigned each instance, and `engine.updateLoadBalancer(next)` to roll out a new configuration
+([QUIC: Behind a load balancer](quic.md#behind-a-load-balancer)). Without a QUIC-LB load balancer, put one instance behind
+each address, or accept that a client that changes address while connected to a multi-instance pool reconnects. The engine does not offer a QUIC
 preferred address (`QuicServerConfig.preferredAddress`, [QUIC: Migration and paths](quic.md#migration-and-paths)) either;
 that needs the QUIC API directly.
 

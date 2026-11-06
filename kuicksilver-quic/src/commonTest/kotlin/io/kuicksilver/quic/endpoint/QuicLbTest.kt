@@ -10,7 +10,6 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.quic.QuicLbConfig
 import io.kuicksilver.tls.KslQuicCrypto
-import io.kuicksilver.tls.LoadBalancerKey
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -36,10 +35,9 @@ class QuicLbTest {
         key: String?,
         block: (QuicLbCodec) -> T,
     ): T {
-        val config = QuicLbConfig(configId, hex(sid), nonceLength, key?.let { hex(it) })
         val k = key?.let { KslQuicCrypto.newLoadBalancerKey(hex(it)) }
         try {
-            return block(QuicLbCodec(config, k))
+            return block(QuicLbCodec(QuicLbConfig(configId, hex(sid), nonceLength, k)))
         } finally {
             k?.close()
         }
@@ -71,10 +69,11 @@ class QuicLbTest {
     @Test fun plaintextVector1() = vector(0, "c4605e", "4504cc4f", "07c4605e4504cc4f", null)
 
     /**
-     * B.1, second line. The draft prints "1 350d28b420 3487d970b 20a350d28b4203487d970b": a nine-digit nonce and a first octet
-     * that cannot be cr_bits 1 (0b001xxxxx) are what a generator gives that drops leading zeros and prints the first octet as
-     * "2" (the config ID, shifted) followed by "0a" (the length). Read with the leading zeros, the nonce is 03487d970b (five
-     * bytes, as the eleven-byte CID requires) and the CID is 2a | 350d28b420 | 03487d970b: cr_bits 1, length 10.
+     * B.1, second line. The draft prints "1 350d28b420 3487d970b 20a350d28b4203487d970b": a nine-digit nonce, and a first octet
+     * 0x20 whose config rotation bits are 1 as the line says but whose length bits are 0, not 10. That is what a generator
+     * gives that drops leading zeros and prints the first octet as "2" (the codepoint) followed by "0a" (the length). With the
+     * leading zeros restored the nonce is 03487d970b (five bytes, as the eleven-byte CID requires) and the CID is
+     * 2a | 350d28b420 | 03487d970b: cr_bits 1, length 10.
      */
     @Test fun plaintextVector2() = vector(1, "350d28b420", "03487d970b", "2a350d28b42003487d970b", null)
 
@@ -143,20 +142,19 @@ class QuicLbTest {
         length: Int,
         start: Long = 0,
         seed: ByteArray = ByteArray(length),
-        key: LoadBalancerKey? = null,
-    ) = QuicLbNonces(length, seed, key, start)
+    ) = QuicLbNonceSpace(length, seed, null, null, start)
 
     @Test fun nonceCounterNeverRepeats() {
         KslQuicCrypto.newLoadBalancerKey(null).use { k ->
             val seen = HashSet<String>()
-            val n = nonces(4, seed = byteArrayOf(-1, -1, -1, -16), key = k) // wraps past 2^32 within the run: still no repeat
-            repeat(10_000) { assertTrue(seen.add(hexOf(assertNotNull(n.next()))), "nonce $it repeated") }
+            val n = nonces(4, seed = byteArrayOf(-1, -1, -1, -16)) // wraps past 2^32 within the run: still no repeat
+            repeat(10_000) { assertTrue(seen.add(hexOf(assertNotNull(n.next(k)))), "nonce $it repeated") }
             codec(0, "ed793a", 4, b2Key) { c ->
                 val cids = HashSet<String>()
-                val m = nonces(4, key = k)
+                val m = nonces(4)
                 repeat(10_000) {
                     val out = ByteArray(c.cidLength)
-                    c.encode(assertNotNull(m.next()), out)
+                    c.encode(assertNotNull(m.next(k)), out)
                     assertTrue(cids.add(hexOf(out)), "CID $it repeated")
                 }
             }
@@ -166,24 +164,117 @@ class QuicLbTest {
     /** The counter is permuted with a local key: consecutive nonces show no relation (draft section 5.4: plaintext nonces). */
     @Test fun noncesArePermuted() {
         KslQuicCrypto.newLoadBalancerKey(null).use { k ->
-            val n = nonces(6, key = k)
-            val a = assertNotNull(n.next())
-            val b = assertNotNull(n.next())
+            val n = nonces(6)
+            val a = assertNotNull(n.next(k))
+            val b = assertNotNull(n.next(k))
             assertFalse(a.contentEquals(ByteArray(6)), "not the counter")
             assertFalse(b.contentEquals(ByteArray(5) + byteArrayOf(1)), "not the counter")
         }
         val plain = nonces(4, seed = byteArrayOf(0, 0, 0, 9))
-        assertContentEquals(byteArrayOf(0, 0, 0, 9), plain.next(), "without a key the counter starts at its seed")
-        assertContentEquals(byteArrayOf(0, 0, 0, 10), plain.next())
+        assertContentEquals(byteArrayOf(0, 0, 0, 9), plain.next(null), "without a permutation the counter starts at its seed")
+        assertContentEquals(byteArrayOf(0, 0, 0, 10), plain.next(null))
     }
 
     @Test fun nonceExhaustionReturnsNull() {
         val n = nonces(4, start = (1L shl 32) - 2, seed = byteArrayOf(-1, -1, -1, -1))
-        assertContentEquals(byteArrayOf(-1, -1, -1, -3), n.next(), "the last two values of the 2^32 space")
-        assertContentEquals(byteArrayOf(-1, -1, -1, -2), n.next())
-        assertNull(n.next(), "the next one would be the seed again: exhausted")
-        assertNull(n.next(), "and stays exhausted")
+        assertContentEquals(byteArrayOf(-1, -1, -1, -3), n.next(null), "the last two values of the 2^32 space")
+        assertContentEquals(byteArrayOf(-1, -1, -1, -2), n.next(null))
+        assertNull(n.next(null), "the next one would be the seed again: exhausted")
+        assertNull(n.next(null), "and stays exhausted")
         assertTrue(n.exhausted)
+    }
+
+    /** The nonce (decrypted) of an ID of [config]. */
+    private fun nonceOf(
+        config: QuicLbConfig,
+        cid: ByteArray,
+    ): String {
+        val plain = cid.copyOfRange(1, cid.size)
+        QuicLbCipher.decrypt(config.key!!, plain, 0, plain.size)
+        return hexOf(plain.copyOfRange(config.serverIdLength, plain.size))
+    }
+
+    /**
+     * Section 9.6 within a process: two endpoints that share a key, with two server IDs, draw from one nonce space: no nonce
+     * of one is ever a nonce of the other.
+     */
+    @Test fun nonceSpaceSharedByKeyAcrossServerIdsAndEndpoints() {
+        val keyBytes = "00112233445566778899aabbccddee01"
+        KslQuicCrypto.newLoadBalancerKey(hex(keyBytes)).use { k1 ->
+            KslQuicCrypto.newLoadBalancerKey(hex(keyBytes)).use { k2 ->
+                val a = QuicLbConfig(1, hex("0a0b0c"), 4, k1)
+                val b = QuicLbConfig(2, hex("0d0e0f"), 4, k2) // the same key through another handle
+                val sa = QuicLbState(LbNullCrypto, kotlin.random.Random(1), a, 1, 8)
+                val sb = QuicLbState(LbNullCrypto, kotlin.random.Random(2), b, 1, 8)
+                try {
+                    val ra = QuicLbRoute(sa, 0)
+                    val rb = QuicLbRoute(sb, 0)
+                    val na = HashSet<String>()
+                    val nb = HashSet<String>()
+                    repeat(2000) {
+                        na += nonceOf(a, ra.newCid(kotlin.random.Random(it), client = false).toByteArray())
+                        nb += nonceOf(b, rb.newCid(kotlin.random.Random(it), client = false).toByteArray())
+                    }
+                    assertEquals(2000, na.size)
+                    assertTrue(na.intersect(nb).isEmpty(), "one key, one nonce space")
+                } finally {
+                    sa.close()
+                    sb.close()
+                }
+            }
+        }
+    }
+
+    private class MemoryReservation : io.kuicksilver.quic.QuicLbNonceReservation {
+        var mark = 0L
+        val stores = ArrayList<Long>()
+
+        override fun load(): Long = mark
+
+        override fun store(mark: Long) {
+            stores += mark
+            this.mark = mark
+        }
+    }
+
+    /** Section 9.6 across processes: with a reservation the nonce sequence is fixed and a new process starts past the stored mark. */
+    @Test fun nonceReservationSurvivesARestart() {
+        val keyBytes = "00112233445566778899aabbccddee02"
+        val store = MemoryReservation()
+        val seen = HashSet<String>()
+        repeat(2) { process ->
+            QuicLbNonceSpaces.forgetForTest() // a new process
+            KslQuicCrypto.newLoadBalancerKey(hex(keyBytes)).use { k ->
+                val c = QuicLbConfig(1, hex("0a0b0c"), 4, k, store)
+                val s = QuicLbState(LbNullCrypto, kotlin.random.Random(process), c, 1, 8)
+                try {
+                    val r = QuicLbRoute(s, 0)
+                    repeat(1000) { assertTrue(seen.add(nonceOf(c, r.newCid(kotlin.random.Random(it), client = false).toByteArray()))) }
+                } finally {
+                    s.close()
+                }
+            }
+        }
+        assertEquals(listOf(65_536L, 131_072L), store.stores, "one block reserved per process, before its first nonce")
+    }
+
+    @Test fun negative_reservationFailureGoesUnroutable() {
+        val keyBytes = "00112233445566778899aabbccddee03"
+        KslQuicCrypto.newLoadBalancerKey(hex(keyBytes)).use { k ->
+            val failing =
+                object : io.kuicksilver.quic.QuicLbNonceReservation {
+                    override fun load(): Long = 0
+
+                    override fun store(mark: Long): Unit = throw kotlinx.io.IOException("disk full")
+                }
+            val s = QuicLbState(LbNullCrypto, kotlin.random.Random(1), QuicLbConfig(1, hex("0a0b0c"), 4, k, failing), 1, 8)
+            try {
+                val i = QuicLbRoute(s, 0).issue(kotlin.random.Random(1), client = false)
+                assertEquals(CidIssuance.SingleNoMigration, i.issuance, "no unreserved nonce is ever used")
+            } finally {
+                s.close()
+            }
+        }
     }
 
     @Test fun negative_configIdSevenRejected() {
@@ -201,12 +292,17 @@ class QuicLbTest {
 
     @Test fun negative_nonceUnder4Rejected() {
         assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(3), 3, null) }
-        assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(3), 4, ByteArray(15)) }
+        assertFailsWith<IllegalArgumentException>("a reservation needs a key") {
+            QuicLbConfig(0, ByteArray(3), 4, null, MemoryReservation())
+        }
     }
 
     @Test fun negative_configNeverPrintsTheKey() {
-        val c = QuicLbConfig(1, hex("ed793a"), 4, hex(b2Key))
-        assertFalse(c.toString().contains("8f95"), c.toString())
-        assertFalse(c.toString().contains("ed793a"), c.toString())
+        KslQuicCrypto.newLoadBalancerKey(hex(b2Key)).use { k ->
+            val c = QuicLbConfig(1, hex("ed793a"), 4, k)
+            assertFalse(c.toString().contains("8f95"), c.toString())
+            assertFalse(c.toString().contains("ed793a"), c.toString())
+            assertFalse(assertNotNull(c.keyFingerprint).contains("8f95f092"), "the fingerprint is not the key")
+        }
     }
 }

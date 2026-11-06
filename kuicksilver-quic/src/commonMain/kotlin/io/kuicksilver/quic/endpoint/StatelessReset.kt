@@ -87,6 +87,17 @@ internal class StatelessRateLimiter(
     /** Addresses in the current one-second window (the resource probe). */
     val addresses: Int get() = perAddress.size
 
+    /** [allow] without spending: an expensive check (a QUIC-LB decryption) runs only for an answer the limits would let out. */
+    fun wouldAllow(
+        to: InetSocketAddress,
+        now: TimeMark,
+    ): Boolean {
+        if (windowStart == TimeMark.NEVER || now - windowStart >= 1.seconds) return true
+        if (total >= totalPerSecond) return false
+        val n = perAddress[to] ?: 0
+        return n < perAddressPerSecond && (n > 0 || perAddress.size < MAX_ADDRESSES)
+    }
+
     fun allow(
         to: InetSocketAddress,
         now: TimeMark,

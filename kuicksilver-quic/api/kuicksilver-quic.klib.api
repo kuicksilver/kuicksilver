@@ -316,6 +316,16 @@ abstract interface io.kuicksilver.quic/QuicEndpoint : kotlin/AutoCloseable { // 
     }
 }
 
+abstract interface io.kuicksilver.quic/QuicLbNonceReservation { // io.kuicksilver.quic/QuicLbNonceReservation|null[0]
+    abstract fun load(): kotlin/Long // io.kuicksilver.quic/QuicLbNonceReservation.load|load(){}[0]
+    abstract fun store(kotlin/Long) // io.kuicksilver.quic/QuicLbNonceReservation.store|store(kotlin.Long){}[0]
+
+    final object Companion { // io.kuicksilver.quic/QuicLbNonceReservation.Companion|null[0]
+        final const val BLOCK // io.kuicksilver.quic/QuicLbNonceReservation.Companion.BLOCK|{}BLOCK[0]
+            final fun <get-BLOCK>(): kotlin/Long // io.kuicksilver.quic/QuicLbNonceReservation.Companion.BLOCK.<get-BLOCK>|<get-BLOCK>(){}[0]
+    }
+}
+
 abstract interface io.kuicksilver.quic/QuicPath { // io.kuicksilver.quic/QuicPath|null[0]
     abstract val id // io.kuicksilver.quic/QuicPath.id|{}id[0]
         abstract fun <get-id>(): io.kuicksilver.quic/PathId // io.kuicksilver.quic/QuicPath.id.<get-id>|<get-id>(){}[0]
@@ -878,6 +888,7 @@ final class io.kuicksilver.quic/EndpointCore { // io.kuicksilver.quic/EndpointCo
     final fun pollStateless(io.kuicksilver.quic/PacketBatch): kotlin/Int // io.kuicksilver.quic/EndpointCore.pollStateless|pollStateless(io.kuicksilver.quic.PacketBatch){}[0]
     final fun processPending(io.kuicksilver.quic/TimeMark, kotlin/Int = ...): kotlin/Int // io.kuicksilver.quic/EndpointCore.processPending|processPending(io.kuicksilver.quic.TimeMark;kotlin.Int){}[0]
     final fun remove(io.kuicksilver.quic/ConnectionCore) // io.kuicksilver.quic/EndpointCore.remove|remove(io.kuicksilver.quic.ConnectionCore){}[0]
+    final fun updateLoadBalancer(io.kuicksilver.quic/QuicLbConfig?) // io.kuicksilver.quic/EndpointCore.updateLoadBalancer|updateLoadBalancer(io.kuicksilver.quic.QuicLbConfig?){}[0]
 }
 
 final class io.kuicksilver.quic/EndpointStats { // io.kuicksilver.quic/EndpointStats|null[0]
@@ -923,6 +934,8 @@ final class io.kuicksilver.quic/EndpointStats { // io.kuicksilver.quic/EndpointS
         final fun <get-invalidTokens>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.invalidTokens.<get-invalidTokens>|<get-invalidTokens>(){}[0]
     final val listenerFailures // io.kuicksilver.quic/EndpointStats.listenerFailures|{}listenerFailures[0]
         final fun <get-listenerFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.listenerFailures.<get-listenerFailures>|<get-listenerFailures>(){}[0]
+    final val loadBalancerNoncesExhausted // io.kuicksilver.quic/EndpointStats.loadBalancerNoncesExhausted|{}loadBalancerNoncesExhausted[0]
+        final fun <get-loadBalancerNoncesExhausted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.loadBalancerNoncesExhausted.<get-loadBalancerNoncesExhausted>|<get-loadBalancerNoncesExhausted>(){}[0]
     final val newTokensAccepted // io.kuicksilver.quic/EndpointStats.newTokensAccepted|{}newTokensAccepted[0]
         final fun <get-newTokensAccepted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.newTokensAccepted.<get-newTokensAccepted>|<get-newTokensAccepted>(){}[0]
     final val newTokensIssued // io.kuicksilver.quic/EndpointStats.newTokensIssued|{}newTokensIssued[0]
@@ -1392,7 +1405,7 @@ final class io.kuicksilver.quic/QuicEndpointConfig { // io.kuicksilver.quic/Quic
 }
 
 final class io.kuicksilver.quic/QuicLbConfig { // io.kuicksilver.quic/QuicLbConfig|null[0]
-    constructor <init>(kotlin/Int, kotlin/ByteArray, kotlin/Int, kotlin/ByteArray?) // io.kuicksilver.quic/QuicLbConfig.<init>|<init>(kotlin.Int;kotlin.ByteArray;kotlin.Int;kotlin.ByteArray?){}[0]
+    constructor <init>(kotlin/Int, kotlin/ByteArray, kotlin/Int, io.kuicksilver.tls/LoadBalancerKey?, io.kuicksilver.quic/QuicLbNonceReservation? = ...) // io.kuicksilver.quic/QuicLbConfig.<init>|<init>(kotlin.Int;kotlin.ByteArray;kotlin.Int;io.kuicksilver.tls.LoadBalancerKey?;io.kuicksilver.quic.QuicLbNonceReservation?){}[0]
 
     final val configId // io.kuicksilver.quic/QuicLbConfig.configId|{}configId[0]
         final fun <get-configId>(): kotlin/Int // io.kuicksilver.quic/QuicLbConfig.configId.<get-configId>|<get-configId>(){}[0]
@@ -1400,8 +1413,12 @@ final class io.kuicksilver.quic/QuicLbConfig { // io.kuicksilver.quic/QuicLbConf
         final fun <get-connectionIdLength>(): kotlin/Int // io.kuicksilver.quic/QuicLbConfig.connectionIdLength.<get-connectionIdLength>|<get-connectionIdLength>(){}[0]
     final val encrypted // io.kuicksilver.quic/QuicLbConfig.encrypted|{}encrypted[0]
         final fun <get-encrypted>(): kotlin/Boolean // io.kuicksilver.quic/QuicLbConfig.encrypted.<get-encrypted>|<get-encrypted>(){}[0]
+    final val key // io.kuicksilver.quic/QuicLbConfig.key|{}key[0]
+        final fun <get-key>(): io.kuicksilver.tls/LoadBalancerKey? // io.kuicksilver.quic/QuicLbConfig.key.<get-key>|<get-key>(){}[0]
     final val nonceLength // io.kuicksilver.quic/QuicLbConfig.nonceLength|{}nonceLength[0]
         final fun <get-nonceLength>(): kotlin/Int // io.kuicksilver.quic/QuicLbConfig.nonceLength.<get-nonceLength>|<get-nonceLength>(){}[0]
+    final val nonceReservation // io.kuicksilver.quic/QuicLbConfig.nonceReservation|{}nonceReservation[0]
+        final fun <get-nonceReservation>(): io.kuicksilver.quic/QuicLbNonceReservation? // io.kuicksilver.quic/QuicLbConfig.nonceReservation.<get-nonceReservation>|<get-nonceReservation>(){}[0]
     final val serverId // io.kuicksilver.quic/QuicLbConfig.serverId|{}serverId[0]
         final fun <get-serverId>(): kotlin/ByteArray // io.kuicksilver.quic/QuicLbConfig.serverId.<get-serverId>|<get-serverId>(){}[0]
 

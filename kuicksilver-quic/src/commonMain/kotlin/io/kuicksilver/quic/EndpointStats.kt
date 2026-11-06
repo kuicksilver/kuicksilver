@@ -130,6 +130,12 @@ public class EndpointStats internal constructor(
      */
     @property:ExperimentalKuicksilverApi
     public val preferredAddressFailures: Long = 0,
+    /**
+     * Times a QUIC-LB configuration's nonces ran out (`QuicEndpointConfig.loadBalancer`; once per configuration): the endpoint
+     * then issues unroutable connection IDs until [QuicEndpoint.updateLoadBalancer] gives it a new configuration (a new key).
+     */
+    @property:ExperimentalKuicksilverApi
+    public val loadBalancerNoncesExhausted: Long = 0,
 ) {
     /** Field by field sum: a loop group's endpoint statistics. */
     internal operator fun plus(o: EndpointStats): EndpointStats =
@@ -172,6 +178,7 @@ public class EndpointStats internal constructor(
             ptbAccepted + o.ptbAccepted,
             ptbIgnored + o.ptbIgnored,
             preferredAddressFailures + o.preferredAddressFailures,
+            loadBalancerNoncesExhausted + o.loadBalancerNoncesExhausted,
         )
 
     @OptIn(ExperimentalKuicksilverApi::class)
@@ -190,5 +197,6 @@ public class EndpointStats internal constructor(
             "pathValidations=$pathValidations, pathValidationFailures=$pathValidationFailures, uncaughtFailures=$uncaughtFailures, " +
             "sendFailures=$sendFailures, listenerFailures=$listenerFailures, newTokensIssued=$newTokensIssued, " +
             "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected, ptbAccepted=$ptbAccepted, " +
-            "ptbIgnored=$ptbIgnored, preferredAddressFailures=$preferredAddressFailures)"
+            "ptbIgnored=$ptbIgnored, preferredAddressFailures=$preferredAddressFailures, " +
+            "loadBalancerNoncesExhausted=$loadBalancerNoncesExhausted)"
 }

@@ -34,6 +34,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine : io/
 	public fun startSuspend (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun stop (JJ)V
 	public fun stopSuspend (JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun updateLoadBalancer (Lio/kuicksilver/quic/QuicLbConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration : io/ktor/server/engine/BaseApplicationEngine$Configuration {
@@ -56,6 +57,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getQuicAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
 	public final fun getQuicEarlyData ()Z
+	public final fun getQuicLoadBalancer ()Lio/kuicksilver/quic/QuicLbConfig;
 	public final fun getQuicMaxIdleTimeout-FghU774 ()Lkotlin/time/Duration;
 	public final fun getRequestHeaderTimeoutSeconds ()I
 	public final fun getUdpSocketCount ()I
@@ -79,6 +81,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setQuicAdmission (Lio/kuicksilver/quic/ConnectionAdmission;)V
 	public final fun setQuicEarlyData (Z)V
+	public final fun setQuicLoadBalancer (Lio/kuicksilver/quic/QuicLbConfig;)V
 	public final fun setQuicMaxIdleTimeout-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setRequestHeaderTimeoutSeconds (I)V
 	public final fun setUdpSocketCount (I)V

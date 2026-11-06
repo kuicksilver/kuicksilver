@@ -10,6 +10,7 @@ import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.serverWithKeys
 import io.kuicksilver.quic.endpoint.AdmissionQueue
+import io.kuicksilver.quic.endpoint.IssuedCid
 import io.kuicksilver.quic.endpoint.StatelessClose
 import io.kuicksilver.quic.endpoint.TokenCheck
 import io.kuicksilver.quic.wire.ConnectionId
@@ -158,7 +159,7 @@ private fun EndpointCore.admitValidated(
             }
             val clientDcid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
             val clientScid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
-            val ourScid = route.newCid(random, client = false)
+            val ourScid = route.newCid(random, client = false) // one ID this connection will use, if the client comes back
             val token =
                 tokens.mint(clientDcid, ourScid, from, hv.version, now) ?: run {
                     initialsDropped++ // this key's nonces are spent (2^55 tokens or more): no Retry rather than a repeated nonce
@@ -173,16 +174,17 @@ private fun EndpointCore.admitValidated(
     }
     var originalDcid: ConnectionId? = null
     var retryScid: ConnectionId? = null
-    val cid: ConnectionId =
+    val issued: IssuedCid =
         if (check is TokenCheck.Valid) {
             originalDcid = check.odcid
-            retryScid =
-                ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
-            if (testFreshCidAfterRetry) route.newCid(random, client = false) else retryScid
+            val rs = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
+            retryScid = rs
+            if (testFreshCidAfterRetry) route.issue(random, client = false) else IssuedCid(rs, route.issuanceOf(rs))
         } // our Retry SCID is this connection's ID
         else {
-            route.newCid(random, client = false)
+            route.issue(random, client = false)
         }
+    val cid = issued.cid
     val core =
         ConnectionCore.serverWithKeys(
             server.quic,
@@ -211,7 +213,7 @@ private fun EndpointCore.admitValidated(
         }
     }
     config.maxConnectionLifetime?.let { core.lifetimeDeadline = now + it }
-    attach(core)
+    attach(core, issued.issuance)
     // after attach: the sequence-1 ID a preferred address issues must route here (the registrar is set) before the first packet;
     // one re-encoding of the transport parameters for both changes. A preferred socket that failed is no longer offered
     // ... nor to a connection whose QUIC-LB ID is plaintext or unroutable: it hands out no second ID (draft-ietf-quic-load-balancers-21

@@ -21,10 +21,12 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.QuicLbConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.endpoint.LbNullCrypto
 import io.kuicksilver.quic.endpoint.QuicLbFixtures
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
@@ -654,14 +656,21 @@ class LoopGroupTest {
         runBlocking {
             withTimeout(30.seconds) {
                 val net = MemoryNetwork()
+                // 9-byte IDs: the client's 8-byte Initial DCID is never taken for one of ours, so the connection stays where its
+                // Initial lands (loop 0, whose address the client dialled), whatever the client's random bytes
                 val lbConfig =
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            server =
+                                QuicServerConfig
+                                    .Builder(CoreFixtures.server())
+                                    .apply { quic = quicConfig { connectionIdLength = 9 } }
+                                    .build()
+                            connectionIdLength = 9
                             crypto = LbNullCrypto
                             loops = 4
-                            loadBalancer = QuicLbFixtures.config()
+                            loadBalancer = QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key())
                         }.build()
                 val ios = List(4) { net.open(if (it == 0) serverAddr else InetSocketAddress("10.0.0.${10 + it}", 2222)) }
                 val group = LoopGroup.create(lbConfig, ios)

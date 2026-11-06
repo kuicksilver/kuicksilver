@@ -157,10 +157,6 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
     64 KiB are one scratch per endpoint loop (0.3.0); what is left is listed in
     [docs/benchmarks.md](benchmarks.md#memory-p5-2026-11-06).
 
-### 0.3.x
-
-- QUIC-LB in the Ktor server engine and `Http3Endpoint` (the QUIC API has it since 0.3.0, experimental).
-
 ### Later
 
 - Multipath.

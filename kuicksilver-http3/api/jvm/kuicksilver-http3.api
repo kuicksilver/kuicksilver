@@ -123,6 +123,7 @@ public final class io/kuicksilver/http3/Http3Endpoint : java/lang/AutoCloseable 
 	public final fun getStats ()Lio/kuicksilver/quic/EndpointStats;
 	public final fun shutdown-rnQQ1Ag (JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/http3/Http3Endpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun updateLoadBalancer (Lio/kuicksilver/quic/QuicLbConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/http3/Http3Endpoint$Companion {

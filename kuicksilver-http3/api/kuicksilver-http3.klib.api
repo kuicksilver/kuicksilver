@@ -257,6 +257,7 @@ final class io.kuicksilver.http3/Http3Endpoint : kotlin/AutoCloseable { // io.ku
     final suspend fun connect(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connect|connect(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings){}[0]
     final suspend fun connectEarly(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ..., io.kuicksilver.tls/EarlyDataState = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connectEarly|connectEarly(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings;io.kuicksilver.tls.EarlyDataState){}[0]
     final suspend fun shutdown(kotlin.time/Duration, kotlin/Long = ..., kotlin/String = ...) // io.kuicksilver.http3/Http3Endpoint.shutdown|shutdown(kotlin.time.Duration;kotlin.Long;kotlin.String){}[0]
+    final suspend fun updateLoadBalancer(io.kuicksilver.quic/QuicLbConfig?) // io.kuicksilver.http3/Http3Endpoint.updateLoadBalancer|updateLoadBalancer(io.kuicksilver.quic.QuicLbConfig?){}[0]
 
     final object Companion { // io.kuicksilver.http3/Http3Endpoint.Companion|null[0]
         final const val H3 // io.kuicksilver.http3/Http3Endpoint.Companion.H3|{}H3[0]

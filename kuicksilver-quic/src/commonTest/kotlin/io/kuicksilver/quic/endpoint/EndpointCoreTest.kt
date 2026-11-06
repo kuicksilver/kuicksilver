@@ -32,6 +32,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -40,7 +41,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-@OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 class EndpointCoreTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -1068,6 +1069,13 @@ class EndpointCoreTest {
                     for (other in cores) assertEquals(i, QuicLbFixtures.owner(other, QuicLbFixtures.shortTo(cid)), "owner of ${hexOf(cid)}")
                 }
             }
+            assertEquals(
+                0L,
+                state.routes.current!!
+                    .wasted
+                    .load(),
+                "IDs drawn for another loop wait for it: no nonce spent unused",
+            )
             assertEquals(-1, QuicLbFixtures.owner(cores[0], QuicLbFixtures.shortTo(ByteArray(8) { 0x55 })), "not our format")
         } finally {
             for (c in cores) c.close()
@@ -1109,11 +1117,11 @@ class EndpointCoreTest {
     }
 
     @Test fun quicLbExhaustionGoesUnroutable() {
-        val p = LbPair(QuicLbFixtures.config())
+        val p = LbPair(QuicLbFixtures.config(keyHex = "0f0e0d0c0b0a09080706050403020101")) // a nonce space of its own
         try {
             assertNotNull(p.server.lb)
                 .routes.current!!
-                .nonces
+                .space
                 .spendForTest()
             val cid =
                 p.server.route
@@ -1127,8 +1135,79 @@ class EndpointCoreTest {
             assertEquals(7, (s.localCid[0].toInt() and 0xff) ushr 5)
             assertEquals(1, localCids(s).size, "one ID over the life of the connection")
             assertEquals(true, c.peerTp?.disableActiveMigration, "disable_active_migration")
+            assertEquals(1L, p.server.stats.loadBalancerNoncesExhausted, "counted once")
         } finally {
             p.close()
+        }
+    }
+
+    /** Spent nonces under a connection that has its full set: its IDs stay, and no unroutable one goes out in NEW_CONNECTION_ID. */
+    @Test fun quicLbExhaustionAfterHandshakeStopsIssuing() {
+        val p = LbPair(QuicLbFixtures.config(keyHex = "0f0e0d0c0b0a09080706050403020102"))
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            assertTrue(localCids(s).size >= 2)
+            p.server.lb!!
+                .routes.current!!
+                .space
+                .spendForTest()
+            assertTrue(c.cids.rotatePeerCid(), "the client retires the ID it used")
+            repeat(20) { p.step() }
+            assertTrue(s.retiredByPeer >= 1, "the server saw the retirement")
+            val live = localCids(s)
+            assertTrue(live.none { (it[0].toInt() and 0xff) ushr 5 == 7 }, "no unroutable ID handed out: ${live.map { hexOf(it) }}")
+            assertTrue(s.cids.singleCid, "the connection stopped issuing")
+            assertEquals(ConnectionState.Confirmed, c.state)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RFC 9000 section 5.1.2: a second change waits until the peer retired what the first one asked for. */
+    @Test fun quicLbBackToBackUpdatesWaitForRetirements() {
+        val p = LbPair(QuicLbFixtures.config(configId = 2))
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 3))
+            p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 4))
+            assertTrue(s.cids.reissuePendingForTest, "the second change waits")
+            assertEquals(1, localCids(s).count { (it[0].toInt() and 0xff) ushr 5 == 3 }, "one ID of the first change so far")
+            repeat(40) { p.step() }
+            assertFalse(s.cids.reissuePendingForTest, "sent once the client retired the earlier IDs")
+            val live = localCids(s)
+            assertTrue(live.isNotEmpty() && live.all { (it[0].toInt() and 0xff) ushr 5 == 4 }, live.map { hexOf(it) }.toString())
+            assertEquals(ConnectionState.Confirmed, c.state)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** An ID two configurations back, still in use, is forwarded to its owner whatever its codepoint. */
+    @Test fun quicLbOwnerOfAnOlderConfigurationsId() {
+        val a = QuicLbFixtures.config(configId = 1)
+        val ec = QuicLbFixtures.endpointConfig(a, loops = 2)
+        val state = QuicLbState(LbNullCrypto, Random(1), a, 2, 8)
+        val loop0 = EndpointCore(ec, Random(10), 0, null, state)
+        val loop1 = EndpointCore(ec, Random(11), 1, null, state)
+        try {
+            val cid = loop1.route.newCid(Random(1), client = false).toByteArray()
+            state.update(QuicLbFixtures.config(configId = 2))
+            state.update(QuicLbFixtures.config(configId = 3))
+            assertEquals(1, QuicLbFixtures.owner(loop0, QuicLbFixtures.shortTo(cid)), "forwarded to loop 1")
+        } finally {
+            loop0.close()
+            loop1.close()
+            state.close()
+        }
+    }
+
+    @Test fun negative_quicLbGroupCoresWithoutSharedState() {
+        assertFailsWith<IllegalArgumentException> {
+            EndpointCore(QuicLbFixtures.endpointConfig(QuicLbFixtures.config(), loops = 2), Random(1), 0)
         }
     }
 
@@ -1205,6 +1284,15 @@ class EndpointCoreTest {
             }
             assertFailsWith<IllegalArgumentException>("another length") {
                 p.server.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(9), 7, null))
+            }
+            val q = LbPair(QuicLbFixtures.config(configId = 2))
+            try {
+                assertFailsWith<IllegalArgumentException>("the codepoint in use with another key") {
+                    q.server.updateLoadBalancer(QuicLbFixtures.config(configId = 2, keyHex = "0f0e0d0c0b0a09080706050403020103"))
+                }
+                q.server.updateLoadBalancer(QuicLbFixtures.config(configId = 2)) // the same configuration again: nothing changes
+            } finally {
+                q.close()
             }
         } finally {
             plain.close()

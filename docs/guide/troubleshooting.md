@@ -314,9 +314,13 @@ datagram per call.
 `QuicEndpointConfig.Builder.build()` refuses a `loadBalancer` whose `1 + serverId + nonceLength` differs from
 `connectionIdLength` ("loadBalancer connection IDs are N bytes…"), a `connectionIdLength` below 8, an endpoint without a
 server, and a plaintext configuration (no `key`) next to a `preferredAddress`. `updateLoadBalancer` throws
-`IllegalStateException` on an endpoint built without `loadBalancer`, and `IllegalArgumentException` for another length or
-for a server ID this endpoint used in clear that is now encrypted, or the other way round (draft-ietf-quic-load-balancers-21
-section 9.7: give the encrypted configuration other server IDs). See [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer).
+`IllegalStateException` on an endpoint built without `loadBalancer` (the Ktor engine: without `quicLoadBalancer`), and
+`IllegalArgumentException` for another length, for a server ID this endpoint used in clear that is now encrypted, or the
+other way round (draft-ietf-quic-load-balancers-21 section 9.7: give the encrypted configuration other server IDs), and for
+a `configId` the current or previous configuration still holds with another key, server ID or nonce length ("configId N
+still names the configuration before it": use another codepoint, or wait one more change). `EndpointStats.loadBalancerNoncesExhausted`
+above 0, with the `Warn` line "QUIC-LB: the nonces of configuration … are spent", means the endpoint issues unroutable IDs:
+roll out a configuration with a new key. See [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer).
 
 ### `UnsupportedOperationException` for `loops > 1`
 
