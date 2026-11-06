@@ -1221,8 +1221,6 @@ internal fun isTransientRefusal(e: Throwable): Boolean {
         failure.code == TransportError.CONNECTION_REFUSED
 }
 
-/** RFC 9110 section 9.2.2. */
-
 /** No connection to an endpoint of the HTTPS records could be set up, before the request went out: try the next one. */
 internal class EndpointUnreachable(
     cause: Throwable,
@@ -1242,5 +1240,6 @@ internal fun isIpLiteral(host: String): Boolean =
     ':' in host || host.startsWith('[') ||
         (host.split('.').let { p -> p.size == 4 && p.all { it.isNotEmpty() && it.length <= 3 && it.all(Char::isDigit) } })
 
+/** RFC 9110 section 9.2.2. */
 internal fun HttpMethod.isIdempotent(): Boolean =
     this in setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Options, HttpMethod.Put, HttpMethod.Delete, HttpMethod("TRACE"))

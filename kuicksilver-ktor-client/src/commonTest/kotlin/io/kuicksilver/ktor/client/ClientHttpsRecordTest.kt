@@ -206,7 +206,7 @@ class ClientHttpsRecordTest {
                     }
                 // the source never answers and the connect timeout is far: the request goes on over TCP after the extra wait
                 client(source, more = { connectTimeout = 120.seconds }).use { c ->
-                    val r = withTimeout(30.seconds) { c.get("https://server.test:$port/") }
+                    val r = withTimeout(5.seconds) { c.get("https://server.test:$port/") } // the extra wait, not the 120 s timeout
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals(FallbackReason.NoAlternative, r.kuicksilverDiagnostics?.fallback)
                     assertTrue(asked.isCompleted, "the source was not asked")
