@@ -65,4 +65,6 @@ release: `KSL_ABI_VERSION 7`, and later 0.3.0 additions go under 7. 72 functions
 (0xff000c: `ksl_udp_open` whose bind was refused; other steps keep their codes), and `ksl_tcp_read` answering `KSL_OK`
 with nothing read when it must write first and the pair is full (it answered `KSL_WANT_READ`), and the local-address calls of a
 wildcard UDP socket: `KSL_UDP_PKTINFO`, `ksl_udp_send_src` (a source per slot) and `ksl_udp_recv_dst` (each datagram's
-destination), additive (ADR-0006, "Local addresses on a wildcard bind"); 74 functions.
+destination), additive (ADR-0006, "Local addresses on a wildcard bind"); 74 functions. Also additive under 7:
+`ksl_chain_level` and `KSL_OPT_LEVEL_AFTER_PAUSE` (OpenSSL's security level on the path the platform verifier built,
+checked after its yes under `TrustConfig.Platform`, instead of on the presented chain before the pause; T.5b); 75 functions.

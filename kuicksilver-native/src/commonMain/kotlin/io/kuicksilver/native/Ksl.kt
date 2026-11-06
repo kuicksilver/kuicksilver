@@ -114,6 +114,17 @@ public expect object Ksl {
 
     public fun ctxLastError(ctx: Long): KslError
 
+    /**
+     * OpenSSL's default security level (2, 112 bits) on [chainDer], leaf first (`ksl_chain_level`): with [builtPath] the path a
+     * verifier built, its trust anchor last (every key, every signature but the anchor's, as OpenSSL checks its own path);
+     * without, the chain as the peer sent it (the walk run before the pause). Returns 0 when it passes, the X509_V_ERR_* of the
+     * first weak key or signature when it does not, -1 when the input holds no certificate or does not parse.
+     */
+    public fun chainLevel(
+        chainDer: List<ByteArray>,
+        builtPath: Boolean,
+    ): Int
+
     // session
     public fun sslNew(
         ctx: Long,

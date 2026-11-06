@@ -115,6 +115,11 @@ public actual object Ksl {
         atEpochSeconds: Long,
     ): Int = KslNative.ctxVerifyChain(ctx, frameDerList(chainDer), name, atEpochSeconds)
 
+    public actual fun chainLevel(
+        chainDer: List<ByteArray>,
+        builtPath: Boolean,
+    ): Int = KslNative.chainLevel(frameDerList(chainDer), builtPath)
+
     public actual fun ctxLastError(ctx: Long): KslError {
         val o = IntArray(1)
         val m = KslNative.ctxLastError(ctx, o)

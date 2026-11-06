@@ -255,11 +255,12 @@ static ksl_ctx *weak_server_ctx(blob chain, const char *leaf) {
     if (ksl_ctx_set_identity(sc, chain.buf, chain.len, k, kl) != KSL_OK) { uint32_t e; char m[256]; ksl_ctx_last_error(sc, &e, m, sizeof m); printf("  identity %s: %s\n", leaf, m); CHECK(0, "weak identity loads at level 0"); }
     free(k); free(chain.buf); return sc;
 }
-static int weak_pauses;
+static int weak_pauses, weak_level_after_pause;
 static int weak_on_verify(ksl_ssl *s, int rc, void *a) { (void)a; if (rc != KSL_WANT_VERIFY) return 1; weak_pauses++; return ksl_ssl_verify_resume(s, 1, 0) == KSL_OK; }
 /* the client's local alert and X509 error after a handshake against chain; pause mode accepts at the pause (the platform's yes) */
 static void weak_run(blob chain, const char *leaf, const char *root, int mode, int generic, int *alert, int *verr, int *done, int *pauses) {
     ksl_ctx *sc = weak_server_ctx(chain, leaf), *cc = client_ctx(root, mode); if (generic) ksl_ctx_set_option(cc, KSL_OPT_GENERIC_ALERTS, 1);
+    if (weak_level_after_pause) CHECK(ksl_ctx_set_option(cc, KSL_OPT_LEVEL_AFTER_PAUSE, 1) == KSL_OK, "level after pause set");
     ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_QUIC), *s = ksl_ssl_new(sc, KSL_MODE_QUIC);
     ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1); ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
     ksl_quic_set_transport_params(c, TP, sizeof TP); ksl_quic_set_transport_params(s, TP, sizeof TP);
@@ -284,7 +285,7 @@ static void test_chain_security_level(void) {
     SECTION("verify_peer_chain_security_level");
     for (size_t i = 0; i < sizeof WEAK_CASES / sizeof WEAK_CASES[0]; i++) {
         const weak_case *w = &WEAK_CASES[i]; int al, ve, dn, pa; char msg[160];
-        /* pause mode (TrustConfig.Platform off Linux, Custom, Tofu): ksl checks before the platform is asked */
+        /* pause mode (Custom, Tofu; Platform off Linux checks the path the platform built instead, verify_built_path_level): ksl checks before the pause */
         weak_run(weak_chain(w), w->leaf, NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
         snprintf(msg, sizeof msg, "pause: %s -> %s", w->what, w->verr ? "bad_certificate before the pause" : "reaches the pause, accepted");
         if (w->verr) CHECK(!dn && al == 42 && ve == w->verr && pa == 0, msg); else CHECK(dn && pa == 1, msg);
@@ -411,4 +412,54 @@ static void test_chain_security_bounds(void) {
     }
     ERR_clear_error(); END();
 }
-void run_verify_security_level(void) { test_chain_security_level(); test_own_identity_security_level(); test_chain_security_bounds(); }
+/* ---- T.5b: under TrustConfig.Platform the level holds on the path the platform built, not on what the peer sent ---- */
+static int level_of(int built, int n, ...) {
+    blob b = {0}; va_list ap; va_start(ap, n);
+    for (int i = 0; i < n; i++) { blob one = chain_of(1, va_arg(ap, const char *)); b.buf = realloc(b.buf, b.len + one.len); memcpy(b.buf + b.len, one.buf, one.len); b.len += one.len; free(one.buf); }
+    va_end(ap); int r = ksl_chain_level(b.buf, b.len, built); free(b.buf); return r;
+}
+static void test_built_path_level(void) {
+    SECTION("verify_built_path_level");
+    /* L <- I <- R plus X (R's name and key, signed with SHA-1 by another root): a walk over the presented chain reaches X ... */
+    CHECK(level_of(0, 3, W("leaf-via-cross-mid"), W("cross-mid"), W("cross-root-by-sha1")) == X509_V_ERR_CA_MD_TOO_WEAK,
+          "negative: presented L, I, X: the walk reaches the SHA-1 cross-certificate -> CA_MD_TOO_WEAK");
+    /* ... the path a platform anchored at R built does not */
+    CHECK(level_of(1, 3, W("leaf-via-cross-mid"), W("cross-mid"), W("cross-root")) == X509_V_OK, "built path L, I, R: X is not on it -> accepted");
+    /* a weak certificate on the built path is refused with the error OpenSSL's check_auth_level gives */
+    CHECK(level_of(1, 3, W("leaf-via-sha1"), W("mid-sha1"), W("weak-root")) == X509_V_ERR_CA_MD_TOO_WEAK, "negative: built path through a SHA-1 intermediate -> CA_MD_TOO_WEAK");
+    CHECK(level_of(1, 3, W("leaf-via-rsa1024"), W("mid-rsa1024"), W("weak-root")) == X509_V_ERR_CA_KEY_TOO_SMALL, "negative: built path through a 1024-bit intermediate -> CA_KEY_TOO_SMALL");
+    CHECK(level_of(1, 3, W("leaf-via-p192"), W("mid-p192"), W("weak-root")) == X509_V_ERR_CA_KEY_TOO_SMALL, "negative: built path through a P-192 intermediate -> CA_KEY_TOO_SMALL");
+    CHECK(level_of(1, 2, W("leaf-rsa1024"), W("weak-root")) == X509_V_ERR_EE_KEY_TOO_SMALL, "negative: a 1024-bit leaf on the built path -> EE_KEY_TOO_SMALL");
+    CHECK(level_of(1, 2, W("leaf-sha1"), W("weak-root")) == X509_V_ERR_CA_MD_TOO_WEAK, "negative: a SHA-1-signed leaf on the built path -> CA_MD_TOO_WEAK");
+    CHECK(level_of(1, 2, W("leaf-md5"), W("rsa-root")) == X509_V_ERR_CA_MD_TOO_WEAK, "negative: an MD5-signed leaf on the built path -> CA_MD_TOO_WEAK");
+    CHECK(level_of(1, 3, W("leaf-via-p224"), W("mid-p224"), W("weak-root")) == X509_V_OK, "built path through a P-224 intermediate (112 bits, the floor) -> accepted");
+    /* the anchor: its signature is not checked (it begins the path, even when it is not self-signed), its key is */
+    CHECK(level_of(1, 2, W("leaf-via-sha1"), W("mid-sha1")) == X509_V_OK, "a SHA-1-signed intermediate that is the trust anchor -> accepted");
+    CHECK(level_of(0, 2, W("leaf-via-sha1"), W("mid-sha1")) == X509_V_ERR_CA_MD_TOO_WEAK, "negative: the same certificates as a presented chain -> CA_MD_TOO_WEAK");
+    CHECK(level_of(1, 2, W("leaf-under-sha1-root"), W("sha1-root")) == X509_V_OK, "a SHA-1 self-signed root as the anchor -> accepted");
+    CHECK(level_of(1, 2, W("leaf-under-rsa1024-root"), W("rsa1024-root")) == X509_V_ERR_CA_KEY_TOO_SMALL, "negative: a 1024-bit anchor -> CA_KEY_TOO_SMALL");
+    CHECK(level_of(1, 1, W("leaf-sha1")) == X509_V_OK, "a leaf that is itself the anchor: its signature is not checked");
+    CHECK(level_of(1, 1, W("self-signed-rsa1024")) == X509_V_ERR_EE_KEY_TOO_SMALL, "negative: a 1024-bit leaf that is itself the anchor -> EE_KEY_TOO_SMALL");
+    /* unusable input */
+    { uint8_t bad[] = {0, 0, 0, 9, 1, 2}; CHECK(ksl_chain_level(bad, sizeof bad, 1) == -1 && ksl_chain_level(NULL, 0, 1) == -1, "negative: bad framing or no certificate -> -1"); }
+    /* the pause: with KSL_OPT_LEVEL_AFTER_PAUSE the presented chain reaches the verifier, which holds its own path to the level */
+    {
+        int al, ve, dn, pa;
+        weak_level_after_pause = 1;
+        weak_run(chain_of(3, W("leaf-via-cross-mid"), W("cross-mid"), W("cross-root-by-sha1")), W("leaf-via-cross-mid"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+        CHECK(dn && pa == 1, "pause + level after pause: L, I, X reaches the verifier and is accepted on its yes");
+        weak_run(chain_of(1, W("leaf-rsa1024")), W("leaf-rsa1024"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+        CHECK(pa == 1, "pause + level after pause: a 1024-bit leaf reaches the verifier (it refuses it on its built path)");
+        weak_level_after_pause = 0;
+        weak_run(chain_of(3, W("leaf-via-cross-mid"), W("cross-mid"), W("cross-root-by-sha1")), W("leaf-via-cross-mid"), NULL, KSL_VERIFY_PAUSE, 0, &al, &ve, &dn, &pa);
+        CHECK(!dn && al == 42 && ve == X509_V_ERR_CA_MD_TOO_WEAK && pa == 0, "negative: pause without it (Custom, Tofu): L, I, X -> bad_certificate before the pause");
+    }
+    {
+        ksl_ctx *sc = ksl_ctx_new(KSL_SERVER), *cc = ksl_ctx_new(KSL_CLIENT);
+        CHECK(ksl_ctx_set_option(sc, KSL_OPT_LEVEL_AFTER_PAUSE, 1) == KSL_ERROR, "negative: level after pause is client-only");
+        CHECK(ksl_ctx_set_option(cc, KSL_OPT_LEVEL_AFTER_PAUSE, 1) == KSL_OK, "level after pause on a client");
+        ksl_ctx_free(sc); ksl_ctx_free(cc);
+    }
+    ERR_clear_error(); END();
+}
+void run_verify_security_level(void) { test_chain_security_level(); test_own_identity_security_level(); test_chain_security_bounds(); test_built_path_level(); }

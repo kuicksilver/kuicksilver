@@ -61,8 +61,9 @@ static int alert_to_x509_error(int alert) {
 }
 /* OpenSSL's security level on a certificate chain as it was sent (or, for our own identity, configured): the checks
    X509_verify_cert runs on its own path (x509_vfy.c check_key_level, check_sig_level, check_auth_level; at the default level 2,
-   112 bits), for the pause path, where the platform or the application decides and the JDK, Android and Windows verifiers
-   accept 1024-bit RSA, and for ksl_ctx_set_identity_pkey, where OpenSSL checks only the keys (ssl_security_cert).
+   112 bits), for the pause path, where the application decides (Custom, Tofu) or the platform did not say which path it built,
+   and for ksl_ctx_set_identity_pkey, where OpenSSL checks only the keys (ssl_security_cert). Under TrustConfig.Platform the
+   path the platform built is checked instead (built_path_level, KSL_OPT_LEVEL_AFTER_PAUSE).
 
    Which certificates: every one reachable from the leaf (index 0) through issuer edges that hold, an edge being a certificate
    whose name and key identifiers fit (X509_check_issued) AND whose key verifies the signature (X509_verify). Name matching
@@ -70,7 +71,7 @@ static int alert_to_x509_error(int alert) {
    with a strong key) and end the walk there, so the weak intermediate behind it was never looked at. Each certificate is
    visited once; every issuer that verifies is followed, so cross-certificates (two certificates with one key) are all
    checked. This is stricter than OpenSSL, which checks only the path it builds and stops at the first certificate in its
-   trust store (the owner's choice: a presented certificate above the platform's anchor counts here); certificates on no
+   trust store (the owner's choice: a presented certificate above the application's anchor counts here); certificates on no
    verified path from the leaf are not looked at. Only X509_check_issued edges are followed: above a certificate whose AKID
    does not match its real issuer's SKID (a CA's misissuance) nothing is checked; a peer cannot make such a certificate, it
    would need the CA's key to sign it.
@@ -118,6 +119,33 @@ int ksl_chain_security(int level, STACK_OF(X509) *chain) {
     free(seen); free(queue);
     return weak_chain(err);
 }
+/* The level on a path a verifier built, leaf first and its trust anchor last (T.5b: TrustConfig.Platform, where the platform
+   decides which of the certificates the peer sent it uses): x509_vfy.c check_auth_level, which X509_verify_cert runs on its own
+   path after the leaf's key (EE_KEY_TOO_SMALL): every other key, the anchor's included (CA_KEY_TOO_SMALL), and every
+   signature but the anchor's at index n - 1 (CA_MD_TOO_WEAK), whether or not the anchor is self-signed: a trust anchor begins
+   the path (RFC 9846 section 4.5.1.3: SHA-1 and MD5 may be accepted for "certificates that are self-signed or are trust
+   anchors"). The same minimum bits as ksl_chain_security; at most 101 certificates (OpenSSL's default verify depth). */
+static int built_path_level(int level, STACK_OF(X509) *path) {
+    static const int minbits[] = {80, 112, 128, 192, 256};
+    int n = sk_X509_num(path);
+    if (level <= 0 || n <= 0) return X509_V_OK;
+    if (level > 5) level = 5;
+    if (n > 101) return X509_V_ERR_CERT_CHAIN_TOO_LONG;
+    int min = minbits[level - 1];
+    for (int i = 0; i < n; i++) {
+        X509 *x = sk_X509_value(path, i); EVP_PKEY *pk = X509_get0_pubkey(x); int bits = -1;
+        if (pk == NULL || EVP_PKEY_get_security_bits(pk) < min) return weak_chain(i == 0 ? X509_V_ERR_EE_KEY_TOO_SMALL : X509_V_ERR_CA_KEY_TOO_SMALL);
+        if (i < n - 1 && (!X509_get_signature_info(x, NULL, NULL, &bits, NULL) || bits < min)) return weak_chain(X509_V_ERR_CA_MD_TOO_WEAK);
+    }
+    return X509_V_OK;
+}
+int ksl_chain_level(const uint8_t *chain, size_t chain_len, int built) {
+    ERR_clear_error();
+    STACK_OF(X509) *sk = NULL;
+    if (chain == NULL || chain_len == 0 || !ksl_parse_chain(chain, chain_len, &sk) || sk_X509_num(sk) == 0) { sk_X509_pop_free(sk, X509_free); ERR_clear_error(); return -1; }
+    int r = built ? built_path_level(OPENSSL_TLS_SECURITY_LEVEL, sk) : ksl_chain_security(OPENSSL_TLS_SECURITY_LEVEL, sk);
+    sk_X509_pop_free(sk, X509_free); ERR_clear_error(); return r;
+}
 static int fail_with(ksl_ssl *s, X509_STORE_CTX *xctx, int x509_err) {
     s->verify_err = x509_err;
     X509_STORE_CTX_set_error(xctx, s->owner->generic_alerts ? X509_V_ERR_APPLICATION_VERIFICATION : x509_err);
@@ -143,8 +171,10 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     if (client && s->verify_mode == KSL_VERIFY_PAUSE) {
         /* statem_clnt.c: the pause happens only when the callback returns 1 AND retry_verify is set; 0 is a plain failure. */
         if (s->verify_pending == 0) {
-            /* refused before the pause: the platform or the application is never asked about a chain below the security level */
-            int weak = ksl_chain_security(SSL_get_security_level(ssl), s->presented_chain);
+            /* refused before the pause: the application (Custom, Tofu) is never asked about a chain below the security level. With
+               KSL_OPT_LEVEL_AFTER_PAUSE (Platform) the caller holds the path the platform built to it instead (ksl_chain_level): a
+               certificate the peer sent that the platform does not use (an extra cross-certificate) does not count, as on OpenSSL's path */
+            int weak = s->owner->level_after_pause ? X509_V_OK : ksl_chain_security(SSL_get_security_level(ssl), s->presented_chain);
             if (weak != X509_V_OK) { s->verify_pending = 3; return fail_with(s, xctx, weak); }
             s->verify_pending = 1; (void)SSL_set_retry_verify(ssl); return 1; }
         if (s->verify_pending == 1) { (void)SSL_set_retry_verify(ssl); return 1; }
