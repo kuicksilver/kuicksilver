@@ -48,8 +48,8 @@ public interface QuicConnection : AutoCloseable {
      * waits for the confirmation (it follows completion within a round trip) and throws the connection's
      * [QuicException.ConnectionLost] if it ends first; [MigrationRefusedException] (an IllegalStateException) when the server
      * advertised `disable_active_migration` or uses zero-length connection IDs (a new path would be linkable to the old one,
-     * RFC 9000 section 9.5), IllegalStateException beyond four paths. The socket is closed then, as on any other failure or cancellation before the path
-     * took it over.
+     * RFC 9000 section 9.5), IllegalStateException beyond four paths. The socket is closed then, as on any other failure or
+     * cancellation before the path took it over.
      */
     public suspend fun addPath(io: DatagramIo): QuicPath
 

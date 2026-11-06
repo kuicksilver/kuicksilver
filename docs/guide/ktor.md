@@ -693,7 +693,8 @@ What the engine does:
   the new socket), and every new path is validated before the connection sends on it. A refused or failed move leaves
   the connection where it was;
 - every step reaches `KuicksilverEventListener.connectionMigrated(origin, event)`: `Migrated`, `Failed` (also logged at
-  `Info`, or at `Debug` when the server does not allow migration), `NetworkLost` (the connection waits; its idle timeout decides if no network comes back) and `SourceFailed`;
+  `Info`, or at `Debug` when the server does not allow migration), `NetworkLost` (the connection waits; its idle
+  timeout decides if no network comes back) and `SourceFailed`;
 - a migration neither marks the alternative broken nor forgets marks; `networkId` is separate, which is why the sample
   gives it the same source, so that a new network also gets a fresh chance at alternatives marked broken on the old one.
 

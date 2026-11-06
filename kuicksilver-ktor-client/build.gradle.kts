@@ -162,7 +162,9 @@ tasks.register("androidMigrationDeviceTest") {
             val out = log.get().asFile.readText()
             logger.lifecycle(out)
             // a run with failures prints "FAILURES!!!"; one that crashed prints neither line
-            if (!Regex("""OK \(\d+ tests?\)""").containsMatchIn(out)) throw GradleException("ClientMigrationAndroidTest failed on the device")
+            if (!Regex("""OK \(\d+ tests?\)""").containsMatchIn(out)) {
+                throw GradleException("ClientMigrationAndroidTest failed on the device; see ${log.get().asFile}")
+            }
         } finally {
             androidMigrationPeer.get().stop()
         }

@@ -18,7 +18,8 @@ import kotlinx.coroutines.CoroutineScope
  * The engine calls [start] for every pooled HTTP/3 connection once its handshake has completed (a 0-RTT connection is
  * handed to requests earlier, its migration waits), collects the migrator's [NetworkMigrator.events] into
  * [KuicksilverEventListener.connectionMigrated] (a [MigrationEvent.Failed] and a [MigrationEvent.SourceFailed] are also
- * logged, at `Info`; the transport's refusal of a server that does not allow migration at `Debug`), starts it unless [start] already did, and closes it when the connection ends or the client is closed.
+ * logged, at `Info`; the transport's refusal of a server that does not allow migration at `Debug`), starts it unless
+ * [start] already did, and closes it when the connection ends or the client is closed.
  * The QUIC rules hold whatever the hook does: the transport refuses a new path before the handshake is confirmed, towards a
  * server that sent `disable_active_migration` or uses zero-length connection IDs (a [MigrationEvent.Failed] then, no packet
  * leaves the new socket), validates every new path before the connection sends on it, and keeps the connection on its

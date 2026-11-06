@@ -24,8 +24,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   unbound socket over the new network and the server follows that as a NAT rebinding); the transport still
   refuses to move before confirmation, towards a server that sent `disable_active_migration` or uses zero-length
   connection IDs, and onto a path that does not validate. New `KuicksilverEventListener.connectionMigrated(origin,
-  event)` reports each step (a failed move is also logged at `Info`, a server that does not allow migration at `Debug`). Off by default, so 0.2's behaviour is unchanged;
-  `networkId` stays separate. HTTP/1.1, HTTP/2 and the connections of WebTransport sessions do not migrate.
+  event)` reports each step (a failed move is also logged at `Info`, a server that does not allow migration at
+  `Debug`). Off by default, so 0.2's behaviour is unchanged; `networkId` stays separate. HTTP/1.1, HTTP/2 and the
+  connections of WebTransport sessions do not migrate.
 - QUIC: experimental `MigrationRefusedException` (an `IllegalStateException`, as before) with a `MigrationRefusal`
   reason (`NotConfirmed`, `DisabledByPeer`, `ZeroLengthConnectionId`) is what `QuicConnection.addPath`, `migrate` and a
   `NetworkMigrator` throw or report when the transport refuses a new path (RFC 9000 sections 9 and 9.5).
