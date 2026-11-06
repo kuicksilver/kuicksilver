@@ -10,12 +10,15 @@ import io.kuicksilver.quic.wire.FrameEncoder
 import io.kuicksilver.quic.wire.VarInt
 import io.kuicksilver.quic.wire.WireWriter
 
-/** Received DATAGRAM payloads waiting for the application: a ring of [capacity] pooled buffers; a full ring drops the oldest (bounded memory, threat-model 3.2). */
+/**
+ * Received DATAGRAM payloads waiting for the application: a ring of [capacity] pooled buffers; a full ring drops the oldest
+ * (bounded memory, threat-model 3.2). The ring itself is made by the first datagram: most connections never receive one.
+ */
 internal class DatagramQueue(
     private val capacity: Int,
 ) {
-    private val slots = arrayOfNulls<ByteArray>(capacity)
-    private val lengths = IntArray(capacity)
+    private var slots = NO_SLOTS
+    private var lengths = NO_LENGTHS
     private var head = 0
     var size: Int = 0
         private set
@@ -26,6 +29,10 @@ internal class DatagramQueue(
         off: Int,
         len: Int,
     ): Boolean {
+        if (slots.isEmpty()) {
+            slots = arrayOfNulls(capacity)
+            lengths = IntArray(capacity)
+        }
         var dropped = false
         if (size == capacity) {
             head = (head + 1) % capacity
@@ -51,6 +58,14 @@ internal class DatagramQueue(
         head = (head + 1) % capacity
         size--
         return len
+    }
+
+    /** Test hook: whether the ring has been made. */
+    internal val allocatedForTest: Boolean get() = slots.isNotEmpty()
+
+    private companion object {
+        val NO_SLOTS = arrayOfNulls<ByteArray>(0)
+        val NO_LENGTHS = IntArray(0)
     }
 }
 

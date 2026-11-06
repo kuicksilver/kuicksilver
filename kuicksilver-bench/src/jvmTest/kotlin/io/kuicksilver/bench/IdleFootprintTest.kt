@@ -26,7 +26,14 @@ class IdleFootprintTest {
         assertTrue(bytes <= HTTP3_CEILING, "an idle HTTP/3 server connection holds $bytes bytes (ceiling $HTTP3_CEILING); see its inventory above")
     }
 
+    /** A QUIC server core after the handshake, no stream open (the benchmark's core section). */
+    @Test fun anIdleQuicServerCoreStaysUnderItsCeiling() {
+        val bytes = inventory("core", "server core")
+        assertTrue(bytes <= CORE_CEILING, "an idle QUIC server core holds $bytes bytes (ceiling $CORE_CEILING); see its inventory above")
+    }
+
     private companion object {
         const val HTTP3_CEILING = 120_000L
+        const val CORE_CEILING = 35_500L
     }
 }
