@@ -618,6 +618,33 @@ the rewrite when a repeated header only refreshes the expiry, and the engine wri
 without `persist=1` are dropped when `networkId()` reports a new network (RFC 7838 section 2.2); `clearOnNetworkChange =
 false` keeps them.
 
+### HTTPS records (experimental)
+
+`http3 { httpsRecords = HttpsRecordSource.System }` (or `HttpsRecordSource.Exchange { query -> ... }` for your own
+DNS-over-HTTPS client) also looks up the origin's HTTPS resource records (RFC 9460) in `Auto` mode, so the first request
+to an origin that publishes one with `alpn=h3` races HTTP/3 at once instead of waiting for an `Alt-Svc` header, as
+browsers do. Off by default. The rules:
+
+- only for an `https://` request to a host name with no cached `Alt-Svc` alternative (a cached one wins and no lookup is
+  made, RFC 9460 section 9.3); never for `Preferred`, `H3Only`, `quicHints`, `http://` URLs or IP addresses;
+- the name asked is the host for port 443, `_<port>._https.<host>` otherwise (section 9.1); AliasMode records are
+  followed (at most 8 steps, a loop stops the chain), then the ServiceMode record with the lowest priority whose `alpn`
+  has `h3` gives the target and its `port` (the origin's when absent); the address hints are not used, `ech` is not
+  (a record that requires it is skipped), and a malformed record makes the whole answer unusable (section 2.2);
+- the request waits for the records while the origin's addresses resolve and at most `httpsRecordExtraWait` (50 ms)
+  longer; a lookup that answers later, fails or times out leaves the request on TCP as without records, and a late
+  answer is cached for the next request;
+- the target races TCP to the origin as an `Alt-Svc` alternative does ([Racing and fallback](#racing-and-fallback)),
+  without `Alt-Used`; the certificate is checked against the origin's name whatever the record says, and a target that
+  fails is marked broken like an alternative (`httpsRecordUsed` and `altSvcMarkedBroken` report both);
+- answers are cached by their TTL (60 s to a day; "no records" for 5 minutes; at most 1000 names) and forgotten when
+  `networkId()` reports a new network; a failed lookup is not cached, and one lookup per name runs at a time, for at
+  most the connect timeout (30 s at most).
+
+`HttpsRecordSource.System` asks the operating system's resolver. In this version it has no answers on any platform
+yet (every lookup counts as failed, so requests behave as without records); `HttpsRecordSource.Exchange` works
+everywhere. An `http://` URL is not upgraded to `https://` because of a record (RFC 9460 section 9.5 is not done).
+
 ### Racing and fallback
 
 When HTTP/3 is an option (`Preferred`, a QUIC hint, or a live Alt-Svc alternative) and no HTTP/3 connection to it is

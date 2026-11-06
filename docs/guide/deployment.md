@@ -78,8 +78,10 @@ Clients that find the UDP port closed wait for their QUIC attempt to time out be
 engine's header entirely: then only clients that try HTTP/3 without being told (the Kuicksilver client's `Preferred`
 mode or `quicHints`, `curl --http3`) use it.
 
-The engine does not publish DNS HTTPS records (RFC 9460). The Kuicksilver client does not look them up yet either
-(`AlternativeSource.HttpsRecord` is reserved for that). Publishing one in your DNS zone is up to you.
+The engine does not publish DNS HTTPS records (RFC 9460); publishing one in your DNS zone is up to you. A record such as
+`example.com. 300 IN HTTPS 1 . alpn=h3,h2` lets clients that look them up (browsers, and the Kuicksilver client with
+`http3 { httpsRecords = ... }`, see [HTTPS records](ktor.md#https-records-experimental)) use HTTP/3 from the first
+request; for a port other than 443 the name is `_<port>._https.<host>`.
 
 ## Firewalls and security groups
 

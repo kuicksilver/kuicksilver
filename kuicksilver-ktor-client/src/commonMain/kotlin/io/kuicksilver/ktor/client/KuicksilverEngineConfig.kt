@@ -69,6 +69,29 @@ public class Http3ClientConfig {
     public var altSvcStore: AltSvcStore = InMemoryAltSvcStore()
 
     /**
+     * Where [Http3DiscoveryMode.Auto] looks up HTTPS resource records (RFC 9460; docs/guide/ktor.md, "HTTPS records"):
+     * [HttpsRecordSource.Off] (the default), the system resolver ([HttpsRecordSource.System]) or your DNS-over-HTTPS
+     * exchange ([HttpsRecordSource.Exchange]). An `https://` request to a host name with no cached `Alt-Svc` alternative
+     * asks for the origin's records (the name for port 443, `_<port>._https.<name>` otherwise), follows AliasMode records,
+     * and when a ServiceMode record offers `h3` in its `alpn`, races HTTP/3 to its target (the record's `port`, else the
+     * origin's) against TCP to the origin, as for an `Alt-Svc` alternative; the certificate is checked against the origin's
+     * name whatever the target. The address hints are not used, nor is `ech` (a record that requires it is skipped). A
+     * cached `Alt-Svc` alternative wins and no lookup is made, nor is one for [Http3DiscoveryMode.Preferred],
+     * [Http3DiscoveryMode.H3Only], [quicHints], `http://` URLs or IP addresses. Answers are cached by their TTL (60 s to
+     * 1 day; 5 minutes for "no records"; at most 1000 names) until [networkId] changes; a failed lookup is not cached.
+     */
+    @ExperimentalKuicksilverApi
+    public var httpsRecords: HttpsRecordSource = HttpsRecordSource.Off
+
+    /**
+     * How long a request waits for the HTTPS records after the origin's addresses resolved (50 ms by default, as Chromium):
+     * an answer that comes later is cached for the next request, and this one goes on without records. 0 to 1 s;
+     * any other value fails the engine's creation with [IllegalArgumentException]. The connect timeout bounds the whole wait.
+     */
+    @ExperimentalKuicksilverApi
+    public var httpsRecordExtraWait: Duration = 50.milliseconds
+
+    /**
      * Forget alternatives without `persist=1` when [networkId] reports a new network, as RFC 7838 section 2.2 says a client
      * SHOULD; true by default (before 0.2.1, false). False keeps them across networks.
      */

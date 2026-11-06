@@ -20,6 +20,8 @@ import io.ktor.http.isSecure
 import io.ktor.util.date.getTimeMillis
 import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.http3.Http3Exception
+import io.kuicksilver.ktor.client.dns.HttpsEndpoint
+import io.kuicksilver.ktor.client.dns.HttpsRecords
 import io.kuicksilver.ktor.client.h1.H1Pool
 import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
@@ -42,12 +44,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /** `HttpClient(Kuicksilver)`: HTTP/3, HTTP/2 and HTTP/1.1 over TLS 1.3 (docs/guide/ktor.md). */
 @OptIn(InternalAPI::class, DelicateCoroutinesApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -66,12 +73,33 @@ internal class KuicksilverEngine(
      */
     override val coroutineContext: CoroutineContext = super.coroutineContext.let { it + SupervisorJob(it[Job]) }
 
+    init {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val extraWait = config.http3.httpsRecordExtraWait
+        require(extraWait >= Duration.ZERO && extraWait <= MAX_HTTPS_RECORD_EXTRA_WAIT) {
+            "httpsRecordExtraWait must be 0..1 s, was $extraWait"
+        }
+    }
+
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private val selector = engineSelector(dispatcher) // a socket closed on it is released at once (EngineSelector.kt)
     private val engineJob = SupervisorJob(coroutineContext[Job])
 
     /** Background work that outlives a call (a QUIC setup that lost the race); completed by [close] so the cleanup can run. */
     private val engineScope = CoroutineScope(coroutineContext + engineJob)
+
+    /**
+     * The HTTPS record lookups (`http3.httpsRecords`, RFC 9460), null when off; a lookup lives at most the connect timeout
+     * (30 s when that is longer), so a resolver that never answers holds nothing for long. Internal for tests.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    internal val httpsRecordsForTest: HttpsRecords? =
+        minOf(config.connectTimeout, MAX_HTTPS_RECORD_QUERY).let { timeout ->
+            config.http3.httpsRecords
+                .lookup(timeout)
+                ?.let { HttpsRecords(it, engineScope, timeout, ::getTimeMillis) }
+        }
+    private val httpsRecords: HttpsRecords? get() = httpsRecordsForTest
 
     /** The [KuicksilverEventListener] of the configuration, behind a guard that never fails a call. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -379,20 +407,29 @@ internal class KuicksilverEngine(
     /** `HttpClient.closeHttp3Connections()`: GOAWAY on every HTTP/3 connection and WebTransport session ([H3Pool.goAwayAll]). */
     internal suspend fun closeHttp3Connections() = h3.goAwayAll(engineScope)
 
-    /** A new network (`networkId`) forgets broken marks, QUIC confirmation and, if asked, non-persistent alternatives. */
-    private suspend fun checkNetwork(): String? =
-        altSvcUpdate {
-            val id = config.http3.networkId()
-            if (networkSeen &&
-                id != lastNetwork
-            ) {
-                brokenAltSvc.onNetworkChanged()
-                altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
+    /**
+     * A new network (`networkId`) forgets broken marks, QUIC confirmation, the HTTPS records and, if asked, non-persistent
+     * alternatives.
+     */
+    private suspend fun checkNetwork(): String? {
+        var changed = false
+        val network =
+            altSvcUpdate {
+                val id = config.http3.networkId()
+                if (networkSeen &&
+                    id != lastNetwork
+                ) {
+                    brokenAltSvc.onNetworkChanged()
+                    altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
+                    changed = true
+                }
+                networkSeen = true
+                lastNetwork = id
+                id
             }
-            networkSeen = true
-            lastNetwork = id
-            id
-        }
+        if (changed) httpsRecords?.onNetworkChanged()
+        return network
+    }
 
     /**
      * Runs [block] under [altSvcLock], then writes the store's new content, if any, outside it (threat-model 3.18). A
@@ -417,11 +454,11 @@ internal class KuicksilverEngine(
         network: String?,
         extraHeaders: List<Pair<String, String>>,
         d: ProtocolDiagnostics,
+        // one resolution for both sides of the race and a fallback after it (RFC 8305 section 3)
+        dns: RequestDns = config.newRequestDns(),
     ): HttpResponseData {
         val origin = originKey(data.url)
         val alt = "${t.host}:${t.port}"
-        // one resolution for both sides of the race and a fallback after it (RFC 8305 section 3)
-        val dns = config.newRequestDns()
         val (broken, confirmed, rtt) =
             altSvcLock.withLock {
                 Triple(brokenAltSvc.brokenReason(origin, alt), brokenAltSvc.quicConfirmedOn(network), srtt[origin])
@@ -588,6 +625,29 @@ internal class KuicksilverEngine(
         val url = data.url
         val alt = altSvcUpdate { altSvc.h3For(url) }
         var misdirected = false
+        // no cached alternative: the origin's HTTPS records, when looked up (RFC 9460; a cached Alt-Svc wins, section 9.3)
+        val records = httpsRecords
+        var dns: RequestDns? = null
+        var recordForWebSocket = false
+        if (alt == null && records != null && !isIpLiteral(url.host)) {
+            val requestDns = config.newRequestDns().also { dns = it }
+            val ep = httpsEndpoint(records, url, requestDns)
+            if (ep != null) {
+                // the certificate is still checked against the origin's name (sni): the record only says where to connect
+                val t = H3Target(url.host, ep.host, ep.port)
+                d.alternative(ep.host, ep.port, AlternativeSource.HttpsRecord)
+                if (!webSocket || h3.canConnectProtocol(t)) {
+                    events.emit("httpsRecordUsed") { httpsRecordUsed(data, "${uriHost(ep.host)}:${ep.port}") }
+                    // no Alt-Used: that header names an Alt-Svc alternative (RFC 7838 section 5)
+                    val r = raced(t, data, callContext, network, emptyList(), d, requestDns)
+                    altSvcUpdate {
+                        altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
+                    }
+                    return r
+                }
+                recordForWebSocket = true
+            }
+        }
         if (alt != null) {
             val altHost = alt.host ?: url.host
             val t = H3Target(url.host, altHost, alt.port)
@@ -622,14 +682,56 @@ internal class KuicksilverEngine(
                 data,
                 callContext,
                 // after the alternative's 421 it is gone: no alternative, whatever the request (a WebSocket included)
-                if (alt != null && webSocket && !misdirected) ProtocolReason.WebSocket else ProtocolReason.NoAlternative,
+                if ((alt != null && webSocket && !misdirected) ||
+                    recordForWebSocket
+                ) {
+                    ProtocolReason.WebSocket
+                } else {
+                    ProtocolReason.NoAlternative
+                },
                 d,
+                dns = dns ?: config.newRequestDns(),
             ) { if (misdirected && d.fallback != FallbackReason.H2Refused) d.fallback = FallbackReason.MisdirectedRequest }
         altSvcUpdate {
             altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
         }
         return r
     }
+
+    /**
+     * The h3 endpoint of [url]'s HTTPS records, waiting for them while the origin's addresses resolve (into [dns], for the
+     * TCP side) and at most `httpsRecordExtraWait` longer, all within the connect timeout; null when there is none by then.
+     * A lookup still running goes on, and its answer is cached for the next request.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    private suspend fun httpsEndpoint(
+        records: HttpsRecords,
+        url: io.ktor.http.Url,
+        dns: RequestDns,
+    ): HttpsEndpoint? =
+        withTimeoutOrNull(config.connectTimeout) {
+            coroutineScope {
+                val https = async { records.h3Endpoint(url.host, url.port) }
+                val addresses =
+                    launch {
+                        try {
+                            dns.lookup(url.host, url.port)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            // kept in dns: the TCP side reports it
+                        }
+                    }
+                select {
+                    https.onJoin {}
+                    addresses.onJoin {}
+                }
+                if (!https.isCompleted) withTimeoutOrNull(config.http3.httpsRecordExtraWait) { https.join() }
+                val endpoint = if (https.isCompleted && !https.isCancelled) https.getCompleted() else null
+                https.cancel()
+                endpoint
+            }
+        }
 
     /**
      * HTTP/3, falling back to HTTP/1.1 when it fails before the response headers: always if the request cannot have been
@@ -736,5 +838,17 @@ internal fun isTransientRefusal(e: Throwable): Boolean {
 }
 
 /** RFC 9110 section 9.2.2. */
+
+/** The longest `httpsRecordExtraWait` allowed. */
+internal val MAX_HTTPS_RECORD_EXTRA_WAIT = 1.seconds
+
+/** The longest an HTTPS record lookup runs, whatever the connect timeout. */
+internal val MAX_HTTPS_RECORD_QUERY = 30.seconds
+
+/** Whether [host] (a URL host) is an IP address, which has no HTTPS records: an IPv6 literal or a dotted IPv4 address. */
+internal fun isIpLiteral(host: String): Boolean =
+    ':' in host || host.startsWith('[') ||
+        (host.split('.').let { p -> p.size == 4 && p.all { it.isNotEmpty() && it.length <= 3 && it.all(Char::isDigit) } })
+
 internal fun HttpMethod.isIdempotent(): Boolean =
     this in setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Options, HttpMethod.Put, HttpMethod.Delete, HttpMethod("TRACE"))

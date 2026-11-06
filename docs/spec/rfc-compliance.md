@@ -146,7 +146,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 7838 | §2.4; RFC 9114 §5.2 — a close after GOAWAY is no broken alternative | ✅ | 0.3.0 | A connection the server closes with H3_NO_ERROR after its GOAWAY is an orderly end, so a request that falls back from it leaves the alternative unmarked. | [details](rfc/7838.md#s2-4-close-after-goaway) |
 | RFC 8305 | §4–§6 (TCP) — TCP address race | 🔶 | 0.3.0 | The TCP connection race interleaves address families with a 250 ms attempt delay. | [details](rfc/8305.md#s4-tcp-address-race) |
 | RFC 8305 | Happy Eyeballs | 🔶 | 0.2.1 | The h3/h1 race is a feature subset of Happy Eyeballs; the TCP race is its own row. | [details](rfc/8305.md#happy-eyeballs) |
-| RFC 9460 | HTTPS RR as a source of h3 | ⬜ | 0.3.0 | HTTPS resource records as a source of h3 are planned for 0.3.0, off by default. | [details](rfc/9460.md#https-rr-as-a-source-of) |
+| RFC 9460 | HTTPS RR as a source of h3 | 🔶 | 0.3.0 | The client can race HTTP/3 to the target of an origin's HTTPS record with `alpn=h3`, opt-in. | [details](rfc/9460.md#https-rr-as-a-source-of) |
 | RFC 9460 | §2.2, §7, §8 — SVCB/HTTPS RDATA, mandatory, AliasMode | 🔶 | 0.3.0 | The client reads SVCB/HTTPS records with the format checks of RFC 9460 and drops an RRSet with a malformed record. | [details](rfc/9460.md#s2-2-svcb-https-rdata) |
 | RFC 9850 | SSLKEYLOGFILE format | ✅ | 0.2.0 | Key logs are written in the SSLKEYLOGFILE format. | [details](rfc/9850.md#sslkeylogfile-format) |
 | draft-ietf-webtrans-http3 | WebTransport | 🔶 | 0.3.0 | Experimental WebTransport over HTTP/3 is in progress. | [details](rfc/draft-ietf-webtrans-http3.md#webtransport) |

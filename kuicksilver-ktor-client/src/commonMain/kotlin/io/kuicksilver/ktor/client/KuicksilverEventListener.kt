@@ -68,6 +68,15 @@ public abstract class KuicksilverEventListener {
         alternative: String,
     ) {}
 
+    /**
+     * [request] races HTTP/3 to [alternative] (`host:port`), the target of the origin's HTTPS resource record (RFC 9460,
+     * [Http3ClientConfig.httpsRecords]). A failure there marks it broken as for an `Alt-Svc` alternative ([altSvcMarkedBroken]).
+     */
+    public open fun httpsRecordUsed(
+        request: HttpRequestData,
+        alternative: String,
+    ) {}
+
     /** The engine marked [alternative] of [origin] broken: HTTP/3 failed there while HTTP/1.1 worked (RFC 7838 section 2.4). */
     public open fun altSvcMarkedBroken(
         origin: String,
