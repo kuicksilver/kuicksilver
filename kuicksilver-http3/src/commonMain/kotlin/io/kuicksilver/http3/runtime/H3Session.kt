@@ -219,7 +219,7 @@ internal class H3Session(
      */
     internal var earlyControl: ArrayList<Pair<ByteArray, () -> Boolean>>? = if (role == Http3Role.Client) ArrayList() else null
 
-    /** Test hook: fail when the critical-stream bookkeeping runs anywhere but on [dispatcher] (review 2026-10-28 N3). */
+    /** Test hook: fail when the critical-stream bookkeeping runs anywhere but on [dispatcher]. */
     @kotlin.concurrent.Volatile
     internal var assertOnDispatcherForTest = false
 
@@ -252,8 +252,8 @@ internal class H3Session(
     /**
      * Decoder-stream bytes waiting for [decoderWriter], each with the critical-stream generation it was made for. The decoder
      * stream's output never makes its caller wait: a peer that grants that stream no credit would otherwise block every
-     * QPACK cancellation and acknowledgment, NonCancellable ones included, so requests could no longer be cancelled (review
-     * S1). What the peer does not take is bounded by [decoderQueueLimit].
+     * QPACK cancellation and acknowledgment, NonCancellable ones included, so requests could no longer be cancelled.
+     * What the peer does not take is bounded by [decoderQueueLimit].
      */
     private val decoderQueue = Channel<Pair<Int, ByteArray>>(Channel.UNLIMITED)
     private val decoderQueued = AtomicLong(0)
@@ -410,7 +410,7 @@ internal class H3Session(
         } catch (e: Http3Exception) {
             startEndedForTest?.invoke(this)
             // a peer's H3_NO_ERROR close that arrived with its GOAWAY can be handled before the control reader parsed that
-            // GOAWAY (review 2026-10-28 quic-h3.md R3): the readers that drain the peer's streams finish what arrived, at most
+            // GOAWAY: the readers that drain the peer's streams finish what arrived, at most
             // DRAIN_GRACE after the end, and the session's job ends then; only after that is the GOAWAY known to be absent
             if (!isGracefulEndAfterGoAway(e) && e is Http3Exception.Protocol && e.h3Code == Http3ErrorCode.NO_ERROR) job.join()
             if (!isGracefulEndAfterGoAway(e)) throw e
@@ -594,8 +594,8 @@ internal class H3Session(
      * GET and POST are the RFC's examples of requests without, and a classic CONNECT and RFC 9220 define none. Section 2.1
      * comes first once the request's direction is over ("MUST be silently dropped"): only a stream still receiving is
      * aborted. A direction is over once every byte and the FIN arrived (RFC 9000 "Data Recvd", [receivedAll]), also while
-     * the application has not read them yet, so a message that came whole is never aborted by a stray datagram (review
-     * 2026-10-28 H3R-6). Returns whether [id] was such a request.
+     * the application has not read them yet, so a message that came whole is never aborted by a stray datagram.
+     * Returns whether [id] was such a request.
      */
     suspend fun abortRequestWithoutDatagrams(id: Long): Boolean {
         if (isServer) {

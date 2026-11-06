@@ -41,7 +41,7 @@ import kotlin.time.Duration
  * below is the dispatcher's alone; callers such as `updatePriority` run on the application's thread). Bytes made for
  * streams a rejected 0-RTT dropped (an older [criticalGen], or a write the drop failed) never reach the newer ones:
  * QPACK instructions made then can only be about early request streams the server never saw, whose IDs the requests
- * sent again reuse (a Stream Cancellation there would cancel the new request's sections, review 2026-10-28 H3C-1).
+ * sent again reuse (a Stream Cancellation there would cancel the new request's sections).
  * [again] says whether such a frame is still wanted on the new control stream (a GOAWAY is); one written before the
  * handshake told the 0-RTT's fate is kept for that ([earlyControl]).
  */
@@ -121,12 +121,12 @@ internal fun H3Session.droppedByRejectedZeroRtt(st: QuicStream): Boolean {
 /**
  * RFC 9204 section 2.2.2.2: a stream reset or abandoned before its field sections were all processed gets a Stream
  * Cancellation. Not one the server's rejection of 0-RTT dropped: the server never saw it, so its encoder holds no
- * section of it, and the request sent again reuses its ID (RFC 9001 section 4.6.2; review 2026-10-28 H3C-1).
+ * section of it, and the request sent again reuses its ID (RFC 9001 section 4.6.2).
  */
 internal suspend fun H3Session.cancelSections(st: QuicStream) {
     if (droppedByRejectedZeroRtt(st)) return
     // QPACK is the dispatcher's. NonCancellable: the callers are often cancelled already (a body pump in its catch after
-    // its own cancellation), and withContext would throw at once without making the cancellation (review 2026-10-28 R1)
+    // its own cancellation), and withContext would throw at once without making the cancellation
     withContext(NonCancellable + dispatcher) { qpack.cancelStream(st.id) }
 }
 
@@ -135,7 +135,7 @@ internal suspend fun H3Session.cancelSections(st: QuicStream) {
  * including application state bound to those streams"). Runs before anything of the server is read (the accept loop and
  * the request sent again call it first), so whatever QPACK holds unsent can only be about the dropped streams: it goes.
  * Critical streams the rejection dropped are given up, and [criticalStreamsLoop] opens new ones and sends SETTINGS again;
- * live ones, opened after the rejection, stay (review 2026-10-28 N1: giving those up reset a typed control stream).
+ * live ones, opened after the rejection, stay (giving those up would reset a typed control stream).
  * Idempotent; on the session's dispatcher, whoever calls it.
  */
 internal suspend fun H3Session.noteRejectedZeroRtt() = withContext(dispatcher) { noteRejectedZeroRttHere() }

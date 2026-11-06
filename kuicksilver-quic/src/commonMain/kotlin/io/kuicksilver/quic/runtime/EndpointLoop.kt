@@ -357,7 +357,7 @@ internal class EndpointLoop private constructor(
 
     /**
      * How long a receive may wait on the loop's thread for the next datagrams: never on a dispatcher the caller supplied, which
-     * other work shares (two endpoints on one dispatcher would each stall the other's sends for 1 ms per quiet gap; review d-quic);
+     * other work shares (two endpoints on one dispatcher would each stall the other's sends for 1 ms per quiet gap);
      * what is already queued is still taken there.
      */
     internal val directWait: Duration = if (config.dispatcher != null) Duration.ZERO else BatchReceiver.PLATFORM_WAIT

@@ -115,7 +115,7 @@ internal suspend fun EndpointLoop.receivePreferred(p: DatagramIo) {
 }
 
 /**
- * A preferred-address socket failed: the endpoint degrades instead of failing (owner decision). The preferred address is served
+ * A preferred-address socket failed: the endpoint degrades instead of failing. The preferred address is served
  * by every loop of a group or by none, so the whole group takes it down ([dropPreferred]); counted once in
  * `EndpointStats.preferredAddressFailures`. Loop dispatcher only.
  */
