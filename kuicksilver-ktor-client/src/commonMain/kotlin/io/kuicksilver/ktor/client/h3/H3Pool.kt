@@ -43,6 +43,7 @@ import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.newRequestDns
+import io.kuicksilver.ktor.client.originKeyOf
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
@@ -51,15 +52,19 @@ import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.quic.Initiator
+import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.MigrationEvent
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -179,6 +184,8 @@ internal class H3Pool(
     private val clock: () -> Long =
         io.kuicksilver.ktor.client.h1
             .monotonicMillis(),
+    /** Where the migrators of `http3.connectionMigration` run ([followNetwork]); null: connections never migrate. */
+    private val migrationScope: CoroutineScope? = null,
 ) {
     private val lock = Mutex()
 
@@ -631,6 +638,7 @@ internal class H3Pool(
                     }
                 }
                 d.complete(c)
+                followNetwork(c, originKeyOf(data.url))
             } catch (
                 x: TimeoutCancellationException,
             ) {
@@ -654,6 +662,80 @@ internal class H3Pool(
             setupWaitersForTest.addAndFetch(1)
         }
         return e to d.await()
+    }
+
+    /**
+     * Lets [c] follow the network with `http3.connectionMigration`, if set (docs/guide/ktor.md, "Connection migration"): once
+     * its handshake has completed (RFC 9000 section 9: no migration before; a 0-RTT connection is handed out earlier), the
+     * hook's migrator is started with its events going to the listener, and it is closed when [c] ends or the client
+     * closes. The transport enforces the rest of section 9 (confirmation, `disable_active_migration`, zero-length IDs,
+     * path validation): a refusal is a [MigrationEvent.Failed] that leaves [c] where it is.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun followNetwork(
+        c: Http3Connection,
+        origin: String,
+    ) {
+        val migration = config.http3.connectionMigration ?: return
+        val scope = migrationScope ?: return
+        val job =
+            scope.launch {
+                try {
+                    c.quic.awaitHandshake()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    return@launch // the handshake failed: the connection is gone, nothing to follow
+                }
+                val m =
+                    try {
+                        migration.start(c.quic, this)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logMigration("connection migration for $origin not started: the hook failed", e)
+                        return@launch
+                    }
+                try {
+                    launch(start = CoroutineStart.UNDISPATCHED) { m.events.collect { reportMigration(origin, it) } }
+                    try {
+                        m.start()
+                    } catch (_: IllegalStateException) {
+                        // the hook started it already
+                    }
+                    awaitCancellation() // until the connection ends or the client closes
+                } finally {
+                    m.close()
+                }
+            }
+        // a connection that ended already cancels at once
+        c.closed.invokeOnCompletion { job.cancel() }
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun reportMigration(
+        origin: String,
+        e: MigrationEvent<*>,
+    ) {
+        when (e) {
+            is MigrationEvent.Failed -> {
+                logMigration("connection to $origin did not migrate to ${e.network}", e.cause)
+            }
+
+            is MigrationEvent.SourceFailed -> {
+                logMigration("connection to $origin stopped following the network: its source failed", e.cause)
+            }
+
+            else -> {}
+        }
+        events.emit("connectionMigrated") { connectionMigrated(origin, e) }
+    }
+
+    private fun logMigration(
+        message: String,
+        cause: Throwable,
+    ) {
+        runCatching { if (events.logger.isEnabled(LogLevel.Info)) events.logger.log(LogLevel.Info, message, cause) }
     }
 
     /** The caller setting up a shared connection was cancelled; the callers waiting for it try again. */

@@ -7,6 +7,7 @@ import io.ktor.http.HttpProtocolVersion
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.MigrationEvent
 import kotlin.time.Duration
 
 /**
@@ -105,6 +106,17 @@ public abstract class KuicksilverEventListener {
         request: HttpRequestData,
         protocol: HttpProtocolVersion,
         kept: Boolean,
+    ) {}
+
+    /**
+     * An HTTP/3 connection to [origin] (`https://host:port`) followed the network ([Http3ClientConfig.connectionMigration]):
+     * [event] is what its [io.kuicksilver.quic.NetworkMigrator] did, a move to another network
+     * ([MigrationEvent.Migrated]), a move that failed and left the connection where it was ([MigrationEvent.Failed]), a
+     * lost network or a failed network source. Runs on the migrator's coroutine, not a call's.
+     */
+    public open fun connectionMigrated(
+        origin: String,
+        event: MigrationEvent<*>,
     ) {}
 }
 

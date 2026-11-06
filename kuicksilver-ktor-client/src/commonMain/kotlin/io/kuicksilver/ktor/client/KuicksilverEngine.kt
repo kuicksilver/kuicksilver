@@ -32,6 +32,7 @@ import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -76,10 +77,28 @@ internal class KuicksilverEngine(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val events = EngineEvents(config.eventListener, config.logger ?: config.http3.endpoint.logger)
 
+    /**
+     * The jobs that let HTTP/3 connections follow the network (`http3.connectionMigration`): outside the requests' job, so
+     * a closed client's calls still migrate while they finish, and cancelled by the cleanup before the connections close.
+     * Internal for tests.
+     */
+    internal val migrationJob = SupervisorJob()
+
+    /** Where [migrationJob]'s work runs; a failure that escapes a migrator is logged, never thrown at the application. */
+    private val migrationScope =
+        CoroutineScope(
+            dispatcher + migrationJob + CoroutineName("kuicksilver-h3-migration") +
+                CoroutineExceptionHandler { _, e ->
+                    runCatching {
+                        if (events.logger.isEnabled(LogLevel.Warn)) events.logger.log(LogLevel.Warn, "connection migration failed", e)
+                    }
+                },
+        )
+
     /** `proxyResolver`'s answers per route ([proxyFor]). */
     internal val proxies = ProxyRouting(config, events.logger)
     internal val h1 = H1Pool(config, selector, events) // internal for tests (the engine's session cache)
-    internal val h3 = H3Pool(config, events) // internal for tests (0-RTT reconnects)
+    internal val h3 = H3Pool(config, events, migrationScope = migrationScope) // internal for tests (0-RTT reconnects)
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
     private val altSvcLock = Mutex()
 
@@ -108,6 +127,7 @@ internal class KuicksilverEngine(
                 } finally {
                     withContext(NonCancellable) { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
                     h1.closeAll()
+                    migrationJob.cancel() // the migrators end before their connections
                     h3.close()
                     selector.close()
                 }

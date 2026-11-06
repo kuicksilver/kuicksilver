@@ -278,6 +278,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `maxWebTransportSessions` (*experimental*) | `Int` | 64 | WebTransport sessions open at once, each on its own QUIC connection; at least 1; one more fails at once with `IllegalStateException` |
 | `http3Allowed` (*experimental*) | `() -> Boolean` | `{ true }` | kill switch read once per `https://` request and `webTransport` call (not with `H1Only`): false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)) |
 | `diagnosticsLogLevel` (*experimental*) | `LogLevel?` | `Info` | level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)) |
+| `connectionMigration` (*experimental*) | `Http3ConnectionMigration?` | `null` (connections stay on the network they were opened on) | since 0.3.0: pooled HTTP/3 connections follow the network (RFC 9000 section 9); `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android, `followDefaultNetwork()` on iOS and macOS, your own `NetworkMigrator` elsewhere; events go to `connectionMigrated` ([Connection migration](ktor.md#connection-migration)) |
 
 ## Ktor server engine
 

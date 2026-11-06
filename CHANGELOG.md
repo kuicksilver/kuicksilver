@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: HTTP/3 connections can follow the device's network (connection migration, RFC 9000 section 9;
+  `docs/guide/ktor.md`, "Connection migration"), opt-in and experimental: `http3 { connectionMigration = ... }` takes an
+  `Http3ConnectionMigration`, with `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android
+  (`ConnectivityManager`) and `followDefaultNetwork()` on iOS and macOS (`NWPathMonitor`); elsewhere it wraps a
+  `NetworkMigrator` over a source of your own. Every pooled HTTP/3 connection then moves to the new default network once
+  its handshake has completed, so a download survives a switch from Wi-Fi to the mobile network; the transport still
+  refuses to move before confirmation, towards a server that sent `disable_active_migration` or uses zero-length
+  connection IDs, and onto a path that does not validate. New `KuicksilverEventListener.connectionMigrated(origin,
+  event)` reports each step (a failed move is also logged at `Info`). Off by default, so 0.2's behaviour is unchanged;
+  `networkId` stays separate. HTTP/1.1, HTTP/2 and the connections of WebTransport sessions do not migrate.
 - Docs: a deployment guide for the HTTP/3 server (`docs/guide/deployment.md`): TCP and UDP on one port number and what
   the engine's `Alt-Svc` names (with a sample for a public port that differs from the bound one), firewalls and
   security groups, Docker and Kubernetes (mixed-protocol `LoadBalancer` Services, the client address and the per-IP

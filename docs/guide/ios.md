@@ -157,7 +157,9 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
   `QuicConnection.followDefaultNetwork(scope)` (experimental) follows the default network automatically (Wi-Fi to
   cellular and back) through one shared `NWPathMonitor`, and also replaces a socket iOS reclaimed while the app was
   suspended ([QUIC: Network changes](quic.md#network-changes)). The sample's echo screen has a "Follow the default
-  network" toggle for it and a manual Rebind button.
+  network" toggle for it and a manual Rebind button. For `HttpClient(Kuicksilver)`,
+  `http3 { connectionMigration = Http3ConnectionMigration.followDefaultNetwork() }` (experimental, off by default) does
+  the same for every pooled HTTP/3 connection ([Ktor: Connection migration](ktor.md#connection-migration)).
 
 ## Checks
 

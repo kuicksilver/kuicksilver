@@ -159,6 +159,17 @@ public class Http3ClientConfig {
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var http3Allowed: () -> Boolean = { true }
+
+    /**
+     * Lets pooled HTTP/3 connections follow the device's network (connection migration, RFC 9000 section 9; docs/guide/ktor.md,
+     * "Connection migration"): a download over HTTP/3 survives a switch from Wi-Fi to the mobile network instead of dying
+     * with the network it started on. Null (the default) leaves every connection where it was opened, as in 0.2.
+     * `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android and `Http3ConnectionMigration.followDefaultNetwork()`
+     * on iOS and macOS follow the system's default network; see [Http3ConnectionMigration] for other platforms and the rules.
+     * [networkId] is not derived from it: give it the same source to reset broken marks on a network change.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var connectionMigration: Http3ConnectionMigration? = null
 }
 
 /**

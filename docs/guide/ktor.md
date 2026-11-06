@@ -648,6 +648,47 @@ The switch is not called for `http://` requests or `H1Only`. A switch that throw
 allowed), so a broken configuration cannot take down traffic; the engine logs that at `Warn`, at most once per 5
 minutes. A `CancellationException` or an `Error` out of it fails the call instead.
 
+### Connection migration
+
+`http3 { connectionMigration = ... }` (experimental, off by default) lets the engine's pooled HTTP/3 connections follow
+the device's network (RFC 9000 section 9): when the default network changes, say from Wi-Fi to the mobile network,
+each connection opens a socket on the new network, validates the path to the server and moves there, so a download
+and the requests in flight carry on instead of dying with the old interface (without it, as in 0.2, the connection
+stays on the socket of the network it was opened on and ends at its idle timeout; an idempotent request still waiting
+for its response then falls back to HTTP/1.1). On Android:
+
+```kotlin
+val connectivity = context.getSystemService(ConnectivityManager::class.java)
+// inside HttpClient(Kuicksilver) { engine { http3 { ... } } }:
+// guide:ktor:android-migration
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+connectionMigration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
+networkId = { connectivity.activeNetwork?.toString() }
+```
+
+On iOS and macOS, `Http3ConnectionMigration.followDefaultNetwork()` does the same with the Network framework
+(`NWPathMonitor`, sockets bound to the new interface; it also replaces a socket iOS reclaimed while the app was
+suspended). These are the `NetworkMigrator`s of [QUIC: Network changes](quic.md#network-changes), one per
+connection over one shared system callback. The JVM, Linux and Windows have no network source of their own: pass
+`Http3ConnectionMigration { connection, scope -> NetworkMigrator(connection, yourNetworks, yourOpenIo, scope) }`.
+
+What the engine does:
+
+- it starts the migrator once the connection's handshake has completed (a 0-RTT connection serves early requests
+  first) and closes it when the connection closes (idle, lifetime, `closeHttp3Connections()`) or the client closes;
+- the QUIC rules hold whatever the source says: no new path before the handshake is confirmed, none towards a server
+  that sent `disable_active_migration` or uses zero-length connection IDs (RFC 9000 sections 9 and 9.5; no packet leaves
+  the new socket), and every new path is validated before the connection sends on it. A refused or failed move leaves
+  the connection where it was;
+- every step reaches `KuicksilverEventListener.connectionMigrated(origin, event)`: `Migrated`, `Failed` (also logged at
+  `Info`), `NetworkLost` (the connection waits; its idle timeout decides if no network comes back) and `SourceFailed`;
+- a migration neither marks the alternative broken nor forgets marks; `networkId` is separate, which is why the sample
+  gives it the same source, so that a new network also gets a fresh chance at alternatives marked broken on the old one.
+
+What does not survive a network change: HTTP/1.1 and HTTP/2 run over TCP, which cannot move, and so do WebSockets over
+HTTP/1.1; a call on such a connection fails and the application repeats it. The dedicated connections of WebTransport
+sessions do not follow the network either.
+
 ### Proxies
 
 Where a request's proxy comes from:

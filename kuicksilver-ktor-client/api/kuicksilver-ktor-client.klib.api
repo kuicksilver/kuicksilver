@@ -1,5 +1,6 @@
 // Klib ABI Dump
 // Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Alias: apple => [iosArm64, iosSimulatorArm64, macosArm64]
 // Rendering settings:
 // - Signature version: 2
 // - Show manifest properties: true
@@ -80,6 +81,12 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
     final fun values(): kotlin/Array<io.kuicksilver.ktor.client/ProtocolReason> // io.kuicksilver.ktor.client/ProtocolReason.values|values#static(){}[0]
 }
 
+abstract fun interface io.kuicksilver.ktor.client/Http3ConnectionMigration { // io.kuicksilver.ktor.client/Http3ConnectionMigration|null[0]
+    abstract fun start(io.kuicksilver.quic/QuicConnection, kotlinx.coroutines/CoroutineScope): io.kuicksilver.quic/NetworkMigrator<*> // io.kuicksilver.ktor.client/Http3ConnectionMigration.start|start(io.kuicksilver.quic.QuicConnection;kotlinx.coroutines.CoroutineScope){}[0]
+
+    final object Companion // io.kuicksilver.ktor.client/Http3ConnectionMigration.Companion|null[0]
+}
+
 abstract fun interface io.kuicksilver.ktor.client/ProxyResolver { // io.kuicksilver.ktor.client/ProxyResolver|null[0]
     abstract suspend fun proxyFor(io.ktor.http/Url): io.kuicksilver.ktor.client/ResolvedProxy? // io.kuicksilver.ktor.client/ProxyResolver.proxyFor|proxyFor(io.ktor.http.Url){}[0]
 }
@@ -100,6 +107,7 @@ abstract class io.kuicksilver.ktor.client/KuicksilverEventListener { // io.kuick
     open fun callFailed(io.ktor.client.request/HttpRequestData, kotlin/Throwable) // io.kuicksilver.ktor.client/KuicksilverEventListener.callFailed|callFailed(io.ktor.client.request.HttpRequestData;kotlin.Throwable){}[0]
     open fun callStart(io.ktor.client.request/HttpRequestData) // io.kuicksilver.ktor.client/KuicksilverEventListener.callStart|callStart(io.ktor.client.request.HttpRequestData){}[0]
     open fun connectionAcquired(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, kotlin/Boolean) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectionAcquired|connectionAcquired(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;kotlin.Boolean){}[0]
+    open fun connectionMigrated(kotlin/String, io.kuicksilver.quic/MigrationEvent<*>) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectionMigrated|connectionMigrated(kotlin.String;io.kuicksilver.quic.MigrationEvent<*>){}[0]
     open fun connectionReleased(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, kotlin/Boolean) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectionReleased|connectionReleased(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;kotlin.Boolean){}[0]
     open fun fallback(io.ktor.client.request/HttpRequestData, kotlin/Throwable) // io.kuicksilver.ktor.client/KuicksilverEventListener.fallback|fallback(io.ktor.client.request.HttpRequestData;kotlin.Throwable){}[0]
     open fun protocolSelected(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, io.kuicksilver.ktor.client/ProtocolReason) // io.kuicksilver.ktor.client/KuicksilverEventListener.protocolSelected|protocolSelected(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;io.kuicksilver.ktor.client.ProtocolReason){}[0]
@@ -182,6 +190,9 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
     final var connectionListener // io.kuicksilver.ktor.client/Http3ClientConfig.connectionListener|{}connectionListener[0]
         final fun <get-connectionListener>(): io.kuicksilver.quic/ConnectionListener? // io.kuicksilver.ktor.client/Http3ClientConfig.connectionListener.<get-connectionListener>|<get-connectionListener>(){}[0]
         final fun <set-connectionListener>(io.kuicksilver.quic/ConnectionListener?) // io.kuicksilver.ktor.client/Http3ClientConfig.connectionListener.<set-connectionListener>|<set-connectionListener>(io.kuicksilver.quic.ConnectionListener?){}[0]
+    final var connectionMigration // io.kuicksilver.ktor.client/Http3ClientConfig.connectionMigration|{}connectionMigration[0]
+        final fun <get-connectionMigration>(): io.kuicksilver.ktor.client/Http3ConnectionMigration? // io.kuicksilver.ktor.client/Http3ClientConfig.connectionMigration.<get-connectionMigration>|<get-connectionMigration>(){}[0]
+        final fun <set-connectionMigration>(io.kuicksilver.ktor.client/Http3ConnectionMigration?) // io.kuicksilver.ktor.client/Http3ClientConfig.connectionMigration.<set-connectionMigration>|<set-connectionMigration>(io.kuicksilver.ktor.client.Http3ConnectionMigration?){}[0]
     final var diagnosticsLogLevel // io.kuicksilver.ktor.client/Http3ClientConfig.diagnosticsLogLevel|{}diagnosticsLogLevel[0]
         final fun <get-diagnosticsLogLevel>(): io.kuicksilver.quic/LogLevel? // io.kuicksilver.ktor.client/Http3ClientConfig.diagnosticsLogLevel.<get-diagnosticsLogLevel>|<get-diagnosticsLogLevel>(){}[0]
         final fun <set-diagnosticsLogLevel>(io.kuicksilver.quic/LogLevel?) // io.kuicksilver.ktor.client/Http3ClientConfig.diagnosticsLogLevel.<set-diagnosticsLogLevel>|<set-diagnosticsLogLevel>(io.kuicksilver.quic.LogLevel?){}[0]
@@ -380,3 +391,6 @@ final fun (io.ktor.client.request/HttpRequestBuilder).io.kuicksilver.ktor.client
 final suspend fun (io.ktor.client.statement/HttpResponse).io.kuicksilver.ktor.client/updatePriority(kotlin/Int, kotlin/Boolean): kotlin/Boolean // io.kuicksilver.ktor.client/updatePriority|updatePriority@io.ktor.client.statement.HttpResponse(kotlin.Int;kotlin.Boolean){}[0]
 final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/closeHttp3Connections() // io.kuicksilver.ktor.client/closeHttp3Connections|closeHttp3Connections@io.ktor.client.HttpClient(){}[0]
 final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/webTransport(kotlin/String, kotlin.collections/List<kotlin/String> = ..., io.kuicksilver.http3/Http3Headers = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.ktor.client/webTransport|webTransport@io.ktor.client.HttpClient(kotlin.String;kotlin.collections.List<kotlin.String>;io.kuicksilver.http3.Http3Headers){}[0]
+
+// Targets: [apple]
+final fun (io.kuicksilver.ktor.client/Http3ConnectionMigration.Companion).io.kuicksilver.ktor.client/followDefaultNetwork(): io.kuicksilver.ktor.client/Http3ConnectionMigration // io.kuicksilver.ktor.client/followDefaultNetwork|followDefaultNetwork@io.kuicksilver.ktor.client.Http3ConnectionMigration.Companion(){}[0]
