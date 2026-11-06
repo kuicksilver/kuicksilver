@@ -47,6 +47,8 @@ benchmark {
         // the QUIC core alone (in-memory loopback, Null and ksl crypto): `./gradlew :kuicksilver-bench:jvmCoreBenchmark` / `macosArm64CoreBenchmark`
         register("core") { include("CoreThroughputBenchmark"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
         // whole connections (handshake and close) through the core with ksl crypto: `./gradlew :kuicksilver-bench:jvmHandshakeBenchmark` / `macosArm64HandshakeBenchmark`
+        // whole endpoints over loopback UDP, the accelerated socket and CUBIC (Null crypto): `./gradlew :kuicksilver-bench:jvmUdpBenchmark`
+        register("udp") { include("UdpThroughputBenchmark"); param("io", "accelerated"); param("cc", "cubic"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
         register("handshake") { include("HandshakeBenchmark"); include("EndpointHandshakeBenchmark"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
     }
 }

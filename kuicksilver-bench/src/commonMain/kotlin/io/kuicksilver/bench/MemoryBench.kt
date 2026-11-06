@@ -36,14 +36,14 @@ import kotlin.time.Duration.Companion.minutes
 /**
  * The memory benchmark (P.5): idle footprint of the process, what an idle QUIC connection holds (core alone and through the
  * endpoints' runtimes, both sides and the server's side alone), and what moving data allocates per GB. Everything runs in
- * this process without sockets (virtual time for the cores, a `MemoryNetwork` for the endpoints), so it runs on a busy
- * host; the RSS figures are the noisiest (the JVM's heap grows and does not give memory back). Run it with
+ * this process (virtual time for the cores, a `MemoryNetwork` for the endpoints; only the `udp` section opens loopback sockets,
+ * so the accelerated socket's packet path is measured too), so it runs on a busy host; the RSS figures are the noisiest (the JVM's heap grows and does not give memory back). Run it with
  * `bash tools/bench/memory.sh` (docs/benchmarks.md, "Memory").
  */
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 public object MemoryBench {
     /** The parts [run] can be limited to; each one in its own process keeps one part's heap growth out of the next one's RSS. */
-    public val sections: List<String> = listOf("core", "endpoint", "http3", "transfer")
+    public val sections: List<String> = listOf("core", "endpoint", "http3", "transfer", "udp")
 
     /**
      * Runs [only] the named [sections] (all by default), printing a line per figure to [out]: [connections] idle connections
@@ -64,6 +64,7 @@ public object MemoryBench {
         if ("endpoint" in only) endpointIdle(connections, h3 = false, out)
         if ("http3" in only) endpointIdle(connections, h3 = true, out)
         if ("transfer" in only) { coreTransfer(transferMiB, out); endpointTransfer(transferMiB, out) }
+        if ("udp" in only) udpTransfer(transferMiB, out)
     }
 
     private class Snapshot(val rss: Long, val heap: Long, val malloc: Long, val classes: Map<String, LongArray>?)
@@ -186,6 +187,18 @@ public object MemoryBench {
             pair.transfer(total) { counter.tick() }
             counter.tick()
             report("endpoint, transfer (ksl crypto, one stream, MemoryNetwork)", counter, total, out)
+        }
+    }
+
+    /** The same transfer over loopback UDP through the accelerated socket: no `MemoryNetwork` copy, the packet path a deployment runs. */
+    private suspend fun udpTransfer(mib: Int, out: (String) -> Unit) {
+        EndpointHandshakes.openUdp().use { pair ->
+            val total = mib.toLong() shl 20
+            pair.transfer(minOf(WARMUP, total)) {}
+            val counter = MemoryProbe.allocationCounter()
+            pair.transfer(total) { counter.tick() }
+            counter.tick()
+            report("endpoint, transfer (ksl crypto, one stream, loopback UDP)", counter, total, out)
         }
     }
 

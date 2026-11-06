@@ -4,6 +4,8 @@ package io.kuicksilver.bench
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.IoPreference
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -44,6 +46,7 @@ public class EndpointHandshakes private constructor(
     override fun close() { client.close(); server.close(); identity.close() }
 
     public companion object {
+        /** Two endpoints over a [MemoryNetwork]. */
         public suspend fun open(): EndpointHandshakes {
             val net = MemoryNetwork(receiveBuffer = 4096)
             val identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
@@ -52,6 +55,16 @@ public class EndpointHandshakes private constructor(
             val clientIo = net.open(InetSocketAddress("10.0.0.1", 40000))
             val server = QuicEndpoint.bind(serverIo.localAddress, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).build(); io = { serverIo } }.build())
             val client = QuicEndpoint.bind(clientIo.localAddress, QuicEndpointConfig.Builder().apply { io = { clientIo } }.build())
+            return EndpointHandshakes(identity, server, client)
+        }
+
+        /** Two endpoints on loopback UDP through the platform's socket ([DatagramIo.open]: the accelerated `ksl` one where it exists). */
+        public suspend fun openUdp(prefer: IoPreference = IoPreference.Accelerated): EndpointHandshakes {
+            val identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+            val serverTls = tlsConfig(TlsRole.Server) { alpn = listOf("bench"); this.identity = identity }
+            val lo = InetSocketAddress("127.0.0.1", 0)
+            val server = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).build(); io = { DatagramIo.open(it, prefer) } }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { io = { DatagramIo.open(it, prefer) } }.build())
             return EndpointHandshakes(identity, server, client)
         }
     }
