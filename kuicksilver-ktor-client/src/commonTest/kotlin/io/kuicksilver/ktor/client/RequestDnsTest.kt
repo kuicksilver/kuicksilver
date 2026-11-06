@@ -67,4 +67,25 @@ class RequestDnsTest {
             assertEquals(1, dns.lookup("a.example", 80).size) // kept for the rest of the request
             assertEquals(2, calls)
         }
+
+    @Test fun negative_cancelledLookUpUnderAContendedLockLeavesNoStuckEntry() =
+        runTest {
+            // the cancelled looker-up must give up its entry even when the lock is busy at that moment
+            val gate = CompletableDeferred<Unit>()
+            var calls = 0
+            val dns =
+                RequestDns { _, _ ->
+                    calls++
+                    if (calls == 1) gate.await()
+                    listOf(addr(1))
+                }
+            val first = async { dns.lookup("a.example", 443) }
+            testScheduler.runCurrent()
+            dns.lockForTest.lock() // busy when the cancelled caller cleans up
+            first.cancel()
+            testScheduler.runCurrent()
+            dns.lockForTest.unlock()
+            val again = kotlinx.coroutines.withTimeoutOrNull(10_000) { dns.lookup("a.example", 443) }
+            assertEquals(1, again?.size, "the name was left with an answer that never comes")
+        }
 }

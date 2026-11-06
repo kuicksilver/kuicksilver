@@ -8,10 +8,12 @@ import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.resolveTcp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * The name resolution of one request: each host is looked up once and its answer, or its failure, reused for the rest of
@@ -28,6 +30,9 @@ internal class RequestDns private constructor(
     private val endpoint: Pair<String, Int>?,
 ) {
     constructor(resolve: suspend (String, Int) -> List<TcpAddress>) : this(resolve, Mutex(), HashMap(), null)
+
+    /** The lock over the answers (tests). */
+    internal val lockForTest: Mutex get() = lock
 
     /**
      * A view of this resolution whose every lookup resolves [host] and answers with [port]: the TCP side of a connection to
@@ -64,9 +69,10 @@ internal class RequestDns private constructor(
             var mine = false
             val pending =
                 lock.withLock {
-                    answers.getOrPut(name) {
+                    // a cancelled entry is one whose looker-up went away: replace it, so no waiter spins on it
+                    answers[name]?.takeUnless { it.isCancelled } ?: CompletableDeferred<Result<List<TcpAddress>>>().also {
                         mine = true
-                        CompletableDeferred()
+                        answers[name] = it
                     }
                 }
             if (mine) {
@@ -74,9 +80,10 @@ internal class RequestDns private constructor(
                     try {
                         Result.success(resolve(name, port))
                     } catch (e: CancellationException) {
-                        // this caller goes: no answer is left behind, and a caller waiting for it asks again
-                        lock.withLock { if (answers[name] === pending) answers.remove(name) }
+                        // this caller goes: no answer is left behind, and a caller waiting for it asks again. Cancel first,
+                        // then remove without being cancellable: a busy lock must not leave the entry behind
                         pending.cancel()
+                        withContext(NonCancellable) { lock.withLock { if (answers[name] === pending) answers.remove(name) } }
                         throw e
                     } catch (e: Throwable) {
                         Result.failure(e)
