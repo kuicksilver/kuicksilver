@@ -428,7 +428,15 @@ internal class ServerRequestImpl(
         check(!responseStarted) { "the final response was already sent" }
         withContext(session.dispatcher) {
             writeHeaders(status, headers)
-            st.output.flush()
+            try {
+                st.output.flush()
+            } catch (
+                e: CancellationException,
+            ) {
+                throw e
+            } catch (e: Throwable) {
+                throw session.map(e) // a client that stopped or reset the stream meanwhile: an Http3Exception, as from writeHeaders
+            }
         }
     }
 
