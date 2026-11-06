@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.lang.management.ManagementFactory
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -44,7 +45,8 @@ class FlushAllocationTest {
             val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
             try {
                 withTimeout(30.seconds) {
-                    if (server.ioForTest !is KslDatagramIo) return@withTimeout // no accelerated socket on this host: nothing to measure
+                    // no accelerated socket on this host (a sandbox refusing its probe): nothing to measure, and said so
+                    assumeTrue(server.ioForTest is KslDatagramIo, "no accelerated socket on this host: the fast flush is not used")
                     val accepted = async { server.accept() }
                     val c = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
                     val s = accepted.await() as ConnectionRuntime
