@@ -25,7 +25,7 @@ import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
  * The port goes to `args[0]` once it listens.
  *
  * - `/big`: 8 MiB; over HTTP/3 it stops after 2 MiB until a `/resume` arrives (the device switches networks meanwhile);
- * - `/resume`: lets the oldest waiting `/big` go on;
+ * - `/resume`: lets the waiting `/big` go on (each `/big` first drops a `/resume` left over from an earlier one);
  * - `/version`: the request's HTTP version.
  */
 fun main(args: Array<String>) {
@@ -42,6 +42,8 @@ fun main(args: Array<String>) {
             }) {
                 routing {
                     get("/big") {
+                        // a /resume left over from an earlier download (one that failed before its pause) must not let this one through
+                        while (resumes.tryReceive().isSuccess) Unit
                         call.respondBytesWriter {
                             val chunk = ByteArray(64 * 1024) { 7 }
                             var sent = 0
