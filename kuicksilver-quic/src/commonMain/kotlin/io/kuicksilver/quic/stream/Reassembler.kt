@@ -136,7 +136,9 @@ internal class Reassembler(
             head = 0
             return
         } // compact in place: amortised, never per read
-        val grown = ByteArray(maxOf(need, window.size * 2, 4096))
+        // at least MIN_WINDOW: a stream that only ever carries a few bytes (HTTP/3's control and QPACK streams) keeps a small
+        // window for the life of the connection, a larger one doubles to its working size within a few frames
+        val grown = ByteArray(maxOf(need, window.size * 2, MIN_WINDOW))
         window.copyInto(grown, 0, head, head + buffered)
         bytesMovedForTest +=
             buffered
@@ -185,5 +187,6 @@ internal class Reassembler(
 
     private companion object {
         const val SHRINK_ABOVE = 1 shl 20
+        const val MIN_WINDOW = 512
     }
 }

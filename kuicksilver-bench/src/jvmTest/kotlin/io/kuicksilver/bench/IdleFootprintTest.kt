@@ -33,7 +33,9 @@ class IdleFootprintTest {
     }
 
     private companion object {
-        const val HTTP3_CEILING = 120_000L
-        const val CORE_CEILING = 35_500L
+        // 79 320 measured (2026-11-06, JVM 21); 88-104 K with 4 KiB reassembly windows, 292 K with per-stream staging arrays.
+        // The inventory varies by a few KB between runs with what the connection's coroutines hold when it is taken
+        const val HTTP3_CEILING = 95_000L
+        const val CORE_CEILING = 35_500L // 35 104 measured (2026-11-06, JVM 21); 36 160 with the DATAGRAM ring made up front
     }
 }
