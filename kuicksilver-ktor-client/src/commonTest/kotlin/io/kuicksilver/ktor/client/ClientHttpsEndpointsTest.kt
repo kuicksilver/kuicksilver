@@ -142,9 +142,13 @@ class ClientHttpsEndpointsTest {
                         }
                         connectTimeout = 30.seconds
                         http3 { httpsRecords = HttpsRecordsForTest { if (it == name) records else emptyList() } }
-                    }).use { c ->
+                    }).let { c ->
                         val r = kotlinx.coroutines.withTimeout(10.seconds) { c.get("https://server.test:8443/") }
                         assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        // the origin lookup still hangs in the background: closing the client must end it, not wait for it
+                        val engine = c.engine as KuicksilverEngine
+                        c.close()
+                        kotlinx.coroutines.withTimeout(10.seconds) { engine.cleanup.join() }
                     }
                 } finally {
                     ep.close()

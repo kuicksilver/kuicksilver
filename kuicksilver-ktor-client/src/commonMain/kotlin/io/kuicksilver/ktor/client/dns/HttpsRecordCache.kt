@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -144,6 +145,12 @@ internal class HttpsRecords(
 
     /** Cancels the lookups still running; callers waiting for them get no records. */
     fun close() = job.cancel()
+
+    /**
+     * Runs [block] in the lookups' scope: the address lookups that go with the records (the origin's, an alias target's),
+     * which outlive the request's wait and end with [close] instead of holding up a closing engine.
+     */
+    fun background(block: suspend () -> Unit): Job = scope.launch { block() }
 
     private val lock = Mutex()
     private val cache = HttpsRecordCache(nowMillis)

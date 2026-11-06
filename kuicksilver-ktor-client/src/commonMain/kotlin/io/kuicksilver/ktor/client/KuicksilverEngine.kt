@@ -744,7 +744,7 @@ internal class KuicksilverEngine(
             withTimeoutOrNull(config.connectTimeout) {
                 coroutineScope {
                     val query = async { records.upgradesToHttps(https.host, https.port, supportedAlpn(webSocket = false)) }
-                    val addresses = engineScope.launch { lookupQuietly(dns, url.host, url.port) }
+                    val addresses = records.background { lookupQuietly(dns, url.host, url.port) }
                     select {
                         query.onJoin {}
                         addresses.onJoin {}
@@ -1056,9 +1056,9 @@ internal class KuicksilverEngine(
     ): Pair<HttpsResolution, HttpsResolution> {
         // section 5: "clients SHOULD issue speculative A and/or AAAA queries in parallel with each SVCB query, based on a
         // predicted value of TargetName": an alias target, looked up into the request's resolution
-        val prefetch: (String) -> Unit = { name -> engineScope.launch { lookupQuietly(dns, name, url.port) } }
+        val prefetch: (String) -> Unit = { name -> records.background { lookupQuietly(dns, name, url.port) } }
         // the origin's addresses, for the TCP side: in the background, so records that are in do not wait for them
-        val addresses = engineScope.launch { lookupQuietly(dns, url.host, url.port) }
+        val addresses = records.background { lookupQuietly(dns, url.host, url.port) }
         val originProgress = AliasProgress()
         val altProgress = AliasProgress()
 
