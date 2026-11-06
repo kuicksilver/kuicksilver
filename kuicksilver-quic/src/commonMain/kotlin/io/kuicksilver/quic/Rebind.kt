@@ -4,6 +4,7 @@ package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 
 /**
  * Moves this client connection to a fresh socket: the recovery after [PathEvent.SocketLost] (iOS took the socket while the app
@@ -17,6 +18,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * connection or a peer that sent `disable_active_migration` the same failures as [QuicConnection.addPath].
  */
 @ExperimentalKuicksilverApi
+@OptIn(InternalKuicksilverApi::class)
 public suspend fun QuicConnection.rebind(
     local: InetSocketAddress? = null,
     prefer: IoPreference = IoPreference.Accelerated,
@@ -30,11 +32,14 @@ public suspend fun QuicConnection.rebind(
     return changed
 }
 
-/** The wildcard address (any port) of the family of the peer this connection talks to: where a new socket for it binds. */
-internal fun QuicConnection.wildcardLocal(): InetSocketAddress =
+/**
+ * The wildcard address (any port) of the family of the peer this connection talks to now (its active path, else its first):
+ * where a new socket for it binds. Public for the Ktor client engine's migration hooks only.
+ */
+@InternalKuicksilverApi
+public fun QuicConnection.wildcardLocal(): InetSocketAddress =
     InetSocketAddress(
-        if (paths
-                .firstOrNull()
+        if ((activePath ?: paths.firstOrNull())
                 ?.remoteAddress
                 ?.resolveAddress()
                 ?.size == 16

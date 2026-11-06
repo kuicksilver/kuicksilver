@@ -84,8 +84,8 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **61 steps**; a release needs `--with-interop --with-windows`, which makes **66** (and `--with-browser`
-adds a Chrome WebTransport run, 67). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
+default it has **62 steps**; a release needs `--with-interop --with-windows`, which makes **67** (and `--with-browser`
+adds a Chrome WebTransport run, 68). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
 refuses to start if either fails. What the steps cover:
 
 | Area | Steps (names as the script prints them) |
@@ -95,7 +95,7 @@ refuses to start if either fails. What the steps cover:
 | JVM on macOS | every module's JVM tests, the coverage report (no threshold), the sample, the JNI library and its export whitelist, the Intel-Mac library |
 | JVM on Linux | every module's JVM suite against the manylinux `libksl.so`, x64 and arm64, in Docker; the system-OpenSSL build mode |
 | JVM on Windows | every module's JVM suite in the Windows 11 VM against the mingw-w64 dll (`--with-windows`) |
-| Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the exports and OpenSSL of `libksl.so`, and the device tests on the emulator (`androidConnectedCheck`) |
+| Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the exports and OpenSSL of `libksl.so`, the device tests on the emulator (`androidConnectedCheck`), and the connection migration test against a server on the host (`androidMigrationDeviceTest`) |
 | Native macOS and iOS | `macosArm64` tests, `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled, OpenSSL symbol prefix |
 | Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix |
 | Native Windows | the `mingwX64` test executables are linked here, not run: they run in the hosted CI's `windows` job (stage 6) |

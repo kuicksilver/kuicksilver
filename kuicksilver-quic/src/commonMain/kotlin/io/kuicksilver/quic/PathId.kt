@@ -97,6 +97,36 @@ public class PathValidationException(
         },
     )
 
+/** Why the transport refused a client's new path ([MigrationRefusedException]). */
+@ExperimentalKuicksilverApi
+public enum class MigrationRefusal {
+    /** The handshake is not confirmed yet: no migration before (RFC 9000 section 9). */
+    NotConfirmed,
+
+    /** The server sent `disable_active_migration` (RFC 9000 sections 9 and 18.2). */
+    DisabledByPeer,
+
+    /** The server uses zero-length connection IDs: a new path would be linkable to the old one (RFC 9000 section 9.5). */
+    ZeroLengthConnectionId,
+}
+
+/**
+ * Thrown by [QuicConnection.addPath] (and so [QuicConnection.migrate] and a [NetworkMigrator]) when the transport refuses a
+ * new path before anything is sent on it; [reason] says why. An IllegalStateException, as the refusal was before this type
+ * existed.
+ */
+@ExperimentalKuicksilverApi
+public class MigrationRefusedException(
+    /** Why the path was refused. */
+    public val reason: MigrationRefusal,
+) : IllegalStateException(
+        when (reason) {
+            MigrationRefusal.NotConfirmed -> "migration before the handshake is confirmed (RFC 9000 section 9)"
+            MigrationRefusal.DisabledByPeer -> "the peer advertised disable_active_migration"
+            MigrationRefusal.ZeroLengthConnectionId -> "the peer uses a zero-length connection ID (RFC 9000 section 9.5)"
+        },
+    )
+
 /** ECN codepoint of a datagram (RFC 9000 section 13.4). */
 public enum class Ecn {
     /** Not ECN-capable (codepoint 00): what is sent while ECN is off or failed. */

@@ -96,6 +96,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getAltSvcStore ()Lio/kuicksilver/ktor/client/AltSvcStore;
 	public final fun getClearOnNetworkChange ()Z
 	public final fun getConnectionListener ()Lio/kuicksilver/quic/ConnectionListener;
+	public final fun getConnectionMigration ()Lio/kuicksilver/ktor/client/Http3ConnectionMigration;
 	public final fun getDiagnosticsLogLevel ()Lio/kuicksilver/quic/LogLevel;
 	public final fun getDiscovery ()Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
 	public final fun getEarlyData ()Z
@@ -111,6 +112,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public final fun setClearOnNetworkChange (Z)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
+	public final fun setConnectionMigration (Lio/kuicksilver/ktor/client/Http3ConnectionMigration;)V
 	public final fun setDiagnosticsLogLevel (Lio/kuicksilver/quic/LogLevel;)V
 	public final fun setDiscovery (Lio/kuicksilver/ktor/client/Http3DiscoveryMode;)V
 	public final fun setEarlyData (Z)V
@@ -123,6 +125,18 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setQuicHints (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http3/Http3Settings;)V
 	public final fun setWebTransportIgnoresProxy (Z)V
+}
+
+public abstract interface class io/kuicksilver/ktor/client/Http3ConnectionMigration {
+	public static final field Companion Lio/kuicksilver/ktor/client/Http3ConnectionMigration$Companion;
+	public abstract fun start (Lio/kuicksilver/quic/QuicConnection;Lkotlinx/coroutines/CoroutineScope;)Lio/kuicksilver/quic/NetworkMigrator;
+}
+
+public final class io/kuicksilver/ktor/client/Http3ConnectionMigration$Companion {
+}
+
+public final class io/kuicksilver/ktor/client/Http3ConnectionMigration_androidKt {
+	public static final fun followDefaultNetwork (Lio/kuicksilver/ktor/client/Http3ConnectionMigration$Companion;Landroid/net/ConnectivityManager;)Lio/kuicksilver/ktor/client/Http3ConnectionMigration;
 }
 
 public final class io/kuicksilver/ktor/client/Http3DiscoveryMode : java/lang/Enum {
@@ -208,6 +222,7 @@ public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
 	public fun callFailed (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
 	public fun callStart (Lio/ktor/client/request/HttpRequestData;)V
 	public fun connectionAcquired (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
+	public fun connectionMigrated (Ljava/lang/String;Lio/kuicksilver/quic/MigrationEvent;)V
 	public fun connectionReleased (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
 	public fun fallback (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
 	public fun protocolSelected (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Lio/kuicksilver/ktor/client/ProtocolReason;)V

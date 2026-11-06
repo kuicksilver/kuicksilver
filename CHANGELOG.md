@@ -22,6 +22,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   public option has a row with the right default and release), `troubleshooting-msgs.sh` (every quoted message,
   exception and code exists in the source), `llms-full.sh --check`, and the HTTP/2 server sample is compiled by
   `GuideSamplesTest`.
+- Ktor client: HTTP/3 connections can follow the device's network (connection migration, RFC 9000 section 9;
+  `docs/guide/ktor.md`, "Connection migration"), opt-in and experimental: `http3 { connectionMigration = ... }` takes an
+  `Http3ConnectionMigration`, with `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android
+  (`ConnectivityManager`) and `followDefaultNetwork()` on iOS and macOS (`NWPathMonitor`); elsewhere it wraps a
+  `NetworkMigrator` over a source of your own. Every pooled HTTP/3 connection then moves to the new default network once
+  its handshake has completed, over a validated path with a fresh connection ID, so a download carries on across a
+  switch from Wi-Fi to the mobile network (without it a connection survives only if the system happens to route its
+  unbound socket over the new network and the server follows that as a NAT rebinding); the transport still
+  refuses to move before confirmation, towards a server that sent `disable_active_migration` or uses zero-length
+  connection IDs, and onto a path that does not validate. New `KuicksilverEventListener.connectionMigrated(origin,
+  event)` reports each step (a failed move is also logged at `Info`, a server that does not allow migration at
+  `Debug`). Off by default, so 0.2's behaviour is unchanged; `networkId` stays separate. HTTP/1.1, HTTP/2 and the
+  connections of WebTransport sessions do not migrate.
+- QUIC: experimental `MigrationRefusedException` (an `IllegalStateException`, as before) with a `MigrationRefusal`
+  reason (`NotConfirmed`, `DisabledByPeer`, `ZeroLengthConnectionId`) is what `QuicConnection.addPath`, `migrate` and a
+  `NetworkMigrator` throw or report when the transport refuses a new path (RFC 9000 sections 9 and 9.5).
 - Docs: a deployment guide for the HTTP/3 server (`docs/guide/deployment.md`): TCP and UDP on one port number and what
   the engine's `Alt-Svc` names (with a sample for a public port that differs from the bound one), firewalls and
   security groups, Docker and Kubernetes (mixed-protocol `LoadBalancer` Services, the client address and the per-IP
