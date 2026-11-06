@@ -7,7 +7,9 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.runtime.H3Session
+import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
+import io.kuicksilver.http3.runtime.goAway
 import io.kuicksilver.http3.runtime.request
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.StreamPriority

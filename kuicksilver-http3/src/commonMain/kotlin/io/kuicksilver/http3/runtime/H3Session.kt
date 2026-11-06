@@ -4,31 +4,20 @@
 
 package io.kuicksilver.http3.runtime
 
-import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3PeerSettings
 import io.kuicksilver.http3.Http3Role
 import io.kuicksilver.http3.Http3Settings
-import io.kuicksilver.http3.frame.ControlFrames
-import io.kuicksilver.http3.frame.FrameAction
 import io.kuicksilver.http3.frame.FrameHeaders
-import io.kuicksilver.http3.frame.FrameRules
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
-import io.kuicksilver.http3.frame.SettingsCodec
 import io.kuicksilver.http3.frame.SettingsId
-import io.kuicksilver.http3.frame.StreamType
-import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.GlitchLimiter
-import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.qpack.QpackError
-import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.http3.webtransport.WtSettings
 import io.kuicksilver.http3.webtransport.WtStreamRouter
 import io.kuicksilver.http3.webtransport.WtVersion
-import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
@@ -37,7 +26,6 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
-import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
@@ -60,13 +48,10 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.random.Random
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -83,11 +68,11 @@ internal class H3Session(
 ) {
     val isServer: Boolean get() = role == Http3Role.Server
     val dispatcher = Dispatchers.Default.limitedParallelism(1)
-    private val job = SupervisorJob()
+    internal val job = SupervisorJob()
     val scope = CoroutineScope(job + dispatcher + CoroutineName("http3"))
 
     /** Where [launchDrainer] readers run: outside [scope], so one started after the connection ended still runs. */
-    private val afterEnd = CoroutineScope(SupervisorJob() + dispatcher + CoroutineName("http3-drain"))
+    internal val afterEnd = CoroutineScope(SupervisorJob() + dispatcher + CoroutineName("http3-drain"))
 
     /** How [DRAIN_GRACE] is measured; a test replaces it to end the grace without real time passing. */
     internal var drainTimer: suspend (Duration) -> Unit = { delay(it) }
@@ -96,10 +81,10 @@ internal class H3Session(
     internal var beforeDrainerForTest: (suspend () -> Unit)? = null
 
     /** Coroutines reading what the peer sent, which may finish it when the connection is lost ([drains]). */
-    private val drainers = kotlin.concurrent.atomics.AtomicReference<List<Drainer>>(emptyList())
+    internal val drainers = kotlin.concurrent.atomics.AtomicReference<List<Drainer>>(emptyList())
 
     /** A [drains] reader, and the stream whose message it reads, if any. */
-    private class Drainer(
+    internal class Drainer(
         val job: Job,
         val stream: QuicStream?,
     )
@@ -108,13 +93,13 @@ internal class H3Session(
      * The peer's QPACK encoder stream is being read. Once the connection is gone and this reader too, no insert can arrive
      * any more: a field section still waiting for one never decodes ([noMoreInserts]). Session dispatcher only.
      */
-    private var peerEncoderReading = false
+    internal var peerEncoderReading = false
 
     /** No dynamic-table insert can arrive any more: the connection is gone, and with it the reader of the peer's encoder stream. */
     fun noMoreInserts(): Boolean = closed.isCompleted && !peerEncoderReading
 
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
-    private val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
+    internal val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
     val datagrams = DatagramDemux(this)
 
     /** WebTransport streams to their sessions (only used with [Http3Settings.webTransport]). */
@@ -201,45 +186,45 @@ internal class H3Session(
         private set
 
     /** Our control and QPACK streams, once open, typed and with SETTINGS sent; null until then and after a rejected 0-RTT dropped them. */
-    private class Critical(
+    internal class Critical(
         val control: QuicStream,
         val encoder: QuicStream,
         val decoder: QuicStream,
     )
 
-    private var critical: Critical? = null
+    internal var critical: Critical? = null
 
     /**
      * Client: how often our critical streams were given up because the server rejected the 0-RTT that carried them (RFC 9001
      * section 4.6.2). What was made for the streams of an older generation is not written on newer ones. Dispatcher only.
      */
-    private var criticalGen = 0
+    internal var criticalGen = 0
 
     /** Client: the rejected 0-RTT was noted ([noteRejectedZeroRtt]). Dispatcher only. */
-    private var zeroRttRejectionNoted = false
+    internal var zeroRttRejectionNoted = false
 
     /** [zeroRttRejectionNoted] (a test hook; dispatcher only). */
     internal val zeroRttRejectionNotedForTest: Boolean get() = zeroRttRejectionNoted
 
     /** The streams the running [openCriticalStreams] attempt opened so far (the set of [critical] once it is done). Dispatcher only. */
-    private var attemptStreams: List<QuicStream> = emptyList()
+    internal var attemptStreams: List<QuicStream> = emptyList()
 
     /** Streams of [attemptStreams] whose type went to the transport: never reset, a typed critical stream is for good. Dispatcher only. */
-    private val typedStreams = ArrayList<QuicStream>(3)
+    internal val typedStreams = ArrayList<QuicStream>(3)
 
     /**
      * Client: control frames written on the first control stream before the handshake told whether the server took the 0-RTT
      * it rode, with whether each is still wanted. A rejection drops that stream with them; the new control stream carries
      * them again, after SETTINGS. Null once settled. Dispatcher only.
      */
-    private var earlyControl: ArrayList<Pair<ByteArray, () -> Boolean>>? = if (role == Http3Role.Client) ArrayList() else null
+    internal var earlyControl: ArrayList<Pair<ByteArray, () -> Boolean>>? = if (role == Http3Role.Client) ArrayList() else null
 
     /** Test hook: fail when the critical-stream bookkeeping runs anywhere but on [dispatcher] (review 2026-10-28 N3). */
     @kotlin.concurrent.Volatile
     internal var assertOnDispatcherForTest = false
 
     /** Throws under [assertOnDispatcherForTest] when the caller is not on [dispatcher]. */
-    private suspend fun checkOnDispatcher() {
+    internal suspend fun checkOnDispatcher() {
         if (assertOnDispatcherForTest) {
             check(currentCoroutineContext()[kotlin.coroutines.ContinuationInterceptor] === dispatcher) { "off the session's dispatcher" }
         }
@@ -254,9 +239,9 @@ internal class H3Session(
     /** Where an [openCriticalStreams] attempt is ([criticalAttemptHookForTest]). */
     internal enum class AttemptStep { Started, Opened, ControlWritten }
 
-    private val controlLock = Mutex()
-    private val encoderLock = Mutex()
-    private val decoderLock = Mutex()
+    internal val controlLock = Mutex()
+    internal val encoderLock = Mutex()
+    internal val decoderLock = Mutex()
     val qpack =
         QpackRuntime(
             settings,
@@ -299,125 +284,7 @@ internal class H3Session(
         }
     }
 
-    /**
-     * Writes [b] on our critical stream [pick] once the streams are open, on the session's dispatcher (the bookkeeping
-     * below is the dispatcher's alone; callers such as `updatePriority` run on the application's thread). Bytes made for
-     * streams a rejected 0-RTT dropped (an older [criticalGen], or a write the drop failed) never reach the newer ones:
-     * QPACK instructions made then can only be about early request streams the server never saw, whose IDs the requests
-     * sent again reuse (a Stream Cancellation there would cancel the new request's sections, review 2026-10-28 H3C-1).
-     * [again] says whether such a frame is still wanted on the new control stream (a GOAWAY is); one written before the
-     * handshake told the 0-RTT's fate is kept for that ([earlyControl]).
-     */
-    private suspend fun writeCritical(
-        lock: Mutex,
-        pick: (Critical) -> QuicStream,
-        b: ByteArray,
-        again: (() -> Boolean)? = null,
-        madeFor: Int? = null,
-    ): Unit =
-        withContext(dispatcher) {
-            checkOnDispatcher()
-            // bytes made earlier (queued) are for the streams of the generation they were made in
-            var gen = madeFor ?: criticalGen
-            while (true) {
-                awaitCriticalStreams()
-                val written =
-                    lock.withLock {
-                        val c = critical
-                        if (gen != criticalGen || c == null) return@withLock false
-                        try {
-                            pick(c).output.writeFully(b)
-                            pick(c).output.flush()
-                            if (again != null && gen == 0) earlyControl?.add(b to again)
-                            true
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Throwable) {
-                            val cause = transportCause(e)
-                            if (cause is QuicException.StreamError.Stopped || cause is QuicException.StreamError.Reset) {
-                                // the peer closed one of our critical streams: RFC 9114 section 6.2.1 ("If either control stream is
-                                // closed at any point, this MUST be treated as a connection error of type
-                                // H3_CLOSED_CRITICAL_STREAM") and RFC 9204 section 4.2 (the same for the encoder and decoder streams)
-                                fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer closed our critical stream ${pick(c).id}")
-                                throw e
-                            }
-                            if (cause !is QuicException.StreamError.EarlyDataRejected) throw e
-                            criticalWriteFailuresForTest.addAndFetch(1)
-                            false
-                        }
-                    }
-                if (written) return@withContext
-                // the stream it was for is gone with the rejected 0-RTT. The runtime may not have reported the rejection yet
-                // (its event waits behind a flush): the handshake's end comes after it, and a connection that ends first
-                // leaves nothing to write on. Waiting here also keeps this loop from spinning on a failed stream
-                try {
-                    quic.awaitHandshake()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Throwable) {
-                    return@withContext
-                }
-                noteRejectedZeroRttHere()
-                if (criticalGen == gen || again == null || !again()) return@withContext // no newer streams, or not wanted there
-                gen = criticalGen
-            }
-        }
-
-    /**
-     * The peer stopping one of our critical streams closes it: RFC 9114 section 6.2.1 ("If either control stream is closed at
-     * any point, this MUST be treated as a connection error of type H3_CLOSED_CRITICAL_STREAM") and RFC 9204 section 4.2 for the
-     * QPACK streams. Noticed when the STOP_SENDING arrives, not at our next write there, which may never come.
-     */
-    private fun watchStopped(st: QuicStream) {
-        scope.launch {
-            val code = st.awaitSendStopped()
-            fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer stopped our critical stream ${st.id} (code $code)")
-        }
-    }
-
-    /** [st] was dropped by the server's rejection of 0-RTT (RFC 9001 section 4.6.2): the server never saw anything of it. */
-    fun droppedByRejectedZeroRtt(st: QuicStream): Boolean {
-        val causes = listOf(runCatching { st.output.closedCause }.getOrNull(), runCatching { st.input.closedCause }.getOrNull())
-        return causes.any { it != null && transportCause(it) is QuicException.StreamError.EarlyDataRejected }
-    }
-
-    /**
-     * RFC 9204 section 2.2.2.2: a stream reset or abandoned before its field sections were all processed gets a Stream
-     * Cancellation. Not one the server's rejection of 0-RTT dropped: the server never saw it, so its encoder holds no
-     * section of it, and the request sent again reuses its ID (RFC 9001 section 4.6.2; review 2026-10-28 H3C-1).
-     */
-    suspend fun cancelSections(st: QuicStream) {
-        if (droppedByRejectedZeroRtt(st)) return
-        // QPACK is the dispatcher's. NonCancellable: the callers are often cancelled already (a body pump in its catch after
-        // its own cancellation), and withContext would throw at once without making the cancellation (review 2026-10-28 R1)
-        withContext(NonCancellable + dispatcher) { qpack.cancelStream(st.id) }
-    }
-
-    /**
-     * Client: the server rejected 0-RTT (RFC 9001 section 4.6.2: "The client therefore MUST reset the state of all streams,
-     * including application state bound to those streams"). Runs before anything of the server is read (the accept loop and
-     * the request sent again call it first), so whatever QPACK holds unsent can only be about the dropped streams: it goes.
-     * Critical streams the rejection dropped are given up, and [criticalStreamsLoop] opens new ones and sends SETTINGS again;
-     * live ones, opened after the rejection, stay (review 2026-10-28 N1: giving those up reset a typed control stream).
-     * Idempotent; on the session's dispatcher, whoever calls it.
-     */
-    suspend fun noteRejectedZeroRtt() = withContext(dispatcher) { noteRejectedZeroRttHere() }
-
-    /** [noteRejectedZeroRtt], for a caller already on the dispatcher. */
-    private suspend fun noteRejectedZeroRttHere() {
-        checkOnDispatcher()
-        if (isServer || zeroRttRejectionNoted || quic.earlyDataAccepted != false) return
-        zeroRttRejectionNoted = true
-        qpack.onEarlyDataRejected()
-        val held = critical?.let { listOf(it.control, it.encoder, it.decoder) } ?: attemptStreams
-        if (held.any { droppedByRejectedZeroRtt(it) }) {
-            criticalGen++
-            critical = null
-            if (criticalStreams.isCompleted) criticalStreams = CompletableDeferred()
-        }
-    }
-
-    private val peerUni = HashSet<Long>() // stream types seen: one control, one encoder, one decoder
+    internal val peerUni = HashSet<Long>() // stream types seen: one control, one encoder, one decoder
 
     /** The peer's critical streams whose type was read (a test hook). */
     val criticalStreamsSeen = MutableStateFlow(0)
@@ -432,16 +299,16 @@ internal class H3Session(
     internal var glitchClock: () -> Long = { clock.elapsedNow().inWholeNanoseconds }
 
     // GOAWAY (RFC 9114 section 5.2)
-    private var goAwayPhase = 0 // 0 none, 1 first (2^62-4) sent, 2 final sent
+    internal var goAwayPhase = 0 // 0 none, 1 first (2^62-4) sent, 2 final sent
 
     /** Server: requests with ids from here on are rejected; client: 0 once we sent ours. */
     var goAwaySentId: Long? = null
-        private set
+        internal set
     var maxRequestId = -1L // server: highest client stream id seen
 
     // server: accepted requests whose response has not ended (and request streams whose HEADERS are still being read)
     private val activeRequestCount = MutableStateFlow(0)
-    private var activeRequests: Int
+    internal var activeRequests: Int
         get() = activeRequestCount.value
         set(v) {
             activeRequestCount.value = v
@@ -461,29 +328,29 @@ internal class H3Session(
     var goAwayCloseFallback: Duration = GOAWAY_CLOSE_FALLBACK
 
     /** Server: answered request streams not yet finished at the transport level (response unacknowledged). Session dispatcher only. */
-    private var settling = 0
+    internal var settling = 0
 
     /** Client: exchanges whose request or response is still moving; idle after a GOAWAY, the client closes. Dispatcher only. */
-    private var openExchanges = 0
+    internal var openExchanges = 0
 
     /** Server: request streams still reading their HEADERS, with the coroutine reading them. */
     val pendingHeaders = HashMap<Long, Pair<QuicStream, Job>>()
 
     /** Server: the header deadline after GOAWAY passed; a request stream that still has no HEADERS is rejected. */
     var headerDeadlinePassed = false
-        private set
+        internal set
     val rejectedByGoAway = HashSet<Long>() // client: in-flight requests the peer's GOAWAY did not cover
     val clientStreams = HashMap<Long, QuicStream>() // client: requests waiting for their response
 
     // RFC 9218 (server)
     val activeServerRequests = HashMap<Long, ServerRequestImpl>()
-    private val earlyPriority = LinkedHashMap<Long, StreamPriority>() // PRIORITY_UPDATE for streams not open yet
+    internal val earlyPriority = LinkedHashMap<Long, StreamPriority>() // PRIORITY_UPDATE for streams not open yet
 
     /** Server: the highest client bidirectional stream taken from the transport; the transport hands them out in id order. */
-    private var acceptedBidiUpTo = -1L
+    internal var acceptedBidiUpTo = -1L
 
     /** Server: client bidirectional streams taken from the transport whose handler has not ended (HEADERS may still be on the way). */
-    private val handledBidi = HashSet<Long>()
+    internal val handledBidi = HashSet<Long>()
 
     /** Server: [handledBidi] streams whose HEADERS were read (or that are no request): they never become a session now. */
     private val settledBidi = HashSet<Long>()
@@ -496,7 +363,7 @@ internal class H3Session(
 
     /** Server: the client's last MAX_PUSH_ID, -1 before the first (we never push; kept to catch a decrease). Dispatcher only. */
     var peerMaxPushId = -1L
-        private set
+        internal set
 
     /** HEADERS frames above this are refused unread; QPACK output is never much larger than the decoded section it carries. */
     val maxHeadersFrame: Long get() = 2 * settings.maxFieldSectionSize
@@ -505,7 +372,7 @@ internal class H3Session(
     var bufferedHeaderBytes = 0L
 
     /** Completes once our control and QPACK streams are open and typed and our SETTINGS went out; a new one after a rejected 0-RTT. */
-    private var criticalStreams = CompletableDeferred<Unit>()
+    internal var criticalStreams = CompletableDeferred<Unit>()
 
     /**
      * Starts the session. A coroutine of the session opens our control and QPACK streams: opening a stream waits for the
@@ -561,148 +428,6 @@ internal class H3Session(
             e is Http3Exception.Protocol &&
             e.h3Code == Http3ErrorCode.NO_ERROR
 
-    /**
-     * Opens our critical streams; a client does so again when the server rejected the 0-RTT that carried them (RFC 9001
-     * section 4.6.2 resets every stream the client opened), which it knows for sure once the handshake completed. At most
-     * twice: streams opened after the rejection are 1-RTT streams.
-     */
-    private suspend fun criticalStreamsLoop(deadline: Duration) {
-        while (true) {
-            val gen = criticalGen
-            val opened = openCriticalStreams(deadline, gen) ?: return
-            if (isServer) return
-            try {
-                quic.awaitHandshake()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                return // the connection is gone: its closed handler reports it
-            }
-            noteRejectedZeroRttHere()
-            if (opened && gen == criticalGen) {
-                earlyControl = null // the 0-RTT's fate is known and these streams stay
-                return
-            }
-        }
-    }
-
-    /**
-     * Opens the control and QPACK streams and sends SETTINGS (RFC 9114 section 6.2: the critical streams first, then
-     * others, GREASE, as the peer allows): true once done, false when a rejected 0-RTT took them first (generation [gen]
-     * passed), null when the connection failed: for want of stream credit, or because the peer closed a critical stream of
-     * ours while it was being opened (H3_CLOSED_CRITICAL_STREAM).
-     */
-    private suspend fun openCriticalStreams(
-        deadline: Duration,
-        gen: Int,
-    ): Boolean? {
-        val opened = ArrayList<QuicStream>(3)
-        attemptStreams = opened
-        typedStreams.clear()
-        val hook = criticalAttemptHookForTest
-        val done =
-            try {
-                withTimeoutOrNull(deadline) {
-                    hook?.invoke(AttemptStep.Started, gen)
-                    for (i in 0 until 3) {
-                        opened += quic.openUni(CRITICAL)
-                        if (gen != criticalGen) return@withTimeoutOrNull false
-                    }
-                    hook?.invoke(AttemptStep.Opened, gen)
-                    val (control, encoder, decoder) = opened
-                    controlLock.withLock {
-                        if (gen != criticalGen) return@withTimeoutOrNull false
-                        typedStreams += control
-                        control.output.writeFully(VarInt.encode(StreamType.CONTROL))
-                        control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
-                        if (settings.grease) {
-                            control.output.writeFully(
-                                FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
-                            )
-                        }
-                        // what went on the dropped control stream before the 0-RTT's fate was known, and is still wanted
-                        if (gen > 0) {
-                            earlyControl?.forEach { (frame, wanted) -> if (wanted()) control.output.writeFully(frame) }
-                            earlyControl = null
-                        }
-                        control.output.flush()
-                    }
-                    hook?.invoke(AttemptStep.ControlWritten, gen)
-                    encoderLock.withLock {
-                        if (gen != criticalGen) return@withTimeoutOrNull false
-                        typedStreams += encoder
-                        encoder.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
-                        encoder.output.flush()
-                    }
-                    decoderLock.withLock {
-                        if (gen != criticalGen) return@withTimeoutOrNull false
-                        typedStreams += decoder
-                        decoder.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
-                        decoder.output.flush()
-                    }
-                    if (gen != criticalGen) return@withTimeoutOrNull false
-                    critical = Critical(control, encoder, decoder)
-                    for (st in listOf(control, encoder, decoder)) watchStopped(st)
-                    true
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                val cause = transportCause(e)
-                if (cause is QuicException.StreamError.Stopped || cause is QuicException.StreamError.Reset) {
-                    // the peer closed a critical stream while we set it up (RFC 9114 section 6.2.1, RFC 9204 section 4.2)
-                    fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer closed our critical stream while it was opened")
-                    return null // the connection is closing: criticalStreamsLoop ends, as after the deadline
-                }
-                if (cause !is QuicException.StreamError.EarlyDataRejected) throw e
-                false
-            }
-        if (done == null) {
-            fail(
-                Http3ErrorCode.GENERAL_PROTOCOL_ERROR,
-                "control and QPACK streams not open after $deadline: the peer must allow at least three unidirectional streams",
-            )
-            return null
-        }
-        if (!done) {
-            // only an attempt that holds a stream the rejection dropped gives up ([noteRejectedZeroRttHere]), and the streams
-            // are typed in the order they were opened, after all three were: the live 1-RTT ones it opened after the dropped
-            // ones carry nothing yet. They are reset before their type, which RFC 9114 section 6.2 allows: "A receiver MUST
-            // tolerate unidirectional streams being closed or reset prior to the reception of the unidirectional stream
-            // header". A typed one is never reset (section 6.2.1: a closed control stream is H3_CLOSED_CRITICAL_STREAM)
-            for (st in opened) {
-                if (!droppedByRejectedZeroRtt(st) && typedStreams.none { it === st }) runCatching { st.reset(Http3ErrorCode.NO_ERROR) }
-            }
-            return false
-        }
-        criticalStreams.complete(Unit)
-        // the peer stops a reserved stream at once (RFC 9114 section 6.2.3), so failures here are expected and never fatal
-        if (settings.grease) {
-            scope.launch {
-                try {
-                    val g = quic.openUni()
-                    g.output.writeFully(VarInt.encode(FrameType.grease(Random.nextLong(0, 1000))) + Random.nextBytes(Random.nextInt(0, 8)))
-                    g.output.flushAndClose()
-                } catch (
-                    e: CancellationException,
-                ) {
-                    throw e
-                } catch (_: Throwable) {
-                }
-            }
-        }
-        return true
-    }
-
-    /** Waits until our control and QPACK streams exist; throws the connection's error if it closes first. */
-    private suspend fun awaitCriticalStreams() {
-        if (criticalStreams.isCompleted) return
-        select {
-            criticalStreams.onAwait { }
-            closed.onAwait { throw it }
-        }
-    }
-
     /** The peer's SETTINGS; waits for them, or throws the connection's error if it closes first. */
     suspend fun awaitPeerSettings(): Http3PeerSettings =
         select {
@@ -713,9 +438,9 @@ internal class H3Session(
     /** The highest WebTransport draft the peer's SETTINGS announce; null before they arrived or when they announce none. */
     fun peerWtVersion(): WtVersion? = peerWtVersion
 
-    private var peerWtVersion: WtVersion? = null
+    internal var peerWtVersion: WtVersion? = null
 
-    private fun ourSettings(): List<Pair<Long, Long>> =
+    internal fun ourSettings(): List<Pair<Long, Long>> =
         buildList {
             if (settings.qpackMaxTableCapacity > 0) add(SettingsId.QPACK_MAX_TABLE_CAPACITY to settings.qpackMaxTableCapacity)
             if (settings.qpackBlockedStreams > 0) add(SettingsId.QPACK_BLOCKED_STREAMS to settings.qpackBlockedStreams)
@@ -839,267 +564,6 @@ internal class H3Session(
         wt.onBidi(st)
     }
 
-    /**
-     * One of the peer's unidirectional streams. A stream that ends or is reset before its type is dropped: RFC 9114 section
-     * 6.2 says "A receiver MUST tolerate unidirectional streams being closed or reset prior to the reception of the
-     * unidirectional stream header" (quic-go's `handleUnidirectionalStream` returns the same way). Each such stream spends
-     * a glitch token, so a peer that only opens and abandons streams still meets H3_EXCESSIVE_LOAD (section 10.5).
-     */
-    private suspend fun readUni(st: QuicStream) {
-        val type =
-            try {
-                st.input.readVarIntOrNull()
-            } catch (_: IncompleteFrame) {
-                null
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (transportCause(e) !is QuicException.StreamError) throw e
-                null
-            } ?: run {
-                discardedUniStreams.value++
-                glitch("unidirectional stream ended or reset before its type")
-                return
-            }
-        when (type) {
-            StreamType.CONTROL, StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER -> {
-                if (!peerUni.add(type)) throw H3ProtocolError(Http3ErrorCode.STREAM_CREATION_ERROR, "second stream of type $type")
-                criticalStreamsSeen.value++
-                try {
-                    when (type) {
-                        StreamType.CONTROL -> {
-                            readControl(st)
-                        }
-
-                        StreamType.QPACK_ENCODER -> {
-                            peerEncoderReading = true
-                            try {
-                                readQpack(st) { b, n -> qpack.onPeerEncoderStream(b, n) }
-                            } finally {
-                                peerEncoderReading = false
-                            }
-                        }
-
-                        else -> {
-                            readQpack(st) { b, n -> qpack.onPeerDecoderStream(b, n) }
-                        }
-                    }
-                } catch (
-                    e: IncompleteFrame,
-                ) {
-                    throw H3ProtocolError(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "critical stream $type closed")
-                } catch (
-                    e: QuicException.StreamError,
-                ) {
-                    throw H3ProtocolError(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "critical stream $type reset")
-                }
-                throw H3ProtocolError(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "critical stream $type closed")
-            }
-
-            StreamType.WT_UNI -> {
-                if (settings.webTransport) {
-                    wt.onUni(st)
-                } else {
-                    st.stopSending(Http3ErrorCode.STREAM_CREATION_ERROR)
-                    discardedUniStreams.value++
-                }
-            }
-
-            // no push: a client never sent MAX_PUSH_ID (so any push ID is too large); a server never receives push streams
-            StreamType.PUSH -> {
-                throw H3ProtocolError(if (isServer) Http3ErrorCode.STREAM_CREATION_ERROR else Http3ErrorCode.ID_ERROR, "push stream")
-            }
-
-            else -> {
-                st.stopSending(Http3ErrorCode.STREAM_CREATION_ERROR)
-                discardedUniStreams.value++
-            } // unknown or reserved type: not a connection error (RFC 9114 section 6.2)
-        }
-    }
-
-    private suspend fun readQpack(
-        st: QuicStream,
-        sink: suspend (ByteArray, Int) -> Unit,
-    ) {
-        val buf = ByteArray(4096)
-        while (true) {
-            val n = st.input.readAvailable(buf, 0, buf.size)
-            if (n <
-                0
-            ) {
-                st.input.closedCause?.let { throw it }
-                return
-            }
-            if (n > 0) sink(buf, n)
-        }
-    }
-
-    private suspend fun readControl(st: QuicStream) {
-        var first = true
-        while (true) {
-            val type = st.input.readVarIntOrNull() ?: return
-            val len = st.input.readVarInt()
-            when (FrameRules.checkControl(type, first, isServer, settings.webTransport)) {
-                FrameAction.Skip -> {
-                    glitch("unknown frame on the control stream")
-                    st.input.skipExact(len)
-                }
-
-                FrameAction.Process -> {
-                    FrameRules.checkControlLength(type, len)
-                    beforeControlFrameForTest?.invoke(this, type)
-                    onControlFrame(type, st.input.readExact(len.toInt()))
-                }
-            }
-            first = false
-        }
-    }
-
-    private suspend fun onControlFrame(
-        type: Long,
-        payload: ByteArray,
-    ) {
-        when (type) {
-            FrameType.SETTINGS -> {
-                applyPeerSettings(SettingsCodec.decode(payload))
-            }
-
-            FrameType.GOAWAY -> {
-                onGoAway(ControlFrames.parseGoAway(payload))
-            }
-
-            FrameType.PRIORITY_UPDATE_REQUEST -> {
-                onPriorityUpdate(payload)
-            }
-
-            // server only (a client gets H3_FRAME_UNEXPECTED from FrameRules); RFC 9114 section 7.2.7
-            FrameType.MAX_PUSH_ID -> {
-                val id = ControlFrames.parseMaxPushId(payload)
-                if (id < peerMaxPushId) throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "MAX_PUSH_ID fell from $peerMaxPushId to $id")
-                // we never push: after the first, a MAX_PUSH_ID does no useful work and spends a glitch token (section 10.5)
-                if (peerMaxPushId >= 0) glitch("MAX_PUSH_ID after the first")
-                peerMaxPushId = id
-            }
-
-            FrameType.PRIORITY_UPDATE_PUSH -> {
-                throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "PRIORITY_UPDATE for a push without server push")
-            }
-
-            else -> {}
-        }
-    }
-
-    /**
-     * Throws [Http3Exception.FieldSectionTooLarge] when [fields] (pseudo-headers included) exceed the peer's
-     * `SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as name + value + 32 per field (RFC 9114 section 4.2.2): the peer would
-     * refuse it anyway. No limit is known before the peer's SETTINGS arrive.
-     */
-    fun checkPeerFieldLimit(
-        streamId: Long,
-        fields: List<Pair<String, String>>,
-    ) {
-        val limit = peerSettings.value?.maxFieldSectionSize ?: return
-        var size = 0L
-        for ((n, v) in fields) {
-            size += entrySize(n, v)
-            if (size > limit) throw Http3Exception.FieldSectionTooLarge(streamId, limit)
-        }
-    }
-
-    private suspend fun applyPeerSettings(m: Map<Long, Long>) {
-        val known =
-            setOf(
-                SettingsId.QPACK_MAX_TABLE_CAPACITY,
-                SettingsId.QPACK_BLOCKED_STREAMS,
-                SettingsId.MAX_FIELD_SECTION_SIZE,
-                SettingsId.ENABLE_CONNECT_PROTOCOL,
-                SettingsId.H3_DATAGRAM,
-            ) + WtSettings.ALL
-        val ps =
-            Http3PeerSettings(
-                m[SettingsId.QPACK_MAX_TABLE_CAPACITY] ?: 0,
-                m[SettingsId.QPACK_BLOCKED_STREAMS] ?: 0,
-                m[SettingsId.MAX_FIELD_SECTION_SIZE],
-                m[SettingsId.ENABLE_CONNECT_PROTOCOL] == 1L,
-                m[SettingsId.H3_DATAGRAM] == 1L,
-                m.filterKeys { it !in known },
-                webTransport = WtVersion.of(m) != null,
-            )
-        // H3_DATAGRAM=1 needs the transport's max_datagram_frame_size (RFC 9297 section 2.1: HTTP/3 Datagrams are QUIC DATAGRAM
-        // frames), as quic-go and quiche check: any value above 0 is support (RFC 9221 section 3), however small
-        if (ps.h3Datagram &&
-            !quic.peerSupportsDatagrams
-        ) {
-            throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "H3_DATAGRAM without QUIC datagram support")
-        }
-        qpack.onPeerSettings(ps.qpackMaxTableCapacity, ps.qpackBlockedStreams)
-        peerWtVersion = WtVersion.of(m)
-        peerSettings.value = ps
-        peerSettingsArrived.complete(ps)
-    }
-
-    private fun onGoAway(id: Long) {
-        val prev = goAwayReceived.value
-        if (prev != null && id > prev) throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "GOAWAY id grew from $prev to $id")
-        if (!isServer &&
-            id % 4 != 0L
-        ) {
-            throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "GOAWAY $id is not a client-initiated bidirectional stream")
-        }
-        goAwayReceived.value = id
-        if (!isServer) {
-            for ((sid, st) in clientStreams.toList()) {
-                if (sid >= id) { // never processed: fail them as retry-safe (section 5.2)
-                    rejectedByGoAway += sid
-                    runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
-                    runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
-                }
-            }
-            closeIfIdleAfterGoAway()
-        }
-    }
-
-    /**
-     * RFC 9218 section 7 on a server: the client's new signal for a request stream. An open request takes it at once; a
-     * stream whose request is not open yet (not opened, or its HEADERS still on the way) keeps it (at most
-     * `maxEarlyPriorityUpdates`) and applies it when it opens; a stream beyond the limit we granted is H3_ID_ERROR
-     * (section 7.2); frames above 256 bytes and the excess are ignored and spend glitch tokens.
-     */
-    private fun onPriorityUpdate(payload: ByteArray) {
-        priorityUpdatesForTest++
-        glitch("PRIORITY_UPDATE")
-        if (payload.size > MAX_PRIORITY_UPDATE) {
-            glitch("oversized PRIORITY_UPDATE")
-            return
-        }
-        val (id, value) = ControlFrames.parsePriorityUpdate(payload)
-        if (id % 4 != 0L) throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "PRIORITY_UPDATE for stream $id, not a request stream")
-        // a value that fails to parse carries no parameter (RFC 8941 section 4.2: "treated as if the field were not present"),
-        // and the frame is "a complete set of all priority parameters" in which an omitted one means its default (RFC 9218
-        // section 7): the defaults; the connection error section 7 allows (MAY) is not used
-        val p = PriorityField.parse(value)
-        activeServerRequests[id]?.let {
-            it.onPriorityUpdate(p)
-            return
-        }
-        // the transport hands streams out in id order: one taken whose handler ended is over
-        if (id <= acceptedBidiUpTo && id !in handledBidi) return
-        QuicStreamLimits.peerBidiStreamsGranted(quic)?.let {
-            if (id / 4 >=
-                it
-            ) {
-                throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "PRIORITY_UPDATE for stream $id beyond the limit of $it streams")
-            }
-        }
-        if (id in earlyPriority ||
-            earlyPriority.size < settings.maxEarlyPriorityUpdates
-        ) {
-            earlyPriority[id] = p
-        } else {
-            glitch("early PRIORITY_UPDATE beyond the buffer")
-        }
-    }
-
     fun takeEarlyPriority(id: Long): StreamPriority? = earlyPriority.remove(id)
 
     /**
@@ -1169,62 +633,11 @@ internal class H3Session(
         }
     }
 
-    /**
-     * Graceful shutdown (RFC 9114 section 5.2). A server sends GOAWAY(2^62-4), waits about two round trips for requests in
-     * flight, then GOAWAY with the first id it will not process, and closes with H3_NO_ERROR once its accepted requests
-     * are answered. A client sends GOAWAY(0) (no push) and stops issuing requests.
-     */
-    suspend fun goAway(): Unit = withContext(dispatcher) { goAwayConfined() }
-
     /** Runs on the session dispatcher right after a request's exchange was set up, before `request` returns (test hook). */
     internal var afterRequestForTest: (() -> Unit)? = null
 
     /** The context [goAway] ran in (test hook). */
     internal var goAwayContextForTest: ((kotlin.coroutines.CoroutineContext) -> Unit)? = null
-
-    private suspend fun goAwayConfined() {
-        goAwayContextForTest?.invoke(currentCoroutineContext())
-        if (goAwayPhase != 0 || closed.isCompleted) return
-        if (!isServer) {
-            goAwayPhase = 2
-            goAwaySentId = 0
-            sendGoAway(0)
-            return
-        }
-        goAwayPhase = 1
-        if (!sendGoAway((1L shl 62) - 4)) return
-        delay(maxOf(quic.stats.smoothedRtt * 2, 50.milliseconds))
-        val id = if (maxRequestId < 0) 0 else maxRequestId + 4
-        goAwayPhase = 2
-        goAwaySentId = id
-        if (!sendGoAway(id)) return
-        // a request below the GOAWAY id whose HEADERS never complete must not hold the connection open forever
-        scope.launch {
-            delay(headerDeadlineAfterGoAway)
-            headerDeadlinePassed = true
-            for ((st, reader) in pendingHeaders.values.toList()) {
-                abort(st, Http3ErrorCode.REQUEST_REJECTED)
-                reader.cancel()
-            }
-        }
-        scope.launch { closeIfIdle() }
-    }
-
-    /**
-     * GOAWAY([id]) on our control stream; false when the connection closed meanwhile, which ends the graceful shutdown
-     * (a client idle after our first GOAWAY closes at once, RFC 9114 section 5.2).
-     */
-    private suspend fun sendGoAway(id: Long): Boolean =
-        try {
-            sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(id))
-            true
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            // the connection ended under the write (an idle client closes as soon as GOAWAY arrives): the transport's loss can
-            // reach this write before the session's own close has run, so it counts as closed too
-            if (closed.isCompleted || transportCause(e) is QuicException.ConnectionLost) false else throw e
-        }
 
     fun requestStarted() {
         activeRequests++
@@ -1253,17 +666,6 @@ internal class H3Session(
         }
     }
 
-    /**
-     * After the final GOAWAY with nothing in flight and every response acknowledged (RFC 9114 section 5.2): the client
-     * closes the connection once it read its responses (quic-go's server waits for exactly that); one that does not is
-     * closed after [goAwayCloseFallback], so a slow reader of an acknowledged response still has that long.
-     */
-    private suspend fun closeIfIdle() {
-        if (activeRequests > 0 || settling > 0 || closed.isCompleted) return
-        delay(maxOf(quic.stats.smoothedRtt * 4, goAwayCloseFallback))
-        if (activeRequests == 0 && settling == 0) close(Http3ErrorCode.NO_ERROR, "")
-    }
-
     /** Client: a request stream was opened; [exchangeEnded] follows once its request and response are done. */
     fun exchangeOpened() {
         openExchanges++
@@ -1272,19 +674,6 @@ internal class H3Session(
     fun exchangeEnded() {
         openExchanges--
         closeIfIdleAfterGoAway()
-    }
-
-    /**
-     * Client: a GOAWAY was received and no exchange is left, so this connection carries nothing more (no new request may
-     * use it): close it with H3_NO_ERROR (RFC 9114 section 5.2), which is what lets the server finish its graceful stop
-     * without guessing whether our responses were read.
-     */
-    private fun closeIfIdleAfterGoAway() {
-        if (isServer || goAwayReceived.value == null || openExchanges > 0 || closed.isCompleted) return
-        scope.launch {
-            beforeIdleCloseForTest?.invoke(this@H3Session)
-            close(Http3ErrorCode.NO_ERROR, "")
-        }
     }
 
     /**
@@ -1297,141 +686,6 @@ internal class H3Session(
         again: () -> Boolean = { true },
     ) {
         writeCritical(controlLock, { it.control }, FrameHeaders.frame(type, payload), again)
-    }
-
-    /** Connection error (RFC 9114 section 8): close with [code], fail everything waiting. */
-    suspend fun fail(
-        code: Long,
-        reason: String,
-    ) {
-        if (!closed.complete(Http3Exception.Protocol(code, Initiator.Local, null, "${Http3ErrorCode.name(code)}: $reason"))) return
-        requests.close(closed.getCompleted())
-        try {
-            quic.close(code, reason.take(200))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
-        }
-    }
-
-    suspend fun close(
-        code: Long,
-        reason: String,
-    ) {
-        if (closed.complete(
-                Http3Exception.Protocol(code, Initiator.Local, null, "closed locally with ${Http3ErrorCode.name(code)}"),
-            )
-        ) {
-            requests.close(closed.getCompleted())
-        }
-        try {
-            quic.close(code, reason)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
-        }
-    }
-
-    /**
-     * [job] reads a peer's stream (a message body, a unidirectional stream): when the connection is lost it goes on until
-     * its input ends, which it does once it has read what the peer sent before the loss (`QuicStream.input`), so a
-     * response whose last bytes came with the peer's CONNECTION_CLOSE is still read whole. [stream] is the stream of the
-     * message it reads: one that came whole is never cut ([onTransportClosed]). Any thread (a capsule reader starts on the
-     * application's).
-     */
-    fun drains(
-        job: Job,
-        stream: QuicStream? = null,
-    ): Job {
-        while (true) {
-            val now = drainers.load()
-            val kept = if (now.size >= DRAINERS_PRUNE_MIN) now.filter { !it.job.isCompleted } else now
-            if (drainers.compareAndSet(now, kept + Drainer(job, stream))) return job
-        }
-    }
-
-    /**
-     * The connection is gone: every coroutine of the session ends, but the [drains] readers only once their inputs ended.
-     * Cancelling them at once lost what the peer sent last, Firefox's WT_CLOSE_SESSION right before its close. A reader of
-     * a stream that came whole (its FIN and every byte before it, RFC 9000 section 3.2 "Data Recvd") goes on until it has
-     * handed all of it over: that is the peer's complete message (it ends with its stream, RFC 9114 section 4.1), and
-     * the close does not take back what had arrived. Reading it needs nothing more from the network, and the reader does
-     * not wait for the application either ([handOver]): it moves the rest into the body and ends, so the session ends
-     * whether or not the application reads, and the bytes live only as long as the application keeps the body. Every
-     * other reader gets at most [DRAIN_GRACE] (one the application does not keep up with is cut there, never holding the
-     * session for a message that cannot complete).
-     */
-    private fun onTransportClosed(e: QuicException.ConnectionLost) {
-        if (closed.complete(Http3Exception.fromQuic(e))) requests.close(closed.getCompleted())
-        val draining = drainers.exchange(emptyList()).filter { it.job.isActive }
-        if (draining.isEmpty()) {
-            job.cancel()
-            return
-        }
-        val readers = draining.map { it.job }.toSet()
-        for (c in job.children.toList()) if (c !in readers) c.cancel()
-        // read once the transport reported the end, which it does after it settled which streams came whole
-        val partial = draining.filter { it.stream?.receivedAll != true }.map { it.job }
-        scope.launch {
-            if (partial.isNotEmpty()) {
-                launch(start = CoroutineStart.UNDISPATCHED) {
-                    drainTimer(DRAIN_GRACE)
-                    for (r in partial) r.cancel()
-                }
-            }
-            for (r in readers) r.join()
-            job.cancel()
-        }
-    }
-
-    /**
-     * Launches a reader of a peer's stream that may finish it when the connection is lost, like a [drains] one, from any
-     * thread. It runs outside [scope]: a launch into the scope once the connection ended never runs, and a response whose
-     * headers were read after the session processed the peer's CONNECTION_CLOSE lost its body that way (seen on slow
-     * Windows and macOS runners). Once the session's coroutines are gone it gets at most [DRAIN_GRACE] more, then it is
-     * cut, unless [stream], the stream it reads, came whole: then it goes on until it has handed all of it over (without
-     * waiting for the application, [handOver]), however late it runs (a reader the scheduler paused past the grace cut a whole response with H3_NO_ERROR, seen on a loaded
-     * Android 7 emulator).
-     */
-    fun launchDrainer(
-        stream: QuicStream? = null,
-        block: suspend CoroutineScope.() -> Unit,
-    ): Job =
-        afterEnd.launch {
-            val reader =
-                launch {
-                    beforeDrainerForTest?.invoke()
-                    block()
-                }
-            select {
-                reader.onJoin {}
-                job.onJoin {}
-            }
-            if (reader.isCompleted) return@launch
-            val drainer = coroutineContext.job
-            if (stream?.receivedAll != true) {
-                // cut: this coroutine ends cancelled, the reader with it
-                launch(start = CoroutineStart.UNDISPATCHED) {
-                    drainTimer(DRAIN_GRACE)
-                    drainer.cancel()
-                }
-            }
-            reader.join()
-            drainer.children.forEach { it.cancel() }
-        }
-
-    /**
-     * Runs [cleanup] when [job] ends cancelled, with the connection's reason once it is gone. Unlike a catch or finally in
-     * the job's body this also runs for a job cancelled before it started: a launch into the scope of a connection that
-     * already ended runs none of its body, and a channel only it would have closed left its reader or writer waiting
-     * forever (a response body whose pump was launched just after the connection closed). [cleanup] runs on whatever
-     * thread cancels the job: it may only close channels and complete deferreds.
-     */
-    fun onCancelled(
-        job: Job,
-        cleanup: (Throwable) -> Unit,
-    ) {
-        job.invokeOnCompletion { e -> if (e != null) cleanup(if (closed.isCompleted) closed.getCompleted() else e) }
     }
 
     /** What a stream operation throws once the connection is gone. */
@@ -1485,7 +739,7 @@ internal class H3Session(
         /** See [decoderQueueLimit]. */
         const val DECODER_QUEUE_LIMIT: Long = 64L * 1024
 
-        private const val DRAINERS_PRUNE_MIN = 64
+        internal const val DRAINERS_PRUNE_MIN = 64
 
         /** Control and QPACK streams: sent before every request stream, whatever urgency a peer asks for. */
         val CRITICAL = StreamPriority.Critical

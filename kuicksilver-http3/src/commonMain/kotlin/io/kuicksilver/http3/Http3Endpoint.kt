@@ -5,6 +5,7 @@ package io.kuicksilver.http3
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.http3.runtime.fail
 import io.kuicksilver.quic.EndpointStats
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicClientConfig
