@@ -27,7 +27,7 @@ variables](#system-properties-and-environment-variables) · [fixed limits](#fixe
 | Object | Kotlin API | Ktor client | Ktor server | `EngineMain` key |
 |---|---|---|---|---|
 | [`QuicConfig`](#quicconfig) | `quicConfig { }` | `engine { quic = … }` | `quic = …` (`quicMaxIdleTimeout`) | |
-| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | not configurable (`udpSocketCount` sets `loops`) | `kuicksilver.udpSocketCount` |
+| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicAdmission`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount` |
 | [`TlsConfig`](#tlsconfig) | `tlsConfig(role) { }` | `engine { trust = …; identity = …; tls { } }` | `tlsConnector(identity) { }` | `kuicksilver.tls.*` |
 | [`Http3Settings`](#http3settings) | `http3Settings { }` | `engine { http3 { settings = … } }` | `http3Settings = …` | `kuicksilver.http3` (on/off) |
 | [`Http2Settings`](#http2settings) | `Http2Settings(…)` | `engine { http2 { settings = … } }` | `http2Settings = …` | `kuicksilver.http2` (on/off) |
@@ -306,7 +306,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | Option | Type | Default | Since | What it does |
 |---|---|---|---|---|
 | `enabled` | `Boolean` | `true` | 0.3.0 | offer `h2` and `http/1.1` in ALPN on every `https://` connection over TCP (not WebSockets); `false` offers only `http/1.1`, as in 0.2 |
-| `settings` | `Http2Settings` | `Http2Settings()` | 0.2.0 | our SETTINGS, windows (512 KiB per stream growing to 6 MiB, 768 KiB per connection growing to 15 MiB) and the limits held against the server (64 KiB field sections, 10 s for our SETTINGS to be acknowledged, the flood limits; threat model 3.23) |
+| `settings` | `Http2Settings` | `Http2Settings()` | 0.3.0 | our SETTINGS, windows (512 KiB per stream growing to 6 MiB, 768 KiB per connection growing to 15 MiB) and the limits held against the server (64 KiB field sections, 10 s for our SETTINGS to be acknowledged, the flood limits; threat model 3.23) |
 | `pingInterval` | `Duration` | `Duration.INFINITE` | 0.3.0 | a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms, else the engine's creation fails with `IllegalArgumentException` |
 
 ### HTTP/3 client options

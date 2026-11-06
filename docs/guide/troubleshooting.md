@@ -136,9 +136,9 @@ client knows at once), or it drops the Initial silently (the client waits for it
 | Counter | The client sees | Cause | Action |
 |---|---|---|---|
 | `connectionsRefusedAcceptQueue` | `TransportClosed(code = 0x02)` | `acceptQueue` (128) handshaken connections wait for `accept()` | accept faster, or raise `acceptQueue` |
-| `connectionsRefusedShutdown` | `TransportClosed(code = 0x02)` | the endpoint is shutting down, or the Ktor server is in `Drain` | connect to another instance; wait for the new one |
-| `connectionsRefusedLimits`, `initialsDropped` | nothing, then "Handshake timeout after 10s" | `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached, `initialQueueCap` overflow, or an Initial from a reflective source port (53, 123, 1900, 5353, 11211) | raise the limit in `quicEndpointConfig { }`, or find the client that holds the connections; a NAT puts many users behind one IP |
-| `connectionsRefusedAdmission` | nothing, or the `ConnectionAdmission` close code | your `ConnectionAdmission` said `Drop` or `Close(code)`; the default asks an unvalidated client for a Retry (it does not drop it) above 256 handshakes in flight or 8 MiB of handshake data | check the admission policy and its `maxInflightHandshakes` |
+| `connectionsRefusedShutdown` | `TransportClosed(code = 0x02)` | `QuicEndpoint.shutdown` (the Ktor server's `stop`) is running | connect to another instance; wait for the new one |
+| `connectionsRefusedLimits`, `initialsDropped` | nothing, then "Handshake timeout after 10s" | `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached (not exposed to Ktor server users, who keep the defaults), `initialQueueCap` overflow, or an Initial from a reflective source port (53, 123, 1900, 5353, 11211) | raise the limit in `quicEndpointConfig { }`, or find the client that holds the connections; a NAT puts many users behind one IP |
+| `connectionsRefusedAdmission` | nothing, or the `ConnectionAdmission` close code | your `ConnectionAdmission` said `Drop` or `Close(code)`, or the Ktor server is in `Drain` (it refuses new QUIC clients through its admission policy: `TransportClosed(code = 0x02)`); the default asks an unvalidated client for a Retry (it does not drop it) above 256 handshakes in flight or 8 MiB of handshake data | check the admission policy and its `maxInflightHandshakes` |
 | `statelessRateLimited` | nothing | Retry, Version Negotiation, Stateless Reset or refusals withheld by `statelessPerAddressPerSecond` (8) or `statelessTotalPerSecond` (1000) | a flood or a scan; raise the limits only if real clients are hit |
 | `invalidTokens`, `retriesSent` | `INVALID_TOKEN` | a Retry token that expired or came from another address (the client moved, or a load balancer sent the second Initial to another server) | keep a client's packets on one server; see [Deploying](deployment.md) |
 
@@ -420,7 +420,7 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 
 | Reason | Meaning and fix |
 |---|---|
-| `Configuration` | `discovery` is `H1Only` |
+| `Configuration` | `discovery` is `H1Only` or `H3Only` |
 | `NotSecure` | the URL is not `https` (or `wss`): HTTP/3 needs TLS |
 | `Proxy` | a proxy applies to the URL: HTTP/3 never goes through one (QUIC is UDP); exempt the host from the proxy for HTTP/3 |
 | `Http3Disabled` | `http3 { http3Allowed }` returned false: check the remote configuration behind it |
@@ -445,9 +445,9 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `BrokenAlternative` | HTTP/3 failed earlier on this network while TCP worked; skipped for 5 minutes, doubling |
 | `WebSocket` | a WebSocket without an Extended CONNECT HTTP/3 connection |
 | `HandshakeTimeout` | QUIC got no answer within the connect timeout: UDP blocked, see [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
-| `UdpUnreachable` | ICMP port or host unreachable: nothing listens on UDP there (the server has no HTTP/3, or its UDP port differs from `Alt-Svc`) |
+| `UdpUnreachable` | reserved, not produced yet: calls that would show it show `HandshakeTimeout` |
 | `H3NotReady` | HTTP/1.1 won the race before HTTP/3 answered; not a failure, the QUIC setup goes on |
-| `Refused` | CONNECTION_REFUSED (0x2): the server is draining or its accept queue is full; transient, the next call tries HTTP/3 again ([refusals](#connections-are-refused-or-dropped)). Any other close code marks the alternative broken |
+| `Refused` | the server closed the connection during setup without a TLS alert, or version negotiation failed. CONNECTION_REFUSED (0x2: the server is draining, stopping or its accept queue is full); transient, the next call tries HTTP/3 again ([refusals](#connections-are-refused-or-dropped)). Any other code marks the alternative broken |
 | `TlsFailure` | a TLS alert or a local verification failure in the QUIC handshake: [certificate errors](#the-handshake-fails-with-a-certificate-error), [ALPN mismatch](#the-handshake-fails-with-an-alpn-mismatch) |
 | `Http3Error` | the HTTP/3 connection failed as a whole: an HTTP/3 or QPACK error, a stateless reset, an idle timeout, no viable path |
 | `ZeroRttRejected` | the server rejected 0-RTT: [0-RTT is rejected](#0-rtt-is-rejected) |
