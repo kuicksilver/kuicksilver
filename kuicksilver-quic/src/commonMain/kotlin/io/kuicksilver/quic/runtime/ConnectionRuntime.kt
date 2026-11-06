@@ -318,7 +318,9 @@ internal class ConnectionRuntime(
             }
             seenRemotes[j] = p.remote
         }
-        for (p in pathList) {
+        val list = pathList
+        for (i in 0 until list.size) { // by index: the loop runs this for every flush, an iterator would be its only allocation
+            val p = list[i]
             val r = core.paths.byId(p.id)?.remote ?: continue
             if (r !== p.remote) p.remote = r
         }
@@ -634,7 +636,7 @@ internal class ConnectionRuntime(
     }
 
     internal fun tick() {
-        for (t in tickers) t.trySend(Unit)
+        for (i in 0 until tickers.size) tickers[i].trySend(Unit) // by index: no iterator per flush
     }
 
     /** The connection reached Closed and leaves the loop: everything, its path sockets included, is released. */

@@ -42,6 +42,7 @@ import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConfig
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -468,9 +469,10 @@ internal class EndpointLoop private constructor(
     private val copy = ByteArray(SLOT_SIZE)
 
     /** Sends [out]: in one call when every slot uses the endpoint socket, otherwise slot by slot through each path's socket. */
-    private suspend fun sendOut(
+    private inline fun sendOutWith(
         rt: ConnectionRuntime,
         out: PacketBatch,
+        sendOrLose: (target: DatagramIo, batch: PacketBatch, rt: ConnectionRuntime) -> Unit,
     ) {
         var mixed = false
         for (i in 0 until out.count) if (out.path(i) != PathId.Initial) mixed = true
@@ -497,6 +499,31 @@ internal class EndpointLoop private constructor(
     }
 
     /**
+     * True while no socket this loop sends on can suspend a send: the endpoint's, its preferred-address sockets and every path
+     * socket are [KslDatagramIo]s, whose `send` is `trySend`. A flush then runs without a coroutine frame ([flushNow]).
+     */
+    private fun sendsNeverSuspend(): Boolean {
+        if (io !is KslDatagramIo || suspendingPathSockets) return false
+        val p = preferredIos
+        for (i in 0 until p.size) if (p[i] !is KslDatagramIo) return false
+        return true
+    }
+
+    /**
+     * Set (for good) once a connection of this loop got a path socket whose `send` may suspend (an application's own
+     * [DatagramIo]): flushes take the suspending path from then on. Set before the path can carry a datagram.
+     */
+    @Volatile private var suspendingPathSockets = false
+
+    /** The endpoint's own socket (tests). */
+    internal val ioForTest: DatagramIo get() = io
+
+    /** A path socket [io] was made for one of this loop's connections (see [suspendingPathSockets]). */
+    internal fun pathSocketAdded(io: DatagramIo) {
+        if (io !is KslDatagramIo) suspendingPathSockets = true
+    }
+
+    /**
      * A send that throws (EPERM from a filter, an unreachable route, a socket closed under a closing endpoint) loses this batch,
      * one that takes only part of it (a full send buffer) loses the rest; loss detection repairs both, and [rt]'s connection
      * counts them (a throwing send counts its whole batch, so the count may exceed what was really lost when the socket
@@ -507,6 +534,18 @@ internal class EndpointLoop private constructor(
         batch: PacketBatch,
         rt: ConnectionRuntime?,
     ) {
+        val ctx = currentCoroutineContext()
+        sendOrLoseWith(target, batch, rt, ctx) { full -> if (full) target.trySend(batch) else target.send(batch) }
+    }
+
+    /** [sendOrLose]'s body; [send] sends [batch] on [target] (`trySend` once the socket refused part of a batch in this flush). */
+    private inline fun sendOrLoseWith(
+        target: DatagramIo,
+        batch: PacketBatch,
+        rt: ConnectionRuntime?,
+        ctx: CoroutineContext,
+        send: (full: Boolean) -> Int,
+    ) {
         val lost =
             if (isDefunct(target)) {
                 batch.count // a lost socket is not written again: its paths wait for a move to a new one
@@ -514,8 +553,8 @@ internal class EndpointLoop private constructor(
                 try {
                     // a socket that already refused part of a batch in this flush (after its one wait for room) is not waited on
                     // again: the flush holds flushLock, so each wait would stall ACKs and timers of every other connection
-                    val full = fullThisFlush.any { it === target }
-                    val sent = (if (full) target.trySend(batch) else target.send(batch)).coerceIn(0, batch.count)
+                    val full = isFullThisFlush(target)
+                    val sent = send(full).coerceIn(0, batch.count)
                     // a datagram of this connection the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6)
                     if (rt != null && target is KslDatagramIo) {
                         val tooBig = target.takeEmsgsize()
@@ -528,7 +567,7 @@ internal class EndpointLoop private constructor(
                     observer.datagramsSent += sent
                     batch.count - sent
                 } catch (e: CancellationException) {
-                    currentCoroutineContext().ensureActive() // else a DatagramIo's own failure: a lost batch
+                    ctx.ensureActive() // else a DatagramIo's own failure: a lost batch
                     sendFailures++
                     batch.count
                 } catch (e: SocketDefunctException) {
@@ -792,63 +831,130 @@ internal class EndpointLoop private constructor(
     /** Sockets that did not take a whole batch during the current flush: the rest of the flush only `trySend`s on them. */
     private val fullThisFlush = ArrayList<DatagramIo>(2)
 
-    /** Drains events, sends what the dirty connections have to send, retires closed ones, re-arms their timers. Loop dispatcher only; [touched] joins the dirty list first. */
+    /** By index: an iterator per send would allocate. */
+    private fun isFullThisFlush(target: DatagramIo): Boolean {
+        for (i in 0 until fullThisFlush.size) if (fullThisFlush[i] === target) return true
+        return false
+    }
+
+    /** The connections one flush round works through, copied off the dirty list (a flush can retire connections, and a failure marks others). */
+    private val flushRound = ArrayList<ConnectionCore>()
+
+    /**
+     * Drains events, sends what the dirty connections have to send, retires closed ones, re-arms their timers. Loop dispatcher
+     * only; [touched] joins the dirty list first. Runs on the loop's thread for every received batch, timer and application
+     * write, so it allocates nothing on its own when it cannot suspend ([sendsNeverSuspend], the accelerated socket): then it
+     * takes the lock without waiting and calls [flushBody] directly, and only the suspending path gets a coroutine frame.
+     */
     internal suspend fun flush(
         touched: ConnectionCore? = null,
         signalTimer: Boolean = true,
     ) {
+        if (sendsNeverSuspend() && flushLock.tryLock()) {
+            try {
+                flushNow(touched, signalTimer, currentCoroutineContext())
+            } finally {
+                flushLock.unlock()
+            }
+            return
+        }
+        flushSuspending(touched, signalTimer)
+    }
+
+    /** [flush] when no send can suspend; [flushLock] held. */
+    private fun flushNow(
+        touched: ConnectionCore?,
+        signalTimer: Boolean,
+        ctx: CoroutineContext,
+    ) {
+        flushBody(
+            touched,
+            signalTimer,
+            ctx,
+            sendOut = { rt, out -> sendOutWith(rt, out) { t, b, r -> sendOrLoseWith(t, b, r, ctx) { t.trySend(b) } } },
+            sendStateless = { t, b -> sendOrLoseWith(t, b, null, ctx) { t.trySend(b) } },
+        )
+    }
+
+    /** [flush] through the lock, each send through [sendOrLose] (it may wait for room). */
+    private suspend fun flushSuspending(
+        touched: ConnectionCore?,
+        signalTimer: Boolean,
+    ) {
         flushLock.withLock {
-            if (released) return@withLock // a coroutine resumed after the close job freed the batches
-            if (touched != null) core.markDirty(touched)
-            val now = now()
-            val dirty = core.dirtyConnections
-            if (dirty.isEmpty() && !core.hasStateless) return@withLock
-            val head = timers.peek()?.heapDeadline ?: TimeMark.NEVER
-            fullThisFlush.clear()
-            // connections marked dirty while this flush runs (a refusal in onHandshakeCompleted, a failure marking others) get
-            // further rounds here: their CONNECTION_CLOSE must not wait for the next datagram or timer
-            var rounds = 0
-            while (dirty.isNotEmpty() && rounds++ < FLUSH_ROUNDS) {
-                // the list is copied: a flush can retire connections, and a failure inside one marks others dirty
-                val list = dirty.toList()
-                core.clearDirty()
-                for (c in list) {
-                    val rt = runtimes[c] ?: continue
-                    try {
-                        // a connection closing: its CONNECTION_CLOSE goes to the socket first, and the application side of the end
-                        // (failing streams, waking waiters, the listener's onClosed) follows; the paths' addresses are what the send needs
-                        if (c.state == ConnectionState.Closing) rt.refreshPathRemotes() else rt.drainEvents()
-                        outBatch.clear()
-                        if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
-                        rt.drainEvents()
-                        rt.tick()
-                    } catch (e: Throwable) {
-                        // our own cancellation goes on; a CancellationException out of a callback is that connection's failure
-                        if (e is CancellationException) currentCoroutineContext().ensureActive()
-                        c.failInternal(e)
-                        rt.drainEvents()
-                    }
-                    if (c.state ==
-                        ConnectionState.Closed
-                    ) {
-                        handshakeEnded(rt)
-                        rt.finish()
-                        timers.remove(c)
-                        core.remove(c)
-                        runtimes.remove(c)
-                        if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)
-                    } else {
-                        timers.update(c, c.nextTimeoutOrNever())
-                    }
+            val ctx = currentCoroutineContext()
+            flushBody(
+                touched,
+                signalTimer,
+                ctx,
+                sendOut = { rt, out -> sendOutWith(rt, out) { t, b, r -> sendOrLose(t, b, r) } },
+                sendStateless = { t, b -> sendOrLose(t, b, null) },
+            )
+        }
+    }
+
+    /** What a flush does, with its two kinds of send passed in; [flushLock] held. */
+    private inline fun flushBody(
+        touched: ConnectionCore?,
+        signalTimer: Boolean,
+        ctx: CoroutineContext,
+        sendOut: (rt: ConnectionRuntime, out: PacketBatch) -> Unit,
+        sendStateless: (target: DatagramIo, batch: PacketBatch) -> Unit,
+    ) {
+        if (released) return // a coroutine resumed after the close job freed the batches
+        if (touched != null) core.markDirty(touched)
+        val now = now()
+        val dirty = core.dirtyConnections
+        if (dirty.isEmpty() && !core.hasStateless) return
+        val head = timers.peek()?.heapDeadline ?: TimeMark.NEVER
+        fullThisFlush.clear()
+        // connections marked dirty while this flush runs (a refusal in onHandshakeCompleted, a failure marking others) get
+        // further rounds here: their CONNECTION_CLOSE must not wait for the next datagram or timer
+        var rounds = 0
+        while (dirty.isNotEmpty() && rounds++ < FLUSH_ROUNDS) {
+            // the list is copied (into a list kept for it, by index: no copy or iterator allocated per flush): a flush can
+            // retire connections, and a failure inside one marks others dirty
+            val list = flushRound
+            list.clear()
+            for (i in 0 until dirty.size) list.add(dirty[i])
+            core.clearDirty()
+            for (k in 0 until list.size) {
+                val c = list[k]
+                val rt = runtimes[c] ?: continue
+                try {
+                    // a connection closing: its CONNECTION_CLOSE goes to the socket first, and the application side of the end
+                    // (failing streams, waking waiters, the listener's onClosed) follows; the paths' addresses are what the send needs
+                    if (c.state == ConnectionState.Closing) rt.refreshPathRemotes() else rt.drainEvents()
+                    outBatch.clear()
+                    if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
+                    rt.drainEvents()
+                    rt.tick()
+                } catch (e: Throwable) {
+                    // our own cancellation goes on; a CancellationException out of a callback is that connection's failure
+                    if (e is CancellationException) ctx.ensureActive()
+                    c.failInternal(e)
+                    rt.drainEvents()
+                }
+                if (c.state ==
+                    ConnectionState.Closed
+                ) {
+                    handshakeEnded(rt)
+                    rt.finish()
+                    timers.remove(c)
+                    core.remove(c)
+                    runtimes.remove(c)
+                    if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)
+                } else {
+                    timers.update(c, c.nextTimeoutOrNever())
                 }
             }
-            if (dirty.isNotEmpty()) wake.trySend(Unit) // still more after the bounded rounds: the timer coroutine flushes again
-            outBatch.clear()
-            if (core.pollStateless(outBatch) > 0) sendOrLose(io, outBatch, null)
-            if (core.dirtyConnections.isNotEmpty()) flushesEndingDirtyForTest++
-            val newHead = timers.peek()?.heapDeadline ?: TimeMark.NEVER
-            if (signalTimer && newHead < head) wake.trySend(Unit)
         }
+        if (dirty.isNotEmpty()) wake.trySend(Unit) // still more after the bounded rounds: the timer coroutine flushes again
+        outBatch.clear()
+        if (core.pollStateless(outBatch) > 0) sendStateless(io, outBatch)
+        if (core.dirtyConnections.isNotEmpty()) flushesEndingDirtyForTest++
+        val newHead = timers.peek()?.heapDeadline ?: TimeMark.NEVER
+        if (signalTimer && newHead < head) wake.trySend(Unit)
     }
 
     private fun adopt(c: ConnectionCore): ConnectionRuntime {
