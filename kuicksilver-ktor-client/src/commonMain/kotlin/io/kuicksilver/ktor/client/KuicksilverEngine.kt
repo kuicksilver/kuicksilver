@@ -304,6 +304,8 @@ internal class KuicksilverEngine(
         // section 3.2, the engine does no SVCB resolution there)
         val records = httpsRecords
         if (records != null && url.protocol == io.ktor.http.URLProtocol.HTTP && !isIpLiteral(url.host) && proxyFor(url) == null) {
+            // a new network first (section 12, MUST): the decision must not rest on the old network's records
+            checkNetwork()
             httpsUpgrade(records, data, callContext)?.let { return it }
         }
         // H3Only promises HTTP/3 or a failure, never TCP: through a proxy there is no HTTP/3 (UDP would need CONNECT-UDP,

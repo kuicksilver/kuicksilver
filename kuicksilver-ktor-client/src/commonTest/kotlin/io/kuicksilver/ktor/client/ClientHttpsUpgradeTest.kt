@@ -92,6 +92,21 @@ class ClientHttpsUpgradeTest {
             assertEquals(listOf("server.test"), asked.distinct())
         }
 
+    @Test fun networkChangeIsSeenBeforeTheUpgradeDecision() =
+        clientTest { // RFC 9460 section 12: the first http request on a new network must not use the old network's records
+            var network = "wifi"
+            client(mapOf("server.test" to listOf(rec("server.test", 0, "cdn.example"))), follow = false, more = {
+                http3 { networkId = { network } }
+            }).use { c ->
+                assertEquals(307, c.get("http://server.test/").status.value)
+                assertEquals(307, c.get("http://server.test/").status.value)
+                assertEquals(1, asked.size, "cached on the first network: $asked")
+                network = "cellular"
+                assertEquals(307, c.get("http://server.test/").status.value)
+                assertEquals(2, asked.size, "asked again on the new network: $asked")
+            }
+        }
+
     @Test fun noRecordsKeepsHttp() =
         clientTest {
             val (plain, port) = testServer(plain = true) { routing { get("/") { call.respondText("plain") } } }
