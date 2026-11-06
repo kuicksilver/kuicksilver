@@ -14,9 +14,9 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.close
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
-import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
@@ -379,7 +379,7 @@ internal suspend fun tlsH2WithSilentUdp(
             // the socket closes when this returns: first let the client close its side (it does once it saw our last
             // frames), so our close_notify is out before the socket goes; closing at once sometimes cut the TLS
             // output and the client saw a truncation instead of our SETTINGS and GOAWAY
-            kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { input.readRemaining() } }
+            kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { input.readBuffer() } }
         } finally {
             requests.cancel()
             log.ended.trySend(index)

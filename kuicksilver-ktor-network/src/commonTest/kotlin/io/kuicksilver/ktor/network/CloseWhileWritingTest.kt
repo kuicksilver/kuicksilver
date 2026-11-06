@@ -8,7 +8,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ClosedWriteChannelException
 import io.ktor.utils.io.ConcurrentIOException
 import io.ktor.utils.io.discard
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
@@ -27,6 +27,7 @@ import kotlin.time.Duration.Companion.seconds
  * and the waiting write was resumed with ConcurrentIOException, which escaped the application's coroutine (it also failed
  * the next runTest of the JVM as an uncaught exception from TcpWriterTest).
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class CloseWhileWritingTest {
     /**
      * An application writing 512 KiB at a time into a channel nobody reads: ktor-io holds 1 MiB, so a write waits
@@ -56,7 +57,7 @@ class CloseWhileWritingTest {
             val failure = ended.await()
             assertTrue(failure is ClosedWriteChannelException, "the waiting write ends as closed, got $failure")
             // what was handed over before the close is still there for the socket's writer
-            val queued = channel.readRemaining().readByteArray().size
+            val queued = channel.readBuffer().readByteArray().size
             assertTrue(queued >= 1 shl 20 && queued % (512 shl 10) == 0, "queued $queued")
         }
 

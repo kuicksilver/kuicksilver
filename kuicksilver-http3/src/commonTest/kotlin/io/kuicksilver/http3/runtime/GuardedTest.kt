@@ -25,6 +25,7 @@ import kotlin.time.Duration.Companion.seconds
  * How a session coroutine's failure ends the connection ([H3Session.guarded]): one caused by this session's own lost
  * transport leaves the end to the transport's close, any other is an H3_INTERNAL_ERROR of ours.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class GuardedTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 

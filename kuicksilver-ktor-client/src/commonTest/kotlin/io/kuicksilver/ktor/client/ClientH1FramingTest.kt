@@ -22,8 +22,8 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLine
-import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.client.h1.writeBody
 import io.kuicksilver.ktor.client.h1.writeHeaders
@@ -379,7 +379,7 @@ class ClientH1FramingTest {
                 writeHeaders(request, wire, overProxy = false)
                 writeBody(request, wire, coroutineContext)
                 wire.flushAndClose()
-                val sent = wire.readRemaining().readString()
+                val sent = wire.readBuffer().readString()
                 val head = sent.substringBefore("\r\n\r\n").lines().drop(1)
                 val te = head.filter { it.startsWith("Transfer-Encoding:", ignoreCase = true) }
                 val expected = if (coding.endsWith("chunked")) coding else "$coding, chunked"

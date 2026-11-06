@@ -17,7 +17,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
@@ -156,7 +156,7 @@ class ClientH2Test {
             tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, output ->
                 readRequest(input)
                 output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nh1")
-                runCatching { input.readRemaining() } // the client closes first: closing here could cut the response short
+                runCatching { input.readBuffer() } // the client closes first: closing here could cut the response short
             }) { port ->
                 testClient().use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
@@ -172,7 +172,7 @@ class ClientH2Test {
             tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }, h1 = { _, input, output ->
                 readRequest(input)
                 output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nh1")
-                runCatching { input.readRemaining() } // the client closes first: closing here could cut the response short
+                runCatching { input.readBuffer() } // the client closes first: closing here could cut the response short
             }) { port, log ->
                 testClient(engine = { http2 { enabled = false } }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
@@ -191,7 +191,7 @@ class ClientH2Test {
             tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }, h1 = { _, input, output ->
                 readRequest(input)
                 output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nh1")
-                runCatching { input.readRemaining() }
+                runCatching { input.readBuffer() }
             }) { port, log ->
                 testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
@@ -600,7 +600,7 @@ class ClientH2Test {
             // the server negotiates h2 and then says nothing: its preface must arrive within the connect timeout (RFC 9113
             // section 3.4)
             tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { _, _, input, _ ->
-                runCatching { input.readRemaining() }
+                runCatching { input.readBuffer() }
             }) { port ->
                 testClient(engine = { connectTimeout = 500.milliseconds }).use { c ->
                     assertFailsWith<io.ktor.client.network.sockets.ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
@@ -615,7 +615,7 @@ class ClientH2Test {
             tlsH2WithSilentUdp(
                 settings = Http2Settings(initialStreamWindow = 16_384, maxStreamWindow = 16_384, initialConnectionWindow = 65_535),
                 onRequest = { _, r ->
-                    val got = r.body.readRemaining().readByteArray()
+                    val got = r.body.readBuffer().readByteArray()
                     ok(r, got.size.toString())
                 },
             ) { port, _ ->
@@ -638,7 +638,7 @@ class ClientH2Test {
                         c
                             .get("https://127.0.0.1:$port/")
                             .bodyAsChannel()
-                            .readRemaining()
+                            .readBuffer()
                             .readByteArray()
                     assertEquals(size, body.size)
                     assertContentEquals(ByteArray(size) { (it % 251).toByte() }, body)

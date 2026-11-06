@@ -7,7 +7,7 @@ package io.kuicksilver.http2.runtime
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
@@ -97,7 +97,7 @@ class H2RuntimeTest {
         }
     }
 
-    private suspend fun ByteReadChannel.readAll(): ByteArray = readRemaining().readByteArray()
+    private suspend fun ByteReadChannel.readAll(): ByteArray = readBuffer().readByteArray()
 
     @Test fun requestAndResponseWithTrailers() =
         runTest {

@@ -3,7 +3,7 @@
 package io.kuicksilver.ktor.network
 
 import io.ktor.utils.io.ByteChannel
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.ktor.network.websocket.WebSocketInflate
 import kotlinx.coroutines.launch
@@ -27,7 +27,7 @@ class WebSocketFrameGuardTest {
                 raw.flushAndClose()
             }
             guardWebSocketInput(raw, WS_RSV1, untilClose = false, peerMasks = false, context = coroutineContext, inflate = inflate)
-                .readRemaining()
+                .readBuffer()
                 .readByteArray()
         }
 
