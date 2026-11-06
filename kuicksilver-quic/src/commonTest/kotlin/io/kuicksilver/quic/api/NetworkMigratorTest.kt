@@ -17,6 +17,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.EndpointLoop
+import io.kuicksilver.quic.runtime.flush
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
