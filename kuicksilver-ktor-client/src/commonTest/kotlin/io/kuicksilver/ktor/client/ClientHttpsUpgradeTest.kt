@@ -93,7 +93,8 @@ class ClientHttpsUpgradeTest {
         }
 
     @Test fun networkChangeIsSeenBeforeTheUpgradeDecision() =
-        clientTest { // RFC 9460 section 12: the first http request on a new network must not use the old network's records
+        clientTest {
+            // RFC 9460 section 12: the first http request on a new network must not use the old network's records
             var network = "wifi"
             client(mapOf("server.test" to listOf(rec("server.test", 0, "cdn.example"))), follow = false, more = {
                 http3 { networkId = { network } }
