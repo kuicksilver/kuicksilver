@@ -376,9 +376,15 @@ class ServerH3Test {
                 h3(port) { c -> assertEquals(200, c.request(get()).status) }
                 // the endpoint of the failed UDP-first pair was closed and joined before the start returned: its port can be
                 // bound at once (one try, no waiting; the engine owns no socket on it any more)
+                val warnings = log.lines.filter { it.level == "WARN" }.map { it.message }
+                assertTrue(warnings.none { "was not released" in it }, "the release of UDP $heldPort timed out: $warnings")
                 val again = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", heldPort)) }
                 again.getOrNull()?.close()
-                assertTrue(again.isSuccess, "UDP $heldPort still bound after the start returned ($why): ${again.exceptionOrNull()}")
+                // a failure here with no warning above: the engine joined the endpoint, so another process may have taken the port
+                assertTrue(
+                    again.isSuccess,
+                    "UDP $heldPort still bound after the start returned ($why, warnings $warnings): ${again.exceptionOrNull()}",
+                )
             } finally {
                 server.stop(100, 500)
                 heldTcp?.close()
