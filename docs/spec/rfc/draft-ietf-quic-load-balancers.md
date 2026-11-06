@@ -70,15 +70,17 @@ Stateless Resets.
   the same one, or none) the start and the permutation are fixed (derived from the key, or in clear from the
   reservation's stored `secret()`), and the counter goes on past the mark the last process stored: nonces are used only
   below the stored mark, the next block of 65,536 is stored ahead of need outside any lock, and a crash skips, never
-  reuses. A failed store is retried after a back-off and counted apart (`loadBalancerReservationFailures`); meanwhile a
-  request past the mark gets an unroutable ID for itself only. The derivation blocks end in 0x80..0x82, never a Feistel
+  reuses. Only the space instance the registry keeps ever stores, so the stored mark only moves up; the first block is
+  stored when an update builds the configuration, off the loops. A failed store is retried after a back-off counted in
+  receive batches (at most one store a batch) and counted apart (`loadBalancerReservationFailures`); while no nonce is
+  reserved nothing is drawn, and a request gets an unroutable ID for itself only. The derivation blocks end in 0x80..0x82, never a Feistel
   pass number, so none is an `expand` block under the same key. Once 2^(8 x nonce length) values are drawn the endpoint
   issues unroutable IDs, counts it in `loadBalancerNoncesExhausted` and logs it.
 - `endpoint/CidRoute.kt`: `QuicLbRoute` makes every ID (server connections under the current configuration; unroutable
   IDs `0b111 << 5 | (length - 1)` with CSPRNG bytes when there is none, the nonces are spent, or for a client connection
   of a loop group). The owning loop is `SipHash(group key, ID) mod loops` for any ID of our length with a matching
   length octet; a nonce whose ID hashes to another loop waits in that loop's pool (1,024 IDs), past that it is issued
-  where it was drawn with an owner exception (`OwnerExceptions`: at most 65,536 live IDs, the oldest dropped past that,
+  where it was drawn with an owner exception (`OwnerExceptions`: at most 65,536 live IDs, past that the nonce spent unused rather than a live entry dropped,
   each released when its ID leaves or its connection fails to be made; the datagram path checks a per-bucket counter and
   compares bytes in place, without allocating or a global lock). A Retry's SCID takes no exception: its nonce is spent
   unused past a full pool (`loadBalancerNoncesWasted`). Stateless Resets: only while the reset limit would let one out (else
@@ -97,7 +99,9 @@ Stateless Resets.
   none. `null` switches to unroutable IDs: new connections get one ID and `disable_active_migration`, live ones keep
   their IDs and stop handing out new ones. After a Retry the connection keeps the Retry's SCID as its one server ID
   (sections 3.2 and 9) whenever its first octet still tells what it allows (0b111, or the current or previous codepoint);
-  only a codepoint that went away since the Retry gets a fresh ID, the Retry SCID staying an alias.
+  only a codepoint that went away since the Retry, or an unroutable SCID made while no nonce was reserved when one is now,
+  gets a fresh ID, the Retry SCID staying an alias. A kept SCID that is not of the current configuration gets the change's
+  NEW_CONNECTION_ID at once (section 3.1).
 - Plaintext configurations and unroutable IDs: the connection hands out only its handshake ID (`CidIssuance.Single`,
   `ConnectionIdManager.limitToSingle`), no `preferred_address`. A connection whose nonces run out under it keeps the IDs it
   has and issues no unroutable one (3.2).

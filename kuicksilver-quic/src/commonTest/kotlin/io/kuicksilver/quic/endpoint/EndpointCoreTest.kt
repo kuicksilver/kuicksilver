@@ -1429,10 +1429,12 @@ class EndpointCoreTest {
     private class FlakyReservation : io.kuicksilver.quic.QuicLbNonceReservation {
         var mark = 0L
         var fail = false
+        var tries = 0
 
         override fun load(): Long = mark
 
         override fun store(mark: Long) {
+            tries++
             if (fail) throw kotlinx.io.IOException("disk full")
             this.mark = mark
         }
@@ -1483,6 +1485,115 @@ class EndpointCoreTest {
                 200,
             )) {
                 assertEquals(0, QuicLbFixtures.owner(cores[2], QuicLbFixtures.shortTo(cid)), "the exception names loop 0")
+            }
+        } finally {
+            for (c in cores) c.close()
+            state.close()
+        }
+    }
+
+    /**
+     * Section 3.1: a Retry's SCID of the previous configuration, adopted after the change moved the connections, moves too:
+     * one NEW_CONNECTION_ID of the new configuration whose Retire Prior To retires the Retry SCID.
+     */
+    @Test fun quicLbRetryScidOfThePreviousConfigurationIsRetired() {
+        val p = LbPair(QuicLbFixtures.config(configId = 2), admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
+        try {
+            val c = p.connect()
+            p.step() // the client's Initial, and the server's Retry back to it
+            assertEquals(1L, p.server.stats.retriesSent)
+            p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 3))
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            assertEquals(assertNotNull(c.retryScid), s.localCid, "the Retry SCID was adopted")
+            assertEquals(2, (s.localCid[0].toInt() and 0xff) ushr 5)
+            val reissue = assertNotNull(s.cids.localForTest(1) ?: s.cids.localForTest(2))
+            assertEquals(3, (reissue.cid[0].toInt() and 0xff) ushr 5, "the change's ID is of the new configuration")
+            assertEquals(reissue.seq, reissue.retirePriorTo, "and retires every earlier one, the Retry SCID included")
+            repeat(20) { p.step() }
+            assertNull(s.cids.localForTest(0), "the client retired the Retry SCID")
+            assertTrue(localCids(s).all { (it[0].toInt() and 0xff) ushr 5 == 3 })
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A Retry SCID made unroutable only because no nonce was reserved then gets a routable ID once nonces are reserved. */
+    @Test fun quicLbTemporaryUnroutableRetryScidIsReplaced() {
+        val reservation = FlakyReservation()
+        val key = QuicLbFixtures.key("0f0e0d0c0b0a09080706050403020108")
+        val p =
+            LbPair(
+                QuicLbConfig(2, QuicLbFixtures.SID, 4, key, reservation),
+                admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry,
+            )
+        try {
+            reservation.fail = true
+            p.server.lb!!
+                .routes.current!!
+                .space
+                .useUpReservationForTest()
+            val c = p.connect()
+            p.step()
+            assertEquals(7, (assertNotNull(c.retryScid)[0].toInt() and 0xff) ushr 5, "an unroutable Retry SCID")
+            reservation.fail = false
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            assertEquals(2, (s.localCid[0].toInt() and 0xff) ushr 5, "a routable ID instead")
+            assertFalse(s.unroutableCid)
+            assertFalse(s.cids.singleCid)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * A store outage with many connections waiting for a change: nothing is drawn while nothing is reserved, and the store is
+     * tried at most once a receive batch.
+     */
+    @Test fun quicLbStoreOutageDrawsNothing() {
+        val reservation = FlakyReservation()
+        val key = QuicLbFixtures.key("0f0e0d0c0b0a09080706050403020109")
+        val p = LbPair(QuicLbConfig(2, QuicLbFixtures.SID, 4, key, reservation))
+        try {
+            val clients = List(5) { p.connect() }
+            for (c in clients) assertTrue(p.handshake(c))
+            val space =
+                p.server.lb!!
+                    .routes.current!!
+                    .space
+            reservation.fail = true
+            space.useUpReservationForTest()
+            p.server.updateLoadBalancer(QuicLbConfig(3, QuicLbFixtures.SID, 4, key, reservation))
+            val drawn = space.drawnForTest
+            val tries = reservation.tries
+            val batches = 50
+            repeat(batches) { p.step() }
+            assertEquals(drawn, space.drawnForTest, "nothing drawn during the outage")
+            assertTrue(reservation.tries - tries <= batches, "at most one store a batch: ${reservation.tries - tries}")
+            assertTrue(p.server.connections().all { it.cids.reissuePendingForTest })
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The owner exceptions are full: a new ID that hashes elsewhere is spent unused; every live exception keeps routing. */
+    @Test fun quicLbFullOwnerExceptionsNeverDropALiveOne() {
+        val cfg = QuicLbFixtures.config(keyHex = "0f0e0d0c0b0a0908070605040302010a")
+        val ec = QuicLbFixtures.endpointConfig(cfg, loops = 4)
+        val state = QuicLbState(LbNullCrypto, Random(1), cfg, 4, 8, poolSize = 1, maxExceptions = 4)
+        val cores = List(4) { EndpointCore(ec, Random(10L + it), it, null, state) }
+        try {
+            val r = Random(5)
+            val ids = List(100) { cores[0].route.newCid(r, client = false).toByteArray() }
+            assertEquals(4, state.exceptions.size, "full")
+            assertTrue(cores[0].stats.loadBalancerNoncesWasted > 0, "refused, spent unused")
+            for (cid in ids) {
+                assertEquals(
+                    0,
+                    QuicLbFixtures.owner(cores[2], QuicLbFixtures.shortTo(cid)),
+                    "every issued ID still reaches loop 0",
+                )
             }
         } finally {
             for (c in cores) c.close()

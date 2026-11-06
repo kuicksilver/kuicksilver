@@ -19,8 +19,8 @@ import kotlin.concurrent.atomics.incrementAndFetchAt
  * QUIC-LB connection IDs issued by another loop than the one they hash to (its pool was full), and their real owner. The
  * datagram path ([ownerOf]) allocates nothing and takes no global lock: a per-bucket counter, indexed by the SipHash the
  * caller already computed, answers "none here" for almost every ID; only a bucket that holds an exception takes its shard's
- * lock and compares the bytes in place. At most [capacity] entries live; past that the oldest is dropped (its ID then
- * routes by hash again, which only matters for a datagram that lands on another loop). Entries leave with [release].
+ * lock and compares the bytes in place. At most [capacity] entries live; past that [add] refuses (the caller spends that
+ * nonce unused rather than drop a live entry). Entries leave with [release].
  */
 internal class OwnerExceptions(
     private val capacity: Int,
@@ -30,7 +30,7 @@ internal class OwnerExceptions(
         val bytes: ByteArray,
         val loop: Int,
     ) {
-        var live = true
+        @kotlin.concurrent.Volatile var live = true
     }
 
     private class Shard {
@@ -40,8 +40,6 @@ internal class OwnerExceptions(
 
     private val buckets = AtomicIntArray(BUCKETS)
     private val shards = Array(SHARDS) { Shard() }
-    private val orderLock = SpinLock()
-    private val order = ArrayDeque<Entry>() // insertion order, for the oldest-first drop; released entries leave lazily
     private val liveCount = AtomicInt(0)
 
     /** Live entries. */
@@ -51,33 +49,25 @@ internal class OwnerExceptions(
 
     private fun shardOf(hash: Long) = shards[bucket(hash) and (SHARDS - 1)]
 
+    /**
+     * Records that [cid] (hashed to [hash]) belongs to [loop]; false when [capacity] entries already live: a live entry is
+     * never dropped (its connection's datagrams that land on another loop would stop reaching it, RFC 9000 section 5.1).
+     */
     fun add(
         hash: Long,
         cid: ByteArray,
         loop: Int,
-    ) {
+    ): Boolean {
+        while (true) {
+            val n = liveCount.load()
+            if (n >= capacity) return false
+            if (liveCount.compareAndSet(n, n + 1)) break
+        }
         val e = Entry(hash, cid.copyOf(), loop)
         val s = shardOf(hash)
         s.lock.locked { s.entries += e }
         buckets.incrementAndFetchAt(bucket(hash))
-        liveCount.incrementAndFetch()
-        val evict =
-            orderLock.locked {
-                order.addLast(e)
-                var out: Entry? = null
-                if (liveCount.load() > capacity) {
-                    while (order.isNotEmpty()) {
-                        val o = order.removeFirst()
-                        if (o.live) {
-                            out = o
-                            break
-                        }
-                    }
-                }
-                if (order.size > 2 * capacity + 16) order.removeAll { !it.live } // released entries, compacted
-                out
-            }
-        evict?.let { remove(it) }
+        return true
     }
 
     private fun remove(e: Entry) {
@@ -135,7 +125,6 @@ internal class OwnerExceptions(
         }
         for (i in 0 until BUCKETS) buckets.storeAt(i, 0)
         liveCount.store(0)
-        orderLock.locked { order.clear() }
     }
 
     private fun ConnectionId.contentEqualsArray(b: ByteArray): Boolean {

@@ -12,6 +12,7 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.fetchAndIncrement
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.random.Random
 
 /**
@@ -252,12 +253,13 @@ internal class SpinLock {
  * null for good: the caller issues unroutable connection IDs (section 9.6: "A server that has exhausted its nonces MUST
  * either switch to a different configuration, or if none exists, use the 4-tuple routing config rotation codepoint").
  *
- * With a [reservation] the counter resumes past the mark the last process stored. Nonces are used only below the mark
- * stored last; the next block is stored ahead of need, once half of the current one is drawn, by the thread that crosses
- * it, outside any lock (the other loops go on drawing what is reserved). A failed store is retried after a back-off
- * counted in draws (sans IO: no clock here), 64 draws doubling to 65,536; a draw past the reserved mark meanwhile returns
- * null without the space being spent (the caller gives that one request an unroutable ID). Thread-safe. [start] is a test
- * hook.
+ * With a [reservation] the counter resumes past the mark the last process stored, and nonces are used only below the mark
+ * stored last. Only the instance [QuicLbNonceSpaces] keeps ever stores (a losing one is dropped unused), so the stored mark
+ * never goes down. [prime] stores the first block when the space is made (off the loops: an update builds its
+ * configuration before it switches to it); later blocks are stored ahead of need, once half of the current one is drawn,
+ * by the thread that crosses it, outside any lock. While no reserved nonce is left, [next] draws nothing: it tries one
+ * store if one is due and returns null otherwise. After a failed store the next try waits [tick]s (one per receive batch of
+ * a loop that issues from this space): 1, doubling to 1,024, so at most one store per batch.
  */
 internal class QuicLbNonceSpace(
     val length: Int,
@@ -271,57 +273,70 @@ internal class QuicLbNonceSpace(
     private val drawn = AtomicLong(maxOf(start, reservation?.load() ?: 0L))
     private val reservedUpTo = AtomicLong(drawn.load())
     private val refilling = AtomicInt(0)
-    private val retryAt = AtomicLong(Long.MIN_VALUE)
-    private var backoffDraws = FIRST_BACKOFF_DRAWS // the refilling thread only
+    private val ticks = AtomicLong(0)
+    private val retryAtTick = AtomicLong(Long.MIN_VALUE)
+    private var backoffTicks = FIRST_BACKOFF_TICKS // the refilling thread only
 
-    /** The store made when the space was made failed; reported to the first drawer (no listener exists yet). */
-    private var initialFailure: Throwable? = null
-    private val initialReported = AtomicInt(0)
-
-    init {
-        // the first block before the first draw: no request races a store at start
-        if (reservation != null) {
-            val start0 = drawn.load()
-            try {
-                val mark = minOf(limit, start0 + BLOCK)
-                reservation.store(mark)
-                reservedUpTo.store(mark)
-            } catch (e: Exception) {
-                initialFailure = e
-                retryAt.store(start0 + backoffDraws)
-                backoffDraws = minOf(backoffDraws * 2, MAX_BACKOFF_DRAWS)
-            }
-        }
-    }
-
-    /** Test hook: the reserved nonces are used up (the next draw needs a store). */
-    internal fun useUpReservationForTest() = reservedUpTo.store(drawn.load())
+    /** A failure of [prime], when nobody listened yet: reported to the first drawer. */
+    private var primeFailure: Throwable? = null
+    private val primeReported = AtomicInt(0)
 
     /** Test hook: every nonce drawn. */
     internal fun spendForTest() = drawn.store(limit)
 
+    /** Test hook: the reserved nonces are used up (the next draw needs a store). */
+    internal fun useUpReservationForTest() = reservedUpTo.store(drawn.load())
+
+    /** Test hook: the counter. */
+    internal val drawnForTest: Long get() = drawn.load()
+
     /** True once every nonce of the space was drawn. */
     val exhausted: Boolean get() = drawn.load().let { it < 0 || it >= limit }
 
-    /** Stores the next block when the draws are past half of the reserved one; [onStoreFailed] hears a failed store. */
+    /** A nonce could be drawn now without a store: there is no reservation, or the counter is below the stored mark. */
+    fun hasReserved(): Boolean = !exhausted && (reservation == null || drawn.load() < reservedUpTo.load())
+
+    /**
+     * One receive batch of a loop that issues from this space went by: when no nonce is reserved and a store is due (the
+     * back-off's ticks went by), it is tried now, at most one a batch, without drawing.
+     */
+    fun tick(onStoreFailed: (Throwable) -> Unit = {}) {
+        if (reservation == null) return
+        ticks.incrementAndFetch()
+        if (!exhausted && drawn.load() >= reservedUpTo.load()) refill(drawn.load(), force = true, onStoreFailed = onStoreFailed)
+    }
+
+    /** Stores the first block. Called once, by the instance's creator, after it won the registry's insertion. */
+    fun prime() {
+        if (reservation == null) return
+        refill(drawn.load(), force = true) { primeFailure = it }
+    }
+
+    /**
+     * Stores the next block when [next], the first nonce not yet drawn, is within half a block of the mark (or [force]);
+     * after a failure only once the back-off's ticks went by. Never lowers the mark: the next one is computed from the
+     * current one and the draw.
+     */
     private fun refill(
-        n: Long,
+        next: Long,
+        force: Boolean = false,
         onStoreFailed: (Throwable) -> Unit,
     ) {
         val r = reservation ?: return
         val reserved = reservedUpTo.load()
-        if (reserved >= limit || n < reserved - BLOCK / 2) return
-        if (n < retryAt.load() || !refilling.compareAndSet(0, 1)) return
+        if (reserved >= limit || (!force && next <= reserved - BLOCK / 2)) return
+        if (ticks.load() < retryAtTick.load() || !refilling.compareAndSet(0, 1)) return
         try {
             // after an outage the draws ran past the mark: the next block starts at the draw, not at the stale mark
-            val mark = minOf(limit, maxOf(reservedUpTo.load(), n + 1) + BLOCK)
+            val mark = minOf(limit, maxOf(reservedUpTo.load(), next) + BLOCK)
             if (mark <= reservedUpTo.load()) return
             r.store(mark)
             reservedUpTo.store(mark)
-            backoffDraws = FIRST_BACKOFF_DRAWS
+            retryAtTick.store(Long.MIN_VALUE)
+            backoffTicks = FIRST_BACKOFF_TICKS
         } catch (e: Exception) {
-            retryAt.store(n + backoffDraws)
-            backoffDraws = minOf(backoffDraws * 2, MAX_BACKOFF_DRAWS)
+            retryAtTick.store(ticks.load() + backoffTicks)
+            backoffTicks = minOf(backoffTicks * 2, MAX_BACKOFF_TICKS)
             onStoreFailed(e)
         } finally {
             refilling.store(0)
@@ -330,21 +345,28 @@ internal class QuicLbNonceSpace(
 
     /**
      * The next nonce permuted with [permute] (or [plainPermute]), or null: the space is spent ([exhausted]), or (with a
-     * reservation) the draw is past the stored mark (that nonce is skipped, never used).
+     * reservation) no nonce is reserved and no store could be made now; then nothing was drawn.
      */
     fun next(
         permute: LoadBalancerKey?,
         onStoreFailed: (Throwable) -> Unit = {},
     ): ByteArray? {
+        if (reservation != null) {
+            primeFailure?.let { e -> if (primeReported.compareAndSet(0, 1)) onStoreFailed(e) }
+            if (exhausted) return null
+            if (drawn.load() >= reservedUpTo.load()) {
+                refill(drawn.load(), force = true, onStoreFailed)
+                if (drawn.load() >= reservedUpTo.load()) return null // nothing drawn while nothing is reserved
+            }
+        }
         val n = drawn.fetchAndIncrement()
         if (n < 0 || n >= limit) {
             drawn.store(limit) // stays spent; no wrap of the counter itself
             return null
         }
         if (reservation != null) {
-            initialFailure?.let { e -> if (initialReported.compareAndSet(0, 1)) onStoreFailed(e) }
-            refill(n, onStoreFailed)
-            if (n >= reservedUpTo.load()) return null
+            refill(n + 1, onStoreFailed = onStoreFailed) // ahead of need
+            if (n >= reservedUpTo.load()) return null // another loop drew the last reserved one first: this one is skipped
         }
         // seed + n, big-endian, modulo 2^(8 x length)
         val out = ByteArray(length)
@@ -362,8 +384,8 @@ internal class QuicLbNonceSpace(
 
     companion object {
         val BLOCK: Long = io.kuicksilver.quic.QuicLbNonceReservation.BLOCK
-        const val FIRST_BACKOFF_DRAWS = 64L
-        const val MAX_BACKOFF_DRAWS = 65_536L
+        const val FIRST_BACKOFF_TICKS = 1L
+        const val MAX_BACKOFF_TICKS = 1_024L
     }
 }
 
@@ -408,7 +430,7 @@ internal object QuicLbNonceSpaces {
     ): QuicLbNonceSpace {
         val id = idOf(config)
         lock.locked { spaces[id] }?.let { return checkSame(it, config) }
-        // made outside the lock (a key, a reservation's load, store and secret); the first one in wins
+        // made outside the lock (a key, a reservation's load and secret); the first one in wins and stores
         val r = config.nonceReservation
         val made =
             if (key != null) {
@@ -436,7 +458,11 @@ internal object QuicLbNonceSpaces {
                 QuicLbNonceSpace(config.nonceLength, seed, permute, r)
             }
         val space = lock.locked { spaces[id] ?: made.also { spaces[id] = it } }
-        if (space !== made) made.plainPermute?.close()
+        if (space !== made) {
+            made.plainPermute?.close() // the loser never stores: the stored mark only ever moves up
+        } else {
+            made.prime() // the first block, outside the lock
+        }
         return checkSame(space, config)
     }
 

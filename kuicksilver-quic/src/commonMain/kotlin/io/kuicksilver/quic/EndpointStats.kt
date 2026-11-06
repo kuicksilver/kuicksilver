@@ -137,15 +137,16 @@ public class EndpointStats internal constructor(
     @property:ExperimentalKuicksilverApi
     public val loadBalancerNoncesExhausted: Long = 0,
     /**
-     * Failed `QuicLbNonceReservation.store` calls: retried after a back-off (64 requests for a new ID, doubling to 65,536); once the reserved nonces
-     * are used up, the requests in between get unroutable IDs. Not counted as exhaustion.
+     * Failed `QuicLbNonceReservation.store` calls: retried after a back-off counted in receive batches (one, doubling to
+     * 1,024; at most one store a batch, nothing drawn meanwhile); once the reserved nonces are used up, the requests in
+     * between get unroutable IDs. Not counted as exhaustion.
      */
     @property:ExperimentalKuicksilverApi
     public val loadBalancerReservationFailures: Long = 0,
     /**
-     * QUIC-LB nonces drawn and spent unused: drawn for a Retry's SCID, their ID hashed to another loop of the group whose
-     * pool (1,024 IDs) was full (a Retry's SCID takes no owner exception). Stays near 0 unless one loop sends far more
-     * Retries than the others issue IDs.
+     * QUIC-LB nonces drawn and spent unused: their ID hashed to another loop of the group whose pool (1,024 IDs) was full,
+     * and it was for a Retry's SCID (which takes no owner exception) or the owner exceptions (65,536 live IDs) were full.
+     * Stays near 0 unless the loops issue IDs very unevenly.
      */
     @property:ExperimentalKuicksilverApi
     public val loadBalancerNoncesWasted: Long = 0,

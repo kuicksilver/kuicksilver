@@ -306,23 +306,55 @@ class QuicLbTest {
     }
 
     /** A failed store is retried only after a back-off, not on every draw; once stored, nonces flow again. */
+
+    /** A store outage draws nothing: the next try waits for a receive batch (ticks), 1 doubling, at most one per batch. */
     @Test fun reservationStoreBacksOff() {
         val r = MemoryReservation().also { it.fail = true }
         val space = QuicLbNonceSpace(4, ByteArray(4), null, r, 0)
-        repeat(64) { assertNull(space.next(null)) }
-        assertEquals(1, r.stores.size, "one store, then 64 draws of back-off")
+        space.prime()
+        assertEquals(1, r.stores.size, "the first block, failed")
+        repeat(5) { assertNull(space.next(null)) }
+        assertEquals(1, r.stores.size, "no store before a batch went by")
+        assertEquals(0L, space.drawnForTest, "nothing drawn while nothing is reserved")
+        space.tick()
+        assertEquals(2, r.stores.size, "one try in the batch")
+        space.tick()
+        assertEquals(2, r.stores.size, "back-off: two batches now")
         r.fail = false
-        assertNotNull(space.next(null), "stored after the back-off")
-        assertEquals(2, r.stores.size)
-        assertEquals(64L + 1 + 65_536, r.stores.last(), "the block after an outage starts at the draw, not at the stale mark")
+        space.tick()
+        assertEquals(3, r.stores.size)
+        assertEquals(0L, space.drawnForTest)
+        assertNotNull(space.next(null), "stored")
+        assertEquals(65_536L, r.stores.last(), "the block after an outage starts at the next draw, not past the stale mark")
     }
 
-    /** The first block is stored when the space is made: no draw races a store at start. */
+    /** The first block is stored when the space is primed: no draw races a store at start. */
     @Test fun reservationStoredBeforeTheFirstDraw() {
         val r = MemoryReservation()
         val space = QuicLbNonceSpace(4, ByteArray(4), null, r, 0)
+        space.prime()
         assertEquals(listOf(65_536L), r.stores)
         assertNotNull(space.next(null))
+    }
+
+    /** Section 9.6: an instance that lost the registry's insertion never stores, so the stored mark never goes down. */
+    @Test fun reservationMarkNeverGoesDown() {
+        val r = MemoryReservation()
+        val winner = QuicLbNonceSpace(4, ByteArray(4), null, r, 0)
+        winner.prime()
+        repeat(40_000) { assertNotNull(winner.next(null)) } // past half a block: the next one is stored
+        assertEquals(listOf(65_536L, 131_072L), r.stores)
+        val loser = QuicLbNonceSpace(4, ByteArray(4), null, r, 0) // made late, dropped by the registry: never primed
+        assertEquals(listOf(65_536L, 131_072L), r.stores, "the loser stored nothing")
+        assertTrue(loser.reservation === r)
+        for (i in 1 until r.stores.size) assertTrue(r.stores[i] > r.stores[i - 1], "monotonic: ${r.stores}")
+        KslQuicCrypto.newLoadBalancerKey(hex("00112233445566778899aabbccddee05")).use { k ->
+            val shared = MemoryReservation()
+            val a = QuicLbNonceSpaces.of(QuicLbConfig(1, hex("0a0b0c"), 4, k, shared), k, LbNullCrypto, kotlin.random.Random(1))
+            val b = QuicLbNonceSpaces.of(QuicLbConfig(2, hex("0a0b0d"), 4, k, shared), k, LbNullCrypto, kotlin.random.Random(2))
+            assertTrue(a === b, "one space")
+            assertEquals(listOf(65_536L), shared.stores, "stored once, by the winner")
+        }
     }
 
     @Test fun negative_reservationMustMatchTheNonceSpace() {

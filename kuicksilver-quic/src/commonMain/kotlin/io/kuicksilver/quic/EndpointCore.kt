@@ -438,7 +438,7 @@ public class EndpointCore internal constructor(
                     CidIssuance.SingleNoMigration -> {
                         if (i.temporary) {
                             cids.keepReissuePending()
-                            if (core !in reissueRetry) reissueRetry += core
+                            reissueRetry += core
                         } else {
                             cids.stopIssuing()
                         }
@@ -842,11 +842,15 @@ public class EndpointCore internal constructor(
     private var lbReleased = false
 
     /** Server connections whose QUIC-LB configuration change waits for a nonce reservation that could not be stored. */
-    private val reissueRetry = ArrayList<ConnectionCore>()
+    private val reissueRetry = LinkedHashSet<ConnectionCore>()
 
-    /** Once per receive batch: the waiting configuration changes try again (each try draws one nonce, the store backs off). */
+    /**
+     * Once per receive batch: the route's reservation may try a failed store again (at most one a batch), and the waiting
+     * configuration changes go out once nonces are reserved; while none are, nothing is drawn for them.
+     */
     private fun retryPendingReissues() {
-        if (reissueRetry.isEmpty()) return
+        route.tick()
+        if (reissueRetry.isEmpty() || !route.canIssueRoutable()) return
         val it = reissueRetry.iterator()
         while (it.hasNext()) {
             val c = it.next()
@@ -873,6 +877,18 @@ public class EndpointCore internal constructor(
             if (current == null) c.cids.stopIssuing() else c.cids.requestReissue()
             markDirty(c)
         }
+    }
+
+    /** [QuicLbState.commit] of a configuration prepared off the loop, then the connections move to it. Loop thread only. */
+    internal fun commitLoadBalancer(p: QuicLbState.Prepared) {
+        val state = lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
+        try {
+            checkLoadBalancerUpdate(p.config)
+        } catch (e: Throwable) {
+            state.discard(p)
+            throw e
+        }
+        if (state.commit(p)) reissueForLoadBalancer()
     }
 
     /**

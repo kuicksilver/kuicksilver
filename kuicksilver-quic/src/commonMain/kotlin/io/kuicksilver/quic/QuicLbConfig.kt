@@ -110,9 +110,10 @@ public interface QuicLbNonceReservation {
 
     /**
      * Stores [mark] durably before returning (an fsync'd file, say): nonces below it are about to be used. Called on an
-     * endpoint loop's thread, outside any lock, once per [BLOCK] nonces and ahead of need. A throw is counted in
-     * `EndpointStats.loadBalancerReservationFailures` and logged; it is retried after 64 requests for a new ID, doubling to
-     * 65,536, and once the reserved nonces are used up the requests in between get unroutable IDs.
+     * endpoint loop's thread, outside any lock, once per [BLOCK] nonces and ahead of need (the first one when an update
+     * builds the configuration, off the loops). A throw is counted in `EndpointStats.loadBalancerReservationFailures` and
+     * logged; it is retried after a back-off counted in receive batches (one, doubling to 1,024; at most one store a batch,
+     * nothing drawn meanwhile), and once the reserved nonces are used up the requests in between get unroutable IDs.
      */
     public fun store(mark: Long)
 

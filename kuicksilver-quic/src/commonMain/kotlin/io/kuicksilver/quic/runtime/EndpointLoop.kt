@@ -584,7 +584,15 @@ internal class EndpointLoop private constructor(
 
     override suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
         if (group != null) return group.updateLoadBalancer(config)
-        runOnLoop { core.updateLoadBalancer(config) }
+        // built off the loop (a nonce reservation's first store may fsync), switched to on it
+        val lb = core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
+        val prepared = lb.prepare(config)
+        try {
+            runOnLoop { core.commitLoadBalancer(prepared) }
+        } catch (e: Throwable) {
+            lb.discard(prepared)
+            throw e
+        }
     }
 
     /** [block] on the loop's dispatcher while the endpoint is open (the core is alive there); [QuicException.EndpointClosing] once it closes. */

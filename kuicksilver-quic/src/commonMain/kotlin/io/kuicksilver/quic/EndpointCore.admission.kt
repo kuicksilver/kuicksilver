@@ -186,8 +186,14 @@ private fun EndpointCore.admitValidated(
             // the Retry SCID is the connection's ID (one server ID for the client: draft-ietf-quic-load-balancers-21 sections
             // 3.2 and 9) when its first octet still tells what it allows: 0b111, or the current or previous codepoint. A
             // codepoint that went away since the Retry gets a fresh ID, the Retry SCID staying an alias for the client's Initials
+            // an unroutable Retry SCID made while no nonce was reserved gets a routable one now if it can (a temporary state
+            // must not become the connection's for good)
             val known = if (testFreshCidAfterRetry) null else route.knownIssuance(rs)
-            if (known != null) IssuedCid(rs, known) else route.issue(random, client = false)
+            if (known != null && !(known == CidIssuance.SingleNoMigration && route.canIssueRoutable())) {
+                IssuedCid(rs, known)
+            } else {
+                route.issue(random, client = false)
+            }
         } // our Retry SCID is this connection's ID
         else {
             route.issue(random, client = false)
@@ -237,6 +243,10 @@ private fun EndpointCore.admitValidated(
     if (preferred != null) core.preferredAddress = preferred
     if (testForgeRetryScidInTp && retryScid != null) core.testForgeRetryScid = true
     if (preferred != null || core.testForgeRetryScid || core.unroutableCid) core.refreshLocalTp()
+    // a Retry SCID of the previous configuration (or an unroutable one) adopted after the last change moved the connections:
+    // this one moves too (draft-ietf-quic-load-balancers-21 section 3.1: update the client with IDs of the new configuration
+    // and retire the old ones)
+    if (!route.isCurrent(cid)) core.cids.requestReissue()
     if (retryScid == null) {
         registry.add(core.odcid, core)
     } else if (retryScid != cid) {

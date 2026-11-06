@@ -117,6 +117,15 @@ internal sealed interface CidRoute {
 
     /** What [cid], one of ours made earlier (a Retry's SCID), allows, when its first octet still tells; null otherwise. */
     fun knownIssuance(cid: ConnectionId): CidIssuance? = CidIssuance.Full
+
+    /** One receive batch went by (a failed nonce reservation store may be tried again). */
+    fun tick() {}
+
+    /** A routable ID can be issued now without a store (nonces reserved, or none needed). */
+    fun canIssueRoutable(): Boolean = true
+
+    /** [cid] is of the configuration new IDs use (the codepoint new IDs carry). */
+    fun isCurrent(cid: ConnectionId): Boolean = true
 }
 
 /**
@@ -168,8 +177,8 @@ internal class ByteRoute(
  * the loops. The loop that owns an ID is `SipHash(key, id) mod loops`: an encrypted ID cannot name its loop in clear, and
  * decrypting it for every datagram would cost up to four AES blocks. The price: a nonce whose ID hashes to another loop
  * cannot serve the loop that drew it. It waits in that loop's pool ([POOL] IDs); past that, the drawing loop issues it
- * itself and records the exception in [exceptions] (at most [MAX_EXCEPTIONS] live IDs, released when the ID leaves, the
- * oldest dropped past that), so no nonce is spent unused; a Retry's SCID takes no exception ([Entry.issue]).
+ * itself and records the exception in [exceptions] (at most [MAX_EXCEPTIONS] live IDs, released when the ID leaves; past
+ * that, and for a Retry's SCID, which takes none, the nonce is spent unused and counted) ([Entry.issue]).
  *
  * The nonce counters live in the process-wide [QuicLbNonceSpaces] (draft section 9.6: no nonce reuse under one key). Each
  * configuration in use holds its own copy of the configuration key (the caller may close theirs) and the permutation key
@@ -278,11 +287,8 @@ internal class QuicLbState(
                         }
                     }
                 if (pooled) continue
-                if (!stateless) {
-                    exceptions.add(h, b, loop)
-                    return b
-                }
-                onWasted()
+                if (!stateless && exceptions.add(h, b, loop)) return b
+                onWasted() // a Retry's SCID, or the exceptions are full: a live one is never dropped
             }
         }
 
@@ -371,10 +377,23 @@ internal class QuicLbState(
 
     /**
      * New IDs use [config] from now on (null: unroutable IDs); the current configuration becomes the previous one. False when
-     * [config] is the current one already (nothing changes). Throws as [validate]. One caller at a time (a group's change runs
-     * on its loop 0, a single endpoint's on its loop).
+     * [config] is the current one already (nothing changes). Throws as [validate]. One caller at a time. [prepare] and
+     * [commit] split it so the slow part runs off the loops.
      */
-    fun update(config: QuicLbConfig?): Boolean {
+    fun update(config: QuicLbConfig?): Boolean = commit(prepare(config))
+
+    /** A configuration [prepare]d for [commit]: its entry built (a new one, or the current or previous one again). */
+    inner class Prepared internal constructor(
+        val config: QuicLbConfig?,
+        val entry: Entry?,
+        val fresh: Boolean,
+    )
+
+    /**
+     * Validates [config] and builds its entry (key copy, derived key, nonce space and its first stored block), all of which
+     * may take time (a reservation's fsync): call it off the loops, then [commit] on the loop. Throws as [validate].
+     */
+    fun prepare(config: QuicLbConfig?): Prepared {
         check(!lock.locked { closed }) { "the endpoint is closed" }
         validate(config)
         val r = routes
@@ -385,19 +404,32 @@ internal class QuicLbState(
                 r.previous?.config?.sameAs(config) == true -> r.previous
                 else -> null
             }
-        if (config == null && r.current == null) return false
-        if (reuse != null && reuse === r.current) return false
-        val next = reuse ?: config?.let { Entry(it) } // keys and the nonce space outside the lock
+        return if (config == null || reuse != null) Prepared(config, reuse, false) else Prepared(config, Entry(config), true)
+    }
+
+    /** Drops a [prepare]d configuration that will not be committed. */
+    fun discard(p: Prepared) {
+        if (p.fresh) p.entry?.retire()
+    }
+
+    /** Switches to [p]: false when it is the current configuration already. Throws when the endpoint closed meanwhile. */
+    fun commit(p: Prepared): Boolean {
+        val r = routes
+        val next = p.entry
+        if ((p.config == null && r.current == null) || (next != null && next === r.current)) {
+            discard(p)
+            return false
+        }
         val previous = r.current ?: r.previous // after a spell of unroutable IDs, the last configuration, whose IDs live on
         val committed =
             lock.locked {
                 if (closed) return@locked false
                 routes = Routes(next, previous)
-                if (config != null) history += sidHex(config) to config.encrypted
+                p.config?.let { history += sidHex(it) to it.encrypted }
                 true
             }
         if (!committed) {
-            if (next !== reuse) next?.retire()
+            discard(p)
             throw IllegalStateException("the endpoint is closed")
         }
         for (old in listOfNotNull(r.current, r.previous)) if (old !== next && old !== previous) old.retire()
@@ -433,7 +465,7 @@ internal class QuicLbState(
         /** IDs kept per loop for when it needs one: about 30 KiB per loop. */
         const val POOL = 1024
 
-        /** Live IDs issued off their hash: about 4 MiB at most; past that the oldest goes. */
+        /** Live IDs issued off their hash: about 4 MiB at most; past that a nonce whose pool is full is spent unused. */
         const val MAX_EXCEPTIONS = 65_536
     }
 }
@@ -550,6 +582,26 @@ internal class QuicLbRoute(
     }
 
     override fun release(cid: ConnectionId) = state.release(cid)
+
+    override fun tick() {
+        state.routes.current
+            ?.space
+            ?.tick(onStoreFailed)
+    }
+
+    override fun canIssueRoutable(): Boolean =
+        state.routes.current
+            ?.space
+            ?.hasReserved() == true
+
+    override fun isCurrent(cid: ConnectionId): Boolean {
+        val cr = (cid[0].toInt() and 0xff) ushr 5
+        return cr == (
+            state.routes.current
+                ?.config
+                ?.configId ?: UNROUTABLE
+        )
+    }
 
     /** The current or previous configuration's codepoint: Full or Single by its key; 0b111: SingleNoMigration; else null. */
     override fun knownIssuance(cid: ConnectionId): CidIssuance? {
