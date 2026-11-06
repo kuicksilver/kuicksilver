@@ -279,6 +279,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Native: `ksl_open` decrypts a packet in its own buffer instead of through a heap copy that it then wiped: no `malloc`,
+  copy or wipe per received packet. A packet whose authentication tag fails still leaves no plaintext behind: its
+  ciphertext is restored in place (or wiped should that fail), as before.
+
 - QUIC: a stream no longer holds two 16 KiB staging arrays (one per direction) and a connection's datagram flow no longer
   holds a 64 KiB one; the copies between the core and the application's channels go through one scratch array per endpoint
   loop. An idle HTTP/3 server connection holds about 80–90 KB of heap instead of about 290 KB (JVM), and an idle HTTP/3 connection pair

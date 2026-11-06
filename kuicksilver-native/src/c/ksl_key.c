@@ -113,10 +113,17 @@ int ksl_open(ksl_key *k, uint64_t pn, const uint8_t *hdr, size_t hdr_len, uint8_
     if (EVP_DecryptInit_ex(k->dec, NULL, NULL, NULL, nonce) != 1) return KSL_ERROR;
     if (EVP_DecryptUpdate(k->dec, NULL, &n, hdr, (int)hdr_len) != 1) return KSL_ERROR;
     if (EVP_CIPHER_CTX_ctrl(k->dec, EVP_CTRL_AEAD_SET_TAG, 16, payload + clen) != 1) return KSL_ERROR;
-    uint8_t *tmp = malloc(clen ? clen : 1); if (!tmp) return KSL_ERROR;   /* a failed tag never leaves plaintext in the caller's buffer */
-    int ok = EVP_DecryptUpdate(k->dec, tmp, &n, payload, (int)clen) == 1 && (size_t)n == clen && EVP_DecryptFinal_ex(k->dec, tmp + n, &fin) == 1;
-    if (ok) memcpy(payload, tmp, clen);
-    OPENSSL_cleanse(tmp, clen ? clen : 1); free(tmp); ERR_clear_error();
+    /* In place, no copy per packet (ngtcp2 does the same: crypto/ossl/ossl.c ngtcp2_crypto_decrypt, dest == ciphertext). The tag
+       is only checked at the end, so a forged packet has been decrypted by then: its ciphertext is put back by running the same
+       keystream over it again (GCM and ChaCha20 are counter modes; the AAD only enters the tag), and if even that fails the
+       payload is wiped. A rejected packet never leaves plaintext in the caller's buffer. */
+    int up = EVP_DecryptUpdate(k->dec, payload, &n, payload, (int)clen) == 1 && (size_t)n == clen;
+    int ok = up && EVP_DecryptFinal_ex(k->dec, payload + n, &fin) == 1;
+    if (!ok) {
+        int back = up && EVP_DecryptInit_ex(k->dec, NULL, NULL, NULL, nonce) == 1 && EVP_DecryptUpdate(k->dec, payload, &n, payload, (int)clen) == 1 && (size_t)n == clen;
+        if (!back) OPENSSL_cleanse(payload, clen);
+    }
+    OPENSSL_cleanse(nonce, sizeof nonce); ERR_clear_error();
     return ok ? (int)clen : KSL_ERROR;
 }
 int ksl_header_mask(ksl_key *k, const uint8_t sample[16], uint8_t mask[5]) {

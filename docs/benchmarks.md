@@ -292,8 +292,8 @@ above replaced).
   server 15.4 (2 and 4 times), with 3 % more packets and 2.8 times the acknowledgements; coalescing writes is on the
   roadmap.
 - System time is still about half of either server's CPU (GSO sends and the receive rounds; not broken down further: the
-  images carry no `perf`). Per received packet `ksl_open` allocates, copies and wipes a buffer (a client-side cost:
-  2.4 % of the core benchmark's samples).
+  images carry no `perf`). Per received packet `ksl_open` allocated, copied and wiped a buffer (a client-side cost:
+  2.4 % of the core benchmark's samples); since P.2 it decrypts in place.
 
 ### The server: handshakes
 

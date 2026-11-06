@@ -56,6 +56,55 @@
     END(); \
 } while (0)
 
+/* Heap allocations made while a window is open: the sanitizers' malloc hooks (ASan, TSan); -1 without them (mingw, SAN=). */
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#    define KSL_TEST_MALLOC_HOOKS 1
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#  define KSL_TEST_MALLOC_HOOKS 1
+#endif
+#ifdef KSL_TEST_MALLOC_HOOKS
+#include <sanitizer/allocator_interface.h>
+static volatile int alloc_window, alloc_count;
+static void on_malloc(const volatile void *p, size_t n) { (void)p; (void)n; if (alloc_window) __atomic_add_fetch(&alloc_count, 1, __ATOMIC_RELAXED); }
+static void on_free(const volatile void *p) { (void)p; }
+static int hooks_installed;
+static void alloc_window_open(void) { if (!hooks_installed) hooks_installed = __sanitizer_install_malloc_and_free_hooks(on_malloc, on_free) != 0; alloc_count = 0; alloc_window = 1; }
+static int alloc_window_close(void) { alloc_window = 0; return hooks_installed ? alloc_count : -1; }
+#else
+static void alloc_window_open(void) {}
+static int alloc_window_close(void) { return -1; }
+#endif
+
+/* ksl_open decrypts in the packet's own buffer: no heap copy per packet (P.2), and a packet whose tag fails keeps its
+   ciphertext byte for byte, never any plaintext, for every AEAD (AES-128-GCM, AES-256-GCM through the token key, ChaCha20-Poly1305). */
+static void open_in_place(const char *name, ksl_key *w, ksl_key *r) {
+    uint8_t hdr[8] = {0x40, 1, 2, 3, 4, 5, 6, 7}, pl[1300], sealed[1300], plain[1300];
+    for (size_t i = 0; i < sizeof plain; i++) plain[i] = (uint8_t)(i * 7 + 1);
+    for (size_t len = 0; len <= 1200; len = len ? len * 3 + 1 : 1) {
+        memcpy(pl, plain, len); int n = ksl_seal(w, 77, hdr, sizeof hdr, pl, len, sizeof pl);
+        CHECK(n == (int)len + 16, name); memcpy(sealed, pl, (size_t)n);
+        alloc_window_open(); int m = ksl_open(r, 77, hdr, sizeof hdr, pl, (size_t)n); int allocs = alloc_window_close();
+        CHECK(m == (int)len && !memcmp(pl, plain, len), name);
+        if (allocs >= 0) { if (allocs != 0) printf("  %s: %d allocations in ksl_open of %zu bytes\n", name, allocs, len); CHECK(allocs == 0, "ksl_open allocates nothing per packet"); }
+        /* a flipped bit in the ciphertext, the tag or the header: rejected, the buffer holds the ciphertext it held, and no allocation */
+        for (int where = 0; where < 3; where++) {
+            if (where == 0 && len == 0) continue;
+            memcpy(pl, sealed, (size_t)n); uint8_t h2[8]; memcpy(h2, hdr, 8);
+            if (where == 0) pl[len / 2] ^= 0x10; else if (where == 1) pl[len + 3] ^= 0x01; else h2[5] ^= 0x80;
+            uint8_t before[1300]; memcpy(before, pl, (size_t)n);
+            alloc_window_open(); int bad = ksl_open(r, 77, h2, sizeof h2, pl, (size_t)n); allocs = alloc_window_close();
+            CHECK(bad == KSL_ERROR, "negative: a forged packet is rejected");
+            CHECK(!memcmp(pl, before, (size_t)n), "negative: a rejected packet keeps its ciphertext, no plaintext left behind");
+            if (allocs >= 0) CHECK(allocs == 0, "a rejected packet allocates nothing either");
+        }
+        /* the key still opens the genuine packet after the failures (the cipher context was left reusable) */
+        memcpy(pl, sealed, (size_t)n); CHECK(ksl_open(r, 77, hdr, sizeof hdr, pl, (size_t)n) == (int)len && !memcmp(pl, plain, len), "opens after rejected packets");
+    }
+}
+
 /* test-only hook exported by ksl_key.c: builds a key from a TLS secret (what the KEY event does internally) */
 ksl_key *ksl_key_from_secret_for_test(int aead, const uint8_t *secret, size_t slen, uint32_t version);
 
@@ -68,6 +117,14 @@ void run_key(void) {
     CHECK(ksl_open(k, 1, buf, 4, buf, 15) == KSL_ERROR, "negative: shorter than a tag");
     CHECK(ksl_key_initial(RFC9001_DCID, 8, 0, KSL_DIR_WRITE, 0xdeadbeefu) == NULL, "negative: unknown version");
     ksl_key_free(k); END();
+
+    { SECTION("open_in_place_no_alloc_ciphertext_kept_on_failure");
+    ksl_key *cw = ksl_key_initial(RFC9001_DCID, 8, 0, KSL_DIR_WRITE, 0x00000001u), *sr = ksl_key_initial(RFC9001_DCID, 8, 1, KSL_DIR_READ, 0x00000001u);
+    open_in_place("aes-128-gcm", cw, sr); ksl_key_free(cw); ksl_key_free(sr);
+    ksl_key *ch = ksl_key_from_secret_for_test(KSL_AEAD_CHACHA20_POLY1305, RFC9001_A5_SECRET, 32, 0x00000001u);
+    open_in_place("chacha20-poly1305", ch, ch); ksl_key_free(ch);
+    ksl_key *t = ksl_key_random(KSL_EKEY_TOKEN); open_in_place("aes-256-gcm token", t, t); ksl_key_free(t);
+    END(); }
 
     /* endpoint keys (Retry tokens, stateless reset) generated and kept inside ksl */
     { SECTION("endpoint_keys");
