@@ -42,6 +42,20 @@ public abstract class KuicksilverServerEventListener {
         cause: Throwable,
     ) {}
 
+    /**
+     * A client from [remote] was refused before it became a connection, for [reason]. For TCP the refusal comes right after
+     * `accept`, before the TLS handshake, so whether the client would have spoken HTTP/1.1 or HTTP/2 is not known and
+     * [protocol] is `HTTP_1_1`; the socket is closed at once. Reasons: `per-IP limit` (the address holds
+     * `maxTcpConnectionsPerIp` connections already) and `HTTP/2 repeat offender` (the address serves an
+     * `http2RepeatOffenderPenalty`). A connector at `maxTcpConnections` refuses no one: it stops accepting and the OS
+     * backlog holds new clients, so they are not reported here.
+     */
+    public open fun connectionRefused(
+        protocol: HttpProtocolVersion,
+        remote: InetSocketAddress?,
+        reason: String,
+    ) {}
+
     /** [call] arrived over [protocol] and enters the application's pipeline. */
     public open fun requestStarted(
         protocol: HttpProtocolVersion,

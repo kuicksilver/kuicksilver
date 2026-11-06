@@ -38,7 +38,7 @@ class AcceptLoopTest {
                     },
                     isClosed = { false },
                     onError = { _, _ -> },
-                ) { served += currentTime }
+                ) { _, _ -> served += currentTime }
             }
             val gaps = calls.zipWithNext { a, b -> b - a }
             assertEquals(
@@ -59,7 +59,7 @@ class AcceptLoopTest {
                     accept = { if (++n > 3) throw Stop() else throw IOException("EMFILE $n") },
                     isClosed = { false },
                     onError = { e, pause -> reported += e.message to pause.inWholeMilliseconds },
-                ) {}
+                ) { _, _ -> }
             }
             assertEquals(listOf<Pair<String?, Long>>("EMFILE 1" to 5L, "EMFILE 2" to 10L, "EMFILE 3" to 20L), reported)
         }
@@ -77,7 +77,7 @@ class AcceptLoopTest {
                         },
                         isClosed = { true },
                         onError = { _, _ -> },
-                    ) {}
+                    ) { _, _ -> }
                 }
             assertEquals("closed", e.message)
             assertEquals(1, n)
@@ -97,7 +97,7 @@ class AcceptLoopTest {
                         },
                         isClosed = { false },
                         onError = { _, _ -> },
-                    ) {}
+                    ) { _, _ -> }
                 }
             advanceTimeBy(2_500) // 5 + 10 + … + 640 = 1275 ms, then 1 s pauses: inside the second 1 s pause
             val before = n

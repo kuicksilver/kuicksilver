@@ -90,6 +90,45 @@ public class KuicksilverApplicationEngine(
             }
 
         /**
+         * The most TCP connections each connector holds at once, HTTP/1.1 and HTTP/2 alike, counted from `accept` (TLS
+         * handshakes included) until the socket is released. At the limit the connector stops accepting: the OS backlog
+         * holds new clients (their connect succeeds, nothing is read from them) until a connection closes, and the server
+         * spends no descriptor or TLS work on them. When the backlog is full too (511 on the JVM, 50 on Kotlin/Native) the
+         * OS drops further connection attempts (Linux by default; the client's TCP retries them) or resets them. The
+         * default does not protect a process whose descriptor limit is lower (`ulimit -n`: 256 in a macOS shell, often
+         * 1024 on Linux): raise that limit or set this below it (docs/guide/ktor.md, "Connection limits"). At least 1;
+         * default 10,000. `EngineMain` key `kuicksilver.maxTcpConnections`.
+         *
+         * @throws IllegalArgumentException when set below 1.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var maxTcpConnections: Int = 10_000
+            set(value) {
+                require(value >= 1) { "maxTcpConnections must be at least 1" }
+                field = value
+            }
+
+        /**
+         * The most TCP connections one client address holds at once on a connector, HTTP/1.1 and HTTP/2 alike; null (the
+         * default) turns the limit off. Behind a reverse proxy, a load balancer, Kubernetes source NAT or any NAT every
+         * client shares one address, and an HTTP/1.1 proxy opens an upstream connection per request in flight (and one per
+         * WebSocket or SSE stream): enable it (256, say) only when the server faces its clients directly. A connection over
+         * it is reset right after `accept`, before its TLS handshake (its address is not known earlier), which a proxy in
+         * front reports as 502 or 503, and it is reported to [KuicksilverServerEventListener.connectionRefused] with the
+         * reason `per-IP limit`. An address is its bytes, never a name: an IPv4-mapped client as its IPv4 address, an IPv6
+         * client by its whole address (as QUIC `maxConnectionsPerIp`), so a client holding a /64 gets around it. At least
+         * 1, or null. `EngineMain` key `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off).
+         *
+         * @throws IllegalArgumentException when set below 1.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var maxTcpConnectionsPerIp: Int? = null
+            set(value) {
+                require(value == null || value >= 1) { "maxTcpConnectionsPerIp must be at least 1, or null" }
+                field = value
+            }
+
+        /**
          * When set, every plain connector (`port = ...` of embeddedServer, `connector {}`) serves TLS with this identity instead.
          * A `TlsIdentity.Reloadable` lets the certificate be replaced while the server runs (docs/guide/ktor.md, "Certificate
          * rotation").
@@ -443,6 +482,7 @@ public class KuicksilverApplicationEngine(
                     servers.forEach { it.rootJob.cancel() }
                     // connectors that never started are no part of the probe's count
                     servers.forEach { tcpConnectionsForProbe -= it.connections }
+                    servers.forEach { tcpLimitsForProbe -= it.limits }
                     // an endpoint bound next to its TCP socket but not yet serving (another connector failed) is closed here
                     servers.forEach { srv ->
                         runCatching { srv.h3Endpoint.getCompleted() }.getOrNull()?.let { e -> if (h3.none { it.endpoint === e }) e.close() }
@@ -585,6 +625,12 @@ public class KuicksilverApplicationEngine(
 
     /** TCP connections closed at accept because their address serves an HTTP/2 penalty ([h2Offenders]); for tests. */
     internal val refusedOffenders = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** The connection limits of every TCP connector, for [KuicksilverServerProbe]; written at startup. */
+    internal val tcpLimitsForProbe = ArrayList<TcpLimits>()
+
+    /** TCP connections closed at accept because their address held `maxTcpConnectionsPerIp` ([TcpLimits]). */
+    internal val refusedPerIp = kotlinx.coroutines.flow.MutableStateFlow(0L)
 }
 
 /** `EngineSSLConnectorConfig` (JVM `sslConnector {}`) as a Kuicksilver connector; null on platforms without it. */

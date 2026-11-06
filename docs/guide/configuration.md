@@ -291,6 +291,8 @@ Guide: [Ktor: Client](ktor.md#client).
 | `identityReloadInterval` (*experimental*) | `Duration?` | `null` | at least 1 s; how often the PEM files `EngineMain` read are checked for a renewed certificate (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](ktor.md#certificate-rotation)) |
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](ktor.md#server)) |
+| `maxTcpConnections` (*experimental*) | `Int` | 10,000 | at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n` ([Connection limits](ktor.md#connection-limits)) |
+| `maxTcpConnectionsPerIp` (*experimental*) | `Int?` | `null` (off) | at least 1, or `null`; TCP connections of one client address (its bytes; IPv6 whole, so a /64 holder gets around it; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS (a proxy in front answers 502/503), and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address: enable it (e.g. 256) only when the server faces clients directly ([Connection limits](ktor.md#connection-limits)) |
 | `http3` | `Boolean` | `true` | serve HTTP/3 on every TLS connector |
 | `http2` (*experimental*) | `Boolean` | `false` | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3; no h2c on plain connectors) ([HTTP/2 on the server](ktor.md#http2-on-the-server)) |
 | `http2Settings` (*experimental*) | `Http2Settings` | `Http2Settings()` | windows, SETTINGS and flood limits of every HTTP/2 connection; its `maxHeaderBlockTime` is bounded by `requestHeaderTimeoutSeconds` |
@@ -331,7 +333,7 @@ keep their defaults and are not configurable from the engine. Ktor's `connection
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.http2RepeatOffenderPenalty`,
-`kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
+`kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 ## ktor-network

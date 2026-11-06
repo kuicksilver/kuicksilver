@@ -34,6 +34,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -602,6 +603,40 @@ class ServerH2Test {
                     assertEquals(408, withTimeout(15.seconds) { statuses.receive() })
                     val h = assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.HEADERS })
                     assertTrue(h.endStream || raw.await { it.stream == 1 && it.endStream } != null)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * HTTP/2 connections count against the TCP connection limits like HTTP/1.1 ones (one socket each, from accept until it
+     * is released): with `maxTcpConnectionsPerIp = 1` and an HTTP/2 connection open and served, a second client from the
+     * same address is closed at accept, before its TLS handshake; once the first is closed the address is served again.
+     */
+    @Test fun negative_connectionLimitCountsH2() =
+        serverTest {
+            val (server, port) = h2TlsServer({ maxTcpConnectionsPerIp = 1 }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    assertEquals("h2", raw.alpn)
+                    raw.preface()
+                    raw.headers(1, RawH2Client.get())
+                    assertNotNull(raw.await(within = 15.seconds) { it.stream == 1 && it.endStream }, "the first request is answered")
+                    val probe = KuicksilverServerProbe.snapshot(server.engine)
+                    assertEquals(1L, probe["server.h2Connections"])
+                    assertEquals(1L, probe["server.tcpConnections"])
+                    assertTrue(
+                        runCatching { RawH2Client.connect(port).close() }.isFailure,
+                        "a second connection from 127.0.0.1 was accepted",
+                    )
+                    withTimeout(10.seconds) { server.engine.refusedPerIp.first { it == 1L } }
+                }
+                withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.headers(1, RawH2Client.get())
+                    assertNotNull(raw.await(within = 15.seconds) { it.stream == 1 && it.endStream }, "served again")
                 }
             } finally {
                 server.stop(100, 500)

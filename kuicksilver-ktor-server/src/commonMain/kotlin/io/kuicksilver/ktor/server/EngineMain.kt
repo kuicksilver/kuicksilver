@@ -18,7 +18,8 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files: the deployment port then serves TLS
  * and HTTP/3), `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate, e.g. `1h`;
  * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
- * default), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount`.
+ * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`,
+ * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount`.
  */
 public object EngineMain {
     /** Starts the server from command-line arguments and the configuration file, and blocks until it stops. */
@@ -30,7 +31,8 @@ public object EngineMain {
     /**
      * The server [main] would run, not started yet. Throws [IllegalArgumentException] when only one of the two
      * `kuicksilver.tls.*` file keys is set, `kuicksilver.tls.reloadInterval` is set without them or is not a duration of
-     * at least 1 second (or `0`), or a boolean key is not `true`/`false`.
+     * at least 1 second (or `0`), a boolean key is not `true`/`false`, or `kuicksilver.maxTcpConnections` or
+     * `kuicksilver.maxTcpConnectionsPerIp` is not a whole number in range.
      */
     public fun createServer(args: Array<String>): EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration> {
         val config = CommandLineConfig(args)
@@ -95,6 +97,20 @@ public object EngineMain {
                 http2RepeatOffenderPenalty = parsePenalty(it)
             }
         config
+            .propertyOrNull("kuicksilver.maxTcpConnections")
+            ?.getString()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                maxTcpConnections = parseCount("kuicksilver.maxTcpConnections", it)
+            }
+        config
+            .propertyOrNull("kuicksilver.maxTcpConnectionsPerIp")
+            ?.getString()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                maxTcpConnectionsPerIp = parseCount("kuicksilver.maxTcpConnectionsPerIp", it).takeIf { n -> n != 0 }
+            }
+        config
             .propertyOrNull("kuicksilver.altSvc")
             ?.getString()
             ?.toBooleanStrict()
@@ -110,6 +126,12 @@ public object EngineMain {
             ?.toInt()
             ?.let { udpSocketCount = it }
     }
+
+    /** A whole-number key; the setter checks its range. */
+    private fun parseCount(
+        key: String,
+        value: String,
+    ): Int = value.trim().toIntOrNull() ?: throw IllegalArgumentException("$key: \"$value\" is not a whole number")
 
     /** `kuicksilver.http2RepeatOffenderPenalty`: `0` (off) or a duration as `kotlin.time.Duration.parse` reads it (`30s`). */
     private fun parsePenalty(value: String): Duration {

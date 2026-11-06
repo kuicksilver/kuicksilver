@@ -280,14 +280,28 @@ class ServerH2FloodTest {
     @Test fun negative_repeatOffenderBackoff() =
         serverTest {
             val handlers = Handlers()
-            val (server, port) = floodServer(handlers) { http2RepeatOffenderPenalty = 30.seconds }
+            val refusals = MutableStateFlow<List<String>>(emptyList())
+            val listener =
+                object : KuicksilverServerEventListener() {
+                    override fun connectionRefused(
+                        protocol: io.ktor.http.HttpProtocolVersion,
+                        remote: io.ktor.network.sockets.InetSocketAddress?,
+                        reason: String,
+                    ) = refusals.update { it + "$protocol $reason" }
+                }
+            val (server, port) =
+                floodServer(handlers) {
+                    http2RepeatOffenderPenalty = 30.seconds
+                    eventListener = listener
+                }
             val clock = TestTimeSource()
             assertNotNull(server.engine.h2Offenders, "on with a positive penalty")
             server.engine.h2Offenders = RepeatOffenders(penalty = 30.seconds, timeSource = clock)
             try {
                 threeFloods(server, port)
                 assertFailsWith<Throwable>("refused before the TLS handshake") { RawH2Client.connect(port).close() }
-                assertEquals(1L, server.engine.refusedOffenders.value)
+                withTimeout(10.seconds) { server.engine.refusedOffenders.first { it == 1L } }
+                assertEquals(listOf("HTTP/1.1 HTTP/2 repeat offender"), refusals.value, "reported to connectionRefused")
                 clock += 30.seconds
                 assertServes(port)
             } finally {

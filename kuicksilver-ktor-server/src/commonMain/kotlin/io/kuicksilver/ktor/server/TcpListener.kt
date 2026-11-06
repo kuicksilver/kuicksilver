@@ -72,6 +72,8 @@ internal class TcpServer(
     val draining: CompletableJob,
     /** The parent of its HTTP/1.1 connections, listed for the probe ([KuicksilverApplicationEngine.tcpConnectionsForProbe]). */
     val connections: Job,
+    /** Its `maxTcpConnections` and `maxTcpConnectionsPerIp`, listed for the probe ([KuicksilverApplicationEngine.tcpLimitsForProbe]). */
+    val limits: TcpLimits,
 )
 
 /** `port = 0`: TCP + UDP pairs tried before HTTP/3 is given up for the connector. */
@@ -200,6 +202,10 @@ internal fun KuicksilverApplicationEngine.startTcp(
         // completed when accepting ends (the engine stops): connections read no further request, idle ones close at once
         val draining: CompletableJob = Job()
         tcpConnectionsForProbe += connections
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val limits = TcpLimits(configuration.maxTcpConnections, configuration.maxTcpConnectionsPerIp)
+        tcpLimitsForProbe += limits
         val tlsConfig = l.tls?.let { tcpTlsConfig(it) }
         // RFC 9113 section 3.2: `h2` only over TLS, and only where it was offered (no h2c on a plain connector)
         val h2Offered = tlsConfig != null && H2_ALPN in tlsConfig.alpn
@@ -237,15 +243,38 @@ internal fun KuicksilverApplicationEngine.startTcp(
                         )
                     val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     val refusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
+                    val perIpRefusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     try {
+                        // the checks cheapest first: a slot of maxTcpConnections before accept (none free: the backlog holds
+                        // the client), maxTcpConnectionsPerIp right after it (no lock, no suspension), then the HTTP/2
+                        // repeat offenders (a lock while the table is not empty), and only then the TLS handshake
                         acceptLoop(
                             accept = { server.accept() },
                             isClosed = { server.isClosed },
                             onError = acceptFailures::report,
-                        ) { client ->
+                            limits = limits,
+                            ipKeyOf = { peerIpKey(it.remoteAddress as? InetSocketAddress) },
+                            refuse = { client ->
+                                client.abort()
+                                val from = runCatching { client.remoteAddress as? InetSocketAddress }.getOrNull()
+                                perIpRefusals.report(
+                                    from?.let { peerAddressBytes(it) }?.let { describeIp(it) } ?: "an unknown address",
+                                    "it holds ${limits.maxPerIp} connections already (maxTcpConnectionsPerIp)",
+                                )
+                                events.emit("connectionRefused") { connectionRefused(HttpProtocolVersion.HTTP_1_1, from, REFUSED_PER_IP) }
+                                refusedPerIp.update { it + 1 } // after the event: a test that sees the count sees the event
+                            },
+                        ) { client, lease ->
+                            // the slot and the address count until the descriptor is released, however the connection ends
+                            // (HTTP/1.1 or HTTP/2, a refusal below, a failed handshake, a stop); aborted sockets release it at once
+                            openTcpSockets.update { it + 1 }
+                            client.socketContext.invokeOnCompletion {
+                                lease.release()
+                                openTcpSockets.update { it - 1 }
+                            }
                             // with http2RepeatOffenderPenalty, a client whose HTTP/2 connections keep earning ENHANCE_YOUR_CALM
                             // waits out its penalty: closed here, before the TLS handshake costs anything (threat model 3.23)
-                            val from = client.remoteAddress as? InetSocketAddress
+                            val from = runCatching { client.remoteAddress as? InetSocketAddress }.getOrNull()
                             val refused =
                                 try {
                                     h2Offenders?.refuses(from) == true
@@ -255,15 +284,16 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 }
                             if (refused) {
                                 client.abort()
-                                refusedOffenders.update { it + 1 }
-                                refusals.report(from)
+                                refusals.report(RepeatOffenders.describe(from), "its HTTP/2 connections kept ending in ENHANCE_YOUR_CALM")
+                                events.emit("connectionRefused") {
+                                    connectionRefused(HttpProtocolVersion.HTTP_1_1, from, REFUSED_REPEAT_OFFENDER)
+                                }
+                                refusedOffenders.update { it + 1 } // after the event: a test that sees the count sees the event
                                 return@acceptLoop
                             }
                             // the request-head deadline of the first request counts from here, the TLS handshake included
                             val accepted = TimeSource.Monotonic.markNow()
-                            openTcpSockets.update { it + 1 }
                             client.setCloseTimeout(null) // the engine bounds the close (closeWithin), on progress
-                            client.socketContext.invokeOnCompletion { openTcpSockets.update { it - 1 } }
                             connectionScope.launch {
                                 val sock: Socket
                                 val peer: List<Certificate>
@@ -274,7 +304,15 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             withTimeoutOrNull(headerTimeout) { client.tlsServer(tlsConfig) }
                                                 ?: throw IOException("No TLS handshake within the request header timeout ($headerTimeout)")
                                         } catch (e: Throwable) {
-                                            client.close()
+                                            // never a close without a bound (the socket has none of its own): it would keep
+                                            // the connection's maxTcpConnections slot while the client takes nothing. A FIN
+                                            // (and an alert, if one is pending) for as long as the close moves, then an abort;
+                                            // a stop aborts at once
+                                            if (e is CancellationException) {
+                                                client.abort()
+                                            } else {
+                                                closeWithin(client, { client.abort() }, sendTimeout)
+                                            }
                                             if (e !is CancellationException) {
                                                 events.emit(
                                                     "tlsHandshakeFailed",
@@ -304,14 +342,16 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     )
                                 }
                                 events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
-                                val connection =
-                                    H1Connection(
-                                        sock.openReadChannel(),
-                                        sock.openWriteChannel(),
-                                        sock.remoteAddress.toNetworkAddress(),
-                                        sock.localAddress.toNetworkAddress(),
-                                    )
+                                var connection: H1Connection? = null
                                 try {
+                                    // inside the try: a socket whose channels cannot be opened is still closed below
+                                    connection =
+                                        H1Connection(
+                                            sock.openReadChannel(),
+                                            sock.openWriteChannel(),
+                                            sock.remoteAddress.toNetworkAddress(),
+                                            sock.localAddress.toNetworkAddress(),
+                                        )
                                     startH1Pipeline(
                                         connection,
                                         timeout,
@@ -322,7 +362,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
                                     // a client cut for not reading has had the stall deadline already: no second one for the close
-                                    closeWithin(sock, { sock.abort() }, if (connection.clientStoppedReading) Duration.ZERO else sendTimeout)
+                                    val stall = if (connection?.clientStoppedReading == true) Duration.ZERO else sendTimeout
+                                    closeWithin(sock, { sock.abort() }, stall)
                                     events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_1_1, remote) }
                                 }
                             }
@@ -342,7 +383,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
             latch.complete()
         }
         rootJob.invokeOnCompletion { selector.close() }
-        return TcpServer(rootJob, acceptJob, socket, h3Endpoint, draining, connections)
+        return TcpServer(rootJob, acceptJob, socket, h3Endpoint, draining, connections, limits)
     }
 }
 
@@ -469,27 +510,62 @@ internal val ACCEPT_BACKOFF_MAX: Duration = 1.seconds
  * consecutive failure up to 1 s, and back to 5 ms after the next successful accept, as Go's `net/http` `Server.Serve`
  * does for temporary accept errors. Retrying at once spins at full CPU for as long as the condition lasts. A failure
  * while [isClosed] (the listening socket was closed) is rethrown at once; cancellation ends the loop during a pause too.
+ *
+ * [limits] bound what is accepted, cheapest check first: a slot of `maxTcpConnections` is taken before [accept] (none free:
+ * the loop waits and the OS backlog holds new clients), then right after it the client's address ([ipKeyOf]) is counted
+ * against `maxTcpConnectionsPerIp`; a client over it goes to [refuse], which closes it, and is never served. A client
+ * handed to [serve] comes with its [TcpLease], which [serve] releases when the client's socket is released; a failed or
+ * cancelled accept, a refusal, and a [serve] that throws give the slot back here.
  */
 internal suspend fun <S : Any> acceptLoop(
     accept: suspend () -> S,
     isClosed: () -> Boolean,
     onError: (IOException, Duration) -> Unit,
-    serve: suspend (S) -> Unit,
+    limits: TcpLimits = TcpLimits(Int.MAX_VALUE, null),
+    ipKeyOf: (S) -> String? = { null },
+    refuse: (S) -> Unit = {},
+    serve: suspend (S, TcpLease) -> Unit,
 ): Nothing {
     var pause = Duration.ZERO
     while (true) {
+        limits.awaitSlot()
         val client =
             try {
                 accept()
             } catch (e: IOException) {
+                limits.cancelSlot()
                 if (isClosed()) throw e
                 pause = if (pause == Duration.ZERO) ACCEPT_BACKOFF_MIN else (pause * 2).coerceAtMost(ACCEPT_BACKOFF_MAX)
                 onError(e, pause)
                 delay(pause)
                 continue
+            } catch (e: Throwable) {
+                limits.cancelSlot()
+                throw e
             }
         pause = Duration.ZERO
-        serve(client)
+        val lease = limits.lease()
+        // an address that cannot be read (the peer is gone already) is not counted per address
+        val key =
+            try {
+                ipKeyOf(client)
+            } catch (_: Exception) {
+                null
+            }
+        if (!limits.admit(lease, key)) {
+            try {
+                refuse(client)
+            } finally {
+                lease.release()
+            }
+            continue
+        }
+        try {
+            serve(client, lease)
+        } catch (e: Throwable) {
+            lease.release()
+            throw e
+        }
     }
 }
 
@@ -550,11 +626,17 @@ private val CLOSE_POLL: Duration = 1.seconds
 /** How long [closeWithin] waits for an aborted socket to release its descriptor. */
 private val ABORT_WAIT: Duration = 3.seconds
 
+/** [KuicksilverServerEventListener.connectionRefused] reason: the client's address holds `maxTcpConnectionsPerIp` connections. */
+internal const val REFUSED_PER_IP = "per-IP limit"
+
+/** [KuicksilverServerEventListener.connectionRefused] reason: the client's address serves an `http2RepeatOffenderPenalty`. */
+internal const val REFUSED_REPEAT_OFFENDER = "HTTP/2 repeat offender"
+
 /**
- * Logs the connections closed at accept for an address under an HTTP/2 penalty ([RepeatOffenders]): the first at once,
- * then at most one line per [interval], saying how many were left out, as [AcceptFailureReporter]. A flooding client
- * reconnects as fast as it can, and a line per refusal would flood the log in its place. Used from the one accept-loop
- * coroutine only.
+ * Logs the connections closed at accept for one reason (an address under an HTTP/2 penalty, [RepeatOffenders]; an address
+ * at `maxTcpConnectionsPerIp`, [TcpLimits]): the first at once, then at most one line per [interval], saying how many were
+ * left out, as [AcceptFailureReporter]. A flooding client reconnects as fast as it can, and a line per refusal would flood
+ * the log in its place. Used from the one accept-loop coroutine only.
  */
 internal class RefusalReporter(
     private val interval: Duration,
@@ -564,14 +646,17 @@ internal class RefusalReporter(
     private var lastLogged: TimeMark? = null
     private var leftOut = 0
 
-    fun report(remote: InetSocketAddress?) {
+    fun report(
+        who: String,
+        why: String,
+    ) {
         val last = lastLogged
         if (last != null && last.elapsedNow() < interval) {
             leftOut++
             return
         }
         val more = if (leftOut > 0) " ($leftOut more since the last report)" else ""
-        log("Refused a connection from ${RepeatOffenders.describe(remote)}: its HTTP/2 connections kept ending in ENHANCE_YOUR_CALM$more")
+        log("Refused a connection from $who: $why$more")
         lastLogged = timeSource.markNow()
         leftOut = 0
     }
