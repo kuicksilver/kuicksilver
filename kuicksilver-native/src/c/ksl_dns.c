@@ -66,6 +66,7 @@ static int dns_append(uint8_t *out, size_t cap, size_t *at, uint32_t ttl, const 
 #include <arpa/nameser.h>
 #include <resolv.h>
 #include <netdb.h>
+#include <stdlib.h>
 
 int ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int timeout_ms, uint8_t *out, size_t cap,
                   size_t *len) {
@@ -107,16 +108,26 @@ int ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int ti
         st.retry = 1;
         st.retrans = secs / servers < 1 ? 1 : secs / servers;
     }
+    /* glibc reads a UDP answer into the caller's buffer without MSG_TRUNC: one longer than the buffer comes back cut to
+       its size with the cut length, indistinguishable from an answer of exactly that size. The query therefore gets a
+       buffer of the largest DNS message, and an answer longer than cap is then seen whole and refused. */
     size_t room = cap - 1;
-    if (room > INT_MAX)
-        room = INT_MAX;
-    int n = res_nquery(&st, name, C_IN, type, out + 1, (int)room);
+    uint8_t *buf = malloc(NS_MAXMSG);
+    if (!buf) {
+        res_nclose(&st);
+        return KSL_ERROR;
+    }
+    int n = res_nquery(&st, name, C_IN, type, buf, NS_MAXMSG);
     int herr = st.res_h_errno;
     res_nclose(&st);
-    if (n < 0)
-        return herr == HOST_NOT_FOUND || herr == NO_DATA ? KSL_DNS_NOT_FOUND : KSL_ERROR;
-    if ((size_t)n > room)
-        return KSL_ERROR; /* res_nquery reports the full length of an answer it cut */
+    if (n < 0 || (size_t)n > room || n > NS_MAXMSG) {
+        free(buf);
+        if (n < 0)
+            return herr == HOST_NOT_FOUND || herr == NO_DATA ? KSL_DNS_NOT_FOUND : KSL_ERROR;
+        return KSL_ERROR; /* longer than cap; or longer than the buffer: res_nquery reports the full length of a cut answer */
+    }
+    memcpy(out + 1, buf, (size_t)n);
+    free(buf);
     out[0] = KSL_DNS_MESSAGE;
     *len = (size_t)n + 1;
     return KSL_OK;
