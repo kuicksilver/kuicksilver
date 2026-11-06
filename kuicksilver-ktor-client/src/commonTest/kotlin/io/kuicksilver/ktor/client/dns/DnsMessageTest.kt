@@ -177,6 +177,17 @@ class DnsMessageTest {
         assertEquals(30, ttl)
     }
 
+    @Test fun negative_recordsOfUnrelatedNamesAreNotKept() { // RFC 2181 section 5.4.1: only what the answer leads to
+        val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response("a.example", listOf(rr("a.example", 65, 300, alias))).let { it.copyOf().also { m -> m[11] = 3 } } +
+                rr("victim.example", 65, 200, h3Here) + rr("victim.example", 1, 30, hex("c0000201")) +
+                rr("cdn.example", 1, 30, hex("c0000202"))
+        val a = DnsMessage.read(msg, "a.example")
+        assertTrue(a.related.isEmpty(), "kept ${a.related.keys}")
+        assertEquals(setOf("cdn.example"), a.addresses.keys)
+    }
+
     @Test fun ttlWithTopBitIsZero() { // RFC 2181 section 8
         val msg = response("a.example", listOf(rr("a.example", 65, 0x80000001L, h3Here)))
         assertEquals(0, DnsMessage.answers(msg, "a.example").single().ttlSeconds)

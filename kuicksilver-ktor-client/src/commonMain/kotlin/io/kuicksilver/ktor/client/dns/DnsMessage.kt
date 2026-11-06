@@ -160,6 +160,7 @@ internal object DnsMessage {
         var name = want
         var ttl = Long.MAX_VALUE
         var steps = 0
+        val chain = linkedSetOf(want)
         var chainEnds = rcode != RCODE_NXDOMAIN
         while (chainEnds && found.none { it.first == name }) {
             val next = cnames[name]
@@ -169,6 +170,7 @@ internal object DnsMessage {
             }
             ttl = minOf(ttl, next.second)
             name = next.first
+            chain += name
         }
 
         fun rrset(owner: String): List<SvcbRecord> =
@@ -176,16 +178,33 @@ internal object DnsMessage {
                 SvcbCodec.parseRdata(msg, rd.first, rd.last - rd.first + 1, o, minOf(t, if (o == name) ttl else Long.MAX_VALUE))
             }
         val records = if (chainEnds) rrset(name) else emptyList()
+        // RFC 2181 section 5.4.1: of the other records only those the answer leads to are kept, the CNAME chain and the
+        // TargetNames (and theirs, in turn); anything else in the sections could plant records for unrelated names
+        val allowed = HashSet<String>(chain)
+        val pending = ArrayDeque<List<SvcbRecord>>().apply { add(records) }
         val related = LinkedHashMap<String, List<SvcbRecord>>()
-        for (owner in found.map { it.first }.distinct()) {
-            if (chainEnds && owner == name) continue
-            try {
-                related[owner] = rrset(owner)
-            } catch (_: SvcbMalformedException) {
-                // section 2.2: that RRset is rejected; it does not spoil the one asked for
+        while (pending.isNotEmpty()) {
+            for (r in pending.removeFirst()) {
+                val target = if (r.isAlias) r.target else r.serviceHost
+                if (target == "." || !allowed.add(target)) continue
+                var n = target
+                var hops = 0
+                while (++hops <= MAX_CNAMES) n = cnames[n]?.first?.also { allowed += it } ?: break
+                for (owner in listOf(target) + allowed.filter { it != target }) {
+                    if (owner in related || owner == name || found.none { it.first == owner }) continue
+                    try {
+                        rrset(owner).also {
+                            related[owner] = it
+                            pending.add(it)
+                        }
+                    } catch (_: SvcbMalformedException) {
+                        // section 2.2: that RRset is rejected; it does not spoil the one asked for
+                    }
+                }
             }
         }
-        val addrs = addresses.mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
+        val addrs =
+            addresses.filterKeys { it in allowed }.mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
         return DnsAnswer(records, negativeTtl, related, addrs)
     }
 
