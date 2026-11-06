@@ -6,6 +6,7 @@ package io.kuicksilver.ktor.client
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -95,8 +96,8 @@ class ClientMigrationAndroidTest {
     }
 
     /** `svc wifi` when Wi-Fi is the default network, `svc data` otherwise: the radio that switching off moves the default. */
-    private fun defaultRadio(): String =
-        if (connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+    private fun defaultRadio(default: Network? = connectivity.activeNetwork): String =
+        if (connectivity.getNetworkCapabilities(default)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
             "wifi"
         } else {
             "data"
@@ -162,9 +163,12 @@ class ClientMigrationAndroidTest {
                         val atTwo = CompletableDeferred<Unit>()
                         val body = async { download(c, "https://10.0.2.2:$port/big", atTwo) }
                         atTwo.await()
-                        // read when switching: the default the connection is on now
+                        // read when switching: the default the connection is on now, and only the migration away from it
+                        // (a network validating late may have moved the connection before)
                         val default = connectivity.activeNetwork
-                        radio = defaultRadio().also { shell("svc $it disable") }
+                        while (migrated.tryReceive().isSuccess) Unit
+                        radio = defaultRadio(default)
+                        shell("svc $radio disable")
                         val e = migrated.receive()
                         assertEquals(default, e.old)
                         assertNotEquals(default, e.new)
@@ -206,7 +210,8 @@ class ClientMigrationAndroidTest {
                         val atTwo = CompletableDeferred<Unit>()
                         val body = async { runCatching { download(c, "https://10.0.2.2:$port/big", atTwo) } }
                         atTwo.await()
-                        radio = defaultRadio().also { shell("svc $it disable") }
+                        radio = defaultRadio()
+                        shell("svc $radio disable")
                         val resumed = runCatching { c.get("https://10.0.2.2:$port/resume") }
                         val outcome = body.await()
                         Log.i("kuicksilver", "without migration: resume=${resumed.map { it.version }} body=$outcome")
