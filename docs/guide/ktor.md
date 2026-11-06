@@ -669,7 +669,8 @@ counts as failed there and requests behave as without records. At most four syst
 `HttpsRecordSource.Exchange` works everywhere.
 
 An `http://` request (not `ws://`, not through a proxy, not to an IP address) first looks up the records of the same URL
-with `https` (port 80 becomes 443) and waits for the answer, up to the connect timeout (30 s at most); when the origin
+with `https` (port 80 becomes 443), waiting for the answer as an `https` request does (while the origin's addresses
+resolve and `httpsRecordExtraWait` longer; the whole lookup with a secure source); when the origin
 has an AliasMode record or a ServiceMode record the engine could use, the engine answers `307 Temporary Redirect` to the
 `https` URL itself, without connecting (RFC 9460 section 9.5). Ktor's `HttpRedirect` (on by default) follows it like any
 307; with `followRedirects = false` the call sees the 307. The upgrade is no more trusted than a 307 over cleartext:

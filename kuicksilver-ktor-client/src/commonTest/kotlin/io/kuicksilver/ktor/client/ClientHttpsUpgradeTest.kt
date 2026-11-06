@@ -108,6 +108,20 @@ class ClientHttpsUpgradeTest {
             }
         }
 
+    @Test fun negative_hangingSourceDoesNotStallHttp() =
+        clientTest {
+            // the lookup before an http request waits as long as one before an https request: the extra wait
+            val (plain, port) = testServer(plain = true) { routing { get("/") { call.respondText("plain") } } }
+            try {
+                client(emptyMap(), source = HttpsRecordsForTest { kotlinx.coroutines.awaitCancellation() }).use { c ->
+                    val r = kotlinx.coroutines.withTimeout(5.seconds) { c.get("http://server.test:$port/") }
+                    assertEquals("plain", r.bodyAsText())
+                }
+            } finally {
+                plain.stopSuspend(0, 0)
+            }
+        }
+
     @Test fun noRecordsKeepsHttp() =
         clientTest {
             val (plain, port) = testServer(plain = true) { routing { get("/") { call.respondText("plain") } } }

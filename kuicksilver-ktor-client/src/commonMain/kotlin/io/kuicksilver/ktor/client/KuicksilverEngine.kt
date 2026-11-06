@@ -304,10 +304,12 @@ internal class KuicksilverEngine(
         // RFC 9460 section 9.5: an http request first asks for the HTTPS records of its https URL (not through a proxy:
         // section 3.2, the engine does no SVCB resolution there)
         val records = httpsRecords
+        var upgradeDns: RequestDns? = null // the origin's addresses, looked up while the records were
         if (records != null && url.protocol == io.ktor.http.URLProtocol.HTTP && !isIpLiteral(url.host) && proxyFor(url) == null) {
             // a new network first (section 12, MUST): the decision must not rest on the old network's records
             checkNetwork()
-            httpsUpgrade(records, data, callContext)?.let { return it }
+            upgradeDns = config.newRequestDns()
+            httpsUpgrade(records, data, callContext, upgradeDns)?.let { return it }
         }
         // H3Only promises HTTP/3 or a failure, never TCP: through a proxy there is no HTTP/3 (UDP would need CONNECT-UDP,
         // RFC 9298, or SOCKS5 UDP ASSOCIATE, neither supported), so the request fails instead of going over HTTP/1.1
@@ -343,7 +345,8 @@ internal class KuicksilverEngine(
                     else -> ProtocolReason.NotSecure
                 }
             // the kill switch turns HTTP/3 off, not HTTP/2: the TCP path still offers h2
-            val r = tcp(data, callContext, reason, d, proxy = proxy) // no Alt-Svc is used or learned through a proxy
+            // no Alt-Svc is used or learned through a proxy
+            val r = tcp(data, callContext, reason, d, dns = upgradeDns ?: config.newRequestDns(), proxy = proxy)
             // switched off, Auto keeps learning Alt-Svc, so switching back needs no warm-up
             if (disabled && proxy == null && config.http3.discovery == Http3DiscoveryMode.Auto) {
                 altSvcUpdate {
@@ -723,6 +726,7 @@ internal class KuicksilverEngine(
         records: HttpsRecords,
         data: HttpRequestData,
         callContext: CoroutineContext,
+        dns: RequestDns,
     ): HttpResponseData? {
         val url = data.url
         val https =
@@ -732,8 +736,36 @@ internal class KuicksilverEngine(
                     protocol = io.ktor.http.URLProtocol.HTTPS
                     port = if (url.specifiedPort == 0 || url.specifiedPort == 80) io.ktor.http.DEFAULT_PORT else url.specifiedPort
                 }.build()
-        val upgrade = records.upgradesToHttps(https.host, https.port, supportedAlpn(webSocket = false))
-        if (upgrade == null && config.http3.httpsRecords.secure) {
+        val secure = config.http3.httpsRecords.secure
+        // waited for as before an https request: while the origin's addresses resolve and the extra wait after them
+        // (section 5.1), all of it for a secure source (section 3.1); an answer that comes later is cached for the next
+        val upgrade =
+            withTimeoutOrNull(config.connectTimeout) {
+                coroutineScope {
+                    val query = async { records.upgradesToHttps(https.host, https.port, supportedAlpn(webSocket = false)) }
+                    val addresses = engineScope.launch { lookupQuietly(dns, url.host, url.port) }
+                    select {
+                        query.onJoin {}
+                        addresses.onJoin {}
+                    }
+                    if (secure) {
+                        query.join()
+                    } else if (!query.isCompleted) {
+                        withTimeoutOrNull(config.http3.httpsRecordExtraWait) { query.join() }
+                    }
+                    val answer =
+                        if (query.isCompleted && !query.isCancelled) {
+                            query.getCompleted()
+                        } else if (secure) {
+                            null
+                        } else {
+                            false
+                        }
+                    query.cancel()
+                    answer
+                }
+            } ?: if (secure) null else false
+        if (upgrade == null && secure) {
             throw kotlinx.io.IOException(
                 "the HTTPS records of ${https.host} could not be resolved over the secure DNS source before an http request: " +
                     "the request is abandoned (RFC 9460 sections 3.1 and 9.5)",
