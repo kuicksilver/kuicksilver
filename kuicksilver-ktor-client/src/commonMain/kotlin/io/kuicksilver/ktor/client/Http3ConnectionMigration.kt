@@ -11,7 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 /**
  * How the client engine's HTTP/3 connections follow the device's network (connection migration, RFC 9000 section 9;
  * docs/guide/ktor.md, "Connection migration"): set it with `engine { http3 { connectionMigration = ... } }`. Off (null) by
- * default, as in 0.2: a connection then stays on the network it was opened on and dies with it.
+ * default, as in 0.2: a connection then stays on its first socket, which is bound to no network, so it lives on only if
+ * the system routes that socket over the new network and the server follows the new address as a NAT rebinding; it
+ * may also die at its idle timeout.
  *
  * The engine calls [start] for every pooled HTTP/3 connection once its handshake has completed (a 0-RTT connection is
  * handed to requests earlier, its migration waits), collects the migrator's [NetworkMigrator.events] into

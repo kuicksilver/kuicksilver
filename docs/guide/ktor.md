@@ -653,9 +653,21 @@ minutes. A `CancellationException` or an `Error` out of it fails the call instea
 `http3 { connectionMigration = ... }` (experimental, off by default) lets the engine's pooled HTTP/3 connections follow
 the device's network (RFC 9000 section 9): when the default network changes, say from Wi-Fi to the mobile network,
 each connection opens a socket on the new network, validates the path to the server and moves there, so a download
-and the requests in flight carry on instead of dying with the old interface (without it, as in 0.2, the connection
-stays on the socket of the network it was opened on and ends at its idle timeout; an idempotent request still waiting
-for its response then falls back to HTTP/1.1). On Android:
+and the requests in flight carry on. Without it, as in 0.2, the outcome depends on the system: the engine's socket is
+bound to no network, so the system may send its datagrams over the new default network from a new address, which the
+server then takes as a NAT rebinding (RFC 9000 section 9.3; that is what an Android emulator does when its default
+network goes away), or keep them on an interface that is gone, and then the connection ends at its idle timeout (an
+idempotent request still waiting for its response falls back to HTTP/1.1). What the option adds over such a rebinding:
+
+- the move is the client's decision, made when the system reports a new default network, not whenever the system
+  happens to route a datagram elsewhere, and it does not depend on which network the system picks for an unbound socket
+  (the new socket is bound to the new network: `Network.bindSocket`, `IP_BOUND_IF`);
+- the new path is validated before the connection sends on it, and the connection stays where it was when it fails;
+- the new path uses a fresh connection ID from the server, so the two networks' traffic cannot be linked by it (RFC
+  9000 section 9.5); a rebinding keeps the old one;
+- on iOS a socket the system reclaimed while the app was suspended is replaced.
+
+On Android:
 
 ```kotlin
 val connectivity = context.getSystemService(ConnectivityManager::class.java)

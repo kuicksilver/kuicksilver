@@ -162,8 +162,10 @@ public class Http3ClientConfig {
 
     /**
      * Lets pooled HTTP/3 connections follow the device's network (connection migration, RFC 9000 section 9; docs/guide/ktor.md,
-     * "Connection migration"): a download over HTTP/3 survives a switch from Wi-Fi to the mobile network instead of dying
-     * with the network it started on. Null (the default) leaves every connection where it was opened, as in 0.2.
+     * "Connection migration"): on a switch from Wi-Fi to the mobile network, a connection moves to a socket bound to the new
+     * network over a validated path with a fresh connection ID, so a download over HTTP/3 carries on. Null (the default)
+     * leaves every connection on the socket it was opened on, as in 0.2: it survives only if the system routes that unbound
+     * socket over the new network and the server takes it as a NAT rebinding, and may die at its idle timeout otherwise.
      * `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android and `Http3ConnectionMigration.followDefaultNetwork()`
      * on iOS and macOS follow the system's default network; see [Http3ConnectionMigration] for other platforms and the rules.
      * [networkId] is not derived from it: give it the same source to reset broken marks on a network change.
