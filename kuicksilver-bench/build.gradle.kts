@@ -18,6 +18,9 @@ kotlin {
     val memory: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
         binaries.executable("memory", listOf(org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.RELEASE)) {
             entryPoint = "io.kuicksilver.bench.memoryMain"
+            // -Pkuicksilver.memory.allocator=std: the malloc-based allocator, whose heap figure is the exact size of the live
+            // objects instead of the default allocator's pages (malloc then counts the Kotlin objects too)
+            providers.gradleProperty("kuicksilver.memory.allocator").orNull?.let { freeCompilerArgs += "-Xallocator=$it" }
             runTaskProvider?.configure { args(memoryArgs) }
         }
     }
