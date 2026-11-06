@@ -32,11 +32,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
@@ -50,6 +51,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -124,7 +126,7 @@ class ClientMigrationTest {
     private class Networks {
         val current = MutableStateFlow<Int?>(1)
         val made = Channel<NetworkMigrator<Int>>(Channel.UNLIMITED)
-        val opened = ArrayList<DatagramIo>()
+        val opened = AtomicReference(emptyList<DatagramIo>())
         val sourceStopped = AtomicInt(0)
 
         /** A hook over [current]; each new network is a new loopback socket. */
@@ -133,7 +135,7 @@ class ClientMigrationTest {
                 NetworkMigrator(
                     c,
                     current.onCompletion { sourceStopped.incrementAndFetch() },
-                    { DatagramIo.open(InetSocketAddress("127.0.0.1", 0)).also { opened += it } },
+                    { DatagramIo.open(InetSocketAddress("127.0.0.1", 0)).also { io -> opened.update { it + io } } },
                     scope,
                 ).also { made.trySend(it) }
             }
@@ -332,17 +334,62 @@ class ClientMigrationTest {
                             .single()
                     // the engine's idle timeout closes the connection; its migrator stops with it
                     withTimeout(15.seconds) { conn.closed.await() }
-                    withTimeout(10.seconds) {
-                        while (nets.sourceStopped.load() == 0 ||
-                            engineOf(c)
-                                .migrationJob
-                                .children
-                                .any()
-                        ) {
-                            yield()
-                        }
-                    }
-                    assertEquals(1, nets.sourceStopped.load())
+                    awaitMigratorsGone(c, nets)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** Waits until the network source of the one migrator stopped and no migration job is left (a deadline names what did not happen). */
+    private suspend fun awaitMigratorsGone(
+        c: HttpClient,
+        nets: Networks,
+    ) {
+        val left =
+            withTimeoutOrNull(10.seconds) {
+                while (nets.sourceStopped.load() == 0 || engineOf(c).migrationJob.children.any()) delay(10)
+            }
+        if (left == null) {
+            fail("migrator not closed: source stopped ${nets.sourceStopped.load()}, jobs ${engineOf(c).migrationJob.children.count()}")
+        }
+        assertEquals(1, nets.sourceStopped.load())
+    }
+
+    /** A migrator of a live pooled connection is closed with the client (the cleanup cancels the migration jobs). */
+    @Test fun migratorClosedWithClient() =
+        h3Test {
+            val g = Gates()
+            val (server, port) = server(g)
+            val cut = CompletableDeferred<CuttableIo>()
+            val nets = Networks()
+            try {
+                val c = client(cut, Heard(), nets.hook)
+                assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
+                val migrator = withTimeout(10.seconds) { nets.made.receive() }
+                withTimeout(10.seconds) { migrator.network.first { it == 1 } }
+                c.close()
+                withTimeout(10.seconds) { engineOf(c).cleanup.join() }
+                awaitMigratorsGone(c, nets)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** `closeHttp3Connections()` closes an idle connection after its GOAWAY, and its migrator with it. */
+    @Test fun migratorClosedByCloseHttp3Connections() =
+        h3Test {
+            val g = Gates()
+            val (server, port) = server(g)
+            val cut = CompletableDeferred<CuttableIo>()
+            val nets = Networks()
+            try {
+                client(cut, Heard(), nets.hook).use { c ->
+                    assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
+                    val migrator = withTimeout(10.seconds) { nets.made.receive() }
+                    withTimeout(10.seconds) { migrator.network.first { it == 1 } }
+                    c.closeHttp3Connections()
+                    awaitMigratorsGone(c, nets)
                 }
             } finally {
                 server.stop(100, 500)
@@ -371,7 +418,7 @@ class ClientMigrationTest {
                     val (_, e) = withTimeout(10.seconds) { heard.migrations.receive() }
                     val failed = assertIs<MigrationEvent.Failed<*>>(e, "$e")
                     assertIs<IllegalStateException>(failed.cause)
-                    assertEquals(1, nets.opened.size, "one socket opened, closed again by the refused path")
+                    assertEquals(1, nets.opened.load().size, "one socket opened, closed again by the refused path")
                     // the connection stays where it was and keeps serving
                     assertEquals(path, conn.quic.stats.currentPath)
                     assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
@@ -410,7 +457,7 @@ class ClientMigrationTest {
                 }).use { c ->
                     assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
                     withTimeout(10.seconds) {
-                        while (log.lines.load().none { (level, line) -> level == LogLevel.Info && "no network source" in line }) yield()
+                        while (log.lines.load().none { (level, line) -> level == LogLevel.Info && "no network source" in line }) delay(10)
                     }
                     assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
                 }
