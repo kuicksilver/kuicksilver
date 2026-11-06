@@ -32,6 +32,7 @@ import io.kuicksilver.http3.message.priorityFieldValue
 import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
@@ -458,7 +459,6 @@ internal class ServerRequestImpl(
             }
             try {
                 writeHeaders(status, headers)
-                st.output.flush()
             } catch (
                 e: CancellationException,
             ) {
@@ -467,10 +467,29 @@ internal class ServerRequestImpl(
                 abortInternal()
                 throw e
             }
+            session.afterResponseHeadersForTest?.invoke(st)
+            try {
+                st.output.flush()
+            } catch (
+                e: CancellationException,
+            ) {
+                throw e
+            } catch (e: Throwable) {
+                // every write already handed the HEADERS frame to the transport: a client that stopped the stream once it had
+                // the response (one abandoning a rejected CONNECT) ends the body, which the writer reports, not the response
+                if (!stoppedByPeer(e)) {
+                    abortInternal()
+                    throw session.map(e)
+                }
+            }
             // HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what the application writes is dropped
             ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = method == "HEAD" || status == 204 || status == 304)
         }
     }
+
+    /** The client's STOP_SENDING behind a failed write. */
+    private fun stoppedByPeer(e: Throwable): Boolean =
+        (H3Session.transportCause(e) as? QuicException.StreamError.Stopped)?.initiator == Initiator.Peer
 
     /** Session dispatcher only: [done] changes the session's maps and counters. */
     private fun abortInternal() {
