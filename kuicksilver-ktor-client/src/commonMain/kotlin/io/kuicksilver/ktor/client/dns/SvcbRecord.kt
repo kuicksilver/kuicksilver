@@ -333,13 +333,51 @@ internal fun httpsQueryName(
 }
 
 /**
- * The ServiceMode record to try HTTP/3 with: the one with the lowest SvcPriority whose `alpn` has `h3` and whose
- * endpoint is a host name; null when there is none, or when the RRSet has an AliasMode record (its ServiceMode records
- * are then ignored, RFC 9460 section 2.4.1).
+ * One endpoint of SVCB resolution (RFC 9460 section 3): [host] (a DNS name) and [port], and the transports this client
+ * may use there (section 7.1.2): [quic] when its SVCB ALPN set has `h3`, [tcp] when it has `h2` or `http/1.1` the client
+ * supports. The ALPN offered on each transport stays the client's own list, whatever the set says (section 7.1.2, step 3).
  */
-internal fun pickH3(records: List<SvcbRecord>): SvcbRecord? {
-    if (records.any { it.isAlias }) return null
-    return records.filter { "h3" in it.alpn && isHostName(it.serviceHost) }.minByOrNull { it.priority }
+internal data class HttpsEndpoint(
+    val host: String,
+    val port: Int,
+    val quic: Boolean,
+    val tcp: Boolean,
+)
+
+/** The default ALPN set of the HTTPS RR (RFC 9460 section 9). */
+internal const val HTTPS_DEFAULT_ALPN = "http/1.1"
+
+/**
+ * The SVCB ALPN set of a ServiceMode record (RFC 9460 section 7.1.1): its `alpn` ids, plus the scheme's default set
+ * (`http/1.1` for HTTPS, section 9) unless `no-default-alpn` is present.
+ */
+internal fun SvcbRecord.alpnSet(): Set<String> = if (noDefaultAlpn) alpn.toSet() else alpn.toSet() + HTTPS_DEFAULT_ALPN
+
+/**
+ * The ServiceMode endpoints of one RRset in the order to try them (RFC 9460 section 3, step 4): ascending SvcPriority,
+ * shuffled within a priority level with [random] (section 2.4.1, SHOULD), each at its effective TargetName (the owner for
+ * ".", section 2.5.2) and its `port` or [authorityPort] (section 7.2, SHALL). An endpoint whose SVCB ALPN set has no
+ * protocol in [supported] is left out (section 7.1.2, SHOULD NOT attempt), and so is one whose name a socket cannot take.
+ * Empty when the RRset has an AliasMode record: its ServiceMode records are then ignored (section 2.4.1, MUST).
+ */
+internal fun serviceEndpoints(
+    records: List<SvcbRecord>,
+    authorityPort: Int,
+    supported: Set<String>,
+    random: Random = Random,
+): List<HttpsEndpoint> {
+    if (records.any { it.isAlias }) return emptyList()
+    return records
+        .groupBy { it.priority }
+        .entries
+        .sortedBy { it.key }
+        .flatMap { it.value.shuffled(random) }
+        .mapNotNull { r ->
+            val set = r.alpnSet() intersect supported
+            val quic = "h3" in set
+            val tcp = "h2" in set || HTTPS_DEFAULT_ALPN in set
+            if ((!quic && !tcp) || !isHostName(r.serviceHost)) null else HttpsEndpoint(r.serviceHost, r.port ?: authorityPort, quic, tcp)
+        }
 }
 
 /**

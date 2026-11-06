@@ -63,11 +63,22 @@ internal class HttpsRecordCache(
     }
 }
 
-/** An HTTP/3 endpoint from an HTTPS record: [host] (a DNS name) and the UDP [port]. */
-internal data class HttpsEndpoint(
-    val host: String,
-    val port: Int,
-)
+/** The outcome of SVCB resolution for one service (RFC 9460 section 3). */
+internal sealed interface HttpsResolution {
+    /** The endpoints to try in order (section 3, steps 4 and the appended AliasMode endpoint); never empty. */
+    data class Endpoints(
+        val endpoints: List<HttpsEndpoint>,
+    ) : HttpsResolution
+
+    /**
+     * Connect as if the service had no SVCB record: there is none, none usable, an AliasMode "." (ignored, section 12),
+     * a malformed RRset (section 2.2), or the chain-length limit or a loop was hit (section 3.1, MUST).
+     */
+    data object None : HttpsResolution
+
+    /** A lookup failed (an error answer, a transport error or a timeout): section 3.1 decides what that means. */
+    data object Failed : HttpsResolution
+}
 
 /**
  * The engine's HTTPS record lookups (RFC 9460 section 3, as an SVCB-optional client): [lookup] answers one name (null for
@@ -149,33 +160,53 @@ internal class HttpsRecords(
         }
 
     /**
-     * The h3 endpoint the HTTPS records of `https://host:port` give (RFC 9460 sections 3 and 9.1): AliasMode records are
-     * followed to their TargetName (at most [MAX_ALIASES] steps, a name seen twice ends the chain), then the ServiceMode
-     * record [pickH3] chooses gives the endpoint, its `port` or [port]. Null when there is none, the chain ends in ".",
-     * or a lookup failed.
+     * SVCB resolution of `https://host:port` (RFC 9460 sections 3 and 9.1) for a client that speaks [supported]:
+     * $QNAME is [httpsQueryName]; an AliasMode record sets $QNAME to its TargetName, without prefix labels, and asks again
+     * (step 3; one picked at random among several, section 2.4.2); the compatible ServiceMode records of the final RRset
+     * become the endpoints ([serviceEndpoints]). When at least one AliasMode record was processed, the final $QNAME with
+     * [port] and no SvcParams is appended (section 3, SHALL); without SvcParams its ALPN set is the default `http/1.1`
+     * (section 9), so that endpoint is TCP only. An AliasMode "." is ignored (section 12, SHOULD). More than
+     * [MAX_ALIASES] AliasMode steps or a name seen twice falls back to the authority as if there were no record
+     * (section 3.1, MUST): [HttpsResolution.None].
      */
-    suspend fun h3Endpoint(
+    suspend fun resolve(
         host: String,
         port: Int,
-    ): HttpsEndpoint? {
+        supported: Set<String>,
+    ): HttpsResolution {
         var name = httpsQueryName(host, port)
-        val seen = HashSet<String>()
+        val seen = hashSetOf(name)
+        var aliased = false
         var aliases = 0
-        while (seen.add(name)) {
-            val rs = records(name) ?: return null
+        while (true) {
+            val rs = records(name) ?: return HttpsResolution.Failed
             val alias = aliasTarget(rs, random)
-            if (alias == null) {
-                val r = pickH3(rs) ?: return null
-                return HttpsEndpoint(r.serviceHost, r.port ?: port)
+            if (alias == null || !isHostName(alias)) {
+                // no AliasMode record, or one to "." (ignored): this RRset's ServiceMode records, if any (section 3, step 4)
+                val endpoints = if (alias == null) serviceEndpoints(rs, port, supported, random) else emptyList()
+                val all =
+                    if (aliased) {
+                        endpoints +
+                            HttpsEndpoint(
+                                name,
+                                port,
+                                quic = false,
+                                tcp = HTTPS_DEFAULT_ALPN in supported,
+                            )
+                    } else {
+                        endpoints
+                    }
+                val usable = all.filter { it.quic || it.tcp }
+                return if (usable.isEmpty()) HttpsResolution.None else HttpsResolution.Endpoints(usable)
             }
-            if (!isHostName(alias) || ++aliases > MAX_ALIASES) return null
-            name = alias // the TargetName without prefix labels (section 3)
+            if (++aliases > MAX_ALIASES || !seen.add(alias)) return HttpsResolution.None
+            aliased = true
+            name = alias
         }
-        return null
     }
 
     companion object {
-        /** AliasMode steps followed at most (RFC 9460 section 3.1 asks for a bound and loop detection). */
+        /** AliasMode steps followed at most (RFC 9460 sections 2.4.2 and 3.1: a limit, not zero, and loop detection). */
         const val MAX_ALIASES = 8
     }
 }

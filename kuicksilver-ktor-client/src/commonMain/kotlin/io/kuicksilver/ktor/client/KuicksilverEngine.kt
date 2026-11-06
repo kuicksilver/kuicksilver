@@ -22,6 +22,7 @@ import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.ktor.client.dns.HttpsEndpoint
 import io.kuicksilver.ktor.client.dns.HttpsRecords
+import io.kuicksilver.ktor.client.dns.HttpsResolution
 import io.kuicksilver.ktor.client.h1.H1Pool
 import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
@@ -712,7 +713,16 @@ internal class KuicksilverEngine(
     ): HttpsEndpoint? =
         withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
-                val https = async { records.h3Endpoint(url.host, url.port) }
+                val https =
+                    async {
+                        (
+                            records.resolve(
+                                url.host,
+                                url.port,
+                                SUPPORTED_ALPN,
+                            ) as? HttpsResolution.Endpoints
+                        )?.endpoints?.firstOrNull { it.quic }
+                    }
                 val addresses =
                     launch {
                         try {
@@ -839,6 +849,9 @@ internal fun isTransientRefusal(e: Throwable): Boolean {
 }
 
 /** RFC 9110 section 9.2.2. */
+
+/** The ALPN ids the client supports, for the SVCB ALPN sets of HTTPS records (RFC 9460 section 7.1.2). */
+internal val SUPPORTED_ALPN = setOf("h3", "h2", "http/1.1")
 
 /** The longest `httpsRecordExtraWait` allowed. */
 internal val MAX_HTTPS_RECORD_EXTRA_WAIT = 1.seconds

@@ -11,7 +11,7 @@ import io.kuicksilver.ktor.client.dns.SvcbRecord
 import io.kuicksilver.ktor.client.dns.SvcbTestEncoder
 import io.kuicksilver.ktor.client.dns.aliasTarget
 import io.kuicksilver.ktor.client.dns.isHostName
-import io.kuicksilver.ktor.client.dns.pickH3
+import io.kuicksilver.ktor.client.dns.serviceEndpoints
 import kotlin.random.Random
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -43,7 +43,9 @@ class SvcbFuzzTest {
             assertEquals(r, SvcbCodec.parseRdata(back, 0, back.size, r.owner, r.ttlSeconds), "round trip of $r")
             assertTrue(r.ttlSeconds in 0..Int.MAX_VALUE.toLong())
         }
-        pickH3(records)?.let { assertTrue(isHostName(it.serviceHost) && "h3" in it.alpn) }
+        for (e in serviceEndpoints(records, 443, setOf("h3", "h2", "http/1.1"), Random(0))) {
+            assertTrue(isHostName(e.host) && (e.quic || e.tcp))
+        }
         aliasTarget(records, Random(0))?.let { assertTrue(it.isNotEmpty()) }
     }
 

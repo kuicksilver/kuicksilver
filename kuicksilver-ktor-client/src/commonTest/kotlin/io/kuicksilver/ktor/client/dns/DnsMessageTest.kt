@@ -166,26 +166,32 @@ class DnsMessageTest {
         port: Int? = null,
     ) = SvcbRecord(priority, target, alpn.toList(), false, port, emptyList(), emptyList(), 300, "a.example")
 
-    @Test fun pickH3PrefersLowerPriorityAndSkipsAliasMode() {
-        val chosen = pickH3(listOf(rec(3, "c.example", "h3"), rec(1, "b.example", "h2"), rec(2, "d.example", "h3", port = 8443)))
-        assertEquals("d.example", assertNotNull(chosen).serviceHost)
-        assertEquals(8443, chosen.port)
+    private val all = setOf("h3", "h2", "http/1.1")
+
+    private fun first(records: List<SvcbRecord>) = serviceEndpoints(records, 443, all, Random(1)).firstOrNull()
+
+    @Test fun serviceEndpointsPreferLowerPriorityAndSkipAliasMode() {
+        val eps =
+            serviceEndpoints(listOf(rec(3, "c.example", "h3"), rec(1, "b.example", "h2"), rec(2, "d.example", "h3", port = 8443)), 443, all)
+        assertEquals(listOf("b.example", "d.example", "c.example"), eps.map { it.host })
+        assertEquals(8443, eps[1].port)
+        assertEquals(443, eps[0].port) // section 7.2: the authority's port without a port key
         // an RRSet with an AliasMode record: its ServiceMode records are ignored (RFC 9460 section 2.4.1)
-        assertNull(pickH3(listOf(rec(0, "x.example"), rec(1, "b.example", "h3"))))
+        assertNull(first(listOf(rec(0, "x.example"), rec(1, "b.example", "h3"))))
         assertEquals("x.example", aliasTarget(listOf(rec(0, "x.example"), rec(1, "b.example", "h3")), Random(1)))
     }
 
     @Test fun dotTargetMeansOwner() {
-        assertEquals("a.example", assertNotNull(pickH3(listOf(rec(1, ".", "h3")))).serviceHost)
+        assertEquals("a.example", assertNotNull(first(listOf(rec(1, ".", "h3")))).host)
     }
 
-    @Test fun aliasToDotMeansNoService() { // RFC 9460 section 2.5.1
+    @Test fun aliasToDotIsReported() { // RFC 9460 section 2.5.1; the resolver ignores it (section 12)
         assertEquals(".", aliasTarget(listOf(rec(0, ".")), Random(1)))
     }
 
     @Test fun negative_targetThatIsNoHostNameIsSkipped() {
-        assertNull(pickH3(listOf(rec(1, "a\\032b.example", "h3"))))
-        assertNull(pickH3(listOf(rec(1, "a\\.b.example", "h3"))))
+        assertNull(first(listOf(rec(1, "a\\032b.example", "h3"))))
+        assertNull(first(listOf(rec(1, "a\\.b.example", "h3"))))
     }
 
     @Test fun httpsQueryNameIsTheHostOrThePortPrefixedName() { // RFC 9460 section 9.1
