@@ -1385,6 +1385,23 @@ final class io.kuicksilver.quic/QuicEndpointConfig { // io.kuicksilver.quic/Quic
     }
 }
 
+final class io.kuicksilver.quic/QuicLbConfig { // io.kuicksilver.quic/QuicLbConfig|null[0]
+    constructor <init>(kotlin/Int, kotlin/ByteArray, kotlin/Int, kotlin/ByteArray?) // io.kuicksilver.quic/QuicLbConfig.<init>|<init>(kotlin.Int;kotlin.ByteArray;kotlin.Int;kotlin.ByteArray?){}[0]
+
+    final val configId // io.kuicksilver.quic/QuicLbConfig.configId|{}configId[0]
+        final fun <get-configId>(): kotlin/Int // io.kuicksilver.quic/QuicLbConfig.configId.<get-configId>|<get-configId>(){}[0]
+    final val connectionIdLength // io.kuicksilver.quic/QuicLbConfig.connectionIdLength|{}connectionIdLength[0]
+        final fun <get-connectionIdLength>(): kotlin/Int // io.kuicksilver.quic/QuicLbConfig.connectionIdLength.<get-connectionIdLength>|<get-connectionIdLength>(){}[0]
+    final val encrypted // io.kuicksilver.quic/QuicLbConfig.encrypted|{}encrypted[0]
+        final fun <get-encrypted>(): kotlin/Boolean // io.kuicksilver.quic/QuicLbConfig.encrypted.<get-encrypted>|<get-encrypted>(){}[0]
+    final val nonceLength // io.kuicksilver.quic/QuicLbConfig.nonceLength|{}nonceLength[0]
+        final fun <get-nonceLength>(): kotlin/Int // io.kuicksilver.quic/QuicLbConfig.nonceLength.<get-nonceLength>|<get-nonceLength>(){}[0]
+    final val serverId // io.kuicksilver.quic/QuicLbConfig.serverId|{}serverId[0]
+        final fun <get-serverId>(): kotlin/ByteArray // io.kuicksilver.quic/QuicLbConfig.serverId.<get-serverId>|<get-serverId>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.quic/QuicLbConfig.toString|toString(){}[0]
+}
+
 final class io.kuicksilver.quic/QuicServerConfig { // io.kuicksilver.quic/QuicServerConfig|null[0]
     final val earlyData // io.kuicksilver.quic/QuicServerConfig.earlyData|{}earlyData[0]
         final fun <get-earlyData>(): kotlin/Boolean // io.kuicksilver.quic/QuicServerConfig.earlyData.<get-earlyData>|<get-earlyData>(){}[0]

@@ -1169,6 +1169,16 @@ public final class io/kuicksilver/quic/QuicException$StreamError$Stopped : io/ku
 	public final fun getStreamId ()J
 }
 
+public final class io/kuicksilver/quic/QuicLbConfig {
+	public fun <init> (I[BI[B)V
+	public final fun getConfigId ()I
+	public final fun getConnectionIdLength ()I
+	public final fun getEncrypted ()Z
+	public final fun getNonceLength ()I
+	public final fun getServerId ()[B
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract interface class io/kuicksilver/quic/QuicPath {
 	public abstract fun close ()V
 	public abstract fun getId-ako8JRA ()I
