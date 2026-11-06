@@ -25,46 +25,36 @@ import io.kuicksilver.quic.core.Paths
 import io.kuicksilver.quic.core.Pmtud
 import io.kuicksilver.quic.core.Timers
 import io.kuicksilver.quic.core.abandonPreferredProbe
+import io.kuicksilver.quic.core.afterInput
+import io.kuicksilver.quic.core.amplificationLeavesNoProbe
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
-import io.kuicksilver.quic.core.checkPmtuBlackHoles
 import io.kuicksilver.quic.core.checkTlsInput
 import io.kuicksilver.quic.core.discardSpace
-import io.kuicksilver.quic.core.discardZeroRttKeys
+import io.kuicksilver.quic.core.drainStreamEvents
 import io.kuicksilver.quic.core.driveTls
 import io.kuicksilver.quic.core.dropHandshakeCandidate
+import io.kuicksilver.quic.core.earliestDeadline
 import io.kuicksilver.quic.core.ecnCeReceived
-import io.kuicksilver.quic.core.ecnPathFailed
 import io.kuicksilver.quic.core.enableServerEarlyData
 import io.kuicksilver.quic.core.enterClosing
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.finishPathResponses
 import io.kuicksilver.quic.core.glitch
-import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
-import io.kuicksilver.quic.core.keepAliveDeadline
-import io.kuicksilver.quic.core.largePacketUnanswered
 import io.kuicksilver.quic.core.largestDatagramPayload
-import io.kuicksilver.quic.core.markClosed
-import io.kuicksilver.quic.core.nextChallengeDelay
-import io.kuicksilver.quic.core.onBlockedRepeatTimer
-import io.kuicksilver.quic.core.onHandshakeDatagramDone
-import io.kuicksilver.quic.core.onPathFailed
-import io.kuicksilver.quic.core.onRevalidateDue
+import io.kuicksilver.quic.core.memoryCeiling
 import io.kuicksilver.quic.core.pmtudUpperBound
-import io.kuicksilver.quic.core.probeOtherHandshakeSpace
 import io.kuicksilver.quic.core.pto
 import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.releasePathCid
-import io.kuicksilver.quic.core.requeueForProbe
 import io.kuicksilver.quic.core.revertHandshakeMove
+import io.kuicksilver.quic.core.runDueTimers
+import io.kuicksilver.quic.core.serverWithKeys
 import io.kuicksilver.quic.core.setMtu
-import io.kuicksilver.quic.core.settleHandshakeValidated
-import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.startValidation
 import io.kuicksilver.quic.core.switchPath
-import io.kuicksilver.quic.core.validationTimeout
 import io.kuicksilver.quic.flow.RecvFlowController
 import io.kuicksilver.quic.flow.SendFlowController
 import io.kuicksilver.quic.flow.StreamLimits
@@ -76,9 +66,6 @@ import io.kuicksilver.quic.recovery.SentPacket
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.stream.StreamManager
 import io.kuicksilver.quic.wire.ConnectionId
-import io.kuicksilver.quic.wire.PacketHeaderCodec
-import io.kuicksilver.quic.wire.PacketHeaderView
-import io.kuicksilver.quic.wire.PacketType
 import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
@@ -295,7 +282,7 @@ public class ConnectionCore internal constructor(
     /** Asked for DATAGRAM frames on every 1-RTT packet with room while the window is open; null sends none. */
     public var datagramSender: DatagramSender? = null
     internal val datagramWriter = DatagramWriter()
-    private val datagramQueue = DatagramQueue(config.datagramReceiveQueue)
+    internal val datagramQueue = DatagramQueue(config.datagramReceiveQueue)
     private var datagramsReadableSignalled = false
 
     /** Bytes kept free in a packet next to a full-size datagram, enough for an ACK of a few ranges; larger ACKs go in a packet without the datagram. */
@@ -582,43 +569,6 @@ public class ConnectionCore internal constructor(
     internal var bytesSent = 0L
     internal var duplicatesDropped = 0L
 
-    /**
-     * Fuzzing probe: the sizes of the per-connection collections a peer can make grow, by name (the stateful fuzzer checks
-     * them against bounds derived from the configuration).
-     */
-    internal fun sizesForTest(): Map<String, Long> {
-        val m = LinkedHashMap<String, Long>()
-        m["events"] = events.size.toLong()
-        val st = streams.sizesForTest()
-        m["streams"] = st[0].toLong()
-        m["streamControlFrames"] = st[1].toLong()
-        m["streamEvents"] = st[2].toLong()
-        m["streamSendLimits"] = st[3].toLong()
-        m["streamsEarly"] = st[4].toLong()
-        m["reassemblyRanges"] = streams.reassemblyRanges.toLong()
-        m["sendBufferedBytes"] = streams.sendBufferedBytes
-        val ci = cids.sizesForTest()
-        m["cidsLocal"] = ci[0].toLong()
-        m["cidsPeer"] = ci[1].toLong()
-        m["cidsRetiredLocal"] = ci[2].toLong()
-        m["cidsRetiredUntil"] = ci[3].toLong()
-        m["cidsPendingRetire"] = ci[4].toLong()
-        m["cidsUnackedRetire"] = ci[5].toLong()
-        m["paths"] = paths.all.size.toLong()
-        m["pathResponses"] = paths.responses.toLong()
-        for (space in io.kuicksilver.quic.recovery.SpaceId.entries) {
-            val sp = loss.space(space)
-            m["sent${space.name}"] = sp.sent.size.toLong()
-            m["ackRanges${space.name}"] = sp.ack.rangeCount.toLong()
-        }
-        m["receiverBufferedBytes"] = receiver.bufferedBytes
-        m["cryptoBufferedBytes"] = cryptoStreams.bufferedBytes
-        m["datagramsQueued"] = datagramQueue.size.toLong()
-        m["challengedAddresses"] = challengedAddressesForTest.size.toLong()
-        m["mtuUpdates"] = ccMtuUpdatesForTest.size.toLong()
-        return m
-    }
-
     // ---- test hooks (internal, used by the module's tests only) ----
     internal var testForgeInitialSourceCid = false
         set(v) {
@@ -703,20 +653,6 @@ public class ConnectionCore internal constructor(
         val reason: ByteArray,
     )
 
-    /**
-     * Server: the anti-amplification limit leaves no PTO probe to send, so no PTO is armed (RFC 9002 section 6.2.2.1). Below 64
-     * bytes PacketBuilder builds no datagram; below 1200 an ack-eliciting Initial may not go out (RFC 9000 section 14.1), so a
-     * probe needs Handshake data in flight to resend.
-     */
-    private fun amplificationLeavesNoProbe(): Boolean {
-        if (amplification.validated) return false
-        val budget = amplification.budget()
-        if (budget < 64) return true
-        if (budget >= 1200) return false
-        val handshake = SpaceId.Handshake
-        return writeKeys[2] == null || spaceDiscarded[handshake.ordinal] || loss.space(handshake).ackElicitingInFlight <= 0
-    }
-
     init {
         paths.onEvicted = {
             if (it === handshakeCandidate) dropHandshakeCandidate() // already out of the paths: the rest of the drop still applies
@@ -796,11 +732,6 @@ public class ConnectionCore internal constructor(
             datagramsDroppedSocket,
         )
 
-    private fun memoryCeiling(): Long =
-        config.maxConnectionWindow + config.maxSendBuffer +
-            3L * config.limits.cryptoOutOfOrderPerLevel + config.limits.cryptoPostHandshake +
-            config.limits.undecryptablePackets.toLong() * path.mtu + config.limits.qlogBytes
-
     /** Test hook: thrown out of the next [handleDatagram] to exercise the endpoint's per-connection isolation. */
     internal var testInjectFailure: Throwable? = null
 
@@ -864,27 +795,6 @@ public class ConnectionCore internal constructor(
         afterInput(now)
     }
 
-    internal fun afterInput(now: TimeMark) {
-        if (tlsDirty) {
-            tlsDirty = false
-            driveTls(now)
-        }
-        pendingHandshakeMove?.let {
-            pendingHandshakeMove = null
-            onHandshakeDatagramDone(it)
-        }
-        finishPathResponses()
-        if (discardHandshakeKeysAfterPacket) {
-            discardHandshakeKeysAfterPacket = false
-            discardSpace(SpaceId.Handshake)
-        }
-        if (discardInitialPending) {
-            discardInitialPending = false
-            discardSpace(SpaceId.Initial)
-        }
-        drainStreamEvents()
-    }
-
     /** Fills [out] with datagrams to send now; returns their number (at most one send quantum). */
     public fun poll(
         out: PacketBatch,
@@ -916,200 +826,14 @@ public class ConnectionCore internal constructor(
     }
 
     /** [nextTimeout] without the nullable box: [TimeMark.NEVER] when no timer is armed. */
-    public fun nextTimeoutOrNever(): TimeMark {
-        if (state == ConnectionState.Closed) return TimeMark.NEVER
-        if (state == ConnectionState.Closing || state == ConnectionState.Draining) return timers.closeDeadline ?: TimeMark.NEVER
-        var t: TimeMark = loss.timeout()
-        for (i in 0 until 3) {
-            if (spaceDiscarded[i]) continue
-            val d = loss.space(SpaceId.entries[i]).ack.ackDeadline(config.maxAckDelay)
-            if (d <
-                t
-            ) {
-                t = d
-            }
-        }
-        if (builder.pacerWakeup < t) t = builder.pacerWakeup
-        if (state == ConnectionState.Handshaking) timers.handshakeDeadline?.let { if (it < t) t = it }
-        handshakeFallback?.let { if (it.deadline < t) t = it.deadline }
-        val idle = idleDeadline()
-        if (idle < t) t = idle
-        val keep = keepAliveDeadline()
-        if (keep < t) t = keep
-        if (timers.blockedRepeatAt < t) t = timers.blockedRepeatAt
-        if (lifetimeDeadline < t) t = lifetimeDeadline
-        keyPhase?.let { if (it.discardAt < t) t = it.discardAt }
-        if (keyUpdateRetryAt < t) t = keyUpdateRetryAt
-        if (zeroRttReadDiscardAt < t) t = zeroRttReadDiscardAt
-        for (i in 0 until paths.all.size) {
-            val p = paths.all[i]
-            if (p.state ==
-                PathState.Validating
-            ) {
-                if (p.challengeDeadline <
-                    t
-                ) {
-                    t = p.challengeDeadline
-                }
-                if (p.nextChallengeAt <
-                    t
-                ) {
-                    t = p.nextChallengeAt
-                }
-            }
-            if (p.revalidateAt < t) t = p.revalidateAt
-            p.pmtud?.let { m ->
-                val mt = m.timeout()
-                if (mt < t) t = mt
-            }
-        }
-        val retired = cids.nextRetiredExpiry()
-        if (retired < t) t = retired
-        return t
-    }
+    public fun nextTimeoutOrNever(): TimeMark = earliestDeadline()
 
     /**
      * Runs every timer due at [now]: loss detection and PTO, idle, handshake and lifetime limits, path validation, PMTUD, key discard. Call
      * it once [nextTimeout] passed, then [poll]; an early call does nothing harmful.
      */
     public fun onTimeout(now: TimeMark) {
-        if (state == ConnectionState.Closed) return
-        this.now = now
-        if (state == ConnectionState.Closing ||
-            state == ConnectionState.Draining
-        ) {
-            timers.closeDeadline?.let { if (it <= now) markClosed() }
-            return
-        }
-        if (state ==
-            ConnectionState.Handshaking
-        ) {
-            timers.handshakeDeadline?.let {
-                if (it <=
-                    now
-                ) {
-                    silentClose(QuicException.ConnectionLost.Timeout(TimeoutKind.Handshake, config.handshakeTimeout))
-                    return
-                }
-            }
-        }
-        if (idleDeadline() <=
-            now
-        ) {
-            silentClose(
-                QuicException.ConnectionLost.Timeout(TimeoutKind.Idle, timers.effectiveIdle(config.maxIdleTimeout, peerIdleMs, pto())),
-            )
-            return
-        }
-        if (lifetimeDeadline <= now) {
-            fail(TransportError.NO_ERROR, 0, "connection lifetime reached", null)
-            return
-        }
-        // before the path loop: an unvalidated handshake-time move is undone, not given another validation period nor failed (it may
-        // outlive the handshake when a raced copy carried the client's Finished)
-        handshakeFallback?.let { if (it.deadline <= now) revertHandshakeMove(it) }
-        cids.expireRetired(now)
-        if (zeroRttReadDiscardAt <= now) discardZeroRttKeys()
-        for (i in 0 until paths.all.size) paths.all[i].pmtud?.onTimeout(now)
-        for (i in paths.all.size - 1 downTo 0) paths.all.getOrNull(i)?.let { if (it.revalidateAt <= now) onRevalidateDue(it) }
-        var pi = paths.all.size - 1
-        while (pi >=
-            0
-        ) {
-            val p = paths.all.getOrNull(pi)
-            pi--
-            if (p == null ||
-                p.state != PathState.Validating
-            ) {
-                continue
-            }
-            if (p.challengeDeadline <=
-                now
-            ) {
-                if (p.handshakeCandidate) {
-                    dropHandshakeCandidate() // the other address of a handshake-time rebind did not answer: only it goes, unreported
-                } else if (p.awaitingCid) {
-                    onPathFailed(p, PathFailureReason.NoSpareConnectionId)
-                } else if (p === paths.active && p.handshakeValidated &&
-                    handshakeCandidate?.let { it.state == PathState.Validating && it.challengeDeadline > now } == true
-                ) {
-                    // the other address of a handshake-time rebind may still answer its own challenge: the one the client was reached
-                    // at settles only once that validation ended unanswered
-                    p.challengeDeadline = handshakeCandidate!!.challengeDeadline
-                } else if (p === paths.active &&
-                    p.handshakeValidated
-                ) {
-                    settleHandshakeValidated(p)
-                } else if (p === paths.active && handshakeFallback?.let { it.path === p && !it.isAddress(p.remote) } == true &&
-                    !p.amplification.validated
-                ) {
-                    // the address a handshake-time move took the path to failed its validation (it may have started before the move's
-                    // own deadline: a validation travels with its address between the active path and the candidate): the move is
-                    // undone as at that deadline (RFC 9000 section 9.3.2)
-                    revertHandshakeMove(handshakeFallback!!)
-                } else if (p === paths.active &&
-                    state == ConnectionState.Handshaking
-                ) {
-                    // every handshake-time move that leaves the active path validating keeps a HandshakeFallback whose deadline undoes it
-                    // (revertHandshakeMove); an address restored with a validation still under way restarts it here, so that a deadline
-                    // never stays in the past
-                    p.challengePending = true
-                    p.challengeDeadline = now + validationTimeout()
-                    p.nextChallengeAt = now + nextChallengeDelay(p)
-                } else {
-                    onPathFailed(p)
-                }
-            } else if (p.nextChallengeAt <=
-                now
-            ) {
-                p.challengePending = true
-                p.nextChallengeAt = now + nextChallengeDelay(p)
-            }
-        } // RFC 9000 section 8.2.4
-        // QuicEndpointConfig.maxConnectionLifetime: a transport close with NO_ERROR
-        if (state == ConnectionState.Closed || state == ConnectionState.Closing || state == ConnectionState.Draining) return
-        if (keepAliveDeadline() <= now) timers.keepAlivePending = true
-        onBlockedRepeatTimer(now)
-        if (loss.timeout() <=
-            now
-        ) {
-            val probe = loss.onTimeout(now)
-            checkPmtuBlackHoles()
-            if (probe !=
-                null
-            ) {
-                probePending[probe.space.ordinal] = probe.packets
-                requeueForProbe(probe.space, probe.packets)
-                if (probe.space != SpaceId.Application && handshakeMirror) handshakeMirrorDue = true
-                probeOtherHandshakeSpace(probe.space)
-                if (probe.space ==
-                    SpaceId.Application
-                ) {
-                    path.let { p ->
-                        if (p.ecn.state ==
-                            EcnState.Unknown
-                        ) {
-                            p.ecn.onPto()
-                            ecnPathFailed(p)
-                        }
-                        ; p.pmtud?.let { m ->
-                            if (loss.ptoCount >= 2 &&
-                                m.current > 1200 &&
-                                largePacketUnanswered(p)
-                            ) {
-                                m.onBlackHole(now)
-                                setMtu(p, m.current) // 1200, or the size of a validated Packet Too Big under confirmation
-                            }
-                        }
-                    }
-                }
-            }
-            // RFC 9000 appendix A.4: a 1-RTT PTO with all ten test packets outstanding means the marked packets vanish; two PTOs above the base
-            // MTU with nothing acknowledged are a PMTU black hole (RFC 8899 section 4.3)
-        }
-        if (builder.pacerWakeup <= now) builder.pacerWakeup = TimeMark.NEVER
-        keyPhase?.onTimeout(now)
-        if (now >= keyUpdateRetryAt) keyUpdateRetryAt = TimeMark.NEVER // a wake-up for a caller retrying initiateKeyUpdate, nothing more
+        runDueTimers(now)
     }
 
     /**
@@ -1129,7 +853,7 @@ public class ConnectionCore internal constructor(
     }
 
     /** When a refused [initiateKeyUpdate] may succeed (3 x PTO after the confirming ACK): a timer, so a retrying caller is woken. */
-    private var keyUpdateRetryAt = TimeMark.NEVER
+    internal var keyUpdateRetryAt = TimeMark.NEVER
 
     internal val probeScratch = ArrayList<SentPacket>()
 
@@ -1340,10 +1064,6 @@ public class ConnectionCore internal constructor(
      */
     @DelicateKuicksilverApi public val glitchByFrameType: LongArray get() = glitchCounts
 
-    private fun drainStreamEvents() {
-        while (true) events += streams.events.removeFirstOrNull() ?: break
-    }
-
     /** Holds [client]; the server-side factory is the `ConnectionCore.Companion.server` extension. */
     public companion object {
         /** The most entries a test-only record of this connection keeps (the latest ones): a peer must not grow it. */
@@ -1421,74 +1141,6 @@ public fun ConnectionCore.Companion.server(
     length: Int,
     localCidBytes: ByteArray? = null,
 ): ConnectionCore? = serverWithKeys(config, tls, crypto, remote, random, now, data, length, localCidBytes, null)
-
-internal fun ConnectionCore.Companion.serverWithKeys(
-    config: QuicConfig,
-    tls: TlsConfig,
-    crypto: QuicCrypto,
-    remote: InetSocketAddress,
-    random: Random,
-    now: TimeMark,
-    data: PacketBuffer,
-    length: Int,
-    localCidBytes: ByteArray?,
-    resetKey: ResetKey?,
-    originalDcid: ConnectionId? = null,
-    retryScid: ConnectionId? = null,
-    early: io.kuicksilver.quic.core.ServerEarlyData? = null,
-    tokenValidated: Boolean = false,
-): ConnectionCore? {
-    require(tls.role == TlsRole.Server) { "a server connection needs a server TlsConfig" }
-    val hv = PacketHeaderView()
-    if (length < 1200 || !PacketHeaderCodec.parse(data, 0, length, config.connectionIdLength, hv) ||
-        hv.type != PacketType.Initial
-    ) {
-        return null
-    }
-    val profile = VersionProfile.of(hv.version) ?: return null
-    if (profile !in config.versions) return null
-    val packetDcid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
-    // after a Retry the client's DCID is our Retry SCID; the original one comes from the token (RFC 9000 section 7.3)
-    val odcid = originalDcid ?: packetDcid
-    val remoteCid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
-    val scid = localCidBytes?.let { ConnectionId(it) } ?: ConnectionId(ByteArray(config.connectionIdLength).also { random.nextBytes(it) })
-    val core =
-        ConnectionCore(
-            TlsRole.Server,
-            config,
-            tls,
-            crypto,
-            remote,
-            random,
-            now,
-            odcid,
-            scid,
-            remoteCid,
-            profile,
-            resetKey,
-            earlyMode = io.kuicksilver.tls.EarlyDataState.Disabled,
-            serverEarly = early,
-        )
-    if (tokenValidated) {
-        // a NEW_TOKEN token validated the address (RFC 9000 section 8.1.3): no anti-amplification limit, no Retry state
-        core.validatedByToken = true
-        core.amplification.validated = true
-        core.loss.peerAddressValidated = true
-    }
-    if (retryScid !=
-        null
-    ) {
-        core.initialKeyCid = packetDcid
-        core.retryScid = retryScid
-        core.validatedByToken = true
-        core.amplification.validated =
-            true
-        core.loss.peerAddressValidated = true
-        core.refreshLocalTp()
-    }
-    core.installInitialKeys(profile)
-    return core
-}
 
 /** Appends to a test-only record of a connection, dropping the oldest entry beyond [ConnectionCore.TEST_RECORD_LIMIT]. */
 internal fun <T> MutableList<T>.recordForTest(value: T) {
