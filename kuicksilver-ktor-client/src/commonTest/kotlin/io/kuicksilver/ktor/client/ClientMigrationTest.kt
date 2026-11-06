@@ -62,7 +62,7 @@ import kotlin.time.Duration.Companion.seconds
  * "networks" are a test flow of numbers; a new network is a new loopback socket, and the network the connection leaves
  * goes deaf ([CuttableIo] under the engine's endpoint), as a Wi-Fi interface does when the device walks away from it.
  */
-@OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ClientMigrationTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 

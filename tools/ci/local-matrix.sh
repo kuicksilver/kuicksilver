@@ -123,6 +123,7 @@ fi
 export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 step "lint: action/image pins"                 bash tools/check/pins.sh .
+step "lint: C formatting (clang-format 19.x)"   bash tools/check/clang-format.sh
 step "lint: documentation references"          bash tools/check/doc-refs.sh
 step "lint: doc-refs negative controls"         bash tools/check/doc-refs-test.sh
 step "lint: fuzz campaign.sh (stubs)"           bash tools/fuzz/campaign-test.sh

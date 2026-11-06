@@ -43,7 +43,9 @@ fun main(args: Array<String>) {
                 routing {
                     get("/big") {
                         // a /resume left over from an earlier download (one that failed before its pause) must not let this one through
-                        while (resumes.tryReceive().isSuccess) Unit
+                        while (resumes.tryReceive().isSuccess) {
+                            // drain
+                        }
                         call.respondBytesWriter {
                             val chunk = ByteArray(64 * 1024) { 7 }
                             var sent = 0

@@ -1,0 +1,5 @@
+# clang-format for tools/check/clang-format.sh, pinned by hash (pip install --require-hashes -r ...):
+# the Linux x86_64 wheel (CI) and the macOS arm64 wheel, both from PyPI clang-format 19.1.7.
+clang-format==19.1.7 \
+    --hash=sha256:f4906fb463dd2033032978f56962caab268c9428a384126b9400543eb667f11c \
+    --hash=sha256:776f89c7b056c498c0e256485bc031cbf514aaebe71e929ed54e50c478524b65

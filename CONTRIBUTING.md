@@ -80,6 +80,7 @@ verification failed", do not regenerate blindly: find out why the artifact chang
 ./gradlew --max-workers=2 :kuicksilver-quic:macosArm64Test       # the same on Kotlin/Native (macOS host)
 bash tools/c-test.sh                                             # the ksl C tests under ASan/UBSan
 KSL_TSAN=1 bash tools/c-test.sh                                  # the same under ThreadSanitizer (any data race fails)
+bash tools/check/clang-format.sh                                 # C formatting with clang-format 19 (install lines in the script), --fix rewrites
 ./gradlew checkSpdxHeaders checkLayerDependencies                # headers and module layering
 ./gradlew :kuicksilver-quic:checkQuicArchitecture :kuicksilver-http3:checkHttp3Architecture :kuicksilver-http2:checkHttp2Architecture   # sans-IO and import rules
 ./gradlew checkKotlinAbi                                         # public ABI against the dumps in <module>/api/
@@ -90,6 +91,10 @@ bash tools/check/rfc-table.sh                                    # the RFC compl
 bash tools/check/guide-sync.sh                                   # the guides' code samples match their GuideSamplesTest blocks
 tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them
 ```
+
+Kotlin compiler warnings are errors in every compilation of the library modules (`kuicksilver.kmp`, main and tests);
+`-Pkuicksilver.warningsAsErrors=false` turns that off for a local build, for example to see all the deprecations a
+dependency bump brings before fixing them.
 
 `checkKotlinAbi` over all modules covers every Kotlin/Native target, so it needs every OpenSSL build, including the
 Docker ones. Linux JVM tests against the manylinux library run with `tools/ci/docker-jvm.sh linux-x86_64`. The QUIC

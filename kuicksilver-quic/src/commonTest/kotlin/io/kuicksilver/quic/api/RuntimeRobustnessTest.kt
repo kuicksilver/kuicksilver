@@ -28,6 +28,7 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.runtime.EndpointLoop
+import io.kuicksilver.quic.runtime.flush
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow

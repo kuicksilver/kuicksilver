@@ -23,8 +23,8 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.copyAndClose
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLine
-import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
@@ -147,7 +147,7 @@ class ClientProxyTest {
                                     val line = input.readLine(LineEnding.Lenient).orEmpty()
                                     while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                                     output.writeStringUtf8("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
-                                    val after = withTimeout(10.seconds) { runCatching { input.readRemaining().readByteArray() } }
+                                    val after = withTimeout(10.seconds) { runCatching { input.readBuffer().readByteArray() } }
                                     line to after.getOrElse { ByteArray(0) }.size
                                 }
                             }

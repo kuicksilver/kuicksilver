@@ -20,7 +20,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.webSocket
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Connection
@@ -291,7 +291,7 @@ class ClientKillSwitchTest {
                                 launch {
                                     runCatching {
                                         // "/echo" answers with the request body
-                                        val echo = if (r.path == "/echo") r.body.readRemaining().readString() else null
+                                        val echo = if (r.path == "/echo") r.body.readBuffer().readString() else null
                                         val w = r.respond(200, Http3Headers(emptyList()))
                                         if (echo != null) {
                                             w.output.writeStringUtf8(echo)

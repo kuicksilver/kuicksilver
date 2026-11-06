@@ -188,7 +188,7 @@ class H1PipelineFailedResponseTest {
         }
 
     /** [delegate], counting the completion handlers registered on it and not disposed yet. */
-    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class, kotlinx.coroutines.InternalForInheritanceCoroutinesApi::class)
     private class CountingJob(
         private val delegate: kotlinx.coroutines.CompletableJob,
     ) : kotlinx.coroutines.CompletableJob by delegate {

@@ -1,0 +1,29 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Formatting of the C sources (kuicksilver-native/src/c, src/jni, src/testhooks), checked by tools/check/clang-format.sh.
+# Pinned tool version: see CLANG_FORMAT_VERSION in that script.
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+UseTab: Never
+# One statement per line, braces on every body: formatting must never turn a single-line `if (x) return;` into something else.
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+BreakBeforeBraces: Attach
+IndentCaseLabels: false
+PointerAlignment: Right
+# Include order is significant (ksl_internal.h first, platform headers guarded by #if): never sort.
+SortIncludes: Never
+# Comments carry RFC quotations laid out by hand: do not re-flow them.
+ReflowComments: false
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 0
+SpacesBeforeTrailingComments: 2
+MaxEmptyLinesToKeep: 1
+InsertBraces: false
+BreakStringLiterals: false

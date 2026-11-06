@@ -17,6 +17,7 @@ import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.core.sizesForTest
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.tls.QuicCrypto
 import java.io.ByteArrayOutputStream

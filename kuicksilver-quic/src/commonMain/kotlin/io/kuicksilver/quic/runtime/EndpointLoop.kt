@@ -7,7 +7,6 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
-import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointCore
@@ -30,8 +29,6 @@ import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.core.AddressClass
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
-import io.kuicksilver.quic.core.onEmsgsize
-import io.kuicksilver.quic.core.preferredSocketDown
 import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.ipLiteral
@@ -39,9 +36,7 @@ import io.kuicksilver.quic.openDatagramIo
 import io.kuicksilver.quic.tokenStoreKey
 import io.kuicksilver.quic.withLiteralHost
 import io.kuicksilver.tls.EarlyDataState
-import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.SessionCache
-import io.kuicksilver.tls.TlsConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -53,8 +48,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.selects.onTimeout
-import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -66,7 +59,6 @@ import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
-import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 import kotlin.time.TimeSource
 
@@ -84,10 +76,10 @@ import kotlin.time.TimeSource
 @OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class, InternalKuicksilverApi::class)
 internal class EndpointLoop private constructor(
     private val config: QuicEndpointConfig,
-    private val io: DatagramIo,
+    internal val io: DatagramIo,
     internal val dispatcher: CoroutineDispatcher,
     internal val index: Int = 0,
-    private val group: LoopGroup? = null,
+    internal val group: LoopGroup? = null,
     private val pendingAccept: AtomicInt = AtomicInt(0),
     private val acceptQueue: Channel<QuicConnection> = acceptChannel(pendingAccept),
     /** The client's session tickets (per endpoint, single use; ADR-0015): a group's loops share one, `connect` picks any loop. */
@@ -107,18 +99,18 @@ internal class EndpointLoop private constructor(
         )
 
     /** The preferred-address sockets; emptied when the preferred address goes down ([dropPreferred]). Loop dispatcher only. */
-    private var preferredIos: List<DatagramIo> = preferredIos
+    internal var preferredIos: List<DatagramIo> = preferredIos
 
     /** Lifecycle counters, the connection listener and the logger of this loop (docs/guide/quic.md, "Observability"). */
     internal val observer = LoopObserver(config.logger, config.listener)
 
     // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
     internal val core: EndpointCore
-    private val inBatch: PacketBatch
-    private val outBatch: PacketBatch
+    internal val inBatch: PacketBatch
+    internal val outBatch: PacketBatch
 
     /** One datagram of a slot sent on its own (another socket than the batch's). */
-    private val single: PacketBatch
+    internal val single: PacketBatch
 
     init {
         // the core and the batches are native memory that only the close job frees: a constructor that fails part-way frees
@@ -144,8 +136,8 @@ internal class EndpointLoop private constructor(
         }
     }
 
-    private val wake = Channel<Unit>(Channel.CONFLATED)
-    private val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
+    internal val wake = Channel<Unit>(Channel.CONFLATED)
+    internal val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
     internal val timers = TimerHeap()
 
@@ -160,7 +152,7 @@ internal class EndpointLoop private constructor(
     internal val scratch = ByteArray(SCRATCH)
     private val start = TimeSource.Monotonic.markNow()
     private val closingFlag = AtomicInt(0) // set once, by compare-and-set: two concurrent close() calls must not both tear down
-    private val closing: Boolean get() = closingFlag.load() != 0
+    internal val closing: Boolean get() = closingFlag.load() != 0
     override val localAddress: InetSocketAddress get() = io.localAddress
 
     /** A datagram another loop of the group hands over: [asReceived] ones are treated as if they arrived on this socket (test hook), the rest belong to a connection here. */
@@ -184,7 +176,7 @@ internal class EndpointLoop private constructor(
     internal fun now(): TimeMark = TimeMark(1_000_000_000L + start.elapsedNow().inWholeNanoseconds)
 
     /** [now] for the receivers, read without boxing. */
-    private val clock = BatchReceiver.LoopClock { now() }
+    internal val clock = BatchReceiver.LoopClock { now() }
 
     private var receiveJob: kotlinx.coroutines.Job? = null
     private var forwardJob: kotlinx.coroutines.Job? = null
@@ -204,7 +196,7 @@ internal class EndpointLoop private constructor(
     internal suspend fun <T> withFlushLockForTest(block: suspend () -> T): T = flushLock.withLock { block() }
 
     /** Set by the close job once the core and the batches are freed: a flush after that does nothing. Loop dispatcher only. */
-    private var released = false
+    internal var released = false
 
     /** Batches whose send threw (a transient socket error): the datagrams are treated as lost, nothing else happens. */
     internal var sendFailures = 0L
@@ -215,10 +207,10 @@ internal class EndpointLoop private constructor(
     internal var socketDrops = 0L
 
     /** Server connections this loop adopted whose handshake has not completed yet (bookkeeping and tests; admission does not count them). */
-    private var handshaking = 0
+    internal var handshaking = 0
 
     @Volatile internal var handshakingForTest: Int = 0
-        private set
+        internal set
 
     /** Handshakes that completed while the accept queue was full: refused with CONNECTION_REFUSED. */
     internal var acceptOverflows = 0L
@@ -271,7 +263,7 @@ internal class EndpointLoop private constructor(
     }
 
     /** A loop whose socket or forwarding died ends its endpoint; in a group, the whole group (its accept queue is shared). */
-    private fun fatal(
+    internal fun fatal(
         what: String,
         e: Throwable,
     ) {
@@ -340,180 +332,13 @@ internal class EndpointLoop private constructor(
             } // a cancelled path closes its socket: not a failure
         }
 
-    /**
-     * A socket's capabilities can drop while connections run on it (ECN marking turned off, a route without DF): every
-     * connection hears of it on the paths that use [socket] (the endpoint's socket is [PathId.Initial], a migrating client's
-     * extra socket its path id). Runs on the loop dispatcher, so never inside a connection's poll.
-     */
-    private suspend fun followCapabilities(
-        io: DatagramIo,
-        socket: PathId,
-        only: ConnectionCore? = null,
-    ) {
-        // the current value too: a drop between the path's setup and this subscription must not be missed (a repeat changes nothing)
-        io.capabilities.collect { caps ->
-            for (rt in runtimes.values) {
-                if (only != null && rt.core !== only) continue
-                rt.core.updateSocketCapabilities(socket, caps)
-                core.markDirty(rt.core)
-            }
-        }
-    }
-
-    /** The socket a slot of [out] goes out on: the endpoint's, the preferred one of [to]'s family, or the one of the connection's path. */
-    private fun ioFor(
-        rt: ConnectionRuntime,
-        path: PathId,
-        to: InetSocketAddress? = null,
-    ): DatagramIo? =
-        if (path ==
-            PathId.Initial
-        ) {
-            io
-        } else if (path == PREFERRED_SOCKET) {
-            preferredIoFor(to) // none once the preferred address is down: never the main socket, the client would see a stranger
-        } else {
-            (rt.paths.firstOrNull { it.id == path } as? PathRuntime)?.io ?: io
-        }
-
-    /** The preferred-address socket of [to]'s family (a v4 and a v6 socket at most). */
-    private fun preferredIoFor(to: InetSocketAddress?): DatagramIo? {
-        if (preferredIos.size <= 1 || to == null) return preferredIos.firstOrNull()
-        val v4 = AddressClass.ipBytes(to).size == 4
-        return preferredIos.firstOrNull { (AddressClass.ipBytes(it.localAddress).size == 4) == v4 } ?: preferredIos[0]
-    }
-
-    /**
-     * Receives on a preferred-address socket: the datagrams of connections that moved there (RFC 9000 section 9.6), as
-     * [PREFERRED_SOCKET]; a new connection never starts there. In a group the kernel may hash a moved client onto
-     * another loop's preferred socket: copied to its owner like any other datagram.
-     */
-    private suspend fun receivePreferred(p: DatagramIo) {
-        val batch = PacketBatch(16, SLOT_SIZE)
-        val limiter = WorkLimiter()
-        val receiver = BatchReceiver(p, clock, directWait)
-        try {
-            limiter.start(now())
-            while (true) {
-                batch.clear()
-                receiver.receive(batch, untilTimer)
-                observer.datagramsReceived += batch.count
-                val now = now()
-                for (i in 0 until batch.count) {
-                    onDatagram(
-                        batch.buffer(i),
-                        batch.length(i),
-                        batch.address(i)!!,
-                        batch.ecn(i),
-                        now,
-                        PREFERRED_SOCKET,
-                        batch.localAddress(i),
-                    )
-                }
-                drainPacketTooBig(p, PREFERRED_SOCKET, now)
-                flush()
-                if (limiter.shouldYield(now)) {
-                    yield()
-                    limiter.start(now())
-                }
-            }
-        } catch (e: CancellationException) {
-            currentCoroutineContext().ensureActive()
-            if (!closing) preferredFailed(p, e)
-        } catch (e: Throwable) {
-            if (!closing) preferredFailed(p, e)
-        } finally {
-            batch.close()
-        }
-    }
-
-    /**
-     * A preferred-address socket failed: the endpoint degrades instead of failing (owner decision). The preferred address is served
-     * by every loop of a group or by none, so the whole group takes it down ([dropPreferred]); counted once in
-     * `EndpointStats.preferredAddressFailures`. Loop dispatcher only.
-     */
-    private fun preferredFailed(
-        failed: DatagramIo,
-        e: Throwable,
-    ) {
-        if (core.preferredDown) return // already going down: this loop's other socket, or the group's degrade closing it
-        if (group != null && !group.claimPreferredFailure()) return // another loop's socket failed first
-        observer.logger.emit(LogLevel.Warn, e) {
-            "endpoint ${io.localAddress} loop $index: the preferred-address socket ${failed.localAddress} failed; no longer offering " +
-                "the preferred address, closing the connections that moved there"
-        }
-        core.preferredAddressFailures++
-        core.preferredDown = true
-        if (group != null) group.dropPreferred() else scope.launch { dropPreferred() }
-    }
-
-    /**
-     * Takes this loop's part of the preferred address down: its preferred sockets close, new connections no longer get the offer,
-     * connections whose active path is on a preferred socket are closed at once (an INTERNAL_ERROR close is attempted, but with no
-     * socket left on that address it may never reach the client, which then times out), and a preferred path still under validation
-     * fails, its connection staying where it was (RFC 9000 section 9.6.1). Datagrams that still arrive for the preferred socket (forwarded
-     * by another loop before it went down) are dropped. Loop dispatcher only.
-     */
-    internal suspend fun dropPreferred() {
-        core.preferredDown = true
-        if (preferredIos.isEmpty()) return
-        val down = preferredIos
-        preferredIos = emptyList()
-        for (p in down) p.close()
-        for (rt in runtimes.values.toList()) {
-            if (rt.core.preferredSocketDown()) core.markDirty(rt.core)
-        }
-        flush()
-    }
-
-    private val copy = ByteArray(SLOT_SIZE)
-
-    /** Sends [out]: in one call when every slot uses the endpoint socket, otherwise slot by slot through each path's socket. */
-    private inline fun sendOutWith(
-        rt: ConnectionRuntime,
-        out: PacketBatch,
-        sendOrLose: (target: DatagramIo, batch: PacketBatch, rt: ConnectionRuntime) -> Unit,
-    ) {
-        var mixed = false
-        for (i in 0 until out.count) if (out.path(i) != PathId.Initial) mixed = true
-        if (!mixed) {
-            sendOrLose(io, out, rt)
-            return
-        }
-        for (i in 0 until out.count) {
-            val n = out.length(i)
-            out.buffer(i).copyTo(copy, 0, 0, n)
-            single.clear()
-            single.buffer(0).copyFrom(copy, 0, 0, n)
-            single.setLength(0, n)
-            single.setAddress(0, out.address(i)!!)
-            single.setLocalAddress(0, out.localAddress(i))
-            single.setEcn(0, out.ecn(i))
-            val target = ioFor(rt, out.path(i), out.address(i))
-            if (target == null) {
-                lose(1, rt) // its socket is gone (the preferred address went down): loss recovery or the close deals with it
-                continue
-            }
-            sendOrLose(target, single, rt)
-        }
-    }
-
-    /**
-     * True while no socket this loop sends on can suspend a send: the endpoint's, its preferred-address sockets and every path
-     * socket are [KslDatagramIo]s, whose `send` is `trySend`. A flush then runs without a coroutine frame ([flushNow]).
-     */
-    private fun sendsNeverSuspend(): Boolean {
-        if (io !is KslDatagramIo || suspendingPathSockets) return false
-        val p = preferredIos
-        for (i in 0 until p.size) if (p[i] !is KslDatagramIo) return false
-        return true
-    }
+    internal val copy = ByteArray(SLOT_SIZE)
 
     /**
      * Set (for good) once a connection of this loop got a path socket whose `send` may suspend (an application's own
      * [DatagramIo]): flushes take the suspending path from then on. Set before the path can carry a datagram.
      */
-    @Volatile private var suspendingPathSockets = false
+    @Volatile internal var suspendingPathSockets = false
 
     /** The endpoint's own socket (tests). */
     internal val ioForTest: DatagramIo get() = io
@@ -524,170 +349,33 @@ internal class EndpointLoop private constructor(
     }
 
     /**
-     * A send that throws (EPERM from a filter, an unreachable route, a socket closed under a closing endpoint) loses this batch,
-     * one that takes only part of it (a full send buffer) loses the rest; loss detection repairs both, and [rt]'s connection
-     * counts them (a throwing send counts its whole batch, so the count may exceed what was really lost when the socket
-     * fails mid-batch). It never propagates: it would end a loop coroutine.
-     */
-    private suspend fun sendOrLose(
-        target: DatagramIo,
-        batch: PacketBatch,
-        rt: ConnectionRuntime?,
-    ) {
-        val ctx = currentCoroutineContext()
-        sendOrLoseWith(target, batch, rt, ctx) { full -> if (full) target.trySend(batch) else target.send(batch) }
-    }
-
-    /** [sendOrLose]'s body; [send] sends [batch] on [target] (`trySend` once the socket refused part of a batch in this flush). */
-    private inline fun sendOrLoseWith(
-        target: DatagramIo,
-        batch: PacketBatch,
-        rt: ConnectionRuntime?,
-        ctx: CoroutineContext,
-        send: (full: Boolean) -> Int,
-    ) {
-        val lost =
-            if (isDefunct(target)) {
-                batch.count // a lost socket is not written again: its paths wait for a move to a new one
-            } else {
-                try {
-                    // a socket that already refused part of a batch in this flush (after its one wait for room) is not waited on
-                    // again: the flush holds flushLock, so each wait would stall ACKs and timers of every other connection
-                    val full = isFullThisFlush(target)
-                    val sent = send(full).coerceIn(0, batch.count)
-                    // a datagram of this connection the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6)
-                    if (rt != null && target is KslDatagramIo) {
-                        val tooBig = target.takeEmsgsize()
-                        if (tooBig > 0) {
-                            rt.core.onEmsgsize(tooBig)
-                            core.markDirty(rt.core)
-                        }
-                    }
-                    if (sent < batch.count && !full) fullThisFlush.add(target)
-                    observer.datagramsSent += sent
-                    batch.count - sent
-                } catch (e: CancellationException) {
-                    ctx.ensureActive() // else a DatagramIo's own failure: a lost batch
-                    sendFailures++
-                    batch.count
-                } catch (e: SocketDefunctException) {
-                    sendFailures++
-                    // a server's own socket serves every client: one refused destination must not take it down
-                    if (target !== io || clientOnly) socketLost(target, e)
-                    batch.count
-                } catch (e: Throwable) {
-                    sendFailures++
-                    batch.count
-                }
-            }
-        if (lost > 0) lose(lost, rt)
-    }
-
-    private fun lose(
-        n: Int,
-        rt: ConnectionRuntime?,
-    ) {
-        socketDrops += n
-        if (rt != null) rt.core.datagramsDroppedSocket += n
-    }
-
-    /** One datagram off this loop's socket: routed by the core, or, in a group, copied to the loop its connection ID names. */
-    private fun onDatagram(
-        buf: PacketBuffer,
-        length: Int,
-        from: InetSocketAddress,
-        ecn: Ecn,
-        now: TimeMark,
-        socket: PathId = PathId.Initial,
-        local: InetSocketAddress? = null,
-    ) {
-        if (socket == PREFERRED_SOCKET && preferredIos.isEmpty()) {
-            core.droppedPreferredDown++ // the preferred address went down; another loop forwarded this before it knew
-            return
-        }
-        val misroute = testMisrouteTo
-        if (misroute >= 0 && group != null) {
-            if (!group.forward(misroute, buf, length, from, ecn, asReceived = true, socket, local)) core.droppedQueue++
-            return
-        }
-        if (core.handleDatagram(buf, length, from, ecn, now, socket, local) != null || group == null) return
-        val owner = core.ownerLoop(buf, length)
-        if (owner >= 0 && owner != index &&
-            !group.forward(owner, buf, length, from, ecn, asReceived = false, socket, local)
-        ) {
-            core.droppedQueue++
-        }
-    }
-
-    /**
      * Receive rounds of this socket between two yields: timers and commands share the dispatcher with the receivers. The
      * receiver itself already lets queued work run after every 16 datagrams or 1 ms ([BatchReceiver]); this bounds a socket
      * whose rounds never wait at all (a flood).
      */
-    private val limiter = WorkLimiter()
+    internal val limiter = WorkLimiter()
 
     /**
      * How long a receive may wait on the loop's thread for the next datagrams: never on a dispatcher the caller supplied, which
-     * other work shares (two endpoints on one dispatcher would each stall the other's sends for 1 ms per quiet gap; review d-quic);
+     * other work shares (two endpoints on one dispatcher would each stall the other's sends for 1 ms per quiet gap);
      * what is already queued is still taken there.
      */
-    private val directWait: Duration = if (config.dispatcher != null) Duration.ZERO else BatchReceiver.PLATFORM_WAIT
+    internal val directWait: Duration = if (config.dispatcher != null) Duration.ZERO else BatchReceiver.PLATFORM_WAIT
 
     /** This socket's batches: on the loop's thread while datagrams keep coming, else through the blocking receive. */
     internal val receiver = BatchReceiver(io, clock, directWait)
 
     /** Time left until the loop's next timer: a receive on the loop's thread waits no longer. */
-    private val untilTimer = BatchReceiver.TimerHorizon { timers.peek()?.let { it.heapDeadline - now() } ?: Duration.INFINITE }
-
-    private suspend fun receiveLoop() {
-        try {
-            limiter.start(now())
-            while (true) {
-                inBatch.clear()
-                // the batch on the loop's thread without a coroutine frame; the suspending receive only to yield or to wait
-                val direct = receiver.receiveDirect(inBatch, untilTimer)
-                if (direct < 0) receiver.receive(inBatch, untilTimer, directTried = direct == BatchReceiver.NOTHING)
-                observer.datagramsReceived += inBatch.count
-                val now = now()
-                for (i in 0 until inBatch.count) {
-                    onDatagram(
-                        inBatch.buffer(i),
-                        inBatch.length(i),
-                        inBatch.address(i)!!,
-                        inBatch.ecn(i),
-                        now,
-                        local = inBatch.localAddress(i),
-                    )
-                }
-                afterReceive(now)
-                // a socket that never runs dry (a flood) must not starve the timer coroutine and the queued application commands
-                if (limiter.shouldYield(now)) {
-                    yield()
-                    limiter.start(now())
-                }
-            }
-        } catch (e: CancellationException) {
-            currentCoroutineContext().ensureActive() // our cancellation goes on; else a socket's own failure
-            if (!closing) fatal("transport failed", e)
-        } catch (e: SocketDefunctException) {
-            // a client endpoint keeps its connections: each can move to a new socket (QuicConnection.rebind); connect() fails fast
-            if (closing) return
-            if (clientOnly) socketLost(io, e) else fatal("transport failed", e)
-        } catch (e: Throwable) {
-            if (!closing) fatal("transport failed", e)
-        } // a dead socket ends the endpoint: accept() and connect() must not hang
-    }
+    internal val untilTimer = BatchReceiver.TimerHorizon { timers.peek()?.let { it.heapDeadline - now() } ?: Duration.INFINITE }
 
     /** True for an endpoint without a server role: its socket serves only its own connections, which can move off it. */
-    private val clientOnly: Boolean get() = config.server == null
+    internal val clientOnly: Boolean get() = config.server == null
 
     /** Sockets the system took away (identity; loop dispatcher only): never read or written again. */
-    private val defunct = ArrayList<DatagramIo>(2)
+    internal val defunct = ArrayList<DatagramIo>(2)
 
     /** Set once the endpoint's own socket is lost: connect() fails with it at once. */
     @Volatile private var endpointSocketLost: SocketDefunctException? = null
-
-    private fun isDefunct(target: DatagramIo): Boolean = defunct.isNotEmpty() && defunct.any { it === target }
 
     /**
      * [socket] is gone ([SocketDefunctException]): it is not used again, and every connection reports [PathEvent.SocketLost] for
@@ -713,257 +401,19 @@ internal class EndpointLoop private constructor(
 
     /** Admission + flush rounds run so far (test hook). */
     @Volatile internal var afterReceiveCount: Long = 0
-        private set
-
-    /** The ICMP Packet Too Big messages [io] queued (Linux and Android), as hints for the connections' DPLPMTUD. */
-    private fun drainPacketTooBig(
-        io: DatagramIo,
-        socket: PathId,
-        now: TimeMark,
-    ) {
-        if (io !is KslDatagramIo) return
-        io.drainPacketTooBig { quote, len, dst, mtu -> core.handlePacketTooBig(quote, len, dst, mtu, now, socket) }
-    }
-
-    private suspend fun afterReceive(now: TimeMark) {
-        afterReceiveCount++
-        drainPacketTooBig(io, PathId.Initial, now)
-        core.processPending(now) // admission runs once per receive batch
-        while (true) {
-            val c = core.nextAccepted() ?: break
-            val rt = adopt(c)
-            rt.serverSide = true
-            rt.handshaking = true
-            handshaking++
-            handshakingForTest = handshaking
-        } // new server connections leave the core's queue at once
-        flush()
-    }
-
-    /** Datagrams other loops of the group handed over (a flow the kernel hashed onto their socket). */
-    private suspend fun forwardLoop() {
-        val buf = PacketBuffer.allocate(FORWARD_MAX)
-        try {
-            // in batches of FORWARD_BATCH like the receiver's: admission and a flush after each, then a yield, so a rebound
-            // high-rate flow cannot starve this loop's own socket, timers and commands. Every round, not the WorkLimiter's 16
-            // rounds or 2 ms: queued work held that long starved the application's reads, which extend a stream's
-            // flow-control credit, and slowed a fast sender 2.6 times when the receive path did it (docs/benchmarks.md)
-            var sinceRound = 0
-            for (f in forwarded) {
-                forwardedCount.incrementAndFetch()
-                buf.copyFrom(f.bytes, 0, 0, f.bytes.size)
-                val now = now()
-                if (f.asReceived) {
-                    onDatagram(
-                        buf,
-                        f.bytes.size,
-                        f.from,
-                        f.ecn,
-                        now,
-                        f.socket,
-                        f.local,
-                    )
-                } else if (f.socket == PREFERRED_SOCKET && preferredIos.isEmpty()) {
-                    core.droppedPreferredDown++
-                } else {
-                    core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now, f.socket, f.local)
-                }
-                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-                val drained = forwarded.isEmpty
-                if (++sinceRound == FORWARD_BATCH || drained) {
-                    sinceRound = 0
-                    afterReceive(now)
-                    yield()
-                }
-            }
-        } catch (e: Throwable) {
-            if (e is CancellationException) currentCoroutineContext().ensureActive()
-            if (!closing) fatal("forwarding failed", e)
-        } finally {
-            buf.close()
-        }
-    }
-
-    private suspend fun timerLoop() {
-        try {
-            timerTicks()
-        } catch (e: Throwable) {
-            if (e is CancellationException) currentCoroutineContext().ensureActive()
-            if (!closing) fatal("timer failed", e)
-        } // like the receive loop: a dead timer ends the endpoint instead of escaping
-    }
-
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // select's onTimeout
-    private suspend fun timerTicks() {
-        while (true) {
-            val head = timers.peek()
-            val wait = head?.let { it.heapDeadline - now() }
-            if (wait == null) {
-                wake.receive()
-            } else if (wait > Duration.ZERO) {
-                // not withTimeoutOrNull: its expiry creates and throws a TimeoutCancellationException, and on Kotlin/Native every
-                // throw captures a stack trace and unwinds through C++; a select's timeout clause just resumes (docs/benchmarks.md)
-                select<Unit> {
-                    wake.onReceive {}
-                    onTimeout(wait) {}
-                }
-            }
-            val now = now()
-            while (true) {
-                val c = timers.peek() ?: break
-                if (c.heapDeadline > now) break
-                timers.remove(c)
-                core.markDirty(c)
-                try {
-                    c.onTimeout(now)
-                } catch (e: Throwable) {
-                    c.failInternal(e) // sans-IO, not suspending: even a CancellationException is the connection's failure
-                }
-            }
-            flush(signalTimer = false) // the timer loop re-reads the heap itself; signalling itself here would spin
-        }
-    }
+        internal set
 
     /** Flushes that returned with connections still on the dirty list (test hook). */
     @Volatile internal var flushesEndingDirtyForTest: Long = 0
-        private set
+        internal set
 
     /** Sockets that did not take a whole batch during the current flush: the rest of the flush only `trySend`s on them. */
-    private val fullThisFlush = ArrayList<DatagramIo>(2)
-
-    /** By index: an iterator per send would allocate. */
-    private fun isFullThisFlush(target: DatagramIo): Boolean {
-        for (i in 0 until fullThisFlush.size) if (fullThisFlush[i] === target) return true
-        return false
-    }
+    internal val fullThisFlush = ArrayList<DatagramIo>(2)
 
     /** The connections one flush round works through, copied off the dirty list (a flush can retire connections, and a failure marks others). */
-    private val flushRound = ArrayList<ConnectionCore>()
+    internal val flushRound = ArrayList<ConnectionCore>()
 
-    /**
-     * Drains events, sends what the dirty connections have to send, retires closed ones, re-arms their timers. Loop dispatcher
-     * only; [touched] joins the dirty list first. Runs on the loop's thread for every received batch, timer and application
-     * write, so it allocates nothing on its own when it cannot suspend ([sendsNeverSuspend], the accelerated socket): then it
-     * takes the lock without waiting and calls [flushBody] directly, and only the suspending path gets a coroutine frame.
-     */
-    internal suspend fun flush(
-        touched: ConnectionCore? = null,
-        signalTimer: Boolean = true,
-    ) {
-        if (sendsNeverSuspend() && flushLock.tryLock()) {
-            try {
-                flushNow(touched, signalTimer, currentCoroutineContext())
-            } finally {
-                flushLock.unlock()
-            }
-            return
-        }
-        flushSuspending(touched, signalTimer)
-    }
-
-    /** [flush] when no send can suspend; [flushLock] held. */
-    private fun flushNow(
-        touched: ConnectionCore?,
-        signalTimer: Boolean,
-        ctx: CoroutineContext,
-    ) {
-        flushBody(
-            touched,
-            signalTimer,
-            ctx,
-            sendOut = { rt, out -> sendOutWith(rt, out) { t, b, r -> sendOrLoseWith(t, b, r, ctx) { t.trySend(b) } } },
-            sendStateless = { t, b -> sendOrLoseWith(t, b, null, ctx) { t.trySend(b) } },
-        )
-    }
-
-    /** [flush] through the lock, each send through [sendOrLose] (it may wait for room). */
-    private suspend fun flushSuspending(
-        touched: ConnectionCore?,
-        signalTimer: Boolean,
-    ) {
-        flushLock.withLock {
-            val ctx = currentCoroutineContext()
-            flushBody(
-                touched,
-                signalTimer,
-                ctx,
-                sendOut = { rt, out -> sendOutWith(rt, out) { t, b, r -> sendOrLose(t, b, r) } },
-                sendStateless = { t, b -> sendOrLose(t, b, null) },
-            )
-        }
-    }
-
-    /** What a flush does, with its two kinds of send passed in; [flushLock] held. */
-    private inline fun flushBody(
-        touched: ConnectionCore?,
-        signalTimer: Boolean,
-        ctx: CoroutineContext,
-        sendOut: (rt: ConnectionRuntime, out: PacketBatch) -> Unit,
-        sendStateless: (target: DatagramIo, batch: PacketBatch) -> Unit,
-    ) {
-        if (released) return // a coroutine resumed after the close job freed the batches
-        if (touched != null) core.markDirty(touched)
-        val now = now()
-        val dirty = core.dirtyConnections
-        if (dirty.isEmpty() && !core.hasStateless) return
-        val head = timers.peek()?.heapDeadline ?: TimeMark.NEVER
-        fullThisFlush.clear()
-        // connections marked dirty while this flush runs (a refusal in onHandshakeCompleted, a failure marking others) get
-        // further rounds here: their CONNECTION_CLOSE must not wait for the next datagram or timer
-        try {
-            var rounds = 0
-            while (dirty.isNotEmpty() && rounds++ < FLUSH_ROUNDS) {
-                // the list is copied (into a list kept for it, by index: no copy or iterator allocated per flush): a flush can
-                // retire connections, and a failure inside one marks others dirty
-                val list = flushRound
-                list.clear()
-                for (i in 0 until dirty.size) list.add(dirty[i])
-                core.clearDirty()
-                for (k in 0 until list.size) {
-                    val c = list[k]
-                    val rt = runtimes[c] ?: continue
-                    try {
-                        // a connection closing: its CONNECTION_CLOSE goes to the socket first, and the application side of the end
-                        // (failing streams, waking waiters, the listener's onClosed) follows; the paths' addresses are what the send needs
-                        if (c.state == ConnectionState.Closing) rt.refreshPathRemotes() else rt.drainEvents()
-                        outBatch.clear()
-                        if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
-                        rt.drainEvents()
-                        rt.tick()
-                    } catch (e: Throwable) {
-                        // our own cancellation goes on; a CancellationException out of a callback is that connection's failure
-                        if (e is CancellationException) ctx.ensureActive()
-                        c.failInternal(e)
-                        rt.drainEvents()
-                    }
-                    if (c.state ==
-                        ConnectionState.Closed
-                    ) {
-                        handshakeEnded(rt)
-                        rt.finish()
-                        timers.remove(c)
-                        core.remove(c)
-                        runtimes.remove(c)
-                        if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)
-                    } else {
-                        timers.update(c, c.nextTimeoutOrNever())
-                    }
-                }
-            }
-        } finally {
-            // the round's connections are not kept past the flush, also when it ends in an exception (our cancellation):
-            // a closed one would stay reachable from the loop
-            flushRound.clear()
-        }
-        if (dirty.isNotEmpty()) wake.trySend(Unit) // still more after the bounded rounds: the timer coroutine flushes again
-        outBatch.clear()
-        if (core.pollStateless(outBatch) > 0) sendStateless(io, outBatch)
-        if (core.dirtyConnections.isNotEmpty()) flushesEndingDirtyForTest++
-        val newHead = timers.peek()?.heapDeadline ?: TimeMark.NEVER
-        if (signalTimer && newHead < head) wake.trySend(Unit)
-    }
-
-    private fun adopt(c: ConnectionCore): ConnectionRuntime {
+    internal fun adopt(c: ConnectionCore): ConnectionRuntime {
         val rt = ConnectionRuntime(this, c)
         runtimes[c] = rt
         observer.opened(rt)
@@ -977,83 +427,7 @@ internal class EndpointLoop private constructor(
         return rt
     }
 
-    /** A client connection received a ticket: kept for a later 0-RTT connection with the same TLS configuration. */
-    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-    internal fun storeTicket(
-        tls: TlsConfig,
-        ticket: QuicSessionTicket,
-    ) {
-        if (closing) {
-            ticket.close()
-            return
-        }
-        // started even when the scope is cancelled meanwhile: putQuic then releases the ticket instead of dropping it
-        scope.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) { sessions.putQuic(tls, ticket) }
-    }
-
-    /**
-     * A client connection received a NEW_TOKEN token: handed to the configured store (RFC 9000 section 8.1.3). The store runs
-     * in a coroutine of the loop's scope; what it throws is logged, never the connection's failure.
-     */
-    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-    internal fun storeToken(
-        store: io.kuicksilver.quic.QuicTokenStore,
-        key: String,
-        token: ByteArray,
-    ) {
-        if (closing) return
-        // started even when the scope is cancelled meanwhile, like storeTicket: a token that arrived is still offered to the store
-        scope.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
-            try {
-                // bounded like take: a store that hangs must not keep coroutines (and tokens) around for good
-                var done = false
-                withTimeoutOrNull(TOKEN_STORE_TIMEOUT) {
-                    store.put(key, token)
-                    done = true
-                }
-                if (!done) tokenStoreSlow("put", key)
-            } catch (e: Throwable) {
-                // the loop's own cancellation goes on; anything else, a CancellationException of the store's included, is its failure
-                if (e is CancellationException) currentCoroutineContext().ensureActive()
-                observer.logger.emit(LogLevel.Warn, e) { "token store put failed for $key; the token is dropped" }
-            }
-        }
-    }
-
-    private val tokenStoreSlowLogged = AtomicInt(0)
-
-    /** A token store call ran past [TOKEN_STORE_TIMEOUT]: the connection goes on without it; logged once per endpoint loop. */
-    private fun tokenStoreSlow(
-        call: String,
-        key: String,
-    ) {
-        if (!tokenStoreSlowLogged.compareAndSet(0, 1)) return
-        observer.logger.emit(LogLevel.Warn) {
-            "token store $call for $key took more than $TOKEN_STORE_TIMEOUT; going on without it (logged once per endpoint loop)"
-        }
-    }
-
-    /**
-     * A token for the next connection to [key] from the configured store (in the caller's coroutine), or null: a store that fails
-     * or takes longer than [TOKEN_STORE_TIMEOUT] is logged and the connection goes on without a token.
-     */
-    private suspend fun takeToken(
-        store: io.kuicksilver.quic.QuicTokenStore,
-        key: String,
-    ): ByteArray? =
-        try {
-            var done = false
-            val token =
-                withTimeoutOrNull(TOKEN_STORE_TIMEOUT) {
-                    store.take(key).also { done = true }
-                }
-            if (!done) tokenStoreSlow("take", key)
-            token?.takeIf { it.isNotEmpty() && it.size <= ConnectionCore.MAX_KEPT_TOKEN }
-        } catch (e: Throwable) {
-            if (e is CancellationException) currentCoroutineContext().ensureActive() // the caller's cancellation goes on
-            observer.logger.emit(LogLevel.Warn, e) { "token store take failed for $key; connecting without a token" }
-            null
-        }
+    internal val tokenStoreSlowLogged = AtomicInt(0)
 
     internal fun onHandshakeCompleted(rt: ConnectionRuntime) {
         if (!rt.serverSide || rt.handedOff) return
@@ -1080,7 +454,7 @@ internal class EndpointLoop private constructor(
         private set
 
     /** [rt] no longer counts as a handshake in flight: it completed, or it closed before it could. */
-    private fun handshakeEnded(rt: ConnectionRuntime) {
+    internal fun handshakeEnded(rt: ConnectionRuntime) {
         if (rt.handshaking) {
             rt.handshaking = false
             handshaking--
@@ -1212,10 +586,10 @@ internal class EndpointLoop private constructor(
         core.stats + observer.snapshot(acceptOverflows, uncaughtFailures.load(), sendFailures, socketDrops)
 
     /** Set once on the loop by [beginShutdown]: `connect` refuses, the core refuses new clients. */
-    @Volatile private var shuttingDown = false
+    @Volatile internal var shuttingDown = false
 
     /** Completes once no connection is left after [beginShutdown], or when the endpoint closes. */
-    private val drained = kotlinx.coroutines.CompletableDeferred<Unit>()
+    internal val drained = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     override suspend fun shutdown(
         grace: Duration,

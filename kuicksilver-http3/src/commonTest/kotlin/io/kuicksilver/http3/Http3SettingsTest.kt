@@ -8,7 +8,9 @@ import kotlin.test.assertFailsWith
 
 class Http3SettingsTest {
     /** The values the KDoc gives as defaults are defaults, not ceilings: larger values are accepted. */
-    @Test fun documentedDefaultsAreNotCaps() {
+    @Suppress("DEPRECATION") // maxInformationalResponses is deprecated and ignored, but its default must stay readable
+    @Test
+    fun documentedDefaultsAreNotCaps() {
         val d = Http3Settings.Default
         assertEquals(4096L, d.encoderMaxTableCapacity)
         assertEquals(65_536L, d.maxFieldSectionSize)
@@ -23,7 +25,9 @@ class Http3SettingsTest {
         assertEquals(1000, big.maxEarlyPriorityUpdates)
     }
 
-    @Test fun refusalsNameTheOption() {
+    @Suppress("DEPRECATION") // the deprecated maxInformationalResponses still validates its argument
+    @Test
+    fun refusalsNameTheOption() {
         assertEquals(
             "maxInformationalResponses must not be negative",
             assertFailsWith<IllegalArgumentException> { http3Settings { maxInformationalResponses = -1 } }.message,

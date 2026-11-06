@@ -61,6 +61,7 @@ class ClientMigrationAndroidTest {
         ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
     }
 
+    @Suppress("DEPRECATION") // ConnectivityManager.allNetworks: deprecated in API 31 with no replacement for listing every network
     private fun hasTransport(
         transport: Int,
         validated: Boolean = false,
@@ -166,7 +167,9 @@ class ClientMigrationAndroidTest {
                         // read when switching: the default the connection is on now, and only the migration away from it
                         // (a network validating late may have moved the connection before)
                         val default = connectivity.activeNetwork
-                        while (migrated.tryReceive().isSuccess) Unit
+                        while (migrated.tryReceive().isSuccess) {
+                            // drain
+                        }
                         radio = defaultRadio(default)
                         shell("svc $radio disable")
                         val e = migrated.receive()

@@ -24,7 +24,9 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.runtime.DatagramDemux
 import io.kuicksilver.http3.runtime.H3Session
+import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
+import io.kuicksilver.http3.runtime.drains
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream

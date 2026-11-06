@@ -98,6 +98,12 @@ jobs:
           bash tools/check/llms-full-test.sh
       - name: 'lint: SPDX headers'
         run: bash tools/check/spdx.sh .
+      - name: 'lint: C formatting (clang-format, .clang-format)'
+        # the output is only stable per major version: tools/check/clang-format.sh pins it (CLANG_FORMAT_VERSION)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/clang-format-venv"
+          "$RUNNER_TEMP/clang-format-venv/bin/pip" install --quiet --require-hashes -r tools/check/clang-format-requirements.txt
+          CLANG_FORMAT="$RUNNER_TEMP/clang-format-venv/bin/clang-format" bash tools/check/clang-format.sh
       - name: 'lint: shell syntax'
         run: |
           rc=0; while IFS= read -r f; do bash -n "$f" || rc=1; done < <(git ls-files '*.sh'); exit $rc

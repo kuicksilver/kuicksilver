@@ -188,7 +188,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
         val stall =
             when {
                 conn?.isClosed != true -> Duration.ZERO
-                conn?.endedInError == true -> minOf(sendTimeout, ERROR_CLOSE_STALL)
+                conn.endedInError -> minOf(sendTimeout, ERROR_CLOSE_STALL)
                 else -> sendTimeout
             }
         closeWithin(sock, { sock.abort() }, stall)

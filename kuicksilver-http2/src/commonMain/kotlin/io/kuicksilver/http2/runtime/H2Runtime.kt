@@ -731,7 +731,7 @@ internal class H2Runtime(
                 val id = openStream(fields, endStream)
                 val rt = StreamRt(this@H2Runtime, id, headRequest)
                 rt.localEnded = endStream
-                streams[id] = rt
+                this@H2Runtime.streams[id] = rt
                 s = rt
             }
             // the last identifier went (section 5.1.1): no new stream here (usable is false), and the connection ends once
@@ -991,7 +991,7 @@ internal class H2Runtime(
     /** GOAWAY (NO_ERROR) without new streams; the transport closes once the streams in flight are done. */
     fun shutdown() {
         shuttingDown = true
-        withCore { goAway(Http2ErrorCode.NO_ERROR, ByteArray(0), graceful = !client, now = clock()) }
+        withCore { goAway(Http2ErrorCode.NO_ERROR, ByteArray(0), graceful = !this@H2Runtime.client, now = clock()) }
         onChange()
     }
 

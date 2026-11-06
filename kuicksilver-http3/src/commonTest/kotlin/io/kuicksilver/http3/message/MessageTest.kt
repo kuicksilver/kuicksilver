@@ -380,7 +380,9 @@ class PseudoHeadersTest {
 }
 
 class PriorityFieldTest {
-    @Test fun defaults() {
+    @Suppress("DEPRECATION") // the deprecated maxInformationalResponses keeps its default
+    @Test
+    fun defaults() {
         assertEquals(StreamPriority.Default, PriorityField.parse(null))
         assertEquals(StreamPriority.Default, PriorityField.parse(""))
         assertNull(PriorityField.format(StreamPriority.Default))
@@ -619,7 +621,9 @@ class Http3ExceptionTest {
 }
 
 class Http3SettingsTest {
-    @Test fun defaults() {
+    @Suppress("DEPRECATION") // the deprecated maxInformationalResponses keeps its default
+    @Test
+    fun defaults() {
         val s = Http3Settings.Default
         assertEquals(0, s.qpackMaxTableCapacity)
         assertEquals(0, s.qpackBlockedStreams)
