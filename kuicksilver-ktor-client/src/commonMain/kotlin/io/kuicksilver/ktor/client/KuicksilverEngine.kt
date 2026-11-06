@@ -170,6 +170,7 @@ internal class KuicksilverEngine(
         closed = true
         h3.refuseDedicated() // at once, so a WebTransport call after close() fails instead of binding an endpoint
         reaper.cancel()
+        httpsRecords?.close() // a DNS lookup still running would hold up the cleanup for up to its timeout
         engineJob.complete()
         super.close()
     }

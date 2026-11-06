@@ -626,7 +626,8 @@ to an origin that publishes one with `alpn=h3` races HTTP/3 at once instead of w
 browsers do. Off by default. The rules:
 
 - only for an `https://` request to a host name with no cached `Alt-Svc` alternative (a cached one wins and no lookup is
-  made, RFC 9460 section 9.3); never for `Preferred`, `H3Only`, `quicHints`, `http://` URLs or IP addresses;
+  made, RFC 9460 section 9.3); never for `Preferred`, `H3Only`, `quicHints`, `http://` URLs, IP addresses, requests
+  through a proxy, or while `http3Allowed` says no;
 - the name asked is the host for port 443, `_<port>._https.<host>` otherwise (section 9.1); AliasMode records are
   followed (at most 8 steps, a loop stops the chain), then the ServiceMode record with the lowest priority whose `alpn`
   has `h3` gives the target and its `port` (the origin's when absent); the address hints are not used, `ech` is not
@@ -639,7 +640,7 @@ browsers do. Off by default. The rules:
   fails is marked broken like an alternative (`httpsRecordUsed` and `altSvcMarkedBroken` report both);
 - answers are cached by their TTL (60 s to a day; "no records" for 5 minutes; at most 1000 names) and forgotten when
   `networkId()` reports a new network; a failed lookup is not cached, and one lookup per name runs at a time, for at
-  most the connect timeout (30 s at most).
+  most the connect timeout (30 s at most); closing the client cancels the lookups still running.
 
 `HttpsRecordSource.System` asks the operating system's resolver, so lookups follow the system's DNS settings:
 `res_nquery` on Linux (JVM and Kotlin/Native), `DNSServiceQueryRecord` on macOS and iOS, `DnsQuery_W` on Windows, and

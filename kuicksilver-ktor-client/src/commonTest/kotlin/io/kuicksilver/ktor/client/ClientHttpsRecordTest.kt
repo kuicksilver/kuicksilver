@@ -210,6 +210,32 @@ class ClientHttpsRecordTest {
             }
         }
 
+    @Test fun negative_hangingLookupDoesNotHoldUpClose() =
+        clientTest {
+            val (server, port) =
+                testServer(configure = {
+                    http3 = false
+                    altSvc = false
+                }) { routing { get("/") { call.respondText("h1") } } }
+            try {
+                val asked = CompletableDeferred<Unit>()
+                val source =
+                    HttpsRecordsForTest {
+                        asked.complete(Unit)
+                        awaitCancellation()
+                    }
+                // the lookup outlives its request (its answer would be cached) for up to 30 s; closing the client ends it
+                val c = client(source, more = { connectTimeout = 120.seconds })
+                val engine = c.engine as KuicksilverEngine
+                assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://server.test:$port/").version)
+                assertTrue(asked.isCompleted)
+                c.close()
+                withTimeout(10.seconds) { engine.cleanup.join() }
+            } finally {
+                server.stopSuspend(0, 0)
+            }
+        }
+
     @Test fun negative_wrongCertificateAtTargetFallsBackAndMarksBroken() =
         h3Test {
             coroutineScope {

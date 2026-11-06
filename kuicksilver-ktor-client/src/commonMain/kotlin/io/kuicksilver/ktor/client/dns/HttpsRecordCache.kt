@@ -5,7 +5,9 @@ package io.kuicksilver.ktor.client.dns
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -74,11 +76,18 @@ internal data class HttpsEndpoint(
  */
 internal class HttpsRecords(
     private val lookup: suspend (String) -> List<SvcbRecord>?,
-    private val scope: CoroutineScope,
+    parent: CoroutineScope,
     private val queryTimeout: Duration,
     nowMillis: () -> Long,
     private val random: Random = Random,
 ) {
+    /** The lookups' own job under [parent]: [close] cancels the ones still running, so they do not hold up a closing engine. */
+    private val job = SupervisorJob(parent.coroutineContext[Job])
+    private val scope = CoroutineScope(parent.coroutineContext + job)
+
+    /** Cancels the lookups still running; callers waiting for them get no records. */
+    fun close() = job.cancel()
+
     private val lock = Mutex()
     private val cache = HttpsRecordCache(nowMillis)
     private val inFlight = HashMap<String, Deferred<List<SvcbRecord>?>>()

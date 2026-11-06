@@ -77,7 +77,8 @@ public class Http3ClientConfig {
      * origin's) against TCP to the origin, as for an `Alt-Svc` alternative; the certificate is checked against the origin's
      * name whatever the target. The address hints are not used, nor is `ech` (a record that requires it is skipped). A
      * cached `Alt-Svc` alternative wins and no lookup is made, nor is one for [Http3DiscoveryMode.Preferred],
-     * [Http3DiscoveryMode.H3Only], [quicHints], `http://` URLs or IP addresses. Answers are cached by their TTL (60 s to
+     * [Http3DiscoveryMode.H3Only], [quicHints], `http://` URLs, IP addresses, requests through a proxy, or while
+     * [http3Allowed] says no. Answers are cached by their TTL (60 s to
      * 1 day; 5 minutes for "no records"; at most 1000 names) until [networkId] changes; a failed lookup is not cached.
      */
     @ExperimentalKuicksilverApi
