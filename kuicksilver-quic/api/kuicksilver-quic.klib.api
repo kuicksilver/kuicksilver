@@ -318,6 +318,7 @@ abstract interface io.kuicksilver.quic/QuicEndpoint : kotlin/AutoCloseable { // 
 
 abstract interface io.kuicksilver.quic/QuicLbNonceReservation { // io.kuicksilver.quic/QuicLbNonceReservation|null[0]
     abstract fun load(): kotlin/Long // io.kuicksilver.quic/QuicLbNonceReservation.load|load(){}[0]
+    abstract fun secret(): kotlin/ByteArray // io.kuicksilver.quic/QuicLbNonceReservation.secret|secret(){}[0]
     abstract fun store(kotlin/Long) // io.kuicksilver.quic/QuicLbNonceReservation.store|store(kotlin.Long){}[0]
 
     final object Companion { // io.kuicksilver.quic/QuicLbNonceReservation.Companion|null[0]
@@ -936,6 +937,10 @@ final class io.kuicksilver.quic/EndpointStats { // io.kuicksilver.quic/EndpointS
         final fun <get-listenerFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.listenerFailures.<get-listenerFailures>|<get-listenerFailures>(){}[0]
     final val loadBalancerNoncesExhausted // io.kuicksilver.quic/EndpointStats.loadBalancerNoncesExhausted|{}loadBalancerNoncesExhausted[0]
         final fun <get-loadBalancerNoncesExhausted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.loadBalancerNoncesExhausted.<get-loadBalancerNoncesExhausted>|<get-loadBalancerNoncesExhausted>(){}[0]
+    final val loadBalancerNoncesWasted // io.kuicksilver.quic/EndpointStats.loadBalancerNoncesWasted|{}loadBalancerNoncesWasted[0]
+        final fun <get-loadBalancerNoncesWasted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.loadBalancerNoncesWasted.<get-loadBalancerNoncesWasted>|<get-loadBalancerNoncesWasted>(){}[0]
+    final val loadBalancerReservationFailures // io.kuicksilver.quic/EndpointStats.loadBalancerReservationFailures|{}loadBalancerReservationFailures[0]
+        final fun <get-loadBalancerReservationFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.loadBalancerReservationFailures.<get-loadBalancerReservationFailures>|<get-loadBalancerReservationFailures>(){}[0]
     final val newTokensAccepted // io.kuicksilver.quic/EndpointStats.newTokensAccepted|{}newTokensAccepted[0]
         final fun <get-newTokensAccepted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.newTokensAccepted.<get-newTokensAccepted>|<get-newTokensAccepted>(){}[0]
     final val newTokensIssued // io.kuicksilver.quic/EndpointStats.newTokensIssued|{}newTokensIssued[0]

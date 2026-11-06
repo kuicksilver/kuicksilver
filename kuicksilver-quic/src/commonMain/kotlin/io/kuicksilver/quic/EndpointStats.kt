@@ -136,6 +136,18 @@ public class EndpointStats internal constructor(
      */
     @property:ExperimentalKuicksilverApi
     public val loadBalancerNoncesExhausted: Long = 0,
+    /**
+     * Failed `QuicLbNonceReservation.store` calls: retried after a back-off (64 requests for a new ID, doubling to 65,536); once the reserved nonces
+     * are used up, the requests in between get unroutable IDs. Not counted as exhaustion.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val loadBalancerReservationFailures: Long = 0,
+    /**
+     * QUIC-LB nonces drawn and spent unused: their ID hashed to another loop of the group whose pool (1,024 IDs) and the
+     * owner exceptions (65,536 live IDs) were full. Stays 0 unless the loops issue IDs very unevenly.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val loadBalancerNoncesWasted: Long = 0,
 ) {
     /** Field by field sum: a loop group's endpoint statistics. */
     internal operator fun plus(o: EndpointStats): EndpointStats =
@@ -179,6 +191,8 @@ public class EndpointStats internal constructor(
             ptbIgnored + o.ptbIgnored,
             preferredAddressFailures + o.preferredAddressFailures,
             loadBalancerNoncesExhausted + o.loadBalancerNoncesExhausted,
+            loadBalancerReservationFailures + o.loadBalancerReservationFailures,
+            loadBalancerNoncesWasted + o.loadBalancerNoncesWasted,
         )
 
     @OptIn(ExperimentalKuicksilverApi::class)
@@ -198,5 +212,6 @@ public class EndpointStats internal constructor(
             "sendFailures=$sendFailures, listenerFailures=$listenerFailures, newTokensIssued=$newTokensIssued, " +
             "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected, ptbAccepted=$ptbAccepted, " +
             "ptbIgnored=$ptbIgnored, preferredAddressFailures=$preferredAddressFailures, " +
-            "loadBalancerNoncesExhausted=$loadBalancerNoncesExhausted)"
+            "loadBalancerNoncesExhausted=$loadBalancerNoncesExhausted, loadBalancerReservationFailures=$loadBalancerReservationFailures, " +
+            "loadBalancerNoncesWasted=$loadBalancerNoncesWasted)"
 }

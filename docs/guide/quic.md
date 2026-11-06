@@ -638,7 +638,7 @@ assigned this server:
 ```kotlin
 // guide:quic:load-balancer
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
-val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; close it once the endpoint closed
+val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; the endpoint takes its own copy
 val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
 val behindLb =
     quicEndpointConfig {
@@ -652,17 +652,21 @@ bits and the length of the rest in its five low bits. With an AES `key` the serv
 block when they are 16 bytes together, a four-pass Feistel network otherwise), so only the load balancer can tell which
 server a connection is on; without one they travel in clear, and the server then hands each connection only its
 handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). The key bytes go into the
-native layer once (`newLoadBalancerKey` wipes your array); the configuration holds the handle, which you close after
-the endpoint. `connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration
+native layer once (`newLoadBalancerKey` wipes your array); an endpoint takes its own copy when it is given the
+configuration, so you may close your handle after `bind` or `updateLoadBalancer`. `connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration
 cannot be combined with a `preferredAddress`.
 
-Nonces come from a counter, permuted with a key derived from the configuration key, so they show no pattern and none
-repeats: every endpoint of the process that uses the same key and nonce length (with any server ID) draws from one
-counter. The draft forbids reusing a nonce under one key (section 9.6), and a new process knows nothing of the last
-one's counter, so either give each process start a key no earlier process used (a fresh key per start and per
-instance), or give the configuration a `nonceReservation`: it stores a high-water mark durably every 65,536 nonces
-(`load()`, `store(mark)`, for instance an fsync'd file per key), and the next process starts past it. A crash then
-skips the rest of a block and never reuses one.
+Nonces come from a counter, permuted with a key derived from the configuration key (in clear, a key of the process),
+so they show no pattern and none repeats: every endpoint of the process that uses the same key and nonce length (in
+clear, the same nonce length), with any server ID, draws from one counter. These counters live as long as the process.
+The draft forbids reusing a nonce (section 9.6), and a new process knows nothing of the last one's counter, so either
+give the configuration a `nonceReservation`, or give each process start a configuration whose nonces no earlier process
+drew: a key no earlier process used (a fresh key per start and per instance), or in clear a server ID no earlier process
+used. A reservation stores a high-water mark durably (`load()`, `store(mark)`, for instance an fsync'd file per key),
+one block of 65,536 nonces ahead of need, and the next process starts past it; in clear it also keeps a 16-byte random
+`secret()` that keys the permutation. A crash skips the rest of a block and never reuses one. A failed `store` is
+retried after a back-off (64 requests for a new ID, doubling to 65,536) and counted in `EndpointStats.loadBalancerReservationFailures`; once
+the reserved nonces are used up, the requests in between get an unroutable ID.
 
 To roll out a new configuration (a new key, say), give it to the load balancers first, then to each server:
 
@@ -683,6 +687,8 @@ that same configuration again. Pass `null` when the server has no valid configur
 when a configuration's nonces run out: after 2^(8 x `nonceLength`) nonces of its key (2^32 for 4 bytes, shared by every
 endpoint of the process with that key; Retry packets and connection attempts draw them too, at most at the stateless
 rate limits), counted in `EndpointStats.loadBalancerNoncesExhausted` and logged at `Warn`; then roll out a new key. A
+connection that had its full set of IDs then keeps them and gets no more; one whose configuration changes to plaintext
+gets exactly one plaintext ID. A
 server ID used in clear must never be used encrypted, or the other way round (the call refuses it).
 
 The Ktor server takes the configuration as `quicLoadBalancer` and changes it with `engine.updateLoadBalancer(next)`;
@@ -692,9 +698,13 @@ sans-IO endpoint driven by your own loop.
 With several loops on one port, every loop issues IDs of the same configuration; the loop that owns an ID is the one it
 hashes to under a key the loops share (whatever the ID's codepoint), so a datagram that lands on another loop is still
 forwarded to its owner. A loop that draws a nonce whose ID hashes to another loop keeps it for that loop (up to 1,024 per
-loop) rather than spend it. The Stateless Reset rule stays: a loop answers an unknown connection ID only when the
-stateless rate limit would let the answer out, it carries the current or previous configuration's codepoint, decrypts to
-this server's ID and hashes to that loop; unroutable IDs are never answered.
+loop); past that it issues the ID itself and the group records the exception (up to 65,536 live IDs), so nonces are
+spent unused (`EndpointStats.loadBalancerNoncesWasted`) only when both are full. The hash also takes a client's random
+first Initial DCID for one of ours one time in 32 (when its first octet happens to encode our length); that client's
+datagrams then all go to the loop the DCID hashes to: an extra copy between loops for about 1 in 32 new connections. The
+Stateless Reset rule stays: a loop answers an unknown connection ID only when the stateless rate limit would let the
+answer out, it carries the current or previous configuration's codepoint, decrypts to this server's ID (within a budget
+of decryptions a second, per address and in total) and hashes to that loop; unroutable IDs are never answered.
 
 ## Admission and endpoint limits
 

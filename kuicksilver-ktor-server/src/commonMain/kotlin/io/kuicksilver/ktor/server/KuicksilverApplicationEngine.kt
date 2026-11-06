@@ -359,13 +359,17 @@ public class KuicksilverApplicationEngine(
 
     /**
      * Moves every HTTP/3 listener to another QUIC-LB configuration ([quicLoadBalancer][Configuration.quicLoadBalancer] must have
-     * been set): `QuicEndpoint.updateLoadBalancer` on each, in turn. Waits for the start first, so every listener is there.
+     * been set). Waits for the start first, so every listener is there; checks [config] against every listener before it
+     * changes any, so a refused configuration leaves them all as they were.
      */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
         check(configuration.quicLoadBalancer != null) { "updateLoadBalancer needs quicLoadBalancer in the engine configuration" }
         startupJob.join()
-        for (e in h3Endpoints.toList()) e.updateLoadBalancer(config)
+        val endpoints = h3Endpoints.toList()
+        for (e in endpoints) e.checkLoadBalancer(config)
+        for (e in endpoints) e.updateLoadBalancer(config)
     }
 
     /** The server job's scope while it runs (null before the start): where [http3Advertising] sends its GOAWAY round. */

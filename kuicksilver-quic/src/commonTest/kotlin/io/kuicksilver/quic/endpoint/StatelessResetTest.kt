@@ -714,4 +714,31 @@ class StatelessResetTest {
             state.close()
         }
     }
+
+    /** Decryptions for the reset gate have their own budget: a flood of IDs of ours with another server ID costs at most that many. */
+    @Test fun negative_quicLbDecryptionsAreRateLimited() {
+        val cfg = QuicLbFixtures.config()
+        val stranger = QuicLbFixtures.config(sid = byteArrayOf(0xed.toByte(), 0x79, 0x3b))
+        val p = LbPair(cfg)
+        try {
+            repeat(20) { p.feed(p.server, QuicLbFixtures.shortTo(QuicLbFixtures.cidOf(stranger, byteArrayOf(1, 2, 3, it.toByte())))) }
+            assertEquals(0L, p.server.stats.statelessResets)
+            assertEquals(12L, p.server.stats.statelessRateLimited, "8 decryptions a second from one address, the rest refused")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Over the reset limit, an ID of ours is counted as rate limited, as before the QUIC-LB gate. */
+    @Test fun negative_quicLbResetsOverTheLimitAreCountedRateLimited() {
+        val cfg = QuicLbFixtures.config()
+        val p = LbPair(cfg)
+        try {
+            repeat(20) { p.feed(p.server, QuicLbFixtures.shortTo(QuicLbFixtures.cidOf(cfg, byteArrayOf(1, 2, 3, it.toByte())))) }
+            assertEquals(8L, p.server.stats.statelessResets)
+            assertEquals(12L, p.server.stats.statelessRateLimited)
+        } finally {
+            p.close()
+        }
+    }
 }

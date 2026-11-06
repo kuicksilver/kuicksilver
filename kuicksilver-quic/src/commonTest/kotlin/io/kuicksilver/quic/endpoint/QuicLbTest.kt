@@ -225,16 +225,22 @@ class QuicLbTest {
         }
     }
 
-    private class MemoryReservation : io.kuicksilver.quic.QuicLbNonceReservation {
+    private class MemoryReservation(
+        private val secretBytes: ByteArray = ByteArray(16) { (it * 7 + 1).toByte() },
+    ) : io.kuicksilver.quic.QuicLbNonceReservation {
         var mark = 0L
         val stores = ArrayList<Long>()
+        var fail = false
 
         override fun load(): Long = mark
 
         override fun store(mark: Long) {
             stores += mark
+            if (fail) throw kotlinx.io.IOException("disk full")
             this.mark = mark
         }
+
+        override fun secret(): ByteArray = secretBytes.copyOf()
     }
 
     /** Section 9.6 across processes: with a reservation the nonce sequence is fixed and a new process starts past the stored mark. */
@@ -258,23 +264,83 @@ class QuicLbTest {
         assertEquals(listOf(65_536L, 131_072L), store.stores, "one block reserved per process, before its first nonce")
     }
 
+    /** A failed store: that request gets an unroutable ID marked temporary, reported apart from exhaustion. */
     @Test fun negative_reservationFailureGoesUnroutable() {
         val keyBytes = "00112233445566778899aabbccddee03"
         KslQuicCrypto.newLoadBalancerKey(hex(keyBytes)).use { k ->
-            val failing =
-                object : io.kuicksilver.quic.QuicLbNonceReservation {
-                    override fun load(): Long = 0
-
-                    override fun store(mark: Long): Unit = throw kotlinx.io.IOException("disk full")
-                }
+            val failing = MemoryReservation().also { it.fail = true }
             val s = QuicLbState(LbNullCrypto, kotlin.random.Random(1), QuicLbConfig(1, hex("0a0b0c"), 4, k, failing), 1, 8)
+            var failures = 0
+            var exhausted = 0
             try {
-                val i = QuicLbRoute(s, 0).issue(kotlin.random.Random(1), client = false)
+                val r = QuicLbRoute(s, 0, onExhausted = { exhausted++ }, onStoreFailed = { failures++ })
+                val i = r.issue(kotlin.random.Random(1), client = false)
                 assertEquals(CidIssuance.SingleNoMigration, i.issuance, "no unreserved nonce is ever used")
+                assertTrue(i.temporary, "this request only")
+                assertEquals(1, failures)
+                assertEquals(0, exhausted, "not exhaustion")
+                assertFalse(
+                    s.routes.current!!
+                        .space.exhausted,
+                )
             } finally {
                 s.close()
             }
         }
+    }
+
+    /** A failed store is retried only after a back-off, not on every draw; once stored, nonces flow again. */
+    @Test fun reservationStoreBacksOff() {
+        val r = MemoryReservation().also { it.fail = true }
+        val space = QuicLbNonceSpace(4, ByteArray(4), null, r, 0)
+        repeat(64) { assertNull(space.next(null)) }
+        assertEquals(1, r.stores.size, "one store, then 64 draws of back-off")
+        r.fail = false
+        assertNotNull(space.next(null), "stored after the back-off")
+        assertEquals(2, r.stores.size)
+    }
+
+    @Test fun negative_reservationMustMatchTheNonceSpace() {
+        KslQuicCrypto.newLoadBalancerKey(hex("00112233445566778899aabbccddee04")).use { k ->
+            val s = QuicLbState(LbNullCrypto, kotlin.random.Random(1), QuicLbConfig(1, hex("0a0b0c"), 4, k, MemoryReservation()), 1, 8)
+            try {
+                assertFailsWith<IllegalArgumentException>("no reservation where the space has one") {
+                    QuicLbState(LbNullCrypto, kotlin.random.Random(2), QuicLbConfig(2, hex("0a0b0d"), 4, k), 1, 8)
+                }
+                assertFailsWith<IllegalArgumentException>("another reservation") {
+                    s.update(QuicLbConfig(3, hex("0a0b0c"), 4, k, MemoryReservation()))
+                }
+            } finally {
+                s.close()
+            }
+        }
+    }
+
+    /** Section 9.6 in clear across processes: the stored secret keys the permutation, the mark moves the counter on. */
+    @Test fun plaintextReservationSurvivesARestart() {
+        val store = MemoryReservation()
+        val seen = HashSet<String>()
+        var sequential = 0
+        var previous = -1L
+        repeat(2) { process ->
+            QuicLbNonceSpaces.forgetForTest() // a new process
+            val c = QuicLbConfig(1, hex("0a0b0c"), 6, null, store)
+            val s = QuicLbState(LbNullCrypto, kotlin.random.Random(process), c, 1, 10)
+            try {
+                val r = QuicLbRoute(s, 0)
+                repeat(1000) {
+                    val n = hexOf(r.newCid(kotlin.random.Random(it), client = false).toByteArray().copyOfRange(4, 10))
+                    assertTrue(seen.add(n), "nonce $n repeated")
+                    if (n.toLong(16) == previous + 1) sequential++
+                    previous = n.toLong(16)
+                }
+            } finally {
+                s.close()
+            }
+        }
+        QuicLbNonceSpaces.forgetForTest()
+        assertTrue(sequential < 5, "permuted, not the counter: $sequential sequential pairs")
+        assertEquals(listOf(65_536L, 131_072L), store.stores)
     }
 
     @Test fun negative_configIdSevenRejected() {
@@ -292,9 +358,6 @@ class QuicLbTest {
 
     @Test fun negative_nonceUnder4Rejected() {
         assertFailsWith<IllegalArgumentException> { QuicLbConfig(0, ByteArray(3), 3, null) }
-        assertFailsWith<IllegalArgumentException>("a reservation needs a key") {
-            QuicLbConfig(0, ByteArray(3), 4, null, MemoryReservation())
-        }
     }
 
     @Test fun negative_configNeverPrintsTheKey() {

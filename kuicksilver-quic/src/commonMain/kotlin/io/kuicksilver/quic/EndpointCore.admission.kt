@@ -10,7 +10,9 @@ import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.serverWithKeys
 import io.kuicksilver.quic.endpoint.AdmissionQueue
+import io.kuicksilver.quic.endpoint.CidIssuance
 import io.kuicksilver.quic.endpoint.IssuedCid
+import io.kuicksilver.quic.endpoint.QuicLbRoute
 import io.kuicksilver.quic.endpoint.StatelessClose
 import io.kuicksilver.quic.endpoint.TokenCheck
 import io.kuicksilver.quic.wire.ConnectionId
@@ -179,7 +181,9 @@ private fun EndpointCore.admitValidated(
             originalDcid = check.odcid
             val rs = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
             retryScid = rs
-            if (testFreshCidAfterRetry) route.issue(random, client = false) else IssuedCid(rs, route.issuanceOf(rs))
+            // with QUIC-LB a fresh ID, whose issuance is known (the Retry's is not carried by the stateless round trip); the
+            // Retry SCID stays an alias for the client's Initials
+            if (testFreshCidAfterRetry || route is QuicLbRoute) route.issue(random, client = false) else IssuedCid(rs, CidIssuance.Full)
         } // our Retry SCID is this connection's ID
         else {
             route.issue(random, client = false)

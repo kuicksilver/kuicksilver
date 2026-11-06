@@ -23,6 +23,7 @@ import io.kuicksilver.quic.endpoint.CidRoute
 import io.kuicksilver.quic.endpoint.ConnectionIdRegistry
 import io.kuicksilver.quic.endpoint.QuicLbRoute
 import io.kuicksilver.quic.endpoint.QuicLbState
+import io.kuicksilver.quic.endpoint.ResetGate
 import io.kuicksilver.quic.endpoint.StatelessClose
 import io.kuicksilver.quic.endpoint.StatelessRateLimiter
 import io.kuicksilver.quic.endpoint.StatelessReset
@@ -94,6 +95,9 @@ public class EndpointCore internal constructor(
     internal val resetKey: ResetKey
     internal val limiter: StatelessRateLimiter
 
+    /** QUIC-LB decryptions of unknown IDs for the Stateless Reset gate, per address and in total, a second (the reset limits). */
+    private val decryptLimiter: StatelessRateLimiter
+
     /** Retry and NEW_TOKEN tokens (RFC 9000 section 8.1): a group's, or this endpoint's own; null without a server. */
     internal val addressTokens: AddressTokens?
     internal val queue: AdmissionQueue?
@@ -113,6 +117,9 @@ public class EndpointCore internal constructor(
     /** Times a QUIC-LB configuration's nonces ran out on this loop (`EndpointStats.loadBalancerNoncesExhausted`). */
     internal var lbNoncesExhausted = 0L
 
+    /** Failed `QuicLbNonceReservation.store` calls on this loop (`EndpointStats.loadBalancerReservationFailures`). */
+    internal var lbReservationFailures = 0L
+
     init {
         // native memory (the buffers, the keys) is freed only by close(): a constructor that fails part-way frees what it made
         var vn: PacketBuffer? = null
@@ -126,6 +133,7 @@ public class EndpointCore internal constructor(
             rk = config.crypto.newResetKey()
             resetKey = rk
             limiter = StatelessRateLimiter(config.statelessPerAddressPerSecond, config.statelessTotalPerSecond)
+            decryptLimiter = StatelessRateLimiter(config.statelessPerAddressPerSecond, config.statelessTotalPerSecond)
             tokens =
                 if (config.server == null) {
                     null
@@ -157,13 +165,24 @@ public class EndpointCore internal constructor(
             ownsLb = sharedLb == null
             route =
                 if (ownLb != null) {
-                    QuicLbRoute(ownLb, loopIndex) {
-                        lbNoncesExhausted++
-                        config.logger.emit(LogLevel.Warn) {
-                            "QUIC-LB: the nonces of configuration ${lb.routes.current?.config} are spent; " +
-                                "issuing unroutable connection IDs until updateLoadBalancer gives a new configuration"
-                        }
-                    }
+                    QuicLbRoute(
+                        ownLb,
+                        loopIndex,
+                        onExhausted = {
+                            lbNoncesExhausted++
+                            config.logger.emit(LogLevel.Warn) {
+                                "QUIC-LB: the nonces of configuration ${lb.routes.current?.config} are spent; " +
+                                    "issuing unroutable connection IDs until updateLoadBalancer gives a new configuration"
+                            }
+                        },
+                        onStoreFailed = { e ->
+                            lbReservationFailures++
+                            config.logger.emit(LogLevel.Warn, e) {
+                                "QUIC-LB: the nonce reservation could not be stored; retried after a back-off, and connection IDs " +
+                                    "are unroutable once the reserved nonces are used"
+                            }
+                        },
+                    )
                 } else {
                     ByteRoute(loopIndex, config.connectionIdLength)
                 }
@@ -287,7 +306,10 @@ public class EndpointCore internal constructor(
                 core: ConnectionCore,
             ) = registry.add(cid, core)
 
-            override fun remove(cid: ConnectionId) = registry.remove(cid)
+            override fun remove(cid: ConnectionId) {
+                registry.remove(cid)
+                route.release(cid)
+            }
         }
 
     /** Connections this endpoint holds, in any state, until they are closed and removed. */
@@ -322,6 +344,8 @@ public class EndpointCore internal constructor(
             ptbIgnored = ptbIgnored,
             preferredAddressFailures = preferredAddressFailures,
             loadBalancerNoncesExhausted = lbNoncesExhausted,
+            loadBalancerReservationFailures = lbReservationFailures,
+            loadBalancerNoncesWasted = (route as? QuicLbRoute)?.wasted ?: 0L,
         )
 
     /** A new client connection to [remote]; its first [ConnectionCore.poll] produces the Initial datagrams. */
@@ -377,13 +401,24 @@ public class EndpointCore internal constructor(
             val cids = core.cids
             // an unroutable ID never goes out in a NEW_CONNECTION_ID (draft-ietf-quic-load-balancers-21 section 3.2: one ID
             // over the life of the connection): once the nonces are spent the connection stops handing out IDs
+            // plaintext IDs only one per configuration change (section 9): the change's own NEW_CONNECTION_ID brings it
+            // ([reissueSource]), so the replacements of a connection that had the full set stop here
             cids.generator = { r ->
                 val i = route.issue(r, client = false)
-                if (i.issuance == CidIssuance.SingleNoMigration && cids.localCount > 0) {
-                    cids.stopIssuing()
-                    null
-                } else {
-                    i.cid
+                when {
+                    i.issuance == CidIssuance.SingleNoMigration && cids.localCount > 0 -> {
+                        if (!i.temporary) cids.stopIssuing() // spent; a reservation not stored skips this one only
+                        null
+                    }
+
+                    i.issuance == CidIssuance.Single && cids.localCount > 0 -> {
+                        cids.limitToSingle()
+                        null
+                    }
+
+                    else -> {
+                        i.cid
+                    }
                 }
             }
             // a configuration change: the mode follows the ID it actually makes (section 9: plaintext, one per change)
@@ -401,7 +436,7 @@ public class EndpointCore internal constructor(
                     }
 
                     CidIssuance.SingleNoMigration -> {
-                        cids.stopIssuing()
+                        if (i.temporary) cids.keepReissuePending() else cids.stopIssuing()
                         null
                     }
                 }
@@ -636,26 +671,31 @@ public class EndpointCore internal constructor(
         } // another loop's: the group forwards it (ownerLoop)
         if (hv.type == PacketType.OneRtt) {
             // only for an ID this loop issued (threat-model 3.4); with QUIC-LB also our server ID under the current or previous
-            // configuration, which decrypts: so only once the rate limit would let the answer out
-            if (config.server != null && length > StatelessReset.MIN_SIZE && limiter.wouldAllow(from, now) &&
-                route.mayReset(data, hv.dcidOff, hv.dcidLen)
-            ) {
-                if (!limiter.allow(from, now)) {
+            // configuration, which decrypts: only while the reset limit would let the answer out, and within a budget of
+            // decryptions of its own (per address and in total, a second)
+            if (config.server != null && length > StatelessReset.MIN_SIZE && route.resetCandidate(data, hv.dcidOff, hv.dcidLen)) {
+                val gate =
+                    if (limiter.wouldAllow(from, now)) {
+                        route.mayReset(data, hv.dcidOff, hv.dcidLen) { decryptLimiter.allow(from, now) }
+                    } else {
+                        ResetGate.RateLimited
+                    }
+                if (gate == ResetGate.RateLimited || (gate == ResetGate.Yes && !limiter.allow(from, now))) {
                     statelessRateLimited++
                     droppedStateless++
                     return null
                 }
-                val token = ByteArray(16)
-                resetKey.token(data, hv.dcidOff, hv.dcidLen, token, 0)
-                val n = StatelessReset.write(vnBuffer, token, length, random)
-                if (n >
-                    0
-                ) {
-                    val bytes = ByteArray(n)
-                    vnBuffer.copyTo(bytes, 0, 0, n)
-                    stateless += Stateless(bytes, from, rxLocal)
-                    statelessResets++
-                    return null
+                if (gate == ResetGate.Yes) {
+                    val token = ByteArray(16)
+                    resetKey.token(data, hv.dcidOff, hv.dcidLen, token, 0)
+                    val n = StatelessReset.write(vnBuffer, token, length, random)
+                    if (n > 0) {
+                        val bytes = ByteArray(n)
+                        vnBuffer.copyTo(bytes, 0, 0, n)
+                        stateless += Stateless(bytes, from, rxLocal)
+                        statelessResets++
+                        return null
+                    }
                 }
             }
             if (!foreignCid(data)) droppedStateless++
@@ -831,9 +871,11 @@ public class EndpointCore internal constructor(
 
     /** What every loop must agree on before a configuration change: the preferred address needs encrypted IDs (section 9). */
     internal fun checkLoadBalancerUpdate(config: QuicLbConfig?) {
+        val state = lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
         require(config == null || config.encrypted || this.config.server?.preferredAddress == null) {
             "a preferredAddress needs an encrypted loadBalancer configuration (draft-ietf-quic-load-balancers-21 section 9)"
         }
+        state.validate(config)
     }
 
     /** Frees the queue, the stateless buffer and every connection's native resources. */
@@ -912,6 +954,7 @@ public class EndpointCore internal constructor(
     /** Forgets a closed connection, every ID that routed to it and its per-IP slot. */
     public fun remove(core: ConnectionCore) {
         rememberRtt(core)
+        core.cids.forEachLocal { route.release(it) }
         registry.removeAll(core)
         connections.remove(core)
         accepted.remove(core)

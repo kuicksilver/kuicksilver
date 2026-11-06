@@ -320,7 +320,10 @@ other way round (draft-ietf-quic-load-balancers-21 section 9.7: give the encrypt
 a `configId` the current or previous configuration still holds with another key, server ID or nonce length ("configId N
 still names the configuration before it": use another codepoint, or wait one more change). `EndpointStats.loadBalancerNoncesExhausted`
 above 0, with the `Warn` line "QUIC-LB: the nonces of configuration … are spent", means the endpoint issues unroutable IDs:
-roll out a configuration with a new key. See [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer).
+roll out a configuration with a new key. `loadBalancerReservationFailures` above 0, with the `Warn` line "QUIC-LB: the nonce
+reservation could not be stored", means `QuicLbNonceReservation.store` threw (a full disk, say): fix the store; it is
+retried after a back-off. `IllegalArgumentException` "every configuration with this key … must bring the same
+nonceReservation" means two configurations of one key (or, in clear, one nonce length) disagree about the reservation. See [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer).
 
 ### `UnsupportedOperationException` for `loops > 1`
 

@@ -58,6 +58,7 @@ internal object QuicLbFixtures {
     fun endpointConfig(
         lb: QuicLbConfig?,
         loops: Int = 1,
+        admission: io.kuicksilver.quic.ConnectionAdmission? = null,
     ): QuicEndpointConfig =
         QuicEndpointConfig
             .Builder()
@@ -71,6 +72,7 @@ internal object QuicLbFixtures {
                 crypto = LbNullCrypto
                 loadBalancer = lb
                 this.loops = loops
+                admission?.let { this.admission = it }
             }.build()
 
     /** A short-header datagram of [size] bytes addressed to [dcid]. */
@@ -117,11 +119,12 @@ internal object QuicLbFixtures {
 internal class LbPair(
     lb: QuicLbConfig?,
     serverSeed: Long = 5,
+    admission: io.kuicksilver.quic.ConnectionAdmission? = null,
 ) {
     val clientAddr = InetSocketAddress("10.0.0.1", 4433)
     val serverAddr = InetSocketAddress("10.0.0.2", 443)
     var now = TimeMark(1_000_000_000L)
-    val server = EndpointCore(QuicLbFixtures.endpointConfig(lb), Random(serverSeed))
+    val server = EndpointCore(QuicLbFixtures.endpointConfig(lb, admission = admission), Random(serverSeed))
     val client = EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), Random(6))
     private val batch = PacketBatch(16)
 
@@ -144,6 +147,9 @@ internal class LbPair(
             val n = c.poll(batch, now)
             for (i in 0 until n) feed(to, batch.buffer(i).toByteArray(batch.length(i)), fromAddr)
         }
+        batch.clear()
+        val n = from.pollStateless(batch) // Retry, Version Negotiation, resets
+        for (i in 0 until n) feed(to, batch.buffer(i).toByteArray(batch.length(i)), fromAddr)
         to.processPending(now)
     }
 

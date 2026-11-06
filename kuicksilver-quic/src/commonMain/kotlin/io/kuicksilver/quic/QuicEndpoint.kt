@@ -131,6 +131,20 @@ public fun QuicEndpoint.closeWith(
 }
 
 /**
+ * Throws what [QuicEndpoint.updateLoadBalancer] would throw for [config], changing nothing (the Ktor engine checks every
+ * listener before it changes any); UnsupportedOperationException for an endpoint of another implementation.
+ */
+@InternalKuicksilverApi
+@ExperimentalKuicksilverApi
+public suspend fun QuicEndpoint.checkLoadBalancer(config: QuicLbConfig?) {
+    when (this) {
+        is EndpointLoop -> if (group != null) group.checkLoadBalancer(config) else runOnLoop { core.checkLoadBalancerUpdate(config) }
+        is LoopGroup -> checkLoadBalancer(config)
+        else -> throw UnsupportedOperationException("this QuicEndpoint has no QUIC-LB configuration")
+    }
+}
+
+/**
  * Suspends until [this] stream is over at the transport level: everything we sent acknowledged (or reset), everything the
  * peer sent consumed, or the connection ended. HTTP/3's graceful close waits for it, so a response handed to QUIC is not
  * cut by the CONNECTION_CLOSE while it is still on its way (RFC 9114 section 5.2). Returns at once for streams of other

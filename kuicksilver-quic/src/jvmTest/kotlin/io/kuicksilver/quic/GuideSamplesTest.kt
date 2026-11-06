@@ -377,7 +377,7 @@ class GuideSamplesTest {
             val keyBytes = KslCrypto.randomBytes(16)
             val nextKeyBytes = KslCrypto.randomBytes(16)
             // guide:quic:load-balancer
-            val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; close it once the endpoint closed
+            val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; the endpoint takes its own copy
             val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
             val behindLb =
                 quicEndpointConfig {

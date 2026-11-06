@@ -1071,9 +1071,7 @@ class EndpointCoreTest {
             }
             assertEquals(
                 0L,
-                state.routes.current!!
-                    .wasted
-                    .load(),
+                cores.sumOf { it.stats.loadBalancerNoncesWasted },
                 "IDs drawn for another loop wait for it: no nonce spent unused",
             )
             assertEquals(-1, QuicLbFixtures.owner(cores[0], QuicLbFixtures.shortTo(ByteArray(8) { 0x55 })), "not our format")
@@ -1297,6 +1295,94 @@ class EndpointCoreTest {
         } finally {
             plain.close()
             p.close()
+        }
+    }
+
+    /** A caller that closes a rotated-out key cannot hurt the endpoint: it decrypts with its own copy. */
+    @Test fun quicLbOldKeyClosedByTheCallerKeepsTheEndpointAlive() {
+        val old =
+            io.kuicksilver.tls.KslQuicCrypto
+                .newLoadBalancerKey(QuicLbFixtures.hex("0f0e0d0c0b0a09080706050403020104"))
+        val oldConfig = QuicLbConfig(2, QuicLbFixtures.SID, 4, old)
+        val p = LbPair(oldConfig)
+        try {
+            val oldCid = QuicLbFixtures.cidOf(oldConfig, byteArrayOf(9, 9, 9, 9))
+            val stranger = QuicLbFixtures.cidOf(QuicLbConfig(2, byteArrayOf(1, 1, 1), 4, old), byteArrayOf(9, 9, 9, 9))
+            p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 3))
+            old.close()
+            assertNull(p.feed(p.server, QuicLbFixtures.shortTo(stranger)), "another server ID under the old codepoint")
+            assertEquals(0, p.stateless(), "no reset for a stranger")
+            assertNull(p.feed(p.server, QuicLbFixtures.shortTo(oldCid)))
+            assertEquals(1, p.stateless(), "the previous configuration is still recognised, with the endpoint's own key copy")
+            val c = p.connect()
+            assertTrue(p.handshake(c), "the endpoint is alive")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Section 9: a connection that had the full set never hands out more than the one plaintext ID of the change. */
+    @Test fun quicLbAtMostOnePlaintextIdPerChange() {
+        val p = LbPair(QuicLbFixtures.config(configId = 2))
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            val plaintext = HashSet<String>()
+
+            fun record() = localCids(s).filter { (it[0].toInt() and 0xff) ushr 5 == 4 }.forEach { plaintext += hexOf(it) }
+            p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 3))
+            p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 4, sid = byteArrayOf(7, 7, 7), plaintext = true))
+            assertTrue(c.cids.rotatePeerCid(), "the client retires one ID while the plaintext change waits")
+            repeat(40) {
+                p.step()
+                record()
+            }
+            assertEquals(1, plaintext.size, "one plaintext ID: $plaintext")
+            assertTrue(s.cids.singleCid)
+            assertEquals(ConnectionState.Confirmed, c.state)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** After a Retry, the connection's issuance comes from the ID it was actually given, not from a codepoint lookup. */
+    @Test fun quicLbRetriedConnectionIssuesByItsOwnId() {
+        val p =
+            LbPair(
+                QuicLbFixtures.config(configId = 2, sid = byteArrayOf(5, 5, 5), plaintext = true),
+                admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry,
+            )
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            assertEquals(1L, p.server.stats.retriesSent)
+            val s = p.server.connections().single()
+            assertEquals(1, localCids(s).size, "plaintext: one ID")
+            assertEquals(2, (s.localCid[0].toInt() and 0xff) ushr 5)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A loop that issues far more IDs than the others: their pools fill, then the IDs carry an owner exception; none is wasted. */
+    @Test fun quicLbSkewedIssuanceWastesNoNonce() {
+        val cfg = QuicLbFixtures.config(keyHex = "0f0e0d0c0b0a09080706050403020105")
+        val ec = QuicLbFixtures.endpointConfig(cfg, loops = 4)
+        val state = QuicLbState(LbNullCrypto, Random(1), cfg, 4, 8)
+        val cores = List(4) { EndpointCore(ec, Random(10L + it), it, null, state) }
+        try {
+            val r = Random(7)
+            val ids = List(6000) { cores[0].route.newCid(r, client = false).toByteArray() }
+            assertEquals(0L, cores[0].stats.loadBalancerNoncesWasted)
+            for (cid in ids.takeLast(
+                200,
+            )) {
+                assertEquals(0, QuicLbFixtures.owner(cores[2], QuicLbFixtures.shortTo(cid)), "the exception names loop 0")
+            }
+        } finally {
+            for (c in cores) c.close()
+            state.close()
         }
     }
 }

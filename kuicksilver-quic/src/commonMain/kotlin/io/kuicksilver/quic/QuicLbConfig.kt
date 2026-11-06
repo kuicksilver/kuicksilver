@@ -25,13 +25,16 @@ import io.kuicksilver.tls.LoadBalancerKey
  * @param serverId This server's ID, 1..15 bytes; copied.
  * @param nonceLength Nonce bytes, at least 4; [serverId] and the nonce are at most 19 bytes together.
  * @param key The AES-128 key, made with `QuicCrypto.newLoadBalancerKey(bytes)` (which wipes `bytes`; the key material then
- * lives in the native layer only), or null for plaintext connection IDs. The caller owns it: keep it open while any endpoint
- * that was given this configuration runs. Draft section 9.6: "the server MUST NOT reuse a nonce until it switches to a
- * configuration with new keys". Within a process no nonce of a key and nonce length is ever used twice, whatever the
- * endpoints and server IDs that share them. Across processes that holds only with [nonceReservation]; without one, each
- * process that uses this key must get a key no earlier process used (a fresh key per process start, per instance).
- * @param nonceReservation Where the nonce counter of this key and nonce length survives a restart (needs a [key]); see
- * [QuicLbNonceReservation]. Null: nonces start at a random point in each process.
+ * lives in the native layer only), or null for plaintext connection IDs. The caller owns it; an endpoint takes its own copy
+ * when it is given this configuration (at build or [QuicEndpoint.updateLoadBalancer]), so the caller may close it after
+ * that. Draft section 9.6: "the server MUST NOT reuse a nonce until it switches to a configuration with new keys". Within
+ * a process no nonce of a key and nonce length (in clear: of a nonce length) is ever used twice, whatever the endpoints
+ * and server IDs that share them. Across processes that holds only with [nonceReservation]; without one, the operator
+ * must give every process start a configuration whose nonces no earlier process drew: a key no earlier process used (a
+ * fresh key per process start and per instance), or in clear a server ID no earlier process used.
+ * @param nonceReservation Where the nonce counter of this key and nonce length (in clear: of this nonce length, with a
+ * stored permutation secret) survives a restart; see [QuicLbNonceReservation]. Every configuration that shares the nonce
+ * space must bring the same instance, or none. Null: nonces start at a random point in each process.
  */
 @ExperimentalKuicksilverApi
 public class QuicLbConfig(
@@ -50,9 +53,6 @@ public class QuicLbConfig(
         require(sid.size + nonceLength <= 19) {
             "serverId (${sid.size}) and nonceLength ($nonceLength) must sum to 19 bytes or less (QUIC v1 connection IDs are at most 20)"
         }
-        require(
-            nonceReservation == null || key != null,
-        ) { "a nonceReservation needs a key: plaintext nonces are permuted with a per-process key" }
     }
 
     /**
@@ -92,12 +92,12 @@ public class QuicLbConfig(
 }
 
 /**
- * Keeps the nonce counter of one QUIC-LB key and nonce length across process restarts, so no restart reuses a nonce under
- * that key (draft-ietf-quic-load-balancers-21 section 9.6). With it, the nonce sequence of a key is fixed (derived from the
- * key), and the endpoint reserves nonces in blocks of [BLOCK]: before it uses a nonce at or past the stored mark it calls
- * [store] with the end of the next block, and a new process starts at [load]. A crash skips the rest of a block, never
- * reuses one. Every process that uses the key must share the store (one file per key, say), and only one process may use
- * it at a time.
+ * Keeps the nonce counter of one QUIC-LB nonce space across process restarts, so no restart reuses a nonce
+ * (draft-ietf-quic-load-balancers-21 section 9.6). With it, the nonce sequence is fixed (derived from the configuration key,
+ * or in clear from [secret]), and the endpoint reserves nonces in blocks of [BLOCK]: it uses nonces only below the mark it
+ * stored last, and stores the end of the next block once half of the current one is drawn; a new process starts at [load].
+ * A crash skips the rest of a block, never reuses one. Every process that uses the nonce space must share the store (one
+ * file per key, say), and only one process may use it at a time.
  */
 @ExperimentalKuicksilverApi
 public interface QuicLbNonceReservation {
@@ -106,10 +106,18 @@ public interface QuicLbNonceReservation {
 
     /**
      * Stores [mark] durably before returning (an fsync'd file, say): nonces below it are about to be used. Called on an
-     * endpoint loop's thread, once per [BLOCK] nonces. A throw leaves the endpoint issuing unroutable IDs until a later call
-     * succeeds.
+     * endpoint loop's thread, outside any lock, once per [BLOCK] nonces and ahead of need. A throw is counted in
+     * `EndpointStats.loadBalancerReservationFailures` and logged; it is retried after 64 requests for a new ID, doubling to
+     * 65,536, and once the reserved nonces are used up the requests in between get unroutable IDs.
      */
     public fun store(mark: Long)
+
+    /**
+     * A 16-byte secret made once (random) and stored with the mark, the same in every later process: in clear it keys the
+     * permutation that makes nonces unpredictable (draft section 5.4), so the stored mark means the same nonces after a
+     * restart. Called once per process, for a plaintext configuration only.
+     */
+    public fun secret(): ByteArray
 
     public companion object {
         /** Nonces reserved per [store]. */

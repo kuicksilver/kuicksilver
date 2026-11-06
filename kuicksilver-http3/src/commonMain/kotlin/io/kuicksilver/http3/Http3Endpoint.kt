@@ -15,6 +15,7 @@ import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.checkLoadBalancer
 import io.kuicksilver.quic.closeWith
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.TlsConfig
@@ -128,6 +129,11 @@ public class Http3Endpoint private constructor(
      */
     @ExperimentalKuicksilverApi
     public suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?): Unit = endpoint.updateLoadBalancer(config)
+
+    /** What [updateLoadBalancer] would throw for [config], changing nothing. */
+    @io.kuicksilver.annotations.InternalKuicksilverApi
+    @ExperimentalKuicksilverApi
+    public suspend fun checkLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?): Unit = endpoint.checkLoadBalancer(config)
 
     /**
      * The next server connection that negotiated `h3`. Never waits on a client once its QUIC handshake is done: HTTP/3 starts

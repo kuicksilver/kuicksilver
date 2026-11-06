@@ -86,6 +86,12 @@ internal class LoopGroup private constructor(
 
     private val lbLock = kotlinx.coroutines.sync.Mutex()
 
+    /** What [updateLoadBalancer] would throw for [config], changing nothing. */
+    internal suspend fun checkLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
+        val first = loops[0]
+        first.runOnLoop { first.core.checkLoadBalancerUpdate(config) }
+    }
+
     /**
      * One change of the shared QUIC-LB state, on loop 0 (whose core keeps the state alive while it runs), then every loop
      * moves its own server connections to it; one change at a time.
@@ -95,9 +101,8 @@ internal class LoopGroup private constructor(
         try {
             val first = loops[0]
             first.runOnLoop {
-                val lb = first.core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
                 first.core.checkLoadBalancerUpdate(config)
-                lb.update(config)
+                first.core.lb!!.update(config)
             }
             for (l in loops) l.runOnLoop { l.core.reissueForLoadBalancer() }
         } finally {

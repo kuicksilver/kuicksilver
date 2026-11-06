@@ -157,9 +157,8 @@ internal object QuicLbCipher {
  */
 internal class QuicLbCodec(
     val config: QuicLbConfig,
+    private val key: LoadBalancerKey? = config.key,
 ) {
-    private val key: LoadBalancerKey? = config.key
-
     val sidLength: Int = config.serverIdLength
     val plainLength: Int = sidLength + config.nonceLength
     val cidLength: Int = 1 + plainLength
@@ -228,7 +227,7 @@ internal object QuicLbDerivation {
         }
 }
 
-/** A spin lock for the few places loops meet (held for a few array writes; a reservation's store is the exception, once per block). */
+/** A spin lock for the few places loops meet: held for a few field or collection writes, never across I/O or a key setup. */
 internal class SpinLock {
     private val held = AtomicInt(0)
 
@@ -249,25 +248,31 @@ internal class SpinLock {
  * nonce repeats and none shows a relation to the one before (draft-ietf-quic-load-balancers-21 section 5.4: plaintext nonces
  * "MUST" have "no observable relationship to the field in previously issued connection IDs"; section 9.6: "the server MUST
  * NOT reuse a nonce until it switches to a configuration with new keys", and servers "SHOULD start with a random nonce
- * value"). After 2^(8 x length) draws (never for 8 bytes or more: 2^63) the space is spent and [next] returns null for good:
- * the caller issues unroutable connection IDs (section 9.6: "A server that has exhausted its nonces MUST either switch to a
- * different configuration, or if none exists, use the 4-tuple routing config rotation codepoint"). With a [reservation]
- * the counter resumes where the last process stopped. Thread-safe. [start] is a test hook (draws already made).
+ * value"). After 2^(8 x length) draws (never for 8 bytes or more: 2^63) the space is spent ([exhausted]) and [next] returns
+ * null for good: the caller issues unroutable connection IDs (section 9.6: "A server that has exhausted its nonces MUST
+ * either switch to a different configuration, or if none exists, use the 4-tuple routing config rotation codepoint").
+ *
+ * With a [reservation] the counter resumes past the mark the last process stored. Nonces are used only below the mark
+ * stored last; the next block is stored ahead of need, once half of the current one is drawn, by the thread that crosses
+ * it, outside any lock (the other loops go on drawing what is reserved). A failed store is retried after a back-off
+ * counted in draws (sans IO: no clock here), 64 draws doubling to 65,536; a draw past the reserved mark meanwhile returns
+ * null without the space being spent (the caller gives that one request an unroutable ID). Thread-safe. [start] is a test
+ * hook.
  */
 internal class QuicLbNonceSpace(
     val length: Int,
     seed: ByteArray,
     val plainPermute: LoadBalancerKey?,
-    private val reservation: io.kuicksilver.quic.QuicLbNonceReservation? = null,
+    val reservation: io.kuicksilver.quic.QuicLbNonceReservation? = null,
     start: Long = 0,
 ) {
     private val seed = seed.copyOf()
     private val limit: Long = if (length >= 8) Long.MAX_VALUE else 1L shl (8 * length)
     private val drawn = AtomicLong(maxOf(start, reservation?.load() ?: 0L))
-    private val lock = SpinLock()
-
-    /** Draws below this are covered by the last successful [io.kuicksilver.quic.QuicLbNonceReservation.store]. */
-    @kotlin.concurrent.Volatile private var reservedUpTo: Long = drawn.load()
+    private val reservedUpTo = AtomicLong(drawn.load())
+    private val refilling = AtomicInt(0)
+    private val retryAt = AtomicLong(Long.MIN_VALUE)
+    private var backoffDraws = FIRST_BACKOFF_DRAWS // the refilling thread only
 
     /** Test hook: every nonce drawn. */
     internal fun spendForTest() = drawn.store(limit)
@@ -275,32 +280,47 @@ internal class QuicLbNonceSpace(
     /** True once every nonce of the space was drawn. */
     val exhausted: Boolean get() = drawn.load().let { it < 0 || it >= limit }
 
-    /** Reserves the block that holds [n]; false when the store failed (the draw is lost, never reused). */
-    private fun reserve(n: Long): Boolean {
-        val r = reservation ?: return true
-        if (n < reservedUpTo) return true
-        return lock.locked {
-            try {
-                while (n >= reservedUpTo) {
-                    val mark = minOf(limit, reservedUpTo + io.kuicksilver.quic.QuicLbNonceReservation.BLOCK)
-                    r.store(mark)
-                    reservedUpTo = mark
-                }
-                true
-            } catch (_: Exception) {
-                false
-            }
+    /** Stores the next block when the draws are past half of the reserved one; [onStoreFailed] hears a failed store. */
+    private fun refill(
+        n: Long,
+        onStoreFailed: (Throwable) -> Unit,
+    ) {
+        val r = reservation ?: return
+        val reserved = reservedUpTo.load()
+        if (reserved >= limit || n < reserved - BLOCK / 2) return
+        if (n < retryAt.load() || !refilling.compareAndSet(0, 1)) return
+        try {
+            val mark = minOf(limit, reservedUpTo.load() + BLOCK)
+            if (mark <= reservedUpTo.load()) return
+            r.store(mark)
+            reservedUpTo.store(mark)
+            backoffDraws = FIRST_BACKOFF_DRAWS
+        } catch (e: Exception) {
+            retryAt.store(n + backoffDraws)
+            backoffDraws = minOf(backoffDraws * 2, MAX_BACKOFF_DRAWS)
+            onStoreFailed(e)
+        } finally {
+            refilling.store(0)
         }
     }
 
-    /** The next nonce permuted with [permute] (or [plainPermute]), or null when the space is spent or no block could be reserved. */
-    fun next(permute: LoadBalancerKey?): ByteArray? {
+    /**
+     * The next nonce permuted with [permute] (or [plainPermute]), or null: the space is spent ([exhausted]), or (with a
+     * reservation) the draw is past the stored mark (that nonce is skipped, never used).
+     */
+    fun next(
+        permute: LoadBalancerKey?,
+        onStoreFailed: (Throwable) -> Unit = {},
+    ): ByteArray? {
         val n = drawn.fetchAndIncrement()
         if (n < 0 || n >= limit) {
             drawn.store(limit) // stays spent; no wrap of the counter itself
             return null
         }
-        if (!reserve(n)) return null
+        if (reservation != null) {
+            refill(n, onStoreFailed)
+            if (n >= reservedUpTo.load()) return null
+        }
         // seed + n, big-endian, modulo 2^(8 x length)
         val out = ByteArray(length)
         var carry = 0
@@ -314,55 +334,93 @@ internal class QuicLbNonceSpace(
         (permute ?: plainPermute)?.let { QuicLbCipher.encrypt(it, out, 0, length) }
         return out
     }
+
+    companion object {
+        val BLOCK: Long = io.kuicksilver.quic.QuicLbNonceReservation.BLOCK
+        const val FIRST_BACKOFF_DRAWS = 64L
+        const val MAX_BACKOFF_DRAWS = 65_536L
+    }
 }
 
 /**
- * Every QUIC-LB nonce space of the process, by key fingerprint and nonce length (and by nonce length alone in clear), for the
- * life of the process: two endpoints, or two server IDs, that use one key draw from one counter, and a configuration that
- * comes back goes on where it stopped (draft section 9.6). An encrypted space keeps only its counter and seed: its
- * permutation key is derived from the configuration key by each user. A plaintext space keeps a random permutation key (one
- * per nonce length, at most 15, never freed).
+ * Every QUIC-LB nonce space of the process, by key fingerprint and nonce length (and by nonce length alone in clear). It
+ * lives as long as the process (a few dozen bytes per space): two endpoints, or two server IDs, that use one key draw from
+ * one counter, and a configuration that comes back goes on where it stopped (draft section 9.6). An encrypted space keeps
+ * only its counter and seed: its permutation key is derived from the configuration key by each user. A plaintext space
+ * keeps its permutation key (one per nonce length, at most 15, never freed): random, or with a reservation made from the
+ * reservation's stored secret. All configurations of one space must bring the same [QuicLbConfig.nonceReservation]
+ * instance (or none): the first one decides how the counter survives a restart.
  */
 internal object QuicLbNonceSpaces {
     private val lock = SpinLock()
     private val spaces = HashMap<String, QuicLbNonceSpace>()
 
+    private fun idOf(config: QuicLbConfig): String =
+        config.keyFingerprint?.let { "k:$it:${config.nonceLength}" } ?: "p:${config.nonceLength}"
+
+    private fun checkSame(
+        space: QuicLbNonceSpace,
+        config: QuicLbConfig,
+    ): QuicLbNonceSpace {
+        require(space.reservation === config.nonceReservation) {
+            "every configuration with this key (or, in clear, this nonce length) must bring the same nonceReservation, or none: " +
+                "the first one decides where the nonce counter survives a restart"
+        }
+        return space
+    }
+
+    /** IllegalArgumentException when [config] brings another reservation than the space's ([QuicLbConfig.nonceReservation]). */
+    fun check(config: QuicLbConfig) {
+        lock.locked { spaces[idOf(config)] }?.let { checkSame(it, config) }
+    }
+
     fun of(
-        config: io.kuicksilver.quic.QuicLbConfig,
+        config: QuicLbConfig,
         crypto: io.kuicksilver.tls.QuicCrypto,
         random: Random,
     ): QuicLbNonceSpace {
-        val id = config.keyFingerprint?.let { "k:$it:${config.nonceLength}" } ?: "p:${config.nonceLength}"
-        lock.locked { spaces[id] }?.let { return it }
-        // made outside the lock (a key, a reservation's load); the first one in wins
+        val id = idOf(config)
+        lock.locked { spaces[id] }?.let { return checkSame(it, config) }
+        // made outside the lock (a key, a reservation's load and secret); the first one in wins
         val key = config.key
+        val r = config.nonceReservation
         val made =
             if (key != null) {
+                // with a reservation, a fixed sequence, so the stored counter means the same nonces in the next process
                 val seed =
-                    if (config.nonceReservation == null) {
+                    if (r ==
+                        null
+                    ) {
                         ByteArray(config.nonceLength).also { random.nextBytes(it) }
                     } else {
-                        // a fixed sequence, so the stored counter means the same nonces in the next process
-                        ByteArray(32)
-                            .also {
-                                for (i in 0..1) {
-                                    val b = QuicLbDerivation.label(QuicLbDerivation.SEED, config.nonceLength, i)
-                                    key.encrypt(b, 0, it, 16 * i)
-                                }
-                            }.copyOf(config.nonceLength)
+                        derivedSeed(key, config.nonceLength)
                     }
-                QuicLbNonceSpace(config.nonceLength, seed, null, config.nonceReservation)
+                QuicLbNonceSpace(config.nonceLength, seed, null, r)
             } else {
-                QuicLbNonceSpace(
-                    config.nonceLength,
-                    ByteArray(config.nonceLength).also { random.nextBytes(it) },
-                    crypto.newLoadBalancerKey(null),
-                )
+                val permute =
+                    if (r == null) {
+                        crypto.newLoadBalancerKey(null)
+                    } else {
+                        val secret = r.secret()
+                        require(secret.size == 16) { "QuicLbNonceReservation.secret() must give 16 bytes" }
+                        crypto.newLoadBalancerKey(secret.copyOf()) // the copy is wiped
+                    }
+                val seed =
+                    if (r == null) ByteArray(config.nonceLength).also { random.nextBytes(it) } else derivedSeed(permute, config.nonceLength)
+                QuicLbNonceSpace(config.nonceLength, seed, permute, r)
             }
-        return lock
-            .locked {
-                spaces[id] ?: made.also { spaces[id] = it }
-            }.also { if (it !== made) made.plainPermute?.close() }
+        val space = lock.locked { spaces[id] ?: made.also { spaces[id] = it } }
+        if (space !== made) made.plainPermute?.close()
+        return checkSame(space, config)
+    }
+
+    private fun derivedSeed(
+        key: LoadBalancerKey,
+        nonceLength: Int,
+    ): ByteArray {
+        val b = ByteArray(32)
+        for (i in 0..1) key.encrypt(QuicLbDerivation.label(QuicLbDerivation.SEED, nonceLength, i), 0, b, 16 * i)
+        return b.copyOf(nonceLength).also { b.fill(0) }
     }
 
     /** Test hook: a new process, as far as nonce spaces go (the plaintext permutation keys are dropped, not freed). */

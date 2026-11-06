@@ -286,6 +286,17 @@ internal class ConnectionIdManager(
         issueRetiringOlderWith(cid)
     }
 
+    /** Called by [reissueSource] that could not make the ID just now (a nonce reservation not stored): the change waits and is tried again at the next retirement or change. */
+    fun keepReissuePending() {
+        reissuePending = true
+    }
+
+    /** Every ID of ours this connection holds, live or still routing after retirement. */
+    fun forEachLocal(block: (ConnectionId) -> Unit) {
+        for (i in local.indices) block(local[i].cid)
+        for (i in retiredLocal.indices) block(retiredLocal[i].cid)
+    }
+
     /** A configuration change waits for the peer's retirements ([requestReissue]); tests. */
     internal val reissuePendingForTest: Boolean get() = reissuePending
 
