@@ -10,6 +10,8 @@ import io.kuicksilver.ktor.client.dns.DnsAnswer
 import io.kuicksilver.ktor.client.dns.DnsException
 import io.kuicksilver.ktor.client.dns.DnsMessage
 import io.kuicksilver.ktor.client.dns.SvcbMalformedException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executor
@@ -26,8 +28,12 @@ internal actual suspend fun platformHttpsQuery(
     timeout: Duration,
 ): DnsAnswer? = if (Build.VERSION.SDK_INT < 29) null else withTimeoutOrNull(timeout) { rawQuery(name) }
 
-/** The callback runs on the resolver's own thread: parsing an answer is short and needs no other executor. */
-private val direct = Executor { it.run() }
+/**
+ * Where DnsResolver runs the callback, which parses the answer: a background thread. DnsResolver posts its callbacks
+ * from the main Looper, so a direct executor would parse there, and a main thread blocked waiting for the call (a
+ * `runBlocking` caller) would never see the answer.
+ */
+private val callbackExecutor: Executor = Dispatchers.IO.asExecutor()
 
 @TargetApi(29)
 private suspend fun rawQuery(name: String): DnsAnswer? =
@@ -40,7 +46,7 @@ private suspend fun rawQuery(name: String): DnsAnswer? =
             DnsResolver.CLASS_IN,
             DnsMessage.TYPE_HTTPS,
             DnsResolver.FLAG_EMPTY,
-            direct,
+            callbackExecutor,
             cancel,
             object : DnsResolver.Callback<ByteArray> {
                 override fun onAnswer(
