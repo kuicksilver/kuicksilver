@@ -173,7 +173,8 @@ internal object WindowsTrust {
                     0u
                 ) {
                     val built = validatedChain(context)
-                    PlatformVerdict(VerifyResult.Accepted(built ?: emptyList()), built)
+                    // pins see the leaf alone when the path cannot be read (as on the JDK), never the presented chain
+                    PlatformVerdict(VerifyResult.Accepted(built ?: chain.take(1)), built)
                 } else {
                     rejected(reasonOf(status, context, chain, host))
                 }

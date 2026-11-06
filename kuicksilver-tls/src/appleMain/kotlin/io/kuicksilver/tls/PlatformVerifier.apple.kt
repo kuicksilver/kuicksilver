@@ -114,11 +114,11 @@ internal actual object PlatformVerifier {
                     // runs on the queue: read the outcome, then release everything; a cancelled caller's resume is ignored
                     val r =
                         try {
-                            // the chain SecTrust built, leaf first and its anchor last; when it cannot be read, pins see the presented
-                            // chain and the level holds on it (platformLevel)
+                            // the chain SecTrust built, leaf first and its anchor last; when it cannot be read, pins see the leaf
+                            // alone (as on the JDK) and the level holds on the presented chain (platformLevel)
                             if (ok) {
                                 val built = validatedChain(trust)
-                                PlatformVerdict(VerifyResult.Accepted(built ?: chain), built)
+                                PlatformVerdict(VerifyResult.Accepted(built ?: chain.take(1)), built)
                             } else {
                                 PlatformVerdict(rejection(error, host, chain), null)
                             }
@@ -207,23 +207,30 @@ internal actual object PlatformVerifier {
             },
         )
 
-    /** The chain SecTrust built (leaf first), or null when it cannot be read. */
+    /**
+     * The chain SecTrust built (leaf first, its anchor last), or null when it or any certificate of it cannot be read: a path
+     * with a gap is not the path SecTrust built.
+     */
     private fun validatedChain(trust: SecTrustRef): List<Certificate>? {
         val validated = SecTrustCopyCertificateChain(trust) ?: return null
-        val out = ArrayList<Certificate>()
-        for (i in 0 until CFArrayGetCount(validated)) {
-            val raw = CFArrayGetValueAtIndex(validated, i) ?: continue
-            val cert: CPointer<__SecCertificate> = interpretCPointer(raw.rawValue) ?: continue
-            val data = SecCertificateCopyData(cert) ?: continue
-            val n = CFDataGetLength(data).toInt()
-            val bytes = ByteArray(n)
-            val src = CFDataGetBytePtr(data)
-            if (src != null && n > 0) bytes.usePinned { dst -> memcpy(dst.addressOf(0), src, n.toULong()) }
-            CFRelease(data)
-            out += Certificate(bytes)
+        try {
+            val out = ArrayList<Certificate>()
+            for (i in 0 until CFArrayGetCount(validated)) {
+                val raw = CFArrayGetValueAtIndex(validated, i) ?: return null
+                val cert: CPointer<__SecCertificate> = interpretCPointer(raw.rawValue) ?: return null
+                val data = SecCertificateCopyData(cert) ?: return null
+                val n = CFDataGetLength(data).toInt()
+                val bytes = ByteArray(n)
+                val src = CFDataGetBytePtr(data)
+                if (src != null && n > 0) bytes.usePinned { dst -> memcpy(dst.addressOf(0), src, n.toULong()) }
+                CFRelease(data)
+                if (src == null || n == 0) return null
+                out += Certificate(bytes)
+            }
+            return out.ifEmpty { null }
+        } finally {
+            CFRelease(validated)
         }
-        CFRelease(validated)
-        return out
     }
 }
 

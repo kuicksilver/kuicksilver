@@ -124,7 +124,10 @@ int ksl_chain_security(int level, STACK_OF(X509) *chain) {
    path after the leaf's key (EE_KEY_TOO_SMALL): every other key, the anchor's included (CA_KEY_TOO_SMALL), and every
    signature but the anchor's at index n - 1 (CA_MD_TOO_WEAK), whether or not the anchor is self-signed: a trust anchor begins
    the path (RFC 9846 section 4.5.1.3: SHA-1 and MD5 may be accepted for "certificates that are self-signed or are trust
-   anchors"). The same minimum bits as ksl_chain_security; at most 101 certificates (OpenSSL's default verify depth). */
+   anchors"). The same minimum bits as ksl_chain_security; at most 101 certificates (OpenSSL's default verify depth).
+   Invariant the caller keeps: the last certificate IS the trust anchor the verifier ended at (Android, SecTrust and Windows
+   return it; the JDK path is rebuilt with its anchor appended). A path that may not end at its anchor (the platform did not
+   say) must go through ksl_chain_security instead (built = 0), or the last certificate's signature would go unchecked. */
 static int built_path_level(int level, STACK_OF(X509) *path) {
     static const int minbits[] = {80, 112, 128, 192, 256};
     int n = sk_X509_num(path);
@@ -143,6 +146,8 @@ int ksl_chain_level(const uint8_t *chain, size_t chain_len, int built) {
     ERR_clear_error();
     STACK_OF(X509) *sk = NULL;
     if (chain == NULL || chain_len == 0 || !ksl_parse_chain(chain, chain_len, &sk) || sk_X509_num(sk) == 0) { sk_X509_pop_free(sk, X509_free); ERR_clear_error(); return -1; }
+    /* the compile-time default, which every ksl client context has: SSL_CTX_new starts at it (ssl_cert.c ssl_cert_new) and
+       the Kotlin layer never passes @SECLEVEL; were a context ever lowered, this check would stay at the default, the safe side */
     int r = built ? built_path_level(OPENSSL_TLS_SECURITY_LEVEL, sk) : ksl_chain_security(OPENSSL_TLS_SECURITY_LEVEL, sk);
     sk_X509_pop_free(sk, X509_free); ERR_clear_error(); return r;
 }

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.tls
 
+import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.security.cert.CertPathBuilder
-import java.security.cert.CertPathBuilderException
 import java.security.cert.CertPathValidatorException
 import java.security.cert.CertStore
 import java.security.cert.CertificateException
@@ -74,7 +74,7 @@ internal object JvmTrust {
         tm: X509TrustManager,
         presented: Array<X509Certificate>,
     ): List<Certificate>? {
-        val anchors = tm.acceptedIssuers.map { TrustAnchor(it, null) }.toSet()
+        val anchors = anchorsOf(tm)
         if (anchors.isEmpty()) return null
         return try {
             val params = PKIXBuilderParameters(anchors, X509CertSelector().apply { certificate = presented[0] })
@@ -83,10 +83,20 @@ internal object JvmTrust {
             val result = CertPathBuilder.getInstance("PKIX").build(params) as PKIXCertPathBuilderResult
             result.certPath.certificates.map { Certificate((it as X509Certificate).encoded) } +
                 Certificate(result.trustAnchor.trustedCert.encoded)
-        } catch (_: CertPathBuilderException) {
+        } catch (_: GeneralSecurityException) {
+            // CertPathBuilderException, and InvalidAlgorithmParameterException or the like from the parameters
             null
         }
     }
+
+    /** The trust anchors of [tm], kept for the last manager asked (the default one is made per handshake, its issuers are not). */
+    private fun anchorsOf(tm: X509TrustManager): Set<TrustAnchor> {
+        val issuers = tm.acceptedIssuers.toList()
+        lastAnchors?.let { (key, anchors) -> if (key == issuers) return anchors }
+        return issuers.map { TrustAnchor(it, null) }.toSet().also { lastAnchors = issuers to it }
+    }
+
+    @Volatile private var lastAnchors: Pair<List<X509Certificate>, Set<TrustAnchor>>? = null
 
     internal fun reasonOf(e: CertificateException): VerifyReason {
         val cause =
