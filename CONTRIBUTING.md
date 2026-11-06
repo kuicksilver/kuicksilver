@@ -80,6 +80,7 @@ verification failed", do not regenerate blindly: find out why the artifact chang
 ./gradlew --max-workers=2 :kuicksilver-quic:macosArm64Test       # the same on Kotlin/Native (macOS host)
 bash tools/c-test.sh                                             # the ksl C tests under ASan/UBSan
 KSL_TSAN=1 bash tools/c-test.sh                                  # the same under ThreadSanitizer (any data race fails)
+bash tools/check/clang-format.sh                                 # C formatting; clang-format 19.x (pip install clang-format==19.1.7), --fix rewrites
 ./gradlew checkSpdxHeaders checkLayerDependencies                # headers and module layering
 ./gradlew :kuicksilver-quic:checkQuicArchitecture :kuicksilver-http3:checkHttp3Architecture :kuicksilver-http2:checkHttp2Architecture   # sans-IO and import rules
 ./gradlew checkKotlinAbi                                         # public ABI against the dumps in <module>/api/
