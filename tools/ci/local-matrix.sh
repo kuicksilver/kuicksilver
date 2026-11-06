@@ -128,6 +128,7 @@ step "lint: doc-refs negative controls"         bash tools/check/doc-refs-test.s
 step "lint: fuzz campaign.sh (stubs)"           bash tools/fuzz/campaign-test.sh
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh
+step "lint: reliability report (fixtures)"      bash tools/report/reliability-test.sh
 step "lint: RFC compliance summary table"      bash tools/check/rfc-table.sh
 step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py --check
 step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check

@@ -210,6 +210,8 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
 - [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md) — RFC coverage, one row per requirement, with a details
   file per RFC in [docs/spec/rfc/](docs/spec/rfc/).
 - [docs/spec/interop.md](docs/spec/interop.md) — the interop matrix and the analysis of its red cells.
+- [docs/reliability.md](docs/reliability.md) — what the last gate's artifacts say: interop cells, fuzzing hours, soak
+  trends and the negative tests, generated from those artifacts.
 - [docs/benchmarks.md](docs/benchmarks.md) — goodput, CPU per GB and handshakes per second against quiche, quinn and
   msquic, with the method and its caveats (one Apple Silicon host; the amd64 peer images run emulated).
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.

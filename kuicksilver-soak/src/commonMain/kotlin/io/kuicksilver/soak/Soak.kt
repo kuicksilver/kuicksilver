@@ -48,6 +48,10 @@ internal class SoakConfig(
     val seed: Long = 1,
     /** The scenarios of the mix (`-Pkuicksilver.soak.scenarios=…`), each with its usual weight; all by default. */
     val scenarios: Set<Scenario> = Scenario.entries.toSet(),
+    /** The commit under test (`KSL_SOAK_COMMIT`, set by the Gradle build), written to the report; null when unknown. */
+    val commit: String? = null,
+    /** The UTC start of the run (`KSL_SOAK_DATE`, set by the Gradle build), written to the report; null when unknown. */
+    val date: String? = null,
 ) {
     companion object {
         fun fromEnvironment(): SoakConfig? {
@@ -67,6 +71,8 @@ internal class SoakConfig(
                 reportDir = ProcessResources.env("KSL_SOAK_REPORT") ?: ProcessResources.env("KSL_SOAK_DEFAULT_REPORT"),
                 label = ProcessResources.env("KSL_SOAK_LABEL") ?: d.label,
                 scenarios = Scenario.fromEnvironment(),
+                commit = ProcessResources.env("KSL_SOAK_COMMIT")?.takeIf { it.isNotBlank() },
+                date = ProcessResources.env("KSL_SOAK_DATE")?.takeIf { it.isNotBlank() },
             )
         }
     }
