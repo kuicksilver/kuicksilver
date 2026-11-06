@@ -151,6 +151,16 @@ class SvcbRecordTest {
         malformed("0001 00 0003 0002 01")
     }
 
+    @Test fun negative_manyKeysWithAMalformedValueIsMalformed() { // section 2.2: every value is checked, however many keys
+        val unknown = (100 until 170).joinToString(" ") { "${it.toString(16).padStart(4, '0')} 0000" }
+        malformed("0001 00 0003 0003 0001bb $unknown")
+    }
+
+    @Test fun manyKeysAreRead() {
+        val unknown = (100 until 170).joinToString(" ") { "${it.toString(16).padStart(4, '0')} 0000" }
+        assertEquals(listOf("h3"), parsed("0001 00 0001 0003 026833 $unknown").alpn)
+    }
+
     @Test fun aliasModeParamsAreIgnored() { // section 2.4.2: recipients MUST ignore SvcParams in AliasMode
         val r = parsed("0000 $FOO_EXAMPLE_COM 0000 0002 029b 0003 0002 0035 029b 0001 00")
         assertTrue(r.isAlias)

@@ -84,13 +84,10 @@ internal object SvcbCodec {
     /** The keys this client supports, so a `mandatory` list may name them (section 8); `ech` (5) is not among them. */
     private val SUPPORTED = setOf(KEY_MANDATORY, KEY_ALPN, KEY_NO_DEFAULT_ALPN, KEY_PORT, KEY_IPV4HINT, KEY_IPV6HINT)
 
-    /** More SvcParams than this in one record: the record is skipped, not read (a bound on the work per record). */
-    const val MAX_PARAMS = 64
-
     /**
      * The record in `b[off until off + len]` of [owner] with [ttl]; null when the record is well-formed but unusable: a
-     * `mandatory` key this client does not support (section 8), `no-default-alpn` without `alpn` (section 7.1.1), or more
-     * than [MAX_PARAMS] keys. Throws [DnsFormatException] for a malformed record (section 2.2, section 7), which makes the
+     * `mandatory` key this client does not support (section 8), or `no-default-alpn` without `alpn` (section 7.1.1). Every
+     * value is checked, however many keys there are: the work is bounded by the RDATA's length (at most 65535). Throws [DnsFormatException] for a malformed record (section 2.2, section 7), which makes the
      * whole RRSet unusable: the caller drops it.
      */
     fun parseRdata(
@@ -135,7 +132,6 @@ internal object SvcbCodec {
         }
         // AliasMode: recipients MUST ignore the SvcParams (section 2.4.2)
         if (priority == 0) return SvcbRecord(0, target, emptyList(), false, null, emptyList(), emptyList(), ttl, owner)
-        if (keys.size > MAX_PARAMS) return null
         var mandatory: List<Int> = emptyList()
         var alpn: List<String> = emptyList()
         var noDefaultAlpn = false
