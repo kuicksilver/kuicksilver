@@ -54,14 +54,20 @@ int ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int ti
     if (server && server[0] != 4) return KSL_DNS_NOT_SUPPORTED;   /* an IPv6 server would need the glibc-private _u._ext */
     struct __res_state st; memset(&st, 0, sizeof st);
     if (res_ninit(&st) != 0) { res_nclose(&st); return KSL_ERROR; }
-    int secs = timeout_ms / 1000 / 2;
-    st.retrans = secs < 1 ? 1 : secs;   /* per try, in seconds; two tries */
-    st.retry = 2;
     if (server) {
         struct sockaddr_in a; memset(&a, 0, sizeof a);
         a.sin_family = AF_INET; memcpy(&a.sin_port, server + 2, 2); memcpy(&a.sin_addr, server + 4, 4);   /* KSL_UDP_ADDR_LEN: family, port BE, address */
         st.nsaddr_list[0] = a; st.nscount = 1;
     }
+    /* glibc waits max(1, (retrans << try) / nscount) seconds per server and try, so the whole query takes about
+       sum over tries of max(nscount, retrans << try): with r = secs / 3 and two tries, at most nscount servers of r,
+       that is r + 2r = secs; below 3 s, one try of secs. Servers past the count the budget allows are not asked. */
+    int secs = timeout_ms / 1000; if (secs < 1) secs = 1;
+    int r = secs >= 3 ? secs / 3 : secs;
+    st.retry = secs >= 3 ? 2 : 1;
+    st.retrans = r;
+    if (st.nscount > r) st.nscount = r;
+    if (st.nscount < 1) st.nscount = 1;
     size_t room = cap - 1; if (room > INT_MAX) room = INT_MAX;
     int n = res_nquery(&st, name, C_IN, type, out + 1, (int)room);
     int herr = st.res_h_errno;
