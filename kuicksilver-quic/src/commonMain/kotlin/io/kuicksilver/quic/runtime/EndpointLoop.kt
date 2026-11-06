@@ -949,6 +949,7 @@ internal class EndpointLoop private constructor(
                 }
             }
         }
+        flushRound.clear() // the round's connections are not kept past the flush: a closed one would stay reachable from the loop
         if (dirty.isNotEmpty()) wake.trySend(Unit) // still more after the bounded rounds: the timer coroutine flushes again
         outBatch.clear()
         if (core.pollStateless(outBatch) > 0) sendStateless(io, outBatch)
