@@ -11,7 +11,7 @@ root="$(cd "$(dirname "$0")/../../.." && pwd)"; cd "$root"
 target="$( [ "$(uname)" = Darwin ] && echo "macos-$( [ "$(uname -m)" = arm64 ] && echo arm64 || echo x64)" || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )"
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built (tools/openssl/build.sh $target)"; exit 2; }
 out="$root/build/fuzz-ksl"; mkdir -p "$out"
-CC="${CC:-clang}"; libs=$( [ "$(uname)" = Darwin ] || echo "-lpthread -ldl" )
+CC="${CC:-clang}"; libs=$( [ "$(uname)" = Darwin ] || echo "-lresolv -lpthread -ldl" )
 san="-fsanitize=address,undefined -fno-sanitize-recover=undefined"
 common=(-std=c11 -O1 -g -Wall -Wextra -Wno-misleading-indentation -Wno-unused-parameter -DKSL_FUZZ_TESTDATA="\"$root/kuicksilver-native/src/c/test/testdata/\""
         -I"$O/include" -Ikuicksilver-native/src/c)

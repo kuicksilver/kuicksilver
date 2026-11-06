@@ -2165,6 +2165,71 @@ the rewrite when a repeated header only refreshes the expiry, and the engine wri
 without `persist=1` are dropped when `networkId()` reports a new network (RFC 7838 section 2.2); `clearOnNetworkChange =
 false` keeps them.
 
+#### HTTPS records (experimental)
+
+`http3 { httpsRecords = HttpsRecordSource.System }` (or `HttpsRecordSource.Exchange { query -> ... }` for your own
+DNS-over-HTTPS client) makes the engine an HTTPS-record client (RFC 9460) in `Auto` mode: the origin's records say where
+to connect, so the first request to an origin that publishes one with `alpn=h3` races HTTP/3 at once instead of waiting
+for an `Alt-Svc` header, as browsers do. Off by default. The rules:
+
+- for an `https://` request to a host name; never for `Preferred`, `H3Only`, `quicHints`, IP addresses, requests
+  through a proxy, or while `http3Allowed` says no;
+- the name asked is the host for port 443, `_<port>._https.<host>` otherwise (section 9.1); AliasMode records are
+  followed (one at random among several; at most 8 steps; a loop or a longer chain is treated as no record; an AliasMode
+  "." is ignored); the ServiceMode records of the final name, by ascending priority and shuffled within a priority, are
+  the endpoints, each at its target (the record's own name for ".") and `port` (the origin's when absent); after an
+  AliasMode chain the last name with the origin's port is one more endpoint, last (section 3);
+- an endpoint is tried over the transports its ALPN set allows (section 7.1.2; the default set is `http/1.1`, so
+  `alpn=h3` means QUIC and TCP, `alpn=h2` TCP, and `no-default-alpn` with `alpn=h3` QUIC only); QUIC and TCP race as for
+  an `Alt-Svc` alternative ([Racing and fallback](#racing-and-fallback)), TCP connecting to the endpoint's target and
+  port, both offering the engine's usual ALPN lists. An endpoint that cannot be connected to is followed by the next one,
+  and after the last by the origin as without records. TLS and the request still name the origin, and the certificate is
+  checked against the origin's name whatever the record says; a QUIC endpoint that fails is marked broken like an
+  alternative (`httpsRecordUsed` and `altSvcMarkedBroken` report both). The address hints are not used, `ech` is not (a
+  record that requires it is skipped), and a malformed record makes the whole answer unusable (section 2.2);
+- a cached `Alt-Svc` alternative is tried first, its TCP side going to the origin's first TCP endpoint; the
+  alternative's own HTTPS records are looked up too (RFC 9460 section 9.3), and when it has some, HTTP/3 goes to their
+  targets and ports that offer `h3`, and not to the alternative at all when none does (`Alt-Used` still names the
+  alternative);
+- the request waits for the records while the origin's addresses resolve and at most `httpsRecordExtraWait` (50 ms)
+  longer; a lookup that answers later, fails or times out leaves the request on the origin as without records, and a
+  late answer is cached for the next request (`httpsRecordExtraWait` is 50 ms to 1 s: RFC 9460 section 5.1 asks for at
+  least 50 ms before connecting without the records). While an AliasMode chain is followed, the addresses of each
+  alias target are looked up in parallel (section 5). A malformed answer always counts as "no records". With
+  `HttpsRecordSource.Exchange(secure = true) { ... }` (an exchange whose answers are protected: DNS over HTTPS or TLS, or
+  validated DNSSEC) the request waits for the records instead, up to the connect timeout, and a failed lookup (an error
+  answer such as SERVFAIL, a transport error, a timeout) abandons it with an `IOException`, so an attacker who drops the
+  answers cannot downgrade the connection (RFC 9460 section 3.1). `HttpsRecordSource.ProtectedSystem { ... }` does the
+  same for the system resolver when your check says its answers are protected; on Android
+  `HttpsRecordSource.followingPrivateDns(connectivity)` says so while strict Private DNS is on (the engine has no
+  `Context`: with plain `System` strict Private DNS is not taken into account, so opt in with this builder). Elsewhere no public API
+  tells whether the system's DNS is encrypted, so `System` treats failures as "no records";
+- answers are cached for their TTL, never longer (at most a day; "no records" for the negative TTL of the answer's SOA
+  record, RFC 2308, and not at all without one; at most 1000 names), together with the other HTTPS records and the
+  A/AAAA records the answer carried, which spare follow-up queries (RFC 9460 section 5), and forgotten when
+  `networkId()` reports a new network; without `networkId` the engine cannot see a network change and keeps no answers
+  of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
+  asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at
+  most the connect timeout (30 s at most); closing the client cancels the lookups still running.
+
+`HttpsRecordSource.System` asks the operating system's resolver, so lookups follow the system's DNS settings:
+`res_nquery` on Linux (JVM and Kotlin/Native), `DNSServiceQueryRecord` on macOS and iOS, `DnsQuery_W` on Windows, and
+`DnsResolver.rawQuery` on the default network (Private DNS included) on Android from API 29. On Android API 24 to 28 there
+is no public way to ask for a record type (and a resolver of the engine's own would bypass Private DNS), so every lookup
+counts as failed there and requests behave as without records. At most four system lookups run at once per process.
+`HttpsRecordSource.Exchange` works everywhere.
+
+An `http://` request (not `ws://`, not through a proxy, not to an IP address) first looks up the records of the same URL
+with `https` (port 80 becomes 443), waiting for the answer as an `https` request does (while the origin's addresses
+resolve and `httpsRecordExtraWait` longer; the whole lookup with a secure source); when the origin
+has an AliasMode record or a ServiceMode record the engine could use, the engine answers `307 Temporary Redirect` to the
+`https` URL itself, without connecting (RFC 9460 section 9.5). Ktor's `HttpRedirect` (on by default) follows it like any
+307; with `followRedirects = false` the call sees the 307, and so does a POST, PUT or other unsafe request while
+`HttpRedirect`'s `checkHttpMethod` is on (its default follows GET and HEAD only): set `checkHttpMethod = false` to have
+those repeated over `https` too. An AliasMode record whose target is no host name counts as "." and does not upgrade. The upgrade is no more trusted than a 307 over cleartext:
+nothing is remembered for the origin beyond the records' TTL. An origin that publishes HTTPS records but serves
+different content on `http://` cannot be reached over `http://` by such a client.
+
 #### Racing and fallback
 
 When HTTP/3 is an option (`Preferred`, a QUIC hint, or a live Alt-Svc alternative) and no HTTP/3 connection to it is
@@ -2552,7 +2617,7 @@ embeddedServer(Kuicksilver, configure = {
 **Client.** `engine { eventListener = ... }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
 `protocolSelected` with a `ProtocolReason` (`Configuration`, `NotSecure`, `ExistingConnection`, `Race`, `NoAlternative`,
-`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
+`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`, `HttpsRecord`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
 `altSvcMarkedBroken`; `fallback` from HTTP/3 to HTTP/1.1; `retry` (a request the server did not process after GOAWAY, a
 stale pooled HTTP/1.1 connection); `connectionAcquired` (reused or new) and `connectionReleased` (kept for the next request
 or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
@@ -2910,8 +2975,10 @@ Clients that find the UDP port closed wait for their QUIC attempt to time out be
 engine's header entirely: then only clients that try HTTP/3 without being told (the Kuicksilver client's `Preferred`
 mode or `quicHints`, `curl --http3`) use it.
 
-The engine does not publish DNS HTTPS records (RFC 9460). The Kuicksilver client does not look them up yet either
-(`AlternativeSource.HttpsRecord` is reserved for that). Publishing one in your DNS zone is up to you.
+The engine does not publish DNS HTTPS records (RFC 9460); publishing one in your DNS zone is up to you. A record such as
+`example.com. 300 IN HTTPS 1 . alpn=h3,h2` lets clients that look them up (browsers, and the Kuicksilver client with
+`http3 { httpsRecords = ... }`, see [HTTPS records](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#https-records-experimental)) use HTTP/3 from the first
+request; for a port other than 443 the name is `_<port>._https.<host>`.
 
 ### Firewalls and security groups
 
@@ -3579,8 +3646,10 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `quicHints` | `Set<HostPort>` | empty | 0.2.0 | origins treated as `Preferred` in `Auto` mode; `HostPort(host, port)` compares the host exactly as in URLs |
 | `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | 0.2.0 | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
 | `clearOnNetworkChange` | `Boolean` | `true` | 0.2.0 | drop alternatives without `persist=1` when `networkId` changes (RFC 7838 section 2.2); `false` keeps them |
+| `httpsRecords` (*experimental*) | `HttpsRecordSource` | `HttpsRecordSource.Off` | 0.3.0 | HTTPS resource records (RFC 9460) as a source of HTTP/3 in `Auto`: `System` (the OS resolver) or `Exchange { query -> response }` (your DNS-over-HTTPS client) ([HTTPS records](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#https-records-experimental)) |
+| `httpsRecordExtraWait` (*experimental*) | `Duration` | 50 ms | 0.3.0 | how long a request waits for the HTTPS records after the origin's addresses resolved; 50 ms (RFC 9460 section 5.1) to 1 s, else the engine's creation fails with `IllegalArgumentException` |
 | `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | 0.2.0 | head start of HTTP/3 over HTTP/1.1 in a race on a network where QUIC was confirmed (10 ms elsewhere); an explicit value must be 10 ms..2 s or `Duration.INFINITE` (RFC 8305 section 5; INFINITE starts HTTP/1.1 only after HTTP/3 failed, on every network), else the engine's creation fails with `IllegalArgumentException` |
-| `networkId` | `() -> String?` | `{ null }` (one network) | 0.2.0 | identifies the current network; a change forgets broken marks and QUIC confirmation |
+| `networkId` | `() -> String?` | `{ null }` (one network) | 0.2.0 | identifies the current network; a change forgets broken marks, QUIC confirmation and HTTPS records; the engine caches HTTPS records only when it is set |
 | `settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings of the engine's connections |
 | `endpoint` | `QuicEndpointConfig` | `QuicEndpointConfig.Default` | 0.2.0 | the client QUIC endpoint (bound to `0.0.0.0:0`, a dual-stack socket on the accelerated transport) |
 | `earlyData` (*experimental*) | `Boolean` | `false` | 0.2.0 | 0-RTT for GET, HEAD and OPTIONS without a body on resumed connections |
@@ -4113,6 +4182,7 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 | `ExistingConnection` | an HTTP/3 connection to the origin was already open and carries the call |
 | `WebSocket` | a WebSocket starts on HTTP/1.1 until the origin has an HTTP/3 connection that allows Extended CONNECT (RFC 9220) |
 | `Fallback` | HTTP/3 failed for this request and it is repeated over TCP; `fallback` says why (below) |
+| `HttpsRecord` | an endpoint of the origin's HTTPS record (`http3 { httpsRecords }`) that offers one transport only: TCP (its ALPN set has no `h3`), or HTTP/3 without TCP (`no-default-alpn`), so nothing raced |
 
 `response.kuicksilverDiagnostics?.fallback` (`FallbackReason`, also `fallback=` in the engine's log line) names the cause
 when a call that could have used HTTP/3 went over TCP; `null` when it went over HTTP/3. Every value:

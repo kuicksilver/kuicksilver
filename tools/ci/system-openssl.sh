@@ -15,7 +15,7 @@ probe='#include <stdio.h>
 int main(int argc, char **argv) { int rc = ksl_init(); printf("ksl_init=%d version=\"%s\"\n", rc, rc == KSL_OK ? ksl_version() : ""); return argc > 1 ? (rc == atoi(argv[1]) ? 0 : 1) : (rc == KSL_OK ? 0 : 1); }'
 build() { # image: compiles the probe against the image's libssl headers into build/sys-openssl/
   mkdir -p "$root/build/sys-openssl"
-  docker run --rm --platform linux/amd64 -v "$root:/w" -w /w "$1" bash -c "apt-get -qq update >/dev/null && apt-get -qq install -y gcc libssl-dev >/dev/null 2>&1; echo '$probe' > /tmp/probe.c; gcc -std=c11 -DKSL_SYSTEM_OPENSSL -Ikuicksilver-native/src/c /tmp/probe.c kuicksilver-native/src/c/ksl_*.c -lssl -lcrypto -ldl -o build/sys-openssl/probe && dpkg -s libssl-dev | grep ^Version"
+  docker run --rm --platform linux/amd64 -v "$root:/w" -w /w "$1" bash -c "apt-get -qq update >/dev/null && apt-get -qq install -y gcc libssl-dev >/dev/null 2>&1; echo '$probe' > /tmp/probe.c; gcc -std=c11 -DKSL_SYSTEM_OPENSSL -Ikuicksilver-native/src/c /tmp/probe.c kuicksilver-native/src/c/ksl_*.c -lssl -lcrypto -lresolv -ldl -o build/sys-openssl/probe && dpkg -s libssl-dev | grep ^Version"
 }
 run() { # image expected-code [env]: runs the probe built above against the image's runtime libssl
   docker run --rm --platform linux/amd64 -v "$root:/w" -w /w ${3:+-e "$3"} "$1" bash -c "apt-get -qq update >/dev/null && apt-get -qq install -y libssl3t64 >/dev/null 2>&1 || apt-get -qq install -y libssl3 >/dev/null 2>&1; build/sys-openssl/probe $2"

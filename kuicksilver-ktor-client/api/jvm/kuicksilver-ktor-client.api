@@ -103,6 +103,8 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getEndpoint ()Lio/kuicksilver/quic/QuicEndpointConfig;
 	public final fun getHardDelay-FghU774 ()Lkotlin/time/Duration;
 	public final fun getHttp3Allowed ()Lkotlin/jvm/functions/Function0;
+	public final fun getHttpsRecordExtraWait-UwyO8pc ()J
+	public final fun getHttpsRecords ()Lio/kuicksilver/ktor/client/HttpsRecordSource;
 	public final fun getMaxWebTransportSessions ()I
 	public final fun getNetworkId ()Lkotlin/jvm/functions/Function0;
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
@@ -119,6 +121,8 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setEndpoint (Lio/kuicksilver/quic/QuicEndpointConfig;)V
 	public final fun setHardDelay-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setHttp3Allowed (Lkotlin/jvm/functions/Function0;)V
+	public final fun setHttpsRecordExtraWait-LRDsOJo (J)V
+	public final fun setHttpsRecords (Lio/kuicksilver/ktor/client/HttpsRecordSource;)V
 	public final fun setMaxWebTransportSessions (I)V
 	public final fun setNetworkId (Lkotlin/jvm/functions/Function0;)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
@@ -147,6 +151,39 @@ public final class io/kuicksilver/ktor/client/Http3DiscoveryMode : java/lang/Enu
 
 public final class io/kuicksilver/ktor/client/Http3SwitchKt {
 	public static final fun closeHttp3Connections (Lio/ktor/client/HttpClient;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public abstract interface class io/kuicksilver/ktor/client/HttpsRecordSource {
+	public static final field Companion Lio/kuicksilver/ktor/client/HttpsRecordSource$Companion;
+}
+
+public final class io/kuicksilver/ktor/client/HttpsRecordSource$Companion {
+}
+
+public final class io/kuicksilver/ktor/client/HttpsRecordSource$Exchange : io/kuicksilver/ktor/client/HttpsRecordSource {
+	public fun <init> (ZLkotlin/jvm/functions/Function2;)V
+	public synthetic fun <init> (ZLkotlin/jvm/functions/Function2;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getExchange ()Lkotlin/jvm/functions/Function2;
+	public final fun getSecure ()Z
+}
+
+public final class io/kuicksilver/ktor/client/HttpsRecordSource$Off : io/kuicksilver/ktor/client/HttpsRecordSource {
+	public static final field INSTANCE Lio/kuicksilver/ktor/client/HttpsRecordSource$Off;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/HttpsRecordSource$ProtectedSystem : io/kuicksilver/ktor/client/HttpsRecordSource {
+	public fun <init> (Lkotlin/jvm/functions/Function0;)V
+	public final fun isProtected ()Lkotlin/jvm/functions/Function0;
+}
+
+public final class io/kuicksilver/ktor/client/HttpsRecordSource$System : io/kuicksilver/ktor/client/HttpsRecordSource {
+	public static final field INSTANCE Lio/kuicksilver/ktor/client/HttpsRecordSource$System;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/ktor/client/InMemoryAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
@@ -221,6 +258,7 @@ public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
 	public fun connectionMigrated (Ljava/lang/String;Lio/kuicksilver/quic/MigrationEvent;)V
 	public fun connectionReleased (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
 	public fun fallback (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
+	public fun httpsRecordUsed (Lio/ktor/client/request/HttpRequestData;Ljava/lang/String;)V
 	public fun protocolSelected (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Lio/kuicksilver/ktor/client/ProtocolReason;)V
 	public fun raceEnded-exY8QGI (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;JLjava/lang/Throwable;)V
 	public fun retry (Lio/ktor/client/request/HttpRequestData;ILjava/lang/Throwable;)V
@@ -257,6 +295,7 @@ public final class io/kuicksilver/ktor/client/ProtocolReason : java/lang/Enum {
 	public static final field ExistingConnection Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Fallback Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Http3Disabled Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field HttpsRecord Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NoAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NotSecure Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Proxy Lio/kuicksilver/ktor/client/ProtocolReason;

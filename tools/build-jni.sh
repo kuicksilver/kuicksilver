@@ -17,7 +17,7 @@ case "$cls" in
 esac
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built" >&2; exit 2; }
 lib="libksl_${abi}_${os}_${arch}.${ext}"; dir="$out/$cls"; mkdir -p "$dir" "$out/resources/META-INF/native"
-src="$root/kuicksilver-native/src/c/ksl_lib.c $root/kuicksilver-native/src/c/ksl_ctx.c $root/kuicksilver-native/src/c/ksl_ssl.c $root/kuicksilver-native/src/c/ksl_quic.c $root/kuicksilver-native/src/c/ksl_verify.c $root/kuicksilver-native/src/c/ksl_tcp.c $root/kuicksilver-native/src/c/ksl_udp.c $root/kuicksilver-native/src/c/ksl_udp_send.c $root/kuicksilver-native/src/c/ksl_udp_recv.c $root/kuicksilver-native/src/c/ksl_udp_win.c $root/kuicksilver-native/src/c/ksl_key.c $root/kuicksilver-native/src/c/ksl_crypto.c $root/kuicksilver-native/src/c/ksl_tickets.c $root/kuicksilver-native/src/c/ksl_trust_cache.c $root/kuicksilver-native/src/jni/ksl_jni.c"
+src="$root/kuicksilver-native/src/c/ksl_lib.c $root/kuicksilver-native/src/c/ksl_ctx.c $root/kuicksilver-native/src/c/ksl_ssl.c $root/kuicksilver-native/src/c/ksl_quic.c $root/kuicksilver-native/src/c/ksl_verify.c $root/kuicksilver-native/src/c/ksl_tcp.c $root/kuicksilver-native/src/c/ksl_udp.c $root/kuicksilver-native/src/c/ksl_udp_send.c $root/kuicksilver-native/src/c/ksl_udp_recv.c $root/kuicksilver-native/src/c/ksl_udp_win.c $root/kuicksilver-native/src/c/ksl_key.c $root/kuicksilver-native/src/c/ksl_crypto.c $root/kuicksilver-native/src/c/ksl_tickets.c $root/kuicksilver-native/src/c/ksl_trust_cache.c $root/kuicksilver-native/src/c/ksl_dns.c $root/kuicksilver-native/src/jni/ksl_jni.c"
 cflags="-std=c11 -O2 -ffile-prefix-map=$root=. -fvisibility=hidden -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-misleading-indentation -I$O/include -I$root/kuicksilver-native/src/c"
 case "$os" in
   osx)
@@ -28,13 +28,13 @@ case "$os" in
   linux)
     JH="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"; printf '{ global: JNI_OnLoad; JNI_OnLoad_ksl; local: *; };\n' > "$dir/exports.map"
     ${CC:-gcc} $cflags -fPIC -I"$JH/include" -I"$JH/include/linux" -shared -Wl,--version-script="$dir/exports.map" -Wl,--exclude-libs,ALL -Wl,--no-undefined -Wl,-z,noexecstack -Wl,--gc-sections \
-      $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lpthread -ldl -o "$dir/$lib"
+      $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lresolv -lpthread -ldl -o "$dir/$lib"
     strip --strip-unneeded "$dir/$lib" ;;
   windows)
     JH="${JAVA_HOME:?JAVA_HOME with win32 headers}"; printf 'EXPORTS\nJNI_OnLoad\nJNI_OnLoad_ksl\n' > "$dir/exports.def"
     # reproducible PE: no link timestamp (strip below likewise), and the linker's default image base instead of one hashed from the output path
     # (the loader relocates the dll anyway: --dynamicbase is the default)
-    x86_64-w64-mingw32-gcc $cflags -DKSL_DLL -I"$JH/include" -I"$JH/include/win32" -shared -static-libgcc -Wl,--no-insert-timestamp -Wl,--disable-auto-image-base "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -o "$dir/$lib"
+    x86_64-w64-mingw32-gcc $cflags -DKSL_DLL -I"$JH/include" -I"$JH/include/win32" -shared -static-libgcc -Wl,--no-insert-timestamp -Wl,--disable-auto-image-base "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -ldnsapi -o "$dir/$lib"
     SOURCE_DATE_EPOCH=0 x86_64-w64-mingw32-strip "$dir/$lib" ;;   # strip stamps the PE header with the current time otherwise
 esac
 find "$out/resources/META-INF/native" -name 'libksl_*' ! -name "libksl_${abi}_*" -delete   # a shared output directory never ships a stale ABI

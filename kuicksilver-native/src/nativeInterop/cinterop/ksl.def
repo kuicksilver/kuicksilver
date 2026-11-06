@@ -4,4 +4,6 @@
 package = io.kuicksilver.native.cinterop
 headers = ksl.h
 staticLibraries = libksl.a libssl.a libcrypto.a
-linkerOpts.mingw_x64 = -lcrypt32 -lws2_32 -lbcrypt
+linkerOpts.mingw_x64 = -lcrypt32 -lws2_32 -lbcrypt -ldnsapi
+linkerOpts.linux_x64 = -lresolv
+linkerOpts.linux_arm64 = -lresolv

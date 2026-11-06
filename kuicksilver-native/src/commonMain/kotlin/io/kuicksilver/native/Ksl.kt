@@ -414,6 +414,21 @@ public expect object Ksl {
      * a synchronisation point.
      */
     public fun liveObjects(): LongArray
+
+    /**
+     * `ksl_dns_query` (additive under ABI 7): the records of type [type] of [name] from the operating system's resolver,
+     * blocking for at most about [timeoutMs] (not on Windows, which takes no timeout). The answer starts with its kind,
+     * `KSL_DNS_MESSAGE` (1: a whole DNS message follows) or `KSL_DNS_RECORDS` (2: `ttl:4 | owner length:1 | owner |
+     * rdata length:2 | rdata` records follow); empty when the name has none (NXDOMAIN, NODATA); null when the lookup failed
+     * or the platform cannot make it (Android, or [server] where it cannot be set). [server]: `KSL_UDP_ADDR_LEN` bytes, a
+     * resolver to ask instead of the system's (tests).
+     */
+    public fun dnsQuery(
+        name: String,
+        type: Int,
+        server: ByteArray?,
+        timeoutMs: Int,
+    ): ByteArray?
 }
 
 /**

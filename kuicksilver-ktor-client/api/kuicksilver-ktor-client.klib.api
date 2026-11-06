@@ -68,6 +68,7 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
     enum entry ExistingConnection // io.kuicksilver.ktor.client/ProtocolReason.ExistingConnection|null[0]
     enum entry Fallback // io.kuicksilver.ktor.client/ProtocolReason.Fallback|null[0]
     enum entry Http3Disabled // io.kuicksilver.ktor.client/ProtocolReason.Http3Disabled|null[0]
+    enum entry HttpsRecord // io.kuicksilver.ktor.client/ProtocolReason.HttpsRecord|null[0]
     enum entry NoAlternative // io.kuicksilver.ktor.client/ProtocolReason.NoAlternative|null[0]
     enum entry NotSecure // io.kuicksilver.ktor.client/ProtocolReason.NotSecure|null[0]
     enum entry Proxy // io.kuicksilver.ktor.client/ProtocolReason.Proxy|null[0]
@@ -98,6 +99,38 @@ abstract interface io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.kt
     abstract fun remove(kotlin/String) // io.kuicksilver.ktor.client/AltSvcStore.remove|remove(kotlin.String){}[0]
 }
 
+sealed interface io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource|null[0]
+    final class Exchange : io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange|null[0]
+        constructor <init>(kotlin/Boolean = ..., kotlin.coroutines/SuspendFunction1<kotlin/ByteArray, kotlin/ByteArray>) // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.<init>|<init>(kotlin.Boolean;kotlin.coroutines.SuspendFunction1<kotlin.ByteArray,kotlin.ByteArray>){}[0]
+
+        final val exchange // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.exchange|{}exchange[0]
+            final fun <get-exchange>(): kotlin.coroutines/SuspendFunction1<kotlin/ByteArray, kotlin/ByteArray> // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.exchange.<get-exchange>|<get-exchange>(){}[0]
+        final val secure // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.secure|{}secure[0]
+            final fun <get-secure>(): kotlin/Boolean // io.kuicksilver.ktor.client/HttpsRecordSource.Exchange.secure.<get-secure>|<get-secure>(){}[0]
+    }
+
+    final class ProtectedSystem : io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource.ProtectedSystem|null[0]
+        constructor <init>(kotlin/Function0<kotlin/Boolean>) // io.kuicksilver.ktor.client/HttpsRecordSource.ProtectedSystem.<init>|<init>(kotlin.Function0<kotlin.Boolean>){}[0]
+
+        final val isProtected // io.kuicksilver.ktor.client/HttpsRecordSource.ProtectedSystem.isProtected|{}isProtected[0]
+            final fun <get-isProtected>(): kotlin/Function0<kotlin/Boolean> // io.kuicksilver.ktor.client/HttpsRecordSource.ProtectedSystem.isProtected.<get-isProtected>|<get-isProtected>(){}[0]
+    }
+
+    final object Companion // io.kuicksilver.ktor.client/HttpsRecordSource.Companion|null[0]
+
+    final object Off : io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource.Off|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/HttpsRecordSource.Off.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/HttpsRecordSource.Off.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.ktor.client/HttpsRecordSource.Off.toString|toString(){}[0]
+    }
+
+    final object System : io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource.System|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/HttpsRecordSource.System.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/HttpsRecordSource.System.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.ktor.client/HttpsRecordSource.System.toString|toString(){}[0]
+    }
+}
+
 abstract class io.kuicksilver.ktor.client/KuicksilverEventListener { // io.kuicksilver.ktor.client/KuicksilverEventListener|null[0]
     constructor <init>() // io.kuicksilver.ktor.client/KuicksilverEventListener.<init>|<init>(){}[0]
 
@@ -110,6 +143,7 @@ abstract class io.kuicksilver.ktor.client/KuicksilverEventListener { // io.kuick
     open fun connectionMigrated(kotlin/String, io.kuicksilver.quic/MigrationEvent<*>) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectionMigrated|connectionMigrated(kotlin.String;io.kuicksilver.quic.MigrationEvent<*>){}[0]
     open fun connectionReleased(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, kotlin/Boolean) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectionReleased|connectionReleased(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;kotlin.Boolean){}[0]
     open fun fallback(io.ktor.client.request/HttpRequestData, kotlin/Throwable) // io.kuicksilver.ktor.client/KuicksilverEventListener.fallback|fallback(io.ktor.client.request.HttpRequestData;kotlin.Throwable){}[0]
+    open fun httpsRecordUsed(io.ktor.client.request/HttpRequestData, kotlin/String) // io.kuicksilver.ktor.client/KuicksilverEventListener.httpsRecordUsed|httpsRecordUsed(io.ktor.client.request.HttpRequestData;kotlin.String){}[0]
     open fun protocolSelected(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, io.kuicksilver.ktor.client/ProtocolReason) // io.kuicksilver.ktor.client/KuicksilverEventListener.protocolSelected|protocolSelected(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;io.kuicksilver.ktor.client.ProtocolReason){}[0]
     open fun raceEnded(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, kotlin.time/Duration, kotlin/Throwable?) // io.kuicksilver.ktor.client/KuicksilverEventListener.raceEnded|raceEnded(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;kotlin.time.Duration;kotlin.Throwable?){}[0]
     open fun retry(io.ktor.client.request/HttpRequestData, kotlin/Int, kotlin/Throwable) // io.kuicksilver.ktor.client/KuicksilverEventListener.retry|retry(io.ktor.client.request.HttpRequestData;kotlin.Int;kotlin.Throwable){}[0]
@@ -211,6 +245,12 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
     final var http3Allowed // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed|{}http3Allowed[0]
         final fun <get-http3Allowed>(): kotlin/Function0<kotlin/Boolean> // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed.<get-http3Allowed>|<get-http3Allowed>(){}[0]
         final fun <set-http3Allowed>(kotlin/Function0<kotlin/Boolean>) // io.kuicksilver.ktor.client/Http3ClientConfig.http3Allowed.<set-http3Allowed>|<set-http3Allowed>(kotlin.Function0<kotlin.Boolean>){}[0]
+    final var httpsRecordExtraWait // io.kuicksilver.ktor.client/Http3ClientConfig.httpsRecordExtraWait|{}httpsRecordExtraWait[0]
+        final fun <get-httpsRecordExtraWait>(): kotlin.time/Duration // io.kuicksilver.ktor.client/Http3ClientConfig.httpsRecordExtraWait.<get-httpsRecordExtraWait>|<get-httpsRecordExtraWait>(){}[0]
+        final fun <set-httpsRecordExtraWait>(kotlin.time/Duration) // io.kuicksilver.ktor.client/Http3ClientConfig.httpsRecordExtraWait.<set-httpsRecordExtraWait>|<set-httpsRecordExtraWait>(kotlin.time.Duration){}[0]
+    final var httpsRecords // io.kuicksilver.ktor.client/Http3ClientConfig.httpsRecords|{}httpsRecords[0]
+        final fun <get-httpsRecords>(): io.kuicksilver.ktor.client/HttpsRecordSource // io.kuicksilver.ktor.client/Http3ClientConfig.httpsRecords.<get-httpsRecords>|<get-httpsRecords>(){}[0]
+        final fun <set-httpsRecords>(io.kuicksilver.ktor.client/HttpsRecordSource) // io.kuicksilver.ktor.client/Http3ClientConfig.httpsRecords.<set-httpsRecords>|<set-httpsRecords>(io.kuicksilver.ktor.client.HttpsRecordSource){}[0]
     final var maxWebTransportSessions // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions|{}maxWebTransportSessions[0]
         final fun <get-maxWebTransportSessions>(): kotlin/Int // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions.<get-maxWebTransportSessions>|<get-maxWebTransportSessions>(){}[0]
         final fun <set-maxWebTransportSessions>(kotlin/Int) // io.kuicksilver.ktor.client/Http3ClientConfig.maxWebTransportSessions.<set-maxWebTransportSessions>|<set-maxWebTransportSessions>(kotlin.Int){}[0]

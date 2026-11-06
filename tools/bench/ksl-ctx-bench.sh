@@ -9,7 +9,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 target="${KSL_TARGET:-$( [ "$(uname)" = Darwin ] && echo macos-arm64 || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )}"
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built"; exit 2; }
 out="$root/build/bench"; mkdir -p "$out"; CC="${CC:-cc}"
-libs=$( [ "$(uname)" = Darwin ] || echo "-lpthread -ldl" )
+libs=$( [ "$(uname)" = Darwin ] || echo "-lresolv -lpthread -ldl" )
 $CC -std=gnu11 -O2 -I"$O/include" -Ikuicksilver-native/src/c kuicksilver-native/src/c/ksl_*.c tools/bench/ksl_ctx_bench.c \
   "$O/lib/libssl.a" "$O/lib/libcrypto.a" $libs -o "$out/ksl_ctx_bench"
 "$out/ksl_ctx_bench" "${1:-2000}"

@@ -47,6 +47,7 @@ int main(int argc, char **argv) {
     run_crypto();
     run_udp();
     run_security();
+    run_dns();
 #ifdef KSL_TEST_TCP
     run_tcp();
     run_verify();

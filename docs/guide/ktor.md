@@ -618,6 +618,71 @@ the rewrite when a repeated header only refreshes the expiry, and the engine wri
 without `persist=1` are dropped when `networkId()` reports a new network (RFC 7838 section 2.2); `clearOnNetworkChange =
 false` keeps them.
 
+### HTTPS records (experimental)
+
+`http3 { httpsRecords = HttpsRecordSource.System }` (or `HttpsRecordSource.Exchange { query -> ... }` for your own
+DNS-over-HTTPS client) makes the engine an HTTPS-record client (RFC 9460) in `Auto` mode: the origin's records say where
+to connect, so the first request to an origin that publishes one with `alpn=h3` races HTTP/3 at once instead of waiting
+for an `Alt-Svc` header, as browsers do. Off by default. The rules:
+
+- for an `https://` request to a host name; never for `Preferred`, `H3Only`, `quicHints`, IP addresses, requests
+  through a proxy, or while `http3Allowed` says no;
+- the name asked is the host for port 443, `_<port>._https.<host>` otherwise (section 9.1); AliasMode records are
+  followed (one at random among several; at most 8 steps; a loop or a longer chain is treated as no record; an AliasMode
+  "." is ignored); the ServiceMode records of the final name, by ascending priority and shuffled within a priority, are
+  the endpoints, each at its target (the record's own name for ".") and `port` (the origin's when absent); after an
+  AliasMode chain the last name with the origin's port is one more endpoint, last (section 3);
+- an endpoint is tried over the transports its ALPN set allows (section 7.1.2; the default set is `http/1.1`, so
+  `alpn=h3` means QUIC and TCP, `alpn=h2` TCP, and `no-default-alpn` with `alpn=h3` QUIC only); QUIC and TCP race as for
+  an `Alt-Svc` alternative ([Racing and fallback](#racing-and-fallback)), TCP connecting to the endpoint's target and
+  port, both offering the engine's usual ALPN lists. An endpoint that cannot be connected to is followed by the next one,
+  and after the last by the origin as without records. TLS and the request still name the origin, and the certificate is
+  checked against the origin's name whatever the record says; a QUIC endpoint that fails is marked broken like an
+  alternative (`httpsRecordUsed` and `altSvcMarkedBroken` report both). The address hints are not used, `ech` is not (a
+  record that requires it is skipped), and a malformed record makes the whole answer unusable (section 2.2);
+- a cached `Alt-Svc` alternative is tried first, its TCP side going to the origin's first TCP endpoint; the
+  alternative's own HTTPS records are looked up too (RFC 9460 section 9.3), and when it has some, HTTP/3 goes to their
+  targets and ports that offer `h3`, and not to the alternative at all when none does (`Alt-Used` still names the
+  alternative);
+- the request waits for the records while the origin's addresses resolve and at most `httpsRecordExtraWait` (50 ms)
+  longer; a lookup that answers later, fails or times out leaves the request on the origin as without records, and a
+  late answer is cached for the next request (`httpsRecordExtraWait` is 50 ms to 1 s: RFC 9460 section 5.1 asks for at
+  least 50 ms before connecting without the records). While an AliasMode chain is followed, the addresses of each
+  alias target are looked up in parallel (section 5). A malformed answer always counts as "no records". With
+  `HttpsRecordSource.Exchange(secure = true) { ... }` (an exchange whose answers are protected: DNS over HTTPS or TLS, or
+  validated DNSSEC) the request waits for the records instead, up to the connect timeout, and a failed lookup (an error
+  answer such as SERVFAIL, a transport error, a timeout) abandons it with an `IOException`, so an attacker who drops the
+  answers cannot downgrade the connection (RFC 9460 section 3.1). `HttpsRecordSource.ProtectedSystem { ... }` does the
+  same for the system resolver when your check says its answers are protected; on Android
+  `HttpsRecordSource.followingPrivateDns(connectivity)` says so while strict Private DNS is on (the engine has no
+  `Context`: with plain `System` strict Private DNS is not taken into account, so opt in with this builder). Elsewhere no public API
+  tells whether the system's DNS is encrypted, so `System` treats failures as "no records";
+- answers are cached for their TTL, never longer (at most a day; "no records" for the negative TTL of the answer's SOA
+  record, RFC 2308, and not at all without one; at most 1000 names), together with the other HTTPS records and the
+  A/AAAA records the answer carried, which spare follow-up queries (RFC 9460 section 5), and forgotten when
+  `networkId()` reports a new network; without `networkId` the engine cannot see a network change and keeps no answers
+  of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
+  asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at
+  most the connect timeout (30 s at most); closing the client cancels the lookups still running.
+
+`HttpsRecordSource.System` asks the operating system's resolver, so lookups follow the system's DNS settings:
+`res_nquery` on Linux (JVM and Kotlin/Native), `DNSServiceQueryRecord` on macOS and iOS, `DnsQuery_W` on Windows, and
+`DnsResolver.rawQuery` on the default network (Private DNS included) on Android from API 29. On Android API 24 to 28 there
+is no public way to ask for a record type (and a resolver of the engine's own would bypass Private DNS), so every lookup
+counts as failed there and requests behave as without records. At most four system lookups run at once per process.
+`HttpsRecordSource.Exchange` works everywhere.
+
+An `http://` request (not `ws://`, not through a proxy, not to an IP address) first looks up the records of the same URL
+with `https` (port 80 becomes 443), waiting for the answer as an `https` request does (while the origin's addresses
+resolve and `httpsRecordExtraWait` longer; the whole lookup with a secure source); when the origin
+has an AliasMode record or a ServiceMode record the engine could use, the engine answers `307 Temporary Redirect` to the
+`https` URL itself, without connecting (RFC 9460 section 9.5). Ktor's `HttpRedirect` (on by default) follows it like any
+307; with `followRedirects = false` the call sees the 307, and so does a POST, PUT or other unsafe request while
+`HttpRedirect`'s `checkHttpMethod` is on (its default follows GET and HEAD only): set `checkHttpMethod = false` to have
+those repeated over `https` too. An AliasMode record whose target is no host name counts as "." and does not upgrade. The upgrade is no more trusted than a 307 over cleartext:
+nothing is remembered for the origin beyond the records' TTL. An origin that publishes HTTPS records but serves
+different content on `http://` cannot be reached over `http://` by such a client.
+
 ### Racing and fallback
 
 When HTTP/3 is an option (`Preferred`, a QUIC hint, or a live Alt-Svc alternative) and no HTTP/3 connection to it is
@@ -1005,7 +1070,7 @@ embeddedServer(Kuicksilver, configure = {
 **Client.** `engine { eventListener = ... }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
 `protocolSelected` with a `ProtocolReason` (`Configuration`, `NotSecure`, `ExistingConnection`, `Race`, `NoAlternative`,
-`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
+`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`, `HttpsRecord`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
 `altSvcMarkedBroken`; `fallback` from HTTP/3 to HTTP/1.1; `retry` (a request the server did not process after GOAWAY, a
 stale pooled HTTP/1.1 connection); `connectionAcquired` (reused or new) and `connectionReleased` (kept for the next request
 or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and

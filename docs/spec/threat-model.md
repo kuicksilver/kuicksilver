@@ -102,6 +102,11 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 - **Mitigations:** `ksl` — minimal code, all buffers with lengths, no `strlen`; Kotlin — bounds checks; fuzzing with Jazzer and libFuzzer; size limits.
 - **Verification:** the committed fuzzing corpora run as regression tests in `jvmTest`, and `tools/c-test.sh` runs `ksl` under ASan/UBSan, both in the local gate (`tools/ci/local-matrix.sh`).
 
+0.3.0: the DNS parser of the HTTPS records (RFC 9460, `kuicksilver-ktor-client/.../dns/`) reads answers from the system
+resolver or a DNS-over-HTTPS exchange, which may be on the attacker's path: every read is bounds-checked, a name follows
+at most 128 compression pointers and each must point back, names are at most 255 bytes, and nothing is allocated beyond
+the message's length. New fuzz target `client.svcb` (`SvcbFuzzTest.svcbMessage`, seeds from `tools/fuzz/gen-svcb-seeds.py`).
+
 0.2.0 status (fuzzing campaigns, 2026-10-13/14): local campaigns replace ClusterFuzzLite (`tools/fuzz/campaign.sh`,
 CONTRIBUTING "Fuzzing"): every target runs in slices of at most 20 minutes at background priority, one at a time, and the
 grown corpora are minimized into `tools/fuzz/corpus/<target>/`. New targets: `ConnectionFuzzTest.connectionNull` and
@@ -242,6 +247,21 @@ Status (core review): skipped packet numbers, all CIDs (the client's ODCID/SCID,
 
 - **Threats:** the server points the client at an arbitrary host:port through `Alt-Svc` or `preferred_address`; an attacker makes the client send Initials/tokens to a victim.
 - **Mitigations:** `Alt-Svc` is accepted only from a response over verified TLS, port ≥ 1024 is dropped when the origin is < 1024, the cache is bounded; an alternative on a loopback, link-local, private (RFC 1918, RFC 6598, `fc00::/7`) address or a `localhost` name is dropped unless the origin itself is on such an address (the rule migration applies to paths, §3.5), and one on an unspecified, multicast or broadcast address always (security review 2026-10-14: before, a verified origin, such as a public site under the attacker's control, could send `h3="127.0.0.1:443"` or `h3="[fe80::1]:500"` and every client sent padded Initials into its own network for up to `ma`); a `preferred_address` is followed only after the path is validated, only in the family in use, never to an unspecified, multicast or broadcast address, and from a server reached on a public address never to a loopback, link-local or private one (the same rule, `AddressClass.isUnsafeDestination`; a hostile server can at worst make the client send PATH_CHALLENGE probes to such an address, which the rule prevents); a NEW_TOKEN token is sent only with an explicit token store and only to the server name and port that issued it, so a server cannot make the client send tokens to a third party. An IPv4 literal is classified in every form `inet_aton` and the JVM accept without DNS (`127.1`, `10.1`, `2130706433`: 0.2.1 review, before they counted as DNS names and passed); a numeric host with an octal or hex part (`0177.0.0.1`, `0x7f.1`: octal or hex to inet_aton, decimal or refused by the JVM) or that is no address (`256.1.1.1`) is never a destination.
+- **HTTPS records (RFC 9460, 0.3.0, opt-in):** a record's target and port, where QUIC and TCP then connect, carry the
+  same trust as the A/AAAA records of the origin, which come from the same resolver: whoever can forge one can forge the
+  other. So the Alt-Svc rules above (the port rule, the local-address rule) do not apply to them; the certificate is
+  checked against the origin's name, whatever target the record names, and a target that fails the check loses the race
+  and is marked broken
+  (`ClientHttpsRecordTest.negative_wrongCertificateAtTargetFallsBackAndMarksBroken`). Lookups are bounded: one per name
+  at a time, each at most the connect timeout (30 s at most), at most 8 AliasMode steps with loop detection
+  (`.negative_aliasLoopStops`), 1000 cached names, and a request waits at most `httpsRecordExtraWait` after its addresses
+  resolved (`.negative_hangingSourceDoesNotDelayBeyondExtraWait`). An attacker who drops the HTTPS answers can only make
+  the client connect as without records; with `Exchange(secure = true)` (protected answers) a failed lookup abandons the
+  request instead (RFC 9460 section 3.1; `ClientHttpsFailureTest.negative_failureOverSecureDnsAbandonsTheRequest`).
+  The `http`-to-`https` upgrade from a record (section 9.5) is a synthesized 307: DNS is unauthenticated, so it is
+  trusted exactly as much as a 307 over cleartext HTTP, which the same attacker could send, and nothing about the origin
+  is remembered beyond the TTL; an attacker who drops the answer keeps the request on `http` as without records
+  (`ClientHttpsUpgradeTest.*`; with `Exchange(secure = true)` the request is abandoned instead).
 - **Residue:** only IP literals are classified: an alternative named by a DNS name that resolves to a local address is not caught (the resolver runs in the QUIC connect, and a check before it could be raced by DNS rebinding). That exposure equals a redirect to such a name, which the HTTP client follows anyway.
 - **Verification:** `negative_altSvcFromUnverifiedTls`, `AltSvcDestinationTest.negative_altSvcToLocalNetworkFromPublicOrigin`, `.negative_altSvcToUnspecifiedOrMulticastAlwaysRefused`, `.negative_shorthandIpv4AltSvcToLocalNetworkRefused`, `.negative_ambiguousOrInvalidNumericAltSvcHostRefused`, `.localOriginMayPointToLocalAlternatives`, `negative_preferredAddressIgnored` (the zero-address hook), `PreferredAddressTest.negative_preferredAddressToLoopbackFromPublicServerIgnored`, `.negative_preferredAddressUnspecifiedOrMulticastIgnored`, `.negative_preferredAddressOnReflectionPortIgnored` (a server cannot aim the client's probes at a DNS, NTP, SSDP, mDNS or memcached port either).
 

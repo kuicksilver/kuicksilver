@@ -762,6 +762,18 @@ static jint j_live_objects(JNIEnv *e, jclass c, jlongArray out) {
         (*e)->SetLongArrayRegion(e, out, 0, len, j);
     return n;
 }
+/* ksl_dns_query: the answer (kind byte first), an empty array for KSL_DNS_NOT_FOUND, null otherwise (not supported, failed) */
+static jbyteArray j_dns_query(JNIEnv *e, jclass c, jstring name, jint type, jbyteArray server, jint timeout) {
+    (void)c; if (type < 0 || type > 0xffff) return NULL;
+    uint8_t srv[KSL_UDP_ADDR_LEN];
+    if (server) { if ((*e)->GetArrayLength(e, server) != KSL_UDP_ADDR_LEN) return NULL; (*e)->GetByteArrayRegion(e, server, 0, KSL_UDP_ADDR_LEN, (jbyte *)srv); }
+    size_t cap = 65536 + 1 + 4096; uint8_t *out = malloc(cap); if (!out) return NULL;
+    const char *n = cstr(e, name); size_t len = 0;
+    int r = n ? ksl_dns_query(n, (uint16_t)type, server ? srv : NULL, timeout, out, cap, &len) : KSL_ERROR;
+    cstr_free(e, name, n);
+    jbyteArray a = r == KSL_OK ? new_bytes(e, out, len) : r == KSL_DNS_NOT_FOUND ? new_bytes(e, NULL, 0) : NULL;
+    free(out); return a;
+}
 
 #define S_BB "Ljava/nio/ByteBuffer;"
 #define S_STR "Ljava/lang/String;"
@@ -837,6 +849,7 @@ static const JNINativeMethod methods[] = {
     {"udpTakePtb", "(J[B[I[B)Z", (void *)j_udp_take_ptb},
     {"udpEmsgsize", "(J[I)J", (void *)j_udp_emsgsize},
     {"liveObjects", "([J)I", (void *)j_live_objects},
+    {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},
 };
 
 static jint on_load(JavaVM *vm, jint version) {

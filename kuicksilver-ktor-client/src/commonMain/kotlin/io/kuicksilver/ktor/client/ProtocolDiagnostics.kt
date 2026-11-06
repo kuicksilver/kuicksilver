@@ -304,7 +304,7 @@ public enum class AlternativeSource {
     /** `Http3DiscoveryMode.H3Only`: the origin itself, without a fallback. */
     H3Only,
 
-    /** An HTTPS DNS record (RFC 9460). Not produced yet: this version of the engine does not look such records up. */
+    /** An HTTPS resource record of the origin (RFC 9460, `Http3ClientConfig.httpsRecords`), in `Http3DiscoveryMode.Auto`. */
     HttpsRecord,
 }
 

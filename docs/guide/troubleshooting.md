@@ -430,6 +430,7 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 | `ExistingConnection` | an HTTP/3 connection to the origin was already open and carries the call |
 | `WebSocket` | a WebSocket starts on HTTP/1.1 until the origin has an HTTP/3 connection that allows Extended CONNECT (RFC 9220) |
 | `Fallback` | HTTP/3 failed for this request and it is repeated over TCP; `fallback` says why (below) |
+| `HttpsRecord` | an endpoint of the origin's HTTPS record (`http3 { httpsRecords }`) that offers one transport only: TCP (its ALPN set has no `h3`), or HTTP/3 without TCP (`no-default-alpn`), so nothing raced |
 
 `response.kuicksilverDiagnostics?.fallback` (`FallbackReason`, also `fallback=` in the engine's log line) names the cause
 when a call that could have used HTTP/3 went over TCP; `null` when it went over HTTP/3. Every value:

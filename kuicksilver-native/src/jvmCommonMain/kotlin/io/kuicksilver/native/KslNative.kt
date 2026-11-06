@@ -365,4 +365,11 @@ internal object KslNative {
 
     /** ksl_live_objects into [out]; returns KSL_LIVE_COUNT */
     @JvmStatic external fun liveObjects(out: LongArray): Int
+
+    @JvmStatic external fun dnsQuery(
+        name: String,
+        type: Int,
+        server: ByteArray?,
+        timeoutMs: Int,
+    ): ByteArray?
 }

@@ -69,6 +69,33 @@ public class Http3ClientConfig {
     public var altSvcStore: AltSvcStore = InMemoryAltSvcStore()
 
     /**
+     * Where [Http3DiscoveryMode.Auto] looks up HTTPS resource records (RFC 9460; docs/guide/ktor.md, "HTTPS records"):
+     * [HttpsRecordSource.Off] (the default), the system resolver ([HttpsRecordSource.System]) or your DNS-over-HTTPS
+     * exchange ([HttpsRecordSource.Exchange]). An `https://` request to a host name asks for the origin's records (the
+     * name for port 443, `_<port>._https.<name>` otherwise), follows AliasMode records, and connects to their endpoints in
+     * priority order over the transports each allows (HTTP/3 and TCP racing for `alpn=h3`, TCP to the record's target and
+     * `port`), then to the origin as without records; the certificate is checked against the origin's name whatever the
+     * target. The address hints are not used, nor is `ech` (a record that requires it is skipped). A cached `Alt-Svc`
+     * alternative is tried first. No lookup is made for [Http3DiscoveryMode.Preferred],
+     * [Http3DiscoveryMode.H3Only], [quicHints], IP addresses, requests through a proxy, or while [http3Allowed] says no.
+     * An `http://` request (in every discovery mode) first asks for the records of its `https` URL and, when the origin has
+     * any usable one, gets a `307` to that URL from the engine instead (RFC 9460 section 9.5). Answers are cached for their TTL (at most
+     * 1 day; "no records" for the SOA's negative TTL, not at all without one; at most 1000 names) until [networkId] changes, and only when [networkId] is set
+     * (RFC 9460 section 12); a failed lookup is not cached.
+     */
+    @ExperimentalKuicksilverApi
+    public var httpsRecords: HttpsRecordSource = HttpsRecordSource.Off
+
+    /**
+     * How long a request waits for the HTTPS records after the origin's addresses resolved (50 ms by default, as Chromium):
+     * an answer that comes later is cached for the next request, and this one goes on without records. 50 ms (RFC 9460
+     * section 5.1: an optimistic connection SHOULD wait that long) to 1 s;
+     * any other value fails the engine's creation with [IllegalArgumentException]. The connect timeout bounds the whole wait.
+     */
+    @ExperimentalKuicksilverApi
+    public var httpsRecordExtraWait: Duration = 50.milliseconds
+
+    /**
      * Forget alternatives without `persist=1` when [networkId] reports a new network, as RFC 7838 section 2.2 says a client
      * SHOULD; true by default (before 0.2.1, false). False keeps them across networks.
      */
@@ -83,8 +110,19 @@ public class Http3ClientConfig {
      */
     public var hardDelay: Duration? = null
 
-    /** Identifies the current network; a change resets "broken" marks and QUIC confirmation. null: one network. */
+    /**
+     * Identifies the current network; a change resets "broken" marks, QUIC confirmation and the HTTPS record cache. null:
+     * one network. While it is not set the engine keeps no HTTPS records of its own ([httpsRecords]): RFC 9460 section 12
+     * requires that cache to be flushed on network changes, which the engine cannot see then.
+     */
     public var networkId: () -> String? = { null }
+        set(value) {
+            field = value
+            networkIdSet = true
+        }
+
+    /** Whether [networkId] was set (the HTTPS record cache needs it, RFC 9460 section 12). */
+    internal var networkIdSet: Boolean = false
 
     /** HTTP/3 settings of the engine's connections. */
     public var settings: Http3Settings = Http3Settings.Default
