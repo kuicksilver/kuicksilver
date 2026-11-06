@@ -477,8 +477,8 @@ host (load average 2-9), local; single runs, before = `614733d0d` (P.5), after =
 | JVM, QUIC core with ksl crypto (`CoreAllocationTest`) | 0 | 0 |
 | Native, managed heap per GiB, loopback UDP | 188-346 MiB | 154-315 MiB |
 | `ksl_open`, C heap per received packet | one `malloc` (payload size), copy, wipe | none |
-| `UdpThroughputBenchmark` (accelerated socket, CUBIC, Null crypto) | 28.1 ± 3.2 MiB/s | 34.6 ± 3.9 MiB/s |
-| `CoreThroughputBenchmark`, ksl crypto | 794.9 ± 16.7 ops/s | 828.8 ± 21.6 ops/s (after the `ksl_open` change; 758.7 ± 56.9 at load 5.4) |
+| `UdpThroughputBenchmark` (accelerated socket, CUBIC, Null crypto) | 28.1 ± 3.2 MiB/s | 34.6 ± 3.9 MiB/s (within this host's noise: 26-35 between runs of one build; not attributable) |
+| `CoreThroughputBenchmark`, ksl crypto | 794.9 ± 16.7 ops/s | 828.8 ± 21.6 ops/s after the `ksl_open` change, 758.7 ± 56.9 at load 5.4 (within this host's noise; not attributable) |
 
 What went, by commit (each measured on its own, JVM loopback UDP; the order is the order they landed):
 
