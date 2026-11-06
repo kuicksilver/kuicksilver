@@ -265,22 +265,23 @@ public sealed interface VerifyReason {
 
     /**
      * A key in the peer's chain is below OpenSSL security level 2, 112 bits (RSA under 2048 bits, an elliptic curve under
-     * 224 bits); alert `bad_certificate` (42). Checked by `ksl` under every [TrustConfig], before the platform verifier or
-     * a [CertificateVerifier] is asked, so that every platform refuses the same presented chains (the JDK, Android and
-     * Windows verifiers accept 1024-bit RSA): the key of every certificate the peer sent that is reachable from the leaf
-     * through issuers whose key verifies the signature, a self-signed root included (stricter than OpenSSL for a
-     * certificate sent above the platform's anchor). On OpenSSL's own path ([TrustConfig.AnchoredCa], `Platform` on
-     * Linux) OpenSSL checks the chain it built, its trust anchor included.
+     * 224 bits); alert `bad_certificate` (42). Checked under every [TrustConfig] (the JDK, Android and Windows verifiers
+     * accept 1024-bit RSA): on OpenSSL's own path ([TrustConfig.AnchoredCa], `Platform` on Linux) by OpenSSL on the path
+     * it built; under [TrustConfig.Platform] elsewhere by `ksl` after the platform's yes, on the path the platform built
+     * (a certificate the peer sent that the platform did not use does not count), or on the presented chain when the
+     * platform does not say its path; under [TrustConfig.Custom] and [TrustConfig.Tofu] by `ksl` before the verifier or
+     * the store is asked, on every certificate the peer sent that is reachable from the leaf through issuers whose key
+     * verifies the signature (stricter than OpenSSL for a certificate sent above the anchor the application trusts). The
+     * trust anchor's key counts everywhere.
      */
     @ExperimentalKuicksilverApi
     public data object WeakKey : VerifyReason
 
     /**
      * A certificate in the peer's chain is signed with a digest below OpenSSL security level 2, 112 bits: SHA-1 or MD5
-     * (RFC 9846 section 4.5.1.3: MD5 MUST and SHA-1 SHOULD be refused); alert `bad_certificate` (42). The own signature of
-     * a self-signed certificate (one that verifies under its own key), and on OpenSSL's path the trust anchor's, are not
-     * checked: they begin the path. Checked
-     * where [WeakKey] is.
+     * (RFC 9846 section 4.5.1.3: MD5 MUST and SHA-1 SHOULD be refused); alert `bad_certificate` (42). The trust anchor's
+     * signature is not checked on a path OpenSSL or the platform built, nor, on a presented chain, the own signature of a
+     * self-signed certificate (one that verifies under its own key): they begin the path. Checked where [WeakKey] is.
      */
     @ExperimentalKuicksilverApi
     public data object WeakSignature : VerifyReason

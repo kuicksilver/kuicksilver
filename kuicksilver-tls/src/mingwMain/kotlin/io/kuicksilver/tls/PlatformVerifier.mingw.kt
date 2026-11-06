@@ -82,11 +82,11 @@ internal actual val platformTrustViaOpenSsl: Boolean = false
  * building may fetch missing intermediates (AIA) and the leaf's revocation status over the network.
  */
 internal actual object PlatformVerifier {
-    actual suspend fun verify(
+    actual suspend fun evaluate(
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
-    ): VerifyResult = withContext(Dispatchers.IO) { WindowsTrust.verify(chain, host, role) }
+    ): PlatformVerdict = withContext(Dispatchers.IO) { WindowsTrust.evaluate(chain, host, role) }
 }
 
 /**
@@ -101,7 +101,8 @@ internal actual object PlatformVerifier {
  * 3. `CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL)` decides, with the reference identifier as the server name
  *    for a server; an unknown revocation status is ignored (soft fail, like rustls-platform-verifier, OpenSSL and Secure
  *    Transport), a revoked leaf is not;
- * 4. the first simple chain of the context is the validated chain pins are compared against.
+ * 4. the first simple chain of the context, leaf first and its root last, is the validated chain pins are compared against
+ *    and the path the security level holds on ([platformLevel]).
  *
  * `ksl` still re-checks the name with the shared RFC 9525 matcher when the handshake resumes, so Windows' own matcher
  * (which still falls back to the subject CN when no SAN is present) can only make the decision stricter.
@@ -132,40 +133,49 @@ internal object WindowsTrust {
         host: HostName,
         role: TlsRole,
         exclusiveRoots: List<Certificate>? = null,
-    ): VerifyResult {
-        if (chain.isEmpty()) return VerifyResult.Rejected(VerifyReason.NoCertificate)
+    ): VerifyResult = evaluate(chain, host, role, exclusiveRoots).result
+
+    /** [verify], with the path Windows built on a yes (null when a certificate of it could not be read). */
+    fun evaluate(
+        chain: List<Certificate>,
+        host: HostName,
+        role: TlsRole,
+        exclusiveRoots: List<Certificate>? = null,
+    ): PlatformVerdict {
+        if (chain.isEmpty()) return PlatformVerdict(VerifyResult.Rejected(VerifyReason.NoCertificate), null)
         return memScoped {
             val store =
-                memoryStore() ?: return@memScoped VerifyResult.Rejected(VerifyReason.Custom("CertOpenStore failed"))
+                memoryStore() ?: return@memScoped rejected(VerifyReason.Custom("CertOpenStore failed"))
             var roots: CPointer<*>? = null
             var engine: CPointer<*>? = null
             var leaf: CPointer<CERT_CONTEXT>? = null
             var context: CPointer<CERT_CHAIN_CONTEXT>? = null
             try {
                 for ((i, c) in chain.withIndex()) {
-                    val added = add(store, c) ?: return@memScoped VerifyResult.Rejected(VerifyReason.BadEncoding)
+                    val added = add(store, c) ?: return@memScoped rejected(VerifyReason.BadEncoding)
                     if (i == 0) leaf = added else CertFreeCertificateContext(added)
                 }
                 if (exclusiveRoots != null) {
-                    roots = memoryStore() ?: return@memScoped VerifyResult.Rejected(VerifyReason.Custom("CertOpenStore failed"))
+                    roots = memoryStore() ?: return@memScoped rejected(VerifyReason.Custom("CertOpenStore failed"))
                     for (r in exclusiveRoots) {
-                        CertFreeCertificateContext(add(roots, r) ?: return@memScoped VerifyResult.Rejected(VerifyReason.BadEncoding))
+                        CertFreeCertificateContext(add(roots, r) ?: return@memScoped rejected(VerifyReason.BadEncoding))
                     }
                     engine =
                         exclusiveEngine(roots)
-                            ?: return@memScoped VerifyResult.Rejected(VerifyReason.Custom("CertCreateCertificateChainEngine failed"))
+                            ?: return@memScoped rejected(VerifyReason.Custom("CertCreateCertificateChainEngine failed"))
                 }
                 context = buildChain(engine, leaf, store, role)
-                    ?: return@memScoped VerifyResult.Rejected(VerifyReason.Custom("CertGetCertificateChain failed"))
+                    ?: return@memScoped rejected(VerifyReason.Custom("CertGetCertificateChain failed"))
                 val status =
                     policy(context, host, role)
-                        ?: return@memScoped VerifyResult.Rejected(VerifyReason.Custom("CertVerifyCertificateChainPolicy failed"))
+                        ?: return@memScoped rejected(VerifyReason.Custom("CertVerifyCertificateChainPolicy failed"))
                 if (status.dwError ==
                     0u
                 ) {
-                    VerifyResult.Accepted(validatedChain(context))
+                    val built = validatedChain(context)
+                    PlatformVerdict(VerifyResult.Accepted(built ?: emptyList()), built)
                 } else {
-                    VerifyResult.Rejected(reasonOf(status, context, chain, host))
+                    rejected(reasonOf(status, context, chain, host))
                 }
             } finally {
                 context?.let { CertFreeCertificateChain(it) }
@@ -259,17 +269,22 @@ internal object WindowsTrust {
         return status
     }
 
-    /** The first simple chain of [context], leaf first, anchor last. */
-    private fun validatedChain(context: CPointer<CERT_CHAIN_CONTEXT>): List<Certificate> {
+    private fun rejected(reason: VerifyReason) = PlatformVerdict(VerifyResult.Rejected(reason), null)
+
+    /**
+     * The first simple chain of [context], leaf first, anchor last; null when there is none or a certificate of it cannot be
+     * read (a path with a gap is not the path Windows built).
+     */
+    private fun validatedChain(context: CPointer<CERT_CHAIN_CONTEXT>): List<Certificate>? {
         val ctx = context.pointed
-        if (ctx.cChain == 0u) return emptyList()
+        if (ctx.cChain == 0u) return null
         val simple = ctx.rgpChain!![0]!!.pointed
-        return (0 until simple.cElement.toInt()).mapNotNull { i ->
+        return (0 until simple.cElement.toInt()).map { i ->
             val cert =
                 simple.rgpElement!![i]
                     ?.pointed
                     ?.pCertContext
-                    ?.pointed ?: return@mapNotNull null
+                    ?.pointed ?: return null
             Certificate(cert.pbCertEncoded!!.readBytes(cert.cbCertEncoded.toInt()))
         }
     }

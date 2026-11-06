@@ -15,18 +15,22 @@ internal actual val platformTrustViaOpenSsl: Boolean = false
 /**
  * Android: `TrustManagerFactory.init(null)` so the Network Security Config applies, and the host-aware
  * `X509TrustManagerExtensions.checkServerTrusted(chain, authType, host)`, which per-domain NSC requires and which returns
- * the validated chain (pins are compared against it). Client certificates are not verified by the platform in v1.
+ * the validated chain, leaf first and the trust anchor last (pins are compared against it, the security level holds on it).
+ * Client certificates are not verified by the platform in v1.
  */
 internal actual object PlatformVerifier {
-    actual suspend fun verify(
+    actual suspend fun evaluate(
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
-    ): VerifyResult {
+    ): PlatformVerdict {
         if (role ==
             TlsRole.Server
         ) {
-            return VerifyResult.Rejected(VerifyReason.Custom("platform client-certificate trust is not supported on Android in v1"))
+            return PlatformVerdict(
+                VerifyResult.Rejected(VerifyReason.Custom("platform client-certificate trust is not supported on Android in v1")),
+                null,
+            )
         }
         val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
         tmf.init(null as KeyStore?)
@@ -35,11 +39,11 @@ internal actual object PlatformVerifier {
         val x509 = chain.map { cf.generateCertificate(it.encoded.inputStream()) as X509Certificate }.toTypedArray()
         val authType = if (x509[0].publicKey.algorithm == "EC") "ECDHE_ECDSA" else "ECDHE_RSA"
         return try {
-            val validated = X509TrustManagerExtensions(tm).checkServerTrusted(x509, authType, host.value)
-            VerifyResult.Accepted(validated.map { Certificate(it.encoded) })
+            val validated = X509TrustManagerExtensions(tm).checkServerTrusted(x509, authType, host.value).map { Certificate(it.encoded) }
+            PlatformVerdict(VerifyResult.Accepted(validated), validated)
         } catch (e: CertificateException) {
             val msg = e.message ?: ""
-            VerifyResult.Rejected(
+            rejected(
                 when {
                     msg.contains("Pin verification failed") -> VerifyReason.PinMismatch(emptyList())
 
@@ -56,3 +60,5 @@ internal actual object PlatformVerifier {
         }
     }
 }
+
+private fun rejected(reason: VerifyReason) = PlatformVerdict(VerifyResult.Rejected(reason), null)

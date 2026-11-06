@@ -91,18 +91,21 @@ internal actual object PlatformVerifier {
     /** Test hook: evaluate as of this time (seconds since 1970, `SecTrustSetVerifyDate`) instead of now, so a fixture never expires. */
     internal var verifyDateForTest: Long? = null
 
-    actual suspend fun verify(
+    actual suspend fun evaluate(
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
-    ): VerifyResult {
+    ): PlatformVerdict {
         val owned = ArrayList<CFTypeRef?>() // released once the evaluation answered (or could not start)
         val trust =
             try {
-                createTrust(chain, host, role, owned) ?: return VerifyResult.Rejected(VerifyReason.BadEncoding)
+                createTrust(chain, host, role, owned) ?: return PlatformVerdict(VerifyResult.Rejected(VerifyReason.BadEncoding), null)
             } catch (e: IllegalStateException) {
                 owned.forEach { it?.let(::CFRelease) }
-                return VerifyResult.Rejected(VerifyReason.Custom(e.message ?: "SecTrustCreateWithCertificates failed"))
+                return PlatformVerdict(
+                    VerifyResult.Rejected(VerifyReason.Custom(e.message ?: "SecTrustCreateWithCertificates failed")),
+                    null,
+                )
             }
         return suspendCancellableCoroutine { cont ->
             val q = queue
@@ -111,7 +114,14 @@ internal actual object PlatformVerifier {
                     // runs on the queue: read the outcome, then release everything; a cancelled caller's resume is ignored
                     val r =
                         try {
-                            if (ok) VerifyResult.Accepted(validatedChain(trust) ?: chain) else rejection(error, host, chain)
+                            // the chain SecTrust built, leaf first and its anchor last; when it cannot be read, pins see the presented
+                            // chain and the level holds on it (platformLevel)
+                            if (ok) {
+                                val built = validatedChain(trust)
+                                PlatformVerdict(VerifyResult.Accepted(built ?: chain), built)
+                            } else {
+                                PlatformVerdict(rejection(error, host, chain), null)
+                            }
                         } finally {
                             owned.forEach { it?.let(::CFRelease) }
                         }

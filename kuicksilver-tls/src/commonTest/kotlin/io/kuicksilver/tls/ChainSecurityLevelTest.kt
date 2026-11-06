@@ -24,164 +24,235 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
- * OpenSSL security level 2 (112 bits) on the peer's chain under every trust (T.5): under [TrustConfig.Platform] the JDK,
- * Android and Windows verifiers accept 1024-bit RSA, so `ksl` checks the chain the peer sent before the platform is asked,
- * with the same verdicts as OpenSSL's own path ([TrustConfig.AnchoredCa]). The certificates come from
+ * OpenSSL security level 2 (112 bits) on the peer's chain under every trust (T.5, T.5b): under [TrustConfig.Platform] the
+ * JDK, Android and Windows verifiers accept 1024-bit RSA, so after the platform's yes the path it built is held to the level
+ * as OpenSSL holds its own ([TrustConfig.AnchoredCa]; the anchor's signature exempt, its key not); under `Custom` and `Tofu`
+ * `ksl` checks the chain the peer sent before the application is asked. The Platform cases here stand a platform in that says
+ * yes with a given path ([platformBuilt]); the JVM and Apple tests run the real verifiers. The certificates come from
  * `tools/certs/gen-weak-certs.sh`.
  */
 class ChainSecurityLevelTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private class Outcome(
-        val result: DriveResult,
-        val paused: Boolean,
-        val done: Boolean,
-    )
-
     private val weakRoot = Certificate(WeakCerts.weakRoot)
 
-    /**
-     * A handshake of a real client session against a raw `ksl` server at security level 0 (at the default level 2 OpenSSL
-     * refuses to load a weak key as its own identity). A pause is answered with [verdict], by default the platform's yes, so
-     * that only `ksl`'s own checks can refuse the chain.
-     */
     private fun handshake(
         client: TlsConfig,
         chain: List<ByteArray>,
         key: ByteArray,
         verdict: (QuicTlsSession, List<Certificate>) -> VerifyResult = { _, presented -> VerifyResult.Accepted(presented) },
-    ): Outcome {
-        val sc = Ksl.ctxNew(KslConst.SERVER)
-        var s = 0L
-        val c = KslQuicCrypto.newSession(client)
-        val keys = ArrayList<Long>()
-        val protectors = ArrayList<PacketProtector>()
-        try {
-            Ksl.ctxSetAlpn(sc, byteArrayOf(2, 'h'.code.toByte(), '3'.code.toByte()))
-            Ksl.ctxSetCiphers(sc, null, "@SECLEVEL=0:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256")
-            Ksl.ctxSetIdentity(sc, chain, key.copyOf())
-            s = Ksl.sslNew(sc, KslConst.MODE_QUIC)
-            Ksl.quicSetTransportParams(s, Fixtures.tp)
-            c.setTransportParameters(Fixtures.tp)
-            val ev = KslEvent()
-            var paused = false
-            var clientDone = false
-            var serverDone = false
-            var last: DriveResult = DriveResult.WantRead
-            repeat(40) {
-                last = c.drive()
-                val want = last
-                if (want is DriveResult.WantVerify) {
-                    paused = true
-                    c.resumeVerify(verdict(c, want.chain))
-                    last = c.drive()
-                }
-                while (true) {
-                    when (val e = c.nextEvent() ?: break) {
-                        is TlsEvent.CryptoData -> {
-                            Ksl.quicProvide(s, e.level.ksl, e.data, 0, e.data.size)
-                        }
-
-                        is TlsEvent.Keys -> {
-                            protectors += e.protector
-                        }
-
-                        TlsEvent.HandshakeDone -> {
-                            clientDone = true
-                        }
-
-                        else -> {}
-                    }
-                }
-                if (last is DriveResult.Failed) return Outcome(last, paused, false)
-                Ksl.drive(s)
-                while (Ksl.quicNextEvent(s, ev)) {
-                    when (ev.type) {
-                        KslConst.EV_CRYPTO_SEND -> c.provide(EncryptionLevel.entries.first { it.ksl == ev.level }, ev.payload)
-                        KslConst.EV_KEY -> keys += ev.key
-                        KslConst.EV_HANDSHAKE_DONE -> serverDone = true
-                    }
-                }
-                if (clientDone && serverDone) return Outcome(last, paused, true)
-            }
-            return Outcome(last, paused, clientDone && serverDone)
-        } finally {
-            protectors.forEach { it.close() }
-            keys.forEach(Ksl::keyFree)
-            c.close()
-            if (s != 0L) Ksl.sslFree(s)
-            Ksl.ctxFree(sc)
-        }
-    }
+    ): WeakOutcome = weakHandshake(client, chain, key, verdict)
 
     private fun refused(
-        o: Outcome,
+        o: WeakOutcome,
         reason: VerifyReason,
+        afterThePlatform: Boolean = false,
     ) {
         val f = assertIs<DriveResult.Failed>(o.result, "the chain is refused")
         assertEquals(42, f.alert, "bad_certificate, as OpenSSL sends for a chain below its security level")
         assertEquals(reason, assertIs<TlsException.Verify>(f.exception).reason)
         assertEquals(42, reason.alertCode)
-        assertFalse(o.paused, "refused before the platform or the application is asked")
+        if (afterThePlatform) {
+            assertTrue(o.paused, "the platform is asked first; its path is checked after its yes")
+        } else {
+            assertFalse(o.paused, "refused before the application is asked")
+        }
     }
 
     private val platformPauses get() = !platformTrustViaOpenSsl
 
-    private fun platform() = Fixtures.client(TrustConfig.Platform)
+    private fun platform(trust: TrustConfig = TrustConfig.Platform) = Fixtures.client(trust)
+
+    /**
+     * The verdict of a session under [config] whose platform verifier says yes and built [path] (leaf first, its anchor last;
+     * null: the platform did not say which path it took), through the same [Verification] a real pause runs.
+     */
+    private fun platformBuilt(
+        path: List<ByteArray>?,
+        config: TlsConfig = platform(),
+    ): (QuicTlsSession, List<Certificate>) -> VerifyResult =
+        { _, presented ->
+            val built = path?.map(::Certificate)
+            val v = Verification(config) { _, _, _ -> PlatformVerdict(VerifyResult.Accepted(built ?: presented), built) }
+            immediate { v.verify(presented, HostName.normalize("server.test")) }
+        }
+
+    private fun refusedOnItsPath(
+        chain: List<ByteArray>,
+        key: ByteArray,
+        path: List<ByteArray>,
+        reason: VerifyReason,
+    ) = refused(handshake(platform(), chain, key, platformBuilt(path)), reason, afterThePlatform = true)
 
     private fun anchored(root: Certificate = weakRoot) = Fixtures.client(TrustConfig.AnchoredCa(listOf(root)))
 
     @Test fun negative_platformRefusesA1024BitRsaLeaf() {
         if (!platformPauses) return // Linux: OpenSSL's own level 2 (negative_anchoredRefusesTheSameChains)
-        refused(handshake(platform(), listOf(WeakCerts.leafRsa1024), WeakCerts.leafRsa1024Key), VerifyReason.WeakKey)
-    }
-
-    @Test fun negative_platformRefusesA1024BitRsaIntermediate() {
-        if (!platformPauses) return
-        refused(
-            handshake(platform(), listOf(WeakCerts.leafViaRsa1024, WeakCerts.midRsa1024), WeakCerts.leafViaRsa1024Key),
+        refusedOnItsPath(
+            listOf(WeakCerts.leafRsa1024),
+            WeakCerts.leafRsa1024Key,
+            listOf(WeakCerts.leafRsa1024, WeakCerts.weakRoot),
             VerifyReason.WeakKey,
         )
     }
 
+    @Test fun negative_platformRefusesA1024BitRsaIntermediate() {
+        if (!platformPauses) return
+        val chain = listOf(WeakCerts.leafViaRsa1024, WeakCerts.midRsa1024)
+        refusedOnItsPath(chain, WeakCerts.leafViaRsa1024Key, chain + WeakCerts.weakRoot, VerifyReason.WeakKey)
+    }
+
     @Test fun negative_platformRefusesASmallEcIntermediate() {
         if (!platformPauses) return
-        refused(handshake(platform(), listOf(WeakCerts.leafViaP192, WeakCerts.midP192), WeakCerts.leafViaP192Key), VerifyReason.WeakKey)
+        val chain = listOf(WeakCerts.leafViaP192, WeakCerts.midP192)
+        refusedOnItsPath(chain, WeakCerts.leafViaP192Key, chain + WeakCerts.weakRoot, VerifyReason.WeakKey)
     }
 
     @Test fun negative_platformRefusesASha1SignedIntermediate() {
         if (!platformPauses) return
-        refused(
-            handshake(platform(), listOf(WeakCerts.leafViaSha1, WeakCerts.midSha1), WeakCerts.leafViaSha1Key),
-            VerifyReason.WeakSignature,
-        )
+        val chain = listOf(WeakCerts.leafViaSha1, WeakCerts.midSha1)
+        refusedOnItsPath(chain, WeakCerts.leafViaSha1Key, chain + WeakCerts.weakRoot, VerifyReason.WeakSignature)
     }
 
     /** RFC 9846 section 4.5.1.3: a certificate the endpoint would validate with an MD5 signature MUST be refused with bad_certificate. */
     @Test fun negative_platformRefusesAnMd5SignedLeaf() {
         if (!platformPauses) return
-        refused(handshake(platform(), listOf(WeakCerts.leafMd5), WeakCerts.leafMd5Key), VerifyReason.WeakSignature)
+        refusedOnItsPath(
+            listOf(WeakCerts.leafMd5),
+            WeakCerts.leafMd5Key,
+            listOf(WeakCerts.leafMd5, WeakCerts.rsaRoot),
+            VerifyReason.WeakSignature,
+        )
     }
 
-    @Test fun platformAsksThePlatformAbout2048BitRsaAndP256() {
+    @Test fun platformAcceptsPaths2048BitRsaAndP256() {
         if (!platformPauses) return
         for ((chain, key) in listOf(
             listOf(WeakCerts.leafRsa2048) to WeakCerts.leafRsa2048Key,
             listOf(WeakCerts.leafP256) to WeakCerts.leafP256Key,
             listOf(WeakCerts.leafViaP224, WeakCerts.midP224) to WeakCerts.leafViaP224Key,
         )) {
-            val o = handshake(platform(), chain, key)
+            val o = handshake(platform(), chain, key, platformBuilt(chain + WeakCerts.weakRoot))
             assertTrue(o.paused, "the chain reaches the platform verifier")
             assertTrue(o.done, "accepted once the platform says yes: ${(o.result as? DriveResult.Failed)?.exception}")
         }
     }
 
     /** RFC 9846 section 4.5.1.3: "endpoints can accept these algorithms for certificates that are self-signed or are trust anchors". */
-    @Test fun platformAcceptsASha1SelfSignedRootSentAlong() {
+    @Test fun platformAcceptsASha1SelfSignedRootAsItsAnchor() {
         if (!platformPauses) return
-        val o = handshake(platform(), listOf(WeakCerts.leafUnderSha1Root, WeakCerts.sha1Root), WeakCerts.leafUnderSha1RootKey)
+        val chain = listOf(WeakCerts.leafUnderSha1Root, WeakCerts.sha1Root)
+        val o = handshake(platform(), chain, WeakCerts.leafUnderSha1RootKey, platformBuilt(chain))
         assertTrue(o.paused && o.done)
     }
+
+    /**
+     * T.5b: L <- I <- R and an extra cross-certificate X (R's name and key, signed with SHA-1 by another root) sent along. A
+     * platform anchored at R builds L, I, R: X is not on its path and does not count, as on OpenSSL's own path.
+     */
+    @Test fun platformAcceptsAWeakCrossCertificateOffItsPath() {
+        if (!platformPauses) return
+        val o = handshake(platform(), crossPresented, WeakCerts.leafViaCrossMidKey, platformBuilt(crossBuilt))
+        assertTrue(o.paused && o.done, "${(o.result as? DriveResult.Failed)?.exception}")
+    }
+
+    /** The same chain under `Custom`: the presented chain counts, X with it, and the verifier is not asked. */
+    @Test fun negative_customRefusesTheWeakCrossCertificateItWasSent() {
+        var asked = 0
+        val custom =
+            TrustConfig.Custom(
+                CertificateVerifier { chain, _, _ ->
+                    asked++
+                    VerifyResult.Accepted(chain)
+                },
+            )
+        refused(handshake(Fixtures.client(custom), crossPresented, WeakCerts.leafViaCrossMidKey), VerifyReason.WeakSignature)
+        assertEquals(0, asked)
+    }
+
+    /** A platform that does not say which path it took: the presented chain counts, X with it (stricter, never weaker). */
+    @Test fun negative_platformWithoutItsPathHoldsThePresentedChain() {
+        if (!platformPauses) return
+        refused(
+            handshake(platform(), crossPresented, WeakCerts.leafViaCrossMidKey, platformBuilt(null)),
+            VerifyReason.WeakSignature,
+            afterThePlatform = true,
+        )
+    }
+
+    /** Pinned and ExpectedName over Platform hold the platform's path too, before the pins are compared. */
+    @Test fun negative_pinnedAndExpectedNameOverPlatformCheckItsPath() {
+        if (!platformPauses) return
+        val chain = listOf(WeakCerts.leafViaSha1, WeakCerts.midSha1)
+        val leafPin = Certificate(WeakCerts.leafViaSha1).spkiSha256
+        for (trust in listOf(
+            TrustConfig.Pinned(setOf(leafPin)),
+            TrustConfig.ExpectedName("server.test"),
+        )) {
+            val config = platform(trust)
+            refused(
+                handshake(config, chain, WeakCerts.leafViaSha1Key, platformBuilt(chain + WeakCerts.weakRoot, config)),
+                VerifyReason.WeakSignature,
+                afterThePlatform = true,
+            )
+            val ok = handshake(config, crossPresented, WeakCerts.leafViaCrossMidKey, platformBuilt(crossBuilt, config))
+            if (trust is TrustConfig.Pinned) {
+                // the cross chain's leaf is not pinned: refused by the pins, not by the level
+                val f = assertIs<DriveResult.Failed>(ok.result)
+                assertIs<VerifyReason.PinMismatch>(assertIs<TlsException.Verify>(f.exception).reason)
+            } else {
+                assertTrue(ok.paused && ok.done, "${(ok.result as? DriveResult.Failed)?.exception}")
+            }
+        }
+    }
+
+    /**
+     * The anchor begins the path: its signature is not checked even when it is not self-signed (x509_vfy.c check_auth_level),
+     * here a SHA-1-signed intermediate the platform trusts as its anchor; the same chain under `Custom` is refused.
+     */
+    @Test fun platformDoesNotCheckItsAnchorsSignature() {
+        if (!platformPauses) return
+        val chain = listOf(WeakCerts.leafViaSha1, WeakCerts.midSha1)
+        val o = handshake(platform(), chain, WeakCerts.leafViaSha1Key, platformBuilt(chain))
+        assertTrue(o.paused && o.done, "${(o.result as? DriveResult.Failed)?.exception}")
+        refused(
+            handshake(
+                Fixtures.client(
+                    TrustConfig.Custom {
+                        c,
+                        _,
+                        _,
+                        ->
+                        VerifyResult.Accepted(c)
+                    },
+                ),
+                chain,
+                WeakCerts.leafViaSha1Key,
+            ),
+            VerifyReason.WeakSignature,
+        )
+    }
+
+    /** The anchor's key counts: a 1024-bit root the platform trusts is refused. */
+    @Test fun negative_platformChecksItsAnchorsKey() {
+        if (!platformPauses) return
+        val chain = listOf(WeakCerts.leafUnderRsa1024Root, WeakCerts.rsa1024Root)
+        refusedOnItsPath(listOf(WeakCerts.leafUnderRsa1024Root), WeakCerts.leafUnderRsa1024RootKey, chain, VerifyReason.WeakKey)
+    }
+
+    /** Generic alerts: handshake_failure on the wire, the reason kept. */
+    @Test fun negative_platformPathWithGenericAlertsSendsHandshakeFailure() {
+        if (!platformPauses) return
+        val config = Fixtures.client(TrustConfig.Platform) { genericAlerts = true }
+        val chain = listOf(WeakCerts.leafViaRsa1024, WeakCerts.midRsa1024)
+        val o = handshake(config, chain, WeakCerts.leafViaRsa1024Key, platformBuilt(chain + WeakCerts.weakRoot, config))
+        val f = assertIs<DriveResult.Failed>(o.result)
+        assertEquals(40, f.alert)
+        assertEquals(VerifyReason.WeakKey, assertIs<TlsException.Verify>(f.exception).reason)
+    }
+
+    private val crossPresented get() = listOf(WeakCerts.leafViaCrossMid, WeakCerts.crossMid, WeakCerts.crossRootBySha1)
+    private val crossBuilt get() = listOf(WeakCerts.leafViaCrossMid, WeakCerts.crossMid, WeakCerts.crossRoot)
 
     /** A Custom verifier is not asked about a weak chain either: the level holds under every trust. */
     @Test fun negative_customVerifierIsNotAskedAboutAWeakChain() {
@@ -240,16 +311,28 @@ class ChainSecurityLevelTest {
     private fun tofuVerdict(): (QuicTlsSession, List<Certificate>) -> VerifyResult =
         { s, presented -> immediate { s.verifyPeer(presented) } }
 
-    /** OpenSSL flags a self-issued certificate without key identifiers as self-signed without checking its signature: not an anchor here. */
-    @Test fun negative_platformRefusesAnMd5SignedSelfIssuedLeaf() {
-        if (!platformPauses) return
-        refused(handshake(platform(), listOf(WeakCerts.leafSelfIssuedMd5), WeakCerts.leafSelfIssuedMd5Key), VerifyReason.WeakSignature)
+    /**
+     * OpenSSL flags a self-issued certificate without key identifiers as self-signed without checking its signature: not an
+     * anchor in the walk over a presented chain (`Custom`, `Tofu`, a platform that did not say its path).
+     */
+    @Test fun negative_presentedSelfIssuedMd5LeafIsRefused() {
+        refused(
+            handshake(
+                Fixtures.client(TrustConfig.Custom { c, _, _ -> VerifyResult.Accepted(c) }),
+                listOf(WeakCerts.leafSelfIssuedMd5),
+                WeakCerts.leafSelfIssuedMd5Key,
+            ),
+            VerifyReason.WeakSignature,
+        )
     }
 
-    @Test fun negative_platformRefusesASha1SignedSelfIssuedIntermediate() {
-        if (!platformPauses) return
+    @Test fun negative_presentedSelfIssuedSha1IntermediateIsRefused() {
         refused(
-            handshake(platform(), listOf(WeakCerts.leafViaSelfIssuedSha1, WeakCerts.midSelfIssuedSha1), WeakCerts.leafViaSelfIssuedSha1Key),
+            handshake(
+                Fixtures.client(TrustConfig.Custom { c, _, _ -> VerifyResult.Accepted(c) }),
+                listOf(WeakCerts.leafViaSelfIssuedSha1, WeakCerts.midSelfIssuedSha1),
+                WeakCerts.leafViaSelfIssuedSha1Key,
+            ),
             VerifyReason.WeakSignature,
         )
     }
@@ -282,16 +365,19 @@ class ChainSecurityLevelTest {
         assertEquals(setOf("server.test"), store.pins.keys)
     }
 
-    /** A decoy (the intermediate's subject, no key identifiers, self-signed with a strong key) does not hide the real issuer. */
-    @Test fun negative_platformChecksTheIntermediateBehindADecoy() {
-        if (!platformPauses) return
+    /**
+     * A decoy (the intermediate's subject, no key identifiers, self-signed with a strong key) does not hide the real issuer
+     * from the walk over a presented chain.
+     */
+    @Test fun negative_customChecksTheIntermediateBehindADecoy() {
+        val custom = Fixtures.client(TrustConfig.Custom { c, _, _ -> VerifyResult.Accepted(c) })
         refused(
-            handshake(platform(), listOf(WeakCerts.leafViaSha1, WeakCerts.decoySha1, WeakCerts.midSha1), WeakCerts.leafViaSha1Key),
+            handshake(custom, listOf(WeakCerts.leafViaSha1, WeakCerts.decoySha1, WeakCerts.midSha1), WeakCerts.leafViaSha1Key),
             VerifyReason.WeakSignature,
         )
         refused(
             handshake(
-                platform(),
+                custom,
                 listOf(WeakCerts.leafViaRsa1024, WeakCerts.decoyRsa1024, WeakCerts.midRsa1024),
                 WeakCerts.leafViaRsa1024Key,
             ),

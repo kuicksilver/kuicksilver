@@ -6,9 +6,13 @@ package io.kuicksilver.tls
 internal actual val platformTrustViaOpenSsl: Boolean = true
 
 internal actual object PlatformVerifier {
-    actual suspend fun verify(
+    actual suspend fun evaluate(
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
-    ): VerifyResult = VerifyResult.Rejected(VerifyReason.Custom("unreachable: Linux platform trust is verified by OpenSSL inside ksl"))
+    ): PlatformVerdict =
+        PlatformVerdict(
+            VerifyResult.Rejected(VerifyReason.Custom("unreachable: Linux platform trust is verified by OpenSSL inside ksl")),
+            null,
+        )
 }
