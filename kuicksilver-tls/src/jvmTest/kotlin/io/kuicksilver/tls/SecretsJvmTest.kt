@@ -212,15 +212,20 @@ class SecretsJvmTest {
 
     /**
      * An identity's private key lives in OpenSSL only (ksl ABI 5): while a [TlsIdentity.InMemory] and a context built from it
-     * are alive, a heap dump holds no copy of the EC private scalar. The key is one no other test touches, so the only heap
-     * copy is the array handed to `fromDer` (zeroed there); the needle is kept masked until the dump is written.
+     * are alive, a heap dump holds no copy of the EC private scalar. The key is this file's own (not in [TestCerts], whose cached
+     * arrays other tests copy and which this test must not zero), so the only heap copy is the array handed to `fromDer` (zeroed
+     * there); the needle is kept masked until the dump is written.
      */
     @Test fun negative_heapDumpNoIdentityPrivateKey() {
-        val der = TestCerts.clientNoEkuKey // the lazily cached array itself: fromDer zeroes it
+        val der =
+            java.util.Base64
+                .getDecoder()
+                .decode(PEM_TEST_KEY)
         val at =
             (0 until der.size - 34).first { der[it] == 0x04.toByte() && der[it + 1] == 0x20.toByte() && der[it - 3] == 0x02.toByte() } + 2
         val masked = ByteArray(32) { (der[at + it].toInt() xor 0x5a).toByte() }
-        val id = TlsIdentity.fromDer(listOf(TestCerts.clientNoEku), der)
+        val b64 = java.util.Base64.getDecoder()
+        val id = TlsIdentity.fromDer(listOf(b64.decode(PEM_TEST_CERT)), der)
         assertTrue(der.all { it == 0.toByte() }, "fromDer zeroes the caller's array")
         val ctx =
             KslContext.create(
@@ -251,7 +256,9 @@ class SecretsJvmTest {
         }
         val heap = dump.readBytes()
         val scalar = ByteArray(32) { (masked[it].toInt() xor 0x5a).toByte() }
-        assertFalse(contains(heap, scalar), "the identity's private key was found in the heap dump")
+        val found = contains(heap, scalar)
+        scalar.fill(0) // the key is negative_heapDumpNoIdentityPrivateKeyFromPem's too, whose dump includes unreachable arrays
+        assertFalse(found, "the identity's private key was found in the heap dump")
         assertTrue(contains(heap, "kuicksilver".encodeToByteArray()), "sanity: the dump is searchable")
     }
 
