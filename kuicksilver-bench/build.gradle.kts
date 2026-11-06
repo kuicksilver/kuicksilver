@@ -10,14 +10,25 @@ plugins {
 }
 kotlin {
     jvmToolchain(21)
+    // the expect/actual classes are Beta (KT-61573): Kotlin's documented acknowledgement, as in the kmp convention plugin
+    compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes") }
     jvm()
-    linuxX64()
-    macosArm64()
+    // the memory benchmark (MemoryBench) as an executable: `./gradlew :kuicksilver-bench:runMemoryReleaseExecutableMacosArm64`
+    val memoryArgs = providers.gradleProperty("kuicksilver.memory.args").orNull?.split(' ')?.filter { it.isNotEmpty() } ?: emptyList()
+    val memory: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
+        binaries.executable("memory", listOf(org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.RELEASE)) {
+            entryPoint = "io.kuicksilver.bench.memoryMain"
+            runTaskProvider?.configure { args(memoryArgs) }
+        }
+    }
+    linuxX64(memory)
+    macosArm64 { memory(); compilations.getByName("main").cinterops.create("mallocstats") }
     sourceSets {
         all { languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi") }   // internal tooling: uses the library's experimental API directly
         commonMain.dependencies {
             implementation(project(":kuicksilver-quic"))
             implementation(project(":kuicksilver-testing"))   // MemoryNetwork for EndpointHandshakeBenchmark
+            implementation(project(":kuicksilver-http3"))     // idle HTTP/3 connections in MemoryBench
             implementation(libs.kotlinx.benchmark.runtime)
         }
         jvmTest.dependencies { implementation(kotlin("test-junit5")) }
@@ -44,5 +55,21 @@ tasks.named<Test>("jvmTest") {
     providers.gradleProperty("kuicksilver.jfrExact").orNull?.let { jvmArgs("-XX:-UseTLAB", "-XX:StartFlightRecording=filename=$it,jdk.ObjectAllocationOutsideTLAB#enabled=true,jdk.ObjectAllocationOutsideTLAB#stackTrace=true,jdk.ObjectAllocationSample#enabled=false") }
     // -Pkuicksilver.allocTrace prints every step of the gate window that allocated, with the byte count
     if (providers.gradleProperty("kuicksilver.allocTrace").isPresent) { environment("KUICKSILVER_ALLOC_TRACE", "1"); testLogging.showStandardStreams = true }
+}
+// the memory benchmark on the JVM (MemoryBench): `./gradlew :kuicksilver-bench:jvmMemory -Pkuicksilver.memory.args="1000 256"`
+tasks.register<JavaExec>("jvmMemory") {
+    group = "benchmark"; description = "Idle footprint, memory per idle connection and allocation per GB (MemoryBench), JVM"
+    val jvm = kotlin.jvm().compilations.getByName("main")
+    classpath(jvm.output.allOutputs, jvm.runtimeDependencyFiles)
+    mainClass.set("io.kuicksilver.bench.MemoryMainKt")
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+    // the heap as a server would size it by default, capped; RSS per connection is only indicative here (the heap grows with
+    // garbage and the C heap is not visible: the Native run reports OpenSSL's share). The inventory reads java.base reflectively
+    jvmArgs("-Xmx1g", "--add-opens=java.base/java.util=ALL-UNNAMED", "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED", "--add-opens=java.base/java.lang=ALL-UNNAMED")
+    // extra JVM flags, e.g. a JFR recording: -Pkuicksilver.memory.jvmArgs="-XX:StartFlightRecording=filename=/tmp/m.jfr,settings=profile"
+    providers.gradleProperty("kuicksilver.memory.jvmArgs").orNull?.split(' ')?.filter { it.isNotEmpty() }?.let { jvmArgs(it) }
+    args(providers.gradleProperty("kuicksilver.memory.args").orNull?.split(' ')?.filter { it.isNotEmpty() } ?: emptyList<String>())
+    providers.gradleProperty("kuicksilver.native.path").orNull?.let { systemProperty("kuicksilver.native.path", it) }
 }
 tasks.withType<Test>().configureEach { providers.gradleProperty("kuicksilver.native.path").orNull?.let { systemProperty("kuicksilver.native.path", it) } }

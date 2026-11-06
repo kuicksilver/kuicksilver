@@ -26,10 +26,10 @@ import kotlinx.coroutines.coroutineScope
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 public class EndpointHandshakes private constructor(
     private val identity: TlsIdentity.InMemory,
-    private val server: QuicEndpoint,
-    private val client: QuicEndpoint,
+    internal val server: QuicEndpoint,
+    internal val client: QuicEndpoint,
 ) : AutoCloseable {
-    private val clientConfig = QuicClientConfig.Builder(tlsConfig(TlsRole.Client) { alpn = listOf("bench"); serverName = "server.test"; trust = TrustConfig.Custom { chain, _, _ -> VerifyResult.Accepted(chain) } }).build()
+    internal val clientConfig = QuicClientConfig.Builder(tlsConfig(TlsRole.Client) { alpn = listOf("bench"); serverName = "server.test"; trust = TrustConfig.Custom { chain, _, _ -> VerifyResult.Accepted(chain) } }).build()
 
     /** One connection: handshake, the server's accept, the client's close. */
     public suspend fun connection() {
