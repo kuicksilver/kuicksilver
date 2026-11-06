@@ -105,6 +105,21 @@ class PlatformBuiltPathJvmTest {
         assertTrue(o.paused && o.done, "${(o.result as? DriveResult.Failed)?.exception}")
     }
 
+    /**
+     * RFC 9846 section 4.5.1.3: the JDK refuses an MD5-signed leaf and a P-192 intermediate itself (its algorithm
+     * constraints), with no reason of its own for it; the refusal is still bad_certificate with the weak reason.
+     */
+    @Test fun negative_jdkRefusalOfAWeakChainIsBadCertificate() {
+        trust(WeakCerts.rsaRoot, WeakCerts.weakRoot)
+        val md5 = handshake(TrustConfig.Platform, listOf(WeakCerts.leafMd5), WeakCerts.leafMd5Key)
+        assertTrue(md5.paused)
+        refused(md5, VerifyReason.WeakSignature)
+        refused(
+            handshake(TrustConfig.Platform, listOf(WeakCerts.leafViaP192, WeakCerts.midP192), WeakCerts.leafViaP192Key),
+            VerifyReason.WeakKey,
+        )
+    }
+
     /** The anchor's key counts: a 1024-bit root in the trust store is refused. */
     @Test fun negative_platformChecksItsAnchorsKey() {
         trust(WeakCerts.rsa1024Root)

@@ -241,6 +241,65 @@ class ChainSecurityLevelTest {
     }
 
     /** Generic alerts: handshake_failure on the wire, the reason kept. */
+
+    /** A platform that says no. */
+    private fun platformRefuses(
+        reason: VerifyReason,
+        config: TlsConfig = platform(),
+    ): (QuicTlsSession, List<Certificate>) -> VerifyResult =
+        { _, presented ->
+            val v = Verification(config) { _, _, _ -> PlatformVerdict(VerifyResult.Rejected(reason), null) }
+            immediate { v.verify(presented, HostName.normalize("server.test")) }
+        }
+
+    /**
+     * RFC 9846 section 4.5.1.3: an MD5 (MUST) or SHA-1 (RECOMMENDED) signature aborts with bad_certificate. A platform that
+     * refuses such a chain itself (the JDK's algorithm constraints, SecTrust, CryptoAPI) reports no such reason, so a refusal
+     * of a chain whose presented certificates are below the level is reported as the weak key or signature.
+     */
+    @Test fun negative_platformRefusalOfAWeakChainIsBadCertificate() {
+        if (!platformPauses) return
+        val o = handshake(platform(), listOf(WeakCerts.leafMd5), WeakCerts.leafMd5Key, platformRefuses(VerifyReason.UnknownIssuer))
+        refused(o, VerifyReason.WeakSignature, afterThePlatform = true)
+        val k =
+            handshake(
+                platform(),
+                listOf(WeakCerts.leafViaP192, WeakCerts.midP192),
+                WeakCerts.leafViaP192Key,
+                platformRefuses(VerifyReason.UnknownIssuer),
+            )
+        refused(k, VerifyReason.WeakKey, afterThePlatform = true)
+        val g = Fixtures.client(TrustConfig.Platform) { genericAlerts = true }
+        val f =
+            assertIs<DriveResult.Failed>(
+                handshake(g, listOf(WeakCerts.leafMd5), WeakCerts.leafMd5Key, platformRefuses(VerifyReason.UnknownIssuer, g)).result,
+            )
+        assertEquals(40, f.alert)
+        assertEquals(VerifyReason.WeakSignature, assertIs<TlsException.Verify>(f.exception).reason)
+    }
+
+    /** A refusal for the name or the pins keeps its reason; a refusal of a chain that meets the level keeps the platform's. */
+    @Test fun platformRefusalForTheNameOrOfAStrongChainKeepsItsReason() {
+        if (!platformPauses) return
+        val name = VerifyReason.HostnameMismatch("server.test", emptyList())
+        val o = handshake(platform(), listOf(WeakCerts.leafMd5), WeakCerts.leafMd5Key, platformRefuses(name))
+        assertEquals(name, assertIs<TlsException.Verify>(assertIs<DriveResult.Failed>(o.result).exception).reason)
+        val s = handshake(platform(), listOf(WeakCerts.leafP256), WeakCerts.leafP256Key, platformRefuses(VerifyReason.UnknownIssuer))
+        val f = assertIs<DriveResult.Failed>(s.result)
+        assertEquals(48, f.alert)
+        assertEquals(VerifyReason.UnknownIssuer, assertIs<TlsException.Verify>(f.exception).reason)
+    }
+
+    /** Resumption re-runs [Verification.verify] on the cached chain (TlsConnection, takeQuic): the same check applies. */
+    @Test fun negative_resumptionRecheckHoldsThePlatformPath() {
+        if (!platformPauses) return
+        val chain = listOf(WeakCerts.leafViaSha1, WeakCerts.midSha1).map(::Certificate)
+        val path = chain + Certificate(WeakCerts.weakRoot)
+        val v = Verification(platform()) { _, _, _ -> PlatformVerdict(VerifyResult.Accepted(path), path) }
+        val r = immediate { v.verify(chain, HostName.normalize("server.test")) }
+        assertEquals(VerifyReason.WeakSignature, assertIs<VerifyResult.Rejected>(r).reason)
+    }
+
     @Test fun negative_platformPathWithGenericAlertsSendsHandshakeFailure() {
         if (!platformPauses) return
         val config = Fixtures.client(TrustConfig.Platform) { genericAlerts = true }

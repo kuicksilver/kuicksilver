@@ -131,7 +131,9 @@ verifiers would accept 1024-bit RSA on their own. Which certificates count depen
   manager's roots), as OpenSSL checks its own path: every key, the anchor's included, and every signature but the
   anchor's. A certificate the server sends that the platform does not use, such as an extra cross-certificate above the
   root the platform trusts (signed with SHA-1 by an old root, say), does not count, as with OpenSSL. If the platform does
-  not say which path it took, the certificates the server sent are checked as for `Custom`. On Linux Native `Platform` is
+  not say which path it took, the certificates the server sent are checked as for `Custom`. When the platform itself
+  refuses a chain with an MD5, SHA-1 or small-key certificate in it (the JDK, Apple and Windows do), the refusal is still
+  reported as `WeakSignature` or `WeakKey` with `bad_certificate`. On Linux Native `Platform` is
   OpenSSL's own verifier with the system store, which checks its own path the same way.
 - **`AnchoredCa`**: OpenSSL checks the path it builds to your roots.
 - **`Custom` and `Tofu`**: the certificates the peer sent are checked before your verifier or the TOFU store is asked:

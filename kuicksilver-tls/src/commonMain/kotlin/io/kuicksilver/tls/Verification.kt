@@ -47,12 +47,19 @@ internal class PlatformVerdict(
  * use (an extra cross-certificate above its anchor) does not count. When the platform did not say which path it took, the
  * presented chain is held to the level as for `Custom` and `Tofu` (the walk `ksl` runs before the pause): stricter, never
  * weaker. The same reasons and alert (`bad_certificate`) as that walk.
+ *
+ * A platform's no for a chain below the level (the JDK's algorithm constraints, SecTrust and CryptoAPI refuse MD5, SHA-1 and
+ * small keys themselves) carries no such reason, only "untrusted": RFC 9846 section 4.5.1.3 still wants `bad_certificate`
+ * (MUST for MD5, RECOMMENDED for SHA-1), so such a refusal is reported as [VerifyReason.WeakKey] or
+ * [VerifyReason.WeakSignature] when the presented chain is below the level. A refusal for the name or the pins keeps its
+ * reason, as does a refusal of a chain that meets the level.
  */
 internal fun platformLevel(
     verdict: PlatformVerdict,
     presented: List<Certificate>,
 ): VerifyResult {
-    val accepted = verdict.result as? VerifyResult.Accepted ?: return verdict.result
+    val accepted =
+        verdict.result as? VerifyResult.Accepted ?: return weakRefusal(verdict.result as VerifyResult.Rejected, presented)
     val path = verdict.builtPath?.takeIf { it.isNotEmpty() }
     return when (Ksl.chainLevel((path ?: presented).map { it.encoded }, builtPath = path != null)) {
         0 -> accepted
@@ -67,6 +74,18 @@ internal fun platformLevel(
         22 -> VerifyResult.Rejected(VerifyReason.UnknownIssuer)
 
         else -> VerifyResult.Rejected(VerifyReason.BadEncoding)
+    }
+}
+
+private fun weakRefusal(
+    refused: VerifyResult.Rejected,
+    presented: List<Certificate>,
+): VerifyResult.Rejected {
+    if (refused.reason is VerifyReason.HostnameMismatch || refused.reason is VerifyReason.PinMismatch || presented.isEmpty()) return refused
+    return when (Ksl.chainLevel(presented.map { it.encoded }, builtPath = false)) {
+        66, 67 -> VerifyResult.Rejected(VerifyReason.WeakKey)
+        68 -> VerifyResult.Rejected(VerifyReason.WeakSignature)
+        else -> refused
     }
 }
 
