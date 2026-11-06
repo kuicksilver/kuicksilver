@@ -391,7 +391,7 @@ sockets, so the numbers are the library's, not the kernel's. M4 Max, macOS, JVM 
 |---|---|---|
 | QUIC core, server side, JVM heap | 37.1 KB | 36.1 KB |
 | QUIC endpoint, server side, JVM heap | 41.0 KB | 39.9 KB |
-| HTTP/3, server side, JVM heap | 291.9 KB | 80.6 KB |
+| HTTP/3, server side, JVM heap | 291.9 KB | 80.6 KB (80–90 KB between runs) |
 | HTTP/3, client and server, JVM heap | 572.3 KB | 166.6 KB |
 | QUIC core, client and server, Native RSS | 198.4 KB | 195.4 KB |
 | QUIC endpoint, client and server, Native RSS | 225.8 KB | 222.2 KB |
@@ -427,10 +427,15 @@ connection does not share, charged to the first field path that reaches it; `jvm
 | `builder.scratch`, `streams.scratch` | 4 128 | 2 KiB scratch each (packet building, stream retransmission) |
 | `cryptoStreams.scratch` | 1 176 | what TLS was last handed |
 | `receiver.ackView.ranges` | 1 040 | the peer's ACK ranges, decoded |
-| HTTP/3 server connection, total | 77 224 | the core above plus |
+| HTTP/3 server connection, total | 77 000–89 000 | the core above plus (two modes between runs, see below) |
 | the six control and QPACK streams in the core | ~6 000 | send rings (1 KiB minimum) on the three local ones, reassembly windows (512 bytes now, 4 KiB before) on the peer's, range arrays |
 | the HTTP/3 session and the runtime's streams | ~36 000 | not broken down further: two channels per stream (`readable`, ticker: a 64-slot segment each), coroutine state, kotlinx-io buffers, QPACK state |
 | removed by the commits above | 193 000 + 11 000 + 1 000 | a 16 KiB staging array per stream half and 64 KiB for the datagram flow (now one scratch per endpoint loop); 4 KiB reassembly windows; the DATAGRAM ring |
+
+The HTTP/3 figures have two modes from run to run, about 10 KB apart: in some runs the server connection's channel of
+accepted streams still references the finished request stream through a resumed waiter in one of its cells, and with it
+that stream's input buffer and an 8 KiB kotlinx-io segment (`session.quic.accepted...inChannel.buffer.head.data` in the
+inventory). Which mode a run gets depends on whether the request arrived before or after `acceptRequest` was waiting.
 
 Still to reduce, by estimated bytes per connection (each side):
 
@@ -445,10 +450,12 @@ Still to reduce, by estimated bytes per connection (each side):
    each keep their own array; one set per endpoint loop (the loop runs one connection at a time) or released after the
    handshake.
 4. **CRYPTO send rings of discarded levels**, about 3 KB: released when the level's keys are.
-5. **HTTP/3 streams**: the three control and QPACK send rings start at 1 KiB for a few bytes (start smaller, as the
+5. **The finished request stream kept by the accept channel** (above), about 10 KB in the runs where it happens: let go of
+   the stream when it is handed out.
+6. **HTTP/3 streams**: the three control and QPACK send rings start at 1 KiB for a few bytes (start smaller, as the
    reassembly window now does: about 2 KB); the session and the runtime's streams (about 36 KB) are the next inventory
    to break down.
-6. **Allocation per GiB through the runtime** (not per connection): `StreamInput` copies through a kotlinx-io buffer whose
+7. **Allocation per GiB through the runtime** (not per connection): `StreamInput` copies through a kotlinx-io buffer whose
    segments are allocated as data arrives; writing into the segments directly would also save the copy (P.2).
 
 Not measured here: the HTTP/2 and HTTP/1.1 servers. Their connections are TCP sockets in the Ktor engine, which this

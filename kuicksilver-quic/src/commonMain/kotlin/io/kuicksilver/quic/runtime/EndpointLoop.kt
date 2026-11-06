@@ -153,7 +153,8 @@ internal class EndpointLoop private constructor(
      * its buffer, a stream's output copies its buffer through it into the core, the datagram flow reads a datagram into it.
      * Each use fills and empties it within one task on [dispatcher], which runs one task at a time and never suspends in
      * between, so one array serves every stream and connection of this loop (it was 16 KiB per stream half and 64 KiB per
-     * datagram collector).
+     * datagram collector). Not checked at run time: the runtime has no thread assertions to follow, and the loop's
+     * confinement is already what every core access relies on.
      */
     internal val scratch = ByteArray(SCRATCH)
     private val start = TimeSource.Monotonic.markNow()
@@ -1255,11 +1256,18 @@ internal class EndpointLoop private constructor(
             QuicException.ConnectionLost.TransportClosed(0, 0, "-", ByteArray(0), io.kuicksilver.quic.Initiator.Local, null)
         }
 
-        /** [scratch]: the largest DATAGRAM payload a QUIC packet in a UDP datagram can carry, and room for a stream's 16 KiB chunk. */
-        const val SCRATCH: Int = 65_535
-
         /** What a stream's input or output moves through [scratch] at a time. */
         const val STREAM_CHUNK: Int = 16_384
+
+        /**
+         * [scratch]: a stream's 16 KiB chunk. A received DATAGRAM payload fits too: it arrived in one of this runtime's
+         * [SLOT_SIZE]-byte receive slots (`maxUdpPayloadSize` is capped at it), so it is shorter than that.
+         */
+        const val SCRATCH: Int = STREAM_CHUNK
+
+        init {
+            check(SLOT_SIZE <= SCRATCH) { "a received datagram must fit the loop's scratch" }
+        }
 
         /** Forwarded datagrams handled before admission, flush and a yield. */
         const val FORWARD_BATCH: Int = 16

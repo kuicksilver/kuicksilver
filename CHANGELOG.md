@@ -281,7 +281,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - QUIC: a stream no longer holds two 16 KiB staging arrays (one per direction) and a connection's datagram flow no longer
   holds a 64 KiB one; the copies between the core and the application's channels go through one scratch array per endpoint
-  loop. An idle HTTP/3 server connection holds 89 KB of heap instead of 285 KB (JVM), and an idle HTTP/3 connection pair
+  loop. An idle HTTP/3 server connection holds about 80–90 KB of heap instead of about 290 KB (JVM), and an idle HTTP/3 connection pair
   takes about half the resident memory on Kotlin/Native (docs/benchmarks.md, "Memory"). A connection's ring for received
   DATAGRAM frames (1 KB) is made by its first datagram, and a stream's reassembly window starts at 512 bytes instead of
   4 KiB (HTTP/3's control and QPACK streams carry a few bytes for the life of the connection).

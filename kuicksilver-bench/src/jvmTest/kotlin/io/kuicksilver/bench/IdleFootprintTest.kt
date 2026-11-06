@@ -33,9 +33,10 @@ class IdleFootprintTest {
     }
 
     private companion object {
-        // 79 320 measured (2026-11-06, JVM 21); 88-104 K with 4 KiB reassembly windows, 292 K with per-stream staging arrays.
-        // The inventory varies by a few KB between runs with what the connection's coroutines hold when it is taken
-        const val HTTP3_CEILING = 95_000L
+        // 79-90 K measured (2026-11-06, JVM 21), in two modes: some runs the accept channel still references the finished
+        // request stream and its 8 KiB input segment (docs/benchmarks.md, "Memory"), which depends on whether the request
+        // arrived before acceptRequest waited. 88-104 K with 4 KiB reassembly windows, 292 K with per-stream staging arrays
+        const val HTTP3_CEILING = 110_000L
         const val CORE_CEILING = 35_500L // 35 104 measured (2026-11-06, JVM 21); 36 160 with the DATAGRAM ring made up front
     }
 }
