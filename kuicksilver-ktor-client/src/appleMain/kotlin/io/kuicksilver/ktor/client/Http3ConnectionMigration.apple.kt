@@ -3,10 +3,12 @@
 package io.kuicksilver.ktor.client
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.NetworkMigrator
 import io.kuicksilver.quic.nwPathUpdates
 import io.kuicksilver.quic.open
+import io.kuicksilver.quic.wildcardLocal
 
 /**
  * HTTP/3 connections follow the system's default network (iOS, macOS): each connection gets a [NetworkMigrator] over
@@ -18,6 +20,7 @@ import io.kuicksilver.quic.open
 @ExperimentalKuicksilverApi
 public fun Http3ConnectionMigration.Companion.followDefaultNetwork(): Http3ConnectionMigration =
     Http3ConnectionMigration { connection, scope ->
+        @OptIn(InternalKuicksilverApi::class)
         val bindTo = connection.wildcardLocal()
         NetworkMigrator(connection, nwPathUpdates(), { k -> DatagramIo.open(bindTo, k.interfaceIndex) }, scope)
     }

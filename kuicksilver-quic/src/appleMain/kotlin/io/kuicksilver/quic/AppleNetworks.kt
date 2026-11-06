@@ -253,6 +253,7 @@ public fun QuicConnection.followDefaultNetwork(
 ): NetworkMigrator<NwPathKey> = followNetworks(nwPathUpdates(), scope, local, prefer)
 
 /** [followDefaultNetwork] over any source of keys (tests feed their own). */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 internal fun QuicConnection.followNetworks(
     keys: Flow<NwPathKey?>,
     scope: CoroutineScope,

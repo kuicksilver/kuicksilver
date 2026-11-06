@@ -54,6 +54,7 @@ import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MigrationEvent
+import io.kuicksilver.quic.PathValidationException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.CancellationException
@@ -638,7 +639,7 @@ internal class H3Pool(
                     }
                 }
                 d.complete(c)
-                followNetwork(c, originKeyOf(data.url))
+                followNetwork(c, data)
             } catch (
                 x: TimeoutCancellationException,
             ) {
@@ -674,10 +675,11 @@ internal class H3Pool(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun followNetwork(
         c: Http3Connection,
-        origin: String,
+        data: HttpRequestData,
     ) {
         val migration = config.http3.connectionMigration ?: return
         val scope = migrationScope ?: return
+        val origin = originKeyOf(data.url)
         val job =
             scope.launch {
                 try {
@@ -719,7 +721,15 @@ internal class H3Pool(
     ) {
         when (e) {
             is MigrationEvent.Failed -> {
-                logMigration("connection to $origin did not migrate to ${e.network}", e.cause)
+                // a refusal of the transport (the server sent disable_active_migration or uses zero-length connection IDs)
+                // comes back on every network change and is no fault: Debug; a path that failed validation, or a socket that
+                // could not be opened, is worth Info
+                val refused = e.cause is IllegalStateException && e.cause !is PathValidationException
+                logMigration(
+                    "connection to $origin did not migrate to ${e.network}",
+                    e.cause,
+                    if (refused) LogLevel.Debug else LogLevel.Info,
+                )
             }
 
             is MigrationEvent.SourceFailed -> {
@@ -734,8 +744,9 @@ internal class H3Pool(
     private fun logMigration(
         message: String,
         cause: Throwable,
+        level: LogLevel = LogLevel.Info,
     ) {
-        runCatching { if (events.logger.isEnabled(LogLevel.Info)) events.logger.log(LogLevel.Info, message, cause) }
+        runCatching { if (events.logger.isEnabled(level)) events.logger.log(level, message, cause) }
     }
 
     /** The caller setting up a shared connection was cancelled; the callers waiting for it try again. */

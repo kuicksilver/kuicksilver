@@ -71,6 +71,7 @@ private fun ConnectivityManager.registerDefaultNetworks(): Flow<Network?> =
  * [NetworkMigrator.events] right after this call to see every event; [NetworkMigrator.close] stops following.
  */
 @ExperimentalKuicksilverApi
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 public fun QuicConnection.followDefaultNetwork(
     connectivity: ConnectivityManager,
     scope: CoroutineScope,
