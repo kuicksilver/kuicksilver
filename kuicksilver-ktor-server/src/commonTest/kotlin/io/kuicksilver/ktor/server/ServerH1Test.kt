@@ -509,6 +509,9 @@ class ServerH1Test {
                 )
                 held.close()
                 withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                // every connection has ended: a handshake begun on the refused one would have reported by now
+                val failedAfter = rec.failedHandshakes.value
+                assertEquals(emptyList(), failedAfter.filter { (from, _) -> from != heldPort }, "a handshake failed for the refused client")
                 assertTrue(rawHttp(port, get).startsWith("HTTP/1.1 200"))
             } finally {
                 selector.close()
