@@ -27,6 +27,10 @@ internal class PathRuntime(
     internal val io: DatagramIo?,
     remote: InetSocketAddress,
 ) : QuicPath {
+    init {
+        if (io != null) loop.pathSocketAdded(io) // before the path can carry a datagram: the loop's flush may now suspend
+    }
+
     internal val stateFlow = MutableStateFlow(conn.core.pathState(id))
     override val state: StateFlow<PathState> get() = stateFlow
 

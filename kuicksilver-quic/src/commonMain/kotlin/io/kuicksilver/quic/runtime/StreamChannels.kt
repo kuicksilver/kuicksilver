@@ -17,6 +17,7 @@ import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.Sink
 import kotlinx.io.Source
+import kotlinx.io.unsafe.UnsafeBufferOperations
 import kotlin.concurrent.Volatile
 
 // The two ktor-io halves of a [StreamRuntime]: StreamInput pulls from the core when the application awaits content,
@@ -37,7 +38,6 @@ internal class StreamInput(
     private val stream: StreamRuntime,
 ) : ByteReadChannel {
     private val buffer = Buffer()
-    private val tmp = ByteArray(16384)
 
     /** The FIN was taken from the core: all the peer's data is in [buffer] or was read; a later cause changes nothing. */
     @Volatile private var eof = false
@@ -83,7 +83,9 @@ internal class StreamInput(
                 while (buffer.size < maxOf(min.toLong(), PULL_TARGET) &&
                     pulled < PULL_TARGET
                 ) {
-                    val n = stream.conn.core.readStream(stream.id, tmp, 0, tmp.size)
+                    // the loop's scratch: filled and emptied here, with no suspension in between (EndpointLoop.scratch)
+                    val tmp = stream.loop.scratch
+                    val n = stream.conn.core.readStream(stream.id, tmp, 0, EndpointLoop.STREAM_CHUNK)
                     if (n >
                         0
                     ) {
@@ -172,12 +174,11 @@ internal class StreamInput(
     }
 }
 
-@OptIn(ExperimentalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
+@OptIn(ExperimentalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class, kotlinx.io.UnsafeIoApi::class)
 internal class StreamOutput(
     private val stream: StreamRuntime,
 ) : ByteWriteChannel {
     private val buffer = Buffer()
-    private val tmp = ByteArray(16384)
     override val autoFlush: Boolean get() = true
 
     @Volatile override var isClosedForWrite: Boolean = false
@@ -212,11 +213,14 @@ internal class StreamOutput(
         var unsent = false
         while (!buffer.exhausted()) {
             closedCause?.let { throw ClosedWriteChannelException(it) }
-            // copied, not consumed: only what the core accepted leaves the buffer, so a flush cancelled while waiting loses nothing
-            val n = buffer.peek().readAtMostTo(tmp, 0, tmp.size)
-            val w = writeToCore(tmp, 0, n, false)
+            // the head segment's bytes go to the core straight from the buffer, and only what the core accepted leaves it, so a
+            // flush cancelled while waiting loses nothing. Not through a peek (a peek source, its buffer and shared segment copies
+            // per flush) and a copy into the loop's scratch: the core copies into the stream's send ring anyway
+            val w =
+                UnsafeBufferOperations.readFromHead(buffer) { bytes, start, end ->
+                    writeToCore(bytes, start, minOf(end - start, EndpointLoop.STREAM_CHUNK), false)
+                }
             if (w > 0) {
-                buffer.skip(w.toLong())
                 unsent = true
             } else {
                 // only a flush that sends what was handed over since the last one: every flush ticks every stream's ticker, so
@@ -247,7 +251,7 @@ internal class StreamOutput(
             drain()
             isClosedForWrite = true
             closedCause?.let { throw ClosedWriteChannelException(it) }
-            writeToCore(tmp, 0, 0, fin = true)
+            writeToCore(stream.loop.scratch, 0, 0, fin = true)
             // the data and the FIN are the core's now: the send must not be lost to a cancellation. Yielding first lets the
             // closes already queued on the loop hand over theirs, so concurrent requests share packets instead of taking one
             // each (interop zerortt: one packet per request filled the initial window before the last 0-RTT requests left)

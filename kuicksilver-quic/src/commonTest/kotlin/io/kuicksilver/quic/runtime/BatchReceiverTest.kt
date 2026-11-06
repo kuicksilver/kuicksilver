@@ -71,7 +71,7 @@ class BatchReceiverTest {
     ) : DatagramIo by inner
 
     private val batch = PacketBatch(16)
-    private val noTimer: () -> Duration = { Duration.INFINITE }
+    private val noTimer = BatchReceiver.TimerHorizon { Duration.INFINITE }
 
     private var clock = TimeMark(1_000_000_000L)
 
@@ -132,7 +132,7 @@ class BatchReceiverTest {
             val io = ScriptedIo(3, 0, 1)
             val r = receiver(io)
             r.receive(batch, noTimer)
-            r.receive(batch) { 500.microseconds }
+            r.receive(batch, BatchReceiver.TimerHorizon { 500.microseconds })
             assertEquals(listOf("blocking", "now(0)", "blocking"), io.calls)
         }
 
@@ -141,7 +141,7 @@ class BatchReceiverTest {
             val io = ScriptedIo(3, 0, 1, 0, 1)
             val r = receiver(io, maxWait = 3.milliseconds)
             r.receive(batch, noTimer)
-            r.receive(batch) { 2900.microseconds }
+            r.receive(batch, BatchReceiver.TimerHorizon { 2900.microseconds })
             r.receive(batch, noTimer)
             assertEquals(listOf("blocking", "now(0)", "now(2)", "now(0)", "now(3)"), io.calls)
         }
@@ -181,7 +181,7 @@ class BatchReceiverTest {
             val r = receiver(io)
             r.receive(batch, noTimer)
             launch { io.calls += "timer" }
-            r.receive(batch) { Duration.ZERO }
+            r.receive(batch, BatchReceiver.TimerHorizon { Duration.ZERO })
             assertEquals(listOf("blocking", "timer", "now(0)"), io.calls)
         }
 
@@ -200,6 +200,33 @@ class BatchReceiverTest {
             val r = receiver(PortableIo(inner))
             repeat(2) { r.receive(batch, noTimer) }
             assertEquals(listOf("blocking", "blocking"), inner.calls)
+        }
+
+    @Test fun theDirectPartTakesTheSameBatchesWithoutSuspending() =
+        runBlocking {
+            // receiveDirect + receive(directTried) asks the socket exactly what receive alone asks: P.2 only drops the coroutine frame
+            val io = ScriptedIo(3, 2, 0, 0, 4)
+            val r = receiver(io)
+            assertEquals(BatchReceiver.NOT_TRIED, r.receiveDirect(batch, noTimer)) // not flowing yet: the blocking receive first
+            assertEquals(3, r.receive(batch, noTimer))
+            assertEquals(2, r.receiveDirect(batch, noTimer))
+            assertEquals(BatchReceiver.NOTHING, r.receiveDirect(batch, noTimer)) // now(0), now(1): nothing
+            assertEquals(4, r.receive(batch, noTimer, directTried = true)) // straight to the blocking receive
+            assertEquals(listOf("blocking", "now(0)", "now(0)", "now(1)", "blocking"), io.calls)
+        }
+
+    @Test fun theDirectPartLeavesADueYieldToReceive() =
+        runBlocking {
+            val io = ScriptedIo(3, 10, 6, 2)
+            val r = receiver(io)
+            r.receive(batch, noTimer)
+            assertEquals(10, r.receiveDirect(batch, noTimer))
+            assertEquals(6, r.receiveDirect(batch, noTimer))
+            // 16 datagrams taken: the queued work must run, which only the suspending receive can let happen
+            assertEquals(BatchReceiver.NOT_TRIED, r.receiveDirect(batch, noTimer))
+            launch { io.calls += "command" }
+            assertEquals(2, r.receive(batch, noTimer))
+            assertEquals(listOf("blocking", "now(0)", "now(0)", "command", "now(0)"), io.calls)
         }
 
     /**

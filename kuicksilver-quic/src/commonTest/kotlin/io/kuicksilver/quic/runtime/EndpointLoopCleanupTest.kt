@@ -9,12 +9,17 @@ import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
+import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.PreferredAddress
+import io.kuicksilver.quic.QuicClientConfig
+import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TrackingCrypto
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -213,5 +218,54 @@ class EndpointLoopCleanupTest {
             )
             assertTrue(alloc.allClosed)
             kotlinx.coroutines.withContext(ep.dispatcher) { ep.flush() } // after the release: a no-op, no freed buffer touched
+        }
+
+    /**
+     * P.5 memory benchmark: a closed endpoint kept every connection it had in its timer heap and in its table by peer address
+     * (the cores were released, their Kotlin state, about 40 KB each, stayed reachable through the endpoint), so an
+     * application holding a closed endpoint held all of its connections.
+     */
+    @Test fun aClosedEndpointHoldsNoConnectionInItsTimers() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val sio = net.open(serverAddr)
+            val cio = net.open(InetSocketAddress("10.0.0.1", 1111))
+            val server =
+                QuicEndpoint.bind(
+                    serverAddr,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = NullCryptoProvider
+                            io = { sio }
+                        }.build(),
+                )
+            val client =
+                QuicEndpoint.bind(
+                    cio.localAddress,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            crypto = NullCryptoProvider
+                            io = { cio }
+                        }.build(),
+                )
+            try {
+                withTimeout(30.seconds) {
+                    repeat(3) {
+                        val accepted = async { server.accept() }
+                        client.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                        accepted.await()
+                    }
+                }
+                assertEquals(3, (client as EndpointLoop).timers.count, "the client's idle timers are armed")
+                client.closeAndJoin()
+                assertEquals(0, client.timers.count, "a closed endpoint holds no connection in its timer heap")
+                assertTrue(client.core.byRemote.isEmpty(), "nor in its table by peer address")
+            } finally {
+                client.close()
+                server.close()
+            }
         }
 }

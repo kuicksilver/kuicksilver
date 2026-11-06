@@ -158,4 +158,18 @@ class ReassemblerTest {
         while (r.readable > 0) r.read(out, 0, out.size)
         assertTrue(r.capacityForTest <= 4096, "an empty reassembler does not keep a multi-megabyte window: ${r.capacityForTest}")
     }
+
+    /**
+     * P.5: a stream that only ever carries a few bytes (HTTP/3's control and QPACK streams: a stream type and SETTINGS) gets
+     * a window that size, not 4 KiB for the life of the connection; a larger stream still grows by doubling.
+     */
+    @Test fun aSmallStreamGetsASmallWindow() {
+        val r = Reassembler(256, RangeBudget(4096))
+        insert(r, 0, ByteArray(30) { it.toByte() })
+        assertTrue(r.capacityForTest <= 512, "30 bytes took a ${r.capacityForTest}-byte window")
+        assertContentEquals(ByteArray(30) { it.toByte() }, readAll(r))
+        insert(r, 30, ByteArray(3000) { 7 })
+        assertTrue(r.capacityForTest >= 3000)
+        assertContentEquals(ByteArray(3000) { 7 }, readAll(r))
+    }
 }

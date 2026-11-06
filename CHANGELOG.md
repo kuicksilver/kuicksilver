@@ -300,6 +300,28 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Ktor server: a TCP connector holds at most 10,000 connections by default (`maxTcpConnections`, see "Added"); before,
   it accepted without a bound. At the limit it stops accepting and new clients wait in the OS backlog.
+- QUIC (performance): the packet path on the accelerated socket allocates nothing per datagram: the connection ID table
+  routes a datagram without boxing its hash, the endpoint loop takes a flowing socket's batches and flushes (a send on
+  that socket never suspends) without a coroutine frame, boxed times or a copy of its list of connections, and a stream's
+  output hands the core its buffered bytes without a peek and a second copy. Moving a GiB over loopback UDP allocates
+  132-139 MiB on the JVM heap instead of 234-259 MiB (docs/benchmarks.md, "Allocation-free packet path (P.2)").
+
+- HTTP/3: an idle server connection no longer keeps its last request stream (with that stream's input buffer and an
+  8 KiB kotlinx-io segment, about 10 KB) when the request arrived while the session waited for it: the accept loop's
+  coroutine frame held the stream until the next one came.
+
+- Native: `ksl_open` decrypts a packet in its own buffer instead of through a heap copy that it then wiped: no `malloc`,
+  copy or wipe per received packet. A packet whose authentication tag fails still leaves no plaintext behind: its
+  payload is wiped in place (before, the buffer kept the ciphertext; nothing reads a rejected packet's payload, and its
+  tag, the bytes a Stateless Reset check reads, is untouched).
+
+- QUIC: a stream no longer holds two 16 KiB staging arrays (one per direction) and a connection's datagram flow no longer
+  holds a 64 KiB one; the copies between the core and the application's channels go through one scratch array per endpoint
+  loop. An idle HTTP/3 server connection holds about 80–90 KB of heap instead of about 290 KB (JVM), and an idle HTTP/3 connection pair
+  takes about half the resident memory on Kotlin/Native (docs/benchmarks.md, "Memory"). A connection's ring for received
+  DATAGRAM frames (1 KB) is made by its first datagram, and a stream's reassembly window starts at 512 bytes instead of
+  4 KiB (HTTP/3's control and QPACK streams carry a few bytes for the life of the connection).
+
 - TLS (breaking): a peer's certificate chain below OpenSSL security level 2 (RFC 9325 section 4.5) is refused under
   every trust configuration, not only where OpenSSL verifies the chain (`docs/guide/tls.md`, "Platform trust"): every key
   needs 112 security bits (RSA and DSA 2048 bits, elliptic curves 224 bits) and every certificate signature too, except
@@ -461,6 +483,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
 
 ### Fixed
+
+- QUIC: a closed endpoint no longer keeps its connections reachable. `close()` released every connection's native state, but
+  the endpoint's timer heap and its table of connections by peer address still referenced each `ConnectionCore` (about
+  40 KB of Kotlin state per connection), so an application that kept a reference to a closed endpoint kept all of them.
 
 - Ktor client: a QUIC setup the server refuses with CONNECTION_REFUSED (a server in `Drain`, stopping, or with a full
   accept queue; RFC 9000 sections 5.2.2 and 20.1) no longer marks the HTTP/3 alternative broken. The call falls back to

@@ -1,0 +1,11 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# The C allocator's bytes in use on macOS (all malloc zones): what OpenSSL's per-connection objects take, for MemoryBench.
+package = io.kuicksilver.bench.mallocstats
+headers = malloc/malloc.h
+---
+static inline unsigned long long ksl_bench_malloc_in_use(void) {
+    malloc_statistics_t s;
+    malloc_zone_statistics(0, &s);
+    return (unsigned long long) s.size_in_use;
+}
