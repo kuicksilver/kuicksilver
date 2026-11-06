@@ -27,7 +27,11 @@ kotlin {
     }
     jvmToolchain(21)
     // the expect/actual classes are Beta (KT-61573): this is Kotlin's documented acknowledgement, not a behaviour change
-    compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes") }
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+        // main and test compilations stay free of warnings; -Pkuicksilver.warningsAsErrors=false only to look at a dependency bump's new ones
+        allWarningsAsErrors.set(providers.gradleProperty("kuicksilver.warningsAsErrors").map { it.toBoolean() }.orElse(true))
+    }
     jvm {
         compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
         // the published JVM artifacts link against the JDK 17 API only, whatever toolchain builds them; tests may use the toolchain's JDK
