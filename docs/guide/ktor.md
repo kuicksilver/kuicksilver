@@ -652,7 +652,9 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   answer such as SERVFAIL, a transport error, a timeout) abandons it with an `IOException`, so an attacker who drops the
   answers cannot downgrade the connection (RFC 9460 section 3.1);
 - answers are cached by their TTL (60 s to a day; "no records" for 5 minutes; at most 1000 names) and forgotten when
-  `networkId()` reports a new network; a failed lookup is not cached, and one lookup per name runs at a time, for at
+  `networkId()` reports a new network; without `networkId` the engine cannot see a network change and keeps no answers
+  of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
+  asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at
   most the connect timeout (30 s at most); closing the client cancels the lookups still running.
 
 `HttpsRecordSource.System` asks the operating system's resolver, so lookups follow the system's DNS settings:

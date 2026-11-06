@@ -91,6 +91,12 @@ internal class HttpsRecords(
     private val queryTimeout: Duration,
     nowMillis: () -> Long,
     private val random: Random = Random,
+    /**
+     * Whether answers are kept by TTL: only where a network change is seen ([onNetworkChanged]), since RFC 9460 section 12
+     * says "Clients MUST ensure that their DNS cache is partitioned for each local network, or flushed on network changes".
+     * Without it every request asks the source (one lookup per name at a time still).
+     */
+    private val caching: Boolean = true,
 ) {
     /** The lookups' own job under [parent]: [close] cancels the ones still running, so they do not hold up a closing engine. */
     private val job = SupervisorJob(parent.coroutineContext[Job])
@@ -150,7 +156,7 @@ internal class HttpsRecords(
                     lock.withLock {
                         if (gen == generation) {
                             inFlight.remove(name)
-                            answer?.let { cache.put(name, it) }
+                            if (caching) answer?.let { cache.put(name, it) }
                         }
                     }
                 }

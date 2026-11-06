@@ -80,7 +80,8 @@ public class Http3ClientConfig {
      * [Http3DiscoveryMode.H3Only], [quicHints], IP addresses, requests through a proxy, or while [http3Allowed] says no.
      * An `http://` request (in every discovery mode) first asks for the records of its `https` URL and, when the origin has
      * any usable one, gets a `307` to that URL from the engine instead (RFC 9460 section 9.5). Answers are cached by their TTL (60 s to
-     * 1 day; 5 minutes for "no records"; at most 1000 names) until [networkId] changes; a failed lookup is not cached.
+     * 1 day; 5 minutes for "no records"; at most 1000 names) until [networkId] changes, and only when [networkId] is set
+     * (RFC 9460 section 12); a failed lookup is not cached.
      */
     @ExperimentalKuicksilverApi
     public var httpsRecords: HttpsRecordSource = HttpsRecordSource.Off
@@ -108,8 +109,19 @@ public class Http3ClientConfig {
      */
     public var hardDelay: Duration? = null
 
-    /** Identifies the current network; a change resets "broken" marks and QUIC confirmation. null: one network. */
+    /**
+     * Identifies the current network; a change resets "broken" marks, QUIC confirmation and the HTTPS record cache. null:
+     * one network. While it is not set the engine keeps no HTTPS records of its own ([httpsRecords]): RFC 9460 section 12
+     * requires that cache to be flushed on network changes, which the engine cannot see then.
+     */
     public var networkId: () -> String? = { null }
+        set(value) {
+            field = value
+            networkIdSet = true
+        }
+
+    /** Whether [networkId] was set (the HTTPS record cache needs it, RFC 9460 section 12). */
+    internal var networkIdSet: Boolean = false
 
     /** HTTP/3 settings of the engine's connections. */
     public var settings: Http3Settings = Http3Settings.Default

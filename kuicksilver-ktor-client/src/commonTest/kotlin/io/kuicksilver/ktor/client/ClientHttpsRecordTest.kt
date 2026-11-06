@@ -173,7 +173,12 @@ class ClientHttpsRecordTest {
                         listOf(record(n, 1, "server.test", "h3"))
                     }
                 // TCP starts only once QUIC failed: the pooled HTTP/1.1 connection of the first request cannot win the race
-                client(source, more = { http3 { hardDelay = Duration.INFINITE } }).use { c ->
+                client(source, more = {
+                    http3 {
+                        hardDelay = Duration.INFINITE
+                        networkId = { "wifi" } // answers are cached only where a network change can be seen
+                    }
+                }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     val settled = CompletableDeferred<String>()
                     engine.httpsRecordsForTest!!.settledForTest = { settled.complete(it) }
@@ -284,6 +289,28 @@ class ClientHttpsRecordTest {
                     c.get("https://server.test:$port/")
                     assertEquals(2, records.asked.size, "asked again on the new network: ${records.asked}")
                 }
+            } finally {
+                server.stopSuspend(0, 0)
+            }
+        }
+
+    @Test fun negative_noCacheWithoutNetworkId() =
+        clientTest {
+            // RFC 9460 section 12: the cache MUST be partitioned per network or flushed on network changes
+            val (server, port) =
+                testServer(configure = {
+                    http3 = false
+                    altSvc = false
+                }) { routing { get("/") { call.respondText("h1") } } }
+            try {
+                val name = "_$port._https.server.test"
+                val records = Records(mapOf(name to listOf(record(name, 1, ".", "h2"))))
+                // without networkId the engine cannot see a network change: it keeps no answers of its own
+                client(records.source).use { c ->
+                    c.get("https://server.test:$port/")
+                    c.get("https://server.test:$port/")
+                }
+                assertEquals(2, records.asked.size, "asked again: ${records.asked}")
             } finally {
                 server.stopSuspend(0, 0)
             }

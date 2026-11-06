@@ -99,7 +99,8 @@ internal class KuicksilverEngine(
         minOf(config.connectTimeout, MAX_HTTPS_RECORD_QUERY).let { timeout ->
             config.http3.httpsRecords
                 .lookup(timeout)
-                ?.let { HttpsRecords(it, engineScope, timeout, ::getTimeMillis) }
+                // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId)
+                ?.let { HttpsRecords(it, engineScope, timeout, ::getTimeMillis, caching = config.http3.networkIdSet) }
         }
     private val httpsRecords: HttpsRecords? get() = httpsRecordsForTest
 
