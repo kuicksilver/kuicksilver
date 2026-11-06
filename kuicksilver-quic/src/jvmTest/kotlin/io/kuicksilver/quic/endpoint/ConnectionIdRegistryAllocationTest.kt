@@ -23,6 +23,7 @@ class ConnectionIdRegistryAllocationTest {
             val ids = Array(200) { i -> ByteArray(8) { (it * 31 + i * 7).toByte() } }
             for (id in ids) r.add(ConnectionId(id), p.client)
             val mx = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
+
             fun round(): Int {
                 var hits = 0
                 for (k in ids.indices) { // indices, not an iterator: the loop itself allocates nothing

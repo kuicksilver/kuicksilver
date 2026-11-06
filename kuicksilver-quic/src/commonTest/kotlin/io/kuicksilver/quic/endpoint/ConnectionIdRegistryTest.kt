@@ -48,9 +48,24 @@ class ConnectionIdRegistryTest {
                 val id = ByteArray(4) { rnd.nextInt(0, 3).toByte() }.also { it[0] = rnd.nextInt(0, 40).toByte() }
                 val core = if (rnd.nextBoolean()) p.client else q.client
                 when (rnd.nextInt(10)) {
-                    in 0..4 -> if (id.toList() !in model) { r.add(ConnectionId(id), core); model[id.toList()] = core }
-                    in 5..8 -> { r.remove(ConnectionId(id)); model.remove(id.toList()) }
-                    else -> if (step % 50 == 0) { r.removeAll(core); model.values.removeAll { it === core } }
+                    in 0..4 -> {
+                        if (id.toList() !in model) {
+                            r.add(ConnectionId(id), core)
+                            model[id.toList()] = core
+                        }
+                    }
+
+                    in 5..8 -> {
+                        r.remove(ConnectionId(id))
+                        model.remove(id.toList())
+                    }
+
+                    else -> {
+                        if (step % 50 == 0) {
+                            r.removeAll(core)
+                            model.values.removeAll { it === core }
+                        }
+                    }
                 }
                 packet.copyFrom(id, 0, 3, 4)
                 assertSame(model[id.toList()], r.lookup(packet, 3, 4), "step $step")
