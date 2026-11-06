@@ -110,10 +110,25 @@ static void dns_query_live(void) {
     printf("dns live: %d, %zu bytes (kind %d)\n", r, len, len ? out[0] : 0);
 }
 
+#if defined(__APPLE__)
+int ksl_dns_apple_cname_then_record_for_test(int *done_after_cname, int *records); /* ksl_dns.c, KSL_TEST only */
+
+/* kDNSServiceFlagsReturnIntermediates hands out a CNAME first, in a batch of its own: the query must go on to the records */
+static void dns_apple_cname_does_not_end_the_query(void) {
+    int done_after_cname = -1, records = -1;
+    int r = ksl_dns_apple_cname_then_record_for_test(&done_after_cname, &records);
+    CHECK(done_after_cname == 0, "a CNAME alone does not end the query");
+    CHECK(r == KSL_OK && records == 1, "the record after the CNAME is the answer");
+}
+#endif
+
 void run_dns(void) {
     SECTION("dns");
     dns_query_invalid_name();
     dns_query_server_where_not_supported();
+#if defined(__APPLE__)
+    dns_apple_cname_does_not_end_the_query();
+#endif
 #if defined(__linux__) && !defined(__ANDROID__)
     dns_query_fake_server_linux();
     dns_query_small_cap_fails_cleanly();

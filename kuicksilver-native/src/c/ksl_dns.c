@@ -94,8 +94,23 @@ static void DNSSD_API dns_on_record(DNSServiceRef ref, DNSServiceFlags flags, ui
         if (dns_append(a->out, a->cap, &a->at, ttl, fullname, olen, rdata, rdlen) != KSL_OK) a->result = KSL_ERROR;
         else { a->records++; a->result = KSL_OK; }
     }
-    if (!(flags & kDNSServiceFlagsMoreComing)) a->done = 1;
+    /* a batch ends without MoreComing; ReturnIntermediates also hands out the CNAMEs of the chain, in batches of their
+       own: only an answer of our type, an error or a negative answer ends the query */
+    if (!(flags & kDNSServiceFlagsMoreComing) && (err != kDNSServiceErr_NoError || rrtype == a->type || a->records > 0)) a->done = 1;
 }
+
+#ifdef KSL_TEST
+/* the callback sequence of a CDN name (a CNAME, then the HTTPS record) without the network: done after the CNAME, records */
+int ksl_dns_apple_cname_then_record_for_test(int *done_after_cname, int *records) {
+    uint8_t out[256]; static const uint8_t cname[] = {3, 'c', 'd', 'n', 0}, rd[] = {0, 1, 0, 0, 1, 0, 3, 2, 'h', '3'};
+    dns_acc a = { 65, out, sizeof out, 1, KSL_OK, 0, 0 };
+    dns_on_record(NULL, kDNSServiceFlagsAdd, 0, kDNSServiceErr_NoError, "a.example.", 5, kDNSServiceClass_IN, sizeof cname, cname, 30, &a);
+    *done_after_cname = a.done;
+    dns_on_record(NULL, kDNSServiceFlagsAdd, 0, kDNSServiceErr_NoError, "cdn.", 65, kDNSServiceClass_IN, sizeof rd, rd, 300, &a);
+    *records = a.done ? a.records : -1;
+    return a.result;
+}
+#endif
 
 static int64_t dns_now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000; }
 
