@@ -17,6 +17,7 @@ import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.Sink
 import kotlinx.io.Source
+import kotlinx.io.unsafe.UnsafeBufferOperations
 import kotlin.concurrent.Volatile
 
 // The two ktor-io halves of a [StreamRuntime]: StreamInput pulls from the core when the application awaits content,
@@ -173,7 +174,7 @@ internal class StreamInput(
     }
 }
 
-@OptIn(ExperimentalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
+@OptIn(ExperimentalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class, kotlinx.io.UnsafeIoApi::class)
 internal class StreamOutput(
     private val stream: StreamRuntime,
 ) : ByteWriteChannel {
@@ -212,13 +213,14 @@ internal class StreamOutput(
         var unsent = false
         while (!buffer.exhausted()) {
             closedCause?.let { throw ClosedWriteChannelException(it) }
-            // copied, not consumed: only what the core accepted leaves the buffer, so a flush cancelled while waiting loses nothing
-            // through the loop's scratch: filled and handed to the core with no suspension in between (EndpointLoop.scratch)
-            val tmp = stream.loop.scratch
-            val n = buffer.peek().readAtMostTo(tmp, 0, EndpointLoop.STREAM_CHUNK)
-            val w = writeToCore(tmp, 0, n, false)
+            // the head segment's bytes go to the core straight from the buffer, and only what the core accepted leaves it, so a
+            // flush cancelled while waiting loses nothing. Not through a peek (a peek source, its buffer and shared segment copies
+            // per flush) and a copy into the loop's scratch: the core copies into the stream's send ring anyway
+            val w =
+                UnsafeBufferOperations.readFromHead(buffer) { bytes, start, end ->
+                    writeToCore(bytes, start, minOf(end - start, EndpointLoop.STREAM_CHUNK), false)
+                }
             if (w > 0) {
-                buffer.skip(w.toLong())
                 unsent = true
             } else {
                 // only a flush that sends what was handed over since the last one: every flush ticks every stream's ticker, so
