@@ -524,6 +524,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a server's `respond()` no longer fails when the client stops the request stream right after receiving the
+  response HEADERS (a client abandoning a rejected CONNECT does so at once). The HEADERS frame was already handed to QUIC,
+  but the flush after it met the client's STOP_SENDING and `respond()` threw a raw `ClosedWriteChannelException` and
+  reset the stream with H3_INTERNAL_ERROR; it now returns the writer, whose writes and `finish()` report the stop as an
+  `Http3Exception`. On the client, a request whose stream the server stops before the flush after the request HEADERS
+  with a code other than H3_NO_ERROR now still reads and returns the response, and releases a request body that was not
+  sent yet; it fails only when no response comes (RFC 9114 section 4.1: "Clients MUST NOT discard complete responses as
+  a result of having their request terminated abruptly").
+
 - Ktor network (JVM, Android): a socket whose writer fails or is cancelled now ends the pending read at once. The writer
   closed the descriptor directly, which only cancels its selection key, so a read waiting in the selector was never woken:
   a TLS client that the server reset before its ClientHello waited out its whole handshake timeout.

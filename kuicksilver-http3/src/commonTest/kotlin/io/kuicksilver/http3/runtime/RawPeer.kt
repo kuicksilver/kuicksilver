@@ -13,6 +13,7 @@ import io.kuicksilver.http3.qpack.QpackEncoder
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.awaitSendStopped
 
 /** A hand-driven HTTP/3 peer on a raw QUIC connection, for protocol-violation tests. */
 internal class RawPeer(
@@ -121,4 +122,14 @@ internal suspend fun awaitCondition(
 ) {
     kotlinx.coroutines.withTimeoutOrNull(timeout) { while (!check()) kotlinx.coroutines.yield() }
         ?: kotlin.test.fail("$what did not happen within $timeout")
+}
+
+/**
+ * Waits until the peer's STOP_SENDING for [st] arrived and failed its output, so the next write or flush on it meets the
+ * stop: a test hook between two writes uses it to let the stop win that race every time.
+ */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+internal suspend fun awaitOutputStopped(st: QuicStream) {
+    kotlinx.coroutines.withTimeout(kotlin.time.Duration.parse("5s")) { st.awaitSendStopped() }
+    awaitCondition("the stop failing the output") { st.output.closedCause != null }
 }

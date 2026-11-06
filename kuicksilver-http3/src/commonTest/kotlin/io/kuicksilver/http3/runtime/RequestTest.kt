@@ -844,6 +844,44 @@ class RequestTest {
         withTimeout(5.seconds) { server.join() }
     }
 
+    /**
+     * RFC 9114 section 4.1: "Clients MUST NOT discard complete responses as a result of having their request terminated
+     * abruptly". A server sends a complete response and stops the request stream with a code other than H3_NO_ERROR
+     * before the client's flush after its HEADERS: the request still returns that response, and the application writing
+     * the request body is released with the stop.
+     */
+    @Test fun completeResponseSurvivesAnAbruptStopBeforeTheBody() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                client.session.afterRequestHeadersForTest = { st -> awaitOutputStopped(st) }
+                val raw = RawPeer(s)
+                raw.openControl()
+                client.peerSettings.filterNotNull().first()
+                launch {
+                    val st = withTimeout(5.seconds) { s.acceptBidi() }
+                    st.output.writeFully(raw.headers(st.id, listOf(":status" to "413")) + raw.data("too large".encodeToByteArray()))
+                    peerMayHaveClosed { st.output.flushAndClose() }
+                    st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                }
+                val body = ByteChannel()
+                val resp = client.request(http3Request("POST", "server.test", "/") { this.body = body })
+                assertEquals(413, resp.status)
+                assertEquals("too large", resp.body.readAllBytes().decodeToString())
+                val stopped =
+                    withTimeout(5.seconds) {
+                        while (body.closedCause == null) delay(10)
+                        generateSequence(body.closedCause) { it.cause }.firstNotNullOfOrNull { it as? QuicException.StreamError.Stopped }
+                    }
+                assertEquals(
+                    Http3ErrorCode.REQUEST_CANCELLED,
+                    stopped?.code,
+                    "the body writer is released with the stop, got ${body.closedCause}",
+                )
+            }
+        }
+
     /** A request body the application never reads is stopped with H3_NO_ERROR once the response is complete (RFC 9114 section 4.1). */
     @Test fun unreadBodyIsStoppedAfterResponse() =
         h3Test {

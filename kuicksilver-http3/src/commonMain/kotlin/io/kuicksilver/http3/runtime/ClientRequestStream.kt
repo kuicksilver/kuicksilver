@@ -251,6 +251,7 @@ private suspend fun H3Session.exchange(
     try {
         try {
             st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildRequest(r)))
+            afterRequestHeadersForTest?.invoke(st)
             if (keepOpen) {
                 st.output.flush() // Extended CONNECT: the stream carries data both ways after the response
             } else if (r.body == null && r.trailers == null) {
@@ -264,8 +265,11 @@ private suspend fun H3Session.exchange(
                     }
             }
         } catch (e: Throwable) {
-            // a server that answered without the rest of the request may stop it with H3_NO_ERROR before our FIN left: the response still counts (RFC 9114 section 4.1)
-            if (!stoppedWithNoError(e)) throw e
+            // a server that answered without the rest of the request may stop it before our FIN left (with H3_NO_ERROR, or
+            // abruptly with another code): the upload ends, and the response, when one comes, still counts (RFC 9114 section
+            // 4.1: clients MUST NOT discard complete responses because their request was terminated abruptly)
+            val stop = stoppedByPeer(e) ?: throw e
+            if (sender == null) r.body?.cancel(stop) // the application writing the request body is released
         }
         val frames =
             RequestFrames(
@@ -401,10 +405,14 @@ private fun CompletableDeferred<Unit>.failureOr(e: Throwable): Throwable = getFa
 @OptIn(ExperimentalCoroutinesApi::class)
 private fun CompletableDeferred<Unit>.getFailureOrNull(): Throwable? = if (isCompleted) getCompletionExceptionOrNull() else null
 
-private fun stoppedWithNoError(e: Throwable): Boolean =
-    (H3Session.transportCause(e) as? QuicException.StreamError.Stopped)?.code == Http3ErrorCode.NO_ERROR
+/** The peer's STOP_SENDING behind a failed write, whatever its code; null for any other failure. */
+private fun stoppedByPeer(e: Throwable): QuicException.StreamError.Stopped? =
+    (H3Session.transportCause(e) as? QuicException.StreamError.Stopped)?.takeIf { it.initiator == Initiator.Peer }
 
-/** Request body as DATA frames, then trailers, then FIN. A server that stops reading with H3_NO_ERROR ends this quietly (RFC 9114 section 4.1). */
+/**
+ * Request body as DATA frames, then trailers, then FIN. A server that stops reading (with H3_NO_ERROR, or abruptly) ends
+ * this quietly: the response is still read (RFC 9114 section 4.1).
+ */
 private suspend fun H3Session.sendBody(
     st: QuicStream,
     r: Http3Request,

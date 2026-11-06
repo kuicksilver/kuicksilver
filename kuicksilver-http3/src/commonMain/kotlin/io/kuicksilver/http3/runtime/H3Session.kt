@@ -168,6 +168,12 @@ internal class H3Session(
      */
     internal var beforeRequestHeadersForTest: (suspend (QuicStream) -> Unit)? = null
 
+    /** Test hook: runs on a client's request stream once its HEADERS frame was written, before the flush (or FIN) after it. */
+    internal var afterRequestHeadersForTest: (suspend (QuicStream) -> Unit)? = null
+
+    /** Test hook: runs on a server's request stream once the response HEADERS frame was written, before the flush after it. */
+    internal var afterResponseHeadersForTest: (suspend (QuicStream) -> Unit)? = null
+
     /** Requests repeated after a 425 Too Early (RFC 8470 section 5.2). */
     internal var early425Retries = 0
 

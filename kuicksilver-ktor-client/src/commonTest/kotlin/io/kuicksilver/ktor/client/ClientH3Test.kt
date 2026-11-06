@@ -275,6 +275,37 @@ class ClientH3Test {
             }
         }
 
+    /**
+     * RFC 9114 section 4.1: a server that answers without reading the request stops the upload (STOP_SENDING H3_NO_ERROR),
+     * and "Clients MUST NOT discard complete responses as a result of having their request terminated abruptly": the call
+     * reports the early response, and the body writer, which never ends by itself, is stopped.
+     */
+    @Test fun earlyResponseStopsAnEndlessUpload() =
+        h3Test {
+            val (server, port) =
+                testServer {
+                    routing { post("/upload") { call.respondText("too large", status = io.ktor.http.HttpStatusCode.PayloadTooLarge) } }
+                }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    val body =
+                        object : OutgoingContent.WriteChannelContent() {
+                            override suspend fun writeTo(channel: ByteWriteChannel) {
+                                while (true) {
+                                    channel.writeFully(ByteArray(65536))
+                                    channel.flush()
+                                }
+                            }
+                        }
+                    val r = c.post("https://127.0.0.1:$port/upload") { setBody(body) }
+                    assertEquals(413, r.status.value)
+                    assertEquals("too large", r.bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun headersRoundTripLowercase() =
         h3Test {
             val (server, port) =

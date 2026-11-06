@@ -272,6 +272,55 @@ class ExtendedConnectTest {
         }
 
     /**
+     * The client abandons a rejected CONNECT (STOP_SENDING) as soon as it has the 501 HEADERS, which may be before the
+     * server's respond() returned: the response went out, so respond() still hands back its writer, and only the writer
+     * reports the stop. The hook lets the stop arrive between the HEADERS and respond()'s flush every time.
+     */
+    @Test fun rejectedConnectStoppedBeforeRespondReturns() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                p.server.session.afterResponseHeadersForTest = { st -> awaitOutputStopped(st) }
+                val served =
+                    async {
+                        val w = p.server.acceptRequest().respond(501)
+                        runCatching { w.finish() }.exceptionOrNull()
+                    }
+                assertEquals(501, assertFailsWith<Http3Exception.ConnectRejected> { p.client.connect(connectReq(), "unknown") }.status)
+                val finishFailure = withTimeout(5.seconds) { served.await() }
+                assertIs<Http3Exception>(finishFailure, "the writer reports the client's stop as an HTTP/3 error")
+            }
+        }
+
+    /**
+     * RFC 9114 section 4.1: "Clients MUST NOT discard complete responses as a result of having their request terminated
+     * abruptly". A server answers a CONNECT with a complete 501 and stops the request stream, with H3_NO_ERROR or
+     * abruptly with another code, before the client's flush after its HEADERS: connect still reports the 501.
+     */
+    @Test fun rejectedConnectWithStopBeforeTheClientsFlush() =
+        h3Test {
+            for (code in listOf(Http3ErrorCode.NO_ERROR, Http3ErrorCode.REQUEST_CANCELLED)) {
+                QuicPair.open().useScoped { q ->
+                    val (c, s) = q.connect()
+                    val client = Http3Connection.client(c)
+                    client.session.afterRequestHeadersForTest = { st -> awaitOutputStopped(st) }
+                    val raw = RawPeer(s)
+                    raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L))
+                    launch {
+                        val st = withTimeout(5.seconds) { s.acceptBidi() }
+                        st.output.writeFully(raw.headers(st.id, listOf(":status" to "501")))
+                        peerMayHaveClosed { st.output.flushAndClose() }
+                        st.stopSending(code)
+                    }
+                    val e =
+                        assertFailsWith<Http3Exception.ConnectRejected>("STOP_SENDING ${Http3ErrorCode.name(code)}") {
+                            client.connect(connectReq(), "unknown")
+                        }
+                    assertEquals(501, e.status)
+                }
+            }
+        }
+
+    /**
      * RFC 9110 section 9.3.6: a CONNECT request has no content, and what follows its header section is the tunnel; per
      * RFC 9114 section 4.1.2 its `content-length` then does not describe the DATA frames. A CONNECT (classic and
      * Extended) declaring `content-length: 0` delivers its tunnel bytes instead of failing with H3_MESSAGE_ERROR.
