@@ -252,20 +252,38 @@ void run_udp_win(void) {
     { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(0, lc); CHECK(c != NULL, "socket for shutdown test");
       if (c) { ksl_udp_shutdown(c); uint8_t buf[8] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 8 }, rc[1] = { 8 }, got = 0, sent = 0; uint8_t e[1] = { 0 };
         CHECK(ksl_udp_send(c, bufs, lens, lb, e, 1, &sent) == KSL_ERROR, "send after shutdown is an error"); CHECK(ksl_udp_recv(c, bufs, rc, lens, lc, e, 1, &got, 1000) == KSL_ERROR && got == 0, "recv after shutdown is an error, at once"); ksl_udp_close(c); } }
-    /* udp_win_pktinfo_reply_from_destination: a 0.0.0.0 socket with PKTINFO learns the address a datagram was sent to (127.0.0.2, also on
-       Windows' loopback) and a reply sent from it arrives from 127.0.0.2, not from 127.0.0.1, the route's choice back to the client */
+    /* udp_win_pktinfo_*: a 0.0.0.0 socket with PKTINFO learns the address a datagram was sent to and sends from a named source. Windows
+       answers all of 127/8 on loopback but assigns 127.0.0.1 alone, and it is a strong-host system: WSASendMsg refuses 127.0.0.2 as an
+       IN_PKTINFO source (WSAEINVAL; WSAEADDRNOTAVAIL with the interface index) and a loopback client cannot reach an interface address
+       (verified in the Windows 11 VM, 2026-11-06). So no second address separates the reply's source from the route's choice here
+       (Linux and macOS test that, test_udp.c udp_pktinfo_reply_from_second_address); this checks the destinations, a send from a named
+       source, and that a source Windows refuses loses that slot only */
     { uint8_t any[KSL_UDP_ADDR_LEN], lw[KSL_UDP_ADDR_LEN], lc[KSL_UDP_ADDR_LEN]; w4(any, 0); memset(any + 3, 0, 4);
       ksl_udp *w = wopen(any, KSL_UDP_PKTINFO, lw), *c = wopen_lo(0, lc); CHECK(w && c, "wildcard server and client");
       if (w && c) {
         CHECK(wcaps(w, NULL) & KSL_UDP_PKTINFO, "udp_win_pktinfo_granted_on_wildcard");
-        uint8_t to2[KSL_UDP_ADDR_LEN]; w4(to2, wport(lw)); to2[6] = 2; uint8_t buf[64] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 64 }, sent = 0; uint8_t e[1] = { 0 };
-        CHECK(ksl_udp_send(c, bufs, lens, to2, e, 1, &sent) == KSL_OK && sent == 1, "to 127.0.0.2");
-        uint8_t rbuf[128]; uint8_t *rb[1] = { rbuf }; uint32_t rc[1] = { 128 }, rl[1] = { 0 }, got = 0; uint8_t from[KSL_UDP_ADDR_LEN], dst[KSL_UDP_ADDR_LEN], re[1];
-        for (int tries = 0; tries < 25 && !got; tries++) ksl_udp_recv_dst(w, rb, rc, rl, from, dst, re, 1, &got, 200);
-        CHECK(got == 1 && dst[0] == 4 && dst[3] == 127 && dst[6] == 2 && wport(dst) == wport(lw), "udp_win_pktinfo_dst: 127.0.0.2 reported");
-        sent = 0; CHECK(ksl_udp_send_src(w, bufs, lens, from, dst, e, 1, &sent) == KSL_OK && sent == 1, "reply sent from 127.0.0.2");
-        got = 0; uint8_t seen[KSL_UDP_ADDR_LEN]; for (int tries = 0; tries < 25 && !got; tries++) ksl_udp_recv(c, rb, rc, rl, seen, re, 1, &got, 200);
-        CHECK(got == 1 && seen[3] == 127 && seen[6] == 2 && wport(seen) == wport(lw), "udp_win_pktinfo_reply_from_destination");
+        uint8_t buf[64] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 64 }, sent = 0; uint8_t e[1] = { 0 };
+        uint8_t rbuf[128]; uint8_t *rb[1] = { rbuf }; uint32_t rc[1] = { 128 }, rl[1] = { 0 }, got = 0; uint8_t from[KSL_UDP_ADDR_LEN], dst[KSL_UDP_ADDR_LEN], dst1[KSL_UDP_ADDR_LEN], re[1], seen[KSL_UDP_ADDR_LEN];
+        for (int k = 1; k <= 2; k++) {   /* udp_win_pktinfo_dst: 127.0.0.1 and 127.0.0.2 reported with the socket's port */
+            uint8_t to[KSL_UDP_ADDR_LEN]; w4(to, wport(lw)); to[6] = (uint8_t)k; sent = 0;
+            CHECK(ksl_udp_send(c, bufs, lens, to, e, 1, &sent) == KSL_OK && sent == 1, "to 127.0.0.k");
+            got = 0; for (int tries = 0; tries < 25 && !got; tries++) ksl_udp_recv_dst(w, rb, rc, rl, from, dst, re, 1, &got, 200);
+            if (!(got == 1 && dst[0] == 4 && dst[3] == 127 && dst[6] == k && wport(dst) == wport(lw))) printf("udp_win_pktinfo_dst: got %u dst %u:%u.%u.%u.%u:%u\n", got, dst[0], dst[3], dst[4], dst[5], dst[6], wport(dst));
+            CHECK(got == 1 && dst[0] == 4 && dst[3] == 127 && dst[6] == k && wport(dst) == wport(lw), "udp_win_pktinfo_dst: 127.0.0.k reported");
+            if (k == 1) memcpy(dst1, dst, KSL_UDP_ADDR_LEN);
+        }
+        /* udp_win_pktinfo_reply_from_named_source: the reply with source 127.0.0.1 (IN_PKTINFO, interface 0) arrives from it */
+        sent = 0; CHECK(ksl_udp_send_src(w, bufs, lens, from, dst1, e, 1, &sent) == KSL_OK && sent == 1, "reply sent from 127.0.0.1");
+        got = 0; for (int tries = 0; tries < 25 && !got; tries++) ksl_udp_recv(c, rb, rc, rl, seen, re, 1, &got, 200);
+        CHECK(got == 1 && seen[3] == 127 && seen[6] == 1 && wport(seen) == wport(lw), "udp_win_pktinfo_reply_from_named_source");
+        /* negative_udp_win_pktinfo_refused_source: 127.0.0.2 as source is refused: that slot is lost, the next one leaves, no socket error */
+        { uint8_t srcs[2 * KSL_UDP_ADDR_LEN], ad[2 * KSL_UDP_ADDR_LEN]; memcpy(srcs, dst, KSL_UDP_ADDR_LEN); memcpy(srcs + KSL_UDP_ADDR_LEN, dst1, KSL_UDP_ADDR_LEN);
+          memcpy(ad, from, KSL_UDP_ADDR_LEN); memcpy(ad + KSL_UDP_ADDR_LEN, from, KSL_UDP_ADDR_LEN);
+          uint8_t b0[64], b1[64]; memset(b0, 1, 64); memset(b1, 2, 64); uint8_t *bb[2] = { b0, b1 }; uint32_t bl[2] = { 64, 64 }; uint8_t be[2] = { 0, 0 }; sent = 0;
+          CHECK(ksl_udp_send_src(w, bb, bl, ad, srcs, be, 2, &sent) == KSL_OK && sent == 2, "negative_udp_win_pktinfo_refused_source: both slots accounted");
+          got = 0; for (int tries = 0; tries < 10 && !got; tries++) ksl_udp_recv(c, rb, rc, rl, seen, re, 1, &got, 200);
+          CHECK(got == 1 && rbuf[0] == 2 && seen[6] == 1, "negative_udp_win_pktinfo_refused_source: the slot with a source Windows takes arrived");
+          got = 0; ksl_udp_recv(c, rb, rc, rl, seen, re, 1, &got, 200); CHECK(got == 0, "negative_udp_win_pktinfo_refused_source: the refused one never left"); }
       }
       if (w) ksl_udp_close(w); if (c) ksl_udp_close(c); }
     ksl_udp_close(a); ksl_udp_close(b);
