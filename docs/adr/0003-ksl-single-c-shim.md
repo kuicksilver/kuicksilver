@@ -68,3 +68,12 @@ wildcard UDP socket: `KSL_UDP_PKTINFO`, `ksl_udp_send_src` (a source per slot) a
 destination), additive (ADR-0006, "Local addresses on a wildcard bind"); 74 functions. Also additive under 7:
 `ksl_chain_level` and `KSL_OPT_LEVEL_AFTER_PAUSE` (OpenSSL's security level on the path the platform verifier built,
 checked after its yes under `TrustConfig.Platform`, instead of on the presented chain before the pause; T.5b); 75 functions.
+
+DNS query, additive under 7 (L1.2, HTTPS records for the Ktor client): `ksl_dns_query(name, type, server, timeout_ms, out,
+cap, len)` asks the operating system's resolver for one record type, so the lookup follows the system's DNS settings:
+`res_nquery` on Linux (`libresolv.so.2`, a new `DT_NEEDED` of the Linux libraries; glibc ships it, and the symbols are
+older than the glibc floors), `DNSServiceQueryRecord` on Apple (libSystem), `DnsQuery_W` on Windows (`dnsapi.dll`).
+Linux returns the whole DNS message, Apple and Windows a list of records (they hand out records, not messages); the first
+byte of `out` says which. Android answers `KSL_DNS_NOT_SUPPORTED` (no public call below API 29: Kotlin asks
+`DnsResolver.rawQuery` there). No state, no threads; the call blocks for about `timeout_ms` at most, except on Windows,
+whose call takes no timeout: Kotlin stops waiting and lets it end, at most four lookups at a time per process. 76 functions.

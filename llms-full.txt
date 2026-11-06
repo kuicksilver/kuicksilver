@@ -2188,11 +2188,12 @@ browsers do. Off by default. The rules:
   `networkId()` reports a new network; a failed lookup is not cached, and one lookup per name runs at a time, for at
   most the connect timeout (30 s at most).
 
-`HttpsRecordSource.System` asks the operating system's resolver, so lookups follow the system's DNS settings: on Android
-`DnsResolver.rawQuery` on the default network (Private DNS included) from API 29; on API 24 to 28 there is no public way
-to ask for a record type (and a resolver of the engine's own would bypass Private DNS), so every lookup counts as failed
-there and requests behave as without records. Other platforms do not answer yet either; `HttpsRecordSource.Exchange`
-works everywhere. An `http://` URL is not upgraded to `https://` because of a record (RFC 9460 section 9.5 is not done).
+`HttpsRecordSource.System` asks the operating system's resolver, so lookups follow the system's DNS settings:
+`res_nquery` on Linux (JVM and Kotlin/Native), `DNSServiceQueryRecord` on macOS and iOS, `DnsQuery_W` on Windows, and
+`DnsResolver.rawQuery` on the default network (Private DNS included) on Android from API 29. On Android API 24 to 28 there
+is no public way to ask for a record type (and a resolver of the engine's own would bypass Private DNS), so every lookup
+counts as failed there and requests behave as without records. At most four system lookups run at once per process.
+`HttpsRecordSource.Exchange` works everywhere. An `http://` URL is not upgraded to `https://` because of a record (RFC 9460 section 9.5 is not done).
 
 #### Racing and fallback
 

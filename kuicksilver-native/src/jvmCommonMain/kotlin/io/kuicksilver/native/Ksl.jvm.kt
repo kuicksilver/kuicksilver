@@ -592,4 +592,11 @@ public actual object Ksl {
     ): Long = KslNative.udpEmsgsize(udp, lastSize)
 
     public actual fun liveObjects(): LongArray = LongArray(KslConst.LIVE_COUNT).also { KslNative.liveObjects(it) }
+
+    public actual fun dnsQuery(
+        name: String,
+        type: Int,
+        server: ByteArray?,
+        timeoutMs: Int,
+    ): ByteArray? = KslNative.dnsQuery(name, type, server, timeoutMs)
 }

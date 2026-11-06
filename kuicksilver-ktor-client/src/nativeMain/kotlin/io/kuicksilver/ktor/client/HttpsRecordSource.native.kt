@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.kuicksilver.ktor.client.dns.DnsMessage
 import io.kuicksilver.ktor.client.dns.SvcbRecord
+import io.kuicksilver.ktor.client.dns.httpsRecordsOf
+import io.kuicksilver.tls.KslDns
 import kotlin.time.Duration
 
-// the system resolver is not asked yet on this platform: every lookup counts as failed (HttpsRecordSource.System)
+/** The OS resolver through ksl (`ksl_dns_query`): res_nquery on Linux, DNSServiceQueryRecord on Apple, DnsQuery_W on Windows. */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 internal actual suspend fun platformHttpsQuery(
     name: String,
     timeout: Duration,
-): List<SvcbRecord>? = null
+): List<SvcbRecord>? = KslDns.query(name, DnsMessage.TYPE_HTTPS, timeout)?.let { httpsRecordsOf(it, name) }

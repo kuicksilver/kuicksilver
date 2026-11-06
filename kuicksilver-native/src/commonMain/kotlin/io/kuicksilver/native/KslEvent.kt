@@ -114,6 +114,12 @@ public object KslConst {
     public const val UDP_PKTINFO: Int = 32
     public const val UDP_ADDR_LEN: Int = 20
 
+    /** `Ksl.dnsQuery` answer kind: a whole DNS message follows (`KSL_DNS_MESSAGE`). */
+    public const val DNS_MESSAGE: Int = 1
+
+    /** `Ksl.dnsQuery` answer kind: `ttl:4 | owner length:1 | owner | rdata length:2 | rdata` records follow (`KSL_DNS_RECORDS`). */
+    public const val DNS_RECORDS: Int = 2
+
     // ksl_live_objects indices (KSL_LIVE_*)
     public const val LIVE_CTX: Int = 0
     public const val LIVE_SSL: Int = 1

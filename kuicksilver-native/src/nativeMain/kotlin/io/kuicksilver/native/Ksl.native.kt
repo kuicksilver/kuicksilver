@@ -886,4 +886,33 @@ public actual object Ksl {
             ksl_live_objects(out, KslConst.LIVE_COUNT.toULong())
             LongArray(KslConst.LIVE_COUNT) { out[it] }
         }
+
+    public actual fun dnsQuery(
+        name: String,
+        type: Int,
+        server: ByteArray?,
+        timeoutMs: Int,
+    ): ByteArray? {
+        if (type !in 0..0xffff || (server != null && server.size != KslConst.UDP_ADDR_LEN)) return null
+        val out = ByteArray(DNS_ANSWER_CAP)
+        return memScoped {
+            val len = alloc<ULongVar>()
+            val r =
+                out.pin { o, cap ->
+                    if (server == null) {
+                        ksl_dns_query(name, type.toUShort(), null, timeoutMs, o, cap, len.ptr)
+                    } else {
+                        server.pin { s, _ -> ksl_dns_query(name, type.toUShort(), s, timeoutMs, o, cap, len.ptr) }
+                    }
+                }
+            when (r) {
+                KSL_OK -> out.copyOf(len.value.toInt())
+                KSL_DNS_NOT_FOUND -> ByteArray(0)
+                else -> null
+            }
+        }
+    }
+
+    /** A DNS message over TCP is at most 64 KiB; the record list of Apple and Windows adds a few bytes per record. */
+    private const val DNS_ANSWER_CAP = 65536 + 1 + 4096
 }

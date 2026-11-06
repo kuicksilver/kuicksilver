@@ -116,3 +116,35 @@ internal object DnsMessage {
     /** [name] as [DnsReader.name] writes it: lower case, no final dot. */
     private fun normalize(name: String): String = name.trimEnd('.').lowercase().ifEmpty { "." }
 }
+
+/**
+ * The HTTPS records of [name] in an answer of the system resolver: a whole message goes through [DnsMessage.answers];
+ * a record list (Apple, Windows, which hand out records) through [SvcbCodec.parseRdata], each with its owner and TTL.
+ * Null when the answer cannot be used, a malformed record included (RFC 9460 section 2.2: the RRSet is rejected).
+ */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+internal fun httpsRecordsOf(
+    answer: io.kuicksilver.tls.KslDnsAnswer,
+    name: String,
+): List<SvcbRecord>? =
+    try {
+        when (answer) {
+            is io.kuicksilver.tls.KslDnsAnswer.Message -> {
+                DnsMessage.answers(answer.bytes, name)
+            }
+
+            is io.kuicksilver.tls.KslDnsAnswer.Records -> {
+                answer.records.mapNotNull {
+                    SvcbCodec.parseRdata(
+                        it.rdata,
+                        0,
+                        it.rdata.size,
+                        it.owner.trimEnd('.').lowercase(),
+                        it.ttlSeconds.coerceIn(0, Int.MAX_VALUE.toLong()),
+                    )
+                }
+            }
+        }
+    } catch (_: DnsException) {
+        null
+    }

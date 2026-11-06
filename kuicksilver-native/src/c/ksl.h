@@ -33,7 +33,7 @@ extern "C" {
 /* 7: ICMP hints for DPLPMTUD (ADR-0006) — ksl_udp_take_ptb (Packet Too Big read from the Linux error queue, IP_RECVERR with DF) and
    ksl_udp_emsgsize (sends the kernel refused as too large); a queued ICMP error no longer fails ksl_udp_recv. The one ABI bump of 0.3.0:
    later 0.3.0 additions go under 7; additive under 7: ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
-   path the platform built, T.5b) */
+   path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records) */
 
 /* return codes */
 #define KSL_OK 0
@@ -347,6 +347,18 @@ int      ksl_seal(ksl_key *, uint64_t pn, const uint8_t *hdr, size_t hdr_len, ui
 int      ksl_open(ksl_key *, uint64_t pn, const uint8_t *hdr, size_t hdr_len, uint8_t *payload, size_t len);
 int      ksl_header_mask(ksl_key *, const uint8_t sample[16], uint8_t mask[5]);
 int      ksl_retry_tag(uint32_t version, const uint8_t *odcid, size_t odcid_len, const uint8_t *retry_pseudo, size_t plen, uint8_t tag[16]);
+
+/* --- DNS (additive under ABI 7): one record type of one name from the operating system's resolver --- */
+#define KSL_DNS_NOT_FOUND (-2)      /* return code: NXDOMAIN, or the name has no record of the type (NODATA) */
+#define KSL_DNS_NOT_SUPPORTED (-3)  /* return code: this platform cannot ask (Android: Kotlin asks DnsResolver), or not with `server` */
+#define KSL_DNS_MESSAGE 1         /* out[0]: the rest is the whole DNS response (Linux, res_nquery) */
+#define KSL_DNS_RECORDS 2         /* out[0]: the rest is records, each ttl:4 BE | owner length:1 | owner | rdata length:2 BE | rdata
+                                     (Apple DNSServiceQueryRecord, Windows DnsQuery_W: those hand out records, not messages) */
+int      ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int timeout_ms, uint8_t *out, size_t cap, size_t *len);
+         /* class IN. name: 1..253 printable ASCII bytes, labels of 1..63 (else KSL_ERROR before any lookup). server: NULL for the system's
+            resolvers, or a KSL_UDP_ADDR_LEN address to ask instead (Linux: IPv4; Windows: IPv4 on port 53; Apple: KSL_DNS_NOT_SUPPORTED);
+            for tests. Blocks for at most about timeout_ms on Linux (two tries of half of it, at least a second each) and Apple; Windows
+            takes no timeout, the caller stops waiting. KSL_ERROR when the answer does not fit in cap: no byte is written past it */
 
 /* --- KslCrypto --- */
 int      ksl_rand(uint8_t *out, size_t len);
