@@ -182,6 +182,9 @@ internal class EndpointLoop private constructor(
 
     internal fun now(): TimeMark = TimeMark(1_000_000_000L + start.elapsedNow().inWholeNanoseconds)
 
+    /** [now] for the receivers, read without boxing. */
+    private val clock = BatchReceiver.LoopClock { now() }
+
     private var receiveJob: kotlinx.coroutines.Job? = null
     private var forwardJob: kotlinx.coroutines.Job? = null
 
@@ -292,7 +295,7 @@ internal class EndpointLoop private constructor(
             val caps = launch { followCapabilities(io, path, core) }
             val batch = PacketBatch(16, SLOT_SIZE)
             val limiter = WorkLimiter()
-            val receiver = BatchReceiver(io, ::now, directWait)
+            val receiver = BatchReceiver(io, clock, directWait)
             try {
                 limiter.start(now())
                 while (true) {
@@ -387,7 +390,7 @@ internal class EndpointLoop private constructor(
     private suspend fun receivePreferred(p: DatagramIo) {
         val batch = PacketBatch(16, SLOT_SIZE)
         val limiter = WorkLimiter()
-        val receiver = BatchReceiver(p, ::now, directWait)
+        val receiver = BatchReceiver(p, clock, directWait)
         try {
             limiter.start(now())
             while (true) {
@@ -592,17 +595,19 @@ internal class EndpointLoop private constructor(
     private val directWait: Duration = if (config.dispatcher != null) Duration.ZERO else BatchReceiver.PLATFORM_WAIT
 
     /** This socket's batches: on the loop's thread while datagrams keep coming, else through the blocking receive. */
-    internal val receiver = BatchReceiver(io, ::now, directWait)
+    internal val receiver = BatchReceiver(io, clock, directWait)
 
     /** Time left until the loop's next timer: a receive on the loop's thread waits no longer. */
-    private val untilTimer: () -> Duration = { timers.peek()?.let { it.heapDeadline - now() } ?: Duration.INFINITE }
+    private val untilTimer = BatchReceiver.TimerHorizon { timers.peek()?.let { it.heapDeadline - now() } ?: Duration.INFINITE }
 
     private suspend fun receiveLoop() {
         try {
             limiter.start(now())
             while (true) {
                 inBatch.clear()
-                receiver.receive(inBatch, untilTimer)
+                // the batch on the loop's thread without a coroutine frame; the suspending receive only to yield or to wait
+                val direct = receiver.receiveDirect(inBatch, untilTimer)
+                if (direct < 0) receiver.receive(inBatch, untilTimer, directTried = direct == BatchReceiver.NOTHING)
                 observer.datagramsReceived += inBatch.count
                 val now = now()
                 for (i in 0 until inBatch.count) {

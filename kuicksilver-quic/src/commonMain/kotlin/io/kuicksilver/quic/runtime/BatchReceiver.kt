@@ -35,9 +35,19 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 internal class BatchReceiver(
     private val io: DatagramIo,
-    private val now: () -> TimeMark,
+    private val now: LoopClock,
     internal val maxWait: Duration = PLATFORM_WAIT,
 ) {
+    /** The loop's clock: an interface, so reading it does not box the [TimeMark] as a `() -> TimeMark` would, once per batch. */
+    fun interface LoopClock {
+        fun now(): TimeMark
+    }
+
+    /** The time left until the loop's next timer, unboxed like [LoopClock]. */
+    fun interface TimerHorizon {
+        fun untilTimer(): Duration
+    }
+
     private val direct = io as? DirectReceive
 
     /** The last receive brought datagrams: the next ones are likely close behind. */
@@ -51,26 +61,22 @@ internal class BatchReceiver(
     var directBatches = 0L
         private set
 
-    /** Receives into [into] like [DatagramIo.receive]; [untilTimer] answers the time left until the loop's next timer. */
+    /**
+     * Receives into [into] like [DatagramIo.receive]; [untilTimer] answers the time left until the loop's next timer.
+     * [directTried]: [receiveDirect] just tried the loop's thread and got nothing, so the blocking receive follows at once.
+     */
     suspend fun receive(
         into: PacketBatch,
-        untilTimer: () -> Duration,
+        untilTimer: TimerHorizon,
+        directTried: Boolean = false,
     ): Int {
-        if (direct != null && flowing) {
-            if (sinceYield >= YIELD_DATAGRAMS || now() - lastYield >= YIELD_INTERVAL || untilTimer() <= Duration.ZERO) {
+        if (direct != null && flowing && !directTried) {
+            if (yieldDue(untilTimer)) {
                 yield()
                 yielded()
             }
-            var n = direct.receiveNow(into, 0)
-            if (n == 0) {
-                val wait = minOf(maxWait, untilTimer()).inWholeMilliseconds
-                if (wait > 0) n = direct.receiveNow(into, wait.toInt())
-            }
-            if (n > 0) {
-                sinceYield += n
-                directBatches++
-                return n
-            }
+            val n = takeDirect(direct, into, untilTimer)
+            if (n > 0) return n
         }
         val n = io.receive(into) // suspends: the loop's queued work runs meanwhile
         yielded()
@@ -78,12 +84,54 @@ internal class BatchReceiver(
         return n
     }
 
+    /**
+     * The part of [receive] that does not suspend, so the loop calls it without a coroutine frame per batch: while datagrams
+     * flow and no yield is due, the next batch on the loop's thread. [NOT_TRIED] when [receive] has to run instead (it yields
+     * first, or waits on the blocking receive), [NOTHING] when the loop's thread got nothing (then `receive(directTried = true)`).
+     */
+    fun receiveDirect(
+        into: PacketBatch,
+        untilTimer: TimerHorizon,
+    ): Int {
+        if (direct == null || !flowing || yieldDue(untilTimer)) return NOT_TRIED
+        val n = takeDirect(direct, into, untilTimer)
+        return if (n > 0) n else NOTHING
+    }
+
+    private fun yieldDue(untilTimer: TimerHorizon): Boolean =
+        sinceYield >= YIELD_DATAGRAMS || now.now() - lastYield >= YIELD_INTERVAL || untilTimer.untilTimer() <= Duration.ZERO
+
+    /** What is queued, or what arrives within [maxWait] and before the next timer; 0 when nothing came. */
+    private fun takeDirect(
+        direct: DirectReceive,
+        into: PacketBatch,
+        untilTimer: TimerHorizon,
+    ): Int {
+        var n = direct.receiveNow(into, 0)
+        if (n == 0) {
+            val timer = untilTimer.untilTimer()
+            val wait = (if (timer < maxWait) timer else maxWait).inWholeMilliseconds // not minOf: it boxes both Durations
+            if (wait > 0) n = direct.receiveNow(into, wait.toInt())
+        }
+        if (n > 0) {
+            sinceYield += n
+            directBatches++
+        }
+        return n
+    }
+
     private fun yielded() {
         sinceYield = 0
-        lastYield = now()
+        lastYield = now.now()
     }
 
     companion object {
+        /** [receiveDirect]: not tried, call [receive]. */
+        const val NOT_TRIED = -1
+
+        /** [receiveDirect]: tried, nothing came; call [receive] with `directTried = true`. */
+        const val NOTHING = -2
+
         /** Long enough for the gaps between a paced sender's bursts (under 0.2 ms from quinn at 0.9 Gbit/s), short for a command. */
         val DEFAULT_WAIT: Duration = 1.milliseconds
 
