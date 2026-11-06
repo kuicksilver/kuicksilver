@@ -35,6 +35,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -45,7 +46,8 @@ import kotlin.time.Duration.Companion.seconds
  * the default) and the other one takes over. Run it with `:kuicksilver-ktor-client:androidMigrationDeviceTest`, which starts
  * the server and passes its port as the instrumentation argument `kslMigrationPeerPort`; without it (a plain
  * `connectedAndroidDeviceTest`) the tests are skipped, because a server inside the device is reached over loopback whatever
- * network the client's socket is bound to, which would prove nothing about routing. Needs Wi-Fi and a mobile network (the
+ * network the client's socket is bound to, which would prove nothing about routing. With the port, a device without both
+ * Wi-Fi and a mobile network fails rather than skips, so the gate cannot pass without the switch. Needs both (the
  * stock emulator). The network is switched on again at the end.
  */
 @RunWith(AndroidJUnit4::class)
@@ -61,7 +63,7 @@ class ClientMigrationAndroidTest {
     private fun hasTransport(transport: Int): Boolean =
         connectivity.allNetworks.any { connectivity.getNetworkCapabilities(it)?.hasTransport(transport) == true }
 
-    /** The host server's port, or a skipped test. */
+    /** The host server's port; skipped without one, failed when the device cannot switch between Wi-Fi and mobile data. */
     private suspend fun peerPort(): Int {
         val port = InstrumentationRegistry.getArguments().getString("kslMigrationPeerPort")?.toIntOrNull()
         assumeTrue("run :kuicksilver-ktor-client:androidMigrationDeviceTest (a server on the host, 10.0.2.2)", port != null)
@@ -69,10 +71,13 @@ class ClientMigrationAndroidTest {
         withTimeoutOrNull(60.seconds) {
             while (!hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || !hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) delay(200)
         }
-        assumeTrue(
-            "the device has Wi-Fi and a mobile network",
+        // asked for on purpose (the gate passes the port): a device that cannot switch networks fails instead of passing silently
+        assertTrue(
             connectivity.activeNetwork != null && hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
                 hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+            "androidMigrationDeviceTest needs a device with Wi-Fi and mobile data both on (the stock emulator has them); " +
+                "found: default ${connectivity.activeNetwork}, Wi-Fi ${hasTransport(NetworkCapabilities.TRANSPORT_WIFI)}, " +
+                "mobile ${hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)}",
         )
         return port!!
     }
