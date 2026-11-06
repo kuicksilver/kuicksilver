@@ -80,6 +80,8 @@ Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, wh
 - **What the dumps do not catch**: behaviour, defaults and KDoc contracts. Those are covered by the module tests, the
   guides' code samples (`GuideSamplesTest`, kept in step by `tools/check/guide-sync.sh`) and the CHANGELOG entry every
   user-visible change needs.
+- **What the last gate measured**: [reliability.md](reliability.md) is generated from the gate's artifacts (interop
+  cells, fuzzing hours, soak trends, `negative_*` test counts). It reports observations, not promises.
 
 ## The native library ABI (`ksl`)
 

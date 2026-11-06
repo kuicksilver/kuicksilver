@@ -79,6 +79,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    this). Commit, then run the gate (step 1) on that commit. The 24–72 hour soak of CONTRIBUTING ("Soak and churn")
    precedes a planned release; a patch release that only moves OpenSSL to a fixed 3.5.x release (SECURITY.md, OpenSSL)
    needs the full gate but not the long soak.
+   The reliability page [reliability.md](reliability.md) is generated from the artifacts of that gate and soak, and
+   its numbers are never typed by hand: with the artifacts in place run `tools/report/reliability.sh --check` (it fails
+   with the name of every missing source, e.g. "no fuzz stats at build/fuzz-campaign/stats.tsv"), then
+   `tools/report/reliability.sh`, and commit the page with the release commit. The cases of the script are in
+   `tools/report/test-reliability.sh`.
 3. Dry run, then the release, from the same commit:
    ```
    tools/release/local-release.sh <version> --dry-run      # everything but the upload; refusals become warnings
