@@ -217,14 +217,11 @@ class SecretsJvmTest {
      * there); the needle is kept masked until the dump is written.
      */
     @Test fun negative_heapDumpNoIdentityPrivateKey() {
-        val der =
-            java.util.Base64
-                .getDecoder()
-                .decode(PEM_TEST_KEY)
+        val b64 = java.util.Base64.getDecoder()
+        val der = b64.decode(PEM_TEST_KEY)
         val at =
             (0 until der.size - 34).first { der[it] == 0x04.toByte() && der[it + 1] == 0x20.toByte() && der[it - 3] == 0x02.toByte() } + 2
         val masked = ByteArray(32) { (der[at + it].toInt() xor 0x5a).toByte() }
-        val b64 = java.util.Base64.getDecoder()
         val id = TlsIdentity.fromDer(listOf(b64.decode(PEM_TEST_CERT)), der)
         assertTrue(der.all { it == 0.toByte() }, "fromDer zeroes the caller's array")
         val ctx =
@@ -265,8 +262,9 @@ class SecretsJvmTest {
     /**
      * `fromPem` reads the key from the caller's `CharArray` without creating a `String` of it and wipes every decoded block:
      * neither the EC private scalar nor the Base64 text of the PEM body (a stretch that spans a line break, which no
-     * one-line literal contains) is in a heap dump that includes unreachable objects. The key is this test's own (generated
-     * for it, not in [TestCerts]); its DER is wiped after the PEM `CharArray` is built, and both needles stay masked until the
+     * one-line literal contains) is in a heap dump that includes unreachable objects. The key is this file's own (generated
+     * for it, not in [TestCerts]) and shared only with [negative_heapDumpNoIdentityPrivateKey], which wipes the scalar it
+     * rebuilds; its DER is wiped after the PEM `CharArray` is built, and both needles stay masked until the
      * dump is written.
      */
     @Test fun negative_heapDumpNoIdentityPrivateKeyFromPem() {
@@ -313,7 +311,9 @@ class SecretsJvmTest {
         }
         val heap = dump.readBytes()
         val scalar = ByteArray(32) { (maskedScalar[it].toInt() xor 0x5a).toByte() }
-        assertFalse(contains(heap, scalar), "the identity's private key was found in the heap dump")
+        val found = contains(heap, scalar)
+        scalar.fill(0)
+        assertFalse(found, "the identity's private key was found in the heap dump")
         val text = ByteArray(maskedText.size) { (maskedText[it].toInt() xor 0x5a).toByte() }
         assertFalse(contains(heap, text), "the Base64 text of the PEM key was found in the heap dump")
         assertTrue(contains(heap, "kuicksilver".encodeToByteArray()), "sanity: the dump is searchable")
@@ -523,7 +523,10 @@ class SecretsJvmTest {
     }
 }
 
-/** A P-256 key and its self-signed certificate used only by [SecretsJvmTest.negative_heapDumpNoIdentityPrivateKeyFromPem]. */
+/**
+ * A P-256 key and its self-signed certificate, used only by the heap-dump tests
+ * [SecretsJvmTest.negative_heapDumpNoIdentityPrivateKey] and [SecretsJvmTest.negative_heapDumpNoIdentityPrivateKeyFromPem].
+ */
 private const val PEM_TEST_KEY =
     "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkurDS6tlARHsfz6oak6PgHs/SXvWtQNwkR5wy5f5VOuhRANCAATpGhO4BkysWPUd5oM2arp0/5ylD+IAHWhuvV/eS7LElH2vO8aQ/HsL2dxcPg4Btoy5zYHzGdoOzuIgYl784hzH"
 private const val PEM_TEST_CERT =
