@@ -114,6 +114,35 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
     }
     providers.gradleProperty("kuicksilver.test.jvmArgs").orNull?.let { a -> jvmArgs(a.split(' ').filter { it.isNotBlank() }) }
 }
+// Flake hunting (tools/ci/flake-hunt.sh): -Pkuicksilver.test.repeat=<N> runs the JVM suite N times in one build, jvmTest
+// then jvmTestRepeat2..N, each with its own results directory; -Pkuicksilver.test.forks=<K> runs K test JVMs side by side.
+providers.gradleProperty("kuicksilver.test.forks").orNull?.toInt()?.let { k -> tasks.withType<Test>().configureEach { maxParallelForks = k } }
+providers.gradleProperty("kuicksilver.test.repeat").orNull?.toInt()?.takeIf { it > 1 }?.let { n ->
+    val jvmTest = tasks.named<Test>("jvmTest")
+    val repeats = (2..n).map { i ->
+        tasks.register<Test>("jvmTestRepeat$i") {
+            group = "verification"
+            description = "Run $i of $n of the JVM tests"
+            val base = jvmTest.get()
+            testClassesDirs = base.testClassesDirs
+            classpath = base.classpath
+            javaLauncher.set(base.javaLauncher)
+            jvmArgs(base.jvmArgs)
+            systemProperties(base.systemProperties)
+            environment(base.environment)
+            workingDir = base.workingDir
+            maxHeapSize = base.maxHeapSize
+            if (base.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions) useJUnitPlatform() else useJUnit()
+            filter.includePatterns.addAll(base.filter.includePatterns)
+            filter.isFailOnNoMatchingTests = base.filter.isFailOnNoMatchingTests
+            outputs.upToDateWhen { false }
+            outputs.cacheIf { false }
+            mustRunAfter(jvmTest)
+            if (i > 2) mustRunAfter("jvmTestRepeat${i - 1}")
+        }
+    }
+    jvmTest.configure { finalizedBy(repeats) }
+}
 
 // The JVM and Android dumps must not list a class nested in an @InternalKuicksilverApi class (its companion, a nested
 // type): checked from the compiled classes, independently of the dump filter above.
