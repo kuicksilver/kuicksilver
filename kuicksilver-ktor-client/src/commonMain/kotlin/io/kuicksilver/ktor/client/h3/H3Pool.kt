@@ -54,7 +54,7 @@ import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MigrationEvent
-import io.kuicksilver.quic.PathValidationException
+import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.CancellationException
@@ -721,10 +721,10 @@ internal class H3Pool(
     ) {
         when (e) {
             is MigrationEvent.Failed -> {
-                // a refusal of the transport (the server sent disable_active_migration or uses zero-length connection IDs)
-                // comes back on every network change and is no fault: Debug; a path that failed validation, or a socket that
-                // could not be opened, is worth Info
-                val refused = e.cause is IllegalStateException && e.cause !is PathValidationException
+                // the transport's refusal (disable_active_migration, zero-length connection IDs, not confirmed yet) comes
+                // back on every network change and is no fault: Debug; anything else (a path that failed validation, a
+                // socket that could not be opened, a hook's own IllegalStateException) is worth Info
+                val refused = e.cause is MigrationRefusedException
                 logMigration(
                     "connection to $origin did not migrate to ${e.network}",
                     e.cause,

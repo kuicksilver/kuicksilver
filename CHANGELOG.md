@@ -26,6 +26,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection IDs, and onto a path that does not validate. New `KuicksilverEventListener.connectionMigrated(origin,
   event)` reports each step (a failed move is also logged at `Info`, a server that does not allow migration at `Debug`). Off by default, so 0.2's behaviour is unchanged;
   `networkId` stays separate. HTTP/1.1, HTTP/2 and the connections of WebTransport sessions do not migrate.
+- QUIC: experimental `MigrationRefusedException` (an `IllegalStateException`, as before) with a `MigrationRefusal`
+  reason (`NotConfirmed`, `DisabledByPeer`, `ZeroLengthConnectionId`) is what `QuicConnection.addPath`, `migrate` and a
+  `NetworkMigrator` throw or report when the transport refuses a new path (RFC 9000 sections 9 and 9.5).
 - Docs: a deployment guide for the HTTP/3 server (`docs/guide/deployment.md`): TCP and UDP on one port number and what
   the engine's `Alt-Svc` names (with a sample for a public port that differs from the bound one), firewalls and
   security groups, Docker and Kubernetes (mixed-protocol `LoadBalancer` Services, the client address and the per-IP

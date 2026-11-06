@@ -1285,11 +1285,11 @@ public class ConnectionCore internal constructor(
         socket: PathId? = null,
     ): PathId {
         check(role == TlsRole.Client) { "only a client migrates (RFC 9000 section 9)" }
-        check(state == ConnectionState.Confirmed) { "migration before the handshake is confirmed (RFC 9000 section 9)" }
+        if (state != ConnectionState.Confirmed) throw MigrationRefusedException(MigrationRefusal.NotConfirmed) // RFC 9000 section 9
         // RFC 9000 section 18.2: disable_active_migration does not cover the preferred address, and once there the client may move on
-        check(peerTp?.disableActiveMigration != true || movedToPreferred) { "the peer advertised disable_active_migration" }
+        if (peerTp?.disableActiveMigration == true && !movedToPreferred) throw MigrationRefusedException(MigrationRefusal.DisabledByPeer)
         // RFC 9000 section 9.5: traffic on a new path to a peer without connection IDs is trivially linkable to the old one
-        check(remoteCid.length != 0) { "the peer uses a zero-length connection ID (RFC 9000 section 9.5)" }
+        if (remoteCid.length == 0) throw MigrationRefusedException(MigrationRefusal.ZeroLengthConnectionId)
         this.now = now
         abandonPreferredProbe() // the application's own move wins over a preferred address still under validation
         val p =

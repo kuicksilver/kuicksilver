@@ -603,6 +603,20 @@ public final class io/kuicksilver/quic/MigrationEvent$SourceFailed : io/kuicksil
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class io/kuicksilver/quic/MigrationRefusal : java/lang/Enum {
+	public static final field DisabledByPeer Lio/kuicksilver/quic/MigrationRefusal;
+	public static final field NotConfirmed Lio/kuicksilver/quic/MigrationRefusal;
+	public static final field ZeroLengthConnectionId Lio/kuicksilver/quic/MigrationRefusal;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/MigrationRefusal;
+	public static fun values ()[Lio/kuicksilver/quic/MigrationRefusal;
+}
+
+public final class io/kuicksilver/quic/MigrationRefusedException : java/lang/IllegalStateException {
+	public fun <init> (Lio/kuicksilver/quic/MigrationRefusal;)V
+	public final fun getReason ()Lio/kuicksilver/quic/MigrationRefusal;
+}
+
 public final class io/kuicksilver/quic/NetworkMigrator : java/lang/AutoCloseable {
 	public fun <init> (Lio/kuicksilver/quic/QuicConnection;Lkotlinx/coroutines/flow/Flow;Lkotlin/jvm/functions/Function2;Lkotlinx/coroutines/CoroutineScope;)V
 	public fun close ()V

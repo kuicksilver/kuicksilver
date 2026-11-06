@@ -23,6 +23,8 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MigrationEvent
+import io.kuicksilver.quic.MigrationRefusal
+import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.NetworkMigrator
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -123,7 +125,10 @@ class ClientMigrationTest {
     }
 
     /** The test's network source and the migrators the hook made. */
-    private class Networks {
+    private class Networks(
+        /** Opening a socket on network 2 and up throws this instead (a socket the platform refuses). */
+        val openFailure: Exception? = null,
+    ) {
         val current = MutableStateFlow<Int?>(1)
         val made = Channel<NetworkMigrator<Int>>(Channel.UNLIMITED)
         val opened = AtomicReference(emptyList<DatagramIo>())
@@ -135,7 +140,10 @@ class ClientMigrationTest {
                 NetworkMigrator(
                     c,
                     current.onCompletion { sourceStopped.incrementAndFetch() },
-                    { DatagramIo.open(InetSocketAddress("127.0.0.1", 0)).also { io -> opened.update { it + io } } },
+                    { n ->
+                        if (n > 1) openFailure?.let { throw it }
+                        DatagramIo.open(InetSocketAddress("127.0.0.1", 0)).also { io -> opened.update { it + io } }
+                    },
                     scope,
                 ).also { made.trySend(it) }
             }
@@ -187,8 +195,10 @@ class ClientMigrationTest {
         migration: Http3ConnectionMigration?,
         maxIdle: Duration = 10.seconds,
         engineIdle: Duration? = null,
+        log: KuicksilverLogger? = null,
     ): HttpClient =
         testClient(Http3DiscoveryMode.Preferred, engine = {
+            log?.let { logger = it }
             quic = quicConfig { maxIdleTimeout = maxIdle }
             eventListener = listener
             engineIdle?.let { idleTimeout = it }
@@ -403,8 +413,9 @@ class ClientMigrationTest {
             val cut = CompletableDeferred<CuttableIo>()
             val nets = Networks()
             val heard = Heard()
+            val log = Lines()
             try {
-                client(cut, heard, nets.hook).use { c ->
+                client(cut, heard, nets.hook, log = log).use { c ->
                     assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
                     val migrator = withTimeout(10.seconds) { nets.made.receive() }
                     withTimeout(10.seconds) { migrator.network.first { it == 1 } }
@@ -417,12 +428,51 @@ class ClientMigrationTest {
                     nets.current.value = 2
                     val (_, e) = withTimeout(10.seconds) { heard.migrations.receive() }
                     val failed = assertIs<MigrationEvent.Failed<*>>(e, "$e")
-                    assertIs<IllegalStateException>(failed.cause)
+                    val refused = assertIs<MigrationRefusedException>(failed.cause)
+                    assertEquals(MigrationRefusal.DisabledByPeer, refused.reason)
                     assertEquals(1, nets.opened.load().size, "one socket opened, closed again by the refused path")
+                    // a refusal comes back on every network change and is no fault: Debug, not Info
+                    assertEquals(
+                        listOf(LogLevel.Debug),
+                        log.lines
+                            .load()
+                            .filter { "did not migrate" in it.second }
+                            .map { it.first },
+                    )
                     // the connection stays where it was and keeps serving
                     assertEquals(path, conn.quic.stats.currentPath)
                     assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
                     assertTrue(heard.fallbacks.tryReceive().isFailure, "no fallback")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** Any other failure (here a socket the platform refuses, also an IllegalStateException) is worth Info. */
+    @Test fun otherMigrationFailureLoggedAtInfo() =
+        h3Test {
+            val g = Gates()
+            val (server, port) = server(g)
+            val cut = CompletableDeferred<CuttableIo>()
+            val nets = Networks(openFailure = IllegalStateException("interface gone"))
+            val heard = Heard()
+            val log = Lines()
+            try {
+                client(cut, heard, nets.hook, log = log).use { c ->
+                    assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
+                    val migrator = withTimeout(10.seconds) { nets.made.receive() }
+                    withTimeout(10.seconds) { migrator.network.first { it == 1 } }
+                    nets.current.value = 2
+                    val (_, e) = withTimeout(10.seconds) { heard.migrations.receive() }
+                    assertEquals("interface gone", assertIs<MigrationEvent.Failed<*>>(e, "$e").cause.message)
+                    assertEquals(
+                        listOf(LogLevel.Info),
+                        log.lines
+                            .load()
+                            .filter { "did not migrate" in it.second }
+                            .map { it.first },
+                    )
                 }
             } finally {
                 server.stop(100, 500)
