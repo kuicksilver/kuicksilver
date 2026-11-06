@@ -41,12 +41,9 @@ internal object DnsMessage {
         name: String,
         type: Int = TYPE_HTTPS,
     ): ByteArray {
+        require(isAskable(name)) { "not a DNS name: $name" }
         val labels = name.trimEnd('.').split('.')
-        require(labels.all { it.isNotEmpty() && it.length <= DnsReader.MAX_LABEL && it.all { c -> c.code in 0x21..0x7e } }) {
-            "not a DNS name: $name"
-        }
         val wire = labels.sumOf { it.length + 1 } + 1
-        require(wire <= DnsReader.MAX_NAME) { "a DNS name of $wire bytes: $name" }
         val out = ByteArray(12 + wire + 4)
         out[2] = 0x01 // RD
         out[5] = 1 // QDCOUNT
@@ -206,6 +203,16 @@ internal object DnsMessage {
         val addrs =
             addresses.filterKeys { it in allowed }.mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
         return DnsAnswer(records, negativeTtl, related, addrs)
+    }
+
+    /**
+     * Whether [name] can be put in a query: labels of 1..63 printable ASCII bytes, at most 255 bytes in wire format. A
+     * host in Unicode is not: DNS carries A-labels (RFC 5890 section 2.3.2.1), and the engine does not convert to them.
+     */
+    fun isAskable(name: String): Boolean {
+        val labels = name.trimEnd('.').split('.')
+        return labels.all { it.isNotEmpty() && it.length <= DnsReader.MAX_LABEL && it.all { c -> c.code in 0x21..0x7e } } &&
+            labels.sumOf { it.length + 1 } + 1 <= DnsReader.MAX_NAME
     }
 
     /** [name] as [DnsReader.name] writes it: lower case, no final dot. */

@@ -236,6 +236,9 @@ internal class HttpsRecords(
         prefetch: (String) -> Unit = {},
     ): HttpsResolution {
         var name = httpsQueryName(host, port)
+        // a name that cannot be asked (a Unicode host) has no SVCB resolution at all: as without records, and no failed
+        // lookup either, which a secure source would turn into an abandoned request (section 3.1)
+        if (!DnsMessage.isAskable(name)) return HttpsResolution.None
         val seen = hashSetOf(name)
         var aliased = false
         var aliases = 0
@@ -298,7 +301,9 @@ internal class HttpsRecords(
         port: Int,
         supported: Set<String>,
     ): Boolean? {
-        val rs = records(httpsQueryName(host, port)) ?: return null
+        val name = httpsQueryName(host, port)
+        if (!DnsMessage.isAskable(name)) return false // as in [resolve]
+        val rs = records(name) ?: return null
         val alias = aliasTarget(rs, random)
         return if (alias != null) isHostName(alias) else serviceEndpoints(rs, port, supported, random).isNotEmpty()
     }

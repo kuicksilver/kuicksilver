@@ -208,6 +208,21 @@ class SvcbResolutionTest {
             gate.complete(Unit)
         }
 
+    @Test fun nameThatCannotBeAskedHasNoRecords() =
+        runTest {
+            // a non-ASCII (not punycoded) host is no DNS name: no records, not a failed lookup (section 3.1)
+            var asked = 0
+            val rs =
+                HttpsRecords({ n ->
+                    asked++
+                    DnsMessage.query(n)
+                    DnsAnswer(emptyList())
+                }, backgroundScope, 10.seconds, { 0L })
+            assertSame(HttpsResolution.None, rs.resolve("bücher.example", 443, all))
+            assertEquals(false, rs.upgradesToHttps("bücher.example", 443, all))
+            assertEquals(0, asked)
+        }
+
     @Test fun failedLookupIsFailed() =
         runTest {
             val rs = resolver(mapOf("a.example" to null), backgroundScope)
