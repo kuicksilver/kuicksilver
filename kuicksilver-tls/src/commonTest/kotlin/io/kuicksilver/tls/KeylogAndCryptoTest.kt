@@ -181,6 +181,16 @@ class KslCryptoTest {
         }
     }
 
+    @Test fun lbKeyDuplicateOutlivesTheOriginal() {
+        val k = KslLbKey.of(unhex("000102030405060708090a0b0c0d0e0f"))
+        val d = k.duplicate()
+        k.close()
+        val ct = ByteArray(16)
+        d.encrypt(unhex("00112233445566778899aabbccddeeff"), 0, ct, 0)
+        assertContentEquals(unhex("69c4e0d86a7b0430d8cdb78070b4c55a"), ct, "the copy works after the original closed")
+        d.close()
+    }
+
     @Test fun negative_lbKeySourceArrayWiped() {
         val k = unhex("8f95f09245765f80256934e50c66207f")
         KslLbKey.of(k).close()

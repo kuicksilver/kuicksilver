@@ -204,6 +204,54 @@ static void open_in_place(const char *name, ksl_key *w, ksl_key *r) {
 /* test-only hook exported by ksl_key.c: builds a key from a TLS secret (what the KEY event does internally) */
 ksl_key *ksl_key_from_secret_for_test(int aead, const uint8_t *secret, size_t slen, uint32_t version);
 
+#ifndef _WIN32
+#include <pthread.h>
+/* One LB key, many threads: ksl_key_ecb16 only copies the key's template contexts (KSL_TSAN=1 tools/c-test.sh checks it). */
+typedef struct {
+    ksl_key *k;
+    int ok;
+} lb_share;
+static void *lb_worker(void *arg) {
+    lb_share *s = arg;
+    static const uint8_t want[16] = {0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30,
+                                     0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a};
+    uint8_t pt[16], ct[16], back[16];
+    for (int i = 0; i < 16; i++)
+        pt[i] = (uint8_t)(i * 0x11);
+    s->ok = 1;
+    for (int n = 0; n < 2000; n++) {
+        if (ksl_key_ecb16(s->k, 0, pt, ct) != KSL_OK || memcmp(ct, want, 16) ||
+            ksl_key_ecb16(s->k, 1, ct, back) != KSL_OK || memcmp(back, pt, 16))
+            s->ok = 0;
+    }
+    return NULL;
+}
+static void lb_key_concurrent(void) {
+    SECTION("lb_key_concurrent_ecb16");
+    uint8_t key[16];
+    for (int i = 0; i < 16; i++)
+        key[i] = (uint8_t)i;
+    ksl_key *k = ksl_key_lb(key);
+    pthread_t t[8];
+    lb_share s[8];
+    for (int i = 0; i < 8; i++) {
+        s[i].k = k;
+        pthread_create(&t[i], NULL, lb_worker, &s[i]);
+    }
+    int ok = 1;
+    for (int i = 0; i < 8; i++) {
+        pthread_join(t[i], NULL);
+        ok &= s[i].ok;
+    }
+    CHECK(ok, "8 threads x 2000 blocks each way on one key, all FIPS-197 C.1");
+    ksl_key_free(k);
+    END();
+}
+#else
+static void lb_key_concurrent(void) {
+}
+#endif
+
 void run_key(void) {
     RUN_VECTORS(RFC9001);
     RUN_VECTORS(RFC9369);
@@ -364,12 +412,19 @@ void run_key(void) {
         ksl_key *reset = ksl_key_random(KSL_EKEY_RESET);
         CHECK(ksl_key_lb_derive(reset, label) == NULL, "negative: derive from a reset key");
         ksl_key_free(reset);
+        ksl_key *dup = ksl_key_lb_dup(k);
+        CHECK(dup && ksl_key_ecb16(dup, 0, pt, c1) == KSL_OK && !memcmp(c1, want, 16), "lb_key_dup: the same key");
+        CHECK(ksl_key_lb_dup(NULL) == NULL, "negative: dup of nothing");
+        ksl_key_free(dup);
         ksl_key_free(d);
         ksl_key_free(expect);
         ksl_key_free(r);
         ksl_key_free(r2);
         ksl_key_free(k);
         END();
+    }
+    {
+        lb_key_concurrent();
     }
     {
         SECTION("negative_lb_key_wrong_kind");

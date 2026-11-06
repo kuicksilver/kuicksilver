@@ -269,6 +269,9 @@ public expect object Ksl {
     /** A QUIC-LB block key ([KslConst.EKEY_LB]) from the 16 bytes of [key], copied into native memory; the caller wipes its array. */
     public fun keyLb(key: ByteArray): Long
 
+    /** An independent copy of a QUIC-LB key (its own handle and lifetime). */
+    public fun keyLbDup(key: Long): Long
+
     /** A new QUIC-LB key whose bytes are [key]'s encryption of the 16-byte [label]; the bytes never leave ksl. */
     public fun keyLbDerive(
         key: Long,

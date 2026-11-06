@@ -457,6 +457,12 @@ public interface LoadBalancerKey : AutoCloseable {
      * provider. The default throws [UnsupportedOperationException].
      */
     public fun derive(label: ByteArray): LoadBalancerKey = throw UnsupportedOperationException("this LoadBalancerKey cannot derive keys")
+
+    /**
+     * An independent copy of this key (the caller closes it): closing either leaves the other usable. An endpoint keeps a copy
+     * of every configuration key it uses. The default throws [UnsupportedOperationException].
+     */
+    public fun duplicate(): LoadBalancerKey = throw UnsupportedOperationException("this LoadBalancerKey cannot be duplicated")
 }
 
 /** The crypto provider the QUIC core sees (ADR-0002). */

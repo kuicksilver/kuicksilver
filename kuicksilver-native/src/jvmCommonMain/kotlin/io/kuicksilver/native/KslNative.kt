@@ -239,6 +239,8 @@ internal object KslNative {
 
     @JvmStatic external fun keyLb(key: ByteArray): Long
 
+    @JvmStatic external fun keyLbDup(key: Long): Long
+
     @JvmStatic external fun keyLbDerive(
         key: Long,
         label: ByteArray,

@@ -479,6 +479,9 @@ public actual object Ksl {
         }
     }
 
+    public actual fun keyLbDup(key: Long): Long =
+        ksl_key_lb_dup(key(key)).h().also { if (it == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_key_lb_dup failed") }
+
     public actual fun keyLbDerive(
         key: Long,
         label: ByteArray,

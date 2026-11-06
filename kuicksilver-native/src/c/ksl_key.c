@@ -144,6 +144,9 @@ int ksl_key_ecb16(ksl_key *k, int decrypt, const uint8_t in[16], uint8_t out[16]
         ERR_clear_error();
     return ok ? KSL_OK : KSL_ERROR;
 }
+ksl_key *ksl_key_lb_dup(ksl_key *k) {
+    return k && k->kind == KSL_EKEY_LB ? lb_build(k->key) : NULL;
+}
 ksl_key *ksl_key_lb_derive(ksl_key *k, const uint8_t label[16]) {
     uint8_t derived[16];
     if (!label || ksl_key_ecb16(k, 0, label, derived) != KSL_OK)

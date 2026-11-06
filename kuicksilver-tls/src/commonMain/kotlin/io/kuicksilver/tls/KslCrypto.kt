@@ -55,6 +55,8 @@ public class KslLbKey internal constructor(
 
     override fun derive(label: ByteArray): LoadBalancerKey = KslLbKey(Ksl.keyLbDerive(k(), label))
 
+    override fun duplicate(): LoadBalancerKey = KslLbKey(Ksl.keyLbDup(k()))
+
     override fun encrypt(
         input: ByteArray,
         inOffset: Int,

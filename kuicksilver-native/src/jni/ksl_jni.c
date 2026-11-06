@@ -511,6 +511,11 @@ static jlong j_key_lb(JNIEnv *e, jclass c, jbyteArray k) {
     wipe(key, sizeof key);
     return h;
 }
+static jlong j_key_lb_dup(JNIEnv *e, jclass c, jlong k) {
+    (void)e;
+    (void)c;
+    return H(ksl_key_lb_dup(P(ksl_key, k)));
+}
 static jlong j_key_lb_derive(JNIEnv *e, jclass c, jlong k, jbyteArray label) {
     (void)c;
     uint8_t l[16];
@@ -874,6 +879,7 @@ static const JNINativeMethod methods[] = {
     {"keyRandom", "(I)J", (void *)j_key_random},
     {"keyMac16", "(J" S_BB "II[BI)I", (void *)j_key_mac16},
     {"keyLb", "([B)J", (void *)j_key_lb},
+    {"keyLbDup", "(J)J", (void *)j_key_lb_dup},
     {"keyLbDerive", "(J[B)J", (void *)j_key_lb_derive},
     {"keyEcb16", "(JZ[BI[BI)I", (void *)j_key_ecb16},
     {"seal", "(JJ" S_BB "II" S_BB "III)I", (void *)j_seal},

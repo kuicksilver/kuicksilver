@@ -34,7 +34,7 @@ extern "C" {
    ksl_udp_emsgsize (sends the kernel refused as too large); a queued ICMP error no longer fails ksl_udp_recv. The one ABI bump of 0.3.0:
    later 0.3.0 additions go under 7; additive under 7: ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
-   ksl_key_lb, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs) */
+   ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs) */
 
 /* return codes */
 #define KSL_OK 0
@@ -322,6 +322,9 @@ int ksl_key_mac16(
     3 /* AES-128 block key for QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4): ksl_key_lb, or random
          via ksl_key_random; used only with ksl_key_ecb16. Additive in ABI 7 */
 ksl_key *ksl_key_lb(const uint8_t key[16]); /* copies the 16 key bytes in (the caller wipes its copy); NULL on NULL */
+ksl_key *
+ksl_key_lb_dup(ksl_key *); /* KSL_EKEY_LB only: an independent copy (its own lifetime); NULL otherwise. Additive in
+                                     ABI 7 */
 ksl_key *ksl_key_lb_derive(
     ksl_key *, const uint8_t label[16]); /* KSL_EKEY_LB only: a new LB key whose 16 bytes are this key's encryption of
                                             label, never leaving ksl; NULL for any other key. Additive in ABI 7 */

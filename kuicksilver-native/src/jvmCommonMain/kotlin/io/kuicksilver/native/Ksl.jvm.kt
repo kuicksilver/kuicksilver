@@ -360,6 +360,9 @@ public actual object Ksl {
         return KslNative.keyLb(key).also { if (it == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_key_lb failed") }
     }
 
+    public actual fun keyLbDup(key: Long): Long =
+        KslNative.keyLbDup(key).also { if (it == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_key_lb_dup failed") }
+
     public actual fun keyLbDerive(
         key: Long,
         label: ByteArray,
