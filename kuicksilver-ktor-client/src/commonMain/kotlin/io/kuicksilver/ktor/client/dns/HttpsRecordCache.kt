@@ -204,9 +204,10 @@ internal class HttpsRecords(
                             val a = answer
                             if (caching && a != null) {
                                 cache.put(name, a.records, a.negativeTtl)
-                                // RFC 9460 section 5: other RRsets and addresses of the answer go to the cache as well
-                                for ((owner, rs) in a.related) if (rs.isNotEmpty()) cache.put(owner, rs, null)
-                                for ((owner, ad) in a.addresses) cache.putAddresses(owner, ad.first, ad.second)
+                                // RFC 9460 section 5: other RRsets and addresses of the answer go to the cache as well, those
+                                // in the query's bailiwick only: another zone's data serves this resolution, not later ones
+                                for ((owner, rs) in a.related) if (rs.isNotEmpty() && a.inBailiwick(owner)) cache.put(owner, rs, null)
+                                for ((owner, ad) in a.addresses) if (a.inBailiwick(owner)) cache.putAddresses(owner, ad.first, ad.second)
                             }
                         }
                     }

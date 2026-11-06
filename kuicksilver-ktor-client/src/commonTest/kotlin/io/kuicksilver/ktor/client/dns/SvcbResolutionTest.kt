@@ -174,6 +174,29 @@ class SvcbResolutionTest {
             assertEquals(emptyList(), prefetched) // its addresses came with the answer
         }
 
+    @Test fun negative_outOfZoneRecordsAreNotCachedBeyondTheResolution() =
+        runTest {
+            // a TargetName in another zone: its records from this answer serve this resolution only
+            val asked = ArrayList<String>()
+            val rs =
+                HttpsRecords({ name ->
+                    asked += name
+                    if (name == "a.example") {
+                        DnsAnswer(
+                            listOf(rec("a.example", 0, "cdn.other")),
+                            related = mapOf("cdn.other" to listOf(rec("cdn.other", 1, ".", "h3"))),
+                            chain = setOf("a.example"),
+                        )
+                    } else {
+                        DnsAnswer(listOf(rec(name, 1, ".", "h2")))
+                    }
+                }, backgroundScope, 10.seconds, { 0L })
+            assertEquals("cdn.other", assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 443, all)).endpoints.first().host)
+            assertEquals(listOf("a.example"), asked) // used for this resolution
+            rs.resolve("cdn.other", 443, all)
+            assertEquals(listOf("a.example", "cdn.other"), asked) // but not kept: asked for itself
+        }
+
     @Test fun aliasTargetIsPrefetched() =
         runTest {
             // section 5: speculative A/AAAA queries in parallel with each SVCB query

@@ -9,13 +9,19 @@ package io.kuicksilver.ktor.client.dns
  * @property negativeTtl how long "none" may be cached (RFC 2308 section 5), null when the response gives no SOA.
  * @property related other HTTPS RRsets of the response, by owner (an alias target's, for example).
  * @property addresses A and AAAA addresses of the response by owner, 4 or 16 bytes each, with their smallest TTL.
+ * @property chain the name asked and its CNAMEs: [related] and [addresses] of names at or under one of these may be cached
+ *   beyond this resolution, the others serve it only (they are another zone's data).
  */
 internal class DnsAnswer(
     val records: List<SvcbRecord>,
     val negativeTtl: Long? = null,
     val related: Map<String, List<SvcbRecord>> = emptyMap(),
     val addresses: Map<String, Pair<List<ByteArray>, Long>> = emptyMap(),
-)
+    val chain: Set<String> = emptySet(),
+) {
+    /** Whether [owner] is at or under a name of [chain]: in the bailiwick of the query (RFC 2181 section 5.4.1). */
+    fun inBailiwick(owner: String): Boolean = chain.any { owner == it || owner.endsWith(".$it") }
+}
 
 /**
  * DNS messages for the HTTPS records (RFC 1035 section 4.1), sans-IO: the query and the records of its answer.
@@ -202,7 +208,7 @@ internal object DnsMessage {
         }
         val addrs =
             addresses.filterKeys { it in allowed }.mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
-        return DnsAnswer(records, negativeTtl, related, addrs)
+        return DnsAnswer(records, negativeTtl, related, addrs, chain)
     }
 
     /**
