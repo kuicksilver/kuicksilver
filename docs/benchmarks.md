@@ -382,7 +382,7 @@ Where the Native endpoint benchmark's busy CPU went (`sample`, 10 s, about 7 000
 and on Kotlin/Native, each section in a process of its own: the idle process; 1000 idle connections through the QUIC core
 alone (`ConnectionCore` pairs under virtual time), through two `QuicEndpoint`s over a `MemoryNetwork`, and as HTTP/3
 connections that each carried one GET (control and QPACK streams open, an `acceptRequest` loop per server connection);
-then the managed heap allocated per GiB moved. Each idle measurement is taken with both sides, then again after the client
+then the managed heap allocated per GiB moved (and, since P.2, the same over loopback UDP: the `udp` section). Each idle measurement is taken with both sides, then again after the client
 sides closed without telling the server, which leaves the server's share. Client and server run in one process, without
 sockets, so the numbers are the library's, not the kernel's. M4 Max, macOS, JVM 21 (`-Xmx1g`), loaded host (load average
 3–5), local; single runs, before = `9ed03deb0` (the benchmark), after = `2c0dae80c` (the three `perf(quic)` commits below).
@@ -450,17 +450,60 @@ Still to reduce, by estimated bytes per connection (each side):
    each keep their own array; one set per endpoint loop (the loop runs one connection at a time) or released after the
    handshake.
 4. **CRYPTO send rings of discarded levels**, about 3 KB: released when the level's keys are.
-5. **The finished request stream kept by the accept channel** (above), about 10 KB in the runs where it happens: let go of
-   the stream when it is handed out.
+5. **The finished request stream kept by the accept channel** (above), about 10 KB in the runs where it happens: done in
+   P.2 (below): it was the HTTP/3 accept loop's coroutine frame, not the channel.
 6. **HTTP/3 streams**: the three control and QPACK send rings start at 1 KiB for a few bytes (start smaller, as the
    reassembly window now does: about 2 KB); the session and the runtime's streams (about 36 KB) are the next inventory
    to break down.
 7. **Allocation per GiB through the runtime** (not per connection): `StreamInput` copies through a kotlinx-io buffer whose
-   segments are allocated as data arrives; writing into the segments directly would also save the copy (P.2).
+   segments are allocated as data arrives; writing into the segments directly would also save the copy. P.2 (below)
+   measured it over real sockets too, where the segments are a small part.
 
 Not measured here: the HTTP/2 and HTTP/1.1 servers. Their connections are TCP sockets in the Ktor engine, which this
 in-process benchmark does not drive; the soak harness (`kuicksilver-soak`) runs them and samples RSS, but not per
 connection.
+
+### Allocation-free packet path (P.2, 2026-11-06)
+
+The memory benchmark's allocation per GiB went over a `MemoryNetwork` only, whose per-datagram copy a socket does not
+make; its `udp` section (`tools/bench/memory.sh`, `MemoryBench`) now moves the same stream over loopback through the
+accelerated socket (`KslDatagramIo`), client and server in one process with ksl crypto. M4 Max, macOS, JVM 21, loaded
+host (load average 2-9), local; single runs, before = `614733d0d` (P.5), after = `6db77c3e3`.
+
+| | before | after |
+|---|---|---|
+| JVM, managed heap per GiB, loopback UDP | 234-259 MiB | 132-139 MiB |
+| JVM, managed heap per GiB, `MemoryNetwork` | 2785-2842 MiB | 2041-2045 MiB |
+| JVM, QUIC core with ksl crypto (`CoreAllocationTest`) | 0 | 0 |
+| Native, managed heap per GiB, loopback UDP | 188-346 MiB | 154-315 MiB |
+| `ksl_open`, C heap per received packet | one `malloc` (payload size), copy, wipe | none |
+| `UdpThroughputBenchmark` (accelerated socket, CUBIC, Null crypto) | 28.1 ± 3.2 MiB/s | 34.6 ± 3.9 MiB/s |
+| `CoreThroughputBenchmark`, ksl crypto | 794.9 ± 16.7 ops/s | 828.8 ± 21.6 ops/s (after the `ksl_open` change; 758.7 ± 56.9 at load 5.4) |
+
+What went, by commit (each measured on its own, JVM loopback UDP; the order is the order they landed):
+
+- `ksl_open` decrypts in the packet's buffer; a packet whose tag fails gets its ciphertext back (the same keystream run
+  over it again) and so still leaves no plaintext behind. Not visible in the JVM figure (C heap), counted by the C tests
+  through the sanitizers' malloc hooks.
+- The connection ID table routes each datagram without boxing its SipHash key (an open-addressed table on the hash):
+  one 16-byte object per datagram, 7.3 % of the figure before; 234-259 -> 219 MiB.
+- The loop takes a flowing socket's batch without a coroutine frame, a boxed `TimeMark` and two boxed `Duration`s: within
+  the spread at this size (219 -> 225 MiB).
+- A flush on the accelerated socket (whose `send` never suspends) runs as a plain function: no frame for the flush,
+  `sendOut` and `sendOrLose`, no copy of the dirty list, no iterators: 225 -> 145 MiB.
+- A stream's output hands the core its head segment in place instead of through a `peek()` and the loop's scratch:
+  145 -> 130 MiB (`MemoryNetwork`: 2726 -> 2079 MiB).
+- The HTTP/3 accept loop no longer keeps its last request stream (an idle server connection: 78.6-79.6 K in every run,
+  instead of 88.6-89.4 K in about a third of them; `IdleFootprintTest`'s ceiling is now 85 000).
+
+What the loopback-UDP figure still holds (JFR, JVM): no allocation per datagram on the packet path itself; what is left
+is per wake-up of a coroutine. The timer coroutine's `select` with `onTimeout` (about 10 %: the select, its clauses, a
+delayed task), the application's hops onto the loop (`withContext` in `StreamOutput.flush` and `StreamInput.awaitContent`:
+a dispatched continuation, a scoped coroutine and its context), the channels that wake readers and writers, and the
+kotlinx-io segments `StreamInput` fills (about 7 %, from the pool's second level). The Kotlin/Native figure moves within
+its run-to-run spread on this host (its counter forces a collection every 256 KiB and attributes nothing); the Native
+bindings' per-call `memScoped` arena and pinning are per batch, not per datagram, and were not changed. Off-heap
+buffers through FFM are left for later.
 
 ## msquic's goodput outlier
 

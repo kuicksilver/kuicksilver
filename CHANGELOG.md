@@ -279,6 +279,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC (performance): the packet path on the accelerated socket allocates nothing per datagram: the connection ID table
+  routes a datagram without boxing its hash, the endpoint loop takes a flowing socket's batches and flushes (a send on
+  that socket never suspends) without a coroutine frame, boxed times or a copy of its list of connections, and a stream's
+  output hands the core its buffered bytes without a peek and a second copy. Moving a GiB over loopback UDP allocates
+  132-139 MiB on the JVM heap instead of 234-259 MiB (docs/benchmarks.md, "Allocation-free packet path (P.2)").
+
 - HTTP/3: an idle server connection no longer keeps its last request stream (with that stream's input buffer and an
   8 KiB kotlinx-io segment, about 10 KB) when the request arrived while the session waited for it: the accept loop's
   coroutine frame held the stream until the next one came.
