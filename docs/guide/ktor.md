@@ -112,6 +112,16 @@ offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (
 is no h2c, and a client's `PRI * HTTP/2.0` preface is refused with `505 HTTP Version Not Supported`. HTTP/2 runs over
 TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
 
+```kotlin
+// guide:ktor:http2-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    http2 = true                                              // offer h2 before http/1.1 in ALPN
+    http2Settings = Http2Settings(maxConcurrentStreams = 50)  // windows and flood limits are Http2Settings'
+}, module = Application::module)
+```
+
 Each stream is a Ktor call: `call.request.httpVersion` is `"HTTP/2"`, `call.request.local.scheme` is `"https"` (the
 connection's, whatever the request's `:scheme`), `:authority` appears as the `Host` header and split `cookie` fields as one (RFC 9113 section 8.2.3). Responses
 go out without connection-specific headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade` are dropped), a

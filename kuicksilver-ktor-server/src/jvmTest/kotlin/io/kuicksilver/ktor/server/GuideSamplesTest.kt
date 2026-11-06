@@ -20,6 +20,7 @@ import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
@@ -63,6 +64,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:certificate-rotation" in guide, "marker certificate-rotation")
         assertTrue("guide:ktor:websocket-deflate-server" in guide, "marker websocket-deflate-server")
         assertTrue("guide:ktor:http3-advertising" in guide, "marker http3-advertising")
+        assertTrue("guide:ktor:http2-server" in guide, "marker http2-server")
     }
 
     private object Metrics {
@@ -183,6 +185,22 @@ class GuideSamplesTest {
         server.engine.http3Advertising = Http3Advertising.On
 
         assertEquals(Http3Advertising.On, server.engine.http3Advertising) // ServerHttp3AdvertisingTest runs each mode
+        identity.close()
+    }
+
+    @Test fun http2ServerSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:ktor:http2-server
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+                http2 = true // offer h2 before http/1.1 in ALPN
+                http2Settings = Http2Settings(maxConcurrentStreams = 50) // windows and flood limits are Http2Settings'
+            }, module = Application::module)
+
+        val configuration = server.engine.configuration
+        assertTrue(configuration.http2, "the TLS connector offers h2") // ServerHttp2*Test serve it
+        assertEquals(50, configuration.http2Settings.maxConcurrentStreams)
         identity.close()
     }
 
