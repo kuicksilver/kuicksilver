@@ -82,6 +82,12 @@ internal object KslNative {
         at: Long,
     ): Int
 
+    /** 0 = passes, X509_V_ERR_* = a weak key or signature, -1 = unusable input */
+    @JvmStatic external fun chainLevel(
+        chain: ByteArray,
+        builtPath: Boolean,
+    ): Int
+
     /** out[0] = packed code */
     @JvmStatic external fun ctxLastError(
         ctx: Long,

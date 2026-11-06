@@ -119,20 +119,35 @@ intermediate CA accepts the chains that reach it, without its issuers (OpenSSL `
 shared RFC 9525 matcher afterwards on every platform, so a platform matcher can only make the decision stricter; pins
 (`Pinned`) are compared against the chain the platform built, never against certificates the peer merely sent.
 
-Before the platform is asked, `ksl` holds the certificates the peer sent to OpenSSL's security level 2 (RFC 9325 section
-4.5), on every platform alike. It checks every presented certificate reachable from the leaf through issuers whose key
-verifies the signature (each issuer that verifies is followed, so cross-certificates are all checked): every key needs
-112 security bits (RSA 2048 bits, an elliptic curve 224 bits), and every certificate signature too, except the own
-signature of a certificate that is really self-signed (it verifies under its own key): no SHA-1 or MD5 below that (RFC
-9846 section 4.5.1.3). A weaker chain ends the handshake with `bad_certificate` and `TlsException.Verify` with
-`VerifyReason.WeakKey` or `VerifyReason.WeakSignature`. The JDK, Android and Windows verifiers would accept 1024-bit RSA
-on their own. This reads the presented chain, not the chain the platform builds, so it is stricter than OpenSSL's own
-verifier: an extra cross-certificate the server sends above the anchor the platform trusts (signed with SHA-1 by an old
-root, say) is checked and refuses the chain, where OpenSSL would stop at the trusted anchor. A certificate on no verified
-path from the leaf, and an anchor the platform takes from its own store, are not looked at. The same check runs before a
-`Custom` verifier and `Tofu`; there is no switch to turn it off. The endpoint's own chain is held to the same rules when
-the identity is made (`TlsIdentity.fromDer`, `fromPem` and the JVM key store factories throw `TlsException.Config` for a
-SHA-1- or MD5-signed certificate or a key under 112 bits), for a server and for a client certificate alike.
+Every peer chain is held to OpenSSL's security level 2 (RFC 9325 section 4.5): every key needs 112 security bits (RSA
+2048 bits, an elliptic curve 224 bits), and every certificate signature too, except the trust anchor's: no SHA-1 or MD5
+(RFC 9846 section 4.5.1.3). A weaker chain ends the handshake with `bad_certificate` and `TlsException.Verify` with
+`VerifyReason.WeakKey` or `VerifyReason.WeakSignature`; there is no switch to turn it off. The JDK, Android and Windows
+verifiers would accept 1024-bit RSA on their own. Which certificates count depends on the trust:
+
+- **`Platform`** (also under `Pinned` and `ExpectedName`): the platform is asked first, and after its yes `ksl` checks the
+  path the platform built, leaf first and its trust anchor last (Android's `X509TrustManagerExtensions`, Apple's
+  `SecTrustCopyCertificateChain`, Windows' chain, and on the JVM the path rebuilt with the JDK's PKIX builder to the trust
+  manager's roots), as OpenSSL checks its own path: every key, the anchor's included, and every signature but the
+  anchor's. A certificate the server sends that the platform does not use, such as an extra cross-certificate above the
+  root the platform trusts (signed with SHA-1 by an old root, say), does not count, as with OpenSSL. If the platform does
+  not say which path it took, the certificates the server sent are checked as for `Custom`. When the platform itself
+  refuses a chain with an MD5, SHA-1 or small-key certificate in it (the JDK, Apple and Windows do), the refusal is still
+  reported as `WeakSignature` or `WeakKey` with `bad_certificate`. This holds even when the chain is not trusted at all
+  (RFC 9846 section 4.5.1.3 does not depend on trust; OpenSSL would send `unknown_ca`), and it takes precedence over the
+  platform's own reason: an expired or revoked chain that also has a weak certificate among those sent is reported as
+  `WeakKey` or `WeakSignature`. The chain is refused either way. On Linux Native `Platform` is
+  OpenSSL's own verifier with the system store, which checks its own path the same way.
+- **`AnchoredCa`**: OpenSSL checks the path it builds to your roots.
+- **`Custom` and `Tofu`**: the certificates the peer sent are checked before your verifier or the TOFU store is asked:
+  every presented certificate reachable from the leaf through issuers whose key verifies the signature (each such issuer
+  is followed, so cross-certificates are all checked), only a really self-signed certificate's own signature exempt. This
+  is stricter than OpenSSL for an extra cross-certificate the server sends above the anchor your verifier trusts: it is
+  checked and refuses the chain. A certificate on no verified path from the leaf is not looked at.
+
+The endpoint's own chain is held to the same rules when the identity is made (`TlsIdentity.fromDer`, `fromPem` and the
+JVM key store factories throw `TlsException.Config` for a SHA-1- or MD5-signed certificate or a key under 112 bits), for
+a server and for a client certificate alike.
 
 | Platform | Verifier and store | Revocation |
 |---|---|---|

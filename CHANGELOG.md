@@ -293,17 +293,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server: a TCP connector holds at most 10,000 connections by default (`maxTcpConnections`, see "Added"); before,
   it accepted without a bound. At the limit it stops accepting and new clients wait in the OS backlog.
 - TLS (breaking): a peer's certificate chain below OpenSSL security level 2 (RFC 9325 section 4.5) is refused under
-  every trust configuration, not only where OpenSSL verifies the chain (`docs/guide/tls.md`, "Platform trust"). Before
-  the platform verifier, a `Custom` verifier or `Tofu` is asked, `ksl` checks the certificates the peer sent: every key on
-  the path from the leaf through the presented issuers needs 112 security bits (RSA and DSA 2048 bits, elliptic curves
-  224 bits) and every certificate signature on it too, except the own signature of a certificate that verifies under its
-  own key (no SHA-1 or MD5 below it; RFC 9846 section 4.5.1.3: MD5 MUST, SHA-1 SHOULD be refused). A weaker chain ends
+  every trust configuration, not only where OpenSSL verifies the chain (`docs/guide/tls.md`, "Platform trust"): every key
+  needs 112 security bits (RSA and DSA 2048 bits, elliptic curves 224 bits) and every certificate signature too, except
+  the trust anchor's (no SHA-1 or MD5; RFC 9846 section 4.5.1.3: MD5 MUST, SHA-1 SHOULD be refused). A weaker chain ends
   the handshake with `bad_certificate` (42; `handshake_failure` with `genericAlerts`). Before, `TrustConfig.Platform` on
-  the JVM, Android and Windows accepted 1024-bit RSA keys and SHA-1-signed intermediates when the platform did. The check
-  covers every presented certificate reachable from the leaf through issuers whose key verifies the signature (a decoy
-  with the intermediate's name cannot hide it; cross-certificates are all checked), not the chain the platform builds, so
-  it is stricter than OpenSSL's own verifier for an extra cross-certificate a server sends above the platform's anchor
-  (one signed with SHA-1 refuses the chain). This endpoint's own chain is checked the same way when the identity is made
+  the JVM, Android and Windows accepted 1024-bit RSA keys and SHA-1-signed intermediates when the platform did. Under
+  `Platform` on the JVM, Android, Apple and Windows (also under `Pinned` and `ExpectedName`) the check runs after the
+  platform's yes on the path the platform built, leaf to its trust anchor, as OpenSSL checks its own path (the anchor's
+  key counts, its signature does not): a certificate the server sends that the platform does not use, such as an extra
+  SHA-1 cross-certificate above the root it trusts, does not refuse the chain; when the platform does not say which path
+  it took (the JDK's path cannot be rebuilt with its PKIX builder, SecTrust's chain cannot be read), the presented chain
+  is checked as below. Under `Custom` and `Tofu`, `ksl` checks the certificates the peer sent before the verifier or the
+  store is asked: every presented certificate reachable from the leaf through issuers whose key verifies the signature (a
+  decoy with the intermediate's name cannot hide it; cross-certificates are all checked), only the own signature of a
+  certificate that verifies under its own key exempt, which is stricter than OpenSSL's own verifier for an extra
+  cross-certificate a server sends above the anchor the application trusts (one signed with SHA-1 refuses the chain).
+  This endpoint's own chain is checked the same way when the identity is made
   (RFC 9325 section 4.5: servers MUST NOT authenticate with SHA-1 or MD5 or with RSA under 2048 bits): `TlsIdentity`
   factories throw `TlsException.Config` for a SHA-1- or MD5-signed certificate (OpenSSL checked only the keys). What breaks:
   `Custom` and `Tofu` now refuse weak keys too, so devices with legacy 1024-bit RSA certificates no longer connect, and

@@ -512,6 +512,9 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
     case KSL_OPT_EARLY_DATA:
         if (c->role != KSL_SERVER) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: early data option is server-only"); return KSL_ERROR; }
         c->early_data = value != 0; if (c->early_data) ksl_ctx_enable_early_data(c->ctx); return KSL_OK;
+    case KSL_OPT_LEVEL_AFTER_PAUSE:
+        if (c->role != KSL_CLIENT) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: level after pause is client-only"); return KSL_ERROR; }
+        c->level_after_pause = value != 0; return KSL_OK;
     case KSL_OPT_SNI_PAUSE:
         if (c->role != KSL_SERVER) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: SNI pause is server-only"); return KSL_ERROR; }
         c->sni_pause = value != 0; return KSL_OK;

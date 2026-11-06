@@ -158,6 +158,11 @@ public actual object Ksl {
             }
         }
 
+    public actual fun chainLevel(
+        chainDer: List<ByteArray>,
+        builtPath: Boolean,
+    ): Int = frameDerList(chainDer).pin { p, n -> ksl_chain_level(p, n, if (builtPath) 1 else 0) }
+
     public actual fun ctxLastError(ctx: Long): KslError = ctxError(ctx).let { KslError(it.packed, it.alert, it.message ?: "") }
 
     public actual fun sslNew(

@@ -32,7 +32,8 @@ extern "C" {
    ksl_ticket_keys_register / ksl_ctx_use_ticket_keys (explicit keys copied in once, referred to by id) */
 /* 7: ICMP hints for DPLPMTUD (ADR-0006) — ksl_udp_take_ptb (Packet Too Big read from the Linux error queue, IP_RECVERR with DF) and
    ksl_udp_emsgsize (sends the kernel refused as too large); a queued ICMP error no longer fails ksl_udp_recv. The one ABI bump of 0.3.0:
-   later 0.3.0 additions go under 7 */
+   later 0.3.0 additions go under 7; additive under 7: ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
+   path the platform built, T.5b) */
 
 /* return codes */
 #define KSL_OK 0
@@ -69,6 +70,10 @@ extern "C" {
 #define KSL_OPT_EARLY_DATA 10      /* server, 1 = QUIC sessions accept 0-RTT: tickets carry early_data, OpenSSL's cache-based anti-replay is off
                                       (SSL_OP_NO_ANTI_REPLAY; the transport keeps the replay register), and each hello needs KSL_SET_EARLY_DATA
                                       plus a matching KSL_SET_EARLY_CONTEXT; KSL_E_BAD_ARG on a client context */
+#define KSL_OPT_LEVEL_AFTER_PAUSE 11 /* client, KSL_VERIFY_PAUSE (ABI 7, additive): 1 = the presented chain is not held to the security level
+                                      before KSL_WANT_VERIFY; the caller holds the path its verifier built to it with ksl_chain_level before
+                                      it accepts (TrustConfig.Platform: the platform's path, not every certificate the peer sent).
+                                      KSL_E_BAD_ARG on a server context */
 
 /* ksl_ssl_get keys */
 #define KSL_GET_ALPN 1             /* negotiated protocol, bytes */
@@ -212,6 +217,13 @@ int      ksl_ctx_freeze(ksl_ctx *);
    (ADR-0011). */
 int      ksl_ctx_verify_chain(ksl_ctx *, const uint8_t *chain, size_t chain_len, const char *name, int64_t at, int *x509_err);
 int      ksl_ctx_last_error(ksl_ctx *, uint32_t *packed, char *buf, size_t len);
+/* OpenSSL's security level (the default, OPENSSL_TLS_SECURITY_LEVEL, 2: 112 bits; a ksl client context never changes it) on a
+   chain framed as for ksl_ctx_set_roots, leaf first. built = 1: the path a verifier built, its trust anchor last, checked as
+   X509_verify_cert checks its own path (x509_vfy.c check_auth_level): every key, every signature but the anchor's. built = 0:
+   the chain as the peer sent it, checked as before KSL_WANT_VERIFY. Returns X509_V_OK (0), the X509_V_ERR_* of the first weak
+   key or signature (EE_KEY_TOO_SMALL, CA_KEY_TOO_SMALL, CA_MD_TOO_WEAK, CERT_CHAIN_TOO_LONG), or -1 when the input holds no
+   certificate or does not parse. Touches no context: safe from any thread (ABI 7, additive). */
+int      ksl_chain_level(const uint8_t *chain, size_t chain_len, int built);
 
 /* --- session (QUIC or TCP) --- */
 ksl_ssl *ksl_ssl_new(ksl_ctx *, int mode);

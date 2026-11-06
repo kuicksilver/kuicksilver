@@ -42,6 +42,12 @@ public object KslConst {
     /** Server context: QUIC sessions accept 0-RTT (ABI 6, ADR-0015). */
     public const val OPT_EARLY_DATA: Int = 10
 
+    /**
+     * Client context, pause mode: the presented chain is not held to the security level before the pause; the caller holds
+     * the path its verifier built to it with [Ksl.chainLevel] (ABI 7, T.5b).
+     */
+    public const val OPT_LEVEL_AFTER_PAUSE: Int = 11
+
     public const val GET_ALPN: Int = 1
     public const val GET_VERSION: Int = 2
     public const val GET_CHANNEL_BINDING: Int = 4

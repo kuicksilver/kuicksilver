@@ -247,7 +247,10 @@ internal class KslContext private constructor(
                 rootsOf(config.trust)?.takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
             }
             if (config.role == TlsRole.Client) {
-                Ksl.ctxSetOption(h, KslConst.OPT_VERIFY_MODE, verifyModeFor(config))
+                val mode = verifyModeFor(config)
+                Ksl.ctxSetOption(h, KslConst.OPT_VERIFY_MODE, mode)
+                // T.5b: the platform's path is held to the level after its yes (platformLevel), not the presented chain before the pause
+                if (mode == KslConst.VERIFY_PAUSE && platformDecides(config.trust)) Ksl.ctxSetOption(h, KslConst.OPT_LEVEL_AFTER_PAUSE, 1)
             } else {
                 Ksl.ctxSetOption(
                     h,

@@ -22,7 +22,7 @@ typedef struct { uint8_t *buf; size_t len, cap, consumed; } ksl_inbuf;
 
 struct ksl_ctx {
     SSL_CTX *ctx;
-    int role, verify_mode, client_cert_mode, frozen, sni_pause, keylog, generic_alerts, early_data;
+    int role, verify_mode, client_cert_mode, frozen, sni_pause, keylog, generic_alerts, early_data, level_after_pause;
     size_t num_tickets;
     uint8_t alpn[256]; size_t alpn_len;
     /* settings SSL_new copies into each session, kept so an SNI override can apply them (ksl_ctx_apply_to_ssl) */
