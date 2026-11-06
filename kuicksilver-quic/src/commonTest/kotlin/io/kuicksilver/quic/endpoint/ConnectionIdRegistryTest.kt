@@ -34,14 +34,19 @@ class ConnectionIdRegistryTest {
         }
     }
 
-    @Test fun addRemoveAndRemoveAllAgreeWithAModel() {
+    @Test fun addRemoveAndRemoveAllAgreeWithAModel() = agreesWithAModel(-1L)
+
+    /** Every ID's 64-bit key reduced to 3 bits: IDs share a key and a bucket, as two whose SipHash collides would. */
+    @Test fun idsSharingAKeyAgreeWithAModel() = agreesWithAModel(7L)
+
+    private fun agreesWithAModel(keyMask: Long) {
         // the open-addressed table against a plain map: growth, backward-shift deletion and the rebuild in removeAll; 4-byte
         // IDs keep the table small enough that probe runs wrap and collide
         val p = CorePair()
         val q = CorePair()
         val packet = PacketBuffer.allocate(32)
         try {
-            val r = ConnectionIdRegistry(0x1234L, 0x5678L)
+            val r = ConnectionIdRegistry(0x1234L, 0x5678L, keyMask)
             val model = HashMap<List<Byte>, io.kuicksilver.quic.ConnectionCore>()
             val rnd = kotlin.random.Random(7)
             repeat(20_000) { step ->

@@ -53,4 +53,31 @@ class ConnectionIdRegistryAllocationTest {
             p.close()
         }
     }
+
+    @Test fun closingAConnectionInALargeTableAllocatesLittle() {
+        // EndpointCore.remove calls removeAll for every closed connection, whose IDs are still registered: it must not rebuild
+        // the table (a 32 768-slot table is about 400 KB per rebuild here; an attacker can churn connections)
+        val p = CorePair()
+        val q = CorePair()
+        try {
+            val r = ConnectionIdRegistry(0x1234L, 0x5678L)
+            repeat(10_000) { i -> r.add(ConnectionId(ByteArray(8) { (i shr (8 * (it % 4))).toByte() }.also { it[7] = 1 }), q.client) }
+            val mine = Array(4) { k -> ConnectionId(ByteArray(8) { (k * 37 + it).toByte() }.also { it[7] = 2 }) }
+            val mx = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
+            fun close() {
+                for (k in mine.indices) r.add(mine[k], p.client)
+                r.removeAll(p.client)
+            }
+            repeat(3) { close() } // classes loaded, scratch sized
+            val before = mx.currentThreadAllocatedBytes
+            repeat(50) { close() }
+            val perClose = (mx.currentThreadAllocatedBytes - before) / 50
+            // re-adding four IDs makes their buckets and entries (well under 1 KB); a rebuild is the whole table
+            assertTrue(perClose <= 2048, "$perClose bytes per close")
+            assertEquals(10_000, r.size)
+        } finally {
+            p.close()
+            q.close()
+        }
+    }
 }

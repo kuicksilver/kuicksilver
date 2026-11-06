@@ -16,6 +16,8 @@ import io.kuicksilver.quic.wire.ConnectionId
 internal class ConnectionIdRegistry(
     private val k0: Long,
     private val k1: Long,
+    // tests: a mask over the 64-bit key, so IDs share keys as SipHash collisions would (the default keeps every bit)
+    private val keyMask: Long = -1L,
 ) : CidRegistrar {
     private class Entry(
         val cid: ConnectionId,
@@ -34,7 +36,7 @@ internal class ConnectionIdRegistry(
 
     private fun key(cid: ConnectionId): Long {
         cid.copyToArray(scratch, 0)
-        return SipHash.hash24(k0, k1, scratch, 0, cid.length)
+        return SipHash.hash24(k0, k1, scratch, 0, cid.length) and keyMask
     }
 
     private fun home(
@@ -132,7 +134,7 @@ internal class ConnectionIdRegistry(
         off: Int,
         len: Int,
     ): ConnectionCore? {
-        val at = find(SipHash.hash24(k0, k1, buf, off, len))
+        val at = find(SipHash.hash24(k0, k1, buf, off, len) and keyMask)
         if (at < 0) return null
         val l = lists[at]!!
         for (i in 0 until l.size) {
@@ -149,34 +151,36 @@ internal class ConnectionIdRegistry(
         size = 0
     }
 
+    /** Keys whose bucket [removeAll] emptied; kept between calls, so a close allocates nothing once it is large enough. */
+    private var emptiedKeys = LongArray(8)
+
+    /**
+     * Drops every ID of [core] (a closed connection: its IDs are still registered). One walk over the slots, entries removed
+     * by index; the buckets it emptied are then removed by key, each with its probe run shifted back. No rebuild: a rebuild
+     * per close was the whole table again (hundreds of KB per close with many connections), and closes are peer-driven.
+     */
     fun removeAll(core: ConnectionCore) {
-        var emptied = false
-        for (l in lists) {
-            if (l == null) continue
-            val before = l.size
-            l.removeAll { e ->
-                e.core ===
-                    core
+        var emptied = 0
+        val ls = lists
+        for (j in ls.indices) {
+            val l = ls[j] ?: continue
+            var w = 0
+            for (i in 0 until l.size) {
+                val e = l[i]
+                if (e.core !== core) l[w++] = e
             }
-            size -= before - l.size
-            if (l.isEmpty()) emptied = true
+            if (w == l.size) continue
+            size -= l.size - w
+            while (l.size > w) l.removeAt(l.size - 1)
+            if (w == 0) {
+                if (emptied == emptiedKeys.size) emptiedKeys = emptiedKeys.copyOf(emptied * 2)
+                emptiedKeys[emptied++] = keys[j]
+            }
         }
-        if (!emptied) return
-        // rebuild without the empty lists: removing slots while walking them would move entries past the walk
-        val oldKeys = keys
-        val oldLists = lists
-        lists = arrayOfNulls(keys.size)
-        keys = LongArray(keys.size)
-        used = 0
-        val mask = keys.size - 1
-        for (j in oldKeys.indices) {
-            val l = oldLists[j]
-            if (l == null || l.isEmpty()) continue
-            var i = home(oldKeys[j], mask)
-            while (lists[i] != null) i = (i + 1) and mask
-            keys[i] = oldKeys[j]
-            lists[i] = l
-            used++
+        // after the walk: removing a slot moves later entries of its run back, which the walk could have passed over or met twice
+        for (i in 0 until emptied) {
+            val at = find(emptiedKeys[i])
+            if (at >= 0 && lists[at]!!.isEmpty()) removeSlot(at)
         }
     }
 
