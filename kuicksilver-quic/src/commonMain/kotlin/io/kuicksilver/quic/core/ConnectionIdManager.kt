@@ -217,10 +217,46 @@ internal class ConnectionIdManager(
 
     private fun newLocalCid(): ConnectionId = generator?.invoke(random) ?: ConnectionId(ByteArray(cidLength).also { random.nextBytes(it) })
 
-    /** The peer's `active_connection_id_limit`: issue IDs up to min(limit, 8) in total. */
+    /** min(the peer's `active_connection_id_limit`, 8); 1 until the peer's transport parameters arrive. */
+    private var peerTarget = 1
+
+    /**
+     * Only the handshake ID is handed out (no NEW_CONNECTION_ID but the one a configuration change sends): a server whose
+     * QUIC-LB IDs are plaintext or unroutable (draft-ietf-quic-load-balancers-21 sections 3.2 and 9).
+     */
+    var singleCid: Boolean = false
+        private set
+
+    /** The peer's `active_connection_id_limit`: issue IDs up to min(limit, 8) in total (1 with [singleCid]). */
     fun setPeerLimit(limit: Long) {
-        target = minOf(limit, 8L).toInt()
+        peerTarget = minOf(limit, 8L).toInt()
+        target = if (singleCid) 1 else peerTarget
         fill()
+    }
+
+    /** From the start, the connection hands out only its handshake ID ([singleCid]). */
+    fun limitToSingle() {
+        singleCid = true
+        target = 1
+    }
+
+    /**
+     * The endpoint's QUIC-LB configuration changed: one new ID from the generator (the new configuration) that retires every
+     * earlier one (draft-ietf-quic-load-balancers-21 section 3.1: servers "MUST use that QUIC version's methods to update the
+     * client with CIDs (e.g., NEW_CONNECTION_ID frames) using the new configuration and retire CIDs using the old
+     * configuration"); the replacements the peer's retirements call for come from the new configuration too, up to the
+     * limit, or none with [single].
+     */
+    fun reissueForNewConfiguration(single: Boolean) {
+        singleCid = single
+        target = if (single) 1 else peerTarget
+        issueRetiringOlder()
+    }
+
+    /** Stops handing out new IDs past the one in use (the endpoint went unroutable: section 3.2); the live ones stay. */
+    fun stopIssuing() {
+        singleCid = true
+        target = 1
     }
 
     private fun fill() {

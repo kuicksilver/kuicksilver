@@ -626,4 +626,92 @@ class StatelessResetTest {
             b.close()
         }
     }
+
+    // ---- QUIC-LB: the reset gate (draft-ietf-quic-load-balancers-21; threat-model 3.4) ----
+
+    /** A short header to an unknown ID of [cfg] with our server ID: answered, the positive control for the negatives below. */
+    @Test fun quicLbResetForOwnUnknownCid() {
+        val cfg = QuicLbFixtures.config()
+        val p = LbPair(cfg)
+        try {
+            p.feed(p.server, QuicLbFixtures.shortTo(QuicLbFixtures.cidOf(cfg, byteArrayOf(1, 2, 3, 4))))
+            assertEquals(1, p.stateless(), "a Stateless Reset")
+            assertEquals(1L, p.server.stats.statelessResets)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_quicLbNoResetForOtherServerId() {
+        val cfg = QuicLbFixtures.config()
+        val other = QuicLbFixtures.config(sid = byteArrayOf(0xed.toByte(), 0x79, 0x3b)) // sid + 1, same configuration and key
+        val p = LbPair(cfg)
+        try {
+            p.feed(p.server, QuicLbFixtures.shortTo(QuicLbFixtures.cidOf(other, byteArrayOf(1, 2, 3, 4))))
+            assertEquals(0, p.stateless())
+            assertEquals(0L, p.server.stats.statelessResets)
+            assertEquals(1L, p.server.stats.datagramsDroppedStateless)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_quicLbNoResetForUnknownConfigId() {
+        val p = LbPair(QuicLbFixtures.config(configId = 2))
+        try {
+            p.feed(p.server, QuicLbFixtures.shortTo(QuicLbFixtures.cidOf(QuicLbFixtures.config(configId = 5), byteArrayOf(1, 2, 3, 4))))
+            assertEquals(0, p.stateless())
+            assertEquals(0L, p.server.stats.statelessResets)
+            assertEquals(1L, p.server.stats.datagramsDroppedStateless)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** An unroutable ID carries no server ID to check: never answered. */
+    @Test fun negative_quicLbNoResetForUnroutableCid() {
+        val p = LbPair(QuicLbFixtures.config())
+        try {
+            val cid =
+                p.server.route
+                    .newCid(Random(3), client = true)
+                    .toByteArray()
+            assertEquals(7, (cid[0].toInt() and 0xff) ushr 5)
+            p.feed(p.server, QuicLbFixtures.shortTo(cid))
+            assertEquals(0, p.stateless())
+            assertEquals(0L, p.server.stats.statelessResets)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_quicLbNoResetFromNonOwnerLoop() {
+        val cfg = QuicLbFixtures.config()
+        val ec = QuicLbFixtures.endpointConfig(cfg, loops = 2)
+        val state = QuicLbState(LbNullCrypto, Random(1), cfg, 2, 8)
+        val loop0 = EndpointCore(ec, Random(10), 0, null, state)
+        val loop1 = EndpointCore(ec, Random(11), 1, null, state)
+        val batch = PacketBatch(4)
+        try {
+            val cid = loop1.route.newCid(Random(1), client = false).toByteArray() // loop 1's
+            for ((ep, want) in listOf(loop0 to 0, loop1 to 1)) {
+                val b = PacketBuffer.of(QuicLbFixtures.shortTo(cid))
+                try {
+                    assertNull(ep.handleDatagram(b, 100, clientAddr, Ecn.NotEct, TimeMark(1_000_000_000L)))
+                } finally {
+                    b.close()
+                }
+                batch.clear()
+                assertEquals(want, ep.pollStateless(batch), "loop ${ep.loopIndex}")
+            }
+            assertEquals(0L, loop0.stats.statelessResets, "never a stranger's reset")
+            assertEquals(0L, loop0.stats.datagramsDroppedStateless, "forwarded to its owner, not dropped")
+            assertEquals(1, QuicLbFixtures.owner(loop0, QuicLbFixtures.shortTo(cid)))
+        } finally {
+            batch.close()
+            loop0.close()
+            loop1.close()
+            state.close()
+        }
+    }
 }

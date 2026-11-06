@@ -153,7 +153,7 @@ internal object QuicLbCipher {
  */
 internal class QuicLbCodec(
     val config: QuicLbConfig,
-    private val key: LoadBalancerKey?,
+    val key: LoadBalancerKey?,
 ) {
     init {
         require((key != null) == config.encrypted) { "a key exactly when the configuration has one" }
@@ -222,6 +222,9 @@ internal class QuicLbNonces(
     private val seed = seed.copyOf()
     private val drawn = AtomicLong(start)
     private val limit: Long = if (length >= 8) Long.MAX_VALUE else 1L shl (8 * length)
+
+    /** Test hook: every nonce drawn. */
+    internal fun spendForTest() = drawn.store(limit)
 
     /** True once every nonce of the space was drawn. */
     val exhausted: Boolean get() = drawn.load().let { it < 0 || it >= limit }

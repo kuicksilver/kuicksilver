@@ -11,6 +11,7 @@ import io.kuicksilver.native.of
 import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
+import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointCore
@@ -19,6 +20,7 @@ import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicLbConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.VersionProfile
@@ -1010,6 +1012,202 @@ class EndpointCoreTest {
             feed(captured[0], p.clientAddr)
             assertEquals(paths + 1, s.pathCountForTest, "the client's own address on the preferred socket: a new path")
         } finally {
+            p.close()
+        }
+    }
+
+    // ---- QUIC-LB server connection IDs (draft-ietf-quic-load-balancers-21) ----
+
+    private fun hexOf(b: ByteArray) = b.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
+    private fun localCids(s: ConnectionCore): List<ByteArray> =
+        (0L..40L).mapNotNull {
+            s.cids
+                .localForTest(it)
+                ?.cid
+                ?.toByteArray()
+        }
+
+    @Test fun quicLbIssuedCidsDecodeToServerId() {
+        val cfg = QuicLbFixtures.config(configId = 2)
+        val p = LbPair(cfg)
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            val issued = localCids(s)
+            assertTrue(issued.size >= 2, "the handshake ID and NEW_CONNECTION_ID ones: ${issued.size}")
+            val more =
+                List(100) {
+                    p.server.route
+                        .newCid(Random(it), client = false)
+                        .toByteArray()
+                }
+            for (cid in issued + more) {
+                assertEquals(2, (cid[0].toInt() and 0xff) ushr 5, "config rotation bits: ${hexOf(cid)}")
+                assertEquals(7, cid[0].toInt() and 0x1f, "self-encoded length: ${hexOf(cid)}")
+                kotlin.test.assertContentEquals(QuicLbFixtures.SID, QuicLbFixtures.decodeSid(cfg, cid), "server ID of ${hexOf(cid)}")
+            }
+            assertEquals(issued.size + more.size, (issued + more).map { hexOf(it) }.toSet().size, "no ID twice")
+            assertTrue(issued.none { hexOf(it).contains("ed793a") }, "the server ID never shows in clear")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun quicLbOwnerLoopMatchesIssuingLoop() {
+        val cfg = QuicLbFixtures.config()
+        val ec = QuicLbFixtures.endpointConfig(cfg, loops = 4)
+        val state = QuicLbState(LbNullCrypto, Random(1), cfg, 4, 8)
+        val cores = List(4) { EndpointCore(ec, Random(10L + it), it, null, state) }
+        try {
+            for ((i, core) in cores.withIndex()) {
+                val r = Random(100 + i)
+                repeat(1000) {
+                    val cid = core.route.newCid(r, client = it % 10 == 0).toByteArray()
+                    for (other in cores) assertEquals(i, QuicLbFixtures.owner(other, QuicLbFixtures.shortTo(cid)), "owner of ${hexOf(cid)}")
+                }
+            }
+            assertEquals(-1, QuicLbFixtures.owner(cores[0], QuicLbFixtures.shortTo(ByteArray(8) { 0x55 })), "not our format")
+        } finally {
+            for (c in cores) c.close()
+            state.close()
+        }
+    }
+
+    @Test fun quicLbRotationKeepsOldConnectionsRouting() {
+        val p = LbPair(QuicLbFixtures.config(configId = 2))
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            val old = localCids(s)
+            p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 3))
+            for (cid in old) assertEquals(s, p.feed(p.server, QuicLbFixtures.shortTo(cid)), "an old ID still routes to its connection")
+            val fresh =
+                p.server.route
+                    .newCid(Random(1), client = false)
+                    .toByteArray()
+            assertEquals(3, (fresh[0].toInt() and 0xff) ushr 5, "new IDs use the new configuration")
+            assertEquals(0, QuicLbFixtures.owner(p.server, QuicLbFixtures.shortTo(old[0])), "the previous configuration still has an owner")
+            repeat(30) { p.step() }
+            assertEquals(ConnectionState.Confirmed, c.state, "the connection lives on")
+            val live = localCids(s)
+            assertTrue(
+                live.isNotEmpty() &&
+                    live.all {
+                        (it[0].toInt() and 0xff) ushr 5 == 3
+                    },
+                "only new-configuration IDs remain: ${live.map { hexOf(it) }}",
+            )
+            val peer = assertNotNull(c.cids.currentPeer).cid.toByteArray()
+            assertEquals(3, (peer[0].toInt() and 0xff) ushr 5, "the client moved to an ID of the new configuration")
+            assertTrue(c.openStream(bidi = true) >= 0, "and can still open streams")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun quicLbExhaustionGoesUnroutable() {
+        val p = LbPair(QuicLbFixtures.config())
+        try {
+            assertNotNull(p.server.lb)
+                .routes.current!!
+                .nonces
+                .spendForTest()
+            val cid =
+                p.server.route
+                    .newCid(Random(1), client = false)
+                    .toByteArray()
+            assertEquals(7, (cid[0].toInt() and 0xff) ushr 5, "unroutable codepoint once the nonces are spent")
+            assertEquals(7, cid[0].toInt() and 0x1f, "and it self-encodes its length")
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            assertEquals(7, (s.localCid[0].toInt() and 0xff) ushr 5)
+            assertEquals(1, localCids(s).size, "one ID over the life of the connection")
+            assertEquals(true, c.peerTp?.disableActiveMigration, "disable_active_migration")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun quicLbPlaintextHandsOutOneCid() {
+        val p = LbPair(QuicLbFixtures.config(plaintext = true))
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            assertEquals(1, localCids(s).size, "no NEW_CONNECTION_ID for plaintext IDs")
+            kotlin.test.assertNotEquals(true, c.peerTp?.disableActiveMigration)
+            // an encrypted configuration (another server ID: section 9.7) brings the full set back
+            p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 4, sid = byteArrayOf(1, 2, 3)))
+            repeat(30) { p.step() }
+            val live = localCids(s)
+            assertTrue(live.size >= 2 && live.all { (it[0].toInt() and 0xff) ushr 5 == 4 }, live.map { hexOf(it) }.toString())
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun quicLbUnroutableUpdateStopsIssuing() {
+        val p = LbPair(QuicLbFixtures.config())
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            val before = localCids(s)
+            p.server.updateLoadBalancer(null)
+            val cid =
+                p.server.route
+                    .newCid(Random(1), client = false)
+                    .toByteArray()
+            assertEquals(7, (cid[0].toInt() and 0xff) ushr 5)
+            repeat(10) { p.step() }
+            assertEquals(before.map { hexOf(it) }, localCids(s).map { hexOf(it) }, "live connections keep their IDs")
+            assertEquals(s, p.feed(p.server, QuicLbFixtures.shortTo(before[0])))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_lengthMismatchWithEndpointRejected() {
+        fun build(
+            lb: QuicLbConfig,
+            cidLength: Int = 8,
+            server: Boolean = true,
+        ) = QuicEndpointConfig
+            .Builder()
+            .apply {
+                if (server) {
+                    this.server =
+                        QuicServerConfig
+                            .Builder(CoreFixtures.server())
+                            .apply { quic = quicConfig { connectionIdLength = cidLength } }
+                            .build()
+                }
+                connectionIdLength = cidLength
+                loadBalancer = lb
+            }.build()
+        assertFailsWith<IllegalArgumentException> { build(QuicLbConfig(0, ByteArray(3), 5, null)) }
+        assertFailsWith<IllegalArgumentException> { build(QuicLbConfig(0, ByteArray(1), 4, null), cidLength = 6) }
+        assertFailsWith<IllegalArgumentException> { build(QuicLbFixtures.config(), server = false) }
+        build(QuicLbFixtures.config())
+    }
+
+    @Test fun negative_updateLoadBalancerRefused() {
+        val plain = server()
+        val p = LbPair(QuicLbFixtures.config(plaintext = true))
+        try {
+            assertFailsWith<IllegalStateException> { plain.updateLoadBalancer(QuicLbFixtures.config()) }
+            assertFailsWith<IllegalArgumentException>("a server ID in clear must not be used encrypted") {
+                p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 3))
+            }
+            assertFailsWith<IllegalArgumentException>("another length") {
+                p.server.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(9), 7, null))
+            }
+        } finally {
+            plain.close()
             p.close()
         }
     }

@@ -17,8 +17,12 @@ import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.useTicket
 import io.kuicksilver.quic.endpoint.AddressTokens
 import io.kuicksilver.quic.endpoint.AdmissionQueue
+import io.kuicksilver.quic.endpoint.ByteRoute
+import io.kuicksilver.quic.endpoint.CidIssuance
+import io.kuicksilver.quic.endpoint.CidRoute
 import io.kuicksilver.quic.endpoint.ConnectionIdRegistry
-import io.kuicksilver.quic.endpoint.ServerCidFormat
+import io.kuicksilver.quic.endpoint.QuicLbRoute
+import io.kuicksilver.quic.endpoint.QuicLbState
 import io.kuicksilver.quic.endpoint.StatelessClose
 import io.kuicksilver.quic.endpoint.StatelessRateLimiter
 import io.kuicksilver.quic.endpoint.StatelessReset
@@ -47,7 +51,8 @@ import kotlin.time.Duration.Companion.seconds
  * receive batch, which checks the Retry token, the hard limits and the admission policy, and creates the connection.
  *
  * @property config The endpoint's settings; its `server` decides whether client Initials are admitted at all.
- * @property loopIndex This endpoint's loop in a group (0 for a single loop): the routing byte of every server connection ID it issues.
+ * @property loopIndex This endpoint's loop in a group (0 for a single loop): the routing byte of every server connection ID it issues
+ * (with a QUIC-LB configuration, the loop its IDs hash to).
  */
 @ExperimentalKuicksilverApi
 public class EndpointCore internal constructor(
@@ -56,6 +61,8 @@ public class EndpointCore internal constructor(
     public val loopIndex: Int,
     /** The address tokens of a loop group, shared by its loops (this endpoint is one owner); null makes this endpoint's own. */
     sharedTokens: AddressTokens?,
+    /** A group's QUIC-LB state, shared by its loops (this endpoint is one owner); null makes this endpoint's own when it has a `loadBalancer`. */
+    sharedLb: QuicLbState? = null,
 ) {
     /** An endpoint with its own Retry, NEW_TOKEN and reset keys; [loopIndex] is its routing byte in a group (0 alone). */
     public constructor(config: QuicEndpointConfig, random: Random, loopIndex: Int = 0) : this(config, random, loopIndex, null)
@@ -94,12 +101,19 @@ public class EndpointCore internal constructor(
     /** The server's 0-RTT setup (configuration digest and the replay register shared by every loop), or null without 0-RTT. */
     internal val serverEarly: io.kuicksilver.quic.core.ServerEarlyData?
 
+    /** The QUIC-LB configurations (a group's, or this endpoint's own), or null without `loadBalancer`. */
+    internal val lb: QuicLbState?
+
+    /** The layout of our connection IDs: making them, the loop that owns one, the reset gate. */
+    internal val route: CidRoute
+
     init {
         // native memory (the buffers, the keys) is freed only by close(): a constructor that fails part-way frees what it made
         var vn: PacketBuffer? = null
         var rk: ResetKey? = null
         var tokens: AddressTokens? = null
         var q: AdmissionQueue? = null
+        var ownLb: QuicLbState? = null
         try {
             vn = PacketBuffer.allocate(1500)
             vnBuffer = vn
@@ -122,8 +136,18 @@ public class EndpointCore internal constructor(
             q = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
             queue = q
             serverEarly = config.server?.earlySetup(random)
+            ownLb =
+                if (config.loadBalancer == null) {
+                    null
+                } else {
+                    sharedLb?.also { check(it.retain()) { "the group's QUIC-LB state is closed" } }
+                        ?: QuicLbState(config.crypto, random, config.loadBalancer, config.loops, config.connectionIdLength)
+                }
+            lb = ownLb
+            route = if (ownLb != null) QuicLbRoute(ownLb, loopIndex) else ByteRoute(loopIndex, config.connectionIdLength)
         } catch (e: Throwable) {
             val r = Releaser(e) // what a release throws is suppressed into e
+            r.release { ownLb?.close() }
             r.release { q?.close() }
             r.release { tokens?.close() } // this endpoint's own, or its reference to the group's
             r.release { rk?.close() }
@@ -291,7 +315,7 @@ public class EndpointCore internal constructor(
         val quic = rttMemory[AddressClass.addrKey(remote)]?.let { client.quic.withInitialRtt(it) } ?: client.quic
         // the endpoint's CSPRNG itself: a child Random(seed) would let an observer recover the 64-bit seed from two cleartext CIDs
         // in a group the server's answers may land on another loop's socket: the routing byte in our CIDs brings them back
-        val scid = if (grouped) ServerCidFormat.generate(loopIndex, cidLength, random) else null
+        val scid = if (grouped) route.newCid(random, client = true) else null
         val core = ConnectionCore.client(quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData, scid)
         attach(core)
         connectionsCreated++
@@ -322,7 +346,24 @@ public class EndpointCore internal constructor(
         connections += core
         markDirty(core)
         // rotated IDs route and reset like the first one
-        if (core.role == TlsRole.Server || grouped) core.cids.generator = { r -> ServerCidFormat.generate(loopIndex, cidLength, r) }
+        if (core.role == TlsRole.Server || grouped) {
+            val client = core.role == TlsRole.Client
+            core.cids.generator = { r -> route.newCid(r, client) }
+        }
+        if (core.role == TlsRole.Server) {
+            when (route.issuance(core.localCid)) {
+                CidIssuance.Full -> {}
+
+                CidIssuance.Single -> {
+                    core.cids.limitToSingle()
+                }
+
+                CidIssuance.SingleNoMigration -> {
+                    core.cids.limitToSingle()
+                    core.unroutableCid = true
+                }
+            }
+        }
         byRemote.getOrPut(AddressClass.addrKey(core.remoteAddress)) { ArrayList(1) } += core
         core.onRemoteChanged =
             {
@@ -439,9 +480,9 @@ public class EndpointCore internal constructor(
     }
 
     /**
-     * The loop that owns the connection a datagram belongs to, read from the routing byte of our CID format ([ServerCidFormat]),
-     * or -1: Version Negotiation, a client endpoint, a DCID not in our format, or a long header naming this loop or no loop of
-     * the group (an Initial is then admitted where it lands). The endpoint runtime forwards a datagram whose owner is another
+     * The loop that owns the connection a datagram belongs to, from its DCID in our format ([CidRoute.ownerLoop]: the routing
+     * byte, or with a QUIC-LB configuration the loop the ID hashes to), or -1: Version Negotiation, a client endpoint, a DCID
+     * not in our format, or a long header naming this loop or no loop of the group (an Initial is then admitted where it lands). The endpoint runtime forwards a datagram whose owner is another
      * loop: a flow the kernel hashed onto this socket after a rebind, or the answer to a group's client connection ([connect]),
      * which the kernel hashes onto any loop's socket from the first Initial on.
      */
@@ -450,9 +491,9 @@ public class EndpointCore internal constructor(
         length: Int,
     ): Int {
         if (config.server == null || !PacketHeaderCodec.parse(data, 0, length, cidLength, hv) || hv.isVersionNegotiation) return -1
-        if (hv.type != PacketType.OneRtt) return if (routedElsewhere(data)) data[hv.dcidOff + 1].toInt() and 0xff else -1
-        if (hv.dcidLen != cidLength || data[hv.dcidOff].toInt() != ServerCidFormat.FORMAT_VERSION) return -1
-        return data[hv.dcidOff + 1].toInt() and 0xff
+        val owner = route.ownerLoop(data, hv.dcidOff, hv.dcidLen)
+        if (hv.type != PacketType.OneRtt) return if (routedElsewhere(owner)) owner else -1
+        return owner
     }
 
     /** In a group, connection IDs of client connections carry the routing byte too ([connect]), not only those of server connections. */
@@ -463,11 +504,7 @@ public class EndpointCore internal constructor(
      * connections (the server's Initial, Handshake or Retry hashed onto this socket), or a new client whose DCID names it
      * (its retransmits name it too, so it is admitted there consistently). One naming no loop is admitted where it lands.
      */
-    private fun routedElsewhere(data: PacketBuffer): Boolean {
-        if (!grouped || hv.dcidLen != cidLength || data[hv.dcidOff].toInt() != ServerCidFormat.FORMAT_VERSION) return false
-        val routing = data[hv.dcidOff + 1].toInt() and 0xff
-        return routing != loopIndex && routing < config.loops
-    }
+    private fun routedElsewhere(owner: Int): Boolean = grouped && owner >= 0 && owner != loopIndex && owner < config.loops
 
     /**
      * Routes one datagram; returns the connection that took it, or null when it was dropped, answered statelessly or
@@ -539,12 +576,13 @@ public class EndpointCore internal constructor(
         // form: "endpoints MUST treat any packet ending in a valid stateless reset token as a Stateless Reset"), or, in a short
         // header, a reason to send one
         statelessResetFor(data, length, from, now)?.let { return it }
-        if (hv.type != PacketType.OneRtt && routedElsewhere(data)) return null // another loop's: the group forwards it (ownerLoop)
+        if (hv.type != PacketType.OneRtt && grouped && routedElsewhere(route.ownerLoop(data, hv.dcidOff, hv.dcidLen))) {
+            return null
+        } // another loop's: the group forwards it (ownerLoop)
         if (hv.type == PacketType.OneRtt) {
-            if (config.server != null && length > StatelessReset.MIN_SIZE && hv.dcidLen == cidLength &&
-                data[hv.dcidOff].toInt() == ServerCidFormat.FORMAT_VERSION &&
-                data[hv.dcidOff + 1].toInt() == loopIndex
-            ) {
+            // only for an ID this loop issued (threat-model 3.4); with QUIC-LB also our server ID under the current or previous
+            // configuration, checked last: it decrypts
+            if (config.server != null && length > StatelessReset.MIN_SIZE && route.mayReset(data, hv.dcidOff, hv.dcidLen)) {
                 if (!limiter.allow(from, now)) {
                     statelessRateLimited++
                     droppedStateless++
@@ -659,10 +697,9 @@ public class EndpointCore internal constructor(
         return created
     }
 
-    /** The parsed DCID is in our server format with another loop's routing byte: a group forwards it there, it is not dropped. */
+    /** The parsed DCID is in our server format and owned by another loop: a group forwards it there, it is not dropped. */
     private fun foreignCid(data: PacketBuffer): Boolean =
-        config.server != null && hv.dcidLen == cidLength && data[hv.dcidOff].toInt() == ServerCidFormat.FORMAT_VERSION &&
-            (data[hv.dcidOff + 1].toInt() and 0xff) != loopIndex
+        config.server != null && route.ownerLoop(data, hv.dcidOff, hv.dcidLen).let { it >= 0 && it != loopIndex }
 
     /** One connection's failure stays its own: an exception out of the core closes that connection, never the endpoint. */
     internal fun deliver(
@@ -699,6 +736,42 @@ public class EndpointCore internal constructor(
     }
 
     private var tokensReleased = false
+    private var lbReleased = false
+
+    /**
+     * The endpoint's QUIC-LB configuration changed ([QuicLbState.update] already ran): every server connection gets one ID of
+     * the new configuration that retires all earlier ones (draft-ietf-quic-load-balancers-21 section 3.1), and hands out
+     * replacements under it; plaintext configurations hand out no more than that one (section 9). With no configuration
+     * (unroutable IDs) the connections keep the IDs they have and hand out no new ones (section 3.2). Loop thread only.
+     */
+    internal fun reissueForLoadBalancer() {
+        val current = lb?.routes?.current
+        for (i in connections.indices) {
+            val c = connections[i]
+            if (c.role != TlsRole.Server || c.state == ConnectionState.Closing || c.state == ConnectionState.Draining ||
+                c.state == ConnectionState.Closed
+            ) {
+                continue
+            }
+            if (current == null) c.cids.stopIssuing() else c.cids.reissueForNewConfiguration(single = !current.config.encrypted)
+            markDirty(c)
+        }
+    }
+
+    /** [QuicLbState.update] and [reissueForLoadBalancer] for an endpoint that is not part of a group. Loop thread only. */
+    internal fun updateLoadBalancer(config: QuicLbConfig?) {
+        val state = lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
+        checkLoadBalancerUpdate(config)
+        state.update(config)
+        reissueForLoadBalancer()
+    }
+
+    /** What every loop must agree on before a configuration change: the preferred address needs encrypted IDs (section 9). */
+    internal fun checkLoadBalancerUpdate(config: QuicLbConfig?) {
+        require(config == null || config.encrypted || this.config.server?.preferredAddress == null) {
+            "a preferredAddress needs an encrypted loadBalancer configuration (draft-ietf-quic-load-balancers-21 section 9)"
+        }
+    }
 
     /** Frees the queue, the stateless buffer and every connection's native resources. */
     public fun close() {
@@ -723,6 +796,11 @@ public class EndpointCore internal constructor(
                 if (release) addressTokens?.close() // one release per owner: a group's other loops may still use the keys
             }
             r.release { queue?.close() }
+            r.release {
+                val release = !lbReleased
+                lbReleased = true
+                if (release) lb?.close() // one release per owner, like the address tokens
+            }
             r.finish()
         }
     }

@@ -84,6 +84,27 @@ internal class LoopGroup private constructor(
         for (l in loops) l.closeAndJoin()
     }
 
+    private val lbLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * One change of the shared QUIC-LB state, on loop 0 (whose core keeps the state alive while it runs), then every loop
+     * moves its own server connections to it; one change at a time.
+     */
+    override suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
+        lbLock.lock()
+        try {
+            val first = loops[0]
+            first.runOnLoop {
+                val lb = first.core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
+                first.core.checkLoadBalancerUpdate(config)
+                lb.update(config)
+            }
+            for (l in loops) l.runOnLoop { l.core.reissueForLoadBalancer() }
+        } finally {
+            lbLock.unlock()
+        }
+    }
+
     /** Every loop's counters, summed. */
     override val stats: EndpointStats get() = loops.map { it.stats }.reduce { a, b -> a + b }
 
@@ -260,6 +281,24 @@ internal class LoopGroup private constructor(
                     closeSockets(Releaser(e), ios, preferred)
                     throw e
                 }
+            // one QUIC-LB state for every loop: the IDs any loop issues hash onto the loops with one key and draw one nonce counter
+            val lb =
+                try {
+                    config.loadBalancer?.let {
+                        io.kuicksilver.quic.endpoint.QuicLbState(
+                            config.crypto,
+                            KslRandom.newSource(),
+                            it,
+                            config.loops,
+                            config.connectionIdLength,
+                        )
+                    }
+                } catch (e: Throwable) {
+                    val r = Releaser(e)
+                    r.release { tokens.close() }
+                    closeSockets(r, ios, preferred)
+                    throw e
+                }
             val loops = ArrayList<EndpointLoop>(ios.size)
             try {
                 for ((i, io) in ios.withIndex()) {
@@ -275,6 +314,7 @@ internal class LoopGroup private constructor(
                             tokens,
                             preferred.getOrElse(i) { emptyList() },
                             allocate,
+                            lb,
                         )
                 }
                 afterBuild()
@@ -287,6 +327,7 @@ internal class LoopGroup private constructor(
                 throw e
             } finally {
                 tokens.close() // the group's own reference
+                lb?.close() // likewise
             }
             g.loops = loops
             try {

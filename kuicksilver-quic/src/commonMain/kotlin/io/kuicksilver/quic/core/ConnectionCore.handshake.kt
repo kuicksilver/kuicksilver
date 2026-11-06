@@ -40,6 +40,7 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     val tp = config.localTransportParameters(role, localCid, if (role == TlsRole.Server) odcid else null)
     // RFC 9000 section 18.2: the token of the handshake connection ID
     if (role == TlsRole.Server) tp.statelessResetToken = cids.localToken(0)
+    if (role == TlsRole.Server && unroutableCid) tp.disableActiveMigration = true
     if (role ==
         TlsRole.Server
     ) {

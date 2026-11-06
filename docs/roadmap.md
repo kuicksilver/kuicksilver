@@ -159,7 +159,7 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 
 ### 0.3.x
 
-- QUIC-LB (`PathId` and the CID layout are prepared).
+- QUIC-LB in the Ktor server engine and `Http3Endpoint` (the QUIC API has it since 0.3.0, experimental).
 
 ### Later
 

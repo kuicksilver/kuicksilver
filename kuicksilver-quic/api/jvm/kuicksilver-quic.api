@@ -963,6 +963,7 @@ public abstract interface class io/kuicksilver/quic/QuicEndpoint : java/lang/Aut
 	public abstract fun getStats ()Lio/kuicksilver/quic/EndpointStats;
 	public fun shutdown-rnQQ1Ag (JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public fun updateLoadBalancer (Lio/kuicksilver/quic/QuicLbConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/quic/QuicEndpoint$Companion {
@@ -974,6 +975,7 @@ public final class io/kuicksilver/quic/QuicEndpoint$DefaultImpls {
 	public static fun connectEarly (Lio/kuicksilver/quic/QuicEndpoint;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static fun shutdown-rnQQ1Ag (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun updateLoadBalancer (Lio/kuicksilver/quic/QuicEndpoint;Lio/kuicksilver/quic/QuicLbConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/quic/QuicEndpointConfig {
@@ -986,6 +988,7 @@ public final class io/kuicksilver/quic/QuicEndpointConfig {
 	public final fun getInitialQueueCap ()I
 	public final fun getIo ()Lkotlin/jvm/functions/Function2;
 	public final fun getListener ()Lio/kuicksilver/quic/ConnectionListener;
+	public final fun getLoadBalancer ()Lio/kuicksilver/quic/QuicLbConfig;
 	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getLoops ()I
 	public final fun getMaxConnectionLifetime-FghU774 ()Lkotlin/time/Duration;
@@ -1009,6 +1012,7 @@ public final class io/kuicksilver/quic/QuicEndpointConfig$Builder {
 	public final fun getInitialQueueCap ()I
 	public final fun getIo ()Lkotlin/jvm/functions/Function2;
 	public final fun getListener ()Lio/kuicksilver/quic/ConnectionListener;
+	public final fun getLoadBalancer ()Lio/kuicksilver/quic/QuicLbConfig;
 	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getLoops ()I
 	public final fun getMaxConnectionLifetime-FghU774 ()Lkotlin/time/Duration;
@@ -1026,6 +1030,7 @@ public final class io/kuicksilver/quic/QuicEndpointConfig$Builder {
 	public final fun setInitialQueueCap (I)V
 	public final fun setIo (Lkotlin/jvm/functions/Function2;)V
 	public final fun setListener (Lio/kuicksilver/quic/ConnectionListener;)V
+	public final fun setLoadBalancer (Lio/kuicksilver/quic/QuicLbConfig;)V
 	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
 	public final fun setLoops (I)V
 	public final fun setMaxConnectionLifetime-BwNAW2A (Lkotlin/time/Duration;)V

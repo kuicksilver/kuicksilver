@@ -23,6 +23,8 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.endpoint.LbNullCrypto
+import io.kuicksilver.quic.endpoint.QuicLbFixtures
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
@@ -640,6 +642,51 @@ class LoopGroupTest {
                 } finally {
                     clients.close()
                     server.close()
+                }
+            }
+        }
+
+    /**
+     * QUIC-LB IDs name no loop in clear: the owner is the loop they hash to. A live connection's datagrams that the kernel
+     * hands to another loop (every datagram of loop 0's socket goes to loop 1 first) still reach the connection on loop 0.
+     */
+    @Test fun quicLbForwardedToOwner() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val lbConfig =
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = LbNullCrypto
+                            loops = 4
+                            loadBalancer = QuicLbFixtures.config()
+                        }.build()
+                val ios = List(4) { net.open(if (it == 0) serverAddr else InetSocketAddress("10.0.0.${10 + it}", 2222)) }
+                val group = LoopGroup.create(lbConfig, ios)
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(serverAddr, clientConfig) // loop 0's socket: the connection is loop 0's
+                    val s = accepted.await()
+                    group.misrouteForTest(from = 0, to = 1)
+                    val st = c.openBidi()
+                    st.output.writeFully(ByteArray(20_000) { 7 })
+                    st.output.flushAndClose()
+                    val got =
+                        s
+                            .acceptStream()
+                            .input
+                            .readBuffer()
+                            .readByteArray()
+                    assertEquals(20_000, got.size, "every datagram reached the owner")
+                    assertTrue(group.forwardedForTest(0) > 0, "loop 1 forwarded them to loop 0")
+                    assertEquals(0L, group.stats.statelessResets, "no loop answered a stranger's ID")
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
                 }
             }
         }

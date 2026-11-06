@@ -626,6 +626,54 @@ val withLoops = QuicEndpointConfig.Builder().apply { this.server = serverConfig;
 
 `QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 4433), withLoops)` then starts the four loops on port 4433.
 
+## Behind a load balancer
+
+Experimental, after draft-ietf-quic-load-balancers-21 (QUIC-LB; a draft, not an RFC, so the format may still change).
+Several servers behind one address normally rely on the load balancer hashing the 4-tuple, which breaks when a client's
+address changes ([Deploying: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)).
+A QUIC-LB load balancer routes by connection ID instead: each server writes its server ID into every connection ID it
+issues, and the balancer reads it back. Give the endpoint the configuration your load balancer's configuration agent
+assigned this server:
+
+```kotlin
+// guide:quic:load-balancer
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
+val behindLb =
+    quicEndpointConfig {
+        server = serverConfig
+        loadBalancer = lb   // 1 + 3 + 4 = 8 bytes: the default connectionIdLength
+    }
+```
+
+A connection ID is then `first octet || server ID || nonce`: the first octet carries `configId` (0..6) in its three high
+bits and the length of the rest in its five low bits. With a 16-byte AES `key` the server ID and nonce are encrypted
+(one AES block when they are 16 bytes together, a four-pass Feistel network otherwise), so only the load balancer can
+tell which server a connection is on; without one they travel in clear, and the server then hands each connection only
+its handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). Nonces come from a
+counter that starts at random and is permuted with a key of the endpoint's own: none repeats while the process runs.
+`connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration cannot be
+combined with a `preferredAddress`.
+
+To roll out a new configuration (a new key, say), give it to the load balancers first, then to each server:
+
+```kotlin
+// guide:quic:load-balancer-update
+endpoint.updateLoadBalancer(QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey))
+```
+
+New connection IDs use it at once, and every live connection gets one NEW_CONNECTION_ID under it that retires its
+earlier IDs; those keep routing (and can still be answered with a Stateless Reset) until the next change. Pass `null`
+when the server has no valid configuration: it then issues unroutable IDs (codepoint `0b111`, which the balancer routes
+by 4-tuple), gives new connections a single ID and `disable_active_migration`, and leaves live connections as they are.
+The same happens on its own if a configuration's nonces run out (2^32 IDs for a 4-byte nonce). A server ID used in
+clear must never be used encrypted, or the other way round (the call refuses it).
+
+With several loops on one port, every loop issues IDs of the same configuration; the loop that owns an ID is the one it
+hashes to under a key the loops share, so a datagram that lands on another loop is still forwarded to its owner.
+The Stateless Reset rule stays: a loop answers an unknown connection ID only when it carries the current or previous
+configuration's codepoint, decrypts to this server's ID and hashes to that loop; unroutable IDs are never answered.
+
 ## Admission and endpoint limits
 
 A server decides per new client Initial whether to create a connection. `handleDatagram` runs only cheap checks on an
