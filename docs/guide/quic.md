@@ -348,7 +348,7 @@ probe settles that size at once. ICMP is easy to forge, so nothing else trusts i
 
 | Platform | Hints |
 |---|---|
-| Linux, Android (accelerated socket) | Packet Too Big and EMSGSIZE |
+| Linux, Android (accelerated socket) | Packet Too Big and EMSGSIZE (with several loops on one shared socket, each Packet Too Big is offered to every loop, each counting it as accepted or ignored) |
 | macOS, iOS, Windows (accelerated socket) | EMSGSIZE only (no usable ICMP for an unconnected socket) |
 | Portable socket (NIO, ktor-network) | none (no DF) |
 
@@ -610,7 +610,8 @@ lossy transfer. Set `glitchProtection = false` in `quicConfig { }` to turn it of
 ## Several loops on one port
 
 A server endpoint can run `loops` endpoint loops, each with its own single-threaded dispatcher, its own admission state
-and its own Retry and reset keys. The loop that admits a connection owns it for life: its index is the routing byte of
+and its own reset key; the Retry and NEW_TOKEN keys are shared by the loops, so a token one loop issued validates a
+client on any of them. The loop that admits a connection owns it for life: its index is the routing byte of
 every connection ID that loop issues (with a QUIC-LB configuration, the loop the ID hashes to). `accept()` is one queue
 over all loops, `connect` picks loops in turn, and a connection it opens issues connection IDs that name its loop as well.
 No loop ever answers a Stateless Reset for a connection ID that names another loop. The loops share the port in one of
@@ -624,9 +625,13 @@ two ways, chosen by the platform (there is no switch):
   so neither can balance. One receiver thread reads the socket and hands each datagram to the loop its connection ID names
   (a new client's Initial goes to a loop chosen by a keyed hash of its connection ID, the same loop for its
   retransmissions); every loop sends through its own clone of the socket (`ksl_udp_sender`), or through the caller's
-  socket under a lock. A migrated or rebound client reaches its loop directly. A loop that falls behind has 512
+  socket under a lock. A migrated or rebound client reaches its loop directly. A Stateless Reset from a peer, which names
+  no connection ID of ours, goes to the loop whose connection holds the peer's reset token, and an ICMP Packet Too Big
+  (Linux and Android) to every loop, each checking it against its own connections. A loop that falls behind has 512
   datagrams waiting at most: the receiver drops the rest for that loop, counted in `EndpointStats.datagramsDispatchDropped`,
-  and never waits for it, so the other loops go on.
+  and never waits for it, so the other loops go on. Each loop's ring holds 512 slots of 1500 bytes on the heap,
+  768 KB per loop for each shared socket (the main one and each preferred address). A failed socket fails the loops as
+  their own would: the main one ends the endpoint, a preferred-address one takes the preferred address down.
 
 What each mode buys: handshakes (most of a server's CPU) and the work of many connections spread over the loops in both.
 In-process routing keeps receiving sequential: one receive system call per datagram on Darwin, so a bulk transfer over

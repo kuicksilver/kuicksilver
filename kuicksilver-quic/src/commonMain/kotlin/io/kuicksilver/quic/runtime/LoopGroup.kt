@@ -10,7 +10,6 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointStats
 import io.kuicksilver.quic.KslDatagramIo
-import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
@@ -48,7 +47,8 @@ internal class LoopGroup private constructor(
 ) : QuicEndpoint {
     private lateinit var loops: List<EndpointLoop>
 
-    /** The in-process dispatchers of the shared socket and its preferred-address sockets; empty in kernel mode. */
+    /** The in-process dispatchers of the shared socket and its preferred-address sockets; empty in kernel mode. Read by [stats] on any thread. */
+    @kotlin.concurrent.Volatile
     internal var dispatchers: List<SocketDispatcher> = emptyList()
         private set
     private val pendingAccept = AtomicInt(0)
@@ -383,10 +383,29 @@ internal class LoopGroup private constructor(
             afterBuild: suspend () -> Unit = {},
         ): LoopGroup {
             require(senders.size == config.loops && preferredSenders.size == preferred.size)
-            val random = KslRandom.newSource()
-            val key = SipKey(random.nextLong(), random.nextLong())
-            val main = SocketDispatcher(socket, senders, config.connectionIdLength, key, allocate)
-            val others = preferred.mapIndexed { k, p -> SocketDispatcher(p, preferredSenders[k], config.connectionIdLength, key, allocate) }
+            val resets: io.kuicksilver.quic.endpoint.ResetTokenIndex
+            val main: SocketDispatcher
+            val others: List<SocketDispatcher>
+            try {
+                val random = KslRandom.newSource()
+                val key = SipKey(random.nextLong(), random.nextLong())
+                resets =
+                    io.kuicksilver.quic.endpoint
+                        .ResetTokenIndex(random)
+                main = SocketDispatcher(socket, senders, config.connectionIdLength, key, resets, allocate)
+                others =
+                    preferred.mapIndexed { k, p ->
+                        SocketDispatcher(p, preferredSenders[k], config.connectionIdLength, key, resets, allocate)
+                    }
+            } catch (e: Throwable) {
+                // no inbox owns the sockets yet: they and the senders close here
+                val r = Releaser(e)
+                for (s in senders) r.release { s.close() }
+                for (l in preferredSenders) for (s in l) r.release { s.close() }
+                for (p in preferred) r.release { p.close() }
+                r.release { socket.close() }
+                throw e
+            }
             // the loops' views of the sockets: closing them (a failed build included) closes the senders, the last one each socket
             val g =
                 create(
@@ -395,19 +414,16 @@ internal class LoopGroup private constructor(
                     preferred = List(config.loops) { i -> others.map { it.inboxes[i] } },
                     allocate = allocate,
                     afterBuild = afterBuild,
+                    // before any loop starts: every connection's peer reset tokens are known to the receivers from the first one
+                    eachBuilt = { it.core.peerResetTokens = resets },
                 )
             g.dispatchers = listOf(main) + others
             try {
-                // every loop routes connection IDs alike: loop 0's route answers for the group, from the receivers' threads
+                // every loop routes connection IDs alike: loop 0's route answers for the group, from the receivers' threads. A
+                // receiver that fails hands the failure to its inboxes: the main socket's ends every loop (and so the group),
+                // a preferred-address socket's takes the preferred address down group-wide, as in kernel mode
                 val route = g.loops[0].core.route
-                for (d in g.dispatchers) {
-                    d.start(route) { e ->
-                        g.loops[0].observer.logger.emit(LogLevel.Error, e) {
-                            "endpoint ${d.io.localAddress}: the shared socket failed; closing the endpoint"
-                        }
-                        g.close()
-                    }
-                }
+                for (d in g.dispatchers) d.start(route)
             } catch (e: Throwable) {
                 Releaser(e).release { withContext(NonCancellable) { g.closeAndJoin() } }
                 throw e
@@ -430,6 +446,7 @@ internal class LoopGroup private constructor(
             ios: List<io.kuicksilver.quic.DatagramIo>,
             preferred: List<List<io.kuicksilver.quic.DatagramIo>> = emptyList(),
             allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
+            eachBuilt: (EndpointLoop) -> Unit = {},
             afterBuild: suspend () -> Unit = {},
         ): LoopGroup {
             val g = LoopGroup(config)
@@ -471,19 +488,20 @@ internal class LoopGroup private constructor(
             try {
                 for ((i, io) in ios.withIndex()) {
                     loops +=
-                        EndpointLoop.inGroup(
-                            config,
-                            io,
-                            i,
-                            g,
-                            g.acceptQueue,
-                            g.pendingAccept,
-                            g.sessions,
-                            tokens,
-                            preferred.getOrElse(i) { emptyList() },
-                            allocate,
-                            lb,
-                        )
+                        EndpointLoop
+                            .inGroup(
+                                config,
+                                io,
+                                i,
+                                g,
+                                g.acceptQueue,
+                                g.pendingAccept,
+                                g.sessions,
+                                tokens,
+                                preferred.getOrElse(i) { emptyList() },
+                                allocate,
+                                lb,
+                            ).also(eachBuilt)
                 }
                 afterBuild()
             } catch (e: Throwable) {

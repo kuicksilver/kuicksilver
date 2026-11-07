@@ -20,6 +20,11 @@ internal class SipKey(
  * byte) and a datagram too short to carry a DCID go to loop 0; [CidRoute.resetCandidate] answers a Stateless Reset only for
  * an ID of the loop that checks it, so loop 0 never answers one for another loop's IDs (threat-model 3.4).
  *
+ * Before any of that, a datagram that ends with a peer's reset token one of the loops' connections holds ([resets]) goes to
+ * that loop: a Stateless Reset names no ID of ours (RFC 9000 section 10.3), and only the connection that holds the token can
+ * take it (section 10.3.1). A packet of ours ending with such a token by chance (2^-128) only costs its loop a datagram it
+ * forwards to the owner by ID.
+ *
  * Reads the first octet, the long header's DCID length and the DCID; never throws on a short or malformed datagram. Sans-IO;
  * the dispatcher's thread calls it ([CidRoute.ownerLoop] reads only shared, thread-safe state).
  */
@@ -37,8 +42,10 @@ internal object DispatchRoute {
         loops: Int,
         route: CidRoute,
         key: SipKey,
+        resets: ResetTokenIndex? = null,
     ): Int {
         if (loops <= 1 || len < 1) return 0
+        if (resets != null) resets.loopOf(buf, len).let { if (it in 0 until loops) return it }
         val first = buf[0].toInt() and 0xff
         if (first and 0x80 == 0) {
             // short header: the DCID has our length (RFC 9000 section 17.3); a datagram without room for it and one byte more is no packet

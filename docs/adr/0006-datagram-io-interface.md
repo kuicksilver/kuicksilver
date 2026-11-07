@@ -200,7 +200,12 @@ written by the receiver and read by the loop with no lock and no allocation per 
 `DatagramIo` whose sends go to the loop's own `ksl_udp_sender` clone ("One socket, several senders" above), or to a
 caller's socket under one lock; `EndpointLoop` is unchanged but for recognising a non-suspending sender by
 `NonSuspendingSend` instead of `KslDatagramIo`. The socket closes with the last loop's inbox, after every loop sent its
-CONNECTION_CLOSEs; a receive failure closes the group. The preferred-address sockets are shared the same way. Plain
+CONNECTION_CLOSEs. A receive failure fails every inbox of that socket, so the loops react as to a socket of their own: the
+main socket's failure ends the group, a preferred-address socket's takes the preferred address down group-wide. A
+Stateless Reset names no ID of ours: the loops record their connections' peer reset tokens in one `ResetTokenIndex`, and
+a datagram ending with one goes to its loop (RFC 9000 section 10.3.1). After each receive round the receiver drains the
+socket's ICMP Packet Too Big ring (Linux, Android) and offers each message to every loop, which validates the quote
+against its own connections. The preferred-address sockets are shared the same way. Plain
 Darwin and Windows alternatives were not taken: separate ports with `preferred_address` (the handshake still lands on
 one socket, a client may ignore the address, extra ports break on NATs and firewalls) and Windows per-CPU sockets with
 `SIO_CPU_AFFINITY` (msquic; depends on RSS, absent on loopback and many VMs; later, and only on a measurement). msquic

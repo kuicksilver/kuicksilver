@@ -32,7 +32,8 @@ internal class KslDatagramIo private constructor(
     private val socket: KslUdpSocket,
 ) : DatagramIo,
     DirectReceive,
-    NonSuspendingSend {
+    NonSuspendingSend,
+    PacketTooBigSource {
     override val localAddress: InetSocketAddress = inetOf(socket.localAddress, 0)
     private val caps = MutableStateFlow(capsOf())
     override val capabilities: StateFlow<IoCapabilities> get() = caps
@@ -258,7 +259,7 @@ internal class KslDatagramIo private constructor(
      * with DF; none elsewhere): the quoted start of our datagram (valid for [sink]'s call only), its length, the datagram's
      * destination and the MTU the message reports. Spoofable hints the core validates (RFC 8899 section 4.6). The loop's thread only.
      */
-    internal fun drainPacketTooBig(sink: (quote: ByteArray, len: Int, dst: InetSocketAddress, mtu: Int) -> Unit) {
+    override fun drainPacketTooBig(sink: (quote: ByteArray, len: Int, dst: InetSocketAddress, mtu: Int) -> Unit) {
         for (k in 0 until PTB_PER_DRAIN) {
             if (!socket.takePacketTooBig(ptbQuote, ptbMeta, ptbDst)) return
             sink(ptbQuote, ptbMeta[0], peerOf(ptbDst, 0), ptbMeta[1])

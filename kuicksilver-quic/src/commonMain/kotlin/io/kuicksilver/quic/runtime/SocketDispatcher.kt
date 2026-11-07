@@ -11,10 +11,13 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DirectReceive
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.IoCapabilities
+import io.kuicksilver.quic.KslDatagramIo
 import io.kuicksilver.quic.NonSuspendingSend
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.PacketTooBigSource
 import io.kuicksilver.quic.endpoint.CidRoute
 import io.kuicksilver.quic.endpoint.DispatchRoute
+import io.kuicksilver.quic.endpoint.ResetTokenIndex
 import io.kuicksilver.quic.endpoint.SipKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -47,14 +50,21 @@ import kotlin.concurrent.atomics.incrementAndFetch
  * copies each datagram into its loop's ring ([RING] slots of one datagram each, written by the receiver and read by the loop
  * with no lock and no allocation per datagram) and wakes the loop once per receive round. When a loop's ring is full the
  * datagram is dropped and counted ([dropped], `EndpointStats.datagramsDispatchDropped`): the receiver never waits for a loop,
- * so a flood aimed at one loop costs that loop's datagrams only (threat-model 3.4). The socket closes with the last loop's inbox (each loop's close sends
- * its CONNECTION_CLOSEs first); a receive failure ends the group ([start]'s `failed`).
+ * so a flood aimed at one loop costs that loop's datagrams only (threat-model 3.4). A datagram ending with a peer's reset token
+ * goes to the loop whose connection holds it ([resets], RFC 9000 section 10.3.1). After each round the receiver takes the ICMP
+ * Packet Too Big messages the socket queued (Linux and Android with DF) and offers each to every loop: each checks the quote
+ * against its own connections (RFC 8899 section 4.6), as a loop with its own socket does.
+ *
+ * The socket closes with the last loop's inbox (each loop's close sends its CONNECTION_CLOSEs first). A receive failure of
+ * the open socket fails every inbox with it ([LoopInbox.fail]): the loops then react as to their own socket's failure, so a
+ * failed main socket ends the group and a failed preferred-address socket takes the preferred address down group-wide.
  */
 internal class SocketDispatcher(
     internal val io: DatagramIo,
     senders: List<DatagramIo>,
     private val cidLength: Int,
     private val key: SipKey,
+    private val resets: ResetTokenIndex? = null,
     private val allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
 ) {
     val loops: Int = senders.size
@@ -65,7 +75,7 @@ internal class SocketDispatcher(
 
     private val droppedCount = AtomicLong(0)
 
-    /** Datagrams dropped because their loop had no free batch. */
+    /** Datagrams dropped because their loop's ring was full. */
     val dropped: Long get() = droppedCount.load()
 
     private val closed = AtomicInt(0)
@@ -76,20 +86,15 @@ internal class SocketDispatcher(
     @Volatile internal var receiverForTest: Job? = null
         private set
 
-    /** Starts the receiver; [route] tells the owner of a connection ID, [failed] hears a receive failure of the open socket. */
-    fun start(
-        route: CidRoute,
-        failed: (Throwable) -> Unit,
-    ) {
-        receiverForTest = scope.launch { receive(route, failed) }
+    /** Starts the receiver; [route] tells the owner of a connection ID. */
+    fun start(route: CidRoute) {
+        receiverForTest = scope.launch { receive(route) }
     }
 
-    private suspend fun receive(
-        route: CidRoute,
-        failed: (Throwable) -> Unit,
-    ) {
+    private suspend fun receive(route: CidRoute) {
         val batch = PacketBatch(SLOTS, EndpointLoop.SLOT_SIZE, allocate)
         val direct = io as? DirectReceive
+        val icmp = io as? PacketTooBigSource
         try {
             while (closed.load() == 0) {
                 batch.clear()
@@ -98,16 +103,18 @@ internal class SocketDispatcher(
                 for (i in 0 until batch.count) {
                     val len = batch.length(i)
                     val buf = batch.buffer(i)
-                    val loop = DispatchRoute.loopOf(buf, len, cidLength, loops, route, key)
+                    val loop = DispatchRoute.loopOf(buf, len, cidLength, loops, route, key, resets)
                     if (!inboxes[loop].put(buf, len, batch.address(i)!!, batch.localAddress(i), batch.ecn(i))) {
                         droppedCount.incrementAndFetch()
                     }
                 }
+                icmp?.drainPacketTooBig { quote, len, dst, mtu -> for (b in inboxes) b.offerPacketTooBig(quote, len, dst, mtu) }
                 for (b in inboxes) b.wake()
                 currentCoroutineContext().ensureActive()
             }
         } catch (e: Throwable) {
-            if (closed.load() == 0) failed(e) // a socket closed under the receive throws too: that is the close, not a failure
+            // a socket closed under the receive throws too: that is the close, not a failure
+            if (closed.load() == 0) for (b in inboxes) b.fail(e)
         } finally {
             batch.close()
         }
@@ -150,7 +157,8 @@ internal open class LoopInbox(
     val index: Int,
     protected val sender: DatagramIo,
 ) : DatagramIo,
-    DirectReceive {
+    DirectReceive,
+    PacketTooBigSource {
     private val size = SocketDispatcher.RING
     private val data: Array<ByteArray> = Array(size) { ByteArray(EndpointLoop.SLOT_SIZE) }
     private val lengths = IntArray(size)
@@ -166,6 +174,19 @@ internal open class LoopInbox(
     private val signal = Channel<Unit>(Channel.CONFLATED)
     private var putSinceWake = false
     private val closed = AtomicInt(0)
+
+    /** The shared socket's receive failed: the loop's next receive throws it. */
+    @Volatile private var failure: Throwable? = null
+
+    /** One ICMP Packet Too Big of the shared socket, copied for this loop. */
+    private class Ptb(
+        val quote: ByteArray,
+        val dst: InetSocketAddress,
+        val mtu: Int,
+    )
+
+    /** Packet Too Big messages the dispatcher offered and this loop has not taken: as many as the socket's own ring holds, newer ones dropped. */
+    private val ptbs = Channel<Ptb>(KslDatagramIo.PTB_PER_DRAIN)
 
     /** Test hook: while set, the loop takes nothing from this inbox (a loop that falls behind). */
     @Volatile internal var holdForTest: CompletableDeferred<Unit>? = null
@@ -201,6 +222,30 @@ internal open class LoopInbox(
         signal.trySend(Unit)
     }
 
+    /** The dispatcher's thread: the shared socket failed; the loop hears it at its next receive, as from a socket of its own. */
+    internal fun fail(e: Throwable) {
+        failure = e
+        signal.trySend(Unit)
+    }
+
+    /** The dispatcher's thread: a Packet Too Big the shared socket queued, for this loop's connections to check. */
+    internal fun offerPacketTooBig(
+        quote: ByteArray,
+        len: Int,
+        dst: InetSocketAddress,
+        mtu: Int,
+    ) {
+        if (ptbs.trySend(Ptb(quote.copyOf(len), dst, mtu)).isSuccess) putSinceWake = true // the loop takes it even with no datagram
+    }
+
+    /** The loop's thread: the Packet Too Big messages offered since the last call ([EndpointLoop.drainPacketTooBig]). */
+    override fun drainPacketTooBig(sink: (quote: ByteArray, len: Int, dst: InetSocketAddress, mtu: Int) -> Unit) {
+        for (k in 0 until KslDatagramIo.PTB_PER_DRAIN) {
+            val p = ptbs.tryReceive().getOrNull() ?: return
+            sink(p.quote, p.quote.size, p.dst, p.mtu)
+        }
+    }
+
     /** The loop's thread: what waits, as far as [into] has room. */
     private fun take(into: PacketBatch): Int {
         var h = head.load()
@@ -227,8 +272,11 @@ internal open class LoopInbox(
         holdForTest?.await()
         while (true) {
             if (closed.load() != 0) throw IllegalStateException("datagram io closed")
+            failure?.let { throw it }
             val n = take(into)
-            if (n > 0) return n
+            // a Packet Too Big waits: an empty round, after which the loop drains it (EndpointLoop.afterReceive)
+            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+            if (n > 0 || !ptbs.isEmpty) return n
             signal.receive() // a wake after the slots it announces were published: none is missed
         }
     }
@@ -237,7 +285,7 @@ internal open class LoopInbox(
         into: PacketBatch,
         waitMs: Int,
     ): Int {
-        if (closed.load() != 0 || into.count >= into.capacity || holdForTest != null) return 0
+        if (closed.load() != 0 || failure != null || into.count >= into.capacity || holdForTest != null) return 0
         return take(into)
     }
 

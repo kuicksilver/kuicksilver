@@ -10,8 +10,8 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
-import io.kuicksilver.quic.KslDatagramIo
 import io.kuicksilver.quic.PREFERRED_SOCKET
+import io.kuicksilver.quic.PacketTooBigSource
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.SocketDefunctException
@@ -107,7 +107,7 @@ internal fun EndpointLoop.drainPacketTooBig(
     socket: PathId,
     now: TimeMark,
 ) {
-    if (io !is KslDatagramIo) return
+    if (io !is PacketTooBigSource) return
     io.drainPacketTooBig { quote, len, dst, mtu -> core.handlePacketTooBig(quote, len, dst, mtu, now, socket) }
 }
 

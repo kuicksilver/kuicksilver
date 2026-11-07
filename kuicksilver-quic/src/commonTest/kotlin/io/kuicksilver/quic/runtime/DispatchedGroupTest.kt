@@ -19,6 +19,8 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.endpoint.LbNullCrypto
+import io.kuicksilver.quic.endpoint.QuicLbFixtures
 import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.QuicCrypto
 import kotlinx.coroutines.CompletableDeferred
@@ -169,8 +171,261 @@ class DispatchedGroupTest {
         }
 
     /**
+     * A client behind a NAT whose mapping changes: its datagrams arrive from a new address with the same connection ID. The
+     * receiver hands them to the owner by that ID, nothing is forwarded, and the transfer completes on the new path.
+     */
+    @Test fun natRebindWithTheSameCidNeedsNoForwarding(): Unit =
+        runBlocking {
+            withTimeout(60.seconds) {
+                val net = MemoryNetwork()
+                val g = group(serverConfig(net))
+                val nat = NatIo(net.open(InetSocketAddress("10.0.5.1", 5000)), net.open(InetSocketAddress("10.0.5.2", 6000)))
+                val ep = QuicEndpoint.bind(nat.localAddress, clientEndpointConfig(nat))
+                try {
+                    val accepted = async { g.accept() }
+                    val c = ep.connect(serverAddr, clientConfig)
+                    val s = accepted.await()
+                    val first = c.openBidi()
+                    first.output.writeFully(ByteArray(10_000) { 1 })
+                    first.output.flushAndClose()
+                    assertEquals(
+                        10_000,
+                        s
+                            .acceptStream()
+                            .input
+                            .readBuffer()
+                            .readByteArray()
+                            .size,
+                    )
+                    nat.rebound = true // the NAT maps the flow to a new public address; the connection ID stays
+                    val st = c.openBidi()
+                    st.output.writeFully(ByteArray(50_000) { 2 })
+                    st.output.flushAndClose()
+                    assertEquals(
+                        50_000,
+                        s
+                            .acceptStream()
+                            .input
+                            .readBuffer()
+                            .readByteArray()
+                            .size,
+                    )
+                    assertTrue(g.stats.pathValidations >= 1, "the server validated the new address")
+                    assertEquals(0L, (0 until 4).sumOf { g.forwardedForTest(it) }, "no loop forwarded")
+                    assertEquals(0L, g.stats.statelessResets)
+                } finally {
+                    ep.close()
+                    g.close()
+                }
+            }
+        }
+
+    /** Two sockets of one client behind a NAT: sends leave from [a] until [rebound], then from [b]; both deliver to the client. */
+    private class NatIo(
+        private val a: MemoryDatagramIo,
+        private val b: MemoryDatagramIo,
+    ) : DatagramIo {
+        @kotlin.concurrent.Volatile var rebound = false
+        override val localAddress: InetSocketAddress get() = a.localAddress
+        override val capabilities: kotlinx.coroutines.flow.StateFlow<io.kuicksilver.quic.IoCapabilities> get() = a.capabilities
+
+        override suspend fun receive(into: io.kuicksilver.quic.PacketBatch): Int {
+            if (into.count >= into.capacity) return 0
+            val (bytes, from) =
+                kotlinx.coroutines.selects.select {
+                    a.inbox.onReceive { it }
+                    b.inbox.onReceive { it }
+                }
+            val i = into.count
+            into.buffer(i).copyFrom(bytes, 0, 0, bytes.size)
+            into.setLength(i, bytes.size)
+            into.setAddress(i, from)
+            return 1
+        }
+
+        override suspend fun send(batch: io.kuicksilver.quic.PacketBatch): Int = trySend(batch)
+
+        override fun trySend(batch: io.kuicksilver.quic.PacketBatch): Int = (if (rebound) b else a).trySend(batch)
+
+        override fun close() {
+            a.close()
+            b.close()
+        }
+    }
+
+    /**
+     * A Stateless Reset names no connection ID of ours: the receiver hands it to the loop whose connection holds the peer's
+     * token (RFC 9000 section 10.3.1). The group's own client connection on loop 1 is reset by its server and ends at once
+     * with the reset, not at its idle timeout.
+     */
+    @Test fun statelessResetReachesTheLoopHoldingTheToken(): Unit = runBlocking { resetReachesItsLoop { serverConfig(it) } }
+
+    /** The same with QUIC-LB connection IDs, whose owner is a hash: a random reset DCID would name a random loop. */
+    @Test fun statelessResetReachesTheLoopHoldingTheTokenWithQuicLb(): Unit =
+        runBlocking {
+            try {
+                resetReachesItsLoop { net ->
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = LbNullCrypto
+                            loadBalancer = QuicLbFixtures.config()
+                            loops = 4
+                            io = { net.open(it) }
+                        }.build()
+                }
+            } finally {
+                io.kuicksilver.quic.endpoint.QuicLbNonceSpaces
+                    .forgetForTest()
+            }
+        }
+
+    private suspend fun resetReachesItsLoop(cfg: (MemoryNetwork) -> QuicEndpointConfig) =
+        withTimeout(60.seconds) {
+            val net = MemoryNetwork()
+            val g = group(cfg(net))
+            val remote = InetSocketAddress("10.0.7.7", 443)
+            val server =
+                QuicEndpoint.bind(
+                    remote,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = NullCryptoProvider
+                            io = { net.open(it) }
+                        }.build(),
+                )
+            try {
+                val accepted = async { server.accept() }
+                val c = g.connect(remote, clientConfig) // round-robin from loop 1
+                val s = accepted.await()
+                assertEquals(listOf(0, 1, 0, 0), g.connectionsPerLoopForTest().toList(), "the connection lives on loop 1")
+                val token = assertNotNull((s as ConnectionRuntime).core.cids.localToken(0), "the server's reset token")
+                // the server lost its state: a reset to the client, short-header shaped, a DCID that names no loop
+                val reset = ByteArray(43) { (it * 37 + 11).toByte() }
+                reset[0] = 0x4b
+                token.copyInto(reset, reset.size - 16)
+                net.deliver(remote, serverAddr, reset)
+                val why = withTimeout(5.seconds) { c.closed.await() }
+                assertIs<QuicException.ConnectionLost.StatelessReset>(why)
+            } finally {
+                server.close()
+                g.close()
+            }
+        }
+
+    /**
+     * A failed preferred-address socket takes the preferred address down group-wide, as with a socket per loop: counted
+     * once, the group goes on serving on its main socket.
+     */
+    @Test fun preferredSocketFailureDegradesTheGroup(): Unit =
+        runBlocking {
+            withTimeout(60.seconds) {
+                val net = MemoryNetwork()
+                val pref = InetSocketAddress("10.0.0.4", 4433)
+                val cfg =
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server =
+                                QuicServerConfig
+                                    .Builder(CoreFixtures.server())
+                                    .apply { preferredAddress = io.kuicksilver.quic.PreferredAddress(pref, null) }
+                                    .build()
+                            crypto = NullCryptoProvider
+                            loops = 4
+                        }.build()
+                val main = net.open(serverAddr)
+                val prefIo = net.open(pref)
+                val lock = kotlinx.coroutines.sync.Mutex()
+                val prefLock = kotlinx.coroutines.sync.Mutex()
+                val g =
+                    LoopGroup.createDispatched(
+                        cfg,
+                        main,
+                        List(4) { SerializedSender(main, lock) },
+                        listOf(prefIo),
+                        listOf(List(4) { SerializedSender(prefIo, prefLock) }),
+                    )
+                val cs = clients(net, 2)
+                try {
+                    val accepted = async { g.accept() }
+                    cs[0].connect(serverAddr, clientConfig)
+                    accepted.await()
+                    prefIo.failWith(io.kuicksilver.quic.SocketDefunctException("gone", 9))
+                    while (g.stats.preferredAddressFailures < 1L || !prefIo.closed) yield()
+                    assertEquals(1L, g.stats.preferredAddressFailures, "one failure for the group")
+                    assertTrue(!main.closed, "the main socket serves on")
+                    val again = async { g.accept() }
+                    cs[1].connect(serverAddr, clientConfig)
+                    withTimeout(5.seconds) { again.await() }
+                } finally {
+                    cs.forEach { it.close() }
+                    g.close()
+                }
+            }
+        }
+
+    /** The shared socket's ICMP Packet Too Big queue (Linux and Android with DF), faked here. */
+    private class PtbIo(
+        val inner: MemoryDatagramIo,
+    ) : DatagramIo by inner,
+        io.kuicksilver.quic.PacketTooBigSource {
+        val queued = kotlinx.coroutines.channels.Channel<Triple<ByteArray, InetSocketAddress, Int>>(16)
+
+        override fun drainPacketTooBig(sink: (quote: ByteArray, len: Int, dst: InetSocketAddress, mtu: Int) -> Unit) {
+            while (true) {
+                val (q, dst, mtu) = queued.tryReceive().getOrNull() ?: return
+                sink(q, q.size, dst, mtu)
+            }
+        }
+    }
+
+    /**
+     * A Packet Too Big the shared socket queued reaches the loops: the one whose connection sent the quoted datagram takes it
+     * as a DPLPMTUD hint (RFC 8899 section 4.6), the others find no connection of theirs and ignore it.
+     */
+    @Test fun packetTooBigReachesTheLoopOfItsConnection(): Unit =
+        runBlocking {
+            withTimeout(60.seconds) {
+                val net = MemoryNetwork()
+                val io = PtbIo(net.open(serverAddr, df = true))
+                val lock = kotlinx.coroutines.sync.Mutex()
+                val g = LoopGroup.createDispatched(serverConfig(net), io, List(4) { SerializedSender(io, lock) })
+                val clientIo = net.open(InetSocketAddress("10.0.3.1", 3000), df = true)
+                val ep = QuicEndpoint.bind(clientIo.localAddress, clientEndpointConfig(clientIo))
+                try {
+                    val accepted = async { g.accept() }
+                    val c = ep.connect(serverAddr, clientConfig)
+                    val s = (accepted.await() as ConnectionRuntime).core
+                    val st = c.openBidi()
+                    while (s.stats.pathMtu < 1400) {
+                        st.output.writeFully(ByteArray(1000))
+                        st.output.flush()
+                        yield()
+                    }
+                    // the start of a 1-RTT datagram the server sent the client: first byte, the client's ID, then anything
+                    val quote = byteArrayOf(0x43) + s.remoteCid.toByteArray() + ByteArray(24) { 9 }
+                    io.queued.trySend(Triple(quote, clientIo.localAddress, 1328))
+                    while (g.stats.ptbAccepted < 1L || g.stats.ptbIgnored < 3L) {
+                        st.output.writeFully(ByteArray(100))
+                        st.output.flush()
+                        yield()
+                    }
+                    assertEquals(1L, g.stats.ptbAccepted, "the owning loop took it")
+                    assertEquals(3L, g.stats.ptbIgnored, "the other loops found no connection of theirs")
+                } finally {
+                    ep.close()
+                    g.close()
+                }
+            }
+        }
+
+    /**
      * Loop 1 stops taking datagrams (a loop that fell behind) while a peer floods short headers whose routing byte names loop 1:
-     * its batches fill and the rest is dropped and counted; the receiver never waits for it, and new clients still complete their
+     * its ring fills and the rest is dropped and counted; the receiver never waits for it, and new clients still complete their
      * handshakes on loops 0, 2 and 3.
      */
     @Test fun negative_slowLoopDropsNotBlocksReceiver() =
@@ -202,6 +457,9 @@ class DispatchedGroupTest {
                     assertTrue(g.stats.datagramsDispatchDropped > 0, "the held loop's surplus was dropped")
                     assertEquals(0L, perLoop[1], "the held loop took nothing")
                     for (l in listOf(0, 2, 3)) assertTrue(perLoop[l] > 0, "loop $l completed handshakes: $perLoop")
+                    for (l in listOf(0, 2, 3)) {
+                        assertEquals(0L, g.loopForTest(l).stats.statelessResets, "loop $l answered loop 1's IDs with a reset")
+                    }
                     assertTrue(outcomes.any { it != null }, "clients connected while loop 1 was held")
                 } finally {
                     hold.complete(Unit)

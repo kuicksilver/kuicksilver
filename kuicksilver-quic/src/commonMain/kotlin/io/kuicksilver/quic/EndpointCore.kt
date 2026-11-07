@@ -386,11 +386,31 @@ public class EndpointCore internal constructor(
     /** Test hook: server connections hold their NEW_CONNECTION_ID frames (ConnectionIdManager.holdNewCidsForTest). */
     internal var testHoldNewConnectionIds = false
 
+    /**
+     * A loop group sharing one socket: the peers' reset tokens of every loop's connections, each with its loop, so the socket's
+     * receiver hands a Stateless Reset to the loop whose connection it ends (RFC 9000 section 10.3.1). Set before the core
+     * takes its first connection; null otherwise.
+     */
+    internal var peerResetTokens: io.kuicksilver.quic.endpoint.ResetTokenIndex? = null
+
+    private val tokenSink: io.kuicksilver.quic.core.PeerTokenSink? by lazy {
+        val index = peerResetTokens ?: return@lazy null
+        object : io.kuicksilver.quic.core.PeerTokenSink {
+            override fun added(token: ByteArray) = index.add(token, loopIndex)
+
+            override fun removed(token: ByteArray) = index.remove(token)
+        }
+    }
+
     internal fun attach(
         core: ConnectionCore,
         issuance: CidIssuance = CidIssuance.Full,
     ) {
         core.registrar = registrar
+        tokenSink?.let { sink ->
+            core.cids.forEachPeerToken(sink::added)
+            core.cids.peerTokens = sink
+        }
         if (testHoldNewConnectionIds && core.role == TlsRole.Server) core.cids.holdNewCidsForTest = true
         registry.add(core.localCid, core)
         connections += core
@@ -1004,6 +1024,10 @@ public class EndpointCore internal constructor(
     public fun remove(core: ConnectionCore) {
         rememberRtt(core)
         core.cids.forEachLocal { route.release(it) }
+        core.cids.peerTokens?.let { sink ->
+            core.cids.peerTokens = null
+            core.cids.forEachPeerToken(sink::removed)
+        }
         reissueRetry.remove(core)
         registry.removeAll(core)
         connections.remove(core)

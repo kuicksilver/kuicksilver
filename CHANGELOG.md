@@ -18,7 +18,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a port over `SO_REUSEPORT` sockets (Darwin hands every datagram to one socket, Windows binds exclusively), the loops
   share one socket: one receiver thread hands each datagram to the loop its connection ID names (a new client's Initial
   by a keyed hash of its connection ID, the same loop for its retransmissions), and each loop sends through its own
-  `ksl_udp_sender` clone (a caller's socket under a lock). A migrated client reaches its loop with no forwarding. A loop
+  `ksl_udp_sender` clone (a caller's socket under a lock). A migrated client reaches its loop with no forwarding; a peer's
+  Stateless Reset reaches the loop whose connection holds its token, and an ICMP Packet Too Big (Linux, Android) is
+  offered to every loop. A failed preferred-address socket takes the preferred address down, not the endpoint. A loop
   that falls more than 512 datagrams behind loses its own datagrams, counted in the new
   `EndpointStats.datagramsDispatchDropped`; the receiver never waits for it. Linux and Android keep a socket per loop.
   Handshakes and many connections spread over the loops; one connection is not faster with more loops. See

@@ -24,3 +24,13 @@ internal interface NonSuspendingSend {
     /** The length of the latest datagram the kernel refused as too large since the previous call, or 0; the sender's thread only. */
     fun takeEmsgsize(): Int
 }
+
+/** A socket that queues ICMP Packet Too Big messages (Linux and Android with DF): the loop takes them as DPLPMTUD hints. */
+internal interface PacketTooBigSource {
+    /**
+     * Hands [sink] the messages queued since the last call, at most [KslDatagramIo.PTB_PER_DRAIN]: the quoted start of our
+     * datagram (valid for [sink]'s call only), its length, the datagram's destination and the MTU the message reports.
+     * Spoofable hints the core validates (RFC 8899 section 4.6). One thread at a time.
+     */
+    fun drainPacketTooBig(sink: (quote: ByteArray, len: Int, dst: io.ktor.network.sockets.InetSocketAddress, mtu: Int) -> Unit)
+}

@@ -152,7 +152,7 @@ public class EndpointStats internal constructor(
     public val loadBalancerNoncesWasted: Long = 0,
     /**
      * Datagrams the in-process dispatch of `loops > 1` dropped (one socket shared by the loops: Apple, Windows, a caller's
-     * `DatagramIo`) because their loop had no free batch: it fell behind, and its datagrams are lost rather than holding up the
+     * `DatagramIo`) because their loop's ring of 512 datagrams was full: it fell behind, and its datagrams are lost rather than holding up the
      * socket's receiver and the other loops. The peers retransmit. Always 0 with one loop or with SO_REUSEPORT (Linux, Android).
      */
     @property:ExperimentalKuicksilverApi

@@ -23,6 +23,13 @@ internal interface CidRegistrar {
     fun remove(cid: ConnectionId)
 }
 
+/** Hears the peer's stateless reset tokens come and go (a loop group sharing one socket routes resets by them). */
+internal interface PeerTokenSink {
+    fun added(token: ByteArray)
+
+    fun removed(token: ByteArray)
+}
+
 @OptIn(ExperimentalKuicksilverApi::class)
 internal object NoopRegistrar : CidRegistrar {
     override fun add(
@@ -98,7 +105,25 @@ internal class ConnectionIdManager(
         seq: Long,
         token: ByteArray,
     ) {
-        peer.firstOrNull { it.seq == seq }?.token = token.copyOf()
+        val p = peer.firstOrNull { it.seq == seq } ?: return
+        p.token?.let { peerTokens?.removed(it) }
+        p.token = token.copyOf().also { peerTokens?.added(it) }
+    }
+
+    /**
+     * Told of every peer token kept from now on and of every one dropped; set by the endpoint, which hands it the tokens
+     * kept already ([forEachPeerToken]) and drops them all when the connection goes.
+     */
+    var peerTokens: PeerTokenSink? = null
+
+    /** Every peer token kept now. */
+    fun forEachPeerToken(f: (ByteArray) -> Unit) {
+        for (i in peer.indices) peer[i].token?.let(f)
+    }
+
+    private fun dropPeer(p: Peer) {
+        peer.remove(p)
+        p.token?.let { peerTokens?.removed(it) }
     }
 
     /** True when the datagram `[0, end)` ends with the token of a peer ID we used and did not retire (RFC 9000 section 10.3.1). */
@@ -196,7 +221,7 @@ internal class ConnectionIdManager(
         token: ByteArray,
     ) {
         if (peer.any { it.seq == 1L } || peer.size + 1 > localLimit) return
-        peer += Peer(1, cid, token.copyOf())
+        peer += Peer(1, cid, token.copyOf().also { peerTokens?.added(it) })
         if (largestPeerSeq < 1) largestPeerSeq = 1
     }
 
@@ -482,7 +507,7 @@ internal class ConnectionIdManager(
         val old = current ?: return false
         val next = unusedPeer() ?: return false
         if (retireOld) {
-            peer.remove(old)
+            dropPeer(old)
             queueRetire(old.seq)
         }
         current = next
@@ -537,7 +562,7 @@ internal class ConnectionIdManager(
     fun releasePathPeer(p: Peer) {
         p.heldByPath = false
         if (p === current || !isActive(p) || pendingRetire.size + unackedRetire.size + 1 > retiredCap) return
-        peer.remove(p)
+        dropPeer(p)
         pendingRetire += p.seq
         rememberRetired(p.seq)
     }
@@ -576,6 +601,7 @@ internal class ConnectionIdManager(
                 val p = it.next()
                 if (p.seq < retire) {
                     it.remove()
+                    p.token?.let { t -> peerTokens?.removed(t) }
                     queueRetire(p.seq)
                 }
             }
@@ -594,7 +620,10 @@ internal class ConnectionIdManager(
             Peer(
                 seq,
                 ConnectionId(ByteArray(len).also { buf.copyTo(it, off, 0, len) }),
-                ByteArray(16).also { buf.copyTo(it, tokenOff, 0, 16) },
+                ByteArray(16).also {
+                    buf.copyTo(it, tokenOff, 0, 16)
+                    peerTokens?.added(it)
+                },
             )
         if (seq >
             largestPeerSeq
