@@ -43,8 +43,8 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Runs [use] with a loopback port that no socket listens on and that nothing takes while it runs, so a connect to it is
- * refused. A port that was only freed (a listener closed before the connect) can be taken in between: by another process's
+ * Runs [use] with a loopback port that no socket listens on and that is held while it runs, so a connect to it is refused
+ * (on Apple a socket with SO_REUSEADDR could still bind it; nothing in these tests does). A port that was only freed (a listener closed before the connect) can be taken in between: by another process's
  * listener, or as the connect's own port (a TCP self-connect); that connect then really succeeds.
  */
 internal expect suspend fun <T> withRefusedLoopbackPort(
