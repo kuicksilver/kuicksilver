@@ -20,6 +20,7 @@ import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.network.TcpAddress
+import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -359,7 +360,7 @@ class ClientWebSocketConnectingTest {
         block: suspend (Int) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
-        val listener = aSocket(selector).tcp().bind(InetSocketAddress(host, 0))
+        val listener = bindTcp(selector, host, 0)
         try {
             coroutineScope {
                 val server =

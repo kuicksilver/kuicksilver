@@ -7,7 +7,6 @@ import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.install
@@ -31,6 +30,7 @@ import io.ktor.websocket.readText
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
@@ -259,7 +259,7 @@ class ClientWebSocketExtensionsTest {
         block: suspend (Int) -> Unit,
     ): Int {
         val selector = SelectorManager(Dispatchers.IO)
-        val listener = aSocket(selector).tcp().bind(InetSocketAddress("127.0.0.1", 0))
+        val listener = bindTcp(selector, "127.0.0.1", 0)
         try {
             return coroutineScope {
                 val served =
