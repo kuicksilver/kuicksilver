@@ -21,6 +21,8 @@ internal actual class ReceiverCpu private constructor(private val id: Long) {
             return receivers.singleOrNull()?.let { ReceiverCpu(it.threadId()) }
         }
 
+        actual fun currentThreadNanos(): Long = if (threads.isCurrentThreadCpuTimeSupported) threads.currentThreadCpuTime else -1
+
         actual fun note(cpu: ReceiverCpu?): String =
             if (cpu != null) "ThreadMXBean" else "no receiver thread: one loop, or kernel mode (a socket per loop)"
     }

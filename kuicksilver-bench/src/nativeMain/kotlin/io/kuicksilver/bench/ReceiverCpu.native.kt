@@ -9,6 +9,8 @@ internal actual class ReceiverCpu {
     actual companion object {
         actual fun find(): ReceiverCpu? = null
 
+        actual fun currentThreadNanos(): Long = -1
+
         actual fun note(cpu: ReceiverCpu?): String = "Kotlin/Native: sample the process for the receiver's share"
     }
 }

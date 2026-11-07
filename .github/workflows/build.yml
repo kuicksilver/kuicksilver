@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: comma-separated jobs to run (e.g. lint,apple); empty runs all; openssl-docker always runs
+        description: comma-separated jobs to run (e.g. lint,apple); empty runs all; openssl-docker always runs; windows-loops-bench (MultiLoopBenchmark on Windows) runs only when named
         type: string
         default: ''
       interop:

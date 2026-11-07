@@ -53,8 +53,9 @@ import kotlin.time.TimeSource
  *   crypto (AES-GCM). MiB/s = ops/s × [CLIENTS] × [BULK_MIB].
  * - `bulk8null`: the same with the Null crypto provider: no AEAD, so the upper bound the receive path leaves.
  *
- * Each trial prints the dispatcher's drops (`EndpointStats.datagramsDispatchDropped`) and, on the JVM in dispatched mode,
- * the share of one core the receiver thread used while the operations ran (on Kotlin/Native: `sample` the process).
+ * Each trial prints the dispatcher's drops (`EndpointStats.datagramsDispatchDropped`) and, on the JVM, the share of one core
+ * the receiver thread used while the operations ran (dispatched mode; on Kotlin/Native: `sample` the process) and the share
+ * the benchmark's own thread used (it runs all the writers and readers of `bulk8`). Both cover the warm-up iterations too.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.Throughput)
@@ -77,6 +78,7 @@ public class MultiLoopBenchmark {
     private var receiverCpu: ReceiverCpu? = null
     private var busyNanos = 0L
     private var receiverNanos = 0L
+    private var runnerNanos = 0L
 
     @Setup public fun setup(): Unit = runBlocking {
         val nullCrypto = work == "bulk8null"
@@ -115,10 +117,13 @@ public class MultiLoopBenchmark {
 
     @TearDown public fun tearDown(): Unit = runBlocking {
         val share = if (receiverCpu != null && busyNanos > 0) "${(receiverNanos * 1000 / busyNanos) / 10.0} %" else "n/a"
+        // the benchmark's own thread runs every client's writer and every server-side reader (one runBlocking): near 100 %
+        // would make it, not the server, the limit
+        val runner = if (ReceiverCpu.currentThreadNanos() >= 0 && busyNanos > 0) "${(runnerNanos * 1000 / busyNanos) / 10.0} %" else "n/a"
         val st = server.stats
         val lost = connections.sumOf { it.stats.lostPackets }
         println("MultiLoopBenchmark loops=$loops work=$work: datagramsDispatchDropped=${st.datagramsDispatchDropped}, " +
-            "receiver thread CPU=$share of the time the operations ran (${ReceiverCpu.note(receiverCpu)}); server datagrams " +
+            "receiver thread CPU=$share of the time the operations ran (${ReceiverCpu.note(receiverCpu)}), benchmark thread CPU=$runner; server datagrams " +
             "received=${st.datagramsReceived} droppedSocket=${st.datagramsDroppedSocket} droppedQueue=${st.datagramsDroppedQueue}" +
             (if (connections.isEmpty()) "" else ", client packets lost=$lost"))
         for (c in connections) c.close(0, "done")
@@ -131,8 +136,10 @@ public class MultiLoopBenchmark {
     @Benchmark public fun run(): Long = runBlocking {
         val start = TimeSource.Monotonic.markNow()
         val cpu0 = receiverCpu?.nanos() ?: 0L
+        val own0 = ReceiverCpu.currentThreadNanos()
         val done = if (work == "handshake") connectAll(HANDSHAKES / (CLIENTS * LANES)) else bulk()
         receiverNanos += (receiverCpu?.nanos() ?: 0L) - cpu0
+        runnerNanos += ReceiverCpu.currentThreadNanos() - own0
         busyNanos += start.elapsedNow().inWholeNanoseconds
         done
     }
@@ -186,6 +193,9 @@ internal expect class ReceiverCpu {
     companion object {
         /** The receiver of the server's in-process dispatch, or null (one loop, kernel mode, or no per-thread view here). */
         fun find(): ReceiverCpu?
+
+        /** The calling thread's CPU time so far in nanoseconds, or -1 where the platform does not tell it. */
+        fun currentThreadNanos(): Long
 
         /** Why there is no figure when [cpu] is null; what was measured otherwise. */
         fun note(cpu: ReceiverCpu?): String

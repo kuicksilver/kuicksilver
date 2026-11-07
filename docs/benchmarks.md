@@ -524,42 +524,52 @@ times). Windows: not measured yet; the manual `windows-loops-bench` job of `buil
 | handshakes/s | loops 1 | 2 | 4 | 8 |
 |---|---|---|---|---|
 | macOS, Native | 2237 [2164–2380] | 4651 (2.08×) | 7733 (3.46×) | 7595 (3.39×) |
-| macOS, JVM | 2334 [2249–2463] | 4700 (2.01×) | 7736 (3.31×) | 7733 (3.31×) |
-| Linux, JVM (kernel balancing) | 2228 [2200–2315] | 3769 (1.69×) | 5203 (2.33×) | 8549 (3.84×) |
+| macOS, JVM | 2383 [2338–2419] | 4724 (1.98×) | 7798 (3.27×) | 7693 (3.23×) |
+| Linux, JVM (kernel balancing) | 2278 [2206–2301] | 2257 (0.99×) | 7062 (3.10×) | 8644 (3.79×) |
 
 | MiB/s, 8 connections | loops 1 | 2 | 4 | 8 |
 |---|---|---|---|---|
 | macOS, Native, ksl | 220 [215–221] | 271 (1.23×) | 275 (1.25×) | 272 (1.23×) |
 | macOS, Native, Null | 231 [230–234] | 295 (1.28×) | 276 (1.20×) | 290 (1.25×) |
-| macOS, JVM, ksl | 235 [231–236] | 310 (1.32×) | 289 (1.23×) | 314 (1.34×) |
-| macOS, JVM, Null | 259 [257–260] | 314 (1.21×) | 320 (1.24×) | 324 (1.25×) |
-| Linux, JVM, ksl (kernel balancing) | 331 [326–339] | 223 (0.67×) | 204 (0.62×) | 200 (0.60×) |
-| Linux, JVM, Null (kernel balancing) | 387 [384–393] | 211 (0.55×) | 195 (0.50×) | 201 (0.52×) |
+| macOS, JVM, ksl | 240 [232–242] | 299 (1.25×) | 280 (1.17×) | 308 (1.28×) |
+| macOS, JVM, Null | 258 [256–261] | 313 (1.22×) | 322 (1.25×) | 299 (1.16×) |
+| Linux, JVM, ksl (kernel balancing) | 335 [334–342] | 222 (0.66×) | 212 (0.63×) | 201 (0.60×) |
+| Linux, JVM, Null (kernel balancing) | 382 [378–390] | 220 (0.57×) | 199 (0.52×) | 207 (0.54×) |
 
-The receiver thread on macOS (JVM: its CPU time over the time the operations ran, from `ThreadMXBean`; Native: the share
-of its samples outside `poll` in `sample <pid> 5 1`, 5 s into a measured iteration of its own run) and the datagrams the
-dispatch dropped (`EndpointStats.datagramsDispatchDropped`, whole trial with warm-up):
+The receiver thread on macOS and the datagrams the dispatch dropped (`EndpointStats.datagramsDispatchDropped`, whole
+trial). JVM: the receiver's CPU time over the time the operations ran (`ThreadMXBean`, warm-up iterations included),
+from the runs in the table. Native: the share of its samples outside `poll` in `sample <pid> 5 1`, taken during the
+warm-up of a separate run with only that parameter set.
 
 | receiver busy, dropped | loops 2 | 4 | 8 |
 |---|---|---|---|
-| handshake, JVM / Native | 30 % / 12 %, 0 | 44 % / 23 %, 0 | 44 % / 23 %, 0 |
-| bulk8, JVM / Native | 94 % / 86 %, 4 400–8 000 | 83 % / 92 %, 1 400–3 000 | 93 % / 93 %, 0–470 |
-| bulk8null, JVM / Native | 98 % / 90 %, 500–1 300 | 98 % / 89 %, 0–4 600 | 96 % / 95 %, 570–930 |
+| handshake, JVM / Native | 31 % / 12 %, 0 | 46 % / 23 %, 0 | 44 % / 23 %, 0 |
+| bulk8, JVM / Native | 93 % / 86 %, 4 400–7 700 | 82 % / 92 %, 3 000–3 800 | 92 % / 93 %, 0 |
+| bulk8null, JVM / Native | 98 % / 90 %, 500–1 200 | 95 % / 89 %, 25–4 600 | 85 % / 95 %, 930–1 600 |
 
 - **Handshakes scale until the host runs out of cores.** 4 loops complete 3.3–3.5 times the handshakes of one (the
   plan's estimate before measuring: 3.3–3.7). 8 loops add nothing here: at 4 loops the process already keeps about 10
   cores busy (`sample`: the 8 client endpoints do as much TLS work as the server), which is all the performance cores
   of this host. The receiver is not the limit: a quarter of a core on Native.
 - **Bulk transfers are capped by the one receiver,** at 1.2–1.3 times one loop with either crypto. The receiver is
-  busy 85–95 % of the time, and 78–86 % of its samples are in the `recvmsg` system call itself: Darwin has no GRO or
+  busy 82–98 % of the time, and 78–86 % of its samples are in the `recvmsg` system call itself: Darwin has no GRO or
   `recvmmsg`, so it is one system call per datagram, about 3 µs each at 300 MiB/s. The Null crypto rows end at the same
-  ceiling: decryption runs on the loops, which are not the limit, and the copy and routing after `recvmsg` take a few
-  percent of the receiver. When the receiver falls behind, the kernel's buffer and the loops' rings drop datagrams
-  (counted above) and loss recovery resends them. With one connection, more loops never help: it lives on one loop.
-- **Linux (kernel balancing), as a control:** handshakes scale with the loops the 8 client flows hash to (8 flows over 2
-  or 4 sockets are rarely even), and bulk transfers over 8 connections are slower with more than one loop (0.5–0.67×),
-  with no datagram dropped at the server and almost no packet lost. This is the kernel mode that Linux had before the
-  in-process routing and is unchanged by it; it is not explained yet and is listed in [Still open](#still-open).
+  ceiling: decryption runs on the loops, which are not the limit, and the copy and routing after `recvmsg` take under a
+  tenth of the receiver's samples. When the receiver falls behind, the kernel's buffer and the loops' rings drop
+  datagrams (counted above) and loss recovery resends them. The benchmark's own thread, which runs all 8 writers and
+  8 readers, used 20–25 % of a core in `bulk8` (JVM; 16–37 % on Linux), so the clients are not the limit. With one
+  connection, more loops never help: it lives on one loop.
+- **Linux (kernel balancing), as a control.** Handshakes scale with how the 8 client flows hash onto the sockets (a
+  client's connections share its 4-tuple; at 2 loops this run measured 0.99×, an earlier one 1.69×). Bulk transfers
+  are slower with more than one loop (0.52–0.66×). This is not the kernel mode itself, nor Docker: forcing in-process
+  routing on the same Linux host gives the same 214–236 MiB/s, nothing is forwarded between loops, no datagram is
+  dropped at the server, and GSO and GRO are granted on every socket. It is one connection's own rate showing through.
+  A single connection over loopback moves about 25 MiB/s (Linux) or 32 MiB/s (macOS) with a third to half of a core
+  busy, its window large (160–290 KiB at a 60–140 µs RTT): the connection waits rather than works, which is also the
+  28–35 MiB/s of `UdpThroughputBenchmark`. One loop serving all 8 connections stays busy (4.2 cores in the process,
+  datagrams queued at every receive), and that hides the wait; spread over 2 to 8 loops each loop runs idle between
+  datagrams (1.8 cores in the process, RTT down from milliseconds to about 100 µs), and 8 connections move about 8 times
+  that single rate (200–220 MiB/s). Where that wait comes from is listed in [Still open](#still-open).
 
 ## msquic's goodput outlier
 
@@ -579,9 +589,9 @@ msquic runs emulated here, and why its congestion controller keeps that rate was
   ([0.3.0 work in progress](#030-work-in-progress)); the handshake table is to be measured again; the Kotlin side is on
   the roadmap.
 - **The Kotlin/Native server** costs 28 % more CPU per GB than the JVM server (3.5 vs 2.7 s/GB).
-- **Several loops on Linux, bulk:** with kernel balancing, 8 bulk connections move 0.5–0.67 times the MiB/s of one loop
-  when spread over 2 to 8 loops ([Several loops on one socket](#several-loops-on-one-socket-s34-2026-11-07), Docker
-  `linux/arm64`), with no drops at the server; to be profiled on a Linux host.
+- **One connection over loopback waits more than it works:** about 25–35 MiB/s with a third to half of a core busy and a
+  large window, so 8 bulk connections spread over several loops on Linux move only 0.52–0.66 times what one busy loop
+  moves ([Several loops on one socket](#several-loops-on-one-socket-s34-2026-11-07)); the wait is not profiled yet.
 - **Acknowledgements:** fewer ACKs per byte would need the receiver side of the ack-frequency extension
   (draft-ietf-quic-ack-frequency).
 
@@ -613,8 +623,9 @@ that carries the file); and the client's counters were then read through a bind 
 transfers in three pairs (quiche server with each Kuicksilver client and quinn's client), so those three pairs were
 measured again with the script as it is now, which copies them out of the stopped container.
 
-`kuicksilver-bench` (JMH: the QUIC core over an in-memory loopback, and a UDP loopback transfer) measures Kuicksilver
-alone and is not part of this table; it answers "did this change make the core slower", this page "how does it compare".
+`kuicksilver-bench` (JMH: the QUIC core over an in-memory loopback, a UDP loopback transfer, and several server loops
+on one port: `./gradlew --max-workers=2 :kuicksilver-bench:jvmLoopsBenchmark` and `macosArm64LoopsBenchmark`, on Windows
+the `windows-loops-bench` job) measures Kuicksilver alone and is not part of this table; it answers "did this change make the core slower", this page "how does it compare".
 
 ### Profiling
 
