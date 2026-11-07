@@ -274,7 +274,7 @@ internal fun ConnectionCore.takeReceivedTokens(): List<ByteArray> {
 }
 
 /** Server side of a compatible upgrade (RFC 9368 section 2.3): send everything in [chosen] while still reading the client's Original Version Initials. */
-internal fun ConnectionCore.switchServerVersion(chosen: VersionProfile) {
+private fun ConnectionCore.switchServerVersion(chosen: VersionProfile) {
     version = chosen
     initialReadOriginal = readKeys[0]
     readKeys[0] = null

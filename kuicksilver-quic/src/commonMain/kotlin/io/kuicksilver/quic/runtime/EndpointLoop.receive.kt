@@ -180,7 +180,7 @@ internal suspend fun EndpointLoop.timerLoop() {
 }
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // select's onTimeout
-internal suspend fun EndpointLoop.timerTicks() {
+private suspend fun EndpointLoop.timerTicks() {
     while (true) {
         val head = timers.peek()
         val wait = head?.let { it.heapDeadline - now() }

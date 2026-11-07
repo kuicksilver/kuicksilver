@@ -105,7 +105,7 @@ internal suspend fun H3Session.writeCritical(
  * any point, this MUST be treated as a connection error of type H3_CLOSED_CRITICAL_STREAM") and RFC 9204 section 4.2 for the
  * QPACK streams. Noticed when the STOP_SENDING arrives, not at our next write there, which may never come.
  */
-internal fun H3Session.watchStopped(st: QuicStream) {
+private fun H3Session.watchStopped(st: QuicStream) {
     scope.launch {
         val code = st.awaitSendStopped()
         fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer stopped our critical stream ${st.id} (code $code)")

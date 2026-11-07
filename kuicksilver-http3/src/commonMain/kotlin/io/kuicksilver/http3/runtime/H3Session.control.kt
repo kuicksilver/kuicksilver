@@ -112,7 +112,7 @@ internal suspend fun H3Session.readUni(st: QuicStream) {
     }
 }
 
-internal suspend fun H3Session.readQpack(
+private suspend fun H3Session.readQpack(
     st: QuicStream,
     sink: suspend (ByteArray, Int) -> Unit,
 ) {
@@ -129,7 +129,7 @@ internal suspend fun H3Session.readQpack(
     }
 }
 
-internal suspend fun H3Session.readControl(st: QuicStream) {
+private suspend fun H3Session.readControl(st: QuicStream) {
     var first = true
     while (true) {
         val type = st.input.readVarIntOrNull() ?: return
@@ -150,7 +150,7 @@ internal suspend fun H3Session.readControl(st: QuicStream) {
     }
 }
 
-internal suspend fun H3Session.onControlFrame(
+private suspend fun H3Session.onControlFrame(
     type: Long,
     payload: ByteArray,
 ) {
@@ -201,7 +201,7 @@ internal fun H3Session.checkPeerFieldLimit(
     }
 }
 
-internal suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
+private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
     val known =
         setOf(
             SettingsId.QPACK_MAX_TABLE_CAPACITY,

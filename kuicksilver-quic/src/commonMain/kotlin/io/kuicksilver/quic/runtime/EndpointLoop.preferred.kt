@@ -64,7 +64,7 @@ internal fun EndpointLoop.ioFor(
     }
 
 /** The preferred-address socket of [to]'s family (a v4 and a v6 socket at most). */
-internal fun EndpointLoop.preferredIoFor(to: InetSocketAddress?): DatagramIo? {
+private fun EndpointLoop.preferredIoFor(to: InetSocketAddress?): DatagramIo? {
     if (preferredIos.size <= 1 || to == null) return preferredIos.firstOrNull()
     val v4 = AddressClass.ipBytes(to).size == 4
     return preferredIos.firstOrNull { (AddressClass.ipBytes(it.localAddress).size == 4) == v4 } ?: preferredIos[0]

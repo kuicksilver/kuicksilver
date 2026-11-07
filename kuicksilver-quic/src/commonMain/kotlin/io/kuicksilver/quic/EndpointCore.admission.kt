@@ -280,7 +280,7 @@ private fun EndpointCore.admitValidated(
  * A stateless Initial CONNECTION_CLOSE to the client of the Initial in [data] (RFC 9000 section 10.2.3), under the rate limit:
  * well under a third of the at least 1200-byte Initial it answers (section 8.1).
  */
-internal fun EndpointCore.statelessInitialClose(
+private fun EndpointCore.statelessInitialClose(
     data: PacketBuffer,
     profile: VersionProfile,
     from: InetSocketAddress,

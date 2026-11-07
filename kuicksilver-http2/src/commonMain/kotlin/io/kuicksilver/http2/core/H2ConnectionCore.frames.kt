@@ -84,7 +84,7 @@ internal fun H2ConnectionCore.onContinuation(
     if (f.endHeaders) endBlock(now)
 }
 
-internal fun H2ConnectionCore.endBlock(now: Long) {
+private fun H2ConnectionCore.endBlock(now: Long) {
     inBlock = false
     val fields = ArrayList<Pair<String, String>>()
     // a compressed block above the list limit (but within twice it) fails its stream only: it is still decoded for HPACK
@@ -212,7 +212,7 @@ internal fun H2ConnectionCore.onHeaders(
  * peer may still send after our END_STREAM or reset (WINDOW_UPDATE, RST_STREAM; anything on a stream we reset) are not
  * this.
  */
-internal fun H2ConnectionCore.headersOnClosed(id: Int): Nothing =
+private fun H2ConnectionCore.headersOnClosed(id: Int): Nothing =
     throw H2ConnectionError(Http2ErrorCode.STREAM_CLOSED, "HEADERS on closed stream $id")
 
 internal fun H2ConnectionCore.onPushPromise(
@@ -244,7 +244,7 @@ internal fun H2ConnectionCore.onPushPromise(
     startBlock(f.streamId, p, false, -1, f.fragment, f.endHeaders, now)
 }
 
-internal fun H2ConnectionCore.onPushPromiseBlock(
+private fun H2ConnectionCore.onPushPromiseBlock(
     promised: Int,
     now: Long,
 ) {
@@ -361,7 +361,7 @@ internal fun H2ConnectionCore.onSettings(
 }
 
 /** Section 6.5.3: our values hold once acknowledged; a smaller value than the protocol's initial one tightens only now. */
-internal fun H2ConnectionCore.ourSettingsAcknowledged() {
+private fun H2ConnectionCore.ourSettingsAcknowledged() {
     hpackIn.setMaxTableSize(settings.headerTableSize) // section 4.3.1
     val ours = settings.initialStreamWindow.toLong()
     if (ours != recvInitialWindow) {

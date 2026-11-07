@@ -42,7 +42,7 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 internal suspend fun H3Session.goAway(): Unit = withContext(dispatcher) { goAwayConfined() }
 
-internal suspend fun H3Session.goAwayConfined() {
+private suspend fun H3Session.goAwayConfined() {
     goAwayContextForTest?.invoke(currentCoroutineContext())
     if (goAwayPhase != 0 || closed.isCompleted) return
     if (!isServer) {

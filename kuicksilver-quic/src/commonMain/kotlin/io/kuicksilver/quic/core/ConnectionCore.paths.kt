@@ -199,12 +199,12 @@ internal fun ConnectionCore.migrationAllowedFrom(from: InetSocketAddress): Boole
 }
 
 /** Both local ends are the same IP, or both unknown (the socket does not report destinations). */
-internal fun sameLocal(
+private fun sameLocal(
     a: InetSocketAddress?,
     b: InetSocketAddress?,
 ): Boolean = a === b || (a != null && b != null && AddressClass.ipBytes(a).contentEquals(AddressClass.ipBytes(b)))
 
-internal fun ConnectionCore.sameIp(
+private fun ConnectionCore.sameIp(
     a: InetSocketAddress,
     b: InetSocketAddress,
 ): Boolean = AddressClass.ipBytes(a).contentEquals(AddressClass.ipBytes(b))
@@ -399,7 +399,7 @@ private fun ConnectionCore.initServerPath(
 }
 
 /** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */
-internal val PATH_IDLE_TIMEOUT: Duration = 5.seconds
+private val PATH_IDLE_TIMEOUT: Duration = 5.seconds
 
 internal fun ConnectionCore.startValidation(p: Path) {
     p.revalidateAt = TimeMark.NEVER
@@ -788,7 +788,7 @@ internal fun ConnectionCore.onHandshakeDatagramDone(from: InetSocketAddress) {
  * until the new one is validated; back to that address, it restores it instead. [completesClientHello]: the server only now got its
  * keys, so no ServerHello has left yet and no PATH_CHALLENGE leads; otherwise one does.
  */
-internal fun ConnectionCore.applyHandshakeMove(
+private fun ConnectionCore.applyHandshakeMove(
     from: InetSocketAddress,
     completesClientHello: Boolean,
 ) {
@@ -901,7 +901,7 @@ internal fun ConnectionCore.onHandshakePathAcked(
 }
 
 /** The handshake path's current address is validated (see [onInitialPathValidated], [onHandshakePathAcked]). */
-internal fun ConnectionCore.validateHandshakeAddress(p: Path) {
+private fun ConnectionCore.validateHandshakeAddress(p: Path) {
     if (handshakeFallback?.path === p) handshakeFallback = null
     p.amplification.validated = true
     if (p.state == PathState.Validating) {
@@ -1216,7 +1216,7 @@ private fun ConnectionCore.swapWithHandshakeCandidate(
  * is resent there at once, and the other address is dropped. This is the fallback of section 9.3.2 taken as soon as the address
  * is known to work, rather than at the move's deadline.
  */
-internal fun ConnectionCore.adoptHandshakeCandidate(k: Path) {
+private fun ConnectionCore.adoptHandshakeCandidate(k: Path) {
     val p = paths.active
     if (p.state == PathState.Validated || p.id != PathId.Initial) {
         dropHandshakeCandidate()

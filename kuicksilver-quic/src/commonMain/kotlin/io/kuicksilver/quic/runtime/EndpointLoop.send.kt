@@ -27,7 +27,7 @@ import kotlin.coroutines.CoroutineContext
 // Sending: the flush of every connection that has something to write, and what a send error or a full socket does to the datagram.
 
 /** Sends [out]: in one call when every slot uses the endpoint socket, otherwise slot by slot through each path's socket. */
-internal inline fun EndpointLoop.sendOutWith(
+private inline fun EndpointLoop.sendOutWith(
     rt: ConnectionRuntime,
     out: PacketBatch,
     sendOrLose: (target: DatagramIo, batch: PacketBatch, rt: ConnectionRuntime) -> Unit,
@@ -60,7 +60,7 @@ internal inline fun EndpointLoop.sendOutWith(
  * True while no socket this loop sends on can suspend a send: the endpoint's, its preferred-address sockets and every path
  * socket are [NonSuspendingSend]s (the accelerated socket, or a loop's view of one a group shares), whose `send` is `trySend`. A flush then runs without a coroutine frame ([flushNow]).
  */
-internal fun EndpointLoop.sendsNeverSuspend(): Boolean {
+private fun EndpointLoop.sendsNeverSuspend(): Boolean {
     if (io !is NonSuspendingSend || suspendingPathSockets) return false
     val p = preferredIos
     for (i in 0 until p.size) if (p[i] !is NonSuspendingSend) return false
@@ -73,7 +73,7 @@ internal fun EndpointLoop.sendsNeverSuspend(): Boolean {
  * counts them (a throwing send counts its whole batch, so the count may exceed what was really lost when the socket
  * fails mid-batch). It never propagates: it would end a loop coroutine.
  */
-internal suspend fun EndpointLoop.sendOrLose(
+private suspend fun EndpointLoop.sendOrLose(
     target: DatagramIo,
     batch: PacketBatch,
     rt: ConnectionRuntime?,
@@ -83,7 +83,7 @@ internal suspend fun EndpointLoop.sendOrLose(
 }
 
 /** [sendOrLose]'s body; [send] sends [batch] on [target] (`trySend` once the socket refused part of a batch in this flush). */
-internal inline fun EndpointLoop.sendOrLoseWith(
+private inline fun EndpointLoop.sendOrLoseWith(
     target: DatagramIo,
     batch: PacketBatch,
     rt: ConnectionRuntime?,
@@ -136,7 +136,7 @@ internal fun EndpointLoop.lose(
 }
 
 /** By index: an iterator per send would allocate. */
-internal fun EndpointLoop.isFullThisFlush(target: DatagramIo): Boolean {
+private fun EndpointLoop.isFullThisFlush(target: DatagramIo): Boolean {
     for (i in 0 until fullThisFlush.size) if (fullThisFlush[i] === target) return true
     return false
 }
@@ -163,7 +163,7 @@ internal suspend fun EndpointLoop.flush(
 }
 
 /** [flush] when no send can suspend; [flushLock] held. */
-internal fun EndpointLoop.flushNow(
+private fun EndpointLoop.flushNow(
     touched: ConnectionCore?,
     signalTimer: Boolean,
     ctx: CoroutineContext,
@@ -178,7 +178,7 @@ internal fun EndpointLoop.flushNow(
 }
 
 /** [flush] through the lock, each send through [sendOrLose] (it may wait for room). */
-internal suspend fun EndpointLoop.flushSuspending(
+private suspend fun EndpointLoop.flushSuspending(
     touched: ConnectionCore?,
     signalTimer: Boolean,
 ) {
@@ -195,7 +195,7 @@ internal suspend fun EndpointLoop.flushSuspending(
 }
 
 /** What a flush does, with its two kinds of send passed in; [flushLock] held. */
-internal inline fun EndpointLoop.flushBody(
+private inline fun EndpointLoop.flushBody(
     touched: ConnectionCore?,
     signalTimer: Boolean,
     ctx: CoroutineContext,

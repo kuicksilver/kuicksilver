@@ -65,7 +65,7 @@ internal fun EndpointLoop.storeToken(
 }
 
 /** A token store call ran past [TOKEN_STORE_TIMEOUT]: the connection goes on without it; logged once per endpoint loop. */
-internal fun EndpointLoop.tokenStoreSlow(
+private fun EndpointLoop.tokenStoreSlow(
     call: String,
     key: String,
 ) {

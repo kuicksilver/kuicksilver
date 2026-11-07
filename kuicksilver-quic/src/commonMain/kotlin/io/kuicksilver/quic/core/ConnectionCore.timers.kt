@@ -188,7 +188,7 @@ internal fun ConnectionCore.requeueForProbe(
 }
 
 /** A lost (or probed) packet carried the NEW_TOKEN frame still unacknowledged: the same token goes again. */
-internal fun ConnectionCore.requeueNewToken(f: SentFrames) {
+private fun ConnectionCore.requeueNewToken(f: SentFrames) {
     for (i in 0 until f.idCount) {
         if (f.idKind[i] == SentFrames.ID_NEW_TOKEN && f.idValue[i] == newTokenSeq && newToken != null) sendNewToken = true
     }

@@ -184,7 +184,7 @@ internal fun ConnectionCore.glitch(frameType: Long) {
 }
 
 /** The reason text of a glitch close names the frame types that spent the tokens: what a peer or a pcap reader needs to see. */
-internal fun ConnectionCore.glitchSummary(): String {
+private fun ConnectionCore.glitchSummary(): String {
     val sb = StringBuilder()
     for (i in glitchCounts.indices) {
         if (glitchCounts[i] >
