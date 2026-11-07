@@ -901,6 +901,7 @@ class LoopGroupTest {
                 val net = MemoryNetwork()
                 val group = lbGroup(net, QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key()))
                 val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                val release = kotlinx.coroutines.CompletableDeferred<Unit>()
                 try {
                     val accepted = async { group.accept() }
                     val c = client.connect(otherAddr, clientConfig) // loop 1's connection
@@ -918,7 +919,6 @@ class LoopGroupTest {
                         }
                     }
                     group.fanOutTimeout = kotlin.time.Duration.parse("50ms")
-                    val release = kotlinx.coroutines.CompletableDeferred<Unit>()
                     val blocked = kotlinx.coroutines.CompletableDeferred<Unit>()
                     // loop 1's thread busy past the fan-out's timeout
                     loop1.scope.launch {
@@ -946,6 +946,7 @@ class LoopGroupTest {
                     assertEquals(1, reissues.load(), "moved once: the generation keeps the fan-out and the batch from both moving it")
                     c.close()
                 } finally {
+                    release.complete(Unit) // a failed assertion must not leave loop 1 spinning, or close would hang
                     client.close()
                     group.close()
                 }

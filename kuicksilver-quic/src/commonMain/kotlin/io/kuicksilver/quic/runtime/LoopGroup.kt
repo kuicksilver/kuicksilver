@@ -131,7 +131,9 @@ internal class LoopGroup private constructor(
                                 done.complete(Unit)
                             }
                             if (kotlinx.coroutines.withTimeoutOrNull(fanOutTimeout) { done.await() } == null &&
-                                abandoned.compareAndSet(0, 1)
+                                abandoned.compareAndSet(0, 1) &&
+                                !l.closing &&
+                                closingFlag.load() == 0 // a loop closing meanwhile never runs the task: no warning for it
                             ) {
                                 l.observer.logger.emit(io.kuicksilver.quic.LogLevel.Warn) {
                                     "QUIC-LB: loop ${l.index} did not take the configuration change within $fanOutTimeout; " +
