@@ -31,7 +31,8 @@ import kotlinx.coroutines.withContext
 internal class KslDatagramIo private constructor(
     private val socket: KslUdpSocket,
 ) : DatagramIo,
-    DirectReceive {
+    DirectReceive,
+    NonSuspendingSend {
     override val localAddress: InetSocketAddress = inetOf(socket.localAddress, 0)
     private val caps = MutableStateFlow(capsOf())
     override val capabilities: StateFlow<IoCapabilities> get() = caps
@@ -271,7 +272,7 @@ internal class KslDatagramIo private constructor(
      * The length of the latest datagram the kernel refused as too large (EMSGSIZE) since the previous call, or 0 (every accelerated
      * socket). The loop asks after each connection's send, so the refusal belongs to that connection. The loop's thread only.
      */
-    internal fun takeEmsgsize(): Int {
+    override fun takeEmsgsize(): Int {
         val n = socket.emsgsize(emsgLast)
         if (n == emsgSeen) return 0
         emsgSeen = n
@@ -326,6 +327,12 @@ internal class KslDatagramIo private constructor(
     override fun close() {
         socket.close()
     }
+
+    /**
+     * A send-only view of this socket for another thread ([KslUdpSocket.sender]): the same port and capabilities, its own send
+     * scratch and caches. Its `receive` fails; this socket's receiver alone reads. Closing it leaves this socket open.
+     */
+    internal fun sender(): KslDatagramIo = KslDatagramIo(socket.sender())
 
     internal fun statsForTest(): KslUdpSocket.Stats = socket.stats
 

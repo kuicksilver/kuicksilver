@@ -93,7 +93,9 @@ and public API, its internal transitions are extension functions in `core/Connec
 `ConnectionCore.paths.kt`, `ConnectionCore.close.kt` and `ConnectionCore.timers.kt`; the receive path is
 `core/PacketReceiver.kt` (headers, keys, decryption) plus `core/FrameDispatcher.kt` (frames to the connection);
 `EndpointCore.admission.kt` decides queued Initials. `runtime` turns the core into the coroutine API:
-`EndpointLoop` (one loop, one socket, a timer heap), `LoopGroup` (several loops on one port), `ConnectionRuntime`
+`EndpointLoop` (one loop, one socket, a timer heap), `LoopGroup` (several loops on one port: a socket each with
+`SO_REUSEPORT` on Linux and Android, else one socket whose `SocketDispatcher` hands each loop its datagrams through a
+`LoopInbox`, routed by `endpoint/DispatchRoute.kt`), `ConnectionRuntime`
 (`QuicConnection`: lifecycle, paths, datagrams), `StreamRuntime` with its ktor-io channels (`StreamChannels.kt`)
 and datagram queues. `DatagramIo` is the socket abstraction, with the accelerated `KslDatagramIo` (batched UDP with ECN and DF
 through `ksl`, GSO/GRO on Linux, USO/URO on Windows where granted; Linux, Android, Apple, Windows) and the portable NIO or

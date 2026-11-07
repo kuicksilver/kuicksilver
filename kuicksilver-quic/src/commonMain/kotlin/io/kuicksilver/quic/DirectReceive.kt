@@ -14,3 +14,13 @@ internal interface DirectReceive {
         waitMs: Int,
     ): Int
 }
+
+/**
+ * A socket whose `send` never suspends (it is `trySend`) and that reports the datagrams the kernel refused as too large: the
+ * accelerated `ksl` socket, and a loop's view of one socket a group shares ([io.kuicksilver.quic.runtime.LoopInbox]). A loop
+ * whose sockets are all of this kind flushes without a coroutine frame and takes the EMSGSIZE hints for DPLPMTUD.
+ */
+internal interface NonSuspendingSend {
+    /** The length of the latest datagram the kernel refused as too large since the previous call, or 0; the sender's thread only. */
+    fun takeEmsgsize(): Int
+}

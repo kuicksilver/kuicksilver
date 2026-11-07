@@ -349,7 +349,7 @@ internal class EndpointLoop private constructor(
 
     /** A path socket [io] was made for one of this loop's connections (see [suspendingPathSockets]). */
     internal fun pathSocketAdded(io: DatagramIo) {
-        if (io !is KslDatagramIo) suspendingPathSockets = true
+        if (io !is io.kuicksilver.quic.NonSuspendingSend) suspendingPathSockets = true
     }
 
     /**

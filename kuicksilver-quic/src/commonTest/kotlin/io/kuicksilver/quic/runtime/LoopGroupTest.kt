@@ -107,21 +107,34 @@ class LoopGroupTest {
 
     private val clientConfig = QuicClientConfig.Builder(CoreFixtures.client()).build()
 
-    @Test fun loopsAboveOneWithoutReusePortGrantIsUnsupported() =
+    /**
+     * Without the SO_REUSEPORT grant (Darwin, Windows, a seccomp filter) no second socket is bound on the port: the first one is
+     * shared by the loops in process, and the group serves.
+     */
+    @Test fun loopsAboveOneWithoutReusePortGrantShareOneSocket() =
         runBlocking {
-            val net = MemoryNetwork()
-            val first = net.open(serverAddr)
-            var opened = 0
-            val e =
-                assertFailsWith<UnsupportedOperationException> {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val first = net.open(serverAddr)
+                var opened = 0
+                val group =
                     LoopGroup.bindWith(serverAddr, config) { at ->
                         opened++
                         LoopGroup.SharedPortSocket(if (opened == 1) first else net.open(at), reusePort = false)
-                    }
+                    } as LoopGroup
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    assertEquals(1, opened, "no second bind without the grant")
+                    assertTrue(group.dispatcherForTest()?.io === first, "the loops share the first socket")
+                    val accepted = async { group.accept() }
+                    client.connect(serverAddr, clientConfig)
+                    withTimeout(5.seconds) { accepted.await() }
+                } finally {
+                    client.close()
+                    group.closeAndJoin()
                 }
-            assertEquals(LoopGroup.NO_REUSEPORT, e.message)
-            assertEquals(1, opened, "no second bind without the grant")
-            assertTrue(first.closed, "the first socket is closed")
+                assertTrue(first.closed, "the socket closed with the group")
+            }
         }
 
     @Test fun aDatagramForAnotherLoopBeforeStartupDoesNotKillTheGroup() =

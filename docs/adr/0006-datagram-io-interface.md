@@ -176,11 +176,12 @@ ktor-network) have no such call: on a multi-address host a server there binds th
 
 ### `SO_REUSEPORT` grant and `loops > 1`
 
-Several endpoint loops on one port (`LoopGroup`) need kernel flow hashing over `SO_REUSEPORT` sockets. `ksl_udp` sets
-`SO_REUSEPORT` only when asked and reports `KSL_UDP_REUSEPORT` only when the kernel took it. `LoopGroup` checks that grant
-on the first socket (through an injectable opener) and, without it, throws `UnsupportedOperationException` before
-binding a second socket (before 0.2.0 the second bind failed with `KslException.Internal`). The check is the grant, not the
-platform, so it covers:
+Several endpoint loops on one port (`LoopGroup`) use kernel flow hashing over `SO_REUSEPORT` sockets where the kernel
+offers it. `ksl_udp` sets `SO_REUSEPORT` only when asked and reports `KSL_UDP_REUSEPORT` only when the kernel took it.
+`LoopGroup` checks that grant on the first socket (through an injectable opener). With it, each loop binds its own socket
+on the port. Without it no second socket is bound (it would fail with a socket error, or on Darwin take every datagram):
+since 0.3.0 the loops share the first socket in process (below; before, `bind` threw `UnsupportedOperationException`).
+The check is the grant, not the platform, so in-process routing covers:
 
 - **Apple:** Darwin accepts the option but hands a port's unicast datagrams to one of the sockets (the last bound), with
   no flow hashing: with four loops, `MultiLoopTest` saw 100 of 100 connections on one loop. `ksl_udp` never sets or
@@ -188,8 +189,24 @@ platform, so it covers:
 - **Windows:** the socket is bound with `SO_EXCLUSIVEADDRUSE` (Windows `SO_REUSEADDR` would let another socket take the
   port over, msquic does the same), so `KSL_UDP_REUSEPORT` is never granted.
 - **Linux** with a seccomp filter that refuses `SO_REUSEPORT`.
+- A caller-supplied `DatagramIo` (`QuicEndpointConfig.io`), which balances nothing either.
 
-`loops > 1` therefore runs on Linux and Android only.
+**In-process routing (0.3.0).** One socket, one receiver: `runtime/SocketDispatcher.kt` blocks a `Dispatchers.IO` thread
+in the socket's receive (100 ms slices, a shutdown wakes it) and hands each datagram to the loop its connection ID names
+(`endpoint/DispatchRoute.kt`, a sans-IO wrapper over `CidRoute.ownerLoop`; a long header naming no loop goes to
+`SipHash(group key, DCID) mod loops`, a short one to loop 0). The datagram is copied into that loop's ring of 512 slots,
+written by the receiver and read by the loop with no lock and no allocation per datagram; a full ring drops and counts
+(`EndpointStats.datagramsDispatchDropped`), the receiver never waits. Each loop sees the socket as a `LoopInbox`, a
+`DatagramIo` whose sends go to the loop's own `ksl_udp_sender` clone ("One socket, several senders" above), or to a
+caller's socket under one lock; `EndpointLoop` is unchanged but for recognising a non-suspending sender by
+`NonSuspendingSend` instead of `KslDatagramIo`. The socket closes with the last loop's inbox, after every loop sent its
+CONNECTION_CLOSEs; a receive failure closes the group. The preferred-address sockets are shared the same way. Plain
+Darwin and Windows alternatives were not taken: separate ports with `preferred_address` (the handshake still lands on
+one socket, a client may ignore the address, extra ports break on NATs and firewalls) and Windows per-CPU sockets with
+`SIO_CPU_AFFINITY` (msquic; depends on RSS, absent on loopback and many VMs; later, and only on a measurement). msquic
+on Darwin (one datapath partition whose CID carries the partition index) and quic-go (one reading goroutine) work the
+same way. Tests: `DispatchRouteTest`, `DispatchedGroupTest` (four loops on one in-memory socket), `MultiLoopTest` (real
+sockets on every OS).
 
 ### Linux and Android
 
@@ -360,3 +377,5 @@ Android the server also worked on NIO; `AndroidServerTest.serverOnDeviceServesLo
   Windows JVM that claimed ECT(0) it could not send (`ecnSend = false`).
 - **0.2.0, both platforms.** The `loops > 1` check moved from the platform to the `KSL_UDP_REUSEPORT` grant; a refused
   accelerated socket falls back to the portable one instead of failing the bind.
+- **0.3.0, `loops > 1` everywhere.** Without the grant the loops share one socket with in-process routing by connection
+  ID and a `ksl_udp_sender` clone per loop, instead of `bind` throwing `UnsupportedOperationException`.

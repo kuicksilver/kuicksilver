@@ -328,11 +328,18 @@ plaintext nonces must survive a restart (draft section 9.6), so give it a `QuicL
 
 ### `UnsupportedOperationException` for `loops > 1`
 
-Several endpoint loops on one port need kernel `SO_REUSEPORT` flow hashing: Linux and Android only. On macOS, iOS and
-Windows `bind` throws "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"; with a custom `io` or
-the portable socket "loops > 1 needs the accelerated transport…". Use `loops = 1` there (Ktor server:
+Since 0.3.0 `loops > 1` runs on every platform: where the kernel does not balance `SO_REUSEPORT` sockets (macOS, iOS,
+Windows) or with a custom `io`, the loops share one socket ([QUIC: Several loops on one port](quic.md#several-loops-on-one-port)).
+`bind` still throws "loops > 1 needs the accelerated transport" where the accelerated socket cannot open (a sandbox
+that refuses `bind`, a platform without `ksl_udp`) and no `io` is given: use `loops = 1` there (Ktor server:
 `udpSocketCount = 1`), or several processes behind a QUIC-aware load balancer (a QUIC-LB one: [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer))
 ([Deploying the HTTP/3 server: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)).
+
+### Datagrams lost with `loops > 1` on macOS or Windows
+
+`EndpointStats.datagramsDispatchDropped` above 0: a loop fell more than 512 datagrams behind the socket's receiver (more
+loops than cores, a blocking call on the loop, a flood of one loop's connection IDs). Its peers retransmit; the other
+loops are not held up. Use fewer loops than cores and keep blocking work off the endpoint's dispatchers.
 
 ### Windows
 

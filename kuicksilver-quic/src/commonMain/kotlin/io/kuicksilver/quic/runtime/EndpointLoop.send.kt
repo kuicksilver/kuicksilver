@@ -9,7 +9,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.DatagramIo
-import io.kuicksilver.quic.KslDatagramIo
+import io.kuicksilver.quic.NonSuspendingSend
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.SocketDefunctException
@@ -58,12 +58,12 @@ internal inline fun EndpointLoop.sendOutWith(
 
 /**
  * True while no socket this loop sends on can suspend a send: the endpoint's, its preferred-address sockets and every path
- * socket are [KslDatagramIo]s, whose `send` is `trySend`. A flush then runs without a coroutine frame ([flushNow]).
+ * socket are [NonSuspendingSend]s (the accelerated socket, or a loop's view of one a group shares), whose `send` is `trySend`. A flush then runs without a coroutine frame ([flushNow]).
  */
 internal fun EndpointLoop.sendsNeverSuspend(): Boolean {
-    if (io !is KslDatagramIo || suspendingPathSockets) return false
+    if (io !is NonSuspendingSend || suspendingPathSockets) return false
     val p = preferredIos
-    for (i in 0 until p.size) if (p[i] !is KslDatagramIo) return false
+    for (i in 0 until p.size) if (p[i] !is NonSuspendingSend) return false
     return true
 }
 
@@ -100,7 +100,7 @@ internal inline fun EndpointLoop.sendOrLoseWith(
                 val full = isFullThisFlush(target)
                 val sent = send(full).coerceIn(0, batch.count)
                 // a datagram of this connection the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6)
-                if (rt != null && target is KslDatagramIo) {
+                if (rt != null && target is NonSuspendingSend) {
                     val tooBig = target.takeEmsgsize()
                     if (tooBig > 0) {
                         rt.core.onEmsgsize(tooBig)

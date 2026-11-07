@@ -6,15 +6,18 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointStats
 import io.kuicksilver.quic.KslDatagramIo
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.Releaser
 import io.kuicksilver.quic.emit
+import io.kuicksilver.quic.endpoint.SipKey
 import io.kuicksilver.quic.withLiteralHost
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
@@ -25,18 +28,29 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
 
 /**
- * `QuicEndpointConfig.loops` endpoint loops on one port (docs/guide/quic.md, "Several loops on one port"): each has its own accelerated socket bound with
- * SO_REUSEPORT, its own dispatcher, [io.kuicksilver.quic.EndpointCore] (so its own reset key; the Retry and NEW_TOKEN keys are shared) and the routing
- * byte `index` in every connection ID it issues. The kernel hashes a client's flow onto one socket; a datagram that lands
- * elsewhere after a rebind is copied to its owner ([EndpointLoop.forwarded]), never answered by a stranger (threat-model
- * 3.4). Accepted connections of every loop reach one `accept()` queue; `connect` picks loops round-robin, and the client
- * connection's IDs carry its loop's routing byte, so the answers the kernel hashes onto another loop's socket are copied back.
+ * `QuicEndpointConfig.loops` endpoint loops on one port (docs/guide/quic.md, "Several loops on one port"): each has its own
+ * dispatcher, [io.kuicksilver.quic.EndpointCore] (so its own reset key; the Retry and NEW_TOKEN keys are shared) and the routing
+ * byte `index` in every connection ID it issues. Two ways to share the port:
+ *
+ * - **Kernel** (Linux, Android: the socket is granted SO_REUSEPORT): each loop has its own accelerated socket bound with
+ *   SO_REUSEPORT. The kernel hashes a client's flow onto one socket; a datagram that lands elsewhere after a rebind is copied to
+ *   its owner ([EndpointLoop.forwarded]), never answered by a stranger (threat-model 3.4).
+ * - **In process** (Apple, Windows, a caller-supplied [io.kuicksilver.quic.DatagramIo]: no balancing grant): one socket, whose
+ *   receiver hands each datagram to the loop its connection ID names ([SocketDispatcher]); each loop sends through its own
+ *   clone of the socket (`ksl_udp_sender`), or through the caller's socket under a lock. A migrated client needs no forwarding.
+ *
+ * Accepted connections of every loop reach one `accept()` queue; `connect` picks loops round-robin, and the client
+ * connection's IDs carry its loop's routing byte, so its answers reach that loop either way.
  */
 @OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class, InternalKuicksilverApi::class)
 internal class LoopGroup private constructor(
     private val config: QuicEndpointConfig,
 ) : QuicEndpoint {
     private lateinit var loops: List<EndpointLoop>
+
+    /** The in-process dispatchers of the shared socket and its preferred-address sockets; empty in kernel mode. */
+    internal var dispatchers: List<SocketDispatcher> = emptyList()
+        private set
     private val pendingAccept = AtomicInt(0)
     private val acceptQueue = EndpointLoop.acceptChannel(pendingAccept)
 
@@ -148,8 +162,13 @@ internal class LoopGroup private constructor(
         }
     }
 
-    /** Every loop's counters, summed. */
-    override val stats: EndpointStats get() = loops.map { it.stats }.reduce { a, b -> a + b }
+    /** Every loop's counters, summed, and the datagrams the in-process dispatch dropped. */
+    override val stats: EndpointStats
+        get() {
+            val s = loops.map { it.stats }.reduce { a, b -> a + b }
+            if (dispatchers.isEmpty()) return s
+            return s + EndpointStats(0, 0, 0, 0, 0, 0, 0, datagramsDispatchDropped = dispatchers.sumOf { it.dropped })
+        }
 
     /** Every loop stops taking connections at once; one deadline for the whole group, then the group closes as one. */
     override suspend fun shutdown(
@@ -195,6 +214,9 @@ internal class LoopGroup private constructor(
 
     internal fun loopForTest(i: Int): EndpointLoop = loops[i]
 
+    /** The in-process dispatcher of the main socket (tests); null in kernel mode. */
+    internal fun dispatcherForTest(): SocketDispatcher? = dispatchers.firstOrNull()
+
     internal fun connectionsPerLoopForTest(): IntArray = IntArray(loops.size) { loops[it].core.connectionCount }
 
     internal fun forwardedForTest(loop: Int): Long = loops[loop].forwardedCount.load()
@@ -219,20 +241,29 @@ internal class LoopGroup private constructor(
         /** How long a loop has to move its connections to a new QUIC-LB configuration before the update goes on without it. */
         private val FAN_OUT_TIMEOUT = kotlin.time.Duration.parse("5s")
 
+        /** A preferred-address twin bound without the grant the main socket had (kernel mode needs it on every port). */
         internal const val NO_REUSEPORT = "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"
 
         suspend fun bind(
             local: InetSocketAddress,
             config: QuicEndpointConfig,
-        ): QuicEndpoint =
-            bindWith(local, config) { at ->
+        ): QuicEndpoint {
+            val callerIo = config.io
+            if (callerIo != null) {
+                // the caller's socket balances nothing: one socket, dispatched in process, sends under a lock
+                require(config.loops > 1 && config.server != null)
+                EndpointLoop.checkPayloadSize(config.server.quic)
+                return bindDispatched(config, callerIo(local)) { at -> callerIo(at) }
+            }
+            return bindWith(local, config) { at ->
                 KslDatagramIo.open(at, reusePort = true)?.let { SharedPortSocket(it, it.reusePortGranted) }
             }
+        }
 
         /**
-         * [bind] over [open]. The first socket must come back with SO_REUSEPORT granted, else it is closed and `bind` throws
-         * [UnsupportedOperationException]: without the grant the second bind on the port fails with a socket error (Windows'
-         * exclusive bind, Darwin, Linux under a seccomp filter), which is not the documented refusal.
+         * [bind] over [open]. A first socket granted SO_REUSEPORT (Linux, Android) gets twins on its port, one per loop: the
+         * kernel balances. Without the grant (Darwin hands every datagram to one socket, Windows binds exclusively, a Linux
+         * seccomp filter refuses the option) no second socket is bound: the first one is shared in process ([bindDispatched]).
          */
         internal suspend fun bindWith(
             local: InetSocketAddress,
@@ -241,17 +272,11 @@ internal class LoopGroup private constructor(
         ): QuicEndpoint {
             require(config.loops > 1 && config.server != null)
             EndpointLoop.checkPayloadSize(config.server.quic)
-            if (config.io !=
-                null
-            ) {
-                throw UnsupportedOperationException(
-                    "loops > 1 needs the accelerated transport with SO_REUSEPORT, not a caller-supplied DatagramIo",
-                )
-            }
             val first = open(local) ?: throw UnsupportedOperationException("loops > 1 needs the accelerated transport")
             if (!first.reusePort) {
-                first.io.close()
-                throw UnsupportedOperationException(NO_REUSEPORT)
+                return bindDispatched(config, first.io) { at ->
+                    open(at)?.io ?: throw UnsupportedOperationException("accelerated transport unavailable for the preferred address $at")
+                }
             }
             val ios = ArrayList<io.kuicksilver.quic.DatagramIo>(config.loops)
             ios += first.io
@@ -291,6 +316,103 @@ internal class LoopGroup private constructor(
                 throw e
             }
             return create(config, ios, preferred = preferred)
+        }
+
+        /**
+         * The in-process mode over [io], bound already (the group owns it from here): the preferred-address sockets, opened
+         * with [openOther], are shared the same way. Every loop gets a sender per socket ([sendersFor]).
+         */
+        private suspend fun bindDispatched(
+            config: QuicEndpointConfig,
+            socket: DatagramIo,
+            openOther: suspend (InetSocketAddress) -> DatagramIo,
+        ): QuicEndpoint {
+            val preferred =
+                try {
+                    EndpointLoop.openPreferred(config, socket.localAddress, openOther)
+                } catch (e: Throwable) {
+                    Releaser(e).release { socket.close() }
+                    throw e
+                }
+            val senders = ArrayList<List<DatagramIo>>(1 + preferred.size)
+            try {
+                senders += sendersFor(socket, config.loops)
+                for (p in preferred) senders += sendersFor(p, config.loops)
+            } catch (e: Throwable) {
+                val r = Releaser(e)
+                for (l in senders) for (s in l) r.release { s.close() }
+                for (p in preferred) r.release { p.close() }
+                r.release { socket.close() }
+                throw e
+            }
+            return createDispatched(config, socket, senders[0], preferred, senders.drop(1))
+        }
+
+        /** One sender per loop on [socket]: a send-only clone of the accelerated socket, else [socket] itself under one lock. */
+        private fun sendersFor(
+            socket: DatagramIo,
+            loops: Int,
+        ): List<DatagramIo> {
+            if (socket !is KslDatagramIo) {
+                val lock = kotlinx.coroutines.sync.Mutex()
+                return List(loops) { SerializedSender(socket, lock) }
+            }
+            val out = ArrayList<DatagramIo>(loops)
+            try {
+                repeat(loops) { out += socket.sender() }
+            } catch (e: Throwable) {
+                val r = Releaser(e)
+                for (s in out) r.release { s.close() }
+                throw e
+            }
+            return out
+        }
+
+        /**
+         * A group sharing [socket] in process: [senders] (one per loop) send on it, [preferred] sockets with [preferredSenders] are
+         * shared the same way. The sockets and senders are handed to the group, which closes them on any failure. [allocate]
+         * and [afterBuild] are test hooks, as in [create].
+         */
+        internal suspend fun createDispatched(
+            config: QuicEndpointConfig,
+            socket: DatagramIo,
+            senders: List<DatagramIo>,
+            preferred: List<DatagramIo> = emptyList(),
+            preferredSenders: List<List<DatagramIo>> = emptyList(),
+            allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
+            afterBuild: suspend () -> Unit = {},
+        ): LoopGroup {
+            require(senders.size == config.loops && preferredSenders.size == preferred.size)
+            val random = KslRandom.newSource()
+            val key = SipKey(random.nextLong(), random.nextLong())
+            val main = SocketDispatcher(socket, senders, config.connectionIdLength, key, allocate)
+            val others = preferred.mapIndexed { k, p -> SocketDispatcher(p, preferredSenders[k], config.connectionIdLength, key, allocate) }
+            // the loops' views of the sockets: closing them (a failed build included) closes the senders, the last one each socket
+            val g =
+                create(
+                    config,
+                    main.inboxes,
+                    preferred = List(config.loops) { i -> others.map { it.inboxes[i] } },
+                    allocate = allocate,
+                    afterBuild = afterBuild,
+                )
+            g.dispatchers = listOf(main) + others
+            try {
+                // every loop routes connection IDs alike: loop 0's route answers for the group, from the receivers' threads
+                val route = g.loops[0].core.route
+                for (d in g.dispatchers) {
+                    d.start(route) { e ->
+                        g.loops[0].observer.logger.emit(LogLevel.Error, e) {
+                            "endpoint ${d.io.localAddress}: the shared socket failed; closing the endpoint"
+                        }
+                        g.close()
+                    }
+                }
+            } catch (e: Throwable) {
+                Releaser(e).release { withContext(NonCancellable) { g.closeAndJoin() } }
+                throw e
+            }
+            return g
         }
 
         private fun closeSockets(

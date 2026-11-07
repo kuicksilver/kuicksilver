@@ -150,6 +150,13 @@ public class EndpointStats internal constructor(
      */
     @property:ExperimentalKuicksilverApi
     public val loadBalancerNoncesWasted: Long = 0,
+    /**
+     * Datagrams the in-process dispatch of `loops > 1` dropped (one socket shared by the loops: Apple, Windows, a caller's
+     * `DatagramIo`) because their loop had no free batch: it fell behind, and its datagrams are lost rather than holding up the
+     * socket's receiver and the other loops. The peers retransmit. Always 0 with one loop or with SO_REUSEPORT (Linux, Android).
+     */
+    @property:ExperimentalKuicksilverApi
+    public val datagramsDispatchDropped: Long = 0,
 ) {
     /** Field by field sum: a loop group's endpoint statistics. */
     internal operator fun plus(o: EndpointStats): EndpointStats =
@@ -195,6 +202,7 @@ public class EndpointStats internal constructor(
             loadBalancerNoncesExhausted + o.loadBalancerNoncesExhausted,
             loadBalancerReservationFailures + o.loadBalancerReservationFailures,
             loadBalancerNoncesWasted + o.loadBalancerNoncesWasted,
+            datagramsDispatchDropped + o.datagramsDispatchDropped,
         )
 
     @OptIn(ExperimentalKuicksilverApi::class)
@@ -215,5 +223,5 @@ public class EndpointStats internal constructor(
             "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected, ptbAccepted=$ptbAccepted, " +
             "ptbIgnored=$ptbIgnored, preferredAddressFailures=$preferredAddressFailures, " +
             "loadBalancerNoncesExhausted=$loadBalancerNoncesExhausted, loadBalancerReservationFailures=$loadBalancerReservationFailures, " +
-            "loadBalancerNoncesWasted=$loadBalancerNoncesWasted)"
+            "loadBalancerNoncesWasted=$loadBalancerNoncesWasted, datagramsDispatchDropped=$datagramsDispatchDropped)"
 }

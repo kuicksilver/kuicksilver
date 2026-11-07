@@ -138,7 +138,7 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 - Clients: SOCKS and system proxy settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692).
   The Ktor client gets a `proxyResolver` setting whose default is the system proxy (HTTP/3 is not used through a proxy).
 - Server: certificate hot reload and a limit on TCP connections.
-- `loops > 1` on macOS and Windows.
+- `loops > 1` on macOS, iOS and Windows: one socket routed in process by connection ID (done; the benchmark of what it buys is still to come).
 - A run of the iOS device checklist on a physical iPhone ([Device checklist](guide/ios.md#device-checklist)).
 - Server CPU ([Where the time went](benchmarks.md#where-the-time-went)), each measured with `tools/bench` before and after:
   - one `SSL_CTX` per server configuration, shared by its QUIC sessions, instead of one per session: 53 µs of the

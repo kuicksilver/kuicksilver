@@ -57,9 +57,6 @@ internal expect fun EngineTestBase<*, *>.testMarkers(): Set<String>
 /** Skips the running test: a JUnit assumption on the JVM (reported as skipped); elsewhere the test passes without running. */
 internal expect fun skipTest(reason: String)
 
-/** Whether this host's kernel hashes flows across SO_REUSEPORT sockets (Linux, Android), which udpSocketCount > 1 needs. */
-internal expect val reusePortFlowHashing: Boolean
-
 /** How the suite talks to the server. */
 enum class ContractProtocol { H1, H3 }
 

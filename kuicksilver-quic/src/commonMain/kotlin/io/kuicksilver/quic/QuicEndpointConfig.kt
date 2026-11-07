@@ -257,7 +257,13 @@ public class QuicEndpointConfig private constructor(
     public val statelessPerAddressPerSecond: Int,
     /** Stateless answers per second over all addresses (like msquic `MaxBindingStatelessOperations`). */
     public val statelessTotalPerSecond: Int,
-    /** Endpoint loops sharing the port with SO_REUSEPORT (docs/guide/quic.md, "Several loops on one port"): more than one needs a server and the accelerated transport with SO_REUSEPORT flow hashing (Linux, Android; not Apple or Windows), else `bind` throws `UnsupportedOperationException`. */
+    /**
+     * Endpoint loops sharing the port, each on its own thread (docs/guide/quic.md, "Several loops on one port"); more than one
+     * needs a server. Where the accelerated socket is granted SO_REUSEPORT (Linux, Android) each loop has its own socket and the
+     * kernel balances the flows; elsewhere (Apple, Windows, a caller-supplied [io]) the loops share one socket, whose receiver
+     * hands each datagram to the loop its connection ID names. One connection lives on one loop either way. Without the
+     * accelerated transport (and no [io]) `bind` throws `UnsupportedOperationException`.
+     */
     public val loops: Int,
     /** Where the endpoint's diagnostics go (docs/guide/quic.md, "Observability"); [KuicksilverLogger.Stderr] (warnings on standard error) by default. */
     @property:ExperimentalKuicksilverApi

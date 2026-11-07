@@ -9,5 +9,3 @@ internal actual fun EngineTestBase<*, *>.testMarkers(): Set<String> = emptySet()
 internal actual fun skipTest(reason: String) {}
 
 internal actual val vendoredJvmContentSuite: Boolean = false
-
-internal actual val reusePortFlowHashing: Boolean = System.getProperty("os.name")?.lowercase()?.contains("linux") == true

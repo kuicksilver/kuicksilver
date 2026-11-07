@@ -360,7 +360,7 @@ class GuideSamplesTest {
             }
         assertEquals(64, config.maxConnectionsPerIp)
         assertEquals(12.hours, config.maxConnectionLifetime)
-        // guide:quic:loops (the configuration; binding needs the accelerated transport, MultiLoopTest covers it on Linux)
+        // guide:quic:loops (the configuration; MultiLoopTest binds it on real sockets)
         val withLoops =
             QuicEndpointConfig
                 .Builder()

@@ -909,6 +909,8 @@ final class io.kuicksilver.quic/EndpointStats { // io.kuicksilver.quic/EndpointS
         final fun <get-connectionsRefusedLimits>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsRefusedLimits.<get-connectionsRefusedLimits>|<get-connectionsRefusedLimits>(){}[0]
     final val connectionsRefusedShutdown // io.kuicksilver.quic/EndpointStats.connectionsRefusedShutdown|{}connectionsRefusedShutdown[0]
         final fun <get-connectionsRefusedShutdown>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsRefusedShutdown.<get-connectionsRefusedShutdown>|<get-connectionsRefusedShutdown>(){}[0]
+    final val datagramsDispatchDropped // io.kuicksilver.quic/EndpointStats.datagramsDispatchDropped|{}datagramsDispatchDropped[0]
+        final fun <get-datagramsDispatchDropped>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsDispatchDropped.<get-datagramsDispatchDropped>|<get-datagramsDispatchDropped>(){}[0]
     final val datagramsDroppedQueue // io.kuicksilver.quic/EndpointStats.datagramsDroppedQueue|{}datagramsDroppedQueue[0]
         final fun <get-datagramsDroppedQueue>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsDroppedQueue.<get-datagramsDroppedQueue>|<get-datagramsDroppedQueue>(){}[0]
     final val datagramsDroppedSocket // io.kuicksilver.quic/EndpointStats.datagramsDroppedSocket|{}datagramsDroppedSocket[0]

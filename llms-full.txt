@@ -83,12 +83,13 @@ The endpoint's socket comes from `DatagramIo.open(local, prefer)`. On Linux and 
 (`IoPreference.Accelerated`) is the `ksl` socket: batches of up to 64 datagrams per syscall with UDP GSO and GRO,
 ECN marks read and written per datagram, DF in probe mode for PMTUD, and `SO_REUSEPORT` for several loops on one
 port. On macOS and iOS (JVM and Kotlin/Native) it is the same `ksl` socket without GSO and GRO, which Darwin lacks:
-batches leave as one `sendmsg` per datagram, ECN marks and DF work as on Linux, and `SO_REUSEPORT` is not offered.
+batches leave as one `sendmsg` per datagram, ECN marks and DF work as on Linux, and `SO_REUSEPORT` is not offered
+(several loops share one socket there, [Several loops on one port](#several-loops-on-one-port)).
 On Linux, Android and Apple a wildcard address (`0.0.0.0` or `::`) gives a dual-stack socket, as NIO does: one socket
 bound to `::` sends to and receives from IPv4 and IPv6 peers, and IPv4 peers appear as IPv4 addresses. A specific address
 keeps its own family. On Windows (Kotlin/Native and the JVM) the `ksl` socket is Winsock: `WSASendMsg`/`WSARecvMsg`,
 USO/URO and ECN where the Windows version grants them (`io.capabilities` tells), DF, an exclusive bind and no
-`SO_REUSEPORT` (one loop per port); a wildcard address gives a dual-stack socket there too (on a host without IPv6,
+`SO_REUSEPORT` (several loops share one socket); a wildcard address gives a dual-stack socket there too (on a host without IPv6,
 `0.0.0.0` falls back to an IPv4 socket).
 With `IoPreference.Portable`, or where `ksl` cannot open its socket, the portable socket is used (NIO on the JVM,
 `ktor-network` on Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per
@@ -412,7 +413,8 @@ validated the client's address there too (until then everything non-probing leav
 `PathChangeReason.PreferredAddress` and closes the original path. Nothing else happens on a preferred socket: a new
 connection is never started there, and nothing is answered statelessly. With `allowMigration = false` a move to the
 preferred address is still taken, but only from the client's current address. With several loops every loop listens on
-the preferred addresses with `SO_REUSEPORT`, like on the main one. Each preferred socket binds the literal address it
+the preferred addresses as on the main one: with `SO_REUSEPORT` where the kernel balances, else on one shared socket per
+address. Each preferred socket binds the literal address it
 advertises (there is no NAT indirection: behind a NAT, advertise an address the server owns), which must not be the
 endpoint's own (`bind` refuses the same IP and port, the port of a socket bound to `0.0.0.0` for an IPv4 address, or
 the port of one bound to `::` for either family) nor use a reflection port (53, 123, 1900, 5353, 11211). If a preferred
@@ -606,17 +608,32 @@ lossy transfer. Set `glitchProtection = false` in `quicConfig { }` to turn it of
 
 ### Several loops on one port
 
-A server endpoint can run `loops` endpoint loops: each has its own accelerated socket bound with `SO_REUSEPORT`,
-its own single-threaded dispatcher, its own admission state and its own Retry and reset keys. The kernel hashes every
-client flow onto one socket, and the loop that admits a connection owns it for life: its index is the routing byte of
-every connection ID that loop issues. A datagram that lands on another loop after a NAT rebind is copied to the owner;
-no loop ever answers a Stateless Reset for a connection ID that names another loop. `accept()` is one queue over all
-loops, `connect` picks loops in turn; a connection it opens issues connection IDs with its loop's routing byte as
-well, so the server's answers reach that loop whichever socket the kernel hands them to. `loops > 1` needs a server and the accelerated transport with kernel flow hashing (Linux, Android); elsewhere,
-macOS included (Darwin hands a port's unicast datagrams to one `SO_REUSEPORT` socket only) and Windows (the socket is bound
-with `SO_EXCLUSIVEADDRUSE`), `bind` throws
-`UnsupportedOperationException`. Inside each loop a flush visits only the connections something happened to
-since the last one, and the timers sit in a heap, so neither grows with the number of idle connections.
+A server endpoint can run `loops` endpoint loops, each with its own single-threaded dispatcher, its own admission state
+and its own Retry and reset keys. The loop that admits a connection owns it for life: its index is the routing byte of
+every connection ID that loop issues (with a QUIC-LB configuration, the loop the ID hashes to). `accept()` is one queue
+over all loops, `connect` picks loops in turn, and a connection it opens issues connection IDs that name its loop as well.
+No loop ever answers a Stateless Reset for a connection ID that names another loop. The loops share the port in one of
+two ways, chosen by the platform (there is no switch):
+
+- **Kernel balancing** (Linux, Android): each loop has its own accelerated socket bound with `SO_REUSEPORT`, and the
+  kernel hashes every client flow onto one of them. Receiving, decrypting and sending all run in parallel. A datagram
+  that lands on another loop after a NAT rebind is copied to the owner.
+- **In-process routing** (macOS, iOS, Windows, and any endpoint with a caller-supplied `io`): the loops share one socket.
+  Darwin hands a port's unicast datagrams to one `SO_REUSEPORT` socket only, and Windows binds with `SO_EXCLUSIVEADDRUSE`,
+  so neither can balance. One receiver thread reads the socket and hands each datagram to the loop its connection ID names
+  (a new client's Initial goes to a loop chosen by a keyed hash of its connection ID, the same loop for its
+  retransmissions); every loop sends through its own clone of the socket (`ksl_udp_sender`), or through the caller's
+  socket under a lock. A migrated or rebound client reaches its loop directly. A loop that falls behind has 512
+  datagrams waiting at most: the receiver drops the rest for that loop, counted in `EndpointStats.datagramsDispatchDropped`,
+  and never waits for it, so the other loops go on.
+
+What each mode buys: handshakes (most of a server's CPU) and the work of many connections spread over the loops in both.
+In-process routing keeps receiving sequential: one receive system call per datagram on Darwin, so a bulk transfer over
+many connections gains less than handshakes do, and the gain stops where that one receiver is saturated. One connection
+never runs faster with more loops: it lives on one loop, by design. More loops than cores gain nothing.
+
+Inside each loop a flush visits only the connections something happened to since the last one, and the timers sit in a
+heap, so neither grows with the number of idle connections.
 
 ```kotlin
 // guide:quic:loops
@@ -3537,7 +3554,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `rejectInitialFromReflectivePorts` | `Boolean` | `true` |  | 0.2.0 | drop Initials from source ports 53, 123, 1900, 5353 and 11211 (reflection attacks) |
 | `statelessPerAddressPerSecond` | `Int` | 8 | at least 1 | 0.2.0 | stateless answers (Retry, Version Negotiation, Stateless Reset, refusals) per client address per second |
 | `statelessTotalPerSecond` | `Int` | 1000 | at least 1 | 0.2.0 | stateless answers per second over all addresses |
-| `loops` | `Int` | 1 | 1..255; more than 1 needs a `server`, no `dispatcher`, and Linux or Android (`UnsupportedOperationException` at `bind` elsewhere) | 0.2.0 | endpoint loops sharing the port with `SO_REUSEPORT` ([Several loops on one port](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#several-loops-on-one-port)) |
+| `loops` | `Int` | 1 | 1..255; more than 1 needs a `server` and no `dispatcher` | 0.2.0 (every platform since 0.3.0) | endpoint loops sharing the port: a socket each with `SO_REUSEPORT` on Linux and Android, one socket routed in process elsewhere ([Several loops on one port](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#several-loops-on-one-port)) |
 | `logger` (*experimental*) | `KuicksilverLogger` | `KuicksilverLogger.Stderr` (warnings and errors on standard error) |  | 0.2.0 | the endpoint's diagnostics; `KuicksilverLogger.None`, `KuicksilverLogger.stderr(LogLevel.Debug)` or your own ([Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#observability)) |
 | `listener` (*experimental*) | `ConnectionListener?` | `null` |  | 0.2.0 | lifecycle callbacks of every connection, on the loop |
 | `loadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | needs a `server`, `connectionIdLength` = 1 + server ID + nonce and at least 8, a key next to a `preferredAddress` | 0.3.0 | QUIC-LB server connection IDs (draft-ietf-quic-load-balancers-21); change with `QuicEndpoint.updateLoadBalancer` ([Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)) |
@@ -4177,11 +4194,18 @@ plaintext nonces must survive a restart (draft section 9.6), so give it a `QuicL
 
 #### `UnsupportedOperationException` for `loops > 1`
 
-Several endpoint loops on one port need kernel `SO_REUSEPORT` flow hashing: Linux and Android only. On macOS, iOS and
-Windows `bind` throws "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"; with a custom `io` or
-the portable socket "loops > 1 needs the accelerated transport…". Use `loops = 1` there (Ktor server:
+Since 0.3.0 `loops > 1` runs on every platform: where the kernel does not balance `SO_REUSEPORT` sockets (macOS, iOS,
+Windows) or with a custom `io`, the loops share one socket ([QUIC: Several loops on one port](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#several-loops-on-one-port)).
+`bind` still throws "loops > 1 needs the accelerated transport" where the accelerated socket cannot open (a sandbox
+that refuses `bind`, a platform without `ksl_udp`) and no `io` is given: use `loops = 1` there (Ktor server:
 `udpSocketCount = 1`), or several processes behind a QUIC-aware load balancer (a QUIC-LB one: [QUIC: Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer))
 ([Deploying the HTTP/3 server: Connection IDs and several instances](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#connection-ids-and-several-instances)).
+
+#### Datagrams lost with `loops > 1` on macOS or Windows
+
+`EndpointStats.datagramsDispatchDropped` above 0: a loop fell more than 512 datagrams behind the socket's receiver (more
+loops than cores, a blocking call on the loop, a flood of one loop's connection IDs). Its peers retransmit; the other
+loops are not held up. Use fewer loops than cores and keep blocking work off the endpoint's dispatchers.
 
 #### Windows
 

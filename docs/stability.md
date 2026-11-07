@@ -277,5 +277,5 @@ No experimental API. `TlsSocket`, `Socket.tls()` and `Socket.tlsServer()` are st
 
 These are stable, but read their KDoc before relying on them:
 
-- `QuicEndpointConfig.loops > 1` throws `UnsupportedOperationException` outside Linux and Android, and a QUIC server on
-  Kotlin/Native needs the accelerated socket.
+- `QuicEndpointConfig.loops > 1` throws `UnsupportedOperationException` without the accelerated socket (and no `io`),
+  and a QUIC server on Kotlin/Native needs the accelerated socket.

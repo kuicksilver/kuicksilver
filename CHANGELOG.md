@@ -14,6 +14,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC: `loops > 1` on macOS, iOS and Windows, and with a caller-supplied `DatagramIo`. Where the kernel does not balance
+  a port over `SO_REUSEPORT` sockets (Darwin hands every datagram to one socket, Windows binds exclusively), the loops
+  share one socket: one receiver thread hands each datagram to the loop its connection ID names (a new client's Initial
+  by a keyed hash of its connection ID, the same loop for its retransmissions), and each loop sends through its own
+  `ksl_udp_sender` clone (a caller's socket under a lock). A migrated client reaches its loop with no forwarding. A loop
+  that falls more than 512 datagrams behind loses its own datagrams, counted in the new
+  `EndpointStats.datagramsDispatchDropped`; the receiver never waits for it. Linux and Android keep a socket per loop.
+  Handshakes and many connections spread over the loops; one connection is not faster with more loops. See
+  docs/guide/quic.md, "Several loops on one port".
 - Native: `ksl_udp_sender`, a send-only clone of a `ksl_udp` socket with its own send scratch, so several threads send on
   one UDP socket (one per clone); it shares the descriptor, which closes with the last close of the group in any order,
   copies the granted flags (GSO/USO, ECN, DF, PKTINFO), and refuses to receive (`KSL_E_NOT_SUPPORTED`). Linux, Apple and
@@ -360,6 +369,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC: `QuicEndpoint.bind` with `loops > 1` no longer throws `UnsupportedOperationException` on macOS, iOS and Windows
+  or with `QuicEndpointConfig.io`: the loops share one socket there (see Added). It still throws without the
+  accelerated socket and no `io`.
 - Ktor server: a TCP connector holds at most 10,000 connections by default (`maxTcpConnections`, see "Added"); before,
   it accepted without a bound. At the limit it stops accepting and new clients wait in the OS backlog.
 - QUIC (performance): the packet path on the accelerated socket allocates nothing per datagram: the connection ID table
