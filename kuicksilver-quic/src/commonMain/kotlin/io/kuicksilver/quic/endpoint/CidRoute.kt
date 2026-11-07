@@ -325,6 +325,10 @@ internal class QuicLbState(
     private val lock = SpinLock()
     private var closed = false
 
+    /** Committed configuration changes: a loop whose connections have not moved to the current one yet sees a newer value. */
+    private val generationCounter = kotlin.concurrent.atomics.AtomicLong(0)
+    val generation: Long get() = generationCounter.load()
+
     /** Every server ID this endpoint used, and whether in clear (section 9.7). */
     private val history = ArrayList<kotlin.Pair<String, Boolean>>()
 
@@ -446,6 +450,7 @@ internal class QuicLbState(
                 if (closed) return@locked false
                 if (next != null && next.retired) throw StaleConfiguration()
                 routes = Routes(next, previous)
+                generationCounter.store(generationCounter.load() + 1)
                 p.config?.let { history += sidHex(it) to it.encrypted }
                 true
             }

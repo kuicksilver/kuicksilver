@@ -841,6 +841,9 @@ public class EndpointCore internal constructor(
     private var tokensReleased = false
     private var lbReleased = false
 
+    /** The QUIC-LB configuration change ([QuicLbState.generation]) this loop's connections were last moved to. */
+    private var lbGeneration = 0L
+
     /** Server connections whose QUIC-LB configuration change waits for a nonce reservation that could not be stored. */
     private val reissueRetry = LinkedHashSet<ConnectionCore>()
 
@@ -850,6 +853,8 @@ public class EndpointCore internal constructor(
      */
     private fun retryPendingReissues() {
         route.tick() // every loop: the back-off is scaled by the group's size, so a quiet loop 0 cannot stall the retries
+        // a change this loop has not moved its connections to (the group's fan-out missed it): now (section 3.1)
+        lb?.let { if (it.generation != lbGeneration) reissueForLoadBalancer() }
         if (reissueRetry.isEmpty() || !route.canIssueRoutable()) return
         val it = reissueRetry.iterator()
         while (it.hasNext()) {
@@ -866,7 +871,12 @@ public class EndpointCore internal constructor(
      * (unroutable IDs) the connections keep the IDs they have and hand out no new ones (section 3.2). Loop thread only.
      */
     internal fun reissueForLoadBalancer() {
-        val current = lb?.routes?.current
+        val state = lb ?: return
+        // once per committed change on this loop: the fan-out and the batch check may both come
+        val generation = state.generation
+        if (generation == lbGeneration) return
+        lbGeneration = generation
+        val current = state.routes.current
         for (i in connections.indices) {
             val c = connections[i]
             if (c.role != TlsRole.Server || c.state == ConnectionState.Closing || c.state == ConnectionState.Draining ||

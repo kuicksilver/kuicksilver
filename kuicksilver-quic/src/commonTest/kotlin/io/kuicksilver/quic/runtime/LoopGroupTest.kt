@@ -42,11 +42,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -822,6 +824,7 @@ class LoopGroupTest {
                     val job = launch { group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key())) }
                     caller.complete(job)
                     job.join()
+                    group.fanOutForTest?.join()
                     assertTrue(job.isCancelled)
                     loop0.afterLbCommitForTest = null
                     val s = serverConnectionOf(group.loopForTest(1))
@@ -858,6 +861,7 @@ class LoopGroupTest {
                         .space
                         .useUpReservationForTest()
                     group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, key, reservation))
+                    group.fanOutForTest?.join()
                     reservation.fail = false // right away: the back-off stays at its first step
                     val s = serverConnectionOf(loop1)
                     val reissued = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -879,6 +883,67 @@ class LoopGroupTest {
                     }
                     assertTrue(rounds < 100, "$rounds round trips")
                     assertEquals(0L, group.loopForTest(0).stats.datagramsReceived, "loop 0 saw no traffic")
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
+
+    /**
+     * Section 3.1: a loop that misses the group's fan-out (blocked past its timeout) moves its connections at its next
+     * receive batch, by the configuration's generation.
+     */
+    @Test fun quicLbLoopMissingTheFanOutMovesAtItsNextBatch() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val group = lbGroup(net, QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key()))
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(otherAddr, clientConfig) // loop 1's connection
+                    val sc = accepted.await()
+                    val st = c.openBidi()
+                    val input = sc.acceptStreamAfter(st)
+                    val loop1 = group.loopForTest(1)
+                    val s = serverConnectionOf(loop1)
+                    val moved = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    val reissues = kotlin.concurrent.atomics.AtomicInt(0)
+                    loop1.runOnLoop {
+                        s.cids.reissuedForTest = {
+                            reissues.incrementAndFetch()
+                            moved.complete(Unit)
+                        }
+                    }
+                    group.fanOutTimeout = kotlin.time.Duration.parse("50ms")
+                    val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    val blocked = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    // loop 1's thread busy past the fan-out's timeout
+                    loop1.scope.launch {
+                        blocked.complete(Unit)
+                        while (!release.isCompleted) { /* busy */ }
+                    }
+                    blocked.await()
+                    // returns while loop 1 is stuck: the fan-out runs in the group's scope, not in the caller
+                    group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key()))
+                    // the fan-out gives loop 1 up after its timeout, though loop 1 is still stuck (it waits off the loop)
+                    assertNotNull(group.fanOutForTest).join()
+                    assertTrue(!moved.isCompleted, "loop 1 has not moved yet")
+                    release.complete(Unit)
+                    var rounds = 0
+                    while (!moved.isCompleted) {
+                        // round trips to loop 1: its next receive batch sees the new generation
+                        st.output.writeFully(ByteArray(100) { 1 })
+                        st.output.flush()
+                        input.readFully(ByteArray(100))
+                        rounds++
+                    }
+                    val ids = loop1.runOnLoop { (0L..10L).mapNotNull { s.cids.localForTest(it)?.cid } }
+                    assertTrue(ids.any { (it[0].toInt() and 0xff) ushr 5 == 3 }, "loop 1's connection got an ID of the new configuration")
+                    assertTrue(rounds <= 3, "at its next batch: $rounds round trips")
+                    assertEquals(1, reissues.load(), "moved once: the generation keeps the fan-out and the batch from both moving it")
                     c.close()
                 } finally {
                     client.close()

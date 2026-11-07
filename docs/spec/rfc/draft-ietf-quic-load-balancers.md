@@ -96,7 +96,9 @@ Stateless Resets.
 - `QuicEndpoint.updateLoadBalancer`: new IDs use the new configuration at once; every live server connection gets one
   NEW_CONNECTION_ID under it whose Retire Prior To retires every earlier ID (`ConnectionIdManager.requestReissue`), and
   the replacements the client's retirements call for come from it too. A change while the client has not retired what the
-  last one asked for waits for those retirements (RFC 9000 5.1.2), one at most. The issuance mode follows the ID actually
+  last one asked for waits for those retirements (RFC 9000 5.1.2), one at most. In a group, loop 0 commits; the other
+  loops move their connections in the background (5 s each), and a loop that missed it moves them at its next receive
+  batch, by the configuration's generation, so none keeps the old configuration's IDs (section 3.1). The issuance mode follows the ID actually
   made: a plaintext change sends exactly one ID (fills of a connection that had the full set stop), an unroutable one
   none. `null` switches to unroutable IDs: new connections get one ID and `disable_active_migration`, live ones keep
   their IDs and stop handing out new ones. After a Retry the connection keeps the Retry's SCID as its one server ID

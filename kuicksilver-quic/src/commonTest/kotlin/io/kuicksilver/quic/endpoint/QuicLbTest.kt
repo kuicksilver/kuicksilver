@@ -331,6 +331,33 @@ class QuicLbTest {
         assertEquals(65_536L, r.stores.last(), "the block after an outage starts at the next draw, not past the stale mark")
     }
 
+    /** The back-off doubles from one batch to 1,024 and stays there; a success resets it, so the next failure waits one batch. */
+    @Test fun reservationBackOffDoublesThenHoldsThenResets() {
+        val r = MemoryReservation().also { it.fail = true }
+        val space = QuicLbNonceSpace(4, ByteArray(4), null, r, 0)
+        space.prime() // attempt at tick 0
+        val attempts = ArrayList<Int>()
+        var tick = 0
+        while (attempts.size < 12) {
+            val before = r.stores.size
+            space.tick()
+            tick++
+            if (r.stores.size > before) attempts += tick
+        }
+        val gaps = (listOf(0) + attempts).zipWithNext { a, b -> b - a }
+        assertEquals(listOf(1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 1024), gaps)
+        r.fail = false
+        repeat(1024) { space.tick() }
+        assertEquals(14, r.stores.size, "the store after the last 1,024-batch gap succeeds")
+        assertNotNull(space.next(null))
+        r.fail = true
+        space.useUpReservationForTest()
+        space.tick()
+        assertEquals(15, r.stores.size, "a failure again")
+        space.tick()
+        assertEquals(16, r.stores.size, "and the gap is back to one batch")
+    }
+
     /** A storm of requests during an outage: the store is tried at most once a batch, however many requests come. */
     @Test fun reservationStormTriesAtMostOnceABatch() {
         val r = MemoryReservation().also { it.fail = true }

@@ -17,6 +17,7 @@ import io.kuicksilver.quic.Releaser
 import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.withLiteralHost
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.AtomicInt
@@ -73,6 +74,7 @@ internal class LoopGroup private constructor(
         reason: String,
     ) {
         if (!closingFlag.compareAndSet(0, 1)) return
+        lbScope.cancel()
         for (l in loops) l.closeWith(code, reason)
         acceptQueue.close(
             io.kuicksilver.quic.QuicException
@@ -86,6 +88,13 @@ internal class LoopGroup private constructor(
     }
 
     private val lbLock = kotlinx.coroutines.sync.Mutex()
+
+    /** Where a configuration change's fan-out to loops 1..N runs: the caller of updateLoadBalancer does not wait for it. */
+    private val lbScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
+    /** Test hooks: the last fan-out, and how long a loop has to take a change in it. */
+    internal var fanOutForTest: kotlinx.coroutines.Job? = null
+    internal var fanOutTimeout: kotlin.time.Duration = FAN_OUT_TIMEOUT
 
     /** What [updateLoadBalancer] would throw for [config], changing nothing. */
     internal suspend fun checkLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
@@ -104,20 +113,33 @@ internal class LoopGroup private constructor(
             // built off the loops (a nonce reservation's first store may fsync), switched to on loop 0
             val lb = first.core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
             // once committed on loop 0, the other loops' connections move too, even if the caller is cancelled meanwhile
+            // once committed on loop 0, the other loops move their connections: here as a fast path, launched in the group's
+            // scope so the caller never waits on a stuck loop; a loop that misses it moves at its next receive batch anyway
+            // (EndpointCore.reissueForLoadBalancer, by the configuration's generation)
             applyLoadBalancer(lb, config, first) {
-                for (l in loops) {
-                    if (l === first) continue
-                    try {
-                        // a wedged loop must not hold the update (and the next one) for ever
-                        kotlinx.coroutines.withTimeoutOrNull(FAN_OUT_TIMEOUT) { l.runOnLoop { l.core.reissueForLoadBalancer() } }
-                            ?: l.observer.logger.emit(io.kuicksilver.quic.LogLevel.Warn) {
-                                "QUIC-LB: loop ${l.index} did not take the configuration change within $FAN_OUT_TIMEOUT; " +
-                                    "its connections keep their IDs until the next change"
+                fanOutForTest =
+                    lbScope.launch {
+                        for (l in loops) {
+                            if (l === first || l.closing) continue
+                            // posted to the loop; given up after the timeout (the task then does nothing when it finally
+                            // runs: that loop moves at its next receive batch). The wait is not on the loop's dispatcher,
+                            // so a stuck loop cannot hold it past the timeout
+                            val abandoned = kotlin.concurrent.atomics.AtomicInt(0)
+                            val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+                            l.scope.launch {
+                                if (abandoned.compareAndSet(0, 2)) l.core.reissueForLoadBalancer()
+                                done.complete(Unit)
                             }
-                    } catch (_: io.kuicksilver.quic.QuicException.EndpointClosing) {
-                        // that loop is closing with the group: nothing to move
+                            if (kotlinx.coroutines.withTimeoutOrNull(fanOutTimeout) { done.await() } == null &&
+                                abandoned.compareAndSet(0, 1)
+                            ) {
+                                l.observer.logger.emit(io.kuicksilver.quic.LogLevel.Warn) {
+                                    "QUIC-LB: loop ${l.index} did not take the configuration change within $fanOutTimeout; " +
+                                        "it moves its connections at its next receive batch"
+                                }
+                            }
+                        }
                     }
-                }
             }
         } finally {
             lbLock.unlock()

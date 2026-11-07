@@ -89,7 +89,9 @@ public interface QuicEndpoint : AutoCloseable {
      * switched to on the endpoint's loops, one update at a time; once switched, cancelling the caller does not undo it.
      * The call waits for the configuration's nonce reservation (its first `store`) and for the loop it switches on, and
      * cannot be cancelled while it does: a `QuicLbNonceReservation` that hangs, or a wedged loop, holds it and every later
-     * update. In a group, a loop that takes more than 5 s to move its connections is logged at `Warn` and skipped.
+     * update. In a group the switch happens on loop 0, and the other loops move their connections after the call returns
+     * (in the background, without the caller waiting on any of them); a loop that does not do so within 5 s is logged at
+     * `Warn` and moves them at its next receive batch.
      *
      * IllegalArgumentException for a configuration of another connection ID length, a plaintext one while a
      * `preferredAddress` is offered, or one that uses a server ID in clear that an encrypted configuration used, or the

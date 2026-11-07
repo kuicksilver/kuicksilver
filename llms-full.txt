@@ -706,7 +706,8 @@ NEW_CONNECTION_ID that retires it, and an unroutable one made only because no no
 update builds the new configuration on `Dispatchers.IO` (a reservation's first `store` may fsync there), off the
 endpoint's loops, and switches to it on them, one update at a time; a caller cancelled after the switch leaves it in force. The call cannot be
 cancelled while it waits for the reservation's `store` or for a loop: a store that hangs, or a wedged loop, holds it (a
-group skips, and logs, a loop that takes more than 5 s to move its connections).
+group switches on loop 0 and the other loops move their connections in the background, after the call returned; one
+that does not within 5 s is logged and moves them at its next receive batch).
 Later stores run on the loop that draws past half a block; after a failed store the retries are paced by the receive
 batches of every loop (never by the requests themselves, so a flood of them cannot drive it), with the back-off scaled
 by the number of loops, so
