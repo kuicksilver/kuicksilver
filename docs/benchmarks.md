@@ -505,6 +505,62 @@ its run-to-run spread on this host (its counter forces a collection every 256 Ki
 bindings' per-call `memScoped` arena and pinning are per batch, not per datagram, and were not changed. Off-heap
 buffers through FFM are left for later.
 
+### Several loops on one socket (S3.4, 2026-11-07)
+
+`MultiLoopBenchmark` (`./gradlew --max-workers=2 :kuicksilver-bench:jvmLoopsBenchmark` and `macosArm64LoopsBenchmark`):
+one server endpoint with `loops` endpoint loops on `127.0.0.1:0` and 8 client endpoints (one loop and one socket each),
+all in one process over loopback UDP through the accelerated socket. On macOS the loops share one socket and its receiver
+thread (in-process routing, [Several loops on one port](guide/quic.md#several-loops-on-one-port)); on Linux each loop has
+its own `SO_REUSEPORT` socket and the kernel balances the 8 client flows. `handshake`: whole connections with ksl crypto
+(P-256 certificate), 4 at a time per client, the client connects and closes; `bulk8`: 8 connections, one per client, each
+moving 16 MiB to the server with ksl crypto (AES-GCM); `bulk8null`: the same with the Null crypto provider, the upper bound
+the receive path leaves. Medians of 5 iterations of 2 s after 3 of warm-up, [min–max] in brackets; JVM: JMH, 1 fork.
+M4 Max (10 performance and 4 efficiency cores), macOS 26.7, JVM 21; Linux: the same JVM benchmark in Docker Desktop's
+`linux/arm64` VM (14 CPUs, kernel 7.0, Temurin 21) against the manylinux `libksl.so`. Measured on `9869a72a3` plus the
+benchmark; no other build ran, but the host was not quiet (load average 4–9 with the runs, macOS background daemons at
+times). Windows: not measured yet; the manual `windows-loops-bench` job of `build.yml` (workflow_dispatch with
+`only=windows-loops-bench`) runs the JVM benchmark on windows-2025 and keeps the JMH report.
+
+| handshakes/s | loops 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| macOS, Native | 2237 [2164–2380] | 4651 (2.08×) | 7733 (3.46×) | 7595 (3.39×) |
+| macOS, JVM | 2334 [2249–2463] | 4700 (2.01×) | 7736 (3.31×) | 7733 (3.31×) |
+| Linux, JVM (kernel balancing) | 2228 [2200–2315] | 3769 (1.69×) | 5203 (2.33×) | 8549 (3.84×) |
+
+| MiB/s, 8 connections | loops 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| macOS, Native, ksl | 220 [215–221] | 271 (1.23×) | 275 (1.25×) | 272 (1.23×) |
+| macOS, Native, Null | 231 [230–234] | 295 (1.28×) | 276 (1.20×) | 290 (1.25×) |
+| macOS, JVM, ksl | 235 [231–236] | 310 (1.32×) | 289 (1.23×) | 314 (1.34×) |
+| macOS, JVM, Null | 259 [257–260] | 314 (1.21×) | 320 (1.24×) | 324 (1.25×) |
+| Linux, JVM, ksl (kernel balancing) | 331 [326–339] | 223 (0.67×) | 204 (0.62×) | 200 (0.60×) |
+| Linux, JVM, Null (kernel balancing) | 387 [384–393] | 211 (0.55×) | 195 (0.50×) | 201 (0.52×) |
+
+The receiver thread on macOS (JVM: its CPU time over the time the operations ran, from `ThreadMXBean`; Native: the share
+of its samples outside `poll` in `sample <pid> 5 1`, 5 s into a measured iteration of its own run) and the datagrams the
+dispatch dropped (`EndpointStats.datagramsDispatchDropped`, whole trial with warm-up):
+
+| receiver busy, dropped | loops 2 | 4 | 8 |
+|---|---|---|---|
+| handshake, JVM / Native | 30 % / 12 %, 0 | 44 % / 23 %, 0 | 44 % / 23 %, 0 |
+| bulk8, JVM / Native | 94 % / 86 %, 4 400–8 000 | 83 % / 92 %, 1 400–3 000 | 93 % / 93 %, 0–470 |
+| bulk8null, JVM / Native | 98 % / 90 %, 500–1 300 | 98 % / 89 %, 0–4 600 | 96 % / 95 %, 570–930 |
+
+- **Handshakes scale until the host runs out of cores.** 4 loops complete 3.3–3.5 times the handshakes of one (the
+  plan's estimate before measuring: 3.3–3.7). 8 loops add nothing here: at 4 loops the process already keeps about 10
+  cores busy (`sample`: the 8 client endpoints do as much TLS work as the server), which is all the performance cores
+  of this host. The receiver is not the limit: a quarter of a core on Native.
+- **Bulk transfers are capped by the one receiver,** at 1.2–1.3 times one loop with either crypto. The receiver is
+  busy 85–95 % of the time, and 78–86 % of its samples are in the `recvmsg` system call itself: Darwin has no GRO or
+  `recvmmsg`, so it is one system call per datagram, about 3 µs each at 300 MiB/s. The Null crypto rows end at the same
+  ceiling: decryption runs on the loops, which are not the limit, and the copy and routing after `recvmsg` take a few
+  percent of the receiver. When the receiver falls behind, the kernel's buffer and the loops' rings drop datagrams
+  (counted above) and loss recovery resends them. With one connection, more loops never help: it lives on one loop.
+- **Linux (kernel balancing), as a control:** handshakes scale with the loops the 8 client flows hash to (8 flows over 2
+  or 4 sockets are rarely even), and bulk transfers over 8 connections are slower with more than one loop (0.5–0.67×),
+  with no datagram dropped at the server and almost no packet lost. This is the kernel mode that Linux had before the
+  in-process routing and is unchanged by it; it is not explained yet and is listed in [Still open](#still-open).
+
 ## msquic's goodput outlier
 
 Some repetitions are 2–6 % slower, with either client (2026-10-20: four of five JVM, two of five
@@ -523,6 +579,9 @@ msquic runs emulated here, and why its congestion controller keeps that rate was
   ([0.3.0 work in progress](#030-work-in-progress)); the handshake table is to be measured again; the Kotlin side is on
   the roadmap.
 - **The Kotlin/Native server** costs 28 % more CPU per GB than the JVM server (3.5 vs 2.7 s/GB).
+- **Several loops on Linux, bulk:** with kernel balancing, 8 bulk connections move 0.5–0.67 times the MiB/s of one loop
+  when spread over 2 to 8 loops ([Several loops on one socket](#several-loops-on-one-socket-s34-2026-11-07), Docker
+  `linux/arm64`), with no drops at the server; to be profiled on a Linux host.
 - **Acknowledgements:** fewer ACKs per byte would need the receiver side of the ack-frequency extension
   (draft-ietf-quic-ack-frequency).
 

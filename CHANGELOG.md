@@ -24,7 +24,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   that falls more than 512 datagrams behind loses its own datagrams, counted in the new
   `EndpointStats.datagramsDispatchDropped`; the receiver never waits for it. Linux and Android keep a socket per loop.
   Handshakes and many connections spread over the loops; one connection is not faster with more loops. See
-  docs/guide/quic.md, "Several loops on one port".
+  docs/guide/quic.md, "Several loops on one port". Measured on an M4 Max (docs/benchmarks.md, "Several loops on one
+  socket"): 4 loops complete 3.3–3.5 times the handshakes of one; 8 bulk connections move 1.2–1.3 times the bytes,
+  capped by the receiver's one `recvmsg` per datagram on Darwin.
 - Native: `ksl_udp_sender`, a send-only clone of a `ksl_udp` socket with its own send scratch, so several threads send on
   one UDP socket (one per clone); it shares the descriptor, which closes with the last close of the group in any order,
   copies the granted flags (GSO/USO, ECN, DF, PKTINFO), and refuses to receive (`KSL_E_NOT_SUPPORTED`). Linux, Apple and

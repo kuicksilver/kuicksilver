@@ -126,7 +126,7 @@ to `main` and `release/**`, on pull requests to them, weekly, and by hand. The Q
 and by hand, so hosted CI does not repeat every local step on every push. Its jobs: `lint`; the OpenSSL
 builds in Docker; `linux` (x64 and arm64: C tests, `libksl.so`, JVM suites, system OpenSSL); `linux-native` and
 `linux-native-arm64` (Kotlin/Native test executables); `windows` (the `mingwX64` test executables and the C tests on a
-Windows runner); `windows-jvm` (JVM suites on Windows against the mingw-w64 dll); `apple` (ABI dumps, ASan C tests, JVM suites, the Intel-Mac library, the double build) and `apple-native` (`macosArm64`
+Windows runner); `windows-jvm` (JVM suites on Windows against the mingw-w64 dll); `windows-loops-bench` (by hand only, with `only=windows-loops-bench`: `MultiLoopBenchmark` on Windows, not a gate); `apple` (ABI dumps, ASan C tests, JVM suites, the Intel-Mac library, the double build) and `apple-native` (`macosArm64`
 and `iosSimulatorArm64` suites, `iosArm64` compiled); `android` (API 24 and 35 emulators); `jdk-compat`
 (tests on JDK 17 and 25); `jvm-jar` and `consumer-smoke` (the jar with all five JNI libraries, a sample built from a
 local publication); and, weekly or on request, the QUIC Interop Runner against the six peers. Nothing in it publishes,

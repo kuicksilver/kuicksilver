@@ -13,6 +13,7 @@
 #                                                        ├─ apple (macOS arm64): ABI dumps, ASan C tests, JVM + macosArm64 suites, Intel-Mac dylib, repro
 #                                                        └─ interop-images ── interop (weekly / dispatch): JVM and native image × 6 peers
 #   openssl-docker ── windows-jvm (windows-2025): the JVM suites against the mingw-w64 JNI dll
+#   openssl-docker ── windows-loops-bench (windows-2025, dispatch with only=windows-loops-bench): MultiLoopBenchmark, not a gate
 #   openssl-docker + linux + apple ── jvm-jar: the kuicksilver-native jar with all five JNI libraries ── consumer-smoke (mavenLocal)
 #   JNI artifacts jni-<classifier> (tools/build-jni.sh output dirs; .github/workflows/release.yml reuses them from the green run):
 #     linux-x86_64, linux-aarch_64 ← linux · osx-aarch_64, osx-x86_64 ← apple · windows-x86_64 ← openssl-docker (mingw-x64)
@@ -366,6 +367,31 @@ jobs:
           name: reports-windows-jvm
           path: '**/build/reports/tests/'
           retention-days: 7
+
+  windows-loops-bench:
+    # MultiLoopBenchmark (docs/benchmarks.md, "Several loops on one socket") on a Windows host: by hand only, and only when
+    # `only` names it (never in the empty-`only` or scheduled runs, never a gate). Windows binds exclusively, so the loops
+    # share one socket and its receiver; the JVM against the CI-built mingw-w64 dll, as in windows-jvm. The JMH report is the artifact.
+    if: ${{ github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.only), ',windows-loops-bench,') }}
+    needs: openssl-docker
+    runs-on: windows-2025
+    permissions: { contents: read }
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: jni-windows-x86_64, path: kuicksilver-native/build/jni }
+      - name: 'bench: loops on one socket (JVM, Windows)'
+        run: $G --max-workers=2 -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost :kuicksilver-bench:jvmLoopsBenchmark
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: loops-bench-windows
+          path: kuicksilver-bench/build/reports/benchmarks/
+          if-no-files-found: warn
+          retention-days: 30
 
   apple:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',apple,')) }}
