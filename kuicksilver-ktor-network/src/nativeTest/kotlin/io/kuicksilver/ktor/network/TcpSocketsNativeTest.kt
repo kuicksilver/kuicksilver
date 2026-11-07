@@ -42,6 +42,16 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
+/**
+ * Runs [use] with a loopback port that no socket listens on and that nothing takes while it runs, so a connect to it is
+ * refused. A port that was only freed (a listener closed before the connect) can be taken in between: by another process's
+ * listener, or as the connect's own port (a TCP self-connect); that connect then really succeeds.
+ */
+internal expect suspend fun <T> withRefusedLoopbackPort(
+    selector: SelectorManager,
+    use: suspend (port: Int) -> T,
+): T
+
 /** The addresses the native sockets report are the ones the system bound and connected (the JVM reports names instead). */
 class TcpSocketsNativeTest {
     @Test fun ipv6AddressesAreTheBoundOnes() =
@@ -414,14 +424,13 @@ class TcpSocketsNativeTest {
             val selector = SelectorManager(Dispatchers.IO)
             val deaf = NoConnectWakeUpSelector(selector)
             try {
-                val probe = bindTcp(selector, "127.0.0.1", 0)
-                val port = (probe.localAddress as InetSocketAddress).port
-                probe.close() // nothing listens there now
-                val failure =
-                    withTimeoutOrNull(10.seconds) {
-                        runCatching { connectTcpAddressWith(deaf, TcpAddress(byteArrayOf(127, 0, 0, 1), port), 50.milliseconds) }
-                    } ?: error("a refused connect was still waiting after 10 s")
-                assertTrue(failure.isFailure, "a connect to a port nobody listens on succeeded")
+                withRefusedLoopbackPort(selector) { port ->
+                    val failure =
+                        withTimeoutOrNull(10.seconds) {
+                            runCatching { connectTcpAddressWith(deaf, TcpAddress(byteArrayOf(127, 0, 0, 1), port), 50.milliseconds) }
+                        } ?: error("a refused connect was still waiting after 10 s")
+                    assertTrue(failure.isFailure, "a connect to a port nobody listens on succeeded")
+                }
             } finally {
                 selector.close()
             }
