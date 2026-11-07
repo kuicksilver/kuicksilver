@@ -50,8 +50,9 @@ extern "C" {
 #define KSL_SERVER 1
 #define KSL_MODE_QUIC 0
 #define KSL_MODE_TCP 1
-#define KSL_VERIFY_NONE                                                                                                \
-    0 /* client: no certificate verification (tests); a TLS 1.2 server without EMS is still refused before Finished */
+// clang-format off
+#define KSL_VERIFY_NONE 0 /* client: no certificate verification (tests); a TLS 1.2 server without EMS is still refused before Finished */
+// clang-format on
 #define KSL_VERIFY_PAUSE 1
 #define KSL_VERIFY_OPENSSL 2
 #define KSL_CLIENT_CERT_NONE 0
@@ -65,21 +66,22 @@ extern "C" {
 #define KSL_OPT_CLIENT_CERT 2 /* KSL_CLIENT_CERT_* (server only: KSL_E_BAD_ARG on a client context) */
 #define KSL_OPT_MIN_VERSION 3 /* KSL_TLS1_2 | KSL_TLS1_3; QUIC contexts are always TLS 1.3 */
 #define KSL_OPT_MAX_VERSION 4
-#define KSL_OPT_NUM_TICKETS                                                                                            \
-    5 /* TLS 1.3 tickets sent automatically after the handshake (server); 0 also suppresses the in-handshake TLS 1.2 ticket (with ticket keys set) */
+// clang-format off
+#define KSL_OPT_NUM_TICKETS 5 /* TLS 1.3 tickets sent automatically after the handshake (server); 0 also suppresses the in-handshake TLS 1.2 ticket (with ticket keys set) */
+// clang-format on
 #define KSL_OPT_KEYLOG 6          /* 1 = collect RFC 9850 lines, drained with KSL_GET_KEYLOG */
 #define KSL_OPT_SNI_PAUSE 7       /* 1 = server pauses at ClientHello with KSL_WANT_SNI */
 #define KSL_OPT_GENERIC_ALERTS 8  /* 1 = every verification failure is sent as handshake_failure (40) */
 #define KSL_OPT_TICKET_LIFETIME 9 /* seconds a server-issued ticket stays valid */
-#define KSL_OPT_EARLY_DATA                                                                                             \
-    10 /* server, 1 = QUIC sessions accept 0-RTT: tickets carry early_data, OpenSSL's cache-based anti-replay is off
+// clang-format off
+#define KSL_OPT_EARLY_DATA 10 /* server, 1 = QUIC sessions accept 0-RTT: tickets carry early_data, OpenSSL's cache-based anti-replay is off
                                       (SSL_OP_NO_ANTI_REPLAY; the transport keeps the replay register), and each hello needs KSL_SET_EARLY_DATA
                                       plus a matching KSL_SET_EARLY_CONTEXT; KSL_E_BAD_ARG on a client context */
-#define KSL_OPT_LEVEL_AFTER_PAUSE                                                                                      \
-    11 /* client, KSL_VERIFY_PAUSE (ABI 7, additive): 1 = the presented chain is not held to the security level
+#define KSL_OPT_LEVEL_AFTER_PAUSE 11 /* client, KSL_VERIFY_PAUSE (ABI 7, additive): 1 = the presented chain is not held to the security level
                                       before KSL_WANT_VERIFY; the caller holds the path its verifier built to it with ksl_chain_level before
                                       it accepts (TrustConfig.Platform: the platform's path, not every certificate the peer sent).
                                       KSL_E_BAD_ARG on a server context */
+// clang-format on
 
 /* ksl_ssl_get keys */
 #define KSL_GET_ALPN 1    /* negotiated protocol, bytes */
@@ -90,26 +92,25 @@ extern "C" {
 #define KSL_GET_SESSION_REUSED 6  /* 1 byte: 1 if the handshake resumed a session */
 #define KSL_GET_EMS 7             /* 1 byte: 1 if extended master secret was used (TLS 1.2) */
 #define KSL_GET_QUIC_VERSION 8    /* 4 bytes big-endian: negotiated (server, RFC 9368) or set (client) QUIC version */
-#define KSL_GET_EARLY_DATA                                                                                             \
-    9 /* 1 byte: 0 not attempted, 1 rejected, 2 accepted (final once EncryptedExtensions is sent / received) */
-#define KSL_GET_QUIC_PENDING                                                                                           \
-    10 /* 16 bytes: per level 0..3, 4 bytes big-endian, CRYPTO bytes provided and not yet read by TLS */
+// clang-format off
+#define KSL_GET_EARLY_DATA 9 /* 1 byte: 0 not attempted, 1 rejected, 2 accepted (final once EncryptedExtensions is sent / received) */
+#define KSL_GET_QUIC_PENDING 10 /* 16 bytes: per level 0..3, 4 bytes big-endian, CRYPTO bytes provided and not yet read by TLS */
+// clang-format on
 
 /* ksl_ssl_set keys */
 #define KSL_SET_SNI 1         /* data = host name, ASCII */
 #define KSL_SET_VERIFY_NAME 2 /* data = DNS-ID or IP literal; required for verifying clients */
-#define KSL_SET_QUIC_VERSION                                                                                           \
-    3 /* data = 4-byte big-endian QUIC version (0x00000001 | 0x6b3343cf): labels for Handshake/1-RTT keys (RFC 9369 3.3);
+// clang-format off
+#define KSL_SET_QUIC_VERSION 3 /* data = 4-byte big-endian QUIC version (0x00000001 | 0x6b3343cf): labels for Handshake/1-RTT keys (RFC 9369 3.3);
                                       unknown -> KSL_E_BAD_ARG, after Handshake keys exist -> KSL_E_TOO_LATE */
-#define KSL_SET_EARLY_CONTEXT                                                                                          \
-    4 /* server, 1..64 bytes before the first drive: written into every ticket this session issues; a resumed ticket
+#define KSL_SET_EARLY_CONTEXT 4 /* server, 1..64 bytes before the first drive: written into every ticket this session issues; a resumed ticket
                                       whose stored context differs gets no early data (RFC 9001 section 4.6.3). Every server ticket also
                                       carries the QUIC version of its connection (the negotiated one); a ticket of another version than
                                       the client's original one is not resumed (RFC 9369 section 5) */
-#define KSL_SET_EARLY_DATA                                                                                             \
-    5 /* 1 byte before the first drive. Client: 1 = send 0-RTT with the session set by ksl_ssl_set_session
+#define KSL_SET_EARLY_DATA 5 /* 1 byte before the first drive. Client: 1 = send 0-RTT with the session set by ksl_ssl_set_session
                                       (KSL_E_NOT_SUPPORTED when its ticket does not allow early data). Server: 1 = the transport admits early
                                       data for this hello (replay register), 0 = refuse; KSL_E_NOT_SUPPORTED without KSL_OPT_EARLY_DATA */
+// clang-format on
 
 /* ksl_ssl_get_peer_chain selector */
 #define KSL_CHAIN_PRESENTED 0 /* as sent by the peer: leaf first (available during the pause) */
@@ -147,15 +148,14 @@ extern "C" {
 #define KSL_E_NOT_SUPPORTED 0xff0008u
 #define KSL_E_TRUNCATED 0xff0009u
 #define KSL_E_TOO_LATE 0xff000au /* the setting cannot change at this stage of the handshake */
-#define KSL_E_CRYPTO_LEVEL                                                                                             \
-    0xff000bu /* ksl_quic_provide: a level TLS no longer reads (RFC 9001 4.1.3) or more than
+// clang-format off
+#define KSL_E_CRYPTO_LEVEL 0xff000bu /* ksl_quic_provide: a level TLS no longer reads (RFC 9001 4.1.3) or more than
                                          KSL_QUIC_LEVEL_MAX unread bytes at one level */
-#define KSL_E_BIND                                                                                                     \
-    0xff000cu /* ksl_udp_open: the bind was refused (a port in use, an address not on this host); additive
+#define KSL_E_BIND 0xff000cu /* ksl_udp_open: the bind was refused (a port in use, an address not on this host); additive
                                          in ABI 7 */
-#define KSL_E_NO_MEMORY                                                                                                \
-    0xff000du /* ksl_udp_open, ksl_udp_sender: an allocation failed (the object, its scratch, a mutex); additive in ABI 7
+#define KSL_E_NO_MEMORY 0xff000du /* ksl_udp_open, ksl_udp_sender: an allocation failed (the object, its scratch, a mutex); additive in ABI 7
                  (ksl_udp_open answered KSL_E_BAD_ARG for it before) */
+// clang-format on
 
 typedef struct ksl_ctx ksl_ctx;
 typedef struct ksl_ssl ksl_ssl;
@@ -198,8 +198,9 @@ uint32_t ksl_abi_version(void);
 #define KSL_LIVE_PKEY 3    /* ksl_pkey references from ksl_pkey_new not yet dropped with ksl_pkey_free */
 #define KSL_LIVE_SESSION 4 /* ksl_session references from ksl_ssl_get1_session not yet dropped with ksl_session_free */
 #define KSL_LIVE_UDP 5     /* ksl_udp objects opened and not closed */
-#define KSL_LIVE_WAKE                                                                                                  \
-    6 /* wake descriptors those ksl_udp objects hold: pipe ends (Linux, Apple) or wake sockets (Windows) */
+// clang-format off
+#define KSL_LIVE_WAKE 6 /* wake descriptors those ksl_udp objects hold: pipe ends (Linux, Apple) or wake sockets (Windows) */
+// clang-format on
 #define KSL_LIVE_COUNT 7
 int ksl_live_objects(int64_t *out,
                      size_t n); /* writes the first min(n, KSL_LIVE_COUNT) counters; returns KSL_LIVE_COUNT */
@@ -313,18 +314,19 @@ int ksl_tcp_abort(ksl_ssl *);
 /* --- packet protection keys --- */
 ksl_key *ksl_key_initial(const uint8_t *dcid, size_t len, int is_server, int direction, uint32_t version);
 ksl_key *ksl_key_next(ksl_key *); /* key update generation; header protection key is shared */
-#define KSL_EKEY_TOKEN                                                                                                 \
-    1 /* AES-256-GCM key from 32 random bytes made inside ksl: Retry tokens via ksl_seal/ksl_open, pn = 64-bit token nonce */
-#define KSL_EKEY_RESET                                                                                                 \
-    2 /* HMAC-SHA256 key from 32 random bytes made inside ksl: stateless reset tokens via ksl_key_mac16 */
+// clang-format off
+#define KSL_EKEY_TOKEN 1 /* AES-256-GCM key from 32 random bytes made inside ksl: Retry tokens via ksl_seal/ksl_open, pn = 64-bit token nonce */
+#define KSL_EKEY_RESET 2 /* HMAC-SHA256 key from 32 random bytes made inside ksl: stateless reset tokens via ksl_key_mac16 */
+// clang-format on
 ksl_key *ksl_key_random(
     int kind); /* NULL on an unknown kind or RNG failure; the material never leaves ksl; immutable, so ksl_key_mac16 may run concurrently */
 int ksl_key_mac16(
     ksl_key *, const uint8_t *in, size_t len,
     uint8_t out[16]); /* KSL_EKEY_RESET only: first 16 bytes of HMAC-SHA256; KSL_ERROR for any other key */
-#define KSL_EKEY_LB                                                                                                    \
-    3 /* AES-128 block key for QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4): ksl_key_lb, or random
+// clang-format off
+#define KSL_EKEY_LB 3 /* AES-128 block key for QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4): ksl_key_lb, or random
          via ksl_key_random; used only with ksl_key_ecb16. Additive in ABI 7 */
+// clang-format on
 ksl_key *ksl_key_lb(const uint8_t key[16]); /* copies the 16 key bytes in (the caller wipes its copy); NULL on NULL */
 ksl_key *
 ksl_key_lb_dup(ksl_key *); /* KSL_EKEY_LB only: an independent copy (its own lifetime); NULL otherwise. Additive in
@@ -346,12 +348,13 @@ int ksl_key_ecb16(
 #define KSL_UDP_GRO 4
 #define KSL_UDP_DF 8 /* IP_PMTUDISC_PROBE + IPV6_DONTFRAG, never _DO (quic-go CVE-2024-53259) */
 #define KSL_UDP_REUSEPORT 16
-#define KSL_UDP_PKTINFO                                                                                                \
-    32 /* a wildcard bind (0.0.0.0, ::) only: each received datagram's destination address (IP_PKTINFO, IPV6_RECVPKTINFO;
+// clang-format off
+#define KSL_UDP_PKTINFO 32 /* a wildcard bind (0.0.0.0, ::) only: each received datagram's destination address (IP_PKTINFO, IPV6_RECVPKTINFO;
                                         IP_RECVPKTINFO on Apple; WSARecvMsg IP_PKTINFO / IPV6_PKTINFO on Windows) comes back from ksl_udp_recv_dst, and
                                         ksl_udp_send_src sends from a named source address (IP_PKTINFO / IPV6_PKTINFO cmsg): a reply leaves from the
                                         address the request arrived on, not the one the route picks (RFC 9000 section 9: a path is a 4-tuple).
                                         Never granted on a specific address, where the socket's address is the source anyway. Additive in ABI 7 */
+// clang-format on
 #define KSL_UDP_ADDR_LEN 20
 #define KSL_UDP_GET_FD 1     /* 4 bytes BE */
 #define KSL_UDP_GET_CAPS 2   /* 8 bytes: granted flags:4 BE | gso max segments:2 BE | batch:2 BE */
@@ -430,12 +433,14 @@ int ksl_retry_tag(uint32_t version, const uint8_t *odcid, size_t odcid_len, cons
 
 /* --- DNS (additive under ABI 7): one record type of one name from the operating system's resolver --- */
 #define KSL_DNS_NOT_FOUND (-2) /* return code: NXDOMAIN, or the name has no record of the type (NODATA) */
-#define KSL_DNS_NOT_SUPPORTED                                                                                          \
-    (-3) /* return code: this platform cannot ask (Android: Kotlin asks DnsResolver), or not with `server` */
+// clang-format off
+#define KSL_DNS_NOT_SUPPORTED (-3) /* return code: this platform cannot ask (Android: Kotlin asks DnsResolver), or not with `server` */
+// clang-format on
 #define KSL_DNS_MESSAGE 1 /* out[0]: the rest is the whole DNS response (Linux, res_nquery) */
-#define KSL_DNS_RECORDS                                                                                                \
-    2 /* out[0]: the rest is records, each ttl:4 BE | owner length:1 | owner | rdata length:2 BE | rdata
+// clang-format off
+#define KSL_DNS_RECORDS 2 /* out[0]: the rest is records, each ttl:4 BE | owner length:1 | owner | rdata length:2 BE | rdata
                                      (Apple DNSServiceQueryRecord, Windows DnsQuery_W: those hand out records, not messages) */
+// clang-format on
 int ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int timeout_ms, uint8_t *out, size_t cap,
                   size_t *len);
 /* class IN. name: 1..253 printable ASCII bytes, labels of 1..63 (else KSL_ERROR before any lookup). server: NULL for the system's

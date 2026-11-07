@@ -8,8 +8,9 @@
 #define _GNU_SOURCE 1 /* pipe2, recvmmsg-era socket flags, clock_gettime */
 #endif
 #ifndef __APPLE_USE_RFC_3542
-#define __APPLE_USE_RFC_3542                                                                                           \
-    1 /* Darwin: IPV6_RECVPKTINFO and the RFC 3542 IPV6_PKTINFO (not RFC 2292's), as msquic datapath_kqueue.c */
+// clang-format off
+#define __APPLE_USE_RFC_3542 1 /* Darwin: IPV6_RECVPKTINFO and the RFC 3542 IPV6_PKTINFO (not RFC 2292's), as msquic datapath_kqueue.c */
+// clang-format on
 #endif
 #include "ksl_internal.h"
 #include <errno.h>
@@ -17,8 +18,9 @@
 #include <string.h>
 
 #if defined(__linux__) || defined(__APPLE__)
-#define KSL_UDP_ACCEL                                                                                                  \
-    1 /* Linux: GSO, GRO, ECN, DF probe mode; Apple: the same socket without GSO/GRO, DF through IP_DONTFRAG */
+// clang-format off
+#define KSL_UDP_ACCEL 1 /* Linux: GSO, GRO, ECN, DF probe mode; Apple: the same socket without GSO/GRO, DF through IP_DONTFRAG */
+// clang-format on
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>

@@ -16,8 +16,9 @@
 #define KSL_NLEVELS 4
 #define KSL_QUIC_LEVEL_MAX (256u * 1024u) /* unread CRYPTO bytes ksl holds per level (ksl_quic_provide) */
 #define KSL_MSG 512
-#define KSL_CLIENT_TICKETS                                                                                             \
-    6 /* tickets a TCP client session keeps until they are handed out (ksl_ctx.c new_session_cb) */
+// clang-format off
+#define KSL_CLIENT_TICKETS 6 /* tickets a TCP client session keeps until they are handed out (ksl_ctx.c new_session_cb) */
+// clang-format on
 
 typedef struct {
     uint8_t *buf;
