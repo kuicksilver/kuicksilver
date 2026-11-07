@@ -4,7 +4,7 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.http.HttpStatusCode
 import io.ktor.network.selector.SelectorManager
-import io.ktor.network.sockets.aSocket
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.Application
@@ -19,6 +19,7 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -171,7 +172,7 @@ class ServerH1BodyTest {
                 val size = 32 * 1024 * 1024
                 val selector = SelectorManager(Dispatchers.IO)
                 try {
-                    val socket = aSocket(selector).tcp().connect("127.0.0.1", port)
+                    val socket = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
                     val w = socket.openWriteChannel(autoFlush = true)
                     val r = socket.openReadChannel()
                     w.writeStringUtf8("POST /ignore HTTP/1.1\r\nHost: s\r\nContent-Length: $size\r\n\r\n")

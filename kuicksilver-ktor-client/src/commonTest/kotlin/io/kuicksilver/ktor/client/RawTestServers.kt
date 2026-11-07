@@ -21,6 +21,7 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
@@ -99,14 +100,14 @@ internal suspend fun tlsWithSilentUdp(
                             }
                         },
                         release = { it.close() },
-                    ) { p -> aSocket(selector).tcp().bind("127.0.0.1", p) }.let { (u, t, _) ->
+                    ) { p -> bindTcp(selector, "127.0.0.1", p) }.let { (u, t, _) ->
                         udp = u
                         t
                     }
                 }
 
                 else -> {
-                    aSocket(selector).tcp().bind("127.0.0.1", 0)
+                    bindTcp(selector, "127.0.0.1", 0)
                 }
             }
     } catch (e: Throwable) {
@@ -233,7 +234,7 @@ internal suspend fun udpRelay(
                         }
                     },
                     release = { it.close() },
-                ) { p -> aSocket(selector).tcp().bind("127.0.0.1", p) }.let { (u, t, _) -> u to t }
+                ) { p -> bindTcp(selector, "127.0.0.1", p) }.let { (u, t, _) -> u to t }
             } else {
                 aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0)) to null
             }

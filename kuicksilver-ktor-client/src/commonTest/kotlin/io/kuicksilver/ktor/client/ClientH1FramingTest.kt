@@ -15,7 +15,6 @@ import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
@@ -27,6 +26,7 @@ import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.client.h1.writeBody
 import io.kuicksilver.ktor.client.h1.writeHeaders
+import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -402,7 +402,7 @@ class ClientH1FramingTest {
         block: suspend (Int) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
-        val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+        val listener = bindTcp(selector, "127.0.0.1", 0)
         try {
             coroutineScope {
                 val server =
