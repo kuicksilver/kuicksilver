@@ -26,17 +26,28 @@ import kotlin.time.Duration.Companion.milliseconds
  * supplied (`QuicEndpointConfig.dispatcher`): other work shares its thread (a second endpoint, whose datagram this one would
  * be waiting for, or a UI), and a wait there would hold that work up for every quiet gap.
  *
- * The work queued on the loop (timers, the application's reads and writes) runs as often as with the blocking receive,
- * which suspended after at most [YIELD_DATAGRAMS] datagrams: the receiver yields once it took that many directly, once
- * [YIELD_INTERVAL] passed since its last yield, and when a timer is due. Not after every batch: a paced sender's batches
- * hold a few datagrams, and an application reading the stream would be woken for each. Not less often either: an
+ * The loop's own wake-ups (a stream's reader for new data, the timer coroutine; [LoopDispatcher.Batched]) run as often as
+ * with the blocking receive, which suspended after at most [YIELD_DATAGRAMS] datagrams: the receiver yields once it took
+ * that many directly, once [YIELD_INTERVAL] passed since its last yield, and when a timer is due. Not after every batch: a
+ * paced sender's batches hold a few datagrams, and a reader would be handed back to its own thread for each (the JVM
+ * client from quinn's server took a third more CPU per GB when readers counted as queued work). Not less often either: an
  * application read that extends the stream's flow-control credit only every 2 ms stalls a fast sender (a first version
- * made kuicksilver -> kuicksilver 2.6 times slower). A command posted during a wait runs after it, at most [maxWait] later.
+ * made kuicksilver -> kuicksilver 2.6 times slower).
+ *
+ * Any other task queued on the loop's own dispatcher ([queued]: an application's write or command hopping onto the loop with
+ * `withContext`, another receiver's batch) runs before the next batch, and the receiver starts no socket wait while one is
+ * queued: with the socket empty it yields to it first, then waits. A writer that waited for the receiver's next 16
+ * datagrams or 1 ms held a single connection over loopback to about 30 MiB/s with the sender idle (docs/benchmarks.md, "One
+ * connection over loopback"). A task queued while a wait is already under way still runs after it: when a datagram
+ * arrives, at most [maxWait] later. Two receivers of one loop (the endpoint's socket and a migration path's or a preferred
+ * address's) count as such work for each other, so while both flow they alternate batch by batch.
  */
 internal class BatchReceiver(
     private val io: DatagramIo,
     private val now: LoopClock,
     internal val maxWait: Duration = PLATFORM_WAIT,
+    /** The loop's own dispatcher, whose count of queued tasks tells whether work waits behind the receiver; null: not known. */
+    private val queued: LoopDispatcher? = null,
 ) {
     /** The loop's clock: an interface, so reading it does not box the [TimeMark] as a `() -> TimeMark` would, once per batch. */
     fun interface LoopClock {
@@ -57,6 +68,12 @@ internal class BatchReceiver(
     private var sinceYield = 0
     private var lastYield = TimeMark(0)
 
+    /** [LoopDispatcher.dispatched] up to the receiver's last yield: the tasks queued until then have run. */
+    private var accounted = 0L
+
+    /** A task was queued on the loop's dispatcher since the receiver last let queued work run. */
+    private fun workQueued(): Boolean = queued != null && queued.dispatched() > accounted
+
     /** Batches taken on the loop's thread (tests, diagnostics). */
     var directBatches = 0L
         private set
@@ -71,15 +88,20 @@ internal class BatchReceiver(
         directTried: Boolean = false,
     ): Int {
         if (direct != null && flowing && !directTried) {
-            if (yieldDue(untilTimer)) {
-                yield()
-                yielded()
+            if (yieldDue(untilTimer)) yieldToQueued()
+            var n = takeDirect(direct, into, untilTimer)
+            if (n == WORK_FIRST) {
+                // the socket is empty and work is queued: that work first, then the wait on this thread, not the blocking
+                // receive's two hand-offs
+                yieldToQueued()
+                n = takeDirect(direct, into, untilTimer)
             }
-            val n = takeDirect(direct, into, untilTimer)
             if (n > 0) return n
         }
         val n = io.receive(into) // suspends: the loop's queued work runs meanwhile
         yielded()
+        // [accounted] stays: a receive may return without suspending (a loop's inbox on a shared socket whose signal was already
+        // set), and then nothing queued ran. When it did suspend, the next round yields once more for nothing
         flowing = n > 0
         return n
     }
@@ -95,19 +117,40 @@ internal class BatchReceiver(
     ): Int {
         if (direct == null || !flowing || yieldDue(untilTimer)) return NOT_TRIED
         val n = takeDirect(direct, into, untilTimer)
-        return if (n > 0) n else NOTHING
+        // WORK_FIRST: receive yields to that work, then waits
+        return when {
+            n > 0 -> n
+            n == WORK_FIRST -> NOT_TRIED
+            else -> NOTHING
+        }
     }
 
     private fun yieldDue(untilTimer: TimerHorizon): Boolean =
-        sinceYield >= YIELD_DATAGRAMS || now.now() - lastYield >= YIELD_INTERVAL || untilTimer.untilTimer() <= Duration.ZERO
+        workQueued() || sinceYield >= YIELD_DATAGRAMS || now.now() - lastYield >= YIELD_INTERVAL ||
+            untilTimer.untilTimer() <= Duration.ZERO
 
-    /** What is queued, or what arrives within [maxWait] and before the next timer; 0 when nothing came. */
+    /**
+     * Lets the work queued on the loop run. The yield queues the receiver itself behind it (one more dispatch, its own): what
+     * was queued before has run when it returns, what is queued after it is still waiting.
+     */
+    suspend fun yieldToQueued() {
+        val before = queued?.dispatched() ?: 0L
+        yield()
+        yielded()
+        accounted = before + 1
+    }
+
+    /**
+     * What is queued, or what arrives within [maxWait] and before the next timer; 0 when nothing came, [WORK_FIRST] when the
+     * socket held nothing and the wait was not started because work is queued on the loop.
+     */
     private fun takeDirect(
         direct: DirectReceive,
         into: PacketBatch,
         untilTimer: TimerHorizon,
     ): Int {
         var n = direct.receiveNow(into, 0)
+        if (n == 0 && workQueued()) return WORK_FIRST
         if (n == 0) {
             val timer = untilTimer.untilTimer()
             val wait = (if (timer < maxWait) timer else maxWait).inWholeMilliseconds // not minOf: it boxes both Durations
@@ -131,6 +174,9 @@ internal class BatchReceiver(
 
         /** [receiveDirect]: tried, nothing came; call [receive] with `directTried = true`. */
         const val NOTHING = -2
+
+        /** [takeDirect]: the socket was empty and work is queued: the receiver yields to it before it waits. */
+        private const val WORK_FIRST = -3
 
         /** Long enough for the gaps between a paced sender's bursts (under 0.2 ms from quinn at 0.9 Gbit/s), short for a command. */
         val DEFAULT_WAIT: Duration = 1.milliseconds

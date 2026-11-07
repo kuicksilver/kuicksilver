@@ -71,7 +71,7 @@ internal class StreamInput(
         closedCause?.let { throw it }
         if (buffer.size >= min) return true
         pendingCause?.let { throw failNow(it) }
-        return withContext(stream.loop.dispatcher) {
+        return withContext(stream.loop.readHop) {
             while (true) {
                 if (eof) return@withContext buffer.size >= min
                 closedCause?.let { throw it }

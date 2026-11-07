@@ -22,7 +22,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.yield
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 // The preferred-address socket: the second socket a connection moves to after the server's preferred_address (RFC 9000 section 9.6) and the capabilities the endpoint follows.
@@ -78,7 +77,7 @@ private fun EndpointLoop.preferredIoFor(to: InetSocketAddress?): DatagramIo? {
 internal suspend fun EndpointLoop.receivePreferred(p: DatagramIo) {
     val batch = PacketBatch(16, SLOT_SIZE)
     val limiter = WorkLimiter()
-    val receiver = BatchReceiver(p, clock, directWait)
+    val receiver = BatchReceiver(p, clock, directWait, dispatcher as? LoopDispatcher)
     try {
         limiter.start(now())
         while (true) {
@@ -100,7 +99,7 @@ internal suspend fun EndpointLoop.receivePreferred(p: DatagramIo) {
             drainPacketTooBig(p, PREFERRED_SOCKET, now)
             flush()
             if (limiter.shouldYield(now)) {
-                yield()
+                receiver.yieldToQueued()
                 limiter.start(now())
             }
         }

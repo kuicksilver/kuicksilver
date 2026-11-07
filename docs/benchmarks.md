@@ -569,7 +569,88 @@ warm-up of a separate run with only that parameter set.
   28–35 MiB/s of `UdpThroughputBenchmark`. One loop serving all 8 connections stays busy (4.2 cores in the process,
   datagrams queued at every receive), and that hides the wait; spread over 2 to 8 loops each loop runs idle between
   datagrams (1.8 cores in the process, RTT down from milliseconds to about 100 µs), and 8 connections move about 8 times
-  that single rate (200–220 MiB/s). Where that wait comes from is listed in [Still open](#still-open).
+  that single rate (200–220 MiB/s). Where that wait came from, and the same table after the fix: [One connection over
+  loopback](#one-connection-over-loopback-2026-11-08).
+
+### One connection over loopback (2026-11-08)
+
+One connection over loopback moved 25–35 MiB/s with a third to half of a core busy. Sampled every 0.5 ms during a
+256 MiB transfer (JVM, the setup of `UdpThroughputBenchmark`, Null crypto, CUBIC; M4 Max, macOS, quiet host):
+
+| | before | after |
+|---|---|---|
+| bytes in flight, p10 / p50 / p90 | 0 / 0 / 31 KiB | 10–11 / 22–24 / 31 KiB |
+| congestion window | 221–249 KiB | 221–606 KiB |
+| samples with bytes in flight within one datagram of the window | 0 % | 0 % |
+| stream bytes the writer was ahead of the reader, p50 / max | 5 / 80 KiB | 12–13 / 36–37 KiB |
+| packets lost | 0 | 0 |
+| smoothed RTT, p50 | 182 µs | 67–70 µs |
+| throughput (second of two transfers) | 28–35 MiB/s | 250–253 MiB/s |
+| process CPU per GiB (second transfer) | 21 s | 10.6–10.7 s |
+
+Nothing of RFC 9002 or flow control was the limit: the window was never full, nothing was lost, pacing is off below
+1 ms of RTT for CUBIC (`Pacer`), and a stream window of 512 KiB and more never ran out with the writer at most 80 KiB
+ahead. The sender had nothing to send: the application's writer was. Each `writeFully` of 16 KiB flushes (`autoFlush`)
+by hopping onto the loop's dispatcher (`withContext`). The loop's receiver, reading the socket on the loop's own thread
+while datagrams flow (`runtime/BatchReceiver.kt`), let queued work run only every 16 datagrams or 1 ms, and waited up
+to 1 ms in the socket with that work queued. The client's loop receives a few ACKs per millisecond, so the writer's hop
+waited up to a millisecond for each 16 KiB: about 16–30 MiB/s. Giving each endpoint a caller-supplied dispatcher, on
+which the receiver never waits, moved the same transfer at 195–233 MiB/s, which located the wait.
+
+The fix: the loop's own dispatcher counts the tasks queued on it (`runtime/LoopDispatcher.kt`, no allocation per task),
+and the receiver lets them run before its next batch; with the socket empty it yields to them first and only then waits
+in the socket. A stream reader's hop and the timer coroutine are not counted (`LoopDispatcher.Batched`) and run every
+16 datagrams or 1 ms as before: a first version that counted the readers too moved one connection a little faster
+(250–262 MiB/s in `UdpThroughputBenchmark`) but cost the JVM client a third more CPU per GB from quinn's paced server
+(below), one hand-off back to the reading thread per batch of a few datagrams.
+
+Medians of 5 iterations of 2 s after 3 of warm-up, ± the 99.9 % interval (one operation is one MiB from a cold start of
+the writer and reader, so the tail of each MiB weighs more than in the 256 MiB transfer above):
+
+| | before (`8603c0e29`) | after |
+|---|---|---|
+| `UdpThroughputBenchmark`, JVM | 29.1 ± 8.4 MiB/s | 213.2 ± 6.3 MiB/s |
+| `UdpThroughputBenchmark`, Kotlin/Native (macOS) | 26.9 ± 1.1 MiB/s | 209.0 ± 1.0 MiB/s |
+
+The paced case: client CPU of a 1 GiB transfer from quinn's interop server to the JVM interop client
+(`tools/bench/cpu-transfer.sh stammw/quinn-interop:latest <client> 1073741824 1048576 <reps>`, Docker Desktop
+`linux/arm64`, the median 1 MiB transfer's CPU subtracted; the "Where the time went" figure of 18 s/GB is the same
+measurement before 0.2.1):
+
+| client CPU s/GB, quinn → kuicksilver JVM | median, [min–max] of the big transfers | wall s |
+|---|---|---|
+| before (`8603c0e29`), 3 transfers | 8.76 [8.74–8.82] | 8.9–9.0 |
+| readers counted as queued work, 3 transfers | 11.76 [11.61–11.79] | 8.9–9.1 |
+| after, 5 transfers | 8.83 [8.62–9.45] | 8.9–9.0 |
+
+`MultiLoopBenchmark`, MiB/s of 8 bulk connections (ksl / Null crypto), medians [min–max]. macOS, JVM: before and after
+on the quiet host. Linux, JVM (Docker `linux/arm64`, kernel balancing): before is the S3.4 run above (loaded host, so
+compare the ratios to one loop), after on the quiet host.
+
+| MiB/s, 8 connections | loops 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| macOS, JVM, ksl, before | 228 [223–230] | 302 (1.33×) | 286 (1.26×) | 305 (1.34×) |
+| macOS, JVM, ksl, after | 222 [217–227] | 317 (1.43×) | 335 (1.51×) | 338 (1.53×) |
+| macOS, JVM, Null, before | 246 [242–247] | 321 (1.31×) | 320 (1.30×) | 320 (1.30×) |
+| macOS, JVM, Null, after | 245 [241–247] | 310 (1.26×) | 332 (1.35×) | 339 (1.38×) |
+| Linux, JVM, ksl, before | 335 [334–342] | 222 (0.66×) | 212 (0.63×) | 201 (0.60×) |
+| Linux, JVM, ksl, after | 345 [340–350] | 474 (1.37×) | 1097 (3.18×) | 921 (2.67×) |
+| Linux, JVM, Null, before | 382 [378–390] | 220 (0.57×) | 199 (0.52×) | 207 (0.54×) |
+| Linux, JVM, Null, after | 393 [391–395] | 549 (1.40×) | 758 (1.93×) | 704 (1.79×) |
+
+On Linux, where each loop has its own socket, more loops now move more: 3.2 times one loop at 4 loops instead of 0.6.
+On macOS the one receiver thread stays the cap (98–99 % busy in `bulk8`, as in S3.4); the loops gain a little. One
+loop serving 8 connections was busy before and is unchanged. Handshakes are unchanged within the spread (JVM, macOS:
+2294–7783/s after, 2349–7699/s before; Linux: 2207/s at one loop, 3.63× at 8).
+
+What is left on one connection: bytes in flight still sit far below the window (p50 24 KiB), so the application's
+hops are still what paces it. A task queued while the receiver is already waiting in the socket waits until a datagram
+arrives (at most 1 ms): ending that wait at once needs a wake-up of the socket wait from another thread (`ksl_udp` has a
+wake pipe, used only for close today). A writer that hands over 16 KiB per hop pays two thread hand-offs per 16 KiB;
+larger writes, or a writer that buffers several before hopping, would amortise them. And a reader waits for the
+receiver's regular yield, which costs the 1 MiB operations of `UdpThroughputBenchmark` about a sixth (the counted-reader
+variant above), and in request/response traffic a reply's read can wait up to 1 ms in the socket wait once the socket goes
+quiet (as before this change).
 
 ## msquic's goodput outlier
 
@@ -589,9 +670,9 @@ msquic runs emulated here, and why its congestion controller keeps that rate was
   ([0.3.0 work in progress](#030-work-in-progress)); the handshake table is to be measured again; the Kotlin side is on
   the roadmap.
 - **The Kotlin/Native server** costs 28 % more CPU per GB than the JVM server (3.5 vs 2.7 s/GB).
-- **One connection over loopback waits more than it works:** about 25–35 MiB/s with a third to half of a core busy and a
-  large window, so 8 bulk connections spread over several loops on Linux move only 0.52–0.66 times what one busy loop
-  moves ([Several loops on one socket](#several-loops-on-one-socket-s34-2026-11-07)); the wait is not profiled yet.
+- **One connection over loopback** now moves 210–250 MiB/s ([One connection over
+  loopback](#one-connection-over-loopback-2026-11-08)), still paced by the application's hops onto the loop rather than
+  by the window: a wake-up of the receiver's socket wait and fewer hand-offs per write are not done.
 - **Acknowledgements:** fewer ACKs per byte would need the receiver side of the ack-frequency extension
   (draft-ietf-quic-ack-frequency).
 
