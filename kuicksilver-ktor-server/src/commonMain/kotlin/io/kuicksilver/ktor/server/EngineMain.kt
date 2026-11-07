@@ -19,7 +19,8 @@ import kotlin.time.Duration.Companion.seconds
  * and HTTP/3), `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate, e.g. `1h`;
  * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
  * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`,
- * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount`.
+ * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
+ * server).
  */
 public object EngineMain {
     /** Starts the server from command-line arguments and the configuration file, and blocks until it stops. */

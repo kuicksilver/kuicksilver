@@ -230,8 +230,11 @@ public class KuicksilverApplicationEngine(
         public var quicMaxIdleTimeout: Duration? = null
 
         /**
-         * Endpoint loops on the UDP port, as Ktor-Netty's `udpSocketCount`; more than 1 needs kernel `SO_REUSEPORT` flow
-         * hashing, so Linux and Android; elsewhere the engine logs why and serves HTTP/1.1 only on that connector.
+         * Endpoint loops on the UDP port, as Ktor-Netty's `udpSocketCount`, on every platform with a QUIC server: a socket per
+         * loop with kernel `SO_REUSEPORT` flow hashing on Linux and Android, one socket whose datagrams are routed to the
+         * loops by connection ID in process on macOS, iOS and Windows (docs/guide/quic.md, "Several loops on one port").
+         * One connection runs on one loop. Where the accelerated socket cannot open (a JVM on the portable socket), more
+         * than 1 cannot run: the engine logs why and serves HTTP/1.1 only on that connector.
          */
         public var udpSocketCount: Int = 1
 

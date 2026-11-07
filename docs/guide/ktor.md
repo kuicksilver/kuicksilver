@@ -127,12 +127,14 @@ network. Responses never carry `Transfer-Encoding` or other connection-specific 
 simply a sequence of DATA frames.
 
 Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (transport settings), `quicMaxIdleTimeout`
-(applies while `quic` is not assigned), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
+(applies while `quic` is not assigned), `udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC server), `quicAdmission`
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `quicLoadBalancer` (QUIC-LB connection IDs, experimental;
 `engine.updateLoadBalancer` changes them, [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer)), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
-ADR-0006); `udpSocketCount > 1` needs Linux or Android. Where a QUIC server cannot run, the engine logs a warning and serves
+ADR-0006); `udpSocketCount > 1` works wherever HTTP/3 does: a socket per loop with `SO_REUSEPORT` on Linux and Android,
+one socket routed by connection ID in process on macOS, iOS and Windows ([QUIC: Several loops on one port](quic.md#several-loops-on-one-port)).
+Where a QUIC server cannot run, the engine logs a warning and serves
 HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
 identity per SNI name (not supported for QUIC yet), so that connector skips HTTP/3 with a warning instead of failing to start.
 
@@ -256,7 +258,7 @@ cached alternative service entries".
   mark the alternative broken for the refusal ([Racing and fallback](#racing-and-fallback)), so once the instance (or
   another one) serves HTTP/3 and announces it again, the client is back on HTTP/3 with its next call.
 - The UDP socket stays bound under `Drain`: releasing the port and binding it again on `On` would race other processes
-  for it (and, with `udpSocketCount > 1`, for each of its sockets), and a closed port answers with nothing or an ICMP
+  for it (and, with `udpSocketCount > 1` on Linux and Android, for each of its sockets), and a closed port answers with nothing or an ICMP
   error that clients only notice at their handshake timeout. To block UDP outright, use the firewall.
 - Back to `On` (or `Clear`), new QUIC connections are accepted again. GOAWAY cannot be taken back (RFC 9114 section 5.2),
   so connections drained before keep closing; their clients open new ones.

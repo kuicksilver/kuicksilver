@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.engine.connector
+import io.ktor.server.request.httpVersion
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
+import io.ktor.server.routing.routing
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.http3Request
+import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.IO
@@ -14,6 +22,8 @@ import kotlin.time.Duration.Companion.seconds
 
 /** How `quic` and `quicMaxIdleTimeout` combine into the HTTP/3 listeners' QUIC settings. */
 class ServerQuicConfigTest {
+    @kotlin.test.BeforeTest fun load() = KslLoader.ensureLoaded()
+
     @Test fun quicMaxIdleTimeoutAppliesWhileQuicIsUnset() {
         val c = KuicksilverApplicationEngine.Configuration().apply { quicMaxIdleTimeout = 7.seconds }
         assertEquals(7.seconds, c.http3Quic().maxIdleTimeout)
@@ -45,6 +55,39 @@ class ServerQuicConfigTest {
         assertEquals(20.seconds, before.http3Quic().maxIdleTimeout)
         assertEquals(20.seconds, after.http3Quic().maxIdleTimeout)
     }
+
+    /**
+     * `udpSocketCount = 4` serves HTTP/3 on every platform with a QUIC server: four loops on the port, with SO_REUSEPORT where
+     * the kernel balances (Linux, Android), else on one socket routed in process (macOS, iOS, Windows). Before 0.3.0 the
+     * engine logged why and served HTTP/1.1 alone, without `Alt-Svc`, outside Linux and Android.
+     */
+    @Test fun udpSocketCountFourServesHttp3OnEveryPlatform() =
+        h3ServerTest {
+            val log = CapturedLog()
+            val (server, port) =
+                tlsServer({ udpSocketCount = 4 }, log = log) {
+                    routing { get("/") { call.respondText("${call.request.httpVersion} ok") } }
+                }
+            try {
+                val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), "no HTTP/3 advertised with four UDP loops: $resp ${log.lines}")
+                val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+                try {
+                    val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                    try {
+                        val r = c.request(http3Request("GET", "server.test", "/"))
+                        assertEquals(200, r.status)
+                        assertEquals("HTTP/3 ok", r.body.readFullBody().decodeToString())
+                    } finally {
+                        c.close()
+                    }
+                } finally {
+                    ep.close()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 
     /**
      * HTTP/3 needs the client to be able to open three unidirectional streams (RFC 9114 section 6.2): a server whose QUIC

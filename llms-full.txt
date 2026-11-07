@@ -1784,12 +1784,14 @@ network. Responses never carry `Transfer-Encoding` or other connection-specific 
 simply a sequence of DATA frames.
 
 Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (transport settings), `quicMaxIdleTimeout`
-(applies while `quic` is not assigned), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
+(applies while `quic` is not assigned), `udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC server), `quicAdmission`
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `quicLoadBalancer` (QUIC-LB connection IDs, experimental;
 `engine.updateLoadBalancer` changes them, [QUIC: Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
-ADR-0006); `udpSocketCount > 1` needs Linux or Android. Where a QUIC server cannot run, the engine logs a warning and serves
+ADR-0006); `udpSocketCount > 1` works wherever HTTP/3 does: a socket per loop with `SO_REUSEPORT` on Linux and Android,
+one socket routed by connection ID in process on macOS, iOS and Windows ([QUIC: Several loops on one port](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#several-loops-on-one-port)).
+Where a QUIC server cannot run, the engine logs a warning and serves
 HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
 identity per SNI name (not supported for QUIC yet), so that connector skips HTTP/3 with a warning instead of failing to start.
 
@@ -1913,7 +1915,7 @@ cached alternative service entries".
   mark the alternative broken for the refusal ([Racing and fallback](#racing-and-fallback)), so once the instance (or
   another one) serves HTTP/3 and announces it again, the client is back on HTTP/3 with its next call.
 - The UDP socket stays bound under `Drain`: releasing the port and binding it again on `On` would race other processes
-  for it (and, with `udpSocketCount > 1`, for each of its sockets), and a closed port answers with nothing or an ICMP
+  for it (and, with `udpSocketCount > 1` on Linux and Android, for each of its sockets), and a closed port answers with nothing or an ICMP
   error that clients only notice at their handshake timeout. To block UDP outright, use the firewall.
 - Back to `On` (or `Clear`), new QUIC connections are accepted again. GOAWAY cannot be taken back (RFC 9114 section 5.2),
   so connections drained before keep closing; their clients open new ones.
@@ -3053,7 +3055,7 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
   application then also follows the run-time switch `engine.http3Advertising` (below) itself. Use it only on
   connectors that do serve HTTP/3: not on a plain connector without TLS, not on one with an `sniSelector`, and not when
   the start logged "HTTP/3 is not served ..." (a UDP bind failure, a platform without a QUIC server, `udpSocketCount`
-  above what the platform allows); there the header would send clients to a port where nothing answers:
+  above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
 
 ```kotlin
 // guide:deployment:public-alt-svc
@@ -3308,14 +3310,15 @@ and UDP GRO in 5.0. The engine does not log whether they were granted; `Datagram
 (`gsoMaxSegments`, `gro`) shows it for a socket you open yourself on the same host
 ([QUIC: Binding an endpoint and connecting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#binding-an-endpoint-and-connecting)).
 
-`udpSocketCount` (`kuicksilver.udpSocketCount`, default 1) runs that many endpoint loops on the port, each with its own
-socket on `SO_REUSEPORT`, and the kernel spreads client flows over them. That works on Linux and Android with the
-accelerated socket only. On macOS, iOS and Windows, and on a JVM that fell back to the portable socket, a value above 1
-does not fail the start: the engine logs "HTTP/3 is not served on port <port>: ..." and serves HTTP/1.1 alone, without
-`Alt-Svc` ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#unsupportedoperationexception-for-loops--1),
-[QUIC: Several loops on one port](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#several-loops-on-one-port)). A connection whose packets the kernel hashes onto
-another loop's socket (after a NAT rebinding) is forwarded inside the process, so several loops have none of the
-load balancer problems above.
+`udpSocketCount` (`kuicksilver.udpSocketCount`, default 1) runs that many endpoint loops on the port. On Linux and
+Android each has its own socket on `SO_REUSEPORT`, and the kernel spreads client flows over them; a connection whose
+packets the kernel hashes onto another loop's socket (after a NAT rebinding) is forwarded inside the process. On macOS,
+iOS and Windows the loops share one socket, whose receiver hands each datagram to the loop its connection ID names, so a
+rebound client needs no forwarding at all. Either way several loops have none of the load balancer problems above, and
+one connection is no faster with more loops ([QUIC: Several loops on one port](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#several-loops-on-one-port)).
+Only a JVM that fell back to the portable socket cannot run more than one: there the start does not fail, the engine
+logs "HTTP/3 is not served on port <port>: ..." and serves HTTP/1.1 alone, without `Alt-Svc`
+([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#unsupportedoperationexception-for-loops--1)).
 
 If the accelerated socket cannot open, the JVM falls back to a portable socket without these features, with a warning
 in the log; a Kotlin/Native server then serves HTTP/1.1 only
@@ -3429,7 +3432,7 @@ alternative from an earlier run; HTTP/3 starts from the next call.
 
 | Symptom | Check |
 |---|---|
-| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 outside Linux and Android); `http3` and `altSvc` on; an `sniSelector` on the connector; a proxy in front that strips the header ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-server-serves-http11-but-no-http3)) |
+| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 without the accelerated socket); `http3` and `altSvc` on; an `sniSelector` on the connector; a proxy in front that strips the header ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-server-serves-http11-but-no-http3)) |
 | `Alt-Svc: clear` | `engine.http3Advertising` is `Clear` or `Drain` |
 | `Alt-Svc` names the wrong port | a port mapping or load balancer with another number: map the same number or send your own header ([Ports and Alt-Svc](#ports-and-alt-svc)) |
 | `curl --http3-only` times out, `tcpdump` shows nothing | UDP is blocked before the server: firewall, security group, `-p .../udp` missing, the Service has no UDP port, the load balancer has no UDP listener |
@@ -3795,7 +3798,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `altSvc` | `Boolean` | `true` | 0.2.0 | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS (not when the application set its own, not on 421); `engine.http3Advertising` changes it at run time ([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-on-the-server)) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | 0.2.0 | QUIC transport of the HTTP/3 listeners |
 | `quicMaxIdleTimeout` | `Duration?` | `null` | 0.2.0 | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
-| `udpSocketCount` | `Int` | 1 | 0.2.0 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; more than 1 needs Linux or Android) |
+| `udpSocketCount` | `Int` | 1 | 0.2.0 (every platform since 0.3.0) | endpoint loops per UDP port (`QuicEndpointConfig.loops`) |
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | 0.2.0 | Retry policy |
 | `quicLoadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | 0.3.0 | QUIC-LB connection IDs of every HTTP/3 listener (`QuicEndpointConfig.loadBalancer`; its length must equal `quic.connectionIdLength`); `engine.updateLoadBalancer(next)` changes it on the running engine ([Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)) |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings |

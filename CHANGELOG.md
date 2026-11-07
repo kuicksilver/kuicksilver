@@ -369,6 +369,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor server: `udpSocketCount` above 1 serves HTTP/3 on every platform with a QUIC server (macOS, iOS and Windows
+  included, the loops sharing one socket there); before, those platforms logged "HTTP/3 is not served" and answered over
+  HTTP/1.1 without `Alt-Svc`. See docs/guide/ktor.md.
 - QUIC: `QuicEndpoint.bind` with `loops > 1` no longer throws `UnsupportedOperationException` on macOS, iOS and Windows
   or with `QuicEndpointConfig.io`: the loops share one socket there (see Added). It still throws without the
   accelerated socket and no `io`.

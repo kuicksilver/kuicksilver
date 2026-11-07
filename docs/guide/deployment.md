@@ -45,7 +45,7 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
   application then also follows the run-time switch `engine.http3Advertising` (below) itself. Use it only on
   connectors that do serve HTTP/3: not on a plain connector without TLS, not on one with an `sniSelector`, and not when
   the start logged "HTTP/3 is not served ..." (a UDP bind failure, a platform without a QUIC server, `udpSocketCount`
-  above what the platform allows); there the header would send clients to a port where nothing answers:
+  above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
 
 ```kotlin
 // guide:deployment:public-alt-svc
@@ -300,14 +300,15 @@ and UDP GRO in 5.0. The engine does not log whether they were granted; `Datagram
 (`gsoMaxSegments`, `gro`) shows it for a socket you open yourself on the same host
 ([QUIC: Binding an endpoint and connecting](quic.md#binding-an-endpoint-and-connecting)).
 
-`udpSocketCount` (`kuicksilver.udpSocketCount`, default 1) runs that many endpoint loops on the port, each with its own
-socket on `SO_REUSEPORT`, and the kernel spreads client flows over them. That works on Linux and Android with the
-accelerated socket only. On macOS, iOS and Windows, and on a JVM that fell back to the portable socket, a value above 1
-does not fail the start: the engine logs "HTTP/3 is not served on port <port>: ..." and serves HTTP/1.1 alone, without
-`Alt-Svc` ([troubleshooting](troubleshooting.md#unsupportedoperationexception-for-loops--1),
-[QUIC: Several loops on one port](quic.md#several-loops-on-one-port)). A connection whose packets the kernel hashes onto
-another loop's socket (after a NAT rebinding) is forwarded inside the process, so several loops have none of the
-load balancer problems above.
+`udpSocketCount` (`kuicksilver.udpSocketCount`, default 1) runs that many endpoint loops on the port. On Linux and
+Android each has its own socket on `SO_REUSEPORT`, and the kernel spreads client flows over them; a connection whose
+packets the kernel hashes onto another loop's socket (after a NAT rebinding) is forwarded inside the process. On macOS,
+iOS and Windows the loops share one socket, whose receiver hands each datagram to the loop its connection ID names, so a
+rebound client needs no forwarding at all. Either way several loops have none of the load balancer problems above, and
+one connection is no faster with more loops ([QUIC: Several loops on one port](quic.md#several-loops-on-one-port)).
+Only a JVM that fell back to the portable socket cannot run more than one: there the start does not fail, the engine
+logs "HTTP/3 is not served on port <port>: ..." and serves HTTP/1.1 alone, without `Alt-Svc`
+([troubleshooting](troubleshooting.md#unsupportedoperationexception-for-loops--1)).
 
 If the accelerated socket cannot open, the JVM falls back to a portable socket without these features, with a warning
 in the log; a Kotlin/Native server then serves HTTP/1.1 only
@@ -421,7 +422,7 @@ alternative from an earlier run; HTTP/3 starts from the next call.
 
 | Symptom | Check |
 |---|---|
-| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 outside Linux and Android); `http3` and `altSvc` on; an `sniSelector` on the connector; a proxy in front that strips the header ([troubleshooting](troubleshooting.md#the-server-serves-http11-but-no-http3)) |
+| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 without the accelerated socket); `http3` and `altSvc` on; an `sniSelector` on the connector; a proxy in front that strips the header ([troubleshooting](troubleshooting.md#the-server-serves-http11-but-no-http3)) |
 | `Alt-Svc: clear` | `engine.http3Advertising` is `Clear` or `Drain` |
 | `Alt-Svc` names the wrong port | a port mapping or load balancer with another number: map the same number or send your own header ([Ports and Alt-Svc](#ports-and-alt-svc)) |
 | `curl --http3-only` times out, `tcpdump` shows nothing | UDP is blocked before the server: firewall, security group, `-p .../udp` missing, the Service has no UDP port, the load balancer has no UDP listener |
