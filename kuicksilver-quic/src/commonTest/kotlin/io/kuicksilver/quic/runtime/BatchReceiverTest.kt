@@ -252,9 +252,46 @@ class BatchReceiverTest {
             }
         }
 
+    @Test fun aBlockingReceiveThatDidNotSuspendLeavesQueuedWorkQueued() =
+        runBlocking {
+            // a loop's inbox on a shared socket (SocketDispatcher) answers its blocking receive at once when its signal is already
+            // set: nothing queued ran, so the writer's hop must still run before the next batch on the loop's thread
+            val loop = LoopDispatcher(Dispatchers.Default.limitedParallelism(1))
+            withContext(loop) {
+                val io = ScriptedIo(3, 2, 5)
+                val r = BatchReceiver(io, { clock }, 1.milliseconds, loop)
+                r.receive(batch, noTimer)
+                launch { io.calls += "command" }
+                assertEquals(2, r.receive(batch, noTimer, directTried = true)) // returns without suspending
+                assertEquals(BatchReceiver.NOT_TRIED, r.receiveDirect(batch, noTimer))
+                assertEquals(5, r.receive(batch, noTimer))
+                assertEquals(listOf("blocking", "blocking", "command", "now(0)"), io.calls)
+            }
+        }
+
+    @Test fun aReaderWaitsForTheRegularYield() =
+        runBlocking {
+            // a stream reader's hop: run before every batch of a paced sender, it was handed back to its own thread per batch (the
+            // JVM client's CPU per GB from quinn, docs/benchmarks.md); it runs after 16 datagrams or 1 ms, as before
+            val loop = LoopDispatcher(Dispatchers.Default.limitedParallelism(1))
+            withContext(loop) {
+                val io = ScriptedIo(3, 10, 6, 2)
+                val r = BatchReceiver(io, { clock }, 1.milliseconds, loop)
+                r.receive(batch, noTimer)
+                // the dispatch into withContext is counted by the runBlocking thread once queued, possibly after this block started:
+                // two yields put it behind us
+                r.yieldToQueued()
+                r.yieldToQueued()
+                launch(LoopDispatcher.Batched) { io.calls += "reader" }
+                repeat(3) { r.receive(batch, noTimer) }
+                assertEquals(listOf("blocking", "now(0)", "now(0)", "reader", "now(0)"), io.calls)
+            }
+        }
+
     @Test fun noWaitOnTheLoopThreadWhileATaskIsQueued() =
         runBlocking {
-            // the task the yield ran queued another: the loop's thread takes what the socket holds, but does not wait in it
+            // the task the yield ran queued another: with the socket empty, that one runs before the wait on the loop's thread
+            // (not the blocking receive, whose two hand-offs per batch cost a paced flow's client CPU)
             val loop = LoopDispatcher(Dispatchers.Default.limitedParallelism(1))
             withContext(loop) {
                 val io = ScriptedIo(3, 0, 1)
@@ -265,7 +302,7 @@ class BatchReceiverTest {
                     launch { io.calls += "second" }
                 }
                 assertEquals(1, r.receive(batch, noTimer))
-                assertEquals(listOf("blocking", "command", "now(0)", "blocking"), io.calls)
+                assertEquals(listOf("blocking", "command", "now(0)", "second", "now(0)"), io.calls)
             }
         }
 

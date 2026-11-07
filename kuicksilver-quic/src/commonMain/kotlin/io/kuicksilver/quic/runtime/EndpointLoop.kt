@@ -139,6 +139,9 @@ internal class EndpointLoop private constructor(
         }
     }
 
+    /** [dispatcher] for a stream reader's hop onto the loop ([LoopDispatcher.Batched]). */
+    internal val readHop: kotlin.coroutines.CoroutineContext = dispatcher + LoopDispatcher.Batched
+
     internal val wake = Channel<Unit>(Channel.CONFLATED)
     internal val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
@@ -252,7 +255,7 @@ internal class EndpointLoop private constructor(
             }
         }
         receiveJob = scope.launch { receiveLoop() }
-        timerJob = scope.launch { timerLoop() }
+        timerJob = scope.launch(LoopDispatcher.Batched) { timerLoop() } // the receiver yields when a timer is due
         scope.launch { followCapabilities(io, PathId.Initial) }
         for (p in preferredIos) {
             preferredJobs += scope.launch { receivePreferred(p) }
