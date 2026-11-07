@@ -197,7 +197,9 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
 - **Flake hunting.** `tools/ci/flake-hunt.sh` runs the chosen modules' tests N times (default 20) under CPU load and
   prints the failures by test, for example
   `tools/ci/flake-hunt.sh -n 20 -b 8 http3 quic` for the JVM or `tools/ci/flake-hunt.sh -t macos -n 5 quic` for
-  Kotlin/Native; `-Pkuicksilver.test.repeat=N` alone repeats a module's `jvmTest` N times in one build.
+  Kotlin/Native, `-T '*GoAwayTest'` for some tests only; a test process that died is listed apart from the failures.
+  `-Pkuicksilver.test.repeat=N` alone repeats a module's `jvmTest` N times in one build, each run with jvmTest's
+  filter (`--tests` included) and its own results directory.
 - **Platforms.** Common behaviour is tested in `commonTest` so it runs on the JVM, Android and Native. Tests that need a
   Linux-only facility (GSO/GRO, `SO_REUSEPORT` flow hashing) skip themselves elsewhere and run in the Docker steps; the
   accelerated UDP socket itself also runs on macOS and Windows (Windows tests need a Windows host or VM:

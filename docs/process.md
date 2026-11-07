@@ -26,7 +26,7 @@ threat model lists them. The rule for new tests is no waiting with `sleep` or `d
 network simulator in `kuicksilver-testing` or `MemoryNetwork`, so a failure reproduces from its seed; some older tests
 still poll with a deadline. A new test never uses `delay()` as synchronization: it waits for the event itself (a
 `CompletableDeferred`, a channel, a job), and `tools/ci/flake-hunt.sh` reruns a suite 20 times under CPU load to find
-the tests that do not.
+the tests that still wait with a delay.
 
 No tool checks that a test failed before the fix; reviewers ask for it, and the pull request template has a box for it
 ([`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)). A failing existing test is first treated

@@ -115,7 +115,8 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
     providers.gradleProperty("kuicksilver.test.jvmArgs").orNull?.let { a -> jvmArgs(a.split(' ').filter { it.isNotBlank() }) }
 }
 // Flake hunting (tools/ci/flake-hunt.sh): -Pkuicksilver.test.repeat=<N> runs the JVM suite N times in one build, jvmTest
-// then jvmTestRepeat2..N, each with its own results directory; -Pkuicksilver.test.forks=<K> runs K test JVMs side by side.
+// then jvmTestRepeat2..N, each with its own results directory and jvmTest's filter (--tests included);
+// -Pkuicksilver.test.forks=<K> runs K test JVMs side by side.
 providers.gradleProperty("kuicksilver.test.forks").orNull?.toInt()?.let { k -> tasks.withType<Test>().configureEach { maxParallelForks = k } }
 providers.gradleProperty("kuicksilver.test.repeat").orNull?.toInt()?.takeIf { it > 1 }?.let { n ->
     val jvmTest = tasks.named<Test>("jvmTest")
@@ -133,8 +134,16 @@ providers.gradleProperty("kuicksilver.test.repeat").orNull?.toInt()?.takeIf { it
             workingDir = base.workingDir
             maxHeapSize = base.maxHeapSize
             if (base.options is org.gradle.api.tasks.testing.junitplatform.JUnitPlatformOptions) useJUnitPlatform() else useJUnit()
-            filter.includePatterns.addAll(base.filter.includePatterns)
-            filter.isFailOnNoMatchingTests = base.filter.isFailOnNoMatchingTests
+            // jvmTest's filter, also its --tests patterns: read when the run starts, after the command line was applied
+            doFirst {
+                val from = base.filter
+                filter.includePatterns.addAll(from.includePatterns)
+                filter.excludePatterns.addAll(from.excludePatterns)
+                (from as? org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter)?.commandLineIncludePatterns?.let {
+                    (filter as org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter).setCommandLineIncludePatterns(it)
+                }
+                filter.isFailOnNoMatchingTests = from.isFailOnNoMatchingTests
+            }
             outputs.upToDateWhen { false }
             outputs.cacheIf { false }
             mustRunAfter(jvmTest)
