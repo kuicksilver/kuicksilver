@@ -118,6 +118,11 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
 // then jvmTestRepeat2..N, each with its own results directory and jvmTest's filter (--tests included);
 // -Pkuicksilver.test.forks=<K> runs K test JVMs side by side.
 providers.gradleProperty("kuicksilver.test.forks").orNull?.toInt()?.let { k -> tasks.withType<Test>().configureEach { maxParallelForks = k } }
+// -Pkuicksilver.test.allowNoMatch: a --tests pattern that matches nothing in a module does not fail its test task (one
+// pattern given to several modules' tasks, flake-hunt.sh -T)
+if (providers.gradleProperty("kuicksilver.test.allowNoMatch").isPresent) {
+    tasks.withType<AbstractTestTask>().configureEach { filter.isFailOnNoMatchingTests = false }
+}
 providers.gradleProperty("kuicksilver.test.repeat").orNull?.toInt()?.takeIf { it > 1 }?.let { n ->
     val jvmTest = tasks.named<Test>("jvmTest")
     val repeats = (2..n).map { i ->

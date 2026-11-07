@@ -16,46 +16,60 @@
 #               ktor-server, ktor-network)
 # Exit status: 0 when no test failed, no test process died and every build finished; 1 otherwise; 130 when interrupted.
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 2
+# -o and -g are taken relative to the caller's directory, the Gradle build runs from the repository root
+self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+root="$(cd "$(dirname "$0")/../.." && pwd)" || exit 2
+absolute() { case $1 in /*) echo "$1" ;; *) echo "$PWD/$1" ;; esac; }
 
-runs=20; target=jvm; forks=2; outdir=""; gradle=./gradlew
+runs=20; target=jvm; forks=2; outdir=""; gradle=""
 filters=()
 cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 burners=$((cpus / 2))
 while getopts "n:b:f:t:T:o:g:h" opt; do
   case $opt in
-    n) runs=$OPTARG ;; b) burners=$OPTARG ;; f) forks=$OPTARG ;; t) target=$OPTARG ;; o) outdir=$OPTARG ;; g) gradle=$OPTARG ;;
+    n) runs=$OPTARG ;; b) burners=$OPTARG ;; f) forks=$OPTARG ;; t) target=$OPTARG ;; o) outdir=$(absolute "$OPTARG") ;;
+    g) case $OPTARG in */*) gradle=$(absolute "$OPTARG") ;; *) gradle=$OPTARG ;; esac ;; # a bare name is looked up in PATH
     T) filters+=(--tests "$OPTARG") ;;
-    *) sed -n '4,17p' "$0"; exit 2 ;;
+    *) sed -n '4,17p' "$self"; exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
+cd "$root" || exit 2
+read -r -a extra <<< "${FLAKE_HUNT_GRADLE_ARGS:-}"
+gradle=${gradle:-./gradlew}
+# one pattern for several modules: a module where it matches nothing must not fail the build
+[ ${#filters[@]} -eq 0 ] || extra+=(-Pkuicksilver.test.allowNoMatch)
 modules=("$@")
 [ ${#modules[@]} -gt 0 ] || modules=(kuicksilver-http3 kuicksilver-quic kuicksilver-http2 kuicksilver-ktor-client kuicksilver-ktor-server kuicksilver-ktor-network)
 for i in "${!modules[@]}"; do case ${modules[i]} in kuicksilver-*) ;; *) modules[i]=kuicksilver-${modules[i]} ;; esac; done
 case $target in jvm) task=jvmTest ;; macos) task=macosArm64Test ;; *) echo "unknown target $target" >&2; exit 2 ;; esac
 outdir=${outdir:-build/flake-hunt/$(date +%Y%m%d-%H%M%S)}
 mkdir -p "$outdir"
-read -r -a extra <<< "${FLAKE_HUNT_GRADLE_ARGS:-}"
 
 # The load: plain busy loops that also end by themselves once this script is gone (killed with SIGKILL, say).
 pids=()
 gradle_pid=""
 stop_load() { [ ${#pids[@]} -eq 0 ] || kill "${pids[@]}" 2>/dev/null; pids=(); }
 trap stop_load EXIT
-trap '[ -z "$gradle_pid" ] || kill "$gradle_pid" 2>/dev/null; exit 130' INT TERM
+# Gradle runs in a process group of its own (below): the whole group, a wrapper such as quiet-gradle and the Gradle client
+# under it, gets the TERM; a terminal's Ctrl-C reaches only this script's group
+trap '[ -z "$gradle_pid" ] || kill -TERM -- -"$gradle_pid" 2>/dev/null; exit 130' INT TERM
 for ((i = 0; i < burners; i++)); do
   (while kill -0 $$ 2>/dev/null; do :; done) &
   pids+=($!)
 done
 echo "flake-hunt: $runs x $task of ${modules[*]}, $burners CPU burners, results in $outdir"
 
-# Gradle runs in the background so that a signal reaches the trap at once (bash runs a trap only between commands)
+# Gradle runs in the background so that a signal reaches the trap at once (bash runs a trap only between commands), with
+# job control on for the launch: the job gets its own process group, and SIGINT is not ignored in it as in a plain
+# background job of a script
 run_gradle() {   # run_gradle <log> <args...>
   local log=$1 rc
   shift
+  set -m
   "$gradle" "$@" > "$log" 2>&1 &
   gradle_pid=$!
+  set +m
   wait "$gradle_pid"
   rc=$?
   gradle_pid=""
