@@ -382,12 +382,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   accelerated socket and no `io`.
 - Ktor server: a TCP connector holds at most 10,000 connections by default (`maxTcpConnections`, see "Added"); before,
   it accepted without a bound. At the limit it stops accepting and new clients wait in the OS backlog.
-- QUIC (performance): one connection moves about 8 times the bytes over a fast path. The endpoint loop's receiver,
-  reading the socket on the loop's thread, let the application's queued reads and writes run only every 16 datagrams or
-  1 ms, so a stream's writer waited up to 1 ms per write while the sender sat idle. It now lets queued work run before
-  its next batch and does not wait in the socket while work is queued. Over loopback (M4 Max): 29 -> 254 MiB/s on the
-  JVM, 27 -> 229 MiB/s on Kotlin/Native, with less CPU per GiB; 8 connections over 4 loops on Linux move 895 MiB/s
-  instead of 204 (docs/benchmarks.md, "One connection over loopback").
+- QUIC (performance): one connection moves about 7 times the bytes over a fast path. The endpoint loop's receiver,
+  reading the socket on the loop's thread, let the application's writes and commands queued on the loop run only every
+  16 datagrams or 1 ms, so a stream's writer waited up to 1 ms per write while the sender sat idle. They now run before
+  its next batch, and the receiver does not wait in the socket while one is queued; a stream's reader still runs every
+  16 datagrams or 1 ms, so a paced sender's client costs no more CPU (quinn → JVM client 8.8 s/GB before and after).
+  Over loopback (M4 Max): 29 -> 213 MiB/s on the JVM, 27 -> 209 MiB/s on Kotlin/Native. On Linux 8 connections over 4
+  loops move 3.2 times what one loop moves instead of 0.6 times (docs/benchmarks.md, "One connection over loopback").
 - QUIC (performance): the packet path on the accelerated socket allocates nothing per datagram: the connection ID table
   routes a datagram without boxing its hash, the endpoint loop takes a flowing socket's batches and flushes (a send on
   that socket never suspends) without a coroutine frame, boxed times or a copy of its list of connections, and a stream's
