@@ -88,7 +88,8 @@ Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, wh
 The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_ABI_VERSION`, **6 in 0.2.0, 7 in 0.3.0** (ABI 5 kept
 identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters, ABI 7 the ICMP
 hints for PMTUD: `ksl_udp_take_ptb`, `ksl_udp_emsgsize`, and a receive that no longer fails on a queued ICMP error; under 7 too,
-additive, `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, and `ksl_chain_level` with
+additive, `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, `ksl_udp_sender` for
+several sender threads on one socket, and `ksl_chain_level` with
 `KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
 `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message

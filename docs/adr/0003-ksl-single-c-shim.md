@@ -90,3 +90,9 @@ group share it, and an attacker-triggered check (the Stateless Reset gate) costs
 header-protection context, so `ksl_seal`, `ksl_open`, `ksl_header_mask`, `ksl_key_mac16` and `ksl_key_next` refuse it.
 Kotlin: `QuicCrypto.newLoadBalancerKey` (`LoadBalancerKey`, with `derive` and `duplicate`), `KslLbKey` (internal).
 `test_key.c` `lb_key_concurrent_ecb16` runs one key on eight threads (clean under `KSL_TSAN=1`). 80 functions.
+
+Send-only UDP clones, additive under 7 (several endpoint loops on one socket where the kernel does not balance
+`SO_REUSEPORT`): `ksl_udp_sender(base, err, msg, msglen)` makes a clone of a `ksl_udp` that shares its descriptor, has its
+own send scratch and refuses to receive (`KSL_E_NOT_SUPPORTED`); the descriptor closes with the last `ksl_udp_close` of
+the group (ADR-0006, "One socket, several senders"). JNI `KslNative.udpSender`, cinterop `ksl_udp_sender`, Kotlin
+`Ksl.udpSender` and `KslUdpSocket.sender()`. 81 functions.

@@ -105,10 +105,18 @@ struct ksl_udp {
     uint32_t ptb_head, ptb_count, ptb_dropped, errqueue_reads;
     uint64_t emsgsize;
     uint32_t emsgsize_last;
+    /* sender clones (ksl_udp_sender): base is the socket a clone sends on (NULL on the socket ksl_udp_open made); refs, on that
+       socket, counts its owner and its clones not yet closed (__atomic): the last ksl_udp_close of the group closes fd and wake */
+    struct ksl_udp *base;
+    int refs;
 #ifdef KSL_TEST
     int fail_next_gso, fail_next_send; /* error injection, test builds only */
 #endif
 };
+/* the socket this object sends on is shut down: its own shutdown, or for a clone the socket's */
+static inline int ksl_udp_down(const ksl_udp *u) {
+    return KSL_ALOAD(u->closed) || (u->base && KSL_ALOAD(u->base->closed));
+}
 
 void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                       uint32_t mtu); /* ksl_udp.c */

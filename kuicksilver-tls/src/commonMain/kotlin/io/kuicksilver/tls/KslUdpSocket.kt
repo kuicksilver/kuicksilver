@@ -173,6 +173,24 @@ public class KslUdpSocket private constructor(
         }
     }
 
+    /**
+     * A send-only clone of this socket (`ksl_udp_sender`): the same port and [grantedFlags], its own send scratch, so another thread
+     * sends on this socket while this one's sender sends too (one sender thread per object). [receive] on the clone throws
+     * [KslException.Internal] ([KslConst.E_NOT_SUPPORTED] in [KslException.Internal.alert]): this socket's receiver alone reads.
+     * Closing the clone ends the clone only; after this socket's [shutdown] a [send] on the clone throws [KslException.Internal]
+     * (a socket error, ESHUTDOWN), and the descriptor
+     * closes with the last [close] of the group, in any order. Take clones before this socket sends, or from its sender thread.
+     * Throws [IllegalStateException] after [shutdown].
+     */
+    public fun sender(): KslUdpSocket {
+        check(enter()) { "the socket is shut down" }
+        try {
+            return KslUdpSocket(Ksl.udpSender(handle))
+        } finally {
+            leave()
+        }
+    }
+
     /** Wakes a blocked [receive] and closes the socket; every later [send]/[receive] answers 0. Idempotent. */
     public fun shutdown() {
         while (true) {

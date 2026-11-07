@@ -335,9 +335,57 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
         memset(u->local + 3, 0, KSL_UDP_ADDR_LEN - 3);
         u->local[0] = 4;
     } /* 0.0.0.0 asked: 0.0.0.0 reported, the port the kernel chose */
+    u->refs = 1;
     ksl_live_add(KSL_LIVE_UDP, 1);
     ksl_live_add(KSL_LIVE_WAKE, (u->wake[0] >= 0) + (u->wake[1] >= 0));
     return u;
+}
+
+ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen) {
+    ksl_udp *root = base && base->base ? base->base : base;
+    if (!root || ksl_udp_down(base)) {
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        if (msg && msglen)
+            snprintf(msg, msglen, "ksl_udp_sender: %s", root ? "the socket is shut down" : "no socket");
+        return NULL;
+    }
+    ksl_udp *c = calloc(1, sizeof *c);
+    if (!c || pthread_mutex_init(&c->err_mu, NULL) != 0) {
+        free(c);
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        if (msg && msglen)
+            snprintf(msg, msglen, "ksl_udp_sender: out of memory");
+        return NULL;
+    }
+    if (pthread_mutex_init(&c->ptb_mu, NULL) != 0 || !(c->tx = malloc(GRO_MAX))) {
+        pthread_mutex_destroy(&c->err_mu);
+        free(c);
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        if (msg && msglen)
+            snprintf(msg, msglen, "ksl_udp_sender: out of memory");
+        return NULL;
+    }
+    /* the sending state as it stands on the object cloned: a flag the kernel refused there stays off here */
+    c->base = root;
+    c->fd = root->fd;
+    c->family = root->family;
+    c->dual = root->dual;
+    c->wake[0] = c->wake[1] = -1;
+    c->requested = base->requested;
+    c->granted = base->granted;
+    c->gso_max = base->gso_max;
+    c->batch = base->batch;
+    c->gso_on = base->gso_on;
+    c->tos_cmsg_on = base->tos_cmsg_on;
+    c->pktinfo = base->pktinfo;
+    c->recverr = base->recverr;
+    memcpy(c->local, root->local, KSL_UDP_ADDR_LEN);
+    __atomic_add_fetch(&root->refs, 1, __ATOMIC_ACQ_REL);
+    ksl_live_add(KSL_LIVE_UDP, 1);
+    return c;
 }
 
 int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
@@ -397,6 +445,8 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
 void ksl_udp_shutdown(ksl_udp *u) {
     if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_ACQ_REL))
         return; /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD */
+    if (u->base)
+        return; /* a sender clone: the socket and its other clones go on */
     if (u->wake[1] >= 0) {
         uint8_t b = 1;
         ssize_t w = write(u->wake[1], &b, 1);
@@ -406,15 +456,10 @@ void ksl_udp_shutdown(ksl_udp *u) {
         shutdown(u->fd, SHUT_RDWR);
     }
 }
-void ksl_udp_close(ksl_udp *u) {
-    if (!u)
+/* drops one reference to the socket ksl_udp_open made; the last one closes the descriptor and the wake pair and frees it */
+static void udp_release(ksl_udp *u) {
+    if (__atomic_sub_fetch(&u->refs, 1, __ATOMIC_ACQ_REL) > 0)
         return;
-    ksl_udp_shutdown(u);
-    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) {
-        struct timespec ts = {0, 1000000};
-        nanosleep(&ts, NULL);
-    } /* a receiver woke up and leaves the object */
-    ksl_live_add(KSL_LIVE_UDP, -1);
     ksl_live_add(KSL_LIVE_WAKE, -((u->wake[0] >= 0) + (u->wake[1] >= 0)));
     if (u->fd >= 0)
         close(u->fd);
@@ -428,6 +473,27 @@ void ksl_udp_close(ksl_udp *u) {
     free(u->tx);
     memset(u, 0, sizeof *u);
     free(u);
+}
+void ksl_udp_close(ksl_udp *u) {
+    if (!u)
+        return;
+    ksl_udp_shutdown(u);
+    ksl_live_add(KSL_LIVE_UDP, -1);
+    if (u->base) { /* a sender clone: its own scratch, then its reference to the socket */
+        ksl_udp *root = u->base;
+        pthread_mutex_destroy(&u->err_mu);
+        pthread_mutex_destroy(&u->ptb_mu);
+        free(u->tx);
+        memset(u, 0, sizeof *u);
+        free(u);
+        udp_release(root);
+        return;
+    }
+    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) {
+        struct timespec ts = {0, 1000000};
+        nanosleep(&ts, NULL);
+    } /* a receiver woke up and leaves the object */
+    udp_release(u);
 }
 
 int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN],
@@ -551,6 +617,14 @@ int ksl_udp_close_wakes_for_test(ksl_udp *u) {
 #endif
 
 #elif !defined(_WIN32) /* neither Linux, Apple nor Windows (ksl_udp_win.c): the portable DatagramIo does the work */
+ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen) {
+    (void)base;
+    if (err)
+        *err = KSL_E_NOT_SUPPORTED;
+    if (msg && msglen)
+        snprintf(msg, msglen, "ksl_udp: accelerated UDP needs Linux, Apple or Windows");
+    return NULL;
+}
 ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) {
     (void)addr;
     (void)flags;

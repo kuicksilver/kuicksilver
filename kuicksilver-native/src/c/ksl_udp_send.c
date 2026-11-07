@@ -152,6 +152,10 @@ int ksl_udp_send_src(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, con
                      const uint8_t *ecn, uint32_t n, uint32_t *sent) {
     if (!u || KSL_ALOAD(u->closed))
         return KSL_ERROR;
+    if (u->base && KSL_ALOAD(u->base->closed)) { /* a sender clone whose socket was shut down: a socket error */
+        set_err(u, ESHUTDOWN, "sendmsg");
+        return KSL_ERROR;
+    }
     *sent = 0;
     uint32_t i = 0;
     int icmp_retried = 0;

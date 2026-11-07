@@ -885,6 +885,15 @@ public actual object Ksl {
             ByteArray(n.value.toInt()) { out[it].toByte() }
         }
 
+    public actual fun udpSender(udp: Long): Long =
+        memScoped {
+            val err = alloc<UIntVar>()
+            val buf = allocArray<ByteVar>(512)
+            val h = ksl_udp_sender(udp(udp), err.ptr, buf, 512u).h()
+            if (h == 0L) throw KslException.Internal(if (err.value == 0u) KslConst.E_BAD_ARG else err.value.toInt(), 0, buf.toKString())
+            h
+        }
+
     public actual fun udpShutdown(udp: Long): Unit = ksl_udp_shutdown(udp(udp))
 
     public actual fun udpClose(udp: Long): Unit = ksl_udp_close(udp(udp))

@@ -101,12 +101,21 @@ struct ksl_udp {
     uint32_t sends, recvs, gso_fallbacks;
     volatile LONG64 emsgsize;
     volatile LONG emsgsize_last; /* sends lost to WSAEMSGSIZE (ksl_udp_emsgsize) */
+    /* sender clones (ksl_udp_sender, as ksl_udp_internal.h): base is the socket a clone sends on (NULL on the socket ksl_udp_open
+       made); refs, on that socket, counts its owner and its clones not yet closed (__atomic). WSASendMsg is safe from several
+       threads on one SOCKET; each clone has its own tx */
+    struct ksl_udp *base;
+    int refs;
 #ifdef KSL_TEST
     int fail_next_gso, fail_next_send, fail_next_recv, fake_pollerr;
     uint32_t polls; /* error injection, test builds only */
 #endif
 };
 
+/* the socket this object sends on is shut down: its own shutdown, or for a clone the socket's */
+static int udp_down(const ksl_udp *u) {
+    return KSL_ALOAD(u->closed) || (u->base && KSL_ALOAD(u->base->closed));
+}
 static void be32(uint8_t *p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24);
     p[1] = (uint8_t)(v >> 16);
@@ -450,9 +459,52 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
             memcpy(u->local + 3, &in6->sin6_addr, 16);
         } /* the socket's own family, never unmapped */
     }
+    u->refs = 1;
     ksl_live_add(KSL_LIVE_UDP, 1);
     ksl_live_add(KSL_LIVE_WAKE, u->wake != INVALID_SOCKET);
     return u;
+}
+
+ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen) {
+    ksl_udp *root = base && base->base ? base->base : base;
+    if (!root || udp_down(base)) {
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        if (msg && msglen)
+            snprintf(msg, msglen, "ksl_udp_sender: %s", root ? "the socket is shut down" : "no socket");
+        return NULL;
+    }
+    ksl_udp *c = calloc(1, sizeof *c);
+    if (!c || !(c->tx = malloc(GRO_MAX))) {
+        free(c);
+        if (err)
+            *err = KSL_E_BAD_ARG;
+        if (msg && msglen)
+            snprintf(msg, msglen, "ksl_udp_sender: out of memory");
+        return NULL;
+    }
+    InitializeSRWLock(&c->err_mu);
+    /* the sending state as it stands on the object cloned: a flag Windows refused there stays off here */
+    c->base = root;
+    c->fd = root->fd;
+    c->wake = INVALID_SOCKET;
+    c->family = root->family;
+    c->dual = root->dual;
+    c->recv_msg = root->recv_msg;
+    c->send_msg = root->send_msg;
+    c->requested = base->requested;
+    c->granted = base->granted;
+    c->gso_max = base->gso_max;
+    c->batch = base->batch;
+    c->gso_on = base->gso_on;
+    c->ecn_cmsg_on = base->ecn_cmsg_on;
+    c->df_probe = base->df_probe;
+    c->pktinfo = base->pktinfo;
+    c->ce_refused = base->ce_refused;
+    memcpy(c->local, root->local, KSL_UDP_ADDR_LEN);
+    __atomic_add_fetch(&root->refs, 1, __ATOMIC_ACQ_REL);
+    ksl_live_add(KSL_LIVE_UDP, 1);
+    return c;
 }
 
 int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
@@ -633,6 +685,12 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
 int ksl_udp_send_src(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *srcs,
                      const uint8_t *ecn, uint32_t n, uint32_t *sent) {
     if (!u || KSL_ALOAD(u->closed)) {
+        if (sent)
+            *sent = 0;
+        return KSL_ERROR;
+    }
+    if (u->base && KSL_ALOAD(u->base->closed)) { /* a sender clone whose socket was shut down: a socket error */
+        set_err(u, WSAESHUTDOWN, "WSASendMsg");
         if (sent)
             *sent = 0;
         return KSL_ERROR;
@@ -854,6 +912,15 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
 }
 int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs,
                      uint8_t *dsts, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
+    if (u && u->base) { /* a sender clone: the socket's receiver alone reads */
+        err_lock(u);
+        u->last_errno = KSL_E_NOT_SUPPORTED;
+        snprintf(u->last_msg, KSL_MSG, "ksl_udp_recv: a sender clone does not receive");
+        err_unlock(u);
+        if (received)
+            *received = 0;
+        return KSL_ERROR;
+    }
     if (!u || KSL_ALOAD(u->closed)) {
         if (received)
             *received = 0;
@@ -1031,6 +1098,8 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
 void ksl_udp_shutdown(ksl_udp *u) {
     if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_ACQ_REL))
         return; /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD */
+    if (u->base)
+        return; /* a sender clone: the socket and its other clones go on */
     if (u->wake != INVALID_SOCKET) {
         char b = 1;
         send(u->wake, &b, 1, 0);
@@ -1038,13 +1107,10 @@ void ksl_udp_shutdown(ksl_udp *u) {
     if (u->fd != INVALID_SOCKET)
         shutdown(u->fd, SD_BOTH);
 }
-void ksl_udp_close(ksl_udp *u) {
-    if (!u)
+/* drops one reference to the socket ksl_udp_open made; the last one closes the socket and the wake socket and frees it */
+static void udp_release(ksl_udp *u) {
+    if (__atomic_sub_fetch(&u->refs, 1, __ATOMIC_ACQ_REL) > 0)
         return;
-    ksl_udp_shutdown(u);
-    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++)
-        Sleep(1); /* a receiver woke up and leaves the object */
-    ksl_live_add(KSL_LIVE_UDP, -1);
     ksl_live_add(KSL_LIVE_WAKE, -(u->wake != INVALID_SOCKET));
     if (u->fd != INVALID_SOCKET)
         closesocket(u->fd);
@@ -1054,6 +1120,23 @@ void ksl_udp_close(ksl_udp *u) {
     free(u->tx);
     memset(u, 0, sizeof *u);
     free(u);
+}
+void ksl_udp_close(ksl_udp *u) {
+    if (!u)
+        return;
+    ksl_udp_shutdown(u);
+    ksl_live_add(KSL_LIVE_UDP, -1);
+    if (u->base) { /* a sender clone: its own scratch, then its reference to the socket */
+        ksl_udp *root = u->base;
+        free(u->tx);
+        memset(u, 0, sizeof *u);
+        free(u);
+        udp_release(root);
+        return;
+    }
+    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++)
+        Sleep(1); /* a receiver woke up and leaves the object */
+    udp_release(u);
 }
 
 /* Windows reports ICMP through IP_RECVERR as ICMP_ERROR_INFO without the MTU or a quote of our datagram: nothing a caller could

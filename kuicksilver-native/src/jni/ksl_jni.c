@@ -775,6 +775,20 @@ static jlong j_udp_emsgsize(JNIEnv *e, jclass c, jlong h, jintArray last) {
     }
     return (jlong)n;
 }
+static jlong j_udp_sender(JNIEnv *e, jclass c, jlong h, jintArray err, jobjectArray msg) {
+    (void)c;
+    uint32_t code = 0;
+    char m[256] = {0};
+    ksl_udp *u = ksl_udp_sender(P(ksl_udp, h), &code, m, sizeof m);
+    if (!u) {
+        jint ec = (jint)code;
+        (*e)->SetIntArrayRegion(e, err, 0, 1, &ec);
+        jstring js = (*e)->NewStringUTF(e, m);
+        if (js)
+            (*e)->SetObjectArrayElement(e, msg, 0, js);
+    }
+    return H(u);
+}
 static void j_udp_shutdown(JNIEnv *e, jclass c, jlong h) {
     (void)e;
     (void)c;
@@ -896,6 +910,7 @@ static const JNINativeMethod methods[] = {
     {"udpSend", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[B[BI)I", (void *)j_udp_send},
     {"udpRecv", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[B[BII)I", (void *)j_udp_recv},
     {"udpGet", "(JI)[B", (void *)j_udp_get},
+    {"udpSender", "(J[I[Ljava/lang/String;)J", (void *)j_udp_sender},
     {"udpShutdown", "(J)V", (void *)j_udp_shutdown},
     {"udpClose", "(J)V", (void *)j_udp_close},
     {"udpTakePtb", "(J[B[I[B)Z", (void *)j_udp_take_ptb},

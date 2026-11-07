@@ -191,6 +191,15 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
 }
 int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs,
                      uint8_t *dsts, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
+    if (u && u->base) { /* a sender clone: the socket's receiver alone reads */
+        err_lock(u);
+        u->last_errno = KSL_E_NOT_SUPPORTED;
+        snprintf(u->last_msg, KSL_MSG, "ksl_udp_recv: a sender clone does not receive");
+        err_unlock(u);
+        if (received)
+            *received = 0;
+        return KSL_ERROR;
+    }
     if (!u || KSL_ALOAD(u->closed))
         return KSL_ERROR;
     *received = 0;

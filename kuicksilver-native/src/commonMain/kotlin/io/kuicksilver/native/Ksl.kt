@@ -411,6 +411,13 @@ public expect object Ksl {
         what: Int,
     ): ByteArray
 
+    /**
+     * `ksl_udp_sender` (additive in ABI 7): a send-only clone of [udp] with its own send scratch, so another thread sends on the same
+     * port; it shares the descriptor, which closes with the last [udpClose] of the group. Throws [KslException.Internal] with
+     * [KslConst.E_BAD_ARG] when [udp] is shut down. A receive on the clone fails with [KslConst.E_NOT_SUPPORTED] in its error.
+     */
+    public fun udpSender(udp: Long): Long
+
     public fun udpShutdown(udp: Long)
 
     public fun udpClose(udp: Long)

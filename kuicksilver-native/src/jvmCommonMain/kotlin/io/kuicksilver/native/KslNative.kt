@@ -365,6 +365,13 @@ internal object KslNative {
         what: Int,
     ): ByteArray?
 
+    /** ksl_udp_sender: the clone's handle, or 0 with err[0] and msg[0] */
+    @JvmStatic external fun udpSender(
+        udp: Long,
+        err: IntArray,
+        msg: Array<String?>,
+    ): Long
+
     @JvmStatic external fun udpShutdown(udp: Long)
 
     @JvmStatic external fun udpClose(udp: Long)

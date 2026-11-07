@@ -43,6 +43,18 @@ Cross-check 2026-10-02: `ktor-network` on Native closes receiving forever on an 
   call and the shutdown flag in one atomic: entering after shutdown is impossible, `close` frees memory only at a zero
   count, so a use-after-free between the check and the call is ruled out. The getters (`grantedFlags`, `gsoMaxSegments`,
   `batch`, `stats`) enter through the same counter and return the last value read after `shutdown`.
+- **One socket, several senders (0.3.0).** One thread sends on a `ksl_udp` object: the joined GSO/USO run lives in its
+  `tx` scratch. `ksl_udp_sender(base)` (additive under ABI 7) makes a send-only clone for another thread: the same
+  descriptor (`SOCKET` on Windows, where `WSASendMsg` is safe from several threads on one socket), its own `tx`, its own
+  error, counters and sending state copied from the object cloned (granted GSO/USO, ECN, DF, PKTINFO; a fallback one clone
+  takes after a kernel refusal stays with that clone). A receive on a clone answers `KSL_ERROR` with `KSL_E_NOT_SUPPORTED`:
+  the socket's receiver alone reads. The socket counts its owner and its clones (`refs`): `ksl_udp_close` of a clone frees
+  only the clone, and the descriptor and the wake pair close with the last close of the group, in any order; after the
+  socket's shutdown a clone's send fails with `ESHUTDOWN` (`WSAESHUTDOWN`). Each clone counts in `KSL_LIVE_UDP` and holds
+  no wake descriptor. `KslUdpSocket.sender()` wraps it; the in-process loop dispatch of `loops > 1` (below) gives every loop
+  its own clone. Tests: `test_udp.c` / `test_udp_win.c` `udp_sender_clones_send_concurrently` (four threads, 10 000
+  datagrams each through four clones, all 40 000 received intact by the socket; clean under `KSL_TSAN=1`),
+  `udp_sender_outlives_base_close_order`, `negative_udp_sender_cannot_receive`; `KslUdpSenderTest`.
 - **`KslDatagramIo`** (`kuicksilver-quic/src/commonMain`) is the `DatagramIo` over `KslUdpSocket`: `PacketBatch` slots go
   to C as they are; `receive` blocks a `Dispatchers.IO` thread in 100 ms slices until the first datagram or close. Since 0.2.1, while
   datagrams keep coming the endpoint loop reads it on its own thread instead (`receiveNow`, `runtime/BatchReceiver.kt`):

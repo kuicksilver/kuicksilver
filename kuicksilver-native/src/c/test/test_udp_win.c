@@ -205,6 +205,218 @@ static int arrival_wake_ms(ksl_udp *c, ksl_udp *d, const uint8_t lc[KSL_UDP_ADDR
     return (int)((t1.QuadPart - a.sent_at.QuadPart) * 1000 / f.QuadPart);
 }
 
+/* ksl_udp_sender on Windows: the same cases as test_udp.c udp_sender_cases, threads from CreateThread */
+#define WSENDER_THREADS 4
+#define WSENDER_EACH 10000
+#define WSENDER_LEN 48
+#define WSENDER_WINDOW 1024
+struct wsender_run {
+    ksl_udp *clone;
+    const uint8_t *to;
+    uint8_t id;
+    volatile LONG *received, *sent;
+    int failed;
+};
+static void wsender_payload(uint8_t *p, uint8_t id, uint32_t seq) {
+    p[0] = id;
+    p[1] = (uint8_t)(seq >> 24);
+    p[2] = (uint8_t)(seq >> 16);
+    p[3] = (uint8_t)(seq >> 8);
+    p[4] = (uint8_t)seq;
+    for (int i = 5; i < WSENDER_LEN; i++)
+        p[i] = (uint8_t)(id * 31 + seq * 7 + (uint32_t)i);
+}
+static DWORD WINAPI wclone_sender(LPVOID arg) {
+    struct wsender_run *r = arg;
+    uint8_t buf[8][WSENDER_LEN];
+    uint8_t *bufs[8];
+    uint32_t lens[8];
+    uint8_t addrs[8 * KSL_UDP_ADDR_LEN], ecn[8] = {0};
+    for (int i = 0; i < 8; i++) {
+        bufs[i] = buf[i];
+        lens[i] = WSENDER_LEN;
+        memcpy(addrs + i * KSL_UDP_ADDR_LEN, r->to, KSL_UDP_ADDR_LEN);
+    }
+    uint32_t seq = 0;
+    while (seq < WSENDER_EACH) {
+        if (InterlockedCompareExchange(r->sent, 0, 0) - InterlockedCompareExchange(r->received, 0, 0) >=
+            WSENDER_WINDOW) {
+            SwitchToThread();
+            continue;
+        }
+        uint32_t n = WSENDER_EACH - seq < 8 ? WSENDER_EACH - seq : 8;
+        for (uint32_t i = 0; i < n; i++)
+            wsender_payload(buf[i], r->id, seq + i);
+        uint32_t sent = 0;
+        if (ksl_udp_send(r->clone, bufs, lens, addrs, ecn, n, &sent) != KSL_OK) {
+            r->failed = 1;
+            return 0;
+        }
+        seq += sent;
+        InterlockedExchangeAdd(r->sent, (LONG)sent);
+        if (!sent)
+            SwitchToThread();
+    }
+    return 0;
+}
+static int64_t wlive(int which) {
+    int64_t v[KSL_LIVE_COUNT];
+    ksl_live_objects(v, KSL_LIVE_COUNT);
+    return v[which];
+}
+static int wrecv1(ksl_udp *u, int timeout_ms) {
+    uint8_t buf[2048];
+    uint8_t *bufs[1] = {buf};
+    uint32_t caps[1] = {sizeof buf}, lens[1], got = 0;
+    uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+    int r = ksl_udp_recv(u, bufs, caps, lens, ra, re, 1, &got, timeout_ms);
+    if (r == KSL_ERROR)
+        return -1;
+    return r == KSL_OK && got == 1 ? (int)lens[0] : 0;
+}
+static uint32_t wsend1(ksl_udp *u, const uint8_t to[KSL_UDP_ADDR_LEN], uint32_t len) {
+    uint8_t buf[2048];
+    memset(buf, 0x41, sizeof buf);
+    uint8_t *bufs[1] = {buf};
+    uint32_t lens[1] = {len}, sent = 0;
+    uint8_t ecn[1] = {0};
+    return ksl_udp_send(u, bufs, lens, to, ecn, 1, &sent) == KSL_OK ? sent : 0;
+}
+static void udp_sender_win_cases(void) {
+    /* udp_sender_clones_send_concurrently */
+    {
+        uint8_t la[KSL_UDP_ADDR_LEN];
+        ksl_udp *base = wopen_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF, la);
+        ksl_udp *clones[WSENDER_THREADS] = {0};
+        int ok = base != NULL;
+        for (int i = 0; ok && i < WSENDER_THREADS; i++)
+            ok = (clones[i] = ksl_udp_sender(base, NULL, NULL, 0)) != NULL;
+        CHECK(ok, "four sender clones");
+        if (ok) {
+            CHECK(wcaps(clones[0], NULL) == wcaps(base, NULL), "a clone has the socket's granted flags");
+            volatile LONG received = 0, sent = 0;
+            struct wsender_run runs[WSENDER_THREADS];
+            HANDLE th[WSENDER_THREADS];
+            for (int i = 0; i < WSENDER_THREADS; i++) {
+                runs[i] = (struct wsender_run){clones[i], la, (uint8_t)i, &received, &sent, 0};
+                th[i] = CreateThread(NULL, 0, wclone_sender, &runs[i], 0, NULL);
+            }
+            static uint8_t seen[WSENDER_THREADS][WSENDER_EACH];
+            memset(seen, 0, sizeof seen);
+            uint8_t rbuf[64][128];
+            uint8_t *rb[64];
+            uint32_t rc[64], rl[64];
+            uint8_t ra[64 * KSL_UDP_ADDR_LEN], re[64];
+            for (int i = 0; i < 64; i++) {
+                rb[i] = rbuf[i];
+                rc[i] = sizeof rbuf[i];
+            }
+            int bad = 0, dup = 0, total = 0;
+            ULONGLONG deadline = GetTickCount64() + 60000;
+            while (total < WSENDER_THREADS * WSENDER_EACH && GetTickCount64() < deadline) {
+                uint32_t got = 0;
+                int r = ksl_udp_recv(base, rb, rc, rl, ra, re, 64, &got, 200);
+                if (r == KSL_WANT_READ)
+                    continue;
+                if (r != KSL_OK) {
+                    bad++;
+                    break;
+                }
+                for (uint32_t i = 0; i < got; i++) {
+                    uint8_t expect[WSENDER_LEN];
+                    uint8_t id = rb[i][0];
+                    uint32_t seq =
+                        (uint32_t)rb[i][1] << 24 | (uint32_t)rb[i][2] << 16 | (uint32_t)rb[i][3] << 8 | rb[i][4];
+                    if (rl[i] != WSENDER_LEN || id >= WSENDER_THREADS || seq >= WSENDER_EACH) {
+                        bad++;
+                        continue;
+                    }
+                    wsender_payload(expect, id, seq);
+                    if (memcmp(expect, rb[i], WSENDER_LEN))
+                        bad++;
+                    else if (seen[id][seq]++)
+                        dup++;
+                    else
+                        total++;
+                }
+                InterlockedExchangeAdd(&received, (LONG)got);
+            }
+            if (total < WSENDER_THREADS * WSENDER_EACH)
+                InterlockedExchange(&received, WSENDER_THREADS * WSENDER_EACH);
+            int failed = 0;
+            for (int i = 0; i < WSENDER_THREADS; i++) {
+                if (th[i]) {
+                    WaitForSingleObject(th[i], INFINITE);
+                    CloseHandle(th[i]);
+                } else
+                    failed = 1;
+                failed |= runs[i].failed;
+            }
+            CHECK(!failed, "every clone's sends succeeded");
+            CHECK(bad == 0 && dup == 0, "every datagram intact and received once");
+            CHECK(total == WSENDER_THREADS * WSENDER_EACH, "udp_sender_clones_send_concurrently: all 40 000 received");
+            if (total != WSENDER_THREADS * WSENDER_EACH)
+                printf("    %d of %d received (%d bad, %d duplicate)\n", total, WSENDER_THREADS * WSENDER_EACH, bad,
+                       dup);
+        }
+        for (int i = 0; i < WSENDER_THREADS; i++)
+            ksl_udp_close(clones[i]);
+        ksl_udp_close(base);
+    }
+    /* udp_sender_outlives_base_close_order */
+    {
+        int64_t udp0 = wlive(KSL_LIVE_UDP), wake0 = wlive(KSL_LIVE_WAKE);
+        uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN];
+        ksl_udp *peer = wopen_lo(0, lb);
+        ksl_udp *base = wopen_lo(0, la);
+        ksl_udp *clone = base ? ksl_udp_sender(base, NULL, NULL, 0) : NULL;
+        CHECK(peer && base && clone, "socket, clone and peer");
+        if (peer && base && clone) {
+            CHECK(wlive(KSL_LIVE_UDP) == udp0 + 3, "a clone counts as a live ksl_udp");
+            CHECK(wsend1(clone, lb, 100) == 1 && wrecv1(peer, 2000) == 100, "the clone sends");
+            ksl_udp_close(base);
+            CHECK(wsend1(clone, lb, 8) == 0, "negative: a clone of a closed socket no longer sends");
+            CHECK(wlive(KSL_LIVE_UDP) == udp0 + 2, "the closed base is no longer live");
+            ksl_udp_close(clone);
+        }
+        base = wopen_lo(0, la);
+        clone = base ? ksl_udp_sender(base, NULL, NULL, 0) : NULL;
+        if (peer && base && clone) {
+            ksl_udp_close(clone);
+            CHECK(wsend1(base, lb, 120) == 1 && wrecv1(peer, 2000) == 120, "the socket sends after its clone closed");
+            CHECK(wsend1(peer, la, 130) == 1 && wrecv1(base, 2000) == 130,
+                  "the socket receives after its clone closed");
+            ksl_udp_close(base);
+        }
+        ksl_udp_close(peer);
+        CHECK(wlive(KSL_LIVE_UDP) == udp0 && wlive(KSL_LIVE_WAKE) == wake0,
+              "udp_sender_outlives_base_close_order: the counters come back");
+    }
+    /* negative_udp_sender_cannot_receive */
+    {
+        uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN];
+        ksl_udp *peer = wopen_lo(0, lb);
+        ksl_udp *base = wopen_lo(0, la);
+        ksl_udp *clone = base ? ksl_udp_sender(base, NULL, NULL, 0) : NULL;
+        CHECK(peer && base && clone, "socket, clone and peer");
+        if (peer && base && clone) {
+            CHECK(wsend1(peer, la, 140) == 1, "a datagram for the socket");
+            CHECK(wrecv1(clone, 200) == -1, "negative_udp_sender_cannot_receive: KSL_ERROR");
+            uint8_t e[600];
+            size_t n = 0;
+            CHECK(ksl_udp_get(clone, KSL_UDP_GET_ERROR, e, sizeof e, &n) == KSL_OK && n >= 4 &&
+                      ((uint32_t)e[0] << 24 | (uint32_t)e[1] << 16 | (uint32_t)e[2] << 8 | e[3]) == KSL_E_NOT_SUPPORTED,
+                  "the clone's error is KSL_E_NOT_SUPPORTED");
+            CHECK(wrecv1(base, 2000) == 140, "the socket still gets its datagram");
+        }
+        uint32_t err = 0;
+        CHECK(ksl_udp_sender(NULL, &err, NULL, 0) == NULL && err == KSL_E_BAD_ARG, "negative: no clone of nothing");
+        ksl_udp_close(clone);
+        ksl_udp_close(base);
+        ksl_udp_close(peer);
+    }
+}
+
 void run_udp_win(void) {
     uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN];
     ksl_udp *a = wopen_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF | KSL_UDP_REUSEPORT, la),
@@ -870,6 +1082,7 @@ void run_udp_win(void) {
     }
     ksl_udp_close(a);
     ksl_udp_close(b);
+    udp_sender_win_cases();
     /* udp_win_host_cleanup_restarts_winsock: a host that calls WSACleanup more often than WSAStartup took ksl's reference; the next
        open sees WSANOTINITIALISED, starts Winsock once more and succeeds (last: it ends every socket of the process) */
     {

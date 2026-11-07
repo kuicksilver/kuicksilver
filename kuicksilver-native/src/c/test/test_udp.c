@@ -21,6 +21,8 @@
 #endif
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/resource.h> /* RLIMIT_NOFILE for udp_open_without_wake_pipe */
+#include <fcntl.h>        /* F_GETFD: a descriptor the sender clones keep open */
+#include <sched.h>        /* sched_yield: the clone senders wait for the receiver */
 #endif
 #ifdef __linux__
 #include <sched.h> /* unshare: a user and network namespace for the ICMP injection test */
@@ -654,6 +656,243 @@ static void udp_pktinfo_cases(void) {
             ksl_udp_close(w2);
         if (c2)
             ksl_udp_close(c2);
+    }
+}
+#endif
+#if defined(__linux__) || defined(__APPLE__)
+/* ksl_udp_sender: send-only clones of one socket, each with its own tx scratch, so several threads send on one port */
+#define SENDER_THREADS 4
+#define SENDER_EACH 10000
+#define SENDER_LEN 48
+#define SENDER_WINDOW                                                                                                  \
+    1024 /* datagrams sent and not yet received, all threads together: the receive buffer never overflows */
+struct sender_run {
+    ksl_udp *clone;
+    const uint8_t *to;
+    uint8_t id;
+    int *received; /* __atomic, the receiver counts */
+    int *sent;     /* __atomic, all senders count */
+    int failed;
+};
+static void sender_payload(uint8_t *p, uint8_t id, uint32_t seq) {
+    p[0] = id;
+    p[1] = (uint8_t)(seq >> 24);
+    p[2] = (uint8_t)(seq >> 16);
+    p[3] = (uint8_t)(seq >> 8);
+    p[4] = (uint8_t)seq;
+    for (int i = 5; i < SENDER_LEN; i++)
+        p[i] = (uint8_t)(id * 31 + seq * 7 + (uint32_t)i);
+}
+static void *clone_sender(void *arg) {
+    struct sender_run *r = arg;
+    uint8_t buf[8][SENDER_LEN];
+    uint8_t *bufs[8];
+    uint32_t lens[8];
+    uint8_t addrs[8 * KSL_UDP_ADDR_LEN], ecn[8] = {0};
+    for (int i = 0; i < 8; i++) {
+        bufs[i] = buf[i];
+        lens[i] = SENDER_LEN;
+        memcpy(addrs + i * KSL_UDP_ADDR_LEN, r->to, KSL_UDP_ADDR_LEN);
+    }
+    uint32_t seq = 0;
+    while (seq < SENDER_EACH) {
+        /* a window over all senders: wait (yield) until the receiver has caught up */
+        if (__atomic_load_n(r->sent, __ATOMIC_ACQUIRE) - __atomic_load_n(r->received, __ATOMIC_ACQUIRE) >=
+            SENDER_WINDOW) {
+            sched_yield();
+            continue;
+        }
+        uint32_t n = SENDER_EACH - seq < 8 ? SENDER_EACH - seq : 8;
+        for (uint32_t i = 0; i < n; i++)
+            sender_payload(buf[i], r->id, seq + i);
+        uint32_t sent = 0;
+        if (ksl_udp_send(r->clone, bufs, lens, addrs, ecn, n, &sent) != KSL_OK) {
+            r->failed = 1;
+            return NULL;
+        }
+        seq += sent;
+        __atomic_add_fetch(r->sent, (int)sent, __ATOMIC_ACQ_REL);
+        if (!sent)
+            sched_yield(); /* the kernel's queue is full: the rest goes later */
+    }
+    return NULL;
+}
+static int64_t live_of(int which) {
+    int64_t v[KSL_LIVE_COUNT];
+    ksl_live_objects(v, KSL_LIVE_COUNT);
+    return v[which];
+}
+static void udp_sender_cases(void) {
+    /* udp_sender_clones_send_concurrently: four threads, 10 000 datagrams each through four clones of one socket; the socket
+       itself receives all 40 000, each once and with its content (clean under KSL_TSAN=1: the clones share no mutable state) */
+    {
+        uint8_t la[KSL_UDP_ADDR_LEN];
+        ksl_udp *base = open_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF, la);
+        CHECK(base != NULL, "base socket");
+        ksl_udp *clones[SENDER_THREADS] = {0};
+        int ok = base != NULL;
+        for (int i = 0; ok && i < SENDER_THREADS; i++) {
+            uint32_t err = 0;
+            char msg[128] = {0};
+            clones[i] = ksl_udp_sender(base, &err, msg, sizeof msg);
+            if (!clones[i]) {
+                printf("    ksl_udp_sender: %u %s\n", err, msg);
+                ok = 0;
+            }
+        }
+        CHECK(ok, "four sender clones");
+        if (ok) {
+            uint8_t lc[KSL_UDP_ADDR_LEN];
+            size_t n = 0;
+            CHECK(ksl_udp_get(clones[0], KSL_UDP_GET_LOCAL, lc, sizeof lc, &n) == KSL_OK &&
+                      !memcmp(lc, la, KSL_UDP_ADDR_LEN),
+                  "a clone reports the socket's local address");
+            CHECK(caps_of(clones[0], NULL) == caps_of(base, NULL), "a clone has the socket's granted flags");
+            int received = 0, sent = 0;
+            struct sender_run runs[SENDER_THREADS];
+            pthread_t th[SENDER_THREADS];
+            for (int i = 0; i < SENDER_THREADS; i++) {
+                runs[i] = (struct sender_run){clones[i], la, (uint8_t)i, &received, &sent, 0};
+                pthread_create(&th[i], NULL, clone_sender, &runs[i]);
+            }
+            static uint8_t seen[SENDER_THREADS][SENDER_EACH];
+            memset(seen, 0, sizeof seen);
+            uint8_t rbuf[64][128];
+            uint8_t *rb[64];
+            uint32_t rc[64], rl[64];
+            uint8_t ra[64 * KSL_UDP_ADDR_LEN], re[64];
+            for (int i = 0; i < 64; i++) {
+                rb[i] = rbuf[i];
+                rc[i] = sizeof rbuf[i];
+            }
+            int bad = 0, dup = 0, total = 0;
+            int64_t deadline = mono_ms() + 60000;
+            while (total < SENDER_THREADS * SENDER_EACH && mono_ms() < deadline) {
+                uint32_t got = 0;
+                int r = ksl_udp_recv(base, rb, rc, rl, ra, re, 64, &got, 200);
+                if (r == KSL_WANT_READ)
+                    continue;
+                if (r != KSL_OK) {
+                    bad++;
+                    break;
+                }
+                for (uint32_t i = 0; i < got; i++) {
+                    uint8_t expect[SENDER_LEN];
+                    uint8_t id = rb[i][0];
+                    uint32_t seq =
+                        (uint32_t)rb[i][1] << 24 | (uint32_t)rb[i][2] << 16 | (uint32_t)rb[i][3] << 8 | rb[i][4];
+                    if (rl[i] != SENDER_LEN || id >= SENDER_THREADS || seq >= SENDER_EACH ||
+                        port_of(ra + i * KSL_UDP_ADDR_LEN) != port_of(la)) {
+                        bad++;
+                        continue;
+                    }
+                    sender_payload(expect, id, seq);
+                    if (memcmp(expect, rb[i], SENDER_LEN))
+                        bad++;
+                    else if (seen[id][seq]++)
+                        dup++;
+                    else
+                        total++;
+                }
+                __atomic_add_fetch(&received, (int)got, __ATOMIC_ACQ_REL);
+            }
+            int failed = 0;
+            if (total < SENDER_THREADS * SENDER_EACH) /* lost datagrams: let stalled senders go so the join ends */
+                __atomic_store_n(&received, SENDER_THREADS * SENDER_EACH, __ATOMIC_RELEASE);
+            for (int i = 0; i < SENDER_THREADS; i++) {
+                pthread_join(th[i], NULL);
+                failed |= runs[i].failed;
+            }
+            CHECK(!failed, "every clone's sends succeeded");
+            CHECK(bad == 0 && dup == 0, "every datagram intact and received once");
+            CHECK(total == SENDER_THREADS * SENDER_EACH, "udp_sender_clones_send_concurrently: all 40 000 received");
+            if (total != SENDER_THREADS * SENDER_EACH)
+                printf("    %d of %d received (%d bad, %d duplicate)\n", total, SENDER_THREADS * SENDER_EACH, bad, dup);
+        }
+        for (int i = 0; i < SENDER_THREADS; i++)
+            ksl_udp_close(clones[i]);
+        ksl_udp_close(base);
+    }
+    /* udp_sender_outlives_base_close_order: the socket closes with the last of its group, in either order; the live counters
+       come back to where they were */
+    {
+        int64_t udp0 = live_of(KSL_LIVE_UDP), wake0 = live_of(KSL_LIVE_WAKE);
+        uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN];
+        ksl_udp *peer = open_lo(0, lb);
+        ksl_udp *base = open_lo(0, la);
+        ksl_udp *clone = base ? ksl_udp_sender(base, NULL, NULL, 0) : NULL;
+        CHECK(peer && base && clone, "socket, clone and peer");
+        if (peer && base && clone) {
+            CHECK(live_of(KSL_LIVE_UDP) == udp0 + 3, "a clone counts as a live ksl_udp");
+            CHECK(live_of(KSL_LIVE_WAKE) == wake0 + 4, "a clone holds no wake descriptors");
+            uint8_t fdb[4];
+            size_t n = 0;
+            ksl_udp_get(base, KSL_UDP_GET_FD, fdb, 4, &n);
+            int fd = (int)((uint32_t)fdb[0] << 24 | (uint32_t)fdb[1] << 16 | (uint32_t)fdb[2] << 8 | fdb[3]);
+            CHECK(send1(clone, lb, 100) == 1 && recv1(peer, 2000) == 100, "the clone sends");
+            ksl_udp_close(base); /* the base first */
+            CHECK(fcntl(fd, F_GETFD) != -1, "the descriptor stays open while a clone holds it");
+            uint8_t z[8] = {0};
+            uint8_t *zb[1] = {z};
+            uint32_t zl[1] = {8}, sent = 0;
+            uint8_t ze[1] = {0};
+            CHECK(ksl_udp_send(clone, zb, zl, lb, ze, 1, &sent) == KSL_ERROR,
+                  "negative: a clone of a closed socket no longer sends");
+            CHECK(live_of(KSL_LIVE_UDP) == udp0 + 2, "the closed base is no longer live");
+            ksl_udp_close(clone);
+            CHECK(fcntl(fd, F_GETFD) == -1, "the last of the group closes the descriptor");
+            CHECK(live_of(KSL_LIVE_UDP) == udp0 + 1 && live_of(KSL_LIVE_WAKE) == wake0 + 2,
+                  "base first: the counters come back");
+        }
+        /* the clone first: the socket keeps sending and receiving */
+        base = open_lo(0, la);
+        clone = base ? ksl_udp_sender(base, NULL, NULL, 0) : NULL;
+        CHECK(base && clone, "socket and clone again");
+        if (peer && base && clone) {
+            ksl_udp_close(clone);
+            CHECK(send1(base, lb, 120) == 1 && recv1(peer, 2000) == 120, "the socket sends after its clone closed");
+            CHECK(send1(peer, la, 130) == 1 && recv1(base, 2000) == 130, "the socket receives after its clone closed");
+            ksl_udp_close(base);
+        }
+        ksl_udp_close(peer);
+        CHECK(live_of(KSL_LIVE_UDP) == udp0 && live_of(KSL_LIVE_WAKE) == wake0,
+              "udp_sender_outlives_base_close_order: the counters come back");
+    }
+    /* negative_udp_sender_cannot_receive: a clone only sends; a receive on it fails with KSL_E_NOT_SUPPORTED and leaves the socket's
+       datagrams to the socket. No clone of nothing, nor of a socket already shut down */
+    {
+        uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN];
+        ksl_udp *peer = open_lo(0, lb);
+        ksl_udp *base = open_lo(0, la);
+        ksl_udp *clone = base ? ksl_udp_sender(base, NULL, NULL, 0) : NULL;
+        CHECK(peer && base && clone, "socket, clone and peer");
+        if (peer && base && clone) {
+            CHECK(send1(peer, la, 140) == 1, "a datagram for the socket");
+            CHECK(recv1(clone, 200) == -1, "negative_udp_sender_cannot_receive: KSL_ERROR");
+            uint8_t e[600];
+            size_t n = 0;
+            CHECK(ksl_udp_get(clone, KSL_UDP_GET_ERROR, e, sizeof e, &n) == KSL_OK && n >= 4 &&
+                      ((uint32_t)e[0] << 24 | (uint32_t)e[1] << 16 | (uint32_t)e[2] << 8 | e[3]) == KSL_E_NOT_SUPPORTED,
+                  "the clone's error is KSL_E_NOT_SUPPORTED");
+            CHECK(recv1(base, 2000) == 140, "the socket still gets its datagram");
+            ksl_udp *nested = ksl_udp_sender(clone, NULL, NULL, 0);
+            CHECK(nested != NULL, "a clone of a clone sends on the same socket");
+            CHECK(nested && send1(nested, lb, 150) == 1 && recv1(peer, 2000) == 150, "it sends");
+            ksl_udp_close(nested);
+        }
+        uint32_t err = 0;
+        char msg[128] = {0};
+        CHECK(ksl_udp_sender(NULL, &err, msg, sizeof msg) == NULL && err == KSL_E_BAD_ARG,
+              "negative: no clone of nothing");
+        if (base) {
+            ksl_udp_shutdown(base);
+            err = 0;
+            CHECK(ksl_udp_sender(base, &err, msg, sizeof msg) == NULL && err == KSL_E_BAD_ARG,
+                  "negative: no clone of a socket shut down");
+        }
+        ksl_udp_close(clone);
+        ksl_udp_close(base);
+        ksl_udp_close(peer);
     }
 }
 #endif
@@ -1717,6 +1956,7 @@ void run_udp(void) {
         }
 #endif
         udp_pktinfo_cases();
+        udp_sender_cases();
         ksl_udp_close(a);
         ksl_udp_close(b);
     }

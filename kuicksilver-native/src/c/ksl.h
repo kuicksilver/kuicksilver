@@ -34,7 +34,8 @@ extern "C" {
    ksl_udp_emsgsize (sends the kernel refused as too large); a queued ICMP error no longer fails ksl_udp_recv. The one ABI bump of 0.3.0:
    later 0.3.0 additions go under 7; additive under 7: ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
-   ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs) */
+   ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_sender (send-only clones
+   of one UDP socket, one sender thread each) */
 
 /* return codes */
 #define KSL_OK 0
@@ -396,6 +397,16 @@ int ksl_udp_take_ptb(ksl_udp *, uint8_t *quote, uint32_t cap, uint32_t *quote_le
 uint64_t ksl_udp_emsgsize(ksl_udp *, uint32_t *last_size);
 /* datagrams ksl_udp_send lost to EMSGSIZE (larger than the path MTU the kernel knows, with DF), every platform; *last_size: the
             length of the latest one */
+/* A send-only clone of a socket ksl_udp_open made (one sender thread per object: each has its own send scratch, so N threads
+   send on one port through N clones; the clone of a clone is a clone of its socket). It shares the descriptor and copies the
+   granted flags (GSO, ECN, DF, PKTINFO) and the local address as they stand: create clones before the socket sends, or from its
+   sender thread. ksl_udp_send / ksl_udp_send_src, ksl_udp_get and ksl_udp_emsgsize work on it (its own counters and error);
+   ksl_udp_recv / ksl_udp_recv_dst answer KSL_ERROR with KSL_E_NOT_SUPPORTED in its error (the socket's receiver alone reads).
+   ksl_udp_shutdown and ksl_udp_close of a clone end that clone only; after the socket's shutdown a send on a clone fails
+   (KSL_ERROR, ESHUTDOWN / WSAESHUTDOWN in its error). The descriptor closes with the last ksl_udp_close of the group, in any order. NULL with KSL_E_BAD_ARG for NULL or
+   a socket already shut down; never while another thread may close the socket. Each clone counts in KSL_LIVE_UDP and holds no
+   wake descriptor. Additive in ABI 7 */
+ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen);
 void ksl_udp_shutdown(
     ksl_udp
         *); /* wakes a blocked ksl_udp_recv and closes the socket; later send/recv answer KSL_ERROR at once; the object stays until ksl_udp_close */

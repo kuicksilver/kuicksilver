@@ -603,6 +603,14 @@ public actual object Ksl {
         what: Int,
     ): ByteArray = KslNative.udpGet(udp, what) ?: throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_udp_get($what) failed")
 
+    public actual fun udpSender(udp: Long): Long {
+        val err = IntArray(1)
+        val msg = arrayOfNulls<String>(1)
+        val h = KslNative.udpSender(udp, err, msg)
+        if (h == 0L) throw KslException.Internal(if (err[0] == 0) KslConst.E_BAD_ARG else err[0], 0, msg[0] ?: "ksl_udp_sender failed")
+        return h
+    }
+
     public actual fun udpShutdown(udp: Long): Unit = KslNative.udpShutdown(udp)
 
     public actual fun udpClose(udp: Long): Unit = KslNative.udpClose(udp)
