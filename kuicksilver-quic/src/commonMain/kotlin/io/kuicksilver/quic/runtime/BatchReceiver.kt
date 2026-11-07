@@ -31,12 +31,20 @@ import kotlin.time.Duration.Companion.milliseconds
  * [YIELD_INTERVAL] passed since its last yield, and when a timer is due. Not after every batch: a paced sender's batches
  * hold a few datagrams, and an application reading the stream would be woken for each. Not less often either: an
  * application read that extends the stream's flow-control credit only every 2 ms stalls a fast sender (a first version
- * made kuicksilver -> kuicksilver 2.6 times slower). A command posted during a wait runs after it, at most [maxWait] later.
+ * made kuicksilver -> kuicksilver 2.6 times slower).
+ *
+ * On the loop's own dispatcher ([queued]) the receiver also yields as soon as any task was queued behind it, and does not
+ * start a wait while one is: an application's write or read hops onto the loop (`withContext`), and one that waited for the
+ * receiver's next 16 datagrams or 1 ms held a single connection over loopback to about 30 MiB/s with the sender idle (a
+ * stream's writer hands over 16 KiB per hop; docs/benchmarks.md, "One connection over loopback"). A task queued while a
+ * wait is already under way still runs after it: when a datagram arrives, at most [maxWait] later.
  */
 internal class BatchReceiver(
     private val io: DatagramIo,
     private val now: LoopClock,
     internal val maxWait: Duration = PLATFORM_WAIT,
+    /** The loop's own dispatcher, whose count of queued tasks tells whether work waits behind the receiver; null: not known. */
+    private val queued: LoopDispatcher? = null,
 ) {
     /** The loop's clock: an interface, so reading it does not box the [TimeMark] as a `() -> TimeMark` would, once per batch. */
     fun interface LoopClock {
@@ -57,6 +65,12 @@ internal class BatchReceiver(
     private var sinceYield = 0
     private var lastYield = TimeMark(0)
 
+    /** [LoopDispatcher.dispatched] up to the receiver's last yield: the tasks queued until then have run. */
+    private var accounted = 0L
+
+    /** A task was queued on the loop's dispatcher since the receiver last let queued work run. */
+    private fun workQueued(): Boolean = queued != null && queued.dispatched() > accounted
+
     /** Batches taken on the loop's thread (tests, diagnostics). */
     var directBatches = 0L
         private set
@@ -71,15 +85,15 @@ internal class BatchReceiver(
         directTried: Boolean = false,
     ): Int {
         if (direct != null && flowing && !directTried) {
-            if (yieldDue(untilTimer)) {
-                yield()
-                yielded()
-            }
+            if (yieldDue(untilTimer)) yieldToQueued()
             val n = takeDirect(direct, into, untilTimer)
             if (n > 0) return n
         }
         val n = io.receive(into) // suspends: the loop's queued work runs meanwhile
         yielded()
+        // the resumption was queued behind what was waiting then; a task queued after it is taken as run too (it then waits
+        // for the next yield, as before the count existed)
+        accounted = queued?.dispatched() ?: 0L
         flowing = n > 0
         return n
     }
@@ -99,7 +113,19 @@ internal class BatchReceiver(
     }
 
     private fun yieldDue(untilTimer: TimerHorizon): Boolean =
-        sinceYield >= YIELD_DATAGRAMS || now.now() - lastYield >= YIELD_INTERVAL || untilTimer.untilTimer() <= Duration.ZERO
+        workQueued() || sinceYield >= YIELD_DATAGRAMS || now.now() - lastYield >= YIELD_INTERVAL ||
+            untilTimer.untilTimer() <= Duration.ZERO
+
+    /**
+     * Lets the work queued on the loop run. The yield queues the receiver itself behind it (one more dispatch, its own): what
+     * was queued before has run when it returns, what is queued after it is still waiting.
+     */
+    suspend fun yieldToQueued() {
+        val before = queued?.dispatched() ?: 0L
+        yield()
+        yielded()
+        accounted = before + 1
+    }
 
     /** What is queued, or what arrives within [maxWait] and before the next timer; 0 when nothing came. */
     private fun takeDirect(
@@ -108,7 +134,7 @@ internal class BatchReceiver(
         untilTimer: TimerHorizon,
     ): Int {
         var n = direct.receiveNow(into, 0)
-        if (n == 0) {
+        if (n == 0 && !workQueued()) {
             val timer = untilTimer.untilTimer()
             val wait = (if (timer < maxWait) timer else maxWait).inWholeMilliseconds // not minOf: it boxes both Durations
             if (wait > 0) n = direct.receiveNow(into, wait.toInt())

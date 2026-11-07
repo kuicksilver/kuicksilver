@@ -83,7 +83,7 @@ internal suspend fun EndpointLoop.receiveLoop() {
             afterReceive(now)
             // a socket that never runs dry (a flood) must not starve the timer coroutine and the queued application commands
             if (limiter.shouldYield(now)) {
-                yield()
+                receiver.yieldToQueued()
                 limiter.start(now())
             }
         }

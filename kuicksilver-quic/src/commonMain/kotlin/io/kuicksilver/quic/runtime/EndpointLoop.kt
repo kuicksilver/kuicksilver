@@ -54,7 +54,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.yield
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
@@ -292,7 +291,7 @@ internal class EndpointLoop private constructor(
             val caps = launch { followCapabilities(io, path, core) }
             val batch = PacketBatch(16, SLOT_SIZE)
             val limiter = WorkLimiter()
-            val receiver = BatchReceiver(io, clock, directWait)
+            val receiver = BatchReceiver(io, clock, directWait, dispatcher as? LoopDispatcher)
             try {
                 limiter.start(now())
                 while (true) {
@@ -314,7 +313,7 @@ internal class EndpointLoop private constructor(
                     drainPacketTooBig(io, path, now)
                     flush()
                     if (limiter.shouldYield(now)) {
-                        yield()
+                        receiver.yieldToQueued()
                         limiter.start(now())
                     }
                 }
@@ -367,7 +366,7 @@ internal class EndpointLoop private constructor(
     internal val directWait: Duration = if (config.dispatcher != null) Duration.ZERO else BatchReceiver.PLATFORM_WAIT
 
     /** This socket's batches: on the loop's thread while datagrams keep coming, else through the blocking receive. */
-    internal val receiver = BatchReceiver(io, clock, directWait)
+    internal val receiver = BatchReceiver(io, clock, directWait, dispatcher as? LoopDispatcher)
 
     /** Time left until the loop's next timer: a receive on the loop's thread waits no longer. */
     internal val untilTimer = BatchReceiver.TimerHorizon { timers.peek()?.let { it.heapDeadline - now() } ?: Duration.INFINITE }
@@ -794,7 +793,7 @@ internal class EndpointLoop private constructor(
         const val FORWARD_BATCH: Int = 16
 
         @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-        internal fun ownDispatcher(): CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1)
+        internal fun ownDispatcher(): CoroutineDispatcher = LoopDispatcher(Dispatchers.Default.limitedParallelism(1))
 
         suspend fun bind(
             local: InetSocketAddress,
