@@ -398,7 +398,7 @@ public class EndpointCore internal constructor(
         object : io.kuicksilver.quic.core.PeerTokenSink {
             override fun added(token: ByteArray) = index.add(token, loopIndex)
 
-            override fun removed(token: ByteArray) = index.remove(token)
+            override fun removed(token: ByteArray) = index.remove(token, loopIndex)
         }
     }
 

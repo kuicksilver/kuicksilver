@@ -348,7 +348,7 @@ probe settles that size at once. ICMP is easy to forge, so nothing else trusts i
 
 | Platform | Hints |
 |---|---|
-| Linux, Android (accelerated socket) | Packet Too Big and EMSGSIZE (with several loops on one shared socket, each Packet Too Big is offered to every loop, each counting it as accepted or ignored) |
+| Linux, Android (accelerated socket) | Packet Too Big and EMSGSIZE (with several loops on one shared socket, each Packet Too Big is offered to every loop, each counting it as accepted or ignored; one a loop has no room for counts as ignored) |
 | macOS, iOS, Windows (accelerated socket) | EMSGSIZE only (no usable ICMP for an unconnected socket) |
 | Portable socket (NIO, ktor-network) | none (no DF) |
 

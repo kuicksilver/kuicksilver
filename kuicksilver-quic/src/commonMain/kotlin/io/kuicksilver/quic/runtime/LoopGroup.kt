@@ -167,7 +167,18 @@ internal class LoopGroup private constructor(
         get() {
             val s = loops.map { it.stats }.reduce { a, b -> a + b }
             if (dispatchers.isEmpty()) return s
-            return s + EndpointStats(0, 0, 0, 0, 0, 0, 0, datagramsDispatchDropped = dispatchers.sumOf { it.dropped })
+            return s +
+                EndpointStats(
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    ptbIgnored = dispatchers.sumOf { it.ptbDropped },
+                    datagramsDispatchDropped = dispatchers.sumOf { it.dropped },
+                )
         }
 
     /** Every loop stops taking connections at once; one deadline for the whole group, then the group closes as one. */

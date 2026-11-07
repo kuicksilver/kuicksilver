@@ -121,7 +121,11 @@ public class EndpointStats internal constructor(
     /** ICMP Packet Too Big messages taken as a DPLPMTUD hint (they quoted a packet of a connection's active path; RFC 8899 section 4.6). */
     @property:ExperimentalKuicksilverApi
     public val ptbAccepted: Long = 0,
-    /** ICMP Packet Too Big messages ignored: over the 64-a-second budget, below 1200 bytes of payload, or about no packet of ours. */
+    /**
+     * ICMP Packet Too Big messages ignored: over the 64-a-second budget, below 1200 bytes of payload, or about no packet of
+     * ours. With several loops on one shared socket each message is offered to every loop (each counts it, accepted or
+     * ignored), and one a loop had no room for (16 waiting) counts here too.
+     */
     @property:ExperimentalKuicksilverApi
     public val ptbIgnored: Long = 0,
     /**

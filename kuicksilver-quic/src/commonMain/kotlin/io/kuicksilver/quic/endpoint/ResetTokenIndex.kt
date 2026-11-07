@@ -5,36 +5,49 @@
 package io.kuicksilver.quic.endpoint
 
 import io.kuicksilver.native.PacketBuffer
+import kotlin.concurrent.atomics.AtomicArray
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.random.Random
 
 /**
- * The peers' stateless reset tokens of every connection of a loop group that shares one socket, each with the loop that holds
+ * The peers' stateless reset tokens of every connection of a loop group that shares one socket, each with the loops that hold
  * it: a Stateless Reset (RFC 9000 section 10.3) carries no connection ID of ours, only the token in its last 16 bytes, so
  * the receiver of the shared socket finds the loop by that token ([loopOf]) and the loop's connection checks it (section
  * 10.3.1: "an endpoint MUST" detect a reset for a connection it has). The loops add a token when a connection learns it
  * (the `stateless_reset_token` transport parameter, NEW_CONNECTION_ID, `preferred_address`) and remove it when the peer ID
- * leaves or the connection is removed.
+ * leaves or the connection is removed. A token several connections hold (a peer may repeat one) keeps a count per loop,
+ * and routes to a loop that still holds it.
  *
- * An open-addressed table keyed by SipHash of the token under a random key (a peer chooses its tokens: it cannot aim them
- * at one bucket), guarded by a spin lock: the loops write rarely, the receiver reads once per datagram long enough to be
- * a reset. A token held twice (two IDs of one peer giving the same token) counts its holders.
+ * Copy-on-write in [STRIPES] stripes chosen by SipHash under a random key (a peer chooses its tokens: it cannot aim them at
+ * one stripe or bucket): the receiver reads an immutable snapshot of one stripe with no lock, so a loop preempted in the
+ * middle of a change never stalls it; a change builds a new snapshot of its stripe and publishes it with a compare-and-set,
+ * retrying when another loop changed that stripe meanwhile. A change copies one stripe (about a 64th of the tokens), and
+ * changes are rare next to the datagrams the receiver looks up. Tokens are compared in constant time once their keyed
+ * hashes are equal (section 10.3.1: "without leaking information about the value of the token").
  */
 internal class ResetTokenIndex(
     random: Random,
 ) {
     private val k0 = random.nextLong()
     private val k1 = random.nextLong()
-    private val lock = SpinLock()
 
-    // slot state: 0 empty, -1 removed, > 0 the holders of the token in that slot
-    private var tokens = ByteArray(INITIAL * TOKEN)
-    private var loops = IntArray(INITIAL)
-    private var state = IntArray(INITIAL)
-    private var used = 0 // live and removed slots
+    /** One token and its holders, `[loop, count]` pairs with counts above 0; immutable. */
+    private class Entry(
+        val hash: Long,
+        val token: ByteArray,
+        val holders: IntArray,
+    )
+
+    /** An open-addressed table of one stripe; immutable once published. */
+    private class Stripe(
+        val entries: Array<Entry?>,
+        val live: Int,
+    )
+
+    private val stripes = AtomicArray(Array(STRIPES) { EMPTY })
     private val live = AtomicInt(0)
 
-    /** Tokens held now (tests). */
+    /** Distinct tokens held now (tests). */
     val size: Int get() = live.load()
 
     fun add(
@@ -42,28 +55,27 @@ internal class ResetTokenIndex(
         loop: Int,
     ) {
         if (token.size != TOKEN || token.all { it == 0.toByte() }) return // a zero token never matches (StatelessReset.matches)
-        lock.locked {
-            val h = SipHash.hash24(k0, k1, token)
-            val at = find(h) { i -> same(i, token, 0) }
-            if (at >= 0) {
-                state[at]++
-                loops[at] = loop
-                return@locked
-            }
-            if ((used + 1) * 2 > state.size) rehash()
-            put(h, token, loop)
-            live.store(live.load() + 1)
+        change(SipHash.hash24(k0, k1, token), token) { old ->
+            if (old == null) return@change intArrayOf(loop, 1)
+            val i = indexOfLoop(old.holders, loop)
+            if (i >= 0) old.holders.copyOf().also { it[i + 1]++ } else old.holders + intArrayOf(loop, 1)
         }
     }
 
-    fun remove(token: ByteArray) {
+    fun remove(
+        token: ByteArray,
+        loop: Int,
+    ) {
         if (token.size != TOKEN) return
-        lock.locked {
-            val at = find(SipHash.hash24(k0, k1, token)) { i -> same(i, token, 0) }
-            if (at < 0) return@locked
-            if (--state[at] == 0) {
-                state[at] = -1
-                live.store(live.load() - 1)
+        val h = SipHash.hash24(k0, k1, token)
+        change(h, token) { old ->
+            if (old == null) return@change null
+            val i = indexOfLoop(old.holders, loop)
+            when {
+                i < 0 -> old.holders
+                old.holders[i + 1] > 1 -> old.holders.copyOf().also { it[i + 1]-- }
+                old.holders.size == 2 -> null
+                else -> old.holders.copyOfRange(0, i) + old.holders.copyOfRange(i + 2, old.holders.size)
             }
         }
     }
@@ -76,83 +88,97 @@ internal class ResetTokenIndex(
         if (end < StatelessReset.MIN_SIZE || live.load() == 0) return -1
         val off = end - TOKEN
         val h = SipHash.hash24(k0, k1, buf, off, TOKEN)
-        return lock.locked {
-            val at = find(h) { i -> same(i, buf, off) }
-            if (at >= 0) loops[at] else -1
-        }
+        val s = stripes.loadAt(stripeOf(h))
+        val e = find(s, h) { ConstantTime.equals(buf, off, it.token, 0, TOKEN) } ?: return -1
+        return e.holders[0]
     }
 
     private inline fun find(
+        s: Stripe,
         h: Long,
-        eq: (Int) -> Boolean,
-    ): Int {
-        val mask = state.size - 1
-        var i = (h xor (h ushr 32)).toInt() and mask
+        eq: (Entry) -> Boolean,
+    ): Entry? {
+        val a = s.entries
+        if (a.isEmpty()) return null
+        val mask = a.size - 1
+        var i = slotOf(h, mask)
         while (true) {
-            val s = state[i]
-            if (s == 0) return -1
-            if (s > 0 && eq(i)) return i
+            val e = a[i] ?: return null
+            if (e.hash == h && eq(e)) return e
             i = (i + 1) and mask
         }
     }
 
-    private fun put(
+    /**
+     * Replaces the holders of the token with hash [h] (and bytes [token], our own copy when it is new) by what [update] makes
+     * of them (null: the token goes), as one compare-and-set of its stripe.
+     */
+    private inline fun change(
         h: Long,
         token: ByteArray,
-        loop: Int,
+        update: (Entry?) -> IntArray?,
     ) {
-        val mask = state.size - 1
-        var i = (h xor (h ushr 32)).toInt() and mask
-        while (state[i] > 0) i = (i + 1) and mask
-        if (state[i] == 0) used++
-        token.copyInto(tokens, i * TOKEN)
-        loops[i] = loop
-        state[i] = 1
-    }
-
-    /** A table twice the live tokens' need (never below [INITIAL]), without the removed slots. */
-    private fun rehash() {
-        val oldTokens = tokens
-        val oldLoops = loops
-        val oldState = state
-        var cap = INITIAL
-        while (cap < (live.load() + 1) * 4) cap *= 2
-        tokens = ByteArray(cap * TOKEN)
-        loops = IntArray(cap)
-        state = IntArray(cap)
-        used = 0
-        val t = ByteArray(TOKEN)
-        for (i in oldState.indices) {
-            if (oldState[i] <= 0) continue
-            oldTokens.copyInto(t, 0, i * TOKEN, (i + 1) * TOKEN)
-            put(SipHash.hash24(k0, k1, t), t, oldLoops[i])
-            val j = find(SipHash.hash24(k0, k1, t)) { s -> same(s, t, 0) }
-            state[j] = oldState[i]
+        val at = stripeOf(h)
+        while (true) {
+            val s = stripes.loadAt(at)
+            val old = find(s, h) { ConstantTime.equals(it.token, token) }
+            val holders = update(old)
+            if (holders === old?.holders) return
+            val next = rebuild(s, old, if (holders == null) null else Entry(h, old?.token ?: token.copyOf(), holders))
+            if (stripes.compareAndSetAt(at, s, next)) {
+                if (old == null && holders != null) live.addAndFetch(1)
+                if (old != null && holders == null) live.addAndFetch(-1)
+                return
+            }
         }
     }
 
-    private fun same(
-        slot: Int,
-        token: ByteArray,
-        off: Int,
-    ): Boolean {
-        val base = slot * TOKEN
-        for (k in 0 until TOKEN) if (tokens[base + k] != token[off + k]) return false
-        return true
+    /** [s] without [drop] and with [put], in a table at least twice its tokens (never below [MIN_SLOTS]). */
+    private fun rebuild(
+        s: Stripe,
+        drop: Entry?,
+        put: Entry?,
+    ): Stripe {
+        val n = s.live - (if (drop != null) 1 else 0) + (if (put != null) 1 else 0)
+        if (n == 0) return EMPTY
+        var cap = MIN_SLOTS
+        while (cap < n * 2) cap *= 2
+        val a = arrayOfNulls<Entry>(cap)
+        val mask = cap - 1
+
+        fun place(e: Entry) {
+            var i = slotOf(e.hash, mask)
+            while (a[i] != null) i = (i + 1) and mask
+            a[i] = e
+        }
+        for (e in s.entries) if (e != null && e !== drop) place(e)
+        if (put != null) place(put)
+        return Stripe(a, n)
     }
 
-    private fun same(
-        slot: Int,
-        buf: PacketBuffer,
-        off: Int,
-    ): Boolean {
-        val base = slot * TOKEN
-        for (k in 0 until TOKEN) if (tokens[base + k] != buf[off + k]) return false
-        return true
+    private fun indexOfLoop(
+        holders: IntArray,
+        loop: Int,
+    ): Int {
+        var i = 0
+        while (i < holders.size) {
+            if (holders[i] == loop) return i
+            i += 2
+        }
+        return -1
     }
+
+    private fun stripeOf(h: Long): Int = (h ushr 58).toInt() and (STRIPES - 1)
+
+    private fun slotOf(
+        h: Long,
+        mask: Int,
+    ): Int = (h xor (h ushr 29)).toInt() and mask
 
     private companion object {
         const val TOKEN = 16
-        const val INITIAL = 64
+        const val STRIPES = 64
+        const val MIN_SLOTS = 8
+        val EMPTY = Stripe(emptyArray(), 0)
     }
 }

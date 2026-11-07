@@ -21,6 +21,17 @@ internal object ConstantTime {
         for (i in 0 until len) diff = diff or ((a[aOff + i].toInt() xor b[bOff + i].toInt()) and 0xff)
         return diff == 0
     }
+
+    /** The same over two arrays of the same length; false for different lengths (a length is not secret). */
+    fun equals(
+        a: ByteArray,
+        b: ByteArray,
+    ): Boolean {
+        if (a.size != b.size) return false
+        var diff = 0
+        for (i in a.indices) diff = diff or ((a[i].toInt() xor b[i].toInt()) and 0xff)
+        return diff == 0
+    }
 }
 
 /** Stateless Reset packets (RFC 9000 section 10.3): random bytes that look like a short header, the 16-byte token last. */

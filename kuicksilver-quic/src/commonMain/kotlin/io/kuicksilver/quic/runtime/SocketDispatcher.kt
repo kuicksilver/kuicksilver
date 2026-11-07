@@ -78,6 +78,15 @@ internal class SocketDispatcher(
     /** Datagrams dropped because their loop's ring was full. */
     val dropped: Long get() = droppedCount.load()
 
+    private val ptbDroppedCount = AtomicLong(0)
+
+    /** Packet Too Big messages a loop had no room for (its queue holds [KslDatagramIo.PTB_PER_DRAIN]): counted as ignored. */
+    val ptbDropped: Long get() = ptbDroppedCount.load()
+
+    internal fun ptbDroppedOne() {
+        ptbDroppedCount.incrementAndFetch()
+    }
+
     private val closed = AtomicInt(0)
     private val openInboxes = AtomicInt(loops)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
@@ -235,7 +244,11 @@ internal open class LoopInbox(
         dst: InetSocketAddress,
         mtu: Int,
     ) {
-        if (ptbs.trySend(Ptb(quote.copyOf(len), dst, mtu)).isSuccess) putSinceWake = true // the loop takes it even with no datagram
+        if (ptbs.trySend(Ptb(quote.copyOf(len), dst, mtu)).isSuccess) {
+            putSinceWake = true // the loop takes it even with no datagram
+        } else {
+            dispatcher.ptbDroppedOne() // the loop has not taken the ones before: as the socket's own ring, newer ones go
+        }
     }
 
     /** The loop's thread: the Packet Too Big messages offered since the last call ([EndpointLoop.drainPacketTooBig]). */
