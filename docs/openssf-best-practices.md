@@ -70,7 +70,7 @@ answer against the repository when submitting; this file is not kept in sync by 
 | `tests_are_added` | MUST | Met | Fixes in the CHANGELOG name their tests; commits add the failing test with the fix |
 | `tests_documented_added` | SUGGESTED | Met | CONTRIBUTING, Tests, and the pull request checklist |
 | `warnings` | MUST | Met | C: `-Wall -Wextra -Werror` in every build script of `ksl` (`tools/build-jni.sh`, `tools/build-ksl-a.sh`, `tools/build-android-so.sh`, `tools/c-test.sh`); Kotlin: `explicitApi()` and ktlint in `check` |
-| `warnings_fixed` | MUST | Met | C warnings fail the build; ktlint findings fail the gate. Kotlin compiler warnings are errors in every compilation of the library modules (`allWarningsAsErrors`; `-Pkuicksilver.warningsAsErrors=false` turns it off locally, e.g. to try a dependency bump) |
+| `warnings_fixed` | MUST | Met | C warnings fail the build; ktlint findings fail the gate. Kotlin compiler warnings are errors in the main and test compilations of the library modules (the `kuicksilver.kmp` convention plugin sets `allWarningsAsErrors`; `-Pkuicksilver.warningsAsErrors=false` turns it off locally, e.g. to try a dependency bump) |
 | `warnings_strict` | SUGGESTED | Met | C: `-Werror` |
 
 ## Security

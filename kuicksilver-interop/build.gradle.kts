@@ -8,6 +8,7 @@ plugins {
 }
 kotlin {
     jvmToolchain(21)
+    compilerOptions { allWarningsAsErrors.set(true) }   // as in the kmp convention plugin (without its -Pkuicksilver.warningsAsErrors switch)
     jvm()
     linuxX64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
     linuxArm64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
