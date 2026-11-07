@@ -46,6 +46,7 @@ import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.kuicksilver.ktor.network.TcpAddress
+import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsException
@@ -593,7 +594,7 @@ class ClientH1Test {
         block: suspend (Int) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
-        val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+        val listener = bindTcp(selector, "127.0.0.1", 0)
         try {
             coroutineScope {
                 val server =
@@ -621,7 +622,7 @@ class ClientH1Test {
         block: suspend (Int) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
-        val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+        val listener = bindTcp(selector, "127.0.0.1", 0)
         try {
             coroutineScope {
                 val server =

@@ -19,12 +19,14 @@ import kotlin.time.Duration
  * counts the bytes sent and bounds the close; threat model 3.21). On Kotlin/Native it is a socket of
  * this module on [selector] that connects to the resolved address itself, instead of ktor-network's native connect (Ktor
  * issue KTOR-10017, security, under coordinated disclosure). An IPv4-mapped IPv6 address
- * (`::ffff:a.b.c.d`) is connected over IPv4, as the JVM does.
+ * (`::ffff:a.b.c.d`) is connected over IPv4, as the JVM does. A positive [receiveBufferSize] sets `SO_RCVBUF` before the
+ * connect (tests of slow readers bound what the kernel takes for them); 0 keeps the system's default.
  */
 @InternalKuicksilverApi
 public expect suspend fun connectTcp(
     selector: SelectorManager,
     remote: InetSocketAddress,
+    receiveBufferSize: Int = 0,
 ): Socket
 
 /**

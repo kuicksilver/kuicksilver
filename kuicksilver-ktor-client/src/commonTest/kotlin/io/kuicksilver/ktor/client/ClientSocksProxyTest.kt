@@ -15,7 +15,6 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.install
@@ -34,6 +33,8 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
+import io.kuicksilver.ktor.network.bindTcp
+import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -103,7 +104,7 @@ class ClientSocksProxyTest {
         block: suspend (Int, Seen) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
-        val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+        val listener = bindTcp(selector, "127.0.0.1", 0)
         val seen = Seen()
         try {
             coroutineScope {
@@ -142,7 +143,7 @@ class ClientSocksProxyTest {
                                 output.writeFully(byteArrayOf(5, reply.toByte(), 0, 1, 0, 0, 0, 0, 0, 0))
                                 return@launch
                             }
-                            aSocket(selector).tcp().connect("127.0.0.1", originPort).use { o ->
+                            connectTcp(selector, InetSocketAddress("127.0.0.1", originPort)).use { o ->
                                 output.writeFully(byteArrayOf(5, 0, 0, 1, 127, 0, 0, 1, 0, 0))
                                 val oIn = o.openReadChannel()
                                 val oOut = o.openWriteChannel(autoFlush = true)
@@ -231,7 +232,7 @@ class ClientSocksProxyTest {
         clientTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("second address") } } }
             val selector = SelectorManager(Dispatchers.IO)
-            val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
             val destinations = ArrayList<List<Byte>>()
             try {
                 coroutineScope {
@@ -250,7 +251,7 @@ class ClientSocksProxyTest {
                                     if (attempt == 0) {
                                         output.writeFully(byteArrayOf(5, 4, 0, 1, 0, 0, 0, 0, 0, 0)) // host unreachable
                                     } else {
-                                        aSocket(selector).tcp().connect("127.0.0.1", port).use { o ->
+                                        connectTcp(selector, InetSocketAddress("127.0.0.1", port)).use { o ->
                                             output.writeFully(byteArrayOf(5, 0, 0, 1, 127, 0, 0, 1, 0, 0))
                                             val oIn = o.openReadChannel()
                                             val oOut = o.openWriteChannel(autoFlush = true)
@@ -396,7 +397,7 @@ class ClientSocksProxyTest {
     /** The request head a plain HTTP proxy receives for a GET of [url]; the proxy answers 200 "ok". */
     private suspend fun proxiedHead(url: String): List<String> {
         val selector = SelectorManager(Dispatchers.IO)
-        val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+        val listener = bindTcp(selector, "127.0.0.1", 0)
         try {
             return coroutineScope {
                 val head =
@@ -430,7 +431,7 @@ class ClientSocksProxyTest {
     @Test fun absoluteFormCarriesProxyCredentials() =
         clientTest {
             val selector = SelectorManager(Dispatchers.IO)
-            val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
             try {
                 coroutineScope {
                     val head =

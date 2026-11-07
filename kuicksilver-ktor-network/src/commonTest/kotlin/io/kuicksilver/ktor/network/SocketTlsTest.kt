@@ -123,7 +123,7 @@ internal class LoopbackServer private constructor(
     suspend fun client(
         cfg: TlsConfig = clientConfig(),
         reference: String = "127.0.0.1",
-    ): TlsSocket = aSocket(selector).tcp().connect(reference, port).tls(cfg)
+    ): TlsSocket = connectTcp(selector, InetSocketAddress(reference, port)).tls(cfg)
 
     fun close() {
         job.cancel()
@@ -137,7 +137,7 @@ internal class LoopbackServer private constructor(
             handler: suspend (TlsSocket) -> Unit,
         ): LoopbackServer {
             val selector = SelectorManager(Dispatchers.IO)
-            val server = aSocket(selector).tcp().bind("127.0.0.1", 0)
+            val server = bindTcp(selector, "127.0.0.1", 0)
             return LoopbackServer(selector, server, config, handler)
         }
     }
@@ -283,7 +283,7 @@ class SocketTlsTest {
         runBlocking {
             val selector = SelectorManager(Dispatchers.IO)
             try {
-                val server = aSocket(selector).tcp().bind("127.0.0.1", 0)
+                val server = bindTcp(selector, "127.0.0.1", 0)
                 val raw = aSocket(selector).tcp().connect("127.0.0.1", (server.localAddress as InetSocketAddress).port)
                 assertFailsWith<TlsException.Config> { raw.tls(serverConfig()) }
                 server.close()

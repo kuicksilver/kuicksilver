@@ -4,7 +4,7 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.selector.SelectorManager
-import io.ktor.network.sockets.aSocket
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.Application
@@ -229,7 +229,7 @@ class ServerH1Test {
             val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
             val selector = SelectorManager(Dispatchers.IO)
             try {
-                val socket = aSocket(selector).tcp().connect("127.0.0.1", port).tls(ServerFixtures.clientTls())
+                val socket = connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(ServerFixtures.clientTls())
                 val w = socket.openWriteChannel(autoFlush = true)
                 val r = socket.openReadChannel()
                 w.writeStringUtf8("GET / HTTP/1.1\r\nHost: server.test\r\n\r\n")

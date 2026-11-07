@@ -14,7 +14,6 @@ import io.ktor.http.Url
 import io.ktor.http.cio.ParserException
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.response.respondText
@@ -26,6 +25,8 @@ import io.ktor.utils.io.copyAndClose
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.network.bindTcp
+import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -134,7 +135,7 @@ class ClientProxyTest {
     fun negative_noTunnelByteBeforeTheConnectAnswer() =
         clientTest {
             val selector = SelectorManager(Dispatchers.IO)
-            val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
             try {
                 coroutineScope {
                     // per connection: the CONNECT line and the bytes that followed its head until the client closed
@@ -199,7 +200,7 @@ class ClientProxyTest {
     @Test fun negative_hugeConnectResponseHeadFails() =
         clientTest {
             val selector = SelectorManager(Dispatchers.IO)
-            val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
             try {
                 coroutineScope {
                     val proxyClosedBy =
@@ -266,7 +267,7 @@ class ClientProxyTest {
         block: suspend (Int, () -> List<String>) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
-        val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+        val listener = bindTcp(selector, "127.0.0.1", 0)
         val head = ArrayList<String>()
         try {
             coroutineScope {
@@ -280,7 +281,7 @@ class ClientProxyTest {
                                 if (line.isEmpty()) break
                                 head += line
                             }
-                            aSocket(selector).tcp().connect("127.0.0.1", originPort).use { o ->
+                            connectTcp(selector, InetSocketAddress("127.0.0.1", originPort)).use { o ->
                                 output.writeStringUtf8(connectResponse)
                                 val oIn = o.openReadChannel()
                                 val oOut = o.openWriteChannel(autoFlush = true)

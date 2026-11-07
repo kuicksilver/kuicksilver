@@ -5,7 +5,6 @@ package io.kuicksilver.ktor.server
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.Application
@@ -152,22 +151,12 @@ internal suspend fun slowHttp(
 ): String {
     val selector = SelectorManager(Dispatchers.IO)
     try {
-        // ktor-network's mingwX64 connect sometimes fails at once with "POSIX error 0: No error" against a listening server
-        // (the GitHub Windows runner, 2026-10-26): a client-side glitch, so the connect is retried a few times
-        var attempt = 0
+        // Kuicksilver's own connect, as in rawHttp: a write to a connection the server reset fails instead of raising SIGPIPE
+        // (ktor-network's native socket lets it, which ends a Kotlin/Native test process), and ktor-network's mingwX64
+        // connect lost socket errors (POSIX error 0); a small receive buffer keeps the kernel from taking the response early
         val tcp =
-            run {
-                while (true) {
-                    try {
-                        return@run aSocket(selector).tcp().connect("127.0.0.1", port) { receiveBufferSize = 64 * 1024 }
-                    } catch (e: kotlinx.io.IOException) {
-                        if (++attempt >= 3) throw e
-                        kotlinx.coroutines.delay(50)
-                    }
-                }
-                @Suppress("UNREACHABLE_CODE")
-                error("unreachable")
-            }
+            io.kuicksilver.ktor.network
+                .connectTcp(selector, InetSocketAddress("127.0.0.1", port), receiveBufferSize = 64 * 1024)
         val socket: Socket = if (tls != null) tcp.tls(tls) else tcp
         try {
             val w = socket.openWriteChannel(autoFlush = true)

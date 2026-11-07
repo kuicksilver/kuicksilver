@@ -4,7 +4,6 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.Application
@@ -23,6 +22,7 @@ import io.ktor.websocket.Frame
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
@@ -88,7 +88,7 @@ class ServerWebSocketGuardTest {
             val (server, port) = tlsServer { webSocketEcho() }
             val selector = SelectorManager(Dispatchers.IO)
             try {
-                val socket = aSocket(selector).tcp().connect("127.0.0.1", port).tls(ServerFixtures.clientTls())
+                val socket = connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(ServerFixtures.clientTls())
                 try {
                     val w = socket.openWriteChannel(autoFlush = true)
                     val r = socket.openReadChannel()
