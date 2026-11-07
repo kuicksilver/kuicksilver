@@ -39,6 +39,18 @@ class ResetTokenIndexTest {
         for (i in 0 until 1000) assertEquals(if (i % 2 == 0) -1 else i % 4, x.loopOf(resetEndingWith(token(i))), "token $i")
     }
 
+    /** A large group's worth of tokens (100,000 connections' worth would be about 400,000): every one found, every removed one gone. */
+    @Test fun manyTokens() {
+        val x = ResetTokenIndex(Random(6))
+        val n = 60_000
+        val tokens = List(n) { token(100_000 + it) }
+        for (i in 0 until n) x.add(tokens[i], i % 7)
+        assertEquals(n, x.size)
+        for (i in 0 until n step 3) x.remove(tokens[i], i % 7)
+        for (i in 0 until n) assertEquals(if (i % 3 == 0) -1 else i % 7, x.loopOf(resetEndingWith(tokens[i])), "token $i")
+        assertEquals(n - (n + 2) / 3, x.size)
+    }
+
     /** A token two IDs carry stays until both are gone. */
     @Test fun aTokenHeldTwiceStaysUntilBothLeave() {
         val x = ResetTokenIndex(Random(2))

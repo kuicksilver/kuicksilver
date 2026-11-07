@@ -18,11 +18,11 @@ import kotlin.random.Random
  * leaves or the connection is removed. A token several connections hold (a peer may repeat one) keeps a count per loop,
  * and routes to a loop that still holds it.
  *
- * Copy-on-write in [STRIPES] stripes chosen by SipHash under a random key (a peer chooses its tokens: it cannot aim them at
- * one stripe or bucket): the receiver reads an immutable snapshot of one stripe with no lock, so a loop preempted in the
- * middle of a change never stalls it; a change builds a new snapshot of its stripe and publishes it with a compare-and-set,
- * retrying when another loop changed that stripe meanwhile. A change copies one stripe (about a 64th of the tokens), and
- * changes are rare next to the datagrams the receiver looks up. Tokens are compared in constant time once their keyed
+ * Copy-on-write per bucket: [BUCKETS] buckets chosen by SipHash under a random key (a peer chooses its tokens: it cannot
+ * aim them at one bucket), each a short immutable array. The receiver reads one bucket with no lock, so a loop preempted in
+ * the middle of a change never stalls it; a change copies its one bucket (a few entries: 400,000 tokens make about 25 a
+ * bucket) and publishes the copy with a compare-and-set, retrying when another loop changed that bucket meanwhile. A fixed
+ * count keeps it simple: 16,384 references per group, and no resize to coordinate. Tokens are compared in constant time once their keyed
  * hashes are equal (section 10.3.1: "without leaking information about the value of the token").
  */
 internal class ResetTokenIndex(
@@ -38,13 +38,12 @@ internal class ResetTokenIndex(
         val holders: IntArray,
     )
 
-    /** An open-addressed table of one stripe; immutable once published. */
-    private class Stripe(
-        val entries: Array<Entry?>,
-        val live: Int,
-    )
+    private val buckets = AtomicArray(Array(BUCKETS) { EMPTY })
 
-    private val stripes = AtomicArray(Array(STRIPES) { EMPTY })
+    /**
+     * Distinct tokens held, never below the published ones: raised before a new token is published, lowered after one is
+     * withdrawn, so the receiver's shortcut for an empty index never skips a token it could find.
+     */
     private val live = AtomicInt(0)
 
     /** Distinct tokens held now (tests). */
@@ -88,72 +87,45 @@ internal class ResetTokenIndex(
         if (end < StatelessReset.MIN_SIZE || live.load() == 0) return -1
         val off = end - TOKEN
         val h = SipHash.hash24(k0, k1, buf, off, TOKEN)
-        val s = stripes.loadAt(stripeOf(h))
-        val e = find(s, h) { ConstantTime.equals(buf, off, it.token, 0, TOKEN) } ?: return -1
-        return e.holders[0]
-    }
-
-    private inline fun find(
-        s: Stripe,
-        h: Long,
-        eq: (Entry) -> Boolean,
-    ): Entry? {
-        val a = s.entries
-        if (a.isEmpty()) return null
-        val mask = a.size - 1
-        var i = slotOf(h, mask)
-        while (true) {
-            val e = a[i] ?: return null
-            if (e.hash == h && eq(e)) return e
-            i = (i + 1) and mask
-        }
+        val b = buckets.loadAt(bucketOf(h))
+        for (e in b) if (e.hash == h && ConstantTime.equals(buf, off, e.token, 0, TOKEN)) return e.holders[0]
+        return -1
     }
 
     /**
      * Replaces the holders of the token with hash [h] (and bytes [token], our own copy when it is new) by what [update] makes
-     * of them (null: the token goes), as one compare-and-set of its stripe.
+     * of them (null: the token goes), as one compare-and-set of its bucket.
      */
     private inline fun change(
         h: Long,
         token: ByteArray,
         update: (Entry?) -> IntArray?,
     ) {
-        val at = stripeOf(h)
+        val at = bucketOf(h)
         while (true) {
-            val s = stripes.loadAt(at)
-            val old = find(s, h) { ConstantTime.equals(it.token, token) }
+            val b = buckets.loadAt(at)
+            var k = -1
+            for (i in b.indices) if (b[i].hash == h && ConstantTime.equals(b[i].token, token)) k = i
+            val old = if (k >= 0) b[k] else null
             val holders = update(old)
             if (holders === old?.holders) return
-            val next = rebuild(s, old, if (holders == null) null else Entry(h, old?.token ?: token.copyOf(), holders))
-            if (stripes.compareAndSetAt(at, s, next)) {
-                if (old == null && holders != null) live.addAndFetch(1)
-                if (old != null && holders == null) live.addAndFetch(-1)
+            val next: Array<Entry> =
+                when {
+                    holders == null -> Array(b.size - 1) { b[if (it < k) it else it + 1] }
+
+                    // withdrawn
+                    old == null -> Array(b.size + 1) { if (it < b.size) b[it] else Entry(h, token.copyOf(), holders) }
+
+                    else -> b.copyOf().also { it[k] = Entry(h, old.token, holders) }
+                }
+            val adding = old == null
+            if (adding) live.addAndFetch(1) // before it can be found
+            if (buckets.compareAndSetAt(at, b, next)) {
+                if (holders == null) live.addAndFetch(-1) // after it can no longer be found
                 return
             }
+            if (adding) live.addAndFetch(-1)
         }
-    }
-
-    /** [s] without [drop] and with [put], in a table at least twice its tokens (never below [MIN_SLOTS]). */
-    private fun rebuild(
-        s: Stripe,
-        drop: Entry?,
-        put: Entry?,
-    ): Stripe {
-        val n = s.live - (if (drop != null) 1 else 0) + (if (put != null) 1 else 0)
-        if (n == 0) return EMPTY
-        var cap = MIN_SLOTS
-        while (cap < n * 2) cap *= 2
-        val a = arrayOfNulls<Entry>(cap)
-        val mask = cap - 1
-
-        fun place(e: Entry) {
-            var i = slotOf(e.hash, mask)
-            while (a[i] != null) i = (i + 1) and mask
-            a[i] = e
-        }
-        for (e in s.entries) if (e != null && e !== drop) place(e)
-        if (put != null) place(put)
-        return Stripe(a, n)
     }
 
     private fun indexOfLoop(
@@ -168,17 +140,11 @@ internal class ResetTokenIndex(
         return -1
     }
 
-    private fun stripeOf(h: Long): Int = (h ushr 58).toInt() and (STRIPES - 1)
-
-    private fun slotOf(
-        h: Long,
-        mask: Int,
-    ): Int = (h xor (h ushr 29)).toInt() and mask
+    private fun bucketOf(h: Long): Int = (h xor (h ushr 32)).toInt() and (BUCKETS - 1)
 
     private companion object {
         const val TOKEN = 16
-        const val STRIPES = 64
-        const val MIN_SLOTS = 8
-        val EMPTY = Stripe(emptyArray(), 0)
+        const val BUCKETS = 16_384
+        val EMPTY = emptyArray<Entry>()
     }
 }
