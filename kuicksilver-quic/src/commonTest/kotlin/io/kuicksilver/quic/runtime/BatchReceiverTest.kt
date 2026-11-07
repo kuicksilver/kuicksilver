@@ -279,8 +279,9 @@ class BatchReceiverTest {
                 val r = BatchReceiver(io, { clock }, 1.milliseconds, loop)
                 r.receive(batch, noTimer)
                 // the dispatch into withContext is counted by the runBlocking thread once queued, possibly after this block started:
-                // two yields put it behind us
-                r.yieldToQueued()
+                // wait for that count (nothing else dispatches on the loop yet), then one yield puts it behind us
+                while (loop.dispatched() == 0L) {
+                }
                 r.yieldToQueued()
                 launch(LoopDispatcher.Batched) { io.calls += "reader" }
                 repeat(3) { r.receive(batch, noTimer) }

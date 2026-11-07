@@ -649,7 +649,8 @@ arrives (at most 1 ms): ending that wait at once needs a wake-up of the socket w
 wake pipe, used only for close today). A writer that hands over 16 KiB per hop pays two thread hand-offs per 16 KiB;
 larger writes, or a writer that buffers several before hopping, would amortise them. And a reader waits for the
 receiver's regular yield, which costs the 1 MiB operations of `UdpThroughputBenchmark` about a sixth (the counted-reader
-variant above).
+variant above), and in request/response traffic a reply's read can wait up to 1 ms in the socket wait once the socket goes
+quiet (as before this change).
 
 ## msquic's goodput outlier
 
