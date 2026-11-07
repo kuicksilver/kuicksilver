@@ -19,7 +19,12 @@ import kotlin.time.Duration
 public actual suspend fun connectTcp(
     selector: SelectorManager,
     remote: InetSocketAddress,
-): Socket = KslNioSocket(aSocket(selector).tcp().connect(remote), selector, CLIENT_CLOSE_TIMEOUT)
+    receiveBufferSize: Int,
+): Socket {
+    require(receiveBufferSize >= 0) { "receiveBufferSize $receiveBufferSize is negative" }
+    val socket = aSocket(selector).tcp().connect(remote) { if (receiveBufferSize > 0) this.receiveBufferSize = receiveBufferSize }
+    return KslNioSocket(socket, selector, CLIENT_CLOSE_TIMEOUT)
+}
 
 @InternalKuicksilverApi
 public actual suspend fun connectTcpAddress(

@@ -47,6 +47,7 @@ import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_EXCLUSIVEADDRUSE
 import platform.posix.SO_LINGER
+import platform.posix.SO_RCVBUF
 import platform.posix.WSADATA
 import platform.posix.WSAECONNRESET
 import platform.posix.WSAEINPROGRESS
@@ -341,6 +342,20 @@ internal actual fun tcpNoDelay(fd: Int) {
         val err = alloc<IntVar>()
         if (ksl_wsa_setsockopt(fd.convert(), IPPROTO_TCP_WS, TCP_NODELAY_WS, one.ptr, sizeOf<IntVar>().toInt(), err.ptr) != 0) {
             throw PosixException.forErrno(err.value, "setsockopt(TCP_NODELAY)")
+        }
+    }
+}
+
+internal actual fun tcpReceiveBuffer(
+    fd: Int,
+    size: Int,
+) {
+    memScoped {
+        val v = alloc<IntVar>()
+        v.value = size
+        val err = alloc<IntVar>()
+        if (ksl_wsa_setsockopt(fd.convert(), SOL_SOCKET, SO_RCVBUF, v.ptr, sizeOf<IntVar>().toInt(), err.ptr) != 0) {
+            throw PosixException.forErrno(err.value, "setsockopt(SO_RCVBUF)")
         }
     }
 }

@@ -121,6 +121,12 @@ internal expect fun tcpShutdown(
  */
 internal expect fun tcpNoDelay(fd: Int)
 
+/** `SO_RCVBUF` of [fd] (set before the connect: the window scale is agreed in the handshake). */
+internal expect fun tcpReceiveBuffer(
+    fd: Int,
+    size: Int,
+)
+
 /** `SO_LINGER` on with a zero timeout: closing [fd] then sends a reset and drops what is unsent. */
 internal expect fun tcpLingerZero(fd: Int)
 

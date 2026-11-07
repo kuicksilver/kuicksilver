@@ -44,6 +44,7 @@ import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_ERROR
 import platform.posix.SO_LINGER
+import platform.posix.SO_RCVBUF
 import platform.posix.TCP_NODELAY
 import platform.posix.accept
 import platform.posix.addrinfo
@@ -270,6 +271,19 @@ internal actual fun tcpNoDelay(fd: Int) {
         one.value = 1
         if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, one.ptr, sizeOf<IntVar>().convert()) != 0) {
             throw PosixException.forErrno(errno, "setsockopt(TCP_NODELAY)")
+        }
+    }
+}
+
+internal actual fun tcpReceiveBuffer(
+    fd: Int,
+    size: Int,
+) {
+    memScoped {
+        val v = alloc<IntVar>()
+        v.value = size
+        if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, v.ptr, sizeOf<IntVar>().convert()) != 0) {
+            throw PosixException.forErrno(errno, "setsockopt(SO_RCVBUF)")
         }
     }
 }

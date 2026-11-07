@@ -24,3 +24,14 @@ internal actual fun noDelayOf(fd: Int): Boolean =
         assertEquals(0, getsockopt(fd.convert(), 6, 1, value.ptr.reinterpret(), size.ptr), "getsockopt(TCP_NODELAY)")
         value.value != 0
     }
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun receiveBufferOf(fd: Int): Int =
+    memScoped {
+        val value = alloc<IntVar>()
+        val size = alloc<IntVar>()
+        size.value = sizeOf<IntVar>().toInt()
+        // SOL_SOCKET 0xffff, SO_RCVBUF 0x1002 (winsock2.h)
+        assertEquals(0, getsockopt(fd.convert(), 0xffff, 0x1002, value.ptr.reinterpret(), size.ptr), "getsockopt(SO_RCVBUF)")
+        value.value
+    }

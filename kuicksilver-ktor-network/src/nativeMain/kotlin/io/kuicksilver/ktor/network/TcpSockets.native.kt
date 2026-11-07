@@ -194,11 +194,13 @@ private fun String.unbracketed(): String = if (length >= 2 && first() == '[' && 
 public actual suspend fun connectTcp(
     selector: SelectorManager,
     remote: InetSocketAddress,
+    receiveBufferSize: Int,
 ): Socket {
+    require(receiveBufferSize >= 0) { "receiveBufferSize $receiveBufferSize is negative" }
     var last: Throwable? = null
     for (address in resolveTcp(remote.hostname, remote.port)) {
         try {
-            return connectTcpAddress(selector, address)
+            return connectTcpAddressWith(selector, address, tcpConnectRecheck, receiveBufferSize = receiveBufferSize)
         } catch (e: IOException) {
             last = e
         }
@@ -218,13 +220,23 @@ internal suspend fun connectTcpAddressWith(
     address: TcpAddress,
     recheck: Duration?,
     undecidedLimit: Duration = CONNECT_UNDECIDED_LIMIT,
+    receiveBufferSize: Int = 0,
     rechecks: (() -> Unit)? = null,
 ): Socket {
     tcpStartup()
     val to = Sockaddr.of(address)
     val fd =
         try {
-            tcpOpen(to.family)
+            tcpOpen(to.family).also { fd ->
+                if (receiveBufferSize > 0) {
+                    try {
+                        tcpReceiveBuffer(fd, receiveBufferSize)
+                    } catch (e: Throwable) {
+                        tcpClose(fd)
+                        throw e
+                    }
+                }
+            }
         } catch (e: PosixException) {
             throw IOException("Failed to connect to $address.", e)
         }
