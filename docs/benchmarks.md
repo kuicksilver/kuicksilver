@@ -569,7 +569,68 @@ warm-up of a separate run with only that parameter set.
   28–35 MiB/s of `UdpThroughputBenchmark`. One loop serving all 8 connections stays busy (4.2 cores in the process,
   datagrams queued at every receive), and that hides the wait; spread over 2 to 8 loops each loop runs idle between
   datagrams (1.8 cores in the process, RTT down from milliseconds to about 100 µs), and 8 connections move about 8 times
-  that single rate (200–220 MiB/s). Where that wait comes from is listed in [Still open](#still-open).
+  that single rate (200–220 MiB/s). Where that wait came from, and the same table after the fix: [One connection over
+  loopback](#one-connection-over-loopback-2026-11-08).
+
+### One connection over loopback (2026-11-08)
+
+One connection over loopback moved 25–35 MiB/s with a third to half of a core busy. Sampled every 0.5 ms during a
+256 MiB transfer (JVM, the setup of `UdpThroughputBenchmark`, Null crypto, CUBIC; M4 Max, macOS, quiet host):
+
+| | before | after |
+|---|---|---|
+| bytes in flight, p10 / p50 / p90 | 0 / 0 / 31 KiB | 11 / 25 / 31 KiB |
+| congestion window | 221–249 KiB | 199–235 KiB |
+| samples with bytes in flight within one datagram of the window | 0 % | 0 % |
+| stream bytes the writer was ahead of the reader, p50 / max | 5 / 80 KiB | 2 / 35–46 KiB |
+| packets lost | 0 | 0 |
+| smoothed RTT, p50 | 182 µs | 67 µs |
+| throughput | 27–35 MiB/s | 223–269 MiB/s |
+| process CPU per GiB | 21–28 s | 10–17 s |
+
+Nothing of RFC 9002 or flow control was the limit: the window was never full, nothing was lost, pacing is off below
+1 ms of RTT for CUBIC (`Pacer`), and a stream window of 512 KiB and more never ran out with the writer at most 80 KiB
+ahead. The sender had nothing to send: the application's writer was. Each `writeFully` of 16 KiB flushes (`autoFlush`)
+by hopping onto the loop's dispatcher (`withContext`). The loop's receiver, reading the socket on the loop's own thread
+while datagrams flow (`runtime/BatchReceiver.kt`), let queued work run only every 16 datagrams or 1 ms, and waited up
+to 1 ms in the socket with that work queued. The client's loop receives a few ACKs per millisecond, so the writer's hop
+waited up to a millisecond for each 16 KiB: about 16–30 MiB/s. Giving each endpoint a caller-supplied dispatcher, on
+which the receiver never waits, moved the same transfer at 195–233 MiB/s, which located the wait.
+
+The fix: the loop's own dispatcher counts the tasks queued on it (`runtime/LoopDispatcher.kt`, no allocation per task),
+and the receiver yields as soon as one is queued behind it and starts no socket wait while one is. Medians of 5
+iterations of 2 s after 3 of warm-up, ± the 99.9 % interval:
+
+| | before (`8603c0e29`) | after |
+|---|---|---|
+| `UdpThroughputBenchmark`, JVM | 29.1 ± 8.4 MiB/s | 253.8 ± 13.9 MiB/s |
+| `UdpThroughputBenchmark`, Kotlin/Native (macOS) | 26.9 ± 1.1 MiB/s | 229.0 ± 1.1 MiB/s |
+
+`MultiLoopBenchmark`, MiB/s of 8 bulk connections (ksl / Null crypto), medians [min–max]. macOS, JVM: before and after
+on the quiet host. Linux, JVM (Docker `linux/arm64`, kernel balancing): before is the S3.4 run above (loaded host),
+after on the quiet host.
+
+| MiB/s, 8 connections | loops 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| macOS, JVM, ksl, before | 228 [223–230] | 302 (1.33×) | 286 (1.26×) | 305 (1.34×) |
+| macOS, JVM, ksl, after | 219 [215–220] | 329 (1.50×) | 333 (1.52×) | 306 (1.40×) |
+| macOS, JVM, Null, before | 246 [242–247] | 321 (1.31×) | 320 (1.30×) | 320 (1.30×) |
+| macOS, JVM, Null, after | 247 [242–250] | 336 (1.36×) | 323 (1.31×) | 343 (1.39×) |
+| Linux, JVM, ksl, before | 335 [334–342] | 222 (0.66×) | 212 (0.63×) | 201 (0.60×) |
+| Linux, JVM, ksl, after | 344 [340–345] | 479 (1.39×) | 895 (2.60×) | 848 (2.46×) |
+| Linux, JVM, Null, before | 382 [378–390] | 220 (0.57×) | 199 (0.52×) | 207 (0.54×) |
+| Linux, JVM, Null, after | 394 [389–398] | 546 (1.39×) | 701 (1.78×) | 656 (1.66×) |
+
+On Linux, where each loop has its own socket, more loops now move more: 2.6 times one loop at 4 loops instead of 0.6.
+On macOS the one receiver thread stays the cap (98–99 % busy in `bulk8`, as in S3.4); the loops gain a little. One
+loop serving 8 connections was busy before and is unchanged. Handshakes are unchanged within the spread (JVM, macOS:
+2254–7688/s after, 2349–7699/s before; Linux 8 loops: 8831/s, 3.96×).
+
+What is left on one connection: bytes in flight still sit far below the window (p50 25 KiB of 200 KiB), so the
+application's hops are still what paces it. A task queued while the receiver is already waiting in the socket waits
+until a datagram arrives (at most 1 ms): ending that wait at once needs a wake-up of the socket wait from another thread
+(`ksl_udp` has a wake pipe, used only for close today). And a writer that hands over 16 KiB per hop pays two thread
+hand-offs per 16 KiB; larger writes, or a writer that buffers several before hopping, would amortise them.
 
 ## msquic's goodput outlier
 
@@ -589,9 +650,9 @@ msquic runs emulated here, and why its congestion controller keeps that rate was
   ([0.3.0 work in progress](#030-work-in-progress)); the handshake table is to be measured again; the Kotlin side is on
   the roadmap.
 - **The Kotlin/Native server** costs 28 % more CPU per GB than the JVM server (3.5 vs 2.7 s/GB).
-- **One connection over loopback waits more than it works:** about 25–35 MiB/s with a third to half of a core busy and a
-  large window, so 8 bulk connections spread over several loops on Linux move only 0.52–0.66 times what one busy loop
-  moves ([Several loops on one socket](#several-loops-on-one-socket-s34-2026-11-07)); the wait is not profiled yet.
+- **One connection over loopback** now moves 230–270 MiB/s ([One connection over
+  loopback](#one-connection-over-loopback-2026-11-08)), still paced by the application's hops onto the loop rather than
+  by the window: a wake-up of the receiver's socket wait and fewer hand-offs per write are not done.
 - **Acknowledgements:** fewer ACKs per byte would need the receiver side of the ack-frequency extension
   (draft-ietf-quic-ack-frequency).
 
