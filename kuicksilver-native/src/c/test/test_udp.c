@@ -1690,13 +1690,14 @@ void run_udp(void) {
                 ksl_udp_close(r1);
             }
         }
-        /* udp_close_wakes_blocked_recv: a receive blocked with a long timeout returns within 100 ms of close */
+        /* udp_close_wakes_blocked_recv: a receive blocked with a 5 s timeout returns well before it after close. The bound is
+           1 s, not tighter: under ASan on a shared CI runner the shutdown-to-join time passed 100 ms once */
         {
             uint8_t lc[KSL_UDP_ADDR_LEN];
             ksl_udp *c = open_lo(0, lc);
             CHECK(c != NULL, "socket for close test");
             if (c) {
-                CHECK(ksl_udp_close_wakes_for_test(c) <= 100, "shutdown wakes a blocked recv within 100 ms");
+                CHECK(ksl_udp_close_wakes_for_test(c) <= 1000, "shutdown wakes a blocked recv within 1 s");
             }
         }
         /* udp_shutdown_then_calls_fail_fast: a shut socket answers KSL_ERROR to send and recv without waiting; close after shutdown is fine */
