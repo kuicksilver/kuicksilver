@@ -100,7 +100,7 @@ jobs:
       - name: 'lint: SPDX headers'
         run: bash tools/check/spdx.sh .
       - name: 'lint: C formatting (clang-format, .clang-format)'
-        # the output is only stable per major version: tools/check/clang-format.sh pins it (CLANG_FORMAT_VERSION)
+        # minor releases change the layout: tools/check/clang-format.sh requires the exact version pinned in tools/check/clang-format-requirements.txt
         run: |
           python3 -m venv "$RUNNER_TEMP/clang-format-venv"
           "$RUNNER_TEMP/clang-format-venv/bin/pip" install --quiet --require-hashes -r tools/check/clang-format-requirements.txt

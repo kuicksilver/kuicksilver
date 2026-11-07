@@ -664,9 +664,9 @@ static void udp_pktinfo_cases(void) {
 #define SENDER_THREADS 4
 #define SENDER_EACH 10000
 #define SENDER_LEN 48
-// clang-format off
+/* clang-format off */
 #define SENDER_WINDOW 1024 /* datagrams sent and not yet received, all threads together: the receive buffer never overflows */
-// clang-format on
+/* clang-format on */
 struct sender_run {
     ksl_udp *clone;
     const uint8_t *to;

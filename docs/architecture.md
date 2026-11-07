@@ -88,16 +88,19 @@ The QUIC transport (`io.kuicksilver.quic`). The core packages are `wire` (packet
 parameters, version profiles), `crypto` (packet protection), `recovery` (ACK tracking, loss detection, RTT, pacing, BBR's delivery-rate sampling),
 `flow` (flow control), `stream` (stream state and reassembly), `core` (handshake driver, packet builder and receiver,
 paths, key phases, ECN, PMTUD, the glitch bucket) and `endpoint` (connection-ID routing, Retry tokens, stateless reset,
-admission; `CidRoute.kt` and `ResetTokenIndex.kt` hold the routing tables, `DispatchRoute.kt` the datagram-to-loop route). `ConnectionCore` and `EndpointCore` sit on top of them: `ConnectionCore.kt` holds the connection's state
-and public API, its internal transitions are extension functions in `core/ConnectionCore.handshake.kt`,
-`ConnectionCore.paths.kt`, `ConnectionCore.close.kt`, `ConnectionCore.timers.kt`, `ConnectionCore.input.kt` (what runs after
-each input), `ConnectionCore.deadlines.kt` (the earliest deadline and `onTimeout`), `ConnectionCore.stats.kt` (statistics and
-the fuzzing probe) and `ConnectionCore.server.kt` (the server constructor); the receive path is
+admission; `ResetTokenIndex.kt` is the routing table for stateless-reset tokens, `CidRoute.kt` the connection-ID issuance and
+QUIC-LB route encoding (`CidRoute`, `ByteRoute`, `QuicLbRoute`), `DispatchRoute.kt` the datagram-to-loop route).
+`ConnectionCore` and `EndpointCore` sit on top of them: `ConnectionCore.kt` holds the connection's state and public API, its
+internal transitions are extension functions in `core/ConnectionCore.handshake.kt`, `ConnectionCore.paths.kt`,
+`ConnectionCore.close.kt`, `ConnectionCore.timers.kt`, `ConnectionCore.input.kt` (what runs after each input),
+`ConnectionCore.deadlines.kt` (the earliest deadline and `onTimeout`), `ConnectionCore.stats.kt` (memory accounting and the
+fuzzing probe) and `ConnectionCore.server.kt` (the server constructor); the receive path is
 `core/PacketReceiver.kt` (headers, keys, decryption) plus `core/FrameDispatcher.kt` (frames to the connection);
 `EndpointCore.admission.kt` decides queued Initials. `runtime` turns the core into the coroutine API:
 `EndpointLoop` (one loop, one socket, a timer heap; split into `EndpointLoop.receive.kt`, `.send.kt`, `.tokens.kt` for the
-token and ticket store and `.preferred.kt` for the preferred-address socket), `LoopGroup` (several loops on one port: a socket each with
-`SO_REUSEPORT` on Linux and Android, else one socket whose `runtime/SocketDispatcher.kt` hands each loop its datagrams through a
+token and ticket store and `.preferred.kt` for the preferred-address socket), `LoopGroup` (several loops on one port: a
+socket each with `SO_REUSEPORT` on Linux and Android, else one socket whose `runtime/SocketDispatcher.kt` hands each loop
+its datagrams through a
 `LoopInbox`, routed by `endpoint/DispatchRoute.kt`), `ConnectionRuntime`
 (`QuicConnection`: lifecycle, paths, datagrams), `StreamRuntime` with its ktor-io channels (`StreamChannels.kt`)
 and datagram queues. `DatagramIo` is the socket abstraction, with the accelerated `KslDatagramIo` (batched UDP with ECN and DF
@@ -135,8 +138,8 @@ disclosure).
 HTTP/3 and QPACK (`io.kuicksilver.http3`). `frame` holds the sans-IO frame and SETTINGS codecs, `qpack` the encoder and
 decoder with the dynamic table (blocked streams, Section Acknowledgment and Stream Cancellation, Insert Count
 Increment), `message` the field and pseudo-header rules (RFC 9114 section 4) and the `Priority` field, `runtime` the
-connection (`H3Session`: control and QPACK streams, GOAWAY, PRIORITY_UPDATE, datagram demultiplexing; its extension files are
-`H3Session.control.kt`, `H3Session.critical.kt` and `H3Session.shutdown.kt`) and the request
+connection (`H3Session`: control and QPACK streams, GOAWAY, PRIORITY_UPDATE, datagram demultiplexing; its extension
+files are `H3Session.control.kt`, `H3Session.critical.kt` and `H3Session.shutdown.kt`) and the request
 streams (HEADERS/DATA/trailers with backpressure, 1xx, Extended CONNECT: `ServerRequestStream.kt` reads requests and
 writes responses, `ClientRequestStream.kt` writes requests and reads responses, `RequestStream.kt` holds the body pump
 both share). The public API is
@@ -150,7 +153,8 @@ HTTP/2 (RFC 9113) and HPACK (RFC 7541) as a sans-IO core (`io.kuicksilver.http2`
 engines bring the TLS socket. `frame` holds the frame codec (`FrameDecoder` checks a frame's declared length against the
 local maximum before it buffers anything, and streams unknown frames past without buffering them), `hpack` the encoder
 and decoder with the dynamic table and the generated static and Huffman tables (`tools/http/gen-tables.py`), and `core`
-the connection (`H2ConnectionCore`, with `H2ConnectionCore.frames.kt` and `H2ConnectionCore.close.kt`: the preface, SETTINGS and their acknowledgement deadline, stream states, flow control
+the connection (`H2ConnectionCore`, with `H2ConnectionCore.frames.kt` and `H2ConnectionCore.close.kt`: the preface,
+SETTINGS and their acknowledgement deadline, stream states, flow control
 with WINDOW_UPDATE only after the application consumed the data and window auto-tuning, PING, two-phase GOAWAY) and every
 per-connection limit against floods (`H2Limits.kt`: CONTINUATION frames and bytes, queued control frames, empty DATA
 frames, a glitch budget, a server's budget for the client's stream resets). Field lists are HPACK-encoded when `poll`

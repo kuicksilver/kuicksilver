@@ -15,7 +15,7 @@ plugins {
 kotlin {
     jvmToolchain(21)
     // the expect/actual classes are Beta (KT-61573): Kotlin's documented acknowledgement, as in the kmp convention plugin
-    compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes"); allWarningsAsErrors.set(true) }
+    compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes"); allWarningsAsErrors.set(providers.gradleProperty("kuicksilver.warningsAsErrors").map { it.toBoolean() }.orElse(true)) }
     jvm()
     // the h2spec server (tools/interop/h2spec.sh) as an executable: on Linux for the gate's container run, on a Mac locally
     val h2spec: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
