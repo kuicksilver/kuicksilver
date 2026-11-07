@@ -22,6 +22,7 @@ import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -365,7 +366,15 @@ class CapsuleStreamTest {
     @Test fun connectionCloseFailsCapsules() =
         h3Test {
             H3Pair.open(serverSettings = connectOn).useScoped { p ->
-                launch { p.server.acceptRequest().acceptConnect() }
+                launch {
+                    // The client closes right after its CONNECT is answered; the server's side of that exchange can
+                    // still be in flight and see the client's H3_NO_ERROR close (seen on the API 24 emulator).
+                    try {
+                        p.server.acceptRequest().acceptConnect()
+                    } catch (e: Http3Exception.Protocol) {
+                        if (e.h3Code != Http3ErrorCode.NO_ERROR || e.initiator != Initiator.Peer) throw e
+                    }
+                }
                 val c = p.client.connect(connectReq(), "test-capsules").useCapsuleProtocol(known)
                 val collected = async { runCatching { c.capsules.toList() } }
                 p.client.close()
