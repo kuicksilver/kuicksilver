@@ -1,7 +1,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Formatting of the C sources (kuicksilver-native/src/c, src/jni, src/testhooks), checked by tools/check/clang-format.sh.
-# Pinned tool version: see CLANG_FORMAT_VERSION in that script.
+# Pinned tool version: tools/check/clang-format-requirements.txt.
 Language: Cpp
 BasedOnStyle: LLVM
 IndentWidth: 4
