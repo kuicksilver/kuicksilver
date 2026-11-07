@@ -193,20 +193,20 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     ksl_udp *u = calloc(1, sizeof *u);
     if (!u) {
         if (err)
-            *err = KSL_E_BAD_ARG;
+            *err = KSL_E_NO_MEMORY;
         return NULL;
     }
     if (pthread_mutex_init(&u->err_mu, NULL) != 0) {
         free(u);
         if (err)
-            *err = KSL_E_BAD_ARG;
+            *err = KSL_E_NO_MEMORY;
         return NULL;
     }
     if (pthread_mutex_init(&u->ptb_mu, NULL) != 0) {
         pthread_mutex_destroy(&u->err_mu);
         free(u);
         if (err)
-            *err = KSL_E_BAD_ARG;
+            *err = KSL_E_NO_MEMORY;
         return NULL;
     }
     u->requested = (uint32_t)flags;
@@ -326,7 +326,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     u->scratch = malloc(GRO_MAX);
     u->tx = malloc(GRO_MAX);
     if (!u->scratch || !u->tx)
-        return open_failed(u, KSL_E_BAD_ARG, "malloc", ENOMEM, err, msg, msglen);
+        return open_failed(u, KSL_E_NO_MEMORY, "malloc", ENOMEM, err, msg, msglen);
     struct sockaddr_storage ss;
     socklen_t sl = sizeof ss;
     if (getsockname(u->fd, (struct sockaddr *)&ss, &sl) == 0)
@@ -354,7 +354,7 @@ ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen) 
     if (!c || pthread_mutex_init(&c->err_mu, NULL) != 0) {
         free(c);
         if (err)
-            *err = KSL_E_BAD_ARG;
+            *err = KSL_E_NO_MEMORY;
         if (msg && msglen)
             snprintf(msg, msglen, "ksl_udp_sender: out of memory");
         return NULL;
@@ -363,7 +363,7 @@ ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen) 
         pthread_mutex_destroy(&c->err_mu);
         free(c);
         if (err)
-            *err = KSL_E_BAD_ARG;
+            *err = KSL_E_NO_MEMORY;
         if (msg && msglen)
             snprintf(msg, msglen, "ksl_udp_sender: out of memory");
         return NULL;

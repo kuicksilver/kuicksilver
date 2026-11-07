@@ -150,6 +150,9 @@ public object KslConst {
     /** udpOpen: the bind was refused (a port in use, an address not on this host). */
     public const val E_BIND: Int = 0xff000c
 
+    /** `ksl_udp_open`, `ksl_udp_sender`: an allocation failed (additive in ABI 7; `ksl_udp_open` answered [E_BAD_ARG] before). */
+    public const val E_NO_MEMORY: Int = 0xff000d
+
     /** Event wire layout produced by the bindings: 6 x int32 header then the payload. */
     public const val EVENT_HEADER_BYTES: Int = 24
 }

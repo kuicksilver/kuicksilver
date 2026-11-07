@@ -345,7 +345,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     ksl_udp *u = calloc(1, sizeof *u);
     if (!u) {
         if (err)
-            *err = KSL_E_BAD_ARG;
+            *err = KSL_E_NO_MEMORY;
         return NULL;
     }
     InitializeSRWLock(&u->err_mu);
@@ -433,7 +433,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     u->tx = malloc(GRO_MAX);
     if (!u->scratch || !u->tx) {
         if (err)
-            *err = KSL_E_BAD_ARG;
+            *err = KSL_E_NO_MEMORY;
         free(u->scratch);
         free(u->tx);
         closesocket(u->fd);
@@ -478,7 +478,7 @@ ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen) 
     if (!c || !(c->tx = malloc(GRO_MAX))) {
         free(c);
         if (err)
-            *err = KSL_E_BAD_ARG;
+            *err = KSL_E_NO_MEMORY;
         if (msg && msglen)
             snprintf(msg, msglen, "ksl_udp_sender: out of memory");
         return NULL;

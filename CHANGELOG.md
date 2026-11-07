@@ -26,7 +26,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Native: `ksl_udp_sender`, a send-only clone of a `ksl_udp` socket with its own send scratch, so several threads send on
   one UDP socket (one per clone); it shares the descriptor, which closes with the last close of the group in any order,
   copies the granted flags (GSO/USO, ECN, DF, PKTINFO), and refuses to receive (`KSL_E_NOT_SUPPORTED`). Linux, Apple and
-  Windows; additive under ABI 7. Kotlin: `KslUdpSocket.sender()` (internal API).
+  Windows; additive under ABI 7. Kotlin: `KslUdpSocket.sender()` (internal API). New error code `KSL_E_NO_MEMORY` for a
+  failed allocation in `ksl_udp_sender` and `ksl_udp_open` (which answered `KSL_E_BAD_ARG` for it).
 - QUIC: routable server connection IDs for QUIC-LB load balancers (draft-ietf-quic-load-balancers-21), experimental:
   `QuicEndpointConfig.loadBalancer = QuicLbConfig(configId, serverId, nonceLength, key)` writes the server ID into
   every server connection ID (config rotation bits and self-encoded length in the first octet; with a key, made by

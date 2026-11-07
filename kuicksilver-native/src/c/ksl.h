@@ -153,6 +153,9 @@ extern "C" {
 #define KSL_E_BIND                                                                                                     \
     0xff000cu /* ksl_udp_open: the bind was refused (a port in use, an address not on this host); additive
                                          in ABI 7 */
+#define KSL_E_NO_MEMORY                                                                                                \
+    0xff000du /* ksl_udp_open, ksl_udp_sender: an allocation failed (the object, its scratch, a mutex); additive in ABI 7
+                 (ksl_udp_open answered KSL_E_BAD_ARG for it before) */
 
 typedef struct ksl_ctx ksl_ctx;
 typedef struct ksl_ssl ksl_ssl;
@@ -404,7 +407,7 @@ uint64_t ksl_udp_emsgsize(ksl_udp *, uint32_t *last_size);
    ksl_udp_recv / ksl_udp_recv_dst answer KSL_ERROR with KSL_E_NOT_SUPPORTED in its error (the socket's receiver alone reads).
    ksl_udp_shutdown and ksl_udp_close of a clone end that clone only; after the socket's shutdown a send on a clone fails
    (KSL_ERROR, ESHUTDOWN / WSAESHUTDOWN in its error). The descriptor closes with the last ksl_udp_close of the group, in any order. NULL with KSL_E_BAD_ARG for NULL or
-   a socket already shut down; never while another thread may close the socket. Each clone counts in KSL_LIVE_UDP and holds no
+   a socket already shut down, with KSL_E_NO_MEMORY when an allocation fails; never while another thread may close the socket. Each clone counts in KSL_LIVE_UDP and holds no
    wake descriptor. Additive in ABI 7 */
 ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen);
 void ksl_udp_shutdown(
