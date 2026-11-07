@@ -120,7 +120,7 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
 providers.gradleProperty("kuicksilver.test.forks").orNull?.toInt()?.let { k -> tasks.withType<Test>().configureEach { maxParallelForks = k } }
 // -Pkuicksilver.test.allowNoMatch: a --tests pattern that matches nothing in a module does not fail its test task (one
 // pattern given to several modules' tasks, flake-hunt.sh -T)
-if (providers.gradleProperty("kuicksilver.test.allowNoMatch").isPresent) {
+if (providers.gradleProperty("kuicksilver.test.allowNoMatch").orNull.let { it != null && it != "false" }) {
     tasks.withType<AbstractTestTask>().configureEach { filter.isFailOnNoMatchingTests = false }
 }
 providers.gradleProperty("kuicksilver.test.repeat").orNull?.toInt()?.takeIf { it > 1 }?.let { n ->

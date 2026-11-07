@@ -67,7 +67,7 @@ run_gradle() {   # run_gradle <log> <args...>
   local log=$1 rc
   shift
   set -m
-  "$gradle" "$@" > "$log" 2>&1 &
+  "$gradle" "$@" < /dev/null > "$log" 2>&1 & # job control keeps the tty as stdin: a background group reading it would stop
   gradle_pid=$!
   set +m
   wait "$gradle_pid"
