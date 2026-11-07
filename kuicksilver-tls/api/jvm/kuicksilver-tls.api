@@ -168,11 +168,24 @@ public final class io/kuicksilver/tls/KslCrypto {
 public final class io/kuicksilver/tls/KslQuicCrypto : io/kuicksilver/tls/QuicCrypto {
 	public static final field INSTANCE Lio/kuicksilver/tls/KslQuicCrypto;
 	public fun initialProtectors ([BILio/kuicksilver/tls/TlsRole;)Lkotlin/Pair;
+	public fun newLoadBalancerKey ([B)Lio/kuicksilver/tls/LoadBalancerKey;
 	public fun newResetKey ()Lio/kuicksilver/tls/ResetKey;
 	public fun newSession (Lio/kuicksilver/tls/TlsConfig;)Lio/kuicksilver/tls/QuicTlsSession;
 	public fun newSession (Lio/kuicksilver/tls/TlsConfig;Z)Lio/kuicksilver/tls/QuicTlsSession;
 	public fun newTokenKey ()Lio/kuicksilver/tls/TokenKey;
 	public fun retryIntegrityTag (I[B[B)[B
+}
+
+public abstract interface class io/kuicksilver/tls/LoadBalancerKey : java/lang/AutoCloseable {
+	public abstract fun decrypt ([BI[BI)V
+	public fun derive ([B)Lio/kuicksilver/tls/LoadBalancerKey;
+	public fun duplicate ()Lio/kuicksilver/tls/LoadBalancerKey;
+	public abstract fun encrypt ([BI[BI)V
+}
+
+public final class io/kuicksilver/tls/LoadBalancerKey$DefaultImpls {
+	public static fun derive (Lio/kuicksilver/tls/LoadBalancerKey;[B)Lio/kuicksilver/tls/LoadBalancerKey;
+	public static fun duplicate (Lio/kuicksilver/tls/LoadBalancerKey;)Lio/kuicksilver/tls/LoadBalancerKey;
 }
 
 public final class io/kuicksilver/tls/PacketProtectionException : java/io/IOException {
@@ -208,6 +221,7 @@ public final class io/kuicksilver/tls/PlatformVerifier_jvmKt {
 
 public abstract interface class io/kuicksilver/tls/QuicCrypto {
 	public abstract fun initialProtectors ([BILio/kuicksilver/tls/TlsRole;)Lkotlin/Pair;
+	public fun newLoadBalancerKey ([B)Lio/kuicksilver/tls/LoadBalancerKey;
 	public abstract fun newResetKey ()Lio/kuicksilver/tls/ResetKey;
 	public abstract fun newSession (Lio/kuicksilver/tls/TlsConfig;)Lio/kuicksilver/tls/QuicTlsSession;
 	public fun newSession (Lio/kuicksilver/tls/TlsConfig;Z)Lio/kuicksilver/tls/QuicTlsSession;
@@ -216,6 +230,7 @@ public abstract interface class io/kuicksilver/tls/QuicCrypto {
 }
 
 public final class io/kuicksilver/tls/QuicCrypto$DefaultImpls {
+	public static fun newLoadBalancerKey (Lio/kuicksilver/tls/QuicCrypto;[B)Lio/kuicksilver/tls/LoadBalancerKey;
 	public static fun newSession (Lio/kuicksilver/tls/QuicCrypto;Lio/kuicksilver/tls/TlsConfig;Z)Lio/kuicksilver/tls/QuicTlsSession;
 }
 

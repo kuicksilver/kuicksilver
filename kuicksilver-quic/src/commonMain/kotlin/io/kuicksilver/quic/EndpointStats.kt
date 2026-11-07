@@ -130,6 +130,26 @@ public class EndpointStats internal constructor(
      */
     @property:ExperimentalKuicksilverApi
     public val preferredAddressFailures: Long = 0,
+    /**
+     * Times a QUIC-LB configuration's nonces ran out (`QuicEndpointConfig.loadBalancer`; once per configuration): the endpoint
+     * then issues unroutable connection IDs until [QuicEndpoint.updateLoadBalancer] gives it a new configuration (a new key).
+     */
+    @property:ExperimentalKuicksilverApi
+    public val loadBalancerNoncesExhausted: Long = 0,
+    /**
+     * Failed `QuicLbNonceReservation.store` calls: retried after a back-off counted in receive batches (one, doubling to
+     * 1,024, times the loops; about one store a round, nothing drawn meanwhile); once the reserved nonces are used up, the requests in
+     * between get unroutable IDs. Not counted as exhaustion.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val loadBalancerReservationFailures: Long = 0,
+    /**
+     * QUIC-LB nonces drawn and spent unused: their ID hashed to another loop of the group whose pool (1,024 IDs) was full,
+     * and it was for a Retry's SCID (which takes no owner exception) or the owner exceptions (65,536 live IDs) were full.
+     * Stays near 0 unless the loops issue IDs very unevenly.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val loadBalancerNoncesWasted: Long = 0,
 ) {
     /** Field by field sum: a loop group's endpoint statistics. */
     internal operator fun plus(o: EndpointStats): EndpointStats =
@@ -172,6 +192,9 @@ public class EndpointStats internal constructor(
             ptbAccepted + o.ptbAccepted,
             ptbIgnored + o.ptbIgnored,
             preferredAddressFailures + o.preferredAddressFailures,
+            loadBalancerNoncesExhausted + o.loadBalancerNoncesExhausted,
+            loadBalancerReservationFailures + o.loadBalancerReservationFailures,
+            loadBalancerNoncesWasted + o.loadBalancerNoncesWasted,
         )
 
     @OptIn(ExperimentalKuicksilverApi::class)
@@ -190,5 +213,7 @@ public class EndpointStats internal constructor(
             "pathValidations=$pathValidations, pathValidationFailures=$pathValidationFailures, uncaughtFailures=$uncaughtFailures, " +
             "sendFailures=$sendFailures, listenerFailures=$listenerFailures, newTokensIssued=$newTokensIssued, " +
             "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected, ptbAccepted=$ptbAccepted, " +
-            "ptbIgnored=$ptbIgnored, preferredAddressFailures=$preferredAddressFailures)"
+            "ptbIgnored=$ptbIgnored, preferredAddressFailures=$preferredAddressFailures, " +
+            "loadBalancerNoncesExhausted=$loadBalancerNoncesExhausted, loadBalancerReservationFailures=$loadBalancerReservationFailures, " +
+            "loadBalancerNoncesWasted=$loadBalancerNoncesWasted)"
 }

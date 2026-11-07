@@ -153,6 +153,13 @@ abstract interface io.kuicksilver.tls/EarlyDataAdmission { // io.kuicksilver.tls
     abstract fun release(kotlin/ByteArray) // io.kuicksilver.tls/EarlyDataAdmission.release|release(kotlin.ByteArray){}[0]
 }
 
+abstract interface io.kuicksilver.tls/LoadBalancerKey : kotlin/AutoCloseable { // io.kuicksilver.tls/LoadBalancerKey|null[0]
+    abstract fun decrypt(kotlin/ByteArray, kotlin/Int, kotlin/ByteArray, kotlin/Int) // io.kuicksilver.tls/LoadBalancerKey.decrypt|decrypt(kotlin.ByteArray;kotlin.Int;kotlin.ByteArray;kotlin.Int){}[0]
+    abstract fun encrypt(kotlin/ByteArray, kotlin/Int, kotlin/ByteArray, kotlin/Int) // io.kuicksilver.tls/LoadBalancerKey.encrypt|encrypt(kotlin.ByteArray;kotlin.Int;kotlin.ByteArray;kotlin.Int){}[0]
+    open fun derive(kotlin/ByteArray): io.kuicksilver.tls/LoadBalancerKey // io.kuicksilver.tls/LoadBalancerKey.derive|derive(kotlin.ByteArray){}[0]
+    open fun duplicate(): io.kuicksilver.tls/LoadBalancerKey // io.kuicksilver.tls/LoadBalancerKey.duplicate|duplicate(){}[0]
+}
+
 abstract interface io.kuicksilver.tls/PacketProtector : kotlin/AutoCloseable { // io.kuicksilver.tls/PacketProtector|null[0]
     abstract val aead // io.kuicksilver.tls/PacketProtector.aead|{}aead[0]
         abstract fun <get-aead>(): io.kuicksilver.tls/Aead // io.kuicksilver.tls/PacketProtector.aead.<get-aead>|<get-aead>(){}[0]
@@ -171,6 +178,7 @@ abstract interface io.kuicksilver.tls/QuicCrypto { // io.kuicksilver.tls/QuicCry
     abstract fun newSession(io.kuicksilver.tls/TlsConfig): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/QuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig){}[0]
     abstract fun newTokenKey(): io.kuicksilver.tls/TokenKey // io.kuicksilver.tls/QuicCrypto.newTokenKey|newTokenKey(){}[0]
     abstract fun retryIntegrityTag(kotlin/Int, kotlin/ByteArray, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/QuicCrypto.retryIntegrityTag|retryIntegrityTag(kotlin.Int;kotlin.ByteArray;kotlin.ByteArray){}[0]
+    open fun newLoadBalancerKey(kotlin/ByteArray?): io.kuicksilver.tls/LoadBalancerKey // io.kuicksilver.tls/QuicCrypto.newLoadBalancerKey|newLoadBalancerKey(kotlin.ByteArray?){}[0]
     open fun newSession(io.kuicksilver.tls/TlsConfig, kotlin/Boolean): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/QuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig;kotlin.Boolean){}[0]
 }
 
@@ -746,6 +754,7 @@ final object io.kuicksilver.tls/KslCrypto { // io.kuicksilver.tls/KslCrypto|null
 
 final object io.kuicksilver.tls/KslQuicCrypto : io.kuicksilver.tls/QuicCrypto { // io.kuicksilver.tls/KslQuicCrypto|null[0]
     final fun initialProtectors(kotlin/ByteArray, kotlin/Int, io.kuicksilver.tls/TlsRole): kotlin/Pair<io.kuicksilver.tls/PacketProtector, io.kuicksilver.tls/PacketProtector> // io.kuicksilver.tls/KslQuicCrypto.initialProtectors|initialProtectors(kotlin.ByteArray;kotlin.Int;io.kuicksilver.tls.TlsRole){}[0]
+    final fun newLoadBalancerKey(kotlin/ByteArray?): io.kuicksilver.tls/LoadBalancerKey // io.kuicksilver.tls/KslQuicCrypto.newLoadBalancerKey|newLoadBalancerKey(kotlin.ByteArray?){}[0]
     final fun newResetKey(): io.kuicksilver.tls/ResetKey // io.kuicksilver.tls/KslQuicCrypto.newResetKey|newResetKey(){}[0]
     final fun newSession(io.kuicksilver.tls/TlsConfig): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/KslQuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig){}[0]
     final fun newSession(io.kuicksilver.tls/TlsConfig, kotlin/Boolean): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/KslQuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig;kotlin.Boolean){}[0]

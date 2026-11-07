@@ -77,3 +77,16 @@ Linux returns the whole DNS message, Apple and Windows a list of records (they h
 byte of `out` says which. Android answers `KSL_DNS_NOT_SUPPORTED` (no public call below API 29: Kotlin asks
 `DnsResolver.rawQuery` there). No state, no threads; the call blocks for about `timeout_ms` at most (on Linux about max(`timeout_ms`, one second per configured nameserver), every nameserver asked and the tries and waits sized to the budget, plus a possible TCP retry of a truncated answer), except on Windows,
 whose call takes no timeout: Kotlin stops waiting and lets it end, at most four lookups at a time per process. 76 functions.
+
+QUIC-LB block key, additive under 7 (routable server connection IDs, draft-ietf-quic-load-balancers-21 section 5.4):
+`KSL_EKEY_LB`, `ksl_key_lb(key[16])` copies a configured AES-128 key into a `ksl_key` (the JNI copy and the Kotlin array are
+wiped; the object is cleansed on `ksl_key_free`), `ksl_key_random(KSL_EKEY_LB)` makes a random one inside `ksl` (the key
+that permutes plaintext nonces), `ksl_key_lb_dup(key)` an independent copy (an endpoint holds its own copy of each
+configuration key, so the caller may close theirs), `ksl_key_lb_derive(key, label[16])` makes the key whose bytes are `key`'s encryption of
+`label` (the nonce permutation key of an encrypted configuration, so its bytes never reach Kotlin either), and
+`ksl_key_ecb16(key, decrypt, in, out)` runs one AES-128-ECB block. The key schedule is expanded once into two template
+contexts at creation; each call runs on an `EVP_CIPHER_CTX_copy` of one, so the key object is immutable and the loops of a
+group share it, and an attacker-triggered check (the Stateless Reset gate) costs no key expansion. An LB key has no AEAD or
+header-protection context, so `ksl_seal`, `ksl_open`, `ksl_header_mask`, `ksl_key_mac16` and `ksl_key_next` refuse it.
+Kotlin: `QuicCrypto.newLoadBalancerKey` (`LoadBalancerKey`, with `derive` and `duplicate`), `KslLbKey` (internal).
+`test_key.c` `lb_key_concurrent_ecb16` runs one key on eight threads (clean under `KSL_TSAN=1`). 80 functions.

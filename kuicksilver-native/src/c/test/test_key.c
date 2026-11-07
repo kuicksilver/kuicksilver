@@ -204,6 +204,54 @@ static void open_in_place(const char *name, ksl_key *w, ksl_key *r) {
 /* test-only hook exported by ksl_key.c: builds a key from a TLS secret (what the KEY event does internally) */
 ksl_key *ksl_key_from_secret_for_test(int aead, const uint8_t *secret, size_t slen, uint32_t version);
 
+#ifndef _WIN32
+#include <pthread.h>
+/* One LB key, many threads: ksl_key_ecb16 only copies the key's template contexts (KSL_TSAN=1 tools/c-test.sh checks it). */
+typedef struct {
+    ksl_key *k;
+    int ok;
+} lb_share;
+static void *lb_worker(void *arg) {
+    lb_share *s = arg;
+    static const uint8_t want[16] = {0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30,
+                                     0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a};
+    uint8_t pt[16], ct[16], back[16];
+    for (int i = 0; i < 16; i++)
+        pt[i] = (uint8_t)(i * 0x11);
+    s->ok = 1;
+    for (int n = 0; n < 2000; n++) {
+        if (ksl_key_ecb16(s->k, 0, pt, ct) != KSL_OK || memcmp(ct, want, 16) ||
+            ksl_key_ecb16(s->k, 1, ct, back) != KSL_OK || memcmp(back, pt, 16))
+            s->ok = 0;
+    }
+    return NULL;
+}
+static void lb_key_concurrent(void) {
+    SECTION("lb_key_concurrent_ecb16");
+    uint8_t key[16];
+    for (int i = 0; i < 16; i++)
+        key[i] = (uint8_t)i;
+    ksl_key *k = ksl_key_lb(key);
+    pthread_t t[8];
+    lb_share s[8];
+    for (int i = 0; i < 8; i++) {
+        s[i].k = k;
+        pthread_create(&t[i], NULL, lb_worker, &s[i]);
+    }
+    int ok = 1;
+    for (int i = 0; i < 8; i++) {
+        pthread_join(t[i], NULL);
+        ok &= s[i].ok;
+    }
+    CHECK(ok, "8 threads x 2000 blocks each way on one key, all FIPS-197 C.1");
+    ksl_key_free(k);
+    END();
+}
+#else
+static void lb_key_concurrent(void) {
+}
+#endif
+
 void run_key(void) {
     RUN_VECTORS(RFC9001);
     RUN_VECTORS(RFC9369);
@@ -321,6 +369,73 @@ void run_key(void) {
         ksl_ssl_free(s);
         ksl_ctx_free(cc);
         ksl_ctx_free(sc);
+        END();
+    }
+
+    /* QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4): one AES-128-ECB block per call, the key copied in */
+    {
+        SECTION("lb_key_fips197");
+        /* FIPS-197 Appendix C.1 (AES-128) */
+        uint8_t key[16], pt[16], ct[16], back[16];
+        static const uint8_t want[16] = {0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30,
+                                         0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a};
+        for (int i = 0; i < 16; i++) {
+            key[i] = (uint8_t)i;
+            pt[i] = (uint8_t)(i * 0x11);
+        }
+        ksl_key *k = ksl_key_lb(key);
+        CHECK(k != NULL, "lb key from 16 bytes");
+        CHECK(ksl_key_ecb16(k, 0, pt, ct) == KSL_OK && !memcmp(ct, want, 16), "lb_key_fips197: encrypts to C.1");
+        CHECK(ksl_key_ecb16(k, 1, ct, back) == KSL_OK && !memcmp(back, pt, 16), "lb_key_fips197: decrypts back");
+        memcpy(back, pt, 16);
+        CHECK(ksl_key_ecb16(k, 0, back, back) == KSL_OK && !memcmp(back, want, 16), "lb key encrypts in place");
+        uint8_t junk[32] = {0}, mask[5];
+        CHECK(ksl_seal(k, 1, junk, 1, junk, 8, sizeof junk) == KSL_ERROR, "negative: lb key rejects seal");
+        CHECK(ksl_open(k, 1, junk, 1, junk, 16) == KSL_ERROR, "negative: lb key rejects open");
+        CHECK(ksl_header_mask(k, junk, mask) == KSL_ERROR, "negative: lb key rejects header mask");
+        CHECK(ksl_key_mac16(k, junk, 8, junk) == KSL_ERROR, "negative: lb key rejects mac16");
+        CHECK(ksl_key_next(k) == NULL, "negative: lb key has no next generation");
+        ksl_key *r = ksl_key_random(KSL_EKEY_LB), *r2 = ksl_key_random(KSL_EKEY_LB);
+        CHECK(r && r2, "random lb keys made inside ksl");
+        uint8_t a[16], b[16];
+        CHECK(ksl_key_ecb16(r, 0, pt, a) == KSL_OK && ksl_key_ecb16(r2, 0, pt, b) == KSL_OK && memcmp(a, b, 16) != 0,
+              "two random lb keys differ");
+        CHECK(ksl_key_ecb16(r, 1, a, b) == KSL_OK && !memcmp(b, pt, 16), "a random lb key decrypts what it encrypted");
+        /* a derived key is the key whose bytes are k's encryption of the label */
+        uint8_t label[16] = {'l', 'a', 'b', 'e', 'l'}, kb[16], c1[16], c2[16];
+        CHECK(ksl_key_ecb16(k, 0, label, kb) == KSL_OK, "label encrypted");
+        ksl_key *d = ksl_key_lb_derive(k, label), *expect = ksl_key_lb(kb);
+        CHECK(d && expect && ksl_key_ecb16(d, 0, pt, c1) == KSL_OK && ksl_key_ecb16(expect, 0, pt, c2) == KSL_OK &&
+                  !memcmp(c1, c2, 16),
+              "lb_key_derive: AES_k(label) as the new key");
+        CHECK(ksl_key_lb_derive(r, NULL) == NULL, "negative: no label");
+        ksl_key *reset = ksl_key_random(KSL_EKEY_RESET);
+        CHECK(ksl_key_lb_derive(reset, label) == NULL, "negative: derive from a reset key");
+        ksl_key_free(reset);
+        ksl_key *dup = ksl_key_lb_dup(k);
+        CHECK(dup && ksl_key_ecb16(dup, 0, pt, c1) == KSL_OK && !memcmp(c1, want, 16), "lb_key_dup: the same key");
+        CHECK(ksl_key_lb_dup(NULL) == NULL, "negative: dup of nothing");
+        ksl_key_free(dup);
+        ksl_key_free(d);
+        ksl_key_free(expect);
+        ksl_key_free(r);
+        ksl_key_free(r2);
+        ksl_key_free(k);
+        END();
+    }
+    {
+        lb_key_concurrent();
+    }
+    {
+        SECTION("negative_lb_key_wrong_kind");
+        ksl_key *reset = ksl_key_random(KSL_EKEY_RESET), *tok = ksl_key_random(KSL_EKEY_TOKEN);
+        uint8_t in[16] = {0}, out[16];
+        CHECK(ksl_key_ecb16(reset, 0, in, out) == KSL_ERROR, "negative_lb_key_wrong_kind: a reset key");
+        CHECK(ksl_key_ecb16(tok, 1, in, out) == KSL_ERROR, "negative_lb_key_wrong_kind: a token key");
+        CHECK(ksl_key_ecb16(NULL, 0, in, out) == KSL_ERROR, "negative: no key");
+        CHECK(ksl_key_lb(NULL) == NULL, "negative: no key bytes");
+        ksl_key_free(reset);
+        ksl_key_free(tok);
         END();
     }
 }

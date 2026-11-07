@@ -41,6 +41,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
@@ -86,6 +88,8 @@ internal class EndpointLoop private constructor(
     internal val sessions: SessionCache = SessionCache(),
     /** A group's Retry and NEW_TOKEN keys, shared by its loops (RFC 9000 section 8.1); null: the endpoint core makes its own. */
     tokens: io.kuicksilver.quic.endpoint.AddressTokens? = null,
+    /** A group's QUIC-LB state, shared by its loops; null: the endpoint core makes its own when the config has a `loadBalancer`. */
+    lb: io.kuicksilver.quic.endpoint.QuicLbState? = null,
     /** The sockets on the server's preferred addresses, one per family offered ([PREFERRED_SOCKET]). */
     preferredIos: List<DatagramIo> = emptyList(),
     /** Allocates the batches' buffers (a test seam: a failing allocator). */
@@ -119,7 +123,7 @@ internal class EndpointLoop private constructor(
         var i: PacketBatch? = null
         var o: PacketBatch? = null
         try {
-            c = EndpointCore(config, KslRandom.newSource(), index, tokens)
+            c = EndpointCore(config, KslRandom.newSource(), index, tokens, lb)
             core = c
             i = PacketBatch(16, SLOT_SIZE, allocate)
             inBatch = i
@@ -580,6 +584,32 @@ internal class EndpointLoop private constructor(
         closeJob?.join()
     }
 
+    override suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
+        if (group != null) return group.updateLoadBalancer(config)
+        val lb = core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
+        lbLock.withLock { applyLoadBalancer(lb, config, this) }
+    }
+
+    /** One configuration change at a time: a second one prepared meanwhile could reuse an entry the first retires. */
+    private val lbLock = Mutex()
+
+    /** Test hook: runs on the loop right after a configuration was committed (a caller cancelled there must not undo it). */
+    internal var afterLbCommitForTest: (() -> Unit)? = null
+
+    /** [block] on the loop's dispatcher while the endpoint is open (the core is alive there); [QuicException.EndpointClosing] once it closes. */
+    internal suspend fun <T> runOnLoop(block: () -> T): T {
+        if (closing) throw QuicException.EndpointClosing()
+        try {
+            return withContext(dispatcher) {
+                if (closing) throw QuicException.EndpointClosing()
+                block()
+            }
+        } catch (e: CancellationException) {
+            if (closing) throw QuicException.EndpointClosing() // the loop's scope went away under a concurrent close
+            throw e
+        }
+    }
+
     // ---- observability and graceful shutdown ----
 
     override val stats: EndpointStats get() =
@@ -845,8 +875,22 @@ internal class EndpointLoop private constructor(
             tokens: io.kuicksilver.quic.endpoint.AddressTokens,
             preferredIos: List<DatagramIo> = emptyList(),
             allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
+            lb: io.kuicksilver.quic.endpoint.QuicLbState? = null,
         ): EndpointLoop =
-            EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions, tokens, preferredIos, allocate)
+            EndpointLoop(
+                config,
+                io,
+                ownDispatcher(),
+                index,
+                group,
+                pendingAccept,
+                acceptQueue,
+                sessions,
+                tokens,
+                lb,
+                preferredIos,
+                allocate,
+            )
 
         /**
          * The accept queue, whose slots [pending] counts. A connection the queue cannot deliver (an `accept()` cancelled
@@ -858,5 +902,43 @@ internal class EndpointLoop private constructor(
                 pending.decrementAndFetch()
                 c.close() // CONNECTION_CLOSE with application code 0, on the connection's loop
             }
+    }
+}
+
+/**
+ * Prepares [config] on `Dispatchers.IO` (the configuration's key copy, derived key and nonce space; a nonce reservation's
+ * first `store` may fsync), commits it on [loop]'s dispatcher, and prepares again when another change retired the entry it
+ * reused ([QuicLbState.StaleConfiguration]). A prepared configuration is discarded only when it was not committed: a caller
+ * cancelled after the commit leaves it in force.
+ */
+internal suspend fun applyLoadBalancer(
+    lb: io.kuicksilver.quic.endpoint.QuicLbState,
+    config: io.kuicksilver.quic.QuicLbConfig?,
+    loop: EndpointLoop,
+    afterCommit: suspend () -> Unit = {},
+) {
+    var tries = 0
+    while (true) {
+        // not cancellable: a fresh entry made there is either committed or discarded below, never dropped on the floor
+        val prepared = withContext(Dispatchers.IO + NonCancellable) { lb.prepare(config) }
+        var committed = false
+        try {
+            currentCoroutineContext().ensureActive()
+            loop.runOnLoop {
+                loop.core.commitLoadBalancer(prepared)
+                committed = true
+                loop.afterLbCommitForTest?.invoke()
+            }
+            return
+        } catch (e: io.kuicksilver.quic.endpoint.QuicLbState.StaleConfiguration) {
+            // defensive: the update mutexes (EndpointLoop.lbLock, LoopGroup.lbLock) already rule this out
+            if (++tries >= 3) throw e
+        } catch (e: Throwable) {
+            if (!committed) lb.discard(prepared)
+            throw e
+        } finally {
+            // committed, whether the caller goes on or was cancelled right then: the rest of the change happens, once
+            if (committed) withContext(NonCancellable) { afterCommit() }
+        }
     }
 }

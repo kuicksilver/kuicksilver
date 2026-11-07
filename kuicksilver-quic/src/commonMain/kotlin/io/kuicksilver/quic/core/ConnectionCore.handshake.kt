@@ -40,6 +40,7 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     val tp = config.localTransportParameters(role, localCid, if (role == TlsRole.Server) odcid else null)
     // RFC 9000 section 18.2: the token of the handshake connection ID
     if (role == TlsRole.Server) tp.statelessResetToken = cids.localToken(0)
+    if (role == TlsRole.Server && unroutableCid) tp.disableActiveMigration = true
     if (role ==
         TlsRole.Server
     ) {
@@ -57,12 +58,13 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     val preferred = preferredAddress
     if (role == TlsRole.Server && (preferred != null || testAdvertisePreferredAddress)) {
         // RFC 9000 section 18.2: the addresses (zeros for a family not offered: the test hook offers none), the sequence-1 ID and its token
-        val l = cids.preferredAddressLocal()
-        tp.preferredAddressPresent = true
-        tp.preferredIpv4 = preferred?.ipv4
-        tp.preferredIpv6 = preferred?.ipv6
-        tp.preferredAddressCid = l.cid
-        tp.preferredAddressToken = l.token
+        cids.preferredAddressLocal()?.let { l ->
+            tp.preferredAddressPresent = true
+            tp.preferredIpv4 = preferred?.ipv4
+            tp.preferredIpv6 = preferred?.ipv6
+            tp.preferredAddressCid = l.cid
+            tp.preferredAddressToken = l.token
+        } // none when the endpoint's QUIC-LB nonces are spent: no offer
     }
     // client: Chosen Version is the one in use (after a Version Negotiation restart it differs from the configured head); server: ksl rewrites it to the negotiated one
     if (role == TlsRole.Client && tp.availableVersions != null && !testForgeChosenVersion) tp.chosenVersion = version.version

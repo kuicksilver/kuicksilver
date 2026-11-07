@@ -14,8 +14,10 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.Releaser
+import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.withLiteralHost
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.AtomicInt
@@ -72,6 +74,7 @@ internal class LoopGroup private constructor(
         reason: String,
     ) {
         if (!closingFlag.compareAndSet(0, 1)) return
+        lbScope.cancel()
         for (l in loops) l.closeWith(code, reason)
         acceptQueue.close(
             io.kuicksilver.quic.QuicException
@@ -82,6 +85,67 @@ internal class LoopGroup private constructor(
     override suspend fun closeAndJoin() {
         close()
         for (l in loops) l.closeAndJoin()
+    }
+
+    private val lbLock = kotlinx.coroutines.sync.Mutex()
+
+    /** Where a configuration change's fan-out to loops 1..N runs: the caller of updateLoadBalancer does not wait for it. */
+    private val lbScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
+    /** Test hooks: the last fan-out, and how long a loop has to take a change in it. */
+    internal var fanOutForTest: kotlinx.coroutines.Job? = null
+    internal var fanOutTimeout: kotlin.time.Duration = FAN_OUT_TIMEOUT
+
+    /** What [updateLoadBalancer] would throw for [config], changing nothing. */
+    internal suspend fun checkLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
+        val first = loops[0]
+        first.runOnLoop { first.core.checkLoadBalancerUpdate(config) }
+    }
+
+    /**
+     * One change of the shared QUIC-LB state, on loop 0 (whose core keeps the state alive while it runs), then every loop
+     * moves its own server connections to it; one change at a time.
+     */
+    override suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
+        lbLock.lock()
+        try {
+            val first = loops[0]
+            // built off the loops (a nonce reservation's first store may fsync), switched to on loop 0
+            val lb = first.core.lb ?: throw IllegalStateException("updateLoadBalancer needs an endpoint built with a loadBalancer")
+            // once committed on loop 0, the other loops' connections move too, even if the caller is cancelled meanwhile
+            // once committed on loop 0, the other loops move their connections: here as a fast path, launched in the group's
+            // scope so the caller never waits on a stuck loop; a loop that misses it moves at its next receive batch anyway
+            // (EndpointCore.reissueForLoadBalancer, by the configuration's generation)
+            applyLoadBalancer(lb, config, first) {
+                fanOutForTest =
+                    lbScope.launch {
+                        for (l in loops) {
+                            if (l === first || l.closing) continue
+                            // posted to the loop; given up after the timeout (the task then does nothing when it finally
+                            // runs: that loop moves at its next receive batch). The wait is not on the loop's dispatcher,
+                            // so a stuck loop cannot hold it past the timeout
+                            val abandoned = kotlin.concurrent.atomics.AtomicInt(0)
+                            val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+                            l.scope.launch {
+                                if (abandoned.compareAndSet(0, 2)) l.core.reissueForLoadBalancer()
+                                done.complete(Unit)
+                            }
+                            if (kotlinx.coroutines.withTimeoutOrNull(fanOutTimeout) { done.await() } == null &&
+                                abandoned.compareAndSet(0, 1) &&
+                                !l.closing &&
+                                closingFlag.load() == 0 // a loop closing meanwhile never runs the task: no warning for it
+                            ) {
+                                l.observer.logger.emit(io.kuicksilver.quic.LogLevel.Warn) {
+                                    "QUIC-LB: loop ${l.index} did not take the configuration change within $fanOutTimeout; " +
+                                        "it moves its connections at its next receive batch"
+                                }
+                            }
+                        }
+                    }
+            }
+        } finally {
+            lbLock.unlock()
+        }
     }
 
     /** Every loop's counters, summed. */
@@ -152,6 +216,9 @@ internal class LoopGroup private constructor(
     )
 
     companion object {
+        /** How long a loop has to move its connections to a new QUIC-LB configuration before the update goes on without it. */
+        private val FAN_OUT_TIMEOUT = kotlin.time.Duration.parse("5s")
+
         internal const val NO_REUSEPORT = "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"
 
         suspend fun bind(
@@ -260,6 +327,24 @@ internal class LoopGroup private constructor(
                     closeSockets(Releaser(e), ios, preferred)
                     throw e
                 }
+            // one QUIC-LB state for every loop: the IDs any loop issues hash onto the loops with one key and draw one nonce counter
+            val lb =
+                try {
+                    config.loadBalancer?.let {
+                        io.kuicksilver.quic.endpoint.QuicLbState(
+                            config.crypto,
+                            KslRandom.newSource(),
+                            it,
+                            config.loops,
+                            config.connectionIdLength,
+                        )
+                    }
+                } catch (e: Throwable) {
+                    val r = Releaser(e)
+                    r.release { tokens.close() }
+                    closeSockets(r, ios, preferred)
+                    throw e
+                }
             val loops = ArrayList<EndpointLoop>(ios.size)
             try {
                 for ((i, io) in ios.withIndex()) {
@@ -275,6 +360,7 @@ internal class LoopGroup private constructor(
                             tokens,
                             preferred.getOrElse(i) { emptyList() },
                             allocate,
+                            lb,
                         )
                 }
                 afterBuild()
@@ -287,6 +373,7 @@ internal class LoopGroup private constructor(
                 throw e
             } finally {
                 tokens.close() // the group's own reference
+                lb?.close() // likewise
             }
             g.loops = loops
             try {

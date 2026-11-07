@@ -626,6 +626,99 @@ val withLoops = QuicEndpointConfig.Builder().apply { this.server = serverConfig;
 
 `QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 4433), withLoops)` then starts the four loops on port 4433.
 
+## Behind a load balancer
+
+Experimental, after draft-ietf-quic-load-balancers-21 (QUIC-LB; a draft, not an RFC, so the format may still change).
+Several servers behind one address normally rely on the load balancer hashing the 4-tuple, which breaks when a client's
+address changes ([Deploying: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)).
+A QUIC-LB load balancer routes by connection ID instead: each server writes its server ID into every connection ID it
+issues, and the balancer reads it back. Give the endpoint the configuration your load balancer's configuration agent
+assigned this server:
+
+```kotlin
+// guide:quic:load-balancer
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; the endpoint takes its own copy
+val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
+val behindLb =
+    quicEndpointConfig {
+        server = serverConfig
+        loadBalancer = lb   // 1 + 3 + 4 = 8 bytes: the default connectionIdLength
+    }
+```
+
+A connection ID is then `first octet || server ID || nonce`: the first octet carries `configId` (0..6) in its three high
+bits and the length of the rest in its five low bits. With an AES `key` the server ID and nonce are encrypted (one AES
+block when they are 16 bytes together, a four-pass Feistel network otherwise), so only the load balancer can tell which
+server a connection is on; without one they travel in clear, and the server then hands each connection only its
+handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). The key bytes go into the
+native layer once (`newLoadBalancerKey` wipes your array); an endpoint takes its own copy when it is given the
+configuration, so you may close your handle after `bind` or `updateLoadBalancer`. `connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration
+cannot be combined with a `preferredAddress`.
+
+Nonces come from a counter, permuted with a key derived from the configuration key (in clear, a key of the process),
+so they show no pattern and none repeats: every endpoint of the process that uses the same key and nonce length (in
+clear, the same nonce length), with any server ID, draws from one counter. These counters live as long as the process.
+The draft forbids reusing a nonce (section 9.6), and a new process knows nothing of the last one's counter, so either
+give the configuration a `nonceReservation`, or give each process start a key no earlier process used (a fresh key per
+start and per instance). A plaintext configuration (no key) must have a reservation: its nonces travel in clear, and
+`QuicLbConfig` refuses one without. A reservation stores a high-water mark durably (`load()`, `store(mark)`, for instance an fsync'd file per key),
+one block of 65,536 nonces ahead of need, and the next process starts past it; in clear it also keeps a 16-byte random
+`secret()` that keys the permutation. A crash skips the rest of a block and never reuses one. A failed `store` is
+retried after a back-off counted in receive batches (one, doubling to 1,024, times the loops; about one store a round, nothing drawn
+meanwhile) and counted in `EndpointStats.loadBalancerReservationFailures`; once the reserved nonces are used up, the
+requests in between get an unroutable ID.
+
+To roll out a new configuration (a new key, say), give it to the load balancers first, then to each server:
+
+```kotlin
+// guide:quic:load-balancer-update
+val nextKey = KslQuicCrypto.newLoadBalancerKey(nextKeyBytes)
+val next = QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey)
+endpoint.updateLoadBalancer(next)
+```
+
+New connection IDs use it at once, and every live connection gets one NEW_CONNECTION_ID under it that retires its
+earlier IDs; those keep routing (and can still be answered with a Stateless Reset) until the client retired them. A
+second change while a connection's client has not yet retired what the first one asked for waits for those retirements
+(RFC 9000 section 5.1.2), then goes out. A codepoint that the current or previous configuration holds can only be given
+that same configuration again. Pass `null` when the server has no valid configuration: it then issues unroutable IDs
+(codepoint `0b111`, which the balancer routes by 4-tuple), gives new connections a single ID and
+`disable_active_migration`, and live connections keep the IDs they have and get no new ones. The same happens on its own
+when a configuration's nonces run out: after 2^(8 x `nonceLength`) nonces of its key (2^32 for 4 bytes, shared by every
+endpoint of the process with that key; Retry packets and connection attempts draw them too, at most at the stateless
+rate limits), counted in `EndpointStats.loadBalancerNoncesExhausted` and logged at `Warn`; then roll out a new key. A
+connection that had its full set of IDs then keeps them and gets no more; one whose configuration changes to plaintext
+gets exactly one plaintext ID. A
+server ID used in clear must never be used encrypted, or the other way round (the call refuses it).
+
+The Ktor server takes the configuration as `quicLoadBalancer` and changes it with `engine.updateLoadBalancer(next)`;
+`Http3Endpoint.updateLoadBalancer` does the same for an HTTP/3 endpoint, and `EndpointCore.updateLoadBalancer` for a
+sans-IO endpoint driven by your own loop.
+
+With several loops on one port, every loop issues IDs of the same configuration; the loop that owns an ID is the one it
+hashes to under a key the loops share (whatever the ID's codepoint), so a datagram that lands on another loop is still
+forwarded to its owner. A loop that draws a nonce whose ID hashes to another loop keeps it for that loop (up to 1,024 per
+loop); past that it issues the ID itself and the group records the exception (up to 65,536 live IDs, each leaving
+with its ID; when that many live, the nonce is spent unused rather than any live exception dropped). The SCID of a Retry takes no exception (a client that never comes back would
+never release it): its nonce is spent unused past a full pool, counted in `EndpointStats.loadBalancerNoncesWasted`. After
+a Retry the connection keeps that SCID as its one server ID; one of the previous configuration then gets the change's
+NEW_CONNECTION_ID that retires it, and an unroutable one made only because no nonce was reserved is replaced. An
+update builds the new configuration on `Dispatchers.IO` (a reservation's first `store` may fsync there), off the
+endpoint's loops, and switches to it on them, one update at a time; a caller cancelled after the switch leaves it in force. The call cannot be
+cancelled while it waits for the reservation's `store` or for a loop: a store that hangs, or a wedged loop, holds it (a
+group switches on loop 0 and the other loops move their connections in the background, after the call returned; one
+that does not within 5 s is logged and moves them at its next receive batch).
+Later stores run on the loop that draws past half a block; after a failed store the retries are paced by the receive
+batches of every loop (never by the requests themselves, so a flood of them cannot drive it), with the back-off scaled
+by the number of loops, so
+the group makes about one try a round however its traffic is spread. The hash also takes a client's random
+first Initial DCID for one of ours one time in 32 (when its first octet happens to encode our length); that client's
+datagrams then all go to the loop the DCID hashes to: an extra copy between loops for about 1 in 32 new connections. The
+Stateless Reset rule stays: a loop answers an unknown connection ID only when the stateless rate limit would let the
+answer out, it carries the current or previous configuration's codepoint, decrypts to this server's ID (within a budget
+of decryptions a second, per address and in total) and hashes to that loop; unroutable IDs are never answered.
+
 ## Admission and endpoint limits
 
 A server decides per new client Initial whether to create a connection. `handleDatagram` runs only cheap checks on an

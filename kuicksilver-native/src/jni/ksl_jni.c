@@ -501,6 +501,43 @@ static jint j_key_mac16(JNIEnv *e, jclass c, jlong k, jobject in, jint off, jint
         (*e)->SetByteArrayRegion(e, out, outOff, 16, (const jbyte *)mac);
     return r;
 }
+static jlong j_key_lb(JNIEnv *e, jclass c, jbyteArray k) {
+    (void)c;
+    uint8_t key[16];
+    if (!k || (*e)->GetArrayLength(e, k) != 16)
+        return 0;
+    (*e)->GetByteArrayRegion(e, k, 0, 16, (jbyte *)key);
+    jlong h = H(ksl_key_lb(key));
+    wipe(key, sizeof key);
+    return h;
+}
+static jlong j_key_lb_dup(JNIEnv *e, jclass c, jlong k) {
+    (void)e;
+    (void)c;
+    return H(ksl_key_lb_dup(P(ksl_key, k)));
+}
+static jlong j_key_lb_derive(JNIEnv *e, jclass c, jlong k, jbyteArray label) {
+    (void)c;
+    uint8_t l[16];
+    if (!label || (*e)->GetArrayLength(e, label) != 16)
+        return 0;
+    (*e)->GetByteArrayRegion(e, label, 0, 16, (jbyte *)l);
+    return H(ksl_key_lb_derive(P(ksl_key, k), l));
+}
+static jint j_key_ecb16(JNIEnv *e, jclass c, jlong k, jboolean dec, jbyteArray in, jint off, jbyteArray out,
+                        jint outOff) {
+    (void)c;
+    uint8_t b[16];
+    if (!in || !out || off < 0 || outOff < 0 || off > (*e)->GetArrayLength(e, in) - 16 ||
+        outOff > (*e)->GetArrayLength(e, out) - 16)
+        return -1;
+    (*e)->GetByteArrayRegion(e, in, off, 16, (jbyte *)b);
+    int r = ksl_key_ecb16(P(ksl_key, k), dec ? 1 : 0, b, b);
+    if (r == KSL_OK)
+        (*e)->SetByteArrayRegion(e, out, outOff, 16, (const jbyte *)b);
+    wipe(b, sizeof b);
+    return r;
+}
 static jint j_seal(JNIEnv *e, jclass c, jlong k, jlong pn, jobject hdr, jint ho, jint hl, jobject pl, jint po, jint len,
                    jint cap) {
     (void)c;
@@ -841,6 +878,10 @@ static const JNINativeMethod methods[] = {
     {"keyFree", "(J)V", (void *)j_key_free},
     {"keyRandom", "(I)J", (void *)j_key_random},
     {"keyMac16", "(J" S_BB "II[BI)I", (void *)j_key_mac16},
+    {"keyLb", "([B)J", (void *)j_key_lb},
+    {"keyLbDup", "(J)J", (void *)j_key_lb_dup},
+    {"keyLbDerive", "(J[B)J", (void *)j_key_lb_derive},
+    {"keyEcb16", "(JZ[BI[BI)I", (void *)j_key_ecb16},
     {"seal", "(JJ" S_BB "II" S_BB "III)I", (void *)j_seal},
     {"open", "(JJ" S_BB "II" S_BB "II)I", (void *)j_open},
     {"headerMask", "(J" S_BB "I[B)I", (void *)j_header_mask},

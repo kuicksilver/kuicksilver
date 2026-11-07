@@ -18,6 +18,7 @@ import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.KslCrypto
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -369,6 +370,42 @@ class GuideSamplesTest {
                 }.build()
         assertEquals(4, withLoops.loops)
     }
+
+    @Test fun loadBalancerSamples() =
+        runBlocking {
+            val serverConfig = QuicServerConfig.Builder(tlsServerConfig).build()
+            val keyBytes = KslCrypto.randomBytes(16)
+            val nextKeyBytes = KslCrypto.randomBytes(16)
+            // guide:quic:load-balancer
+            val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; the endpoint takes its own copy
+            val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
+            val behindLb =
+                quicEndpointConfig {
+                    server = serverConfig
+                    loadBalancer = lb // 1 + 3 + 4 = 8 bytes: the default connectionIdLength
+                }
+            val endpoint = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), behindLb)
+            try {
+                // guide:quic:load-balancer-update
+                val nextKey = KslQuicCrypto.newLoadBalancerKey(nextKeyBytes)
+                val next = QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey)
+                endpoint.updateLoadBalancer(next)
+
+                endpoint.updateLoadBalancer(null) // unroutable IDs
+                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+                try {
+                    val accepted = async { endpoint.accept() }
+                    val c = withTimeout(10.seconds) { client.connect(endpoint.localAddress, quicClientConfig(CoreFixtures.client())) }
+                    accepted.await().close()
+                    c.close()
+                } finally {
+                    client.close()
+                }
+            } finally {
+                endpoint.closeAndJoin()
+                lbKey.close() // the second key is left to the process: a sample
+            }
+        }
 
     @Test fun tokenStoreSample() =
         runBlocking {

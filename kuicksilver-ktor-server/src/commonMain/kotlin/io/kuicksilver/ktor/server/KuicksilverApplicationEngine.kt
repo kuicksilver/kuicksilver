@@ -238,6 +238,15 @@ public class KuicksilverApplicationEngine(
         /** Admission of new QUIC connections (Retry above a handshake threshold by default); Ktor-Netty's `quicTokenHandler`. */
         public var quicAdmission: ConnectionAdmission? = null
 
+        /**
+         * The QUIC-LB configuration of every HTTP/3 listener's connection IDs (`QuicEndpointConfig.loadBalancer`,
+         * draft-ietf-quic-load-balancers-21; docs/guide/quic.md, "Behind a load balancer"); null (the default) for none. Its
+         * [QuicLbConfig.connectionIdLength] must equal `quic.connectionIdLength`. Change it on the running engine with
+         * [KuicksilverApplicationEngine.updateLoadBalancer].
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var quicLoadBalancer: io.kuicksilver.quic.QuicLbConfig? = null
+
         /** HTTP/3 settings (QPACK, limits). Extended CONNECT is turned on by [webSocketsOverHttp3]. */
         public var http3Settings: Http3Settings = Http3Settings.Default
 
@@ -346,6 +355,21 @@ public class KuicksilverApplicationEngine(
         coroutineScope {
             for (l in h3ListenersForProbe) for (c in l.live()) launch { runCatching { c.goAway() } }
         }
+    }
+
+    /**
+     * Moves every HTTP/3 listener to another QUIC-LB configuration ([quicLoadBalancer][Configuration.quicLoadBalancer] must have
+     * been set). Waits for the start first, so every listener is there; checks [config] against every listener before it
+     * changes any, so a refused configuration leaves them all as they were.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
+        check(configuration.quicLoadBalancer != null) { "updateLoadBalancer needs quicLoadBalancer in the engine configuration" }
+        startupJob.join()
+        val endpoints = h3Endpoints.toList()
+        for (e in endpoints) e.checkLoadBalancer(config)
+        for (e in endpoints) e.updateLoadBalancer(config)
     }
 
     /** The server job's scope while it runs (null before the start): where [http3Advertising] sends its GOAWAY round. */

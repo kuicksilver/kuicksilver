@@ -78,6 +78,30 @@ public interface QuicEndpoint : AutoCloseable {
         closeAndJoin()
     }
 
+    /**
+     * Switches the server's connection IDs to another QUIC-LB configuration (draft-ietf-quic-load-balancers-21 section 3.1,
+     * experimental; docs/guide/quic.md, "Behind a load balancer"); the endpoint must have been built with
+     * `QuicEndpointConfig.loadBalancer`. New IDs use [config] from the return on; every live server connection gets one
+     * NEW_CONNECTION_ID of it that retires its earlier IDs, which keep routing (and may be answered with a Stateless Reset)
+     * until the next change. With null the endpoint issues unroutable IDs (codepoint 0b111, section 3.2): new connections
+     * get one ID and `disable_active_migration`, live ones keep theirs. Deliver the configuration to the load balancers
+     * first (section 3.1). The configuration is built on `Dispatchers.IO` (a nonce reservation's first store may fsync) and
+     * switched to on the endpoint's loops, one update at a time; once switched, cancelling the caller does not undo it.
+     * The call waits for the configuration's nonce reservation (its first `store`) and for the loop it switches on, and
+     * cannot be cancelled while it does: a `QuicLbNonceReservation` that hangs, or a wedged loop, holds it and every later
+     * update. In a group the switch happens on loop 0, and the other loops move their connections after the call returns
+     * (in the background, without the caller waiting on any of them); a loop that does not do so within 5 s is logged at
+     * `Warn` and moves them at its next receive batch.
+     *
+     * IllegalArgumentException for a configuration of another connection ID length, a plaintext one while a
+     * `preferredAddress` is offered, or one that uses a server ID in clear that an encrypted configuration used, or the
+     * other way round (section 9.7); IllegalStateException for an endpoint without `loadBalancer`; the default
+     * implementation throws UnsupportedOperationException.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun updateLoadBalancer(config: QuicLbConfig?): Unit =
+        throw UnsupportedOperationException("this QuicEndpoint has no QUIC-LB configuration")
+
     /** Holds [bind], the way to create an endpoint. */
     public companion object {
         /** Binds [local] (port 0 picks a free port) and starts the endpoint loop. */
@@ -109,6 +133,20 @@ public fun QuicEndpoint.closeWith(
         is EndpointLoop -> closeWith(code, reason)
         is LoopGroup -> closeWith(code, reason)
         else -> close()
+    }
+}
+
+/**
+ * Throws what [QuicEndpoint.updateLoadBalancer] would throw for [config], changing nothing (the Ktor engine checks every
+ * listener before it changes any); UnsupportedOperationException for an endpoint of another implementation.
+ */
+@InternalKuicksilverApi
+@ExperimentalKuicksilverApi
+public suspend fun QuicEndpoint.checkLoadBalancer(config: QuicLbConfig?) {
+    when (this) {
+        is EndpointLoop -> if (group != null) group.checkLoadBalancer(config) else runOnLoop { core.checkLoadBalancerUpdate(config) }
+        is LoopGroup -> checkLoadBalancer(config)
+        else -> throw UnsupportedOperationException("this QuicEndpoint has no QUIC-LB configuration")
     }
 }
 

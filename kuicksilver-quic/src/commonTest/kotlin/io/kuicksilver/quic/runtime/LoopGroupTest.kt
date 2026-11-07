@@ -4,6 +4,7 @@ package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -18,13 +19,19 @@ import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.QuicClientConfig
+import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.QuicLbConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.endpoint.LbNullCrypto
+import io.kuicksilver.quic.endpoint.QuicLbFixtures
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -35,11 +42,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -53,6 +62,11 @@ import kotlin.time.Duration.Companion.seconds
 )
 class LoopGroupTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /** Each test starts with no nonce space of an earlier one (and frees their plaintext keys). */
+    @kotlin.test.AfterTest fun forgetNonceSpaces() =
+        io.kuicksilver.quic.endpoint.QuicLbNonceSpaces
+            .forgetForTest()
 
     private class FailingIo(
         val inner: MemoryDatagramIo,
@@ -643,4 +657,308 @@ class LoopGroupTest {
                 }
             }
         }
+
+    /**
+     * QUIC-LB IDs name no loop in clear: the owner is the loop they hash to. A live connection's datagrams that the kernel
+     * hands to another loop (every datagram of loop 0's socket goes to loop 1 first) still reach the connection on loop 0.
+     */
+    @Test fun quicLbForwardedToOwner() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                // 9-byte IDs: the client's 8-byte Initial DCID is never taken for one of ours, so the connection stays where its
+                // Initial lands (loop 0, whose address the client dialled), whatever the client's random bytes
+                val lbConfig =
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server =
+                                QuicServerConfig
+                                    .Builder(CoreFixtures.server())
+                                    .apply { quic = quicConfig { connectionIdLength = 9 } }
+                                    .build()
+                            connectionIdLength = 9
+                            crypto = LbNullCrypto
+                            loops = 4
+                            loadBalancer = QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key())
+                        }.build()
+                val ios = List(4) { net.open(if (it == 0) serverAddr else InetSocketAddress("10.0.0.${10 + it}", 2222)) }
+                val group = LoopGroup.create(lbConfig, ios)
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(serverAddr, clientConfig) // loop 0's socket: the connection is loop 0's
+                    val s = accepted.await()
+                    group.misrouteForTest(from = 0, to = 1)
+                    val st = c.openBidi()
+                    st.output.writeFully(ByteArray(20_000) { 7 })
+                    st.output.flushAndClose()
+                    val got =
+                        s
+                            .acceptStream()
+                            .input
+                            .readBuffer()
+                            .readByteArray()
+                    assertEquals(20_000, got.size, "every datagram reached the owner")
+                    assertTrue(group.forwardedForTest(0) > 0, "loop 1 forwarded them to loop 0")
+                    assertEquals(0L, group.stats.statelessResets, "no loop answered a stranger's ID")
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
+
+    private fun lbEndpointConfig(net: MemoryNetwork) =
+        QuicEndpointConfig
+            .Builder()
+            .apply {
+                server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                crypto = LbNullCrypto
+                loadBalancer = QuicLbFixtures.config(configId = 1)
+                io = { net.open(serverAddr) }
+            }.build()
+
+    /** A caller cancelled right after its configuration was committed does not undo it: the endpoint still issues routable IDs. */
+    @Test fun quicLbCancelledUpdateKeepsTheCommittedConfiguration() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val ep = QuicEndpoint.bind(serverAddr, lbEndpointConfig(MemoryNetwork())) as EndpointLoop
+                try {
+                    val caller = kotlinx.coroutines.CompletableDeferred<kotlinx.coroutines.Job>()
+                    ep.afterLbCommitForTest = { caller.getCompleted().cancel() }
+                    val job = launch { ep.updateLoadBalancer(QuicLbFixtures.config(configId = 3)) }
+                    caller.complete(job)
+                    job.join()
+                    assertTrue(job.isCancelled)
+                    ep.afterLbCommitForTest = null
+                    val cid = ep.runOnLoop { ep.core.route.newCid(kotlin.random.Random(1), client = false) }
+                    assertEquals(3, (cid[0].toInt() and 0xff) ushr 5, "the committed configuration is in force")
+                } finally {
+                    ep.closeAndJoin()
+                }
+            }
+        }
+
+    /** Concurrent changes on one endpoint are serialised: whatever wins, the configuration in force is a live one. */
+    @Test fun quicLbConcurrentUpdatesNeverInstallARetiredConfiguration() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val ep = QuicEndpoint.bind(serverAddr, lbEndpointConfig(MemoryNetwork())) as EndpointLoop
+                try {
+                    val configs = List(4) { QuicLbFixtures.config(configId = it + 2) }
+                    repeat(10) { round ->
+                        (0 until 4)
+                            .map { i -> async(Dispatchers.Default) { ep.updateLoadBalancer(configs[(i + round) % 4]) } }
+                            .awaitAll()
+                        val cid = ep.runOnLoop { ep.core.route.newCid(kotlin.random.Random(round), client = false) }
+                        val cr = (cid[0].toInt() and 0xff) ushr 5
+                        assertTrue(cr in 2..5, "round $round: a routable ID of one of the configurations, not $cr")
+                        assertTrue(
+                            ep.core.lb!!
+                                .routes.current
+                                ?.retired == false,
+                        )
+                    }
+                } finally {
+                    ep.closeAndJoin()
+                }
+            }
+        }
+
+    private class FlakyReservation : io.kuicksilver.quic.QuicLbNonceReservation {
+        @Volatile var mark = 0L
+
+        @Volatile var fail = false
+
+        override fun load(): Long = mark
+
+        override fun store(mark: Long) {
+            if (fail) throw IOException("disk full")
+            this.mark = mark
+        }
+
+        override fun secret(): ByteArray = ByteArray(16)
+    }
+
+    /** Two loops, 9-byte QUIC-LB IDs (an 8-byte client DCID is never one of ours: a connection stays where its Initial lands). */
+    private suspend fun lbGroup(
+        net: MemoryNetwork,
+        lb: QuicLbConfig,
+    ): LoopGroup =
+        LoopGroup.create(
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    server =
+                        QuicServerConfig
+                            .Builder(CoreFixtures.server())
+                            .apply { quic = quicConfig { connectionIdLength = 9 } }
+                            .build()
+                    connectionIdLength = 9
+                    crypto = LbNullCrypto
+                    loops = 2
+                    loadBalancer = lb
+                }.build(),
+            listOf(net.open(serverAddr), net.open(otherAddr)),
+        )
+
+    private suspend fun serverConnectionOf(loop: EndpointLoop): io.kuicksilver.quic.ConnectionCore =
+        loop.runOnLoop { loop.core.connections().single { it.role == io.kuicksilver.tls.TlsRole.Server } }
+
+    /** A group caller cancelled right after loop 0 committed still moves the other loops' connections to the new configuration. */
+    @Test fun quicLbCancelledGroupUpdateStillMovesEveryLoop() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val group = lbGroup(net, QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key()))
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(otherAddr, clientConfig) // loop 1's socket: the connection is loop 1's
+                    accepted.await()
+                    val loop0 = group.loopForTest(0)
+                    val caller = kotlinx.coroutines.CompletableDeferred<kotlinx.coroutines.Job>()
+                    loop0.afterLbCommitForTest = { caller.getCompleted().cancel() }
+                    val job = launch { group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key())) }
+                    caller.complete(job)
+                    job.join()
+                    group.fanOutForTest?.join()
+                    assertTrue(job.isCancelled)
+                    loop0.afterLbCommitForTest = null
+                    val s = serverConnectionOf(group.loopForTest(1))
+                    val moved = group.loopForTest(1).runOnLoop { (0L..10L).mapNotNull { s.cids.localForTest(it)?.cid } }
+                    assertTrue(moved.any { (it[0].toInt() and 0xff) ushr 5 == 3 }, "loop 1's connection got an ID of the new configuration")
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
+
+    /**
+     * After a failed reservation store, a group whose loop 0 gets no traffic still retries it (every loop ticks): the
+     * change waiting on loop 1 goes out once the store works again.
+     */
+    @Test fun quicLbStoreRetriedWithoutTrafficOnLoopZero() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val reservation = FlakyReservation()
+                val key = QuicLbFixtures.key("0f0e0d0c0b0a0908070605040302010c")
+                val group = lbGroup(net, QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, key, reservation))
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(otherAddr, clientConfig)
+                    val sc = accepted.await()
+                    val loop1 = group.loopForTest(1)
+                    reservation.fail = true
+                    loop1.core.lb!!
+                        .routes.current!!
+                        .space
+                        .useUpReservationForTest()
+                    group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, key, reservation))
+                    group.fanOutForTest?.join()
+                    reservation.fail = false // right away: the back-off stays at its first step
+                    val s = serverConnectionOf(loop1)
+                    val reissued = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    val pending =
+                        loop1.runOnLoop {
+                            s.cids.reissuedForTest = { reissued.complete(Unit) }
+                            s.cids.reissuePendingForTest
+                        }
+                    assertTrue(pending, "the change waits for a nonce")
+                    val st = c.openBidi()
+                    val input = sc.acceptStreamAfter(st)
+                    var rounds = 0
+                    while (!reissued.isCompleted) {
+                        // one round trip to loop 1 only: its receive batches tick the reservation
+                        st.output.writeFully(ByteArray(100) { 1 })
+                        st.output.flush()
+                        input.readFully(ByteArray(100))
+                        rounds++
+                    }
+                    assertTrue(rounds < 100, "$rounds round trips")
+                    assertEquals(0L, group.loopForTest(0).stats.datagramsReceived, "loop 0 saw no traffic")
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
+
+    /**
+     * Section 3.1: a loop that misses the group's fan-out (blocked past its timeout) moves its connections at its next
+     * receive batch, by the configuration's generation.
+     */
+    @Test fun quicLbLoopMissingTheFanOutMovesAtItsNextBatch() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val group = lbGroup(net, QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key()))
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(otherAddr, clientConfig) // loop 1's connection
+                    val sc = accepted.await()
+                    val st = c.openBidi()
+                    val input = sc.acceptStreamAfter(st)
+                    val loop1 = group.loopForTest(1)
+                    val s = serverConnectionOf(loop1)
+                    val moved = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    val reissues = kotlin.concurrent.atomics.AtomicInt(0)
+                    loop1.runOnLoop {
+                        s.cids.reissuedForTest = {
+                            reissues.incrementAndFetch()
+                            moved.complete(Unit)
+                        }
+                    }
+                    group.fanOutTimeout = kotlin.time.Duration.parse("50ms")
+                    val blocked = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    // loop 1's thread busy past the fan-out's timeout
+                    loop1.scope.launch {
+                        blocked.complete(Unit)
+                        while (!release.isCompleted) { /* busy */ }
+                    }
+                    blocked.await()
+                    // returns while loop 1 is stuck: the fan-out runs in the group's scope, not in the caller
+                    group.updateLoadBalancer(QuicLbConfig(3, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key()))
+                    // the fan-out gives loop 1 up after its timeout, though loop 1 is still stuck (it waits off the loop)
+                    assertNotNull(group.fanOutForTest).join()
+                    assertTrue(!moved.isCompleted, "loop 1 has not moved yet")
+                    release.complete(Unit)
+                    var rounds = 0
+                    while (!moved.isCompleted) {
+                        // round trips to loop 1: its next receive batch sees the new generation
+                        st.output.writeFully(ByteArray(100) { 1 })
+                        st.output.flush()
+                        input.readFully(ByteArray(100))
+                        rounds++
+                    }
+                    val ids = loop1.runOnLoop { (0L..10L).mapNotNull { s.cids.localForTest(it)?.cid } }
+                    assertTrue(ids.any { (it[0].toInt() and 0xff) ushr 5 == 3 }, "loop 1's connection got an ID of the new configuration")
+                    assertTrue(rounds <= 3, "at its next batch: $rounds round trips")
+                    assertEquals(1, reissues.load(), "moved once: the generation keeps the fan-out and the batch from both moving it")
+                    c.close()
+                } finally {
+                    release.complete(Unit) // a failed assertion must not leave loop 1 spinning, or close would hang
+                    client.close()
+                    group.close()
+                }
+            }
+        }
+
+    /** The server side of [st]: its first bytes make the stream known to the server. */
+    private suspend fun QuicConnection.acceptStreamAfter(st: io.kuicksilver.quic.QuicStream): io.ktor.utils.io.ByteReadChannel {
+        st.output.writeFully(ByteArray(1))
+        st.output.flush()
+        val input = acceptStream().input
+        input.readFully(ByteArray(1))
+        return input
+    }
 }

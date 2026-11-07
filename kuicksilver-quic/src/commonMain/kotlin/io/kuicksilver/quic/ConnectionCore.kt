@@ -601,6 +601,12 @@ public class ConnectionCore internal constructor(
 
     /** Server: the endpoint's preferred address, advertised in the transport parameters (RFC 9000 section 9.6); null: none. */
     internal var preferredAddress: PreferredAddress? = null
+
+    /**
+     * Server: the handshake ID is an unroutable QUIC-LB ID, so the transport parameters carry `disable_active_migration`
+     * (draft-ietf-quic-load-balancers-21 section 3.2: servers with no active configuration "SHOULD send" it).
+     */
+    internal var unroutableCid = false
         set(v) {
             field = v
             refreshLocalTp()

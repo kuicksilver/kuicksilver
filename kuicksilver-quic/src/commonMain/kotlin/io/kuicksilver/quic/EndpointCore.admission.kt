@@ -10,7 +10,9 @@ import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.serverWithKeys
 import io.kuicksilver.quic.endpoint.AdmissionQueue
-import io.kuicksilver.quic.endpoint.ServerCidFormat
+import io.kuicksilver.quic.endpoint.CidIssuance
+import io.kuicksilver.quic.endpoint.IssuedCid
+import io.kuicksilver.quic.endpoint.QuicLbRoute
 import io.kuicksilver.quic.endpoint.StatelessClose
 import io.kuicksilver.quic.endpoint.TokenCheck
 import io.kuicksilver.quic.wire.ConnectionId
@@ -159,7 +161,9 @@ private fun EndpointCore.admitValidated(
             }
             val clientDcid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
             val clientScid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
-            val ourScid = ServerCidFormat.generate(loopIndex, server.quic.connectionIdLength, random)
+            // the ID this connection will use if the client comes back: a stateless one, which takes no owner exception (nothing
+            // would release it if the client never returns)
+            val ourScid = route.issueStateless(random)
             val token =
                 tokens.mint(clientDcid, ourScid, from, hv.version, now) ?: run {
                     initialsDropped++ // this key's nonces are spent (2^55 tokens or more): no Retry rather than a repeated nonce
@@ -174,34 +178,60 @@ private fun EndpointCore.admitValidated(
     }
     var originalDcid: ConnectionId? = null
     var retryScid: ConnectionId? = null
-    val cid: ConnectionId =
+    val issued: IssuedCid =
         if (check is TokenCheck.Valid) {
             originalDcid = check.odcid
-            retryScid =
-                ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
-            if (testFreshCidAfterRetry) ServerCidFormat.generate(loopIndex, server.quic.connectionIdLength, random) else retryScid
+            val rs = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
+            retryScid = rs
+            // the Retry SCID is the connection's ID (one server ID for the client: draft-ietf-quic-load-balancers-21 sections
+            // 3.2 and 9) when its first octet still tells what it allows: 0b111, or the current or previous codepoint. A
+            // codepoint that went away since the Retry gets a fresh ID, the Retry SCID staying an alias for the client's Initials
+            // an unroutable Retry SCID made while no nonce was reserved gets a routable one now if it can (a temporary state
+            // must not become the connection's for good)
+            val known = if (testFreshCidAfterRetry) null else route.knownIssuance(rs)
+            if (known != null && !(known == CidIssuance.SingleNoMigration && route.canIssueRoutable())) {
+                IssuedCid(rs, known)
+            } else {
+                testBetweenRetryChecks?.invoke()
+                val fresh = route.issue(random, client = false)
+                // the nonces ran out again in between: a second unroutable ID would be a second server ID for the client
+                // (section 3.2: exactly one); keep the Retry SCID, which the change below moves to a routable one later
+                if (known == CidIssuance.SingleNoMigration && fresh.issuance == CidIssuance.SingleNoMigration) {
+                    IssuedCid(rs, CidIssuance.SingleNoMigration)
+                } else {
+                    fresh
+                }
+            }
         } // our Retry SCID is this connection's ID
         else {
-            ServerCidFormat.generate(loopIndex, server.quic.connectionIdLength, random)
+            route.issue(random, client = false)
         }
+    val cid = issued.cid
     val core =
-        ConnectionCore.serverWithKeys(
-            server.quic,
-            server.tls,
-            config.crypto,
-            from,
-            random,
-            now,
-            data,
-            length,
-            cid.toByteArray(),
-            resetKey,
-            originalDcid,
-            retryScid,
-            serverEarly,
-            tokenValidated = check is TokenCheck.NewTokenValid,
-        )
-            ?: return false
+        try {
+            ConnectionCore.serverWithKeys(
+                server.quic,
+                server.tls,
+                config.crypto,
+                from,
+                random,
+                now,
+                data,
+                length,
+                cid.toByteArray(),
+                resetKey,
+                originalDcid,
+                retryScid,
+                serverEarly,
+                tokenValidated = check is TokenCheck.NewTokenValid,
+            )
+        } catch (e: Throwable) {
+            route.release(cid) // an owner exception taken for it goes with it
+            throw e
+        } ?: run {
+            route.release(cid)
+            return false
+        }
     // the address the client's Initial reached: every reply leaves from it. Unknown (a socket that does not report destinations, or one
     // that is no address to answer from, such as a broadcast) leaves the connection on the route's choice of source, as before 0.3.0
     core.paths.active.local = core.serverLocal(rxLocal)
@@ -212,13 +242,19 @@ private fun EndpointCore.admitValidated(
         }
     }
     config.maxConnectionLifetime?.let { core.lifetimeDeadline = now + it }
-    attach(core)
+    attach(core, issued.issuance)
     // after attach: the sequence-1 ID a preferred address issues must route here (the registrar is set) before the first packet;
     // one re-encoding of the transport parameters for both changes. A preferred socket that failed is no longer offered
-    val preferred = server.preferredAddress?.takeIf { !preferredDown }
+    // ... nor to a connection whose QUIC-LB ID is plaintext or unroutable: it hands out no second ID (draft-ietf-quic-load-balancers-21
+    // sections 3.2 and 9), and an unroutable one asks the client not to migrate
+    val preferred = server.preferredAddress?.takeIf { !preferredDown && !core.cids.singleCid }
     if (preferred != null) core.preferredAddress = preferred
     if (testForgeRetryScidInTp && retryScid != null) core.testForgeRetryScid = true
-    if (preferred != null || core.testForgeRetryScid) core.refreshLocalTp()
+    if (preferred != null || core.testForgeRetryScid || core.unroutableCid) core.refreshLocalTp()
+    // a Retry SCID of the previous configuration (or an unroutable one) adopted after the last change moved the connections:
+    // this one moves too (draft-ietf-quic-load-balancers-21 section 3.1: update the client with IDs of the new configuration
+    // and retire the old ones)
+    if (!route.isCurrent(cid)) core.cids.requestReissue()
     if (retryScid == null) {
         registry.add(core.odcid, core)
     } else if (retryScid != cid) {

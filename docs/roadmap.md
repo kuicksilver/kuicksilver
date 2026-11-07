@@ -157,10 +157,6 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
     64 KiB are one scratch per endpoint loop (0.3.0); what is left is listed in
     [docs/benchmarks.md](benchmarks.md#memory-p5-2026-11-06).
 
-### 0.3.x
-
-- QUIC-LB (`PathId` and the CID layout are prepared).
-
 ### Later
 
 - Multipath.

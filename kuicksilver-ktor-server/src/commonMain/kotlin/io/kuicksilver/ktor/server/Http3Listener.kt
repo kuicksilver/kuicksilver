@@ -120,6 +120,7 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
                 }
             configuration.logger?.let { logger = it }
             listener = configuration.connectionListener
+            loadBalancer = configuration.quicLoadBalancer
         }.build()
 }
 

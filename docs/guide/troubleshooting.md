@@ -185,9 +185,10 @@ unused connections on the client side.
   reset key across a restart. Reconnect. A Kuicksilver peer cannot do that after a restart, and neither can another
   instance behind a load balancer: reset tokens come from a key of the endpoint that issued the connection
   ([QUIC: Stateless reset](quic.md#stateless-reset)). Such an endpoint may answer with a Stateless Reset (only to a short-header packet whose
-  connection ID has its format and loop index, and within its stateless rate limit), but its token does not match, so the client ignores it (counted in `ConnectionStats.invalidResets`), and the connection ends with
+  connection ID has its format and loop index, or with QUIC-LB its configuration and server ID, and within its stateless rate limit), but its token does not match, so the client ignores it (counted in `ConnectionStats.invalidResets`), and the connection ends with
   "Idle timeout" instead ([above](#idle-timeout-after-30s)). Behind a load balancer, keep each client on one instance
-  ([Deploying the HTTP/3 server: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)).
+  ([Deploying the HTTP/3 server: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)),
+  or let a QUIC-LB load balancer route by connection ID ([QUIC: Behind a load balancer](quic.md#behind-a-load-balancer)).
 - `ConnectionLost.ApplicationClosed` ("application closed by <Local|Peer>: code <n> (<reason>)"): an application
   `close(code, reason)`. Over HTTP/3, `Http3Exception.fromQuic(e)` reads the code as an HTTP/3 error
   (`Http3Exception.Protocol` with an `Http3ErrorCode`, `H3_NO_ERROR` after a graceful GOAWAY).
@@ -308,12 +309,29 @@ datagram per call.
   Windows), which is unavailable here"), and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
   <port>: <reason>".
 
+### A QUIC-LB configuration is refused
+
+`QuicEndpointConfig.Builder.build()` refuses a `loadBalancer` whose `1 + serverId + nonceLength` differs from
+`connectionIdLength` ("loadBalancer connection IDs are N bytes…"), a `connectionIdLength` below 8, an endpoint without a
+server, and a plaintext configuration (no `key`) next to a `preferredAddress`. `updateLoadBalancer` throws
+`IllegalStateException` on an endpoint built without `loadBalancer` (the Ktor engine: without `quicLoadBalancer`), and
+`IllegalArgumentException` for another length, for a server ID this endpoint used in clear that is now encrypted, or the
+other way round (draft-ietf-quic-load-balancers-21 section 9.7: give the encrypted configuration other server IDs), and for
+a `configId` the current or previous configuration still holds with another key, server ID or nonce length ("configId N
+still names the configuration before it": use another codepoint, or wait one more change). `EndpointStats.loadBalancerNoncesExhausted`
+above 0, with the `Warn` line "QUIC-LB: the nonces of configuration … are spent", means the endpoint issues unroutable IDs:
+roll out a configuration with a new key. `loadBalancerReservationFailures` above 0, with the `Warn` line "QUIC-LB: the nonce
+reservation could not be stored", means `QuicLbNonceReservation.store` threw (a full disk, say): fix the store; it is
+retried after a back-off. `IllegalArgumentException` "every configuration with this key … must bring the same
+nonceReservation" means two configurations of one key (or, in clear, one nonce length) disagree about the reservation. "a plaintext configuration needs a nonceReservation" means a `QuicLbConfig` without a key and without a reservation:
+plaintext nonces must survive a restart (draft section 9.6), so give it a `QuicLbNonceReservation`, or a key. See [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer).
+
 ### `UnsupportedOperationException` for `loops > 1`
 
 Several endpoint loops on one port need kernel `SO_REUSEPORT` flow hashing: Linux and Android only. On macOS, iOS and
 Windows `bind` throws "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"; with a custom `io` or
 the portable socket "loops > 1 needs the accelerated transport…". Use `loops = 1` there (Ktor server:
-`udpSocketCount = 1`), or several processes behind a QUIC-aware load balancer
+`udpSocketCount = 1`), or several processes behind a QUIC-aware load balancer (a QUIC-LB one: [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer))
 ([Deploying the HTTP/3 server: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)).
 
 ### Windows

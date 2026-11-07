@@ -265,6 +265,13 @@ public class QuicEndpointConfig private constructor(
     /** Hears every connection's lifecycle on the endpoint loop; null (the default) for none. */
     @property:ExperimentalKuicksilverApi
     public val listener: ConnectionListener?,
+    /**
+     * The QUIC-LB configuration of the server's connection IDs (draft-ietf-quic-load-balancers-21, experimental; docs/guide/quic.md,
+     * "Behind a load balancer"), or null for the endpoint's own format. Change it on a running endpoint with
+     * [QuicEndpoint.updateLoadBalancer].
+     */
+    @property:ExperimentalKuicksilverApi
+    public val loadBalancer: QuicLbConfig?,
 ) {
     /** The mutable side of [QuicEndpointConfig] behind `quicEndpointConfig { }`; [build] validates the values together. */
     @KuicksilverDsl
@@ -331,6 +338,15 @@ public class QuicEndpointConfig private constructor(
         public var listener: ConnectionListener? = null
 
         /**
+         * Default null. A QUIC-LB configuration needs a [server], a [connectionIdLength] equal to its
+         * [QuicLbConfig.connectionIdLength] and at least 8 (unroutable IDs "SHOULD be of at least length 8", draft section 3.2),
+         * and a key when the server also has a `preferredAddress` (section 9: plaintext IDs only in the server's Initial).
+         * See [QuicEndpointConfig.loadBalancer].
+         */
+        @ExperimentalKuicksilverApi
+        public var loadBalancer: QuicLbConfig? = null
+
+        /**
          * An immutable [QuicEndpointConfig]; IllegalArgumentException for a value out of range or a combination that cannot work
          * (connection ID lengths that differ, loops without a server).
          */
@@ -350,6 +366,18 @@ public class QuicEndpointConfig private constructor(
             require(loops in 1..255) { "loops must be 1..255 (the routing byte)" }
             require(loops == 1 || server != null) { "loops > 1 needs a server" }
             require(loops == 1 || dispatcher == null) { "loops > 1 cannot share one dispatcher" }
+            loadBalancer?.let { lb ->
+                require(server != null) { "loadBalancer needs a server" }
+                require(lb.connectionIdLength == connectionIdLength) {
+                    "loadBalancer connection IDs are ${lb.connectionIdLength} bytes (1 + serverId + nonceLength); the endpoint's connectionIdLength is $connectionIdLength"
+                }
+                require(connectionIdLength >= 8) {
+                    "connectionIdLength must be at least 8 with a loadBalancer (draft-ietf-quic-load-balancers-21 section 3.2)"
+                }
+                require(lb.encrypted || server!!.preferredAddress == null) {
+                    "a preferredAddress needs an encrypted loadBalancer configuration (draft-ietf-quic-load-balancers-21 section 9)"
+                }
+            }
             return QuicEndpointConfig(
                 server,
                 crypto,
@@ -368,6 +396,7 @@ public class QuicEndpointConfig private constructor(
                 loops,
                 logger,
                 listener,
+                loadBalancer,
             )
         }
     }
@@ -393,6 +422,7 @@ public class QuicEndpointConfig private constructor(
             it.loops = loops
             it.logger = logger
             it.listener = listener
+            it.loadBalancer = loadBalancer
         }
 
     /** Holds [Default]. */

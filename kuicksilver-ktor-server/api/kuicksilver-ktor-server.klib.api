@@ -43,6 +43,7 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
     final fun stop(kotlin/Long, kotlin/Long) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.stop|stop(kotlin.Long;kotlin.Long){}[0]
     final suspend fun startSuspend(kotlin/Boolean): io.ktor.server.engine/ApplicationEngine // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.startSuspend|startSuspend(kotlin.Boolean){}[0]
     final suspend fun stopSuspend(kotlin/Long, kotlin/Long) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.stopSuspend|stopSuspend(kotlin.Long;kotlin.Long){}[0]
+    final suspend fun updateLoadBalancer(io.kuicksilver.quic/QuicLbConfig?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.updateLoadBalancer|updateLoadBalancer(io.kuicksilver.quic.QuicLbConfig?){}[0]
 
     final class Configuration : io.ktor.server.engine/BaseApplicationEngine.Configuration { // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration|null[0]
         constructor <init>() // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.<init>|<init>(){}[0]
@@ -101,6 +102,9 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
         final var quicEarlyData // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicEarlyData|{}quicEarlyData[0]
             final fun <get-quicEarlyData>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicEarlyData.<get-quicEarlyData>|<get-quicEarlyData>(){}[0]
             final fun <set-quicEarlyData>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicEarlyData.<set-quicEarlyData>|<set-quicEarlyData>(kotlin.Boolean){}[0]
+        final var quicLoadBalancer // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicLoadBalancer|{}quicLoadBalancer[0]
+            final fun <get-quicLoadBalancer>(): io.kuicksilver.quic/QuicLbConfig? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicLoadBalancer.<get-quicLoadBalancer>|<get-quicLoadBalancer>(){}[0]
+            final fun <set-quicLoadBalancer>(io.kuicksilver.quic/QuicLbConfig?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicLoadBalancer.<set-quicLoadBalancer>|<set-quicLoadBalancer>(io.kuicksilver.quic.QuicLbConfig?){}[0]
         final var quicMaxIdleTimeout // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout|{}quicMaxIdleTimeout[0]
             final fun <get-quicMaxIdleTimeout>(): kotlin.time/Duration? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout.<get-quicMaxIdleTimeout>|<get-quicMaxIdleTimeout>(){}[0]
             final fun <set-quicMaxIdleTimeout>(kotlin.time/Duration?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout.<set-quicMaxIdleTimeout>|<set-quicMaxIdleTimeout>(kotlin.time.Duration?){}[0]

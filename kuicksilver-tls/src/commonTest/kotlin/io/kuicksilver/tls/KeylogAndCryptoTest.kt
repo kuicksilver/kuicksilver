@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(DelicateKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(
+    DelicateKuicksilverApi::class,
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+)
 
 package io.kuicksilver.tls
 
@@ -121,6 +125,88 @@ class KslCryptoTest {
 
     @Test fun spkiMatchesCli() {
         assertContentEquals(TestCerts.serverSpkiSha256, KslCrypto.spkiSha256(TestCerts.server).bytes)
+    }
+
+    private fun unhex(s: String) = ByteArray(s.length / 2) { s.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
+
+    /** FIPS-197 Appendix C.1 (AES-128). */
+    @Test fun lbKeyFips197() {
+        KslLbKey.of(unhex("000102030405060708090a0b0c0d0e0f")).use { k ->
+            val pt = unhex("00112233445566778899aabbccddeeff")
+            val ct = ByteArray(16)
+            k.encrypt(pt, ct)
+            assertContentEquals(unhex("69c4e0d86a7b0430d8cdb78070b4c55a"), ct)
+            val back = ByteArray(16)
+            k.decrypt(ct, back)
+            assertContentEquals(pt, back)
+            val inPlace = ByteArray(20).also { pt.copyInto(it, 2) }
+            k.encrypt(inPlace, 2, inPlace, 2)
+            assertContentEquals(ct, inPlace.copyOfRange(2, 18), "in place, at an offset")
+        }
+    }
+
+    @Test fun lbKeyThroughQuicCrypto() {
+        val key = unhex("000102030405060708090a0b0c0d0e0f")
+        KslQuicCrypto.newLoadBalancerKey(key).use { k ->
+            val ct = ByteArray(16)
+            k.encrypt(unhex("00112233445566778899aabbccddeeff"), 0, ct, 0)
+            assertContentEquals(unhex("69c4e0d86a7b0430d8cdb78070b4c55a"), ct)
+        }
+        assertTrue(key.all { it == 0.toByte() }, "the provider wipes the caller's key bytes")
+        KslQuicCrypto.newLoadBalancerKey(null).use { a ->
+            KslQuicCrypto.newLoadBalancerKey(null).use { b ->
+                val x = ByteArray(16)
+                val y = ByteArray(16)
+                a.encrypt(ByteArray(16), 0, x, 0)
+                b.encrypt(ByteArray(16), 0, y, 0)
+                assertFalse(x.contentEquals(y), "two random keys differ")
+            }
+        }
+    }
+
+    @Test fun lbKeyDerivedIsTheEncryptedLabel() {
+        val label = ByteArray(16) { (0x40 + it).toByte() }
+        KslLbKey.of(unhex("000102030405060708090a0b0c0d0e0f")).use { k ->
+            val bytes = ByteArray(16)
+            k.encrypt(label, bytes)
+            k.derive(label).use { d ->
+                KslLbKey.of(bytes).use { expect ->
+                    val a = ByteArray(16)
+                    val b = ByteArray(16)
+                    d.encrypt(ByteArray(16), 0, a, 0)
+                    expect.encrypt(ByteArray(16), b)
+                    assertContentEquals(b, a)
+                }
+            }
+        }
+    }
+
+    @Test fun lbKeyDuplicateOutlivesTheOriginal() {
+        val k = KslLbKey.of(unhex("000102030405060708090a0b0c0d0e0f"))
+        val d = k.duplicate()
+        k.close()
+        val ct = ByteArray(16)
+        d.encrypt(unhex("00112233445566778899aabbccddeeff"), 0, ct, 0)
+        assertContentEquals(unhex("69c4e0d86a7b0430d8cdb78070b4c55a"), ct, "the copy works after the original closed")
+        d.close()
+    }
+
+    @Test fun negative_lbKeySourceArrayWiped() {
+        val k = unhex("8f95f09245765f80256934e50c66207f")
+        KslLbKey.of(k).close()
+        assertTrue(k.all { it == 0.toByte() }, "the key bytes are wiped once copied into ksl")
+        val short = ByteArray(15) { 1 }
+        assertFailsWith<IllegalArgumentException> { KslLbKey.of(short) }
+        assertTrue(short.all { it == 0.toByte() }, "a refused key is wiped too")
+    }
+
+    @Test fun negative_lbKeyClosedOrMisused() {
+        val k = KslLbKey.of(ByteArray(16) { 3 })
+        assertFailsWith<IndexOutOfBoundsException> { k.encrypt(ByteArray(16), 1, ByteArray(16), 0) }
+        assertFailsWith<IndexOutOfBoundsException> { k.decrypt(ByteArray(16), 0, ByteArray(16), Int.MAX_VALUE - 8) }
+        k.close()
+        k.close()
+        assertFailsWith<IllegalStateException> { k.encrypt(ByteArray(16), ByteArray(16)) }
     }
 }
 

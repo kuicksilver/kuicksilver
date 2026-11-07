@@ -355,6 +355,39 @@ public actual object Ksl {
             }
         }
 
+    public actual fun keyLb(key: ByteArray): Long {
+        require(key.size == 16) { "a QUIC-LB key is 16 bytes, not ${key.size}" }
+        return KslNative.keyLb(key).also { if (it == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_key_lb failed") }
+    }
+
+    public actual fun keyLbDup(key: Long): Long =
+        KslNative.keyLbDup(key).also { if (it == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_key_lb_dup failed") }
+
+    public actual fun keyLbDerive(
+        key: Long,
+        label: ByteArray,
+    ): Long {
+        require(label.size == 16) { "a derivation label is 16 bytes, not ${label.size}" }
+        return KslNative.keyLbDerive(key, label).also {
+            if (it == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_key_lb_derive failed: not a QUIC-LB key?")
+        }
+    }
+
+    public actual fun keyEcb16(
+        key: Long,
+        decrypt: Boolean,
+        input: ByteArray,
+        inOffset: Int,
+        out: ByteArray,
+        outOffset: Int,
+    ) {
+        checkRange(input.size, inOffset, 16, "ecb16 input")
+        checkRange(out.size, outOffset, 16, "ecb16 output")
+        if (KslNative.keyEcb16(key, decrypt, input, inOffset, out, outOffset) != KslConst.OK) {
+            throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ksl_key_ecb16 failed: not a QUIC-LB key?")
+        }
+    }
+
     public actual fun keyMac16(
         key: Long,
         input: PacketBuffer,
