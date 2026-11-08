@@ -14,6 +14,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Documentation site: the API reference of the published modules (Dokka HTML, with module and package descriptions,
+  source links to the release tag and links into the kotlinx-coroutines, kotlinx-io and Ktor references) and the guide
+  as HTML, per version, at <https://kuicksilver.github.io/kuicksilver/> (`/<version>/api/`, `/<version>/guide/`,
+  `/latest/`), from 0.3.0 on. Declarations annotated `@InternalKuicksilverApi` are left out of the reference.
+  `tools/docs/site.sh <version> <outdir>` builds it locally, offline once the dependencies are cached;
+  `.github/workflows/pages.yml` publishes it when a GitHub release is published (docs/release.md, "Every release").
+  `./gradlew :dokkaGenerate` writes the API reference alone to `build/dokka/html`.
 - CI: the non-blocking job `openssl-next` (weekly, or `only=openssl-next` by hand) builds the newest OpenSSL 4.x release
   (4.1.0, pinned by version, SHA-256 and signing key in `gradle/openssl-next.toml`) on linux-x64 and macos-arm64 and runs
   the `ksl` C tests and a JVM smoke test against it. It is never required and produces no release artifact; 0.3.0 stays on
