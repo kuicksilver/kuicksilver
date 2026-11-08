@@ -1,7 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
@@ -11,6 +14,8 @@ import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.http2.Http2ErrorCode
+import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
@@ -66,6 +71,39 @@ class ClientOrderlyCloseTest {
             }
         }
 
+    /**
+     * RFC 9846 section 6.1: an exchange that fails after the whole request went out leaves the client's write side whole,
+     * so the connection ends with close_notify (a TLS 1.3 client has no error alert to send): a malformed response head.
+     */
+    @Test fun malformedResponseHeadEndsWithCloseNotify() =
+        clientTest {
+            val clean = CompletableDeferred<Boolean>()
+            tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, output ->
+                readRequest(input)
+                output.writeStringUtf8("not a status line\r\n\r\n")
+                output.flush()
+                clean.complete(input.endsCleanly())
+            }) { port ->
+                testClient().use { c -> assertTrue(runCatching { c.get("https://127.0.0.1:$port/") }.isFailure) }
+                assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
+            }
+        }
+
+    /** The same for a response that does not come within the socket timeout. */
+    @Test fun responseTimeoutEndsWithCloseNotify() =
+        clientTest {
+            val clean = CompletableDeferred<Boolean>()
+            tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, _ ->
+                readRequest(input)
+                clean.complete(input.endsCleanly())
+            }) { port ->
+                testClient(block = { install(HttpTimeout) { socketTimeoutMillis = 300 } }).use { c ->
+                    assertTrue(runCatching { c.get("https://127.0.0.1:$port/") }.isFailure)
+                }
+                assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
+            }
+        }
+
     /** What a hand-written HTTP/2 server saw of the client's end: the GOAWAY codes and whether TLS ended cleanly. */
     private class H2End {
         val goAways = ArrayList<Long>()
@@ -91,8 +129,8 @@ class ClientOrderlyCloseTest {
         ) + payload
 
     /**
-     * Answers the first request with 200 and END_STREAM; with [violate] it then sends DATA on stream 0, a connection error
-     * of type PROTOCOL_ERROR (RFC 9113 section 6.1). Records every GOAWAY until the input ends.
+     * Answers every request with 200 and END_STREAM; with [violate] it answers with DATA on stream 0 instead, a connection
+     * error of type PROTOCOL_ERROR (RFC 9113 section 6.1). Records every GOAWAY until the input ends.
      */
     private suspend fun h2Server(
         input: ByteReadChannel,
@@ -118,9 +156,12 @@ class ClientOrderlyCloseTest {
                         output.writeFully(frame(4, 1, 0))
                     }
 
+                    type == 1 && violate -> {
+                        output.writeFully(frame(0, 0, 0, "x".encodeToByteArray()))
+                    }
+
                     type == 1 -> {
                         output.writeFully(frame(1, 0x5, stream, byteArrayOf(0x88.toByte())))
-                        if (violate) output.writeFully(frame(0, 0, 0, "x".encodeToByteArray()))
                     }
 
                     type == 7 -> {
@@ -157,9 +198,14 @@ class ClientOrderlyCloseTest {
             tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { _, _, input, output ->
                 h2Server(input, output, end, violate = true)
             }) { port ->
-                testClient().use { c -> runCatching { c.get("https://127.0.0.1:$port/") } }
-                withTimeout(10.seconds) { end.clean.await() }
-                assertEquals(1L, end.goAways.firstOrNull(), "GOAWAY (PROTOCOL_ERROR) reached the server: ${end.goAways}")
+                testClient().use { c ->
+                    // the call fails with the connection error before the engine closes (whose GOAWAY would be NO_ERROR)
+                    val e = runCatching { c.get("https://127.0.0.1:$port/") }.exceptionOrNull()
+                    val closed = generateSequence(e) { it.cause }.filterIsInstance<Http2Exception.ConnectionClosed>().firstOrNull()
+                    assertEquals(Http2ErrorCode.PROTOCOL_ERROR, closed?.code, "the call failed with $e")
+                    withTimeout(10.seconds) { end.clean.await() }
+                }
+                assertEquals(listOf(1L), end.goAways, "one GOAWAY (PROTOCOL_ERROR) reached the server")
             }
         }
 }

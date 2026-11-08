@@ -61,6 +61,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -211,20 +212,32 @@ internal class H1Pool(
      */
     fun evictExpired(): Long? = listOfNotNull(pool.evictExpired(), h2.evictExpired()).minOrNull()
 
+    /**
+     * Closes every connection: GOAWAY (NO_ERROR) on every HTTP/2 connection, written and closed in order (RFC 9113 section
+     * 6.8; at most [ORDERLY_CLOSE_TIMEOUT]), then the idle HTTP/1.1 connections with close_notify, and waits for the
+     * orderly closes (at most twice [ORDERLY_CLOSE_TIMEOUT]): about 3 s at most in all. The hard part (pool shutdown, the
+     * closes cut off, the scopes and the session cache) always runs, also when the caller is cancelled, and is over when
+     * this returns, so the selector may go next.
+     */
     suspend fun closeAll() {
-        // GOAWAY (NO_ERROR) on every HTTP/2 connection, written and closed in order (RFC 9113 section 6.8), then the idle
-        // HTTP/1.1 connections with close_notify; the selector goes only after those closes ended or their bound passed
-        h2.closeAll(ORDERLY_CLOSE_TIMEOUT)
-        pool.shutdown()
-        withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT * 2) {
-            closers.coroutineContext[Job]!!
-                .children
-                .toList()
-                .forEach { it.join() }
+        withContext(NonCancellable) {
+            try {
+                h2.closeAll(ORDERLY_CLOSE_TIMEOUT)
+                pool.shutdown()
+                withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT * 2) {
+                    closers.coroutineContext[Job]!!
+                        .children
+                        .toList()
+                        .forEach { it.join() }
+                }
+            } finally {
+                pool.shutdown() // idempotent; a close cut off before it still frees the idle connections
+                // closes still running end hard (their finally closes TLS and the socket) before the selector goes
+                closers.coroutineContext[Job]!!.cancelAndJoin()
+                h2Scope.cancel()
+                sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
+            }
         }
-        closers.cancel()
-        h2Scope.cancel()
-        sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
     }
 
     private fun keyOf(
@@ -651,6 +664,25 @@ internal class H1Pool(
             var held = obtained.held
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
+            // the whole request went out (headers and a body written in this call); a streamed body says so itself
+            val requestOut = CompletableDeferred<Unit>()
+
+            // RFC 9846 section 6.1: an exchange that failed after the whole request went out (a malformed response head,
+            // a timeout, the call cancelled) leaves our write side whole: the connection ends with close_notify (a TLS 1.3
+            // client cannot send an error alert). A request cut off, or a TLS session that failed, is closed at once.
+            fun closeAfterFailure(e: Throwable?) {
+                val sender = bodyJob
+                val whole =
+                    if (sender == null) {
+                        requestOut.isCompleted
+                    } else {
+                        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                        sender.sent.isCompleted && sender.sent.getCompleted()
+                    }
+                val tlsFailed = generateSequence(e) { it.cause }.any { it is TlsException }
+                if (whole && !tlsFailed) conn.closeOrderly() else conn.close()
+            }
+
             try {
                 val requestTime = GMTDate()
                 // the socket timeout measures inactivity in both directions (Ktor: "maximum time of inactivity between two
@@ -662,7 +694,7 @@ internal class H1Pool(
                 var bodySent = false
 
                 suspend fun exchangeOnce(): HttpResponseData =
-                    withSocketInactivityTimeout(data, activity, onExpiry = { conn.close() }) {
+                    withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterFailure(null) }) {
                         writeHeaders(
                             data,
                             output,
@@ -678,6 +710,7 @@ internal class H1Pool(
                                 bodyJob = sendBodyConcurrently(data, conn, output, callContext)
                             } else {
                                 writeBody(data, output, callContext)
+                                requestOut.complete(Unit)
                             }
                         }
                         // `Expect: 100-continue` (RFC 9110 section 10.1.1): the body waits for the server's 100 Continue, or a
@@ -752,7 +785,7 @@ internal class H1Pool(
                     try {
                         when (webSocketKeys) {
                             null -> exchangeOnce()
-                            else -> connectingWithin(data, onExpiry = { conn.close() }) { exchangeOnce() }
+                            else -> connectingWithin(data, onExpiry = { closeAfterFailure(null) }) { exchangeOnce() }
                         }
                     } finally {
                         held?.release()
@@ -771,12 +804,12 @@ internal class H1Pool(
                 return response
             } catch (e: CancellationException) {
                 held?.release()
-                conn.close()
+                closeAfterFailure(e)
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 throw e
             } catch (e: Throwable) {
                 held?.release()
-                conn.close()
+                closeAfterFailure(e)
                 // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 bodyJob?.failure?.let { throw it }

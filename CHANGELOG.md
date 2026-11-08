@@ -582,11 +582,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
-- Ktor client: connections it ends in order end with TLS `close_notify` (RFC 9846 section 6.1): an HTTP/1.1 connection after
-  a `Connection: close` response or a finished upgrade, idle connections evicted or closed with the engine, and HTTP/2
-  connections after their last GOAWAY; before, the socket was closed without one, and the server saw a truncation. The
-  close waits for the peer's `close_notify` and the socket's last bytes within 1 s, in the background; closing the engine
-  waits for those closes. A failed exchange still cuts its connection at once.
+- Ktor client: connections end with TLS `close_notify` whenever the client's write side is whole (RFC 9846 section 6.1):
+  an HTTP/1.1 connection after a `Connection: close` response, an abandoned response body, a finished upload or upgrade,
+  or an exchange that failed after the whole request went out (a malformed response head, a timeout, the call
+  cancelled), idle connections evicted or closed with the engine, and HTTP/2 connections after their last GOAWAY; before,
+  the socket was closed without one, and the server saw a truncation. The close waits for the peer's `close_notify` and
+  the socket's last bytes within 1 s, in the background; closing the engine waits for those closes, about 3 s at most.
+  A connection whose request body was cut off, or whose TLS session failed, is still closed at once.
 - HTTP/2 client: the GOAWAY of a connection error, of an unanswered PING and of closing the engine reached the server
   only by chance: the TLS session was closed as soon as the GOAWAY was handed to it (RFC 9113 section 5.4.1). The
   transport now closes in order behind it. A TLS 1.3 post-handshake CertificateRequest from a server (which OpenSSL
