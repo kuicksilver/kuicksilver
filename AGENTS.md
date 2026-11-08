@@ -34,6 +34,7 @@ bash tools/check/links.sh                                    # Markdown links
 bash tools/check/doc-refs.sh                                 # doc paths, anchors, symbols; private markers in docs and comments
 bash tools/check/rfc-table.sh                                # RFC compliance summary table format
 bash tools/check/guide-sync.sh                               # guide code samples match the GuideSamplesTest blocks
+bash tools/check/guide-sync-test.sh                          # negative controls of guide-sync.sh
 ```
 
 Always pass `--max-workers=2`. The first build of a module compiles OpenSSL for the host; Linux and mingw OpenSSL builds
