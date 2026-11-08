@@ -132,7 +132,7 @@ public class ConnectionCore internal constructor(
     /** Server: mints a NEW_TOKEN token bound to an address (RFC 9000 section 8.1.3); null when the endpoint issues none. */
     internal var newTokenMinter: ((InetSocketAddress) -> ByteArray?)? = null
 
-    /** Server: the NEW_TOKEN token to send or resend, and its number ([SentFrames.ID_NEW_TOKEN]); null once acknowledged. */
+    /** Server: the NEW_TOKEN token to send or resend, and its number (`SentFrames.ID_NEW_TOKEN`); null once acknowledged. */
     internal var newToken: ByteArray? = null
     internal var newTokenSeq = 0L
     internal var sendNewToken = false
@@ -143,7 +143,7 @@ public class ConnectionCore internal constructor(
     /** Client: NEW_TOKEN frames received on this connection; past [NEW_TOKENS_KEPT] each one spends a glitch token. */
     internal var newTokensReceived = 0
 
-    /** Client: tokens received and not yet handed to the endpoint's token store ([takeReceivedTokens]); at most [NEW_TOKENS_KEPT]. */
+    /** Client: tokens received and not yet handed to the endpoint's token store (`takeReceivedTokens`); at most [NEW_TOKENS_KEPT]. */
     internal var receivedTokens: ArrayList<ByteArray>? = null
 
     /** Server: HANDSHAKE_DONE went out at least once (tests check that NEW_TOKEN never precedes it). */

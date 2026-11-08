@@ -40,9 +40,9 @@ public interface QuicTokenStore {
 }
 
 /**
- * A [QuicTokenStore] in memory, bounded to [maxServers] keys of [tokensPerServer] tokens each: the newest token is taken
- * first, the oldest one beyond [tokensPerServer] is dropped, and the server not used for longest is evicted beyond
- * [maxServers] (as quic-go's `NewLRUTokenStore`). Safe to share between endpoints; its contents end with the process.
+ * A [QuicTokenStore] in memory, bounded to [maxServers][MemoryTokenStore.maxServers] keys of [tokensPerServer][MemoryTokenStore.tokensPerServer] tokens each: the newest token is taken
+ * first, the oldest one beyond [tokensPerServer][MemoryTokenStore.tokensPerServer] is dropped, and the server not used for longest is evicted beyond
+ * [maxServers][MemoryTokenStore.maxServers] (as quic-go's `NewLRUTokenStore`). Safe to share between endpoints; its contents end with the process.
  */
 @ExperimentalKuicksilverApi
 public class MemoryTokenStore(
@@ -84,6 +84,7 @@ public class MemoryTokenStore(
             token
         }
 
+    /** For logs. */
     override fun toString(): String = "MemoryTokenStore(maxServers=$maxServers, tokensPerServer=$tokensPerServer)"
 
     private companion object {

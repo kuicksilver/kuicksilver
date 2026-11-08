@@ -39,7 +39,7 @@ internal class H2Conn(
  * The HTTP/2 connections of the engine by route (the HTTP/1.1 route key: scheme, host, port and proxy). One connection per
  * route while it has a free stream under the server's SETTINGS_MAX_CONCURRENT_STREAMS; a full one makes room for a second,
  * within `maxConnectionsPerRoute` (the TCP pool's slots). Requests that wait for a stream or a slot watch their route's
- * [signal], which every change bumps: a released stream, new SETTINGS, a GOAWAY, a connection that came or went. Routes
+ * `signal`, which every change bumps: a released stream, new SETTINGS, a GOAWAY, a connection that came or went. Routes
  * without connections and watchers are dropped at once, so the map is bounded by the live connections and the waiters.
  * No connection coalescing across origins (RFC 9113 section 9.1.1; ADR-0017).
  */

@@ -31,10 +31,13 @@ public class ProxyCredentials(
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val id: Long = nextCredentialsId.addAndFetch(1L)
 
+    /** Equal when the user and the password are. */
     override fun equals(other: Any?): Boolean = other is ProxyCredentials && other.user == user && other.password == password
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = user.hashCode()
 
+    /** For logs; never shows the password. */
     override fun toString(): String = "ProxyCredentials(user=$user, password=***)"
 }
 
@@ -42,9 +45,9 @@ public class ProxyCredentials(
 private val nextCredentialsId = kotlin.concurrent.atomics.AtomicLong(0)
 
 /**
- * A proxy refused or failed the request's connection: a SOCKS5 reply other than "succeeded" ([replyCode] is its REP
- * field, RFC 1928 section 6), a SOCKS5 authentication the proxy rejected ([replyCode] null), or a status other than 2xx in
- * answer to an HTTP CONNECT ([replyCode] is the status, 407 when the proxy wants credentials). The message names the
+ * A proxy refused or failed the request's connection: a SOCKS5 reply other than "succeeded" ([replyCode][ProxyException.replyCode] is its REP
+ * field, RFC 1928 section 6), a SOCKS5 authentication the proxy rejected ([replyCode][ProxyException.replyCode] null), or a status other than 2xx in
+ * answer to an HTTP CONNECT ([replyCode][ProxyException.replyCode] is the status, 407 when the proxy wants credentials). The message names the
  * proxy, never the credentials.
  */
 @ExperimentalKuicksilverApi
@@ -57,7 +60,7 @@ public class ProxyException(
 /**
  * A proxy as the engine uses it, what a [ProxyResolver] answers: HTTP ([http]: CONNECT tunnels for TLS and WebSockets,
  * the absolute form for plain http) or SOCKS5 ([socks5]: CONNECT only, RFC 1928), with the credentials to present and,
- * for SOCKS5, whether the proxy resolves the origin's name ([remoteDns], `socks5h`) or the engine sends it an address it
+ * for SOCKS5, whether the proxy resolves the origin's name ([remoteDns][ResolvedProxy.remoteDns], `socks5h`) or the engine sends it an address it
  * resolved itself (`socks5`). [toString] leaves the credentials out.
  */
 @ExperimentalKuicksilverApi
@@ -93,12 +96,15 @@ public class ResolvedProxy private constructor(
     internal val basicAuthorization: String?
         get() = credentials?.let { "Basic " + Base64.encode("${it.user}:${it.password}".encodeToByteArray()) }
 
+    /** Equal when the kind, host, port, credentials and remoteDns flag are. */
     override fun equals(other: Any?): Boolean =
         other is ResolvedProxy && other.kind == kind && other.host == host && other.port == port &&
             other.credentials == credentials && other.remoteDns == remoteDns
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = ((kind.hashCode() * 31 + host.hashCode()) * 31 + port) * 31 + (credentials?.hashCode() ?: 0)
 
+    /** For logs. */
     override fun toString(): String =
         "${if (kind == Kind.Http) {
             "http"
@@ -118,7 +124,7 @@ public class ResolvedProxy private constructor(
         ): ResolvedProxy = ResolvedProxy(Kind.Http, socketHost(host), port, credentials, remoteDns = true)
 
         /**
-         * A SOCKS5 proxy at [host]:[port]; [remoteDns] true (`socks5h`) lets it resolve the origin's name. Fails with
+         * A SOCKS5 proxy at [host]:[port]; [remoteDns][ResolvedProxy.remoteDns] true (`socks5h`) lets it resolve the origin's name. Fails with
          * [IllegalArgumentException] for [credentials] whose password is empty or longer than 255 bytes (RFC 1929
          * section 2: PASSWD has 1 to 255 octets).
          */

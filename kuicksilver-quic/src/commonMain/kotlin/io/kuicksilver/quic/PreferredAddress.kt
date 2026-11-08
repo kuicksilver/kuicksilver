@@ -23,7 +23,7 @@ public class PreferredAddress internal constructor(
     public val ipv6: InetSocketAddress?,
     check: Boolean,
 ) {
-    /** A preferred address of [ipv4] and/or [ipv6]: IP literals with a port, not unspecified, multicast or broadcast. */
+    /** A preferred address of [ipv4][PreferredAddress.ipv4] and/or [ipv6][PreferredAddress.ipv6]: IP literals with a port, not unspecified, multicast or broadcast. */
     public constructor(ipv4: InetSocketAddress?, ipv6: InetSocketAddress?) : this(ipv4, ipv6, true)
 
     init {
@@ -51,5 +51,6 @@ public class PreferredAddress internal constructor(
         }
     }
 
+    /** For logs. */
     override fun toString(): String = "PreferredAddress(ipv4=$ipv4, ipv6=$ipv6)"
 }

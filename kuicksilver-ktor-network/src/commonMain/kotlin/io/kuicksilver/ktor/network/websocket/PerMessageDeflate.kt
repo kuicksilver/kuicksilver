@@ -110,9 +110,16 @@ public class PerMessageDeflate internal constructor(
         /** The default of [Config.maxInflatedMessageSize]: 16 MiB. */
         public const val DEFAULT_MAX_INFLATED_MESSAGE_SIZE: Long = 16L * 1024 * 1024
 
+        /** Where Ktor keeps the extension in a session's attributes. */
         override val key: AttributeKey<PerMessageDeflate> = AttributeKey("io.kuicksilver.PerMessageDeflate")
+
+        /** The extension uses RSV1 (RFC 7692 section 6). */
         override val rsv1: Boolean = true
+
+        /** The extension does not use RSV2. */
         override val rsv2: Boolean = false
+
+        /** The extension does not use RSV3. */
         override val rsv3: Boolean = false
 
         /** A new extension for one session with [config] applied; invalid settings throw [IllegalArgumentException]. */
@@ -125,6 +132,7 @@ public class PerMessageDeflate internal constructor(
         }
     }
 
+    /** The factory that makes this extension: its companion. */
     override val factory: WebSocketExtensionFactory<Config, out WebSocketExtension<Config>> get() = PerMessageDeflate
 
     /** The client's offer (RFC 7692 section 7.1). */
@@ -155,12 +163,14 @@ public class PerMessageDeflate internal constructor(
     // users of the codecs (USE each) and the DISPOSED / FREED bits: the codecs are freed once, after the last user
     private val state = AtomicInt(0)
 
+    /** True when the server accepted permessage-deflate, false when it did not; an invalid answer throws [ProtocolViolationException] (RFC 7692 section 7.1). */
     override fun clientNegotiation(negotiatedProtocols: List<WebSocketExtensionHeader>): Boolean {
         val a = clientAgreement(negotiatedProtocols) ?: return false
         agreement = a
         return true
     }
 
+    /** Answers the first valid permessage-deflate offer this extension can keep to (RFC 7692 section 7); an empty list declines them all. */
     override fun serverNegotiation(requestedProtocols: List<WebSocketExtensionHeader>): List<WebSocketExtensionHeader> {
         for (offer in requestedProtocols) {
             if (!offer.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true)) continue
@@ -343,6 +353,7 @@ public class PerMessageDeflate internal constructor(
         inflater = null
     }
 
+    /** For logs: the client's offer. */
     override fun toString(): String = "PerMessageDeflate(${protocols.single()})"
 }
 

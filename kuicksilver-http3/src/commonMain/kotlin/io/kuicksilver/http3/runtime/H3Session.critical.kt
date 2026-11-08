@@ -39,11 +39,11 @@ import kotlin.time.Duration
 /**
  * Writes [b] on our critical stream [pick] once the streams are open, on the session's dispatcher (the bookkeeping
  * below is the dispatcher's alone; callers such as `updatePriority` run on the application's thread). Bytes made for
- * streams a rejected 0-RTT dropped (an older [criticalGen], or a write the drop failed) never reach the newer ones:
+ * streams a rejected 0-RTT dropped (an older `criticalGen`, or a write the drop failed) never reach the newer ones:
  * QPACK instructions made then can only be about early request streams the server never saw, whose IDs the requests
  * sent again reuse (a Stream Cancellation there would cancel the new request's sections).
  * [again] says whether such a frame is still wanted on the new control stream (a GOAWAY is); one written before the
- * handshake told the 0-RTT's fate is kept for that ([earlyControl]).
+ * handshake told the 0-RTT's fate is kept for that (`earlyControl`).
  */
 internal suspend fun H3Session.writeCritical(
     lock: Mutex,

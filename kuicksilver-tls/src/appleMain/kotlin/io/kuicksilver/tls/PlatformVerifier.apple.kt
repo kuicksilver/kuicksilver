@@ -72,7 +72,7 @@ internal actual object PlatformVerifier {
     private val queue: dispatch_queue_t get() = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.toLong(), 0u)
 
     /**
-     * Starts the evaluation of [trust] on [queue] and calls `done(ok, error)` there; [host] is what the trust was made for.
+     * Starts the evaluation of `trust` on [queue] and calls `done(ok, error)` there; `host` is what the trust was made for.
      * Tests replace it with a slow or stalled evaluator; the default is `SecTrustEvaluateAsyncWithError`. Called on [queue].
      */
     internal var evaluator: (trust: SecTrustRef, queue: dispatch_queue_t, host: String, done: (Boolean, CFErrorRef?) -> Unit) -> Unit =

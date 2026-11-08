@@ -192,7 +192,7 @@ internal class ConnectionRuntime(
 
     /**
      * Suspends until the peer gave us a connection ID no path used yet (RFC 9000 section 9.5), so a new path can be probed; throws the
-     * connection's [QuicException.ConnectionLost] once it is gone. [NetworkMigrator] waits here after a
+     * connection's [QuicException.ConnectionLost] once it is gone. `NetworkMigrator` waits here after a
      * [PathFailureReason.NoSpareConnectionId] failure, then migrates again.
      */
     internal suspend fun awaitSpareConnectionId() {

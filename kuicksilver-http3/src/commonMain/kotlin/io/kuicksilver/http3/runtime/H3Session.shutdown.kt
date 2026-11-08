@@ -89,7 +89,7 @@ internal suspend fun H3Session.sendGoAway(id: Long): Boolean =
 /**
  * After the final GOAWAY with nothing in flight and every response acknowledged (RFC 9114 section 5.2): the client
  * closes the connection once it read its responses (quic-go's server waits for exactly that); one that does not is
- * closed after [goAwayCloseFallback], so a slow reader of an acknowledged response still has that long.
+ * closed after `goAwayCloseFallback`, so a slow reader of an acknowledged response still has that long.
  */
 internal suspend fun H3Session.closeIfIdle() {
     if (activeRequests > 0 || settling > 0 || closed.isCompleted) return
@@ -197,7 +197,7 @@ internal fun H3Session.onTransportClosed(e: QuicException.ConnectionLost) {
 
 /**
  * Launches a reader of a peer's stream that may finish it when the connection is lost, like a [drains] one, from any
- * thread. It runs outside [scope]: a launch into the scope once the connection ended never runs, and a response whose
+ * thread. It runs outside `scope`: a launch into the scope once the connection ended never runs, and a response whose
  * headers were read after the session processed the peer's CONNECTION_CLOSE lost its body that way (seen on slow
  * Windows and macOS runners). Once the session's coroutines are gone it gets at most [DRAIN_GRACE] more, then it is
  * cut, unless [stream], the stream it reads, came whole: then it goes on until it has handed all of it over (without

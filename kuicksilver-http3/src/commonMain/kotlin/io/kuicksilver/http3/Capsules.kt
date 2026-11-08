@@ -9,7 +9,7 @@ import io.kuicksilver.quic.DatagramSendResult
 import kotlinx.coroutines.flow.Flow
 
 /**
- * One capsule of the Capsule Protocol (RFC 9297 section 3.2): a [type] and its whole [value]. Two capsules are equal when
+ * One capsule of the Capsule Protocol (RFC 9297 section 3.2): a [type][Capsule.type] and its whole [value][Capsule.value]. Two capsules are equal when
  * their types and value bytes are.
  *
  * @property type the capsule type, 0..2^62-1 (a QUIC variable-length integer); 0x00 is DATAGRAM ([CapsuleProtocol.DATAGRAM]).
@@ -24,10 +24,13 @@ public class Capsule(
         require(type in 0..CapsuleRules.MAX_TYPE) { "capsule type must be 0..2^62-1, was $type" }
     }
 
+    /** Equal when the type and the value bytes are. */
     override fun equals(other: Any?): Boolean = other is Capsule && other.type == type && other.value.contentEquals(value)
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = 31 * type.hashCode() + value.contentHashCode()
 
+    /** For logs: the type in hex and the length of the value. */
     override fun toString(): String = "Capsule(type=0x${type.toString(16)}, ${value.size} bytes)"
 }
 
@@ -78,10 +81,10 @@ public object CapsuleProtocol {
  *   holds back the peer through flow control; 1..4096, 16 by default.
  * @property sendQueue capsules (DATAGRAM capsules included) waiting to be written before [CapsuleStream.send] suspends
  *   and a fallback [CapsuleStream.trySendDatagram] answers QueueFull; 1..4096, 32 by default.
- * @property terminalTypes types of [knownTypes] whose capsule ends the stream's data: it is delivered, and any byte
+ * @property terminalTypes types of [knownTypes][CapsuleConfig.knownTypes] whose capsule ends the stream's data: it is delivered, and any byte
  *   after it (a capsule of any type, even one that would be skipped) is a malformed message, so the stream is reset
  *   with H3_MESSAGE_ERROR and [CapsuleStream.capsules] fails with [Http3Exception.MessageError]. For WebTransport's
- *   WT_CLOSE_SESSION (draft-ietf-webtrans-http3 section 6). Each must be in [knownTypes] and not DATAGRAM; empty by
+ *   WT_CLOSE_SESSION (draft-ietf-webtrans-http3 section 6). Each must be in [knownTypes][CapsuleConfig.knownTypes] and not DATAGRAM; empty by
  *   default.
  */
 @ExperimentalKuicksilverApi

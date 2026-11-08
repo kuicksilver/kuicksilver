@@ -33,7 +33,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * TLS over any byte transport (docs/guide/tls.md, TLS over any channel): ciphertext moves through [transportIn]/[transportOut], plaintext through
+ * TLS over any byte transport (docs/guide/tls.md, TLS over any channel): ciphertext moves through `transportIn`/`transportOut`, plaintext through
  * [input]/[output]. Two pump coroutines and one mutex guard the single `ksl_ssl`. The transport is the caller's: sockets,
  * a QUIC stream, anything that offers channels.
  */
@@ -766,7 +766,7 @@ public class TlsConnection private constructor(
 
         /**
          * Tickets a TCP server issues after a full handshake: RFC 9846 appendix C.4, "Servers that issue tickets SHOULD offer at least
-         * as many tickets as the number of connections that a client might use; for example, a web browser using HTTP/1.1 [RFC9112]
+         * as many tickets as the number of connections that a client might use; for example, a web browser using HTTP/1.1 `RFC9112`
          * might open six connections to a server". Six, the RFC's example; every resumption then brings one more, so a client
          * keeps as many as it uses at once. A server cannot see the client's parallelism before the connections arrive.
          */
@@ -799,12 +799,12 @@ public class TlsConnection private constructor(
         private const val SSL_R_UNEXPECTED_MESSAGE = 244
 
         /**
-         * Runs a client handshake over [transportIn]/[transportOut] and returns once it completed and the server passed
+         * Runs a client handshake over `transportIn`/`transportOut` and returns once it completed and the server passed
          * [TlsConfig.trust] and the host name check. A cached session for the same name and trust is resumed automatically
          * and re-checked. The pumps run in [context] (their parent job, if any); cancelling it ends the connection.
          * Throws [TlsException]: [TlsException.Config] for a server configuration or a client without a reference identifier,
          * [TlsException.Verify], [TlsException.AlertReceived], or [TlsException.Protocol] (also after
-         * [TlsConfig.handshakeTimeout]). On failure the alert is flushed and [transportOut] is closed.
+         * [TlsConfig.handshakeTimeout]). On failure the alert is flushed and `transportOut` is closed.
          */
         public suspend fun client(
             transportIn: ByteReadChannel,
@@ -827,7 +827,7 @@ public class TlsConnection private constructor(
         }
 
         /**
-         * Runs a server handshake over [transportIn]/[transportOut] and returns once it completed: the identity is chosen
+         * Runs a server handshake over `transportIn`/`transportOut` and returns once it completed: the identity is chosen
          * (through [TlsConfig.sniSelector] when set) and a client certificate, when requested, passed [TlsConfig.trust]
          * and the pins. Same [context], errors and failure handling as [client].
          */

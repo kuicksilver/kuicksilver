@@ -17,7 +17,7 @@ public class PacketBatch internal constructor(
     public val segmentSize: Int,
     allocate: (Int) -> PacketBuffer,
 ) : AutoCloseable {
-    /** A batch of [capacity] slots of [segmentSize] bytes each. */
+    /** A batch of [capacity][PacketBatch.capacity] slots of [segmentSize][PacketBatch.segmentSize] bytes each. */
     public constructor(capacity: Int, segmentSize: Int = 1500) : this(capacity, segmentSize, PacketBuffer::allocate)
 
     // native memory on Kotlin/Native: an allocation that fails part-way frees the slots made before it
@@ -116,6 +116,7 @@ public class PacketBatch internal constructor(
         count = 0
     }
 
+    /** Closes every buffer of the batch; the batch cannot be used afterwards. */
     override fun close() {
         val r = Releaser() // every slot even when one before it fails to close
         for (b in buffers) r.release { b.close() }

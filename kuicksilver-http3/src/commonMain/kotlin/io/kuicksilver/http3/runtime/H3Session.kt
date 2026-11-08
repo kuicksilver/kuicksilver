@@ -721,7 +721,7 @@ internal class H3Session(
         @kotlin.concurrent.Volatile
         internal var startEndedForTest: ((H3Session) -> Unit)? = null
 
-        /** Test hook: runs before a control frame of [type] the peer sent is handled (global: a test filters on the session). */
+        /** Test hook: runs before a control frame of `type` the peer sent is handled (global: a test filters on the session). */
         @kotlin.concurrent.Volatile
         internal var beforeControlFrameForTest: (suspend (H3Session, type: Long) -> Unit)? = null
 

@@ -53,6 +53,7 @@ public enum class Http2ErrorCode(
     HTTP_1_1_REQUIRED(0xd),
     ;
 
+    /** Holds [of]. */
     public companion object {
         /**
          * The error code for [code]; an unknown code means [INTERNAL_ERROR] (RFC 9113 section 7: unknown codes MUST NOT

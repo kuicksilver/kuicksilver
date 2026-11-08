@@ -19,15 +19,15 @@ import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.random.Random
 
 /**
- * One `<odcid>_<client|server>_<random>.sqlog` file per connection inside [directory] (docs/guide/quic.md, "qlog").
+ * One `<odcid>_<client|server>_<random>.sqlog` file per connection inside `directory` (docs/guide/quic.md, "qlog").
  *
  * On a server the original destination connection ID is chosen by the client, so the file handling assumes a hostile name
  * (threat model 3.2): the directory is created owner-only when missing and refused (the trace is not opened, an exception the
  * endpoint logs) when it is a symbolic link, not a directory, owned by another user, or writable by group or others without
  * the sticky bit; each file is created exclusively and never through a link (an existing name, a planted symlink or FIFO, is
  * never truncated, followed or blocked on), with a random suffix so a client reusing another connection's ID gets a file of
- * its own. Two ceilings bound what a flood of connections can write through this sink: at most [maxOpenTraces] traces open
- * at once (further connections are not traced), and at most [maxTotalBytes] written over the sink's lifetime (after that, no
+ * its own. Two ceilings bound what a flood of connections can write through this sink: at most [maxOpenTraces][DirectoryQlogSink.maxOpenTraces] traces open
+ * at once (further connections are not traced), and at most [maxTotalBytes][DirectoryQlogSink.maxTotalBytes] written over the sink's lifetime (after that, no
  * new trace opens and open ones stop writing). A fixed 64 MiB per connection still bounds each trace. Files are opened and
  * written on the endpoint loop, so a slow disk stalls every connection of that loop: on a busy server wrap the sink in
  * [AsyncQlogSink].

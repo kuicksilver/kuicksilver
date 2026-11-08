@@ -10,8 +10,12 @@ import io.ktor.client.engine.HttpClientEngineFactory
  * and the platform engines, so the choice stays deterministic when several are on the classpath; above CIO (0.0).
  */
 public class KuicksilverEngineContainer : HttpClientEngineContainer {
+    /** The factory of the Kuicksilver engine. */
     override val factory: HttpClientEngineFactory<*> = Kuicksilver
+
+    /** 0.5: below OkHttp and the platform engines (1.0), above CIO (0.0). */
     override val priority: Double get() = 0.5
 
+    /** The name of the engine. */
     override fun toString(): String = "Kuicksilver"
 }

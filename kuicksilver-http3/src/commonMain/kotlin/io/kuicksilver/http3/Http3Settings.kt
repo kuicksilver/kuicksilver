@@ -28,7 +28,7 @@ public class Http3Settings private constructor(
     public val grease: Boolean,
     /**
      * No longer a limit: a client accepts any number of interim (1xx) responses (RFC 9110 section 15.2), bounded only by
-     * [maxFieldSectionSize] over all of a request's interim field sections. Kept for compatibility; 5 by default, at least 0.
+     * [maxFieldSectionSize][Http3Settings.maxFieldSectionSize] over all of a request's interim field sections. Kept for compatibility; 5 by default, at least 0.
      */
     @Deprecated("Ignored: interim responses are bounded by maxFieldSectionSize over all of them (RFC 9110 section 15.2)")
     public val maxInformationalResponses: Int,
@@ -41,7 +41,7 @@ public class Http3Settings private constructor(
     public val earlyData: Http3EarlyDataPolicy,
     /**
      * Speak WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16): advertise its SETTINGS and route WebTransport streams to
-     * sessions. Needs [enableConnectProtocol] and [h3Datagram].
+     * sessions. Needs [enableConnectProtocol][Http3Settings.enableConnectProtocol] and [h3Datagram][Http3Settings.h3Datagram].
      */
     @property:ExperimentalKuicksilverApi
     public val webTransport: Boolean,
@@ -186,7 +186,7 @@ public class Http3PeerSettings internal constructor(
     public val enableConnectProtocol: Boolean,
     /** `SETTINGS_H3_DATAGRAM=1`: the peer accepts HTTP datagrams (RFC 9297 section 2.1.1). */
     public val h3Datagram: Boolean,
-    /** Settings this library does not interpret (GREASE included); the WebTransport ones are interpreted, see [webTransport]. */
+    /** Settings this library does not interpret (GREASE included); the WebTransport ones are interpreted, see [webTransport][Http3PeerSettings.webTransport]. */
     public val unknown: Map<Long, Long>,
     /**
      * The peer speaks WebTransport over HTTP/3: it sent `SETTINGS_WT_ENABLED=1` (draft-15 and later), a non-zero
@@ -195,6 +195,7 @@ public class Http3PeerSettings internal constructor(
     @property:ExperimentalKuicksilverApi
     public val webTransport: Boolean = false,
 ) {
+    /** For logs: the settings this library interprets. */
     override fun toString(): String =
         "Http3PeerSettings(qpack=$qpackMaxTableCapacity/$qpackBlockedStreams, maxFieldSectionSize=$maxFieldSectionSize, connect=$enableConnectProtocol, datagram=$h3Datagram, webTransport=$webTransport)"
 }

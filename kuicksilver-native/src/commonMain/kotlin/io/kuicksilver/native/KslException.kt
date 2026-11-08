@@ -70,7 +70,7 @@ public sealed class KslException(
     ) : KslException("ksl ABI $native in the native library, $kotlin expected")
 
     /**
-     * An error reported by ksl or OpenSSL: [packed] is `(lib shl 16) or reason`, [alert] is the TLS alert (`or 0x100` when received).
+     * An error reported by ksl or OpenSSL: [packed][KslException.Internal.packed] is `(lib shl 16) or reason`, [alert][KslException.Internal.alert] is the TLS alert (`or 0x100` when received).
      *
      * @property packed the error code `(lib shl 16) or reason`; split it with [lib] and [reason].
      * @property alert the TLS alert involved (RFC 9846 section 6.2) in bits 0-7, bit 8 (`0x100`) set when the peer sent it, and
@@ -81,10 +81,10 @@ public sealed class KslException(
         public val alert: Int,
         message: String,
     ) : KslException(message) {
-        /** The library part of [packed] (OpenSSL's `ERR_GET_LIB`); `0xff` for ksl's own codes, see [isKsl]. */
+        /** The library part of [packed][KslException.Internal.packed] (OpenSSL's `ERR_GET_LIB`); `0xff` for ksl's own codes, see [isKsl]. */
         public val lib: Int get() = packed ushr 16
 
-        /** The reason part of [packed] (OpenSSL's `ERR_GET_REASON`); a `KSL_E_*` value when [isKsl]. */
+        /** The reason part of [packed][KslException.Internal.packed] (OpenSSL's `ERR_GET_REASON`); a `KSL_E_*` value when [isKsl]. */
         public val reason: Int get() = packed and 0xffff
 
         /** True for ksl's own codes (`KSL_E_*`). */

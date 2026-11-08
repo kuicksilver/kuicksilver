@@ -162,7 +162,7 @@ internal suspend fun EndpointLoop.flush(
     flushSuspending(touched, signalTimer)
 }
 
-/** [flush] when no send can suspend; [flushLock] held. */
+/** [flush] when no send can suspend; `flushLock` held. */
 private fun EndpointLoop.flushNow(
     touched: ConnectionCore?,
     signalTimer: Boolean,
@@ -194,7 +194,7 @@ private suspend fun EndpointLoop.flushSuspending(
     }
 }
 
-/** What a flush does, with its two kinds of send passed in; [flushLock] held. */
+/** What a flush does, with its two kinds of send passed in; `flushLock` held. */
 private inline fun EndpointLoop.flushBody(
     touched: ConnectionCore?,
     signalTimer: Boolean,

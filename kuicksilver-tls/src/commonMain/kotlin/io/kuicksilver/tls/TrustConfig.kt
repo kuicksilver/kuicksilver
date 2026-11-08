@@ -14,10 +14,11 @@ import kotlin.io.encoding.Base64
 public sealed interface TrustConfig {
     /** The platform's trust store and verifier (JDK/Android TrustManager, Apple SecTrust, Windows CertVerify, OpenSSL system store on Linux). */
     public object Platform : TrustConfig {
+        /** For logs. */
         override fun toString(): String = "Platform"
     }
 
-    /** Only chains anchored at one of [roots] are trusted; verified by OpenSSL inside `ksl` (bypasses Android NSC on purpose). */
+    /** Only chains anchored at one of [roots][TrustConfig.AnchoredCa.roots] are trusted; verified by OpenSSL inside `ksl` (bypasses Android NSC on purpose). */
     public class AnchoredCa(
         roots: List<Certificate>,
     ) : TrustConfig {
@@ -33,8 +34,8 @@ public sealed interface TrustConfig {
     }
 
     /**
-     * Replaces the reference identifier: the certificate must match [name] (from configuration only) instead of the connection's host.
-     * [base] is [Platform], [AnchoredCa] or [Custom]; to pin as well, wrap this one: `Pinned(pins, base = ExpectedName(name, base))`
+     * Replaces the reference identifier: the certificate must match [name][TrustConfig.ExpectedName.name] (from configuration only) instead of the connection's host.
+     * [base][TrustConfig.ExpectedName.base] is [Platform], [AnchoredCa] or [Custom]; to pin as well, wrap this one: `Pinned(pins, base = ExpectedName(name, base))`
      * (not with a [Custom] base: pins never sit on top of a Custom verifier).
      *
      * @property name the DNS name or IP literal the certificate must match (RFC 9525); never blank, validated when the
@@ -61,7 +62,7 @@ public sealed interface TrustConfig {
     }
 
     /**
-     * [base] trust AND one of [pins] must match the validated chain within [scope].
+     * [base][TrustConfig.Pinned.base] trust AND one of [pins][TrustConfig.Pinned.pins] must match the validated chain within [scope][TrustConfig.Pinned.scope].
      *
      * @property scope which certificates of the validated chain may match; default [PinScope.Leaf], the strictest.
      * @property base the trust that must accept the chain as well (AND, never OR: ADR-0011); default [Platform]. [Tofu],
@@ -76,7 +77,7 @@ public sealed interface TrustConfig {
     ) : TrustConfig {
         /**
          * The accepted SPKI hashes (RFC 7469), never empty; one match is enough, so list a backup key to survive a key
-         * rotation. A miss fails with [VerifyReason.PinMismatch] even when [base] trusts the chain.
+         * rotation. A miss fails with [VerifyReason.PinMismatch] even when [base][TrustConfig.Pinned.base] trusts the chain.
          */
         public val pins: Set<SpkiSha256> = pins.toSet()
 
@@ -142,10 +143,13 @@ public class SpkiSha256(
         require(digest.size == 32) { "SpkiSha256 is 32 bytes" }
     }
 
+    /** Equal when the digests are. */
     override fun equals(other: Any?): Boolean = other is SpkiSha256 && other.digest.contentEquals(digest)
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = digest.contentHashCode()
 
+    /** OkHttp's text form, `sha256/<base64>`. */
     override fun toString(): String = "sha256/" + Base64.encode(digest)
 
     /** Holds [parse]. */
@@ -187,15 +191,16 @@ public interface TofuStore {
 
 /** Outcome of a verification step. */
 public sealed interface VerifyResult {
-    /** Trusted; [validatedChain] is the chain the verifier built (leaf first, anchor last), the one pins are compared against. */
+    /** Trusted; [validatedChain][VerifyResult.Accepted.validatedChain] is the chain the verifier built (leaf first, anchor last), the one pins are compared against. */
     public class Accepted(
         validatedChain: List<Certificate>,
     ) : VerifyResult {
+        /** The chain the verifier built, leaf first, anchor last. */
         public val validatedChain: List<Certificate> = validatedChain.toList()
     }
 
     /**
-     * Not trusted: the handshake ends with [TlsException.Verify] and the alert of [reason] ([alertCode]).
+     * Not trusted: the handshake ends with [TlsException.Verify] and the alert of [reason][VerifyResult.Rejected.reason] ([alertCode]).
      *
      * @property reason why the peer was rejected.
      */
@@ -217,6 +222,7 @@ public sealed interface VerifyReason {
         public val expected: String,
         public val presented: List<String>,
     ) : VerifyReason {
+        /** For logs. */
         override fun toString(): String = "HostnameMismatch(expected=$expected, presented=$presented)"
     }
 
@@ -229,6 +235,7 @@ public sealed interface VerifyReason {
     public class PinMismatch(
         public val chainPins: List<SpkiSha256>,
     ) : VerifyReason {
+        /** For logs. */
         override fun toString(): String = "PinMismatch(chain=$chainPins)"
     }
 
@@ -300,6 +307,7 @@ public sealed interface VerifyReason {
     public class Custom(
         public val text: String,
     ) : VerifyReason {
+        /** For logs. */
         override fun toString(): String = "Custom($text)"
     }
 }

@@ -52,8 +52,10 @@ public value class TimeMark(
         }
     }
 
+    /** Orders marks by their nanoseconds. */
     override fun compareTo(other: TimeMark): Int = nanos.compareTo(other.nanos)
 
+    /** For logs. */
     override fun toString(): String = if (this == NEVER) "TimeMark(never)" else "TimeMark(${nanos}ns)"
 
     /** Holds [NEVER]. */

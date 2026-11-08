@@ -28,6 +28,7 @@ public class IoCapabilities
     ) {
         /** Holds [Portable]: no accelerated feature (one datagram per call; no ECN, GSO, GRO or DF), what a plain UDP socket offers. */
         public companion object {
+            /** The capabilities of a plain UDP socket. */
             @OptIn(ExperimentalKuicksilverApi::class)
             public val Portable: IoCapabilities = IoCapabilities(false, false, 1, false, false, 1)
         }

@@ -84,6 +84,7 @@ public sealed interface TlsIdentity {
         /** The server contexts built from this identity, shared by the handshakes of each configuration (`KslContext.acquire`). */
         internal val serverContexts = SharedServerContexts()
 
+        /** Releases the identity; the server contexts built from it go with the last connection that uses each. */
         override fun close() {
             if (closed.compareAndSet(0, 1)) {
                 serverContexts.close() // each goes with its last connection
@@ -120,7 +121,7 @@ public sealed interface TlsIdentity {
      * **Checks.** [reload] refuses a closed identity, one whose leaf certificate has expired, and one whose leaf is not valid
      * yet (notBefore more than 5 minutes ahead of the clock: a certificate staged for later is never served early); the
      * pairing of key and chain was already checked when the [InMemory] was built ([fromPem], [fromDer]), so a mismatched
-     * pair never gets here. [next] must not be closed by anyone else: an identity closed during the reload is refused.
+     * pair never gets here. `next` must not be closed by anyone else: an identity closed during the reload is refused.
      */
     @ExperimentalKuicksilverApi
     public class Reloadable internal constructor(

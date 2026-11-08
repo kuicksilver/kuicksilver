@@ -111,11 +111,14 @@ public class WebTransportCloseInfo(
     public val reason: String,
     public val cause: Throwable?,
 ) {
+    /** Equal when the code, the reason and the cause are. */
     override fun equals(other: Any?): Boolean =
         other is WebTransportCloseInfo && other.code == code && other.reason == reason && other.cause == cause
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = (code.hashCode() * 31 + reason.hashCode()) * 31 + (cause?.hashCode() ?: 0)
 
+    /** For logs. */
     override fun toString(): String = "WebTransportCloseInfo(code=$code, reason=$reason, cause=$cause)"
 }
 

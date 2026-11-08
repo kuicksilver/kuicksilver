@@ -20,7 +20,7 @@ internal class SipKey(
  * byte) and a datagram too short to carry a DCID go to loop 0; [CidRoute.resetCandidate] answers a Stateless Reset only for
  * an ID of the loop that checks it, so loop 0 never answers one for another loop's IDs (threat-model 3.4).
  *
- * Before any of that, a datagram that ends with a peer's reset token one of the loops' connections holds ([resets]) goes to
+ * Before any of that, a datagram that ends with a peer's reset token one of the loops' connections holds (`resets`) goes to
  * that loop: a Stateless Reset names no ID of ours (RFC 9000 section 10.3), and only the connection that holds the token can
  * take it (section 10.3.1). A packet of ours ending with such a token by chance (2^-128) only costs its loop a datagram it
  * forwards to the owner by ID.

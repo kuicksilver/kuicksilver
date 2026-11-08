@@ -90,7 +90,7 @@ private class PendingInput {
 }
 
 /**
- * Runs [call] on [z] with [input] as its input and [length] bytes of [output] from [offset] as its output; returns zlib's
+ * Runs [call] on `z` with [input] as its input and [length] bytes of [output] from [offset] as its output; returns zlib's
  * result code and moves [input] past what zlib consumed. The second value is the number of bytes written.
  */
 private inline fun ZStream.run(

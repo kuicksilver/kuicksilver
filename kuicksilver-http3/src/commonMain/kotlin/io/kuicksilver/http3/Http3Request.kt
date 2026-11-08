@@ -87,7 +87,7 @@ public class Http3Request private constructor(
         }
 
     /**
-     * Builds an [Http3Request]: [method], [authority] and [path] as the pseudo-headers, everything else optional; see the
+     * Builds an [Http3Request]: [method][Http3Request.Builder.method], [authority][Http3Request.Builder.authority] and [path][Http3Request.Builder.path] as the pseudo-headers, everything else optional; see the
      * properties of [Http3Request] for what each setting means. New options arrive as new properties here, so code that
      * builds requests keeps compiling and linking.
      */

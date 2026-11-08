@@ -407,7 +407,7 @@ internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnec
 }
 
 /**
- * HTTP/3 is announced only where it is served (turned on together with the UDP listener), and as [http3Advertising] says at
+ * HTTP/3 is announced only where it is served (turned on together with the UDP listener), and as `http3Advertising` says at
  * the moment each response head goes out: `h3` under [Http3Advertising.On], `clear` (RFC 7838 section 3) otherwise.
  */
 private fun KuicksilverApplicationEngine.http3AltSvc(port: Int): () -> String? {

@@ -70,6 +70,13 @@ if (providers.gradleProperty("kuicksilver.docs.reportUndocumented").map { it != 
     }
 }
 
+// strict gate of the site build: with the property, any Dokka warning (an undocumented public declaration, an unresolved
+// KDoc link) fails the module's run, so none can come back; the ratchet in tools/docs/api-baseline.properties stays as the
+// second check of the finished pages
+if (providers.gradleProperty("kuicksilver.docs.reportUndocumented").map { it != "false" }.getOrElse(false)) {
+    dokka { dokkaPublications.configureEach { failOnWarning.set(true) } }
+}
+
 // @InternalKuicksilverApi declarations stay out of the API reference (kuicksilver-dokka)
 dependencies { dokkaPlugin(project(":kuicksilver-dokka")) }
 

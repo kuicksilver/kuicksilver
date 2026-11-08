@@ -79,6 +79,7 @@ public sealed class QuicException(
                 checkCode(code)
             }
 
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): TransportClosed = TransportClosed(code, frameType, reason, wire, initiator, cause)
         }
 
@@ -98,6 +99,7 @@ public sealed class QuicException(
                 checkCode(code)
             }
 
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): ApplicationClosed = ApplicationClosed(code, reason, initiator)
         }
 
@@ -111,6 +113,7 @@ public sealed class QuicException(
             public val kind: TimeoutKind,
             public val duration: Duration,
         ) : ConnectionLost("$kind timeout after $duration") {
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): Timeout = Timeout(kind, duration)
         }
 
@@ -131,16 +134,19 @@ public sealed class QuicException(
                         )
                 }}, we support ${supported.map { "0x" + it.toUInt().toString(16) }}",
             ) {
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): VersionNegotiation = VersionNegotiation(offered, supported)
         }
 
         /** The active path failed validation and no other validated path remains (RFC 9000 section 9.3.2). */
         public class NoViablePath : ConnectionLost("no viable path") {
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): NoViablePath = NoViablePath()
         }
 
         /** A Stateless Reset from the peer (RFC 9000 section 10.3): it lost its state; the connection drains without a CONNECTION_CLOSE. */
         public class StatelessReset : ConnectionLost("stateless reset received") {
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): StatelessReset = StatelessReset()
         }
 
@@ -151,6 +157,7 @@ public sealed class QuicException(
          */
         @ExperimentalKuicksilverApi
         public class ZeroRttRejected : ConnectionLost("0-RTT rejected") {
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): ZeroRttRejected = ZeroRttRejected()
         }
 
@@ -159,6 +166,7 @@ public sealed class QuicException(
             message: String,
             cause: Throwable? = null,
         ) : ConnectionLost(message, cause) {
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): Internal = Internal(message ?: "", cause)
         }
     }
@@ -184,6 +192,7 @@ public sealed class QuicException(
                 checkCode(code)
             }
 
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): Reset = Reset(streamId, code, initiator)
         }
 
@@ -204,6 +213,7 @@ public sealed class QuicException(
                 checkCode(code)
             }
 
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): Stopped = Stopped(streamId, code, initiator)
         }
 
@@ -218,6 +228,7 @@ public sealed class QuicException(
         public class EarlyDataRejected(
             public val streamId: Long,
         ) : StreamError("stream $streamId reset: the server rejected 0-RTT") {
+            /** A copy of this exception, for the coroutines stack-trace recovery. */
             override fun createCopy(): EarlyDataRejected = EarlyDataRejected(streamId)
         }
     }
@@ -226,13 +237,14 @@ public sealed class QuicException(
      * `sendDatagram` with a payload above [QuicConnection.maxDatagramSize] (RFC 9221).
      *
      * @property size The payload's size in bytes.
-     * @property max The largest payload that fits at the call, 0 also when none fits; with [size] 0 it means not even an
+     * @property max The largest payload that fits at the call, 0 also when none fits; with [size][QuicException.DatagramTooLarge.size] 0 it means not even an
      *   empty datagram fits (e.g. a peer `max_datagram_frame_size` of 1).
      */
     public class DatagramTooLarge(
         public val size: Int,
         public val max: Int,
     ) : QuicException("datagram of $size bytes exceeds the maximum of $max") {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): DatagramTooLarge = DatagramTooLarge(size, max)
     }
 
@@ -244,11 +256,13 @@ public sealed class QuicException(
     public class DatagramUnsupported(
         public val reason: DatagramUnsupportedReason,
     ) : QuicException("datagrams unsupported: $reason") {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): DatagramUnsupported = DatagramUnsupported(reason)
     }
 
     /** The endpoint is closing: `connect` and `accept` after [QuicEndpoint.close] throw it. */
     public class EndpointClosing : QuicException("endpoint is closing") {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): EndpointClosing = EndpointClosing()
     }
 }

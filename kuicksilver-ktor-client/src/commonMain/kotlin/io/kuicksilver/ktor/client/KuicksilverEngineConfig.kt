@@ -49,10 +49,13 @@ public class HostPort(
     public val host: String,
     public val port: Int,
 ) {
+    /** Equal when the host and the port are. */
     override fun equals(other: Any?): Boolean = other is HostPort && other.host == host && other.port == port
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = host.hashCode() * 31 + port
 
+    /** `host:port`. */
     override fun toString(): String = "$host:$port"
 }
 
