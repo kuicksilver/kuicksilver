@@ -12,6 +12,18 @@
 #include <openssl/x509v3.h>
 #include <openssl/evp.h>
 
+/* System-OpenSSL mode (KSL_SYSTEM_OPENSSL, Linux only): the newest OpenSSL major version a system libssl may have. The one switch of
+ * the accepted range: the default is 3 (3.5 and newer 3.x), so a libssl.so.4 is refused with KSL_INIT_VERSION. 4.x is prepared
+ * but not supported in 0.3.0; building with -DKSL_SYSTEM_OPENSSL_MAX_MAJOR=4 (tools/ci/system-openssl.sh reads
+ * KSL_SYSTEM_OPENSSL_MAX_MAJOR) is how the range is opened once 4.x is supported. */
+#define KSL_SYSTEM_OPENSSL_DEFAULT_MAX_MAJOR 3
+#ifndef KSL_SYSTEM_OPENSSL_MAX_MAJOR
+#define KSL_SYSTEM_OPENSSL_MAX_MAJOR KSL_SYSTEM_OPENSSL_DEFAULT_MAX_MAJOR
+#endif
+/* Whether a libssl reporting OpenSSL_version_num() == num lies in the accepted range: at least 3.5.0, at most major max_major.
+ * Always compiled, so the C tests cover the range without a system libssl. */
+int ksl_system_openssl_version_ok(unsigned long num, unsigned max_major);
+
 #define KSL_EVQ 32
 #define KSL_NLEVELS 4
 #define KSL_QUIC_LEVEL_MAX (256u * 1024u) /* unread CRYPTO bytes ksl holds per level (ksl_quic_provide) */

@@ -2,14 +2,16 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Download OpenSSL source, verify the PGP signature and SHA-256 from openssl.lock, unpack.
-# Usage: fetch.sh   (pin from gradle/openssl.toml)
+# Usage: fetch.sh   (pin from gradle/openssl.toml, or the profile KSL_OPENSSL_PIN names)
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$here/../.."; out="${KSL_OPENSSL_WORK:-$root/build/openssl-work}"
 src="$out/src"
 mkdir -p "$src"
 
-toml="$root/gradle/openssl.toml"
+# KSL_OPENSSL_PIN: another pin profile, a path from the repository root (gradle/openssl-next.toml: the CI job openssl-next)
+pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;; *) toml="$root/$pin" ;; esac
+[ -f "$toml" ] || { echo "no pin profile $toml" >&2; exit 1; }
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$toml")
 sha256=$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")
 fpr=$(sed -n 's/^pgp_fingerprint = "\(.*\)"/\1/p' "$toml")

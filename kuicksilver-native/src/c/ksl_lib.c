@@ -4,12 +4,16 @@
 #include "ksl_internal.h"
 #include <stdio.h>
 
+int ksl_system_openssl_version_ok(unsigned long num, unsigned max_major) {
+    return num >= 0x30500000UL && (num >> 28) <= max_major;
+}
+
 #ifdef KSL_SYSTEM_OPENSSL
 #include <dlfcn.h>
-/* System libssl (Linux only): version floor 3.5, the QUIC TLS API must exist, and a keylog environment is refused outright
+/* System libssl (Linux only): version floor 3.5, ceiling KSL_SYSTEM_OPENSSL_MAX_MAJOR (ksl_internal.h), the QUIC TLS API must exist, and a keylog environment is refused outright
  * because a distribution libssl may have been built with enable-sslkeylog, and key logging goes only through the explicit KeylogSink. */
 static int check_system_openssl(void) {
-    if (OPENSSL_version_major() != 3 || OpenSSL_version_num() < 0x30500000UL)
+    if (!ksl_system_openssl_version_ok(OpenSSL_version_num(), KSL_SYSTEM_OPENSSL_MAX_MAJOR))
         return KSL_INIT_VERSION;
     if (!dlsym(RTLD_DEFAULT, "SSL_set_quic_tls_cbs"))
         return KSL_INIT_MISSING_SYMBOL;

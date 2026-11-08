@@ -18,13 +18,16 @@ fun String.camel() = split('-').joinToString("") { it.replaceFirstChar(Char::upp
 // finding 3). A stale one fails the build rather than being overwritten; a missing one is built as usual. A release never
 // reuses: tools/release/local-release.sh rebuilds all twelve from the verified tarball (KSL_OPENSSL_FRESH=1).
 val prebuilt = providers.gradleProperty("kuicksilver.openssl.prebuilt").map { it.toBoolean() }.getOrElse(false)
-val pinnedVersion = Regex("^version = \"(.*)\"", RegexOption.MULTILINE).find(root.resolve("gradle/openssl.toml").readText())?.groupValues?.get(1)
+// -Pkuicksilver.openssl.pin=gradle/openssl-next.toml: the pin profile of the CI job openssl-next (OpenSSL 4.x); tools/openssl/*.sh read it as KSL_OPENSSL_PIN
+val pinFile = providers.gradleProperty("kuicksilver.openssl.pin").map { root.resolve(it) }.getOrElse(root.resolve("gradle/openssl.toml"))
+val pinText = pinFile.readText()
+val pinnedVersion = Regex("^version = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
 fun prebuiltState(t: String): String? { // null when current, else why not ("missing" when there is nothing to reuse)
     val dir = root.resolve("build/openssl/$t")
     if (!dir.resolve("lib/libcrypto.a").isFile || !dir.resolve("lib/libssl.a").isFile) return "missing"
     val header = dir.resolve("include/openssl/opensslv.h")
     val version = if (header.isFile) Regex("OPENSSL_VERSION_STR \"(.*)\"").find(header.readText())?.groupValues?.get(1) else null
-    if (version != pinnedVersion) return "OpenSSL $version there, $pinnedVersion pinned in gradle/openssl.toml"
+    if (version != pinnedVersion) return "OpenSSL $version there, $pinnedVersion pinned in ${pinFile.name}"
     val flags = dir.resolve("configure-flags.txt")
     if (!flags.isFile || flags.readText() != root.resolve("tools/openssl/configure-flags.txt").readText()) return "configure-flags.txt differs from tools/openssl/configure-flags.txt"
     fun portable(line: String) = line.split(Regex("\\s+")).filter { it.isNotEmpty() && '/' !in it }.joinToString(" ")
@@ -34,7 +37,7 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
     if (target != expected) return "configure-target.txt says '$target', build.sh configures '$expected' for $t"
     val provenance = dir.resolve("provenance.txt").takeIf { it.isFile }?.readLines()?.associate { it.substringBefore(' ') to it.substringAfter(' ') }
         ?: return "no provenance.txt (built before it existed: rebuild with tools/openssl/build.sh $t)"
-    val pinnedSha = Regex("^sha256 = \"(.*)\"", RegexOption.MULTILINE).find(root.resolve("gradle/openssl.toml").readText())?.groupValues?.get(1)
+    val pinnedSha = Regex("^sha256 = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
     if (provenance["tarball-sha256"] != pinnedSha) return "provenance.txt names tarball ${provenance["tarball-sha256"]}, $pinnedSha is pinned"
     if (provenance["target"] != expected) return "provenance.txt names target '${provenance["target"]}', not '$expected'"
     for (a in listOf("libcrypto.a", "libssl.a")) {
@@ -46,7 +49,8 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
 
 val opensslFetch = tasks.register<Exec>("opensslFetch") {
     group = "openssl"; description = "Downloads and verifies the pinned OpenSSL tarball"
-    inputs.file(root.resolve("gradle/openssl.toml")); outputs.dir(root.resolve("build/openssl-work/src"))
+    inputs.file(pinFile); outputs.dir(root.resolve("build/openssl-work/src"))
+    environment("KSL_OPENSSL_PIN", pinFile.path)
     commandLine("bash", root.resolve("tools/openssl/fetch.sh").path)
     // nothing to fetch when every OpenSSL build this invocation needs is reused
     val buildTasks = opensslTargets.associateBy { "${project.path}:opensslBuild${it.camel()}" }
@@ -57,13 +61,14 @@ val opensslFetch = tasks.register<Exec>("opensslFetch") {
 opensslTargets.forEach { t ->
     tasks.register<Exec>("opensslBuild${t.camel()}") {
         group = "openssl"; description = "Builds static OpenSSL for $t"; dependsOn(opensslFetch)
-        inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/configure-flags.txt"), root.resolve("gradle/openssl.toml"))
+        inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/configure-flags.txt"), pinFile)
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
         outputs.dir(root.resolve("build/openssl/$t"))
         if (prebuilt) {
             onlyIf("kuicksilver.openssl.prebuilt: build/openssl/$t is not current") { _ -> prebuiltState(t) != null }
             doFirst { prebuiltState(t)?.takeIf { it != "missing" }?.let { throw GradleException("build/openssl/$t is stale ($it); delete it or drop -Pkuicksilver.openssl.prebuilt") } }
         }
+        environment("KSL_OPENSSL_PIN", pinFile.path)
         environment("JOBS", providers.gradleProperty("kuicksilver.openssl.jobs").getOrElse("4"))
         // Linux and mingw targets need the manylinux / mingw-w64 toolchains: built inside Docker (tools/openssl/docker)
         val script = if (t in dockerTargets) "tools/openssl/build-docker.sh" else "tools/openssl/build.sh"   // -kn targets: konan clang on the host

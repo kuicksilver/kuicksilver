@@ -557,7 +557,24 @@ static void test_system_store_parsed_once(void) {
     END();
 }
 
+/* System-OpenSSL range: 3.5 and newer 3.x by default, 4.x refused until KSL_SYSTEM_OPENSSL_MAX_MAJOR is raised (ksl_internal.h). */
+static void test_system_openssl_range(void) {
+    SECTION("system OpenSSL version range");
+    CHECK(KSL_SYSTEM_OPENSSL_DEFAULT_MAX_MAJOR == 3, "negative_systemOpenSslDefaultCeilingIsMajor3");
+    unsigned d = KSL_SYSTEM_OPENSSL_DEFAULT_MAX_MAJOR;
+    CHECK(ksl_system_openssl_version_ok(0x30500000UL, d), "3.5.0 accepted");
+    CHECK(ksl_system_openssl_version_ok(0x30600000UL, d), "3.6.0 accepted");
+    CHECK(!ksl_system_openssl_version_ok(0x30000020UL, d), "negative_system3_0Refused");
+    CHECK(!ksl_system_openssl_version_ok(0x304FFFF0UL, d), "negative_system3_4Refused");
+    CHECK(!ksl_system_openssl_version_ok(0x40000000UL, d), "negative_system4_0RefusedByDefault");
+    CHECK(!ksl_system_openssl_version_ok(0x40100000UL, d), "negative_system4_1RefusedByDefault");
+    CHECK(ksl_system_openssl_version_ok(0x40100000UL, 4), "4.1 accepted once the ceiling is 4");
+    CHECK(!ksl_system_openssl_version_ok(0x50000000UL, 4), "negative_system5_0RefusedWithCeiling4");
+    END();
+}
+
 void run_security(void) {
+    test_system_openssl_range();
     test_span_fits_never_wraps();
     test_secret_buffer_growth_wipes_old_block();
     test_default_ticket_keys_rotate_in_ksl();

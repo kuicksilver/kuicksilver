@@ -112,7 +112,7 @@ from us, so we commit to the following.
 - **Version strings.** The OpenSSL version stays visible in the native libraries (and in the JVM jar manifest as
   `OpenSSL-Version` and `OpenSSL-SHA256`), so scanners can see which release you ship. Update Kuicksilver promptly when
   an OpenSSL advisory applies.
-- **System OpenSSL.** On Linux, `ksl` can also be compiled against a system OpenSSL 3.5 or newer (`KSL_SYSTEM_OPENSSL`);
+- **System OpenSSL.** On Linux, `ksl` can also be compiled against a system OpenSSL 3.5 or newer 3.x (`KSL_SYSTEM_OPENSSL`; 4.x is refused, prepared but not supported in 0.3.0);
   published artifacts never do this. If you build that way, your operating system vendor is responsible for patching
   OpenSSL.
 - **Not FIPS.** Kuicksilver is not FIPS-certified, and the bundled OpenSSL is built without the FIPS provider (no

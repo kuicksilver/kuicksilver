@@ -19,6 +19,9 @@
 #     linux-x86_64, linux-aarch_64 ← linux · osx-aarch_64, osx-x86_64 ← apple · windows-x86_64 ← openssl-docker (mingw-x64)
 #   android (API 24, 35): AAR (arm64-v8a, x86_64, armeabi-v7a), size and 16 KiB gates, emulator tests
 #   linux ── jdk-compat (JDK 17 API, tests on 17 / 25)
+#   openssl-next (linux-x64, macos-arm64; weekly, or dispatch with only=openssl-next): the newest OpenSSL 4.x (gradle/openssl-next.toml) built
+#     natively, the ksl C tests and a JVM smoke test against it. continue-on-error, needs nothing, nothing needs it, no artifact is kept:
+#     0.3.0 ships OpenSSL 3.5 LTS only (docs/stability.md, OpenSSL).
 name: build
 on:
   # Documentation-only changes run the whole matrix too (no paths-ignore): the lint job checks the docs (doc-refs, links,
@@ -32,7 +35,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: comma-separated jobs to run (e.g. lint,apple); empty runs all; openssl-docker always runs; windows-loops-bench (MultiLoopBenchmark on Windows) runs only when named
+        description: comma-separated jobs to run (e.g. lint,apple); empty runs all; openssl-docker always runs; windows-loops-bench (MultiLoopBenchmark on Windows) and openssl-next (OpenSSL 4.x, not a gate) run only when named, or openssl-next in the weekly run
         type: string
         default: ''
       interop:
@@ -703,6 +706,46 @@ jobs:
           name: 'interop-${{ matrix.image }}-${{ matrix.peer }}'
           path: build/interop/2*
           retention-days: 14
+
+  openssl-next:
+    # OpenSSL 4.x readiness, never a gate: the newest 4.x release of gradle/openssl-next.toml (version, tarball SHA-256 and signing
+    # key pinned like the 3.5 one, same fetch.sh and build.sh through KSL_OPENSSL_PIN) is built on the runner itself, the ksl C
+    # tests run against it, and a JVM smoke test loads the JNI library built from it. continue-on-error: a red step here shows in
+    # the log, not in the run's result; no job depends on it and no artifact leaves it (release artifacts are 3.5 only). Not in
+    # push or pull_request runs: the weekly run, or a dispatch whose `only` names it.
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.only), ',openssl-next,')) }}
+    continue-on-error: true
+    runs-on: ${{ matrix.os }}
+    permissions: { contents: read }
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux-x64 }
+          - { os: macos-26, target: macos-arm64 }
+    env:
+      KSL_OPENSSL_PIN: gradle/openssl-next.toml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        with: { openssl-cache: next }
+      - name: 'openssl-next: fetch and verify'
+        run: bash tools/openssl/fetch.sh
+      - name: 'openssl-next: build ${{ matrix.target }}'
+        run: JOBS=3 bash tools/openssl/build.sh ${{ matrix.target }}
+      - name: 'openssl-next: C tests (${{ matrix.target }})'
+        run: bash tools/c-test.sh ${{ matrix.target }}
+      - name: 'openssl-next: JVM smoke test (${{ matrix.target }})'
+        # the bindings load the JNI library built from the 4.x archives and a TLS handshake runs through it
+        run: |
+          $G --max-workers=2 -Pkuicksilver.openssl.prebuilt=true -Pkuicksilver.openssl.pin=gradle/openssl-next.toml \
+            :kuicksilver-native:jvmTest \
+            --tests 'io.kuicksilver.native.KslSmokeTest.versionStringNamesTheKslAbi' \
+            --tests 'io.kuicksilver.native.KslSmokeTest.abiVersionMatches' \
+            --tests 'io.kuicksilver.native.KslSmokeTest.ctxFreezeRejectsMutation' \
+            :kuicksilver-tls:jvmTest --tests 'io.kuicksilver.tls.TlsConnectionTest'
 
   jvm-jar:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',jvm-jar,')) }}
