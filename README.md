@@ -48,7 +48,8 @@ embeddedServer(Kuicksilver) { /* ... */ }      // HTTP/1.1 over TLS and HTTP/3 o
 - **The rest of modern QUIC.** Datagrams (RFC 9221), path MTU discovery, QUIC v2, stream priorities, WebSockets and
   Extended CONNECT over HTTP/3, qlog; 0-RTT and BBR as opt-in, experimental features.
 - **Tested against the others.** The QUIC Interop Runner against msquic, ngtcp2, picoquic, quic-go, quiche and quinn,
-  in both roles, and a [published benchmark table](docs/benchmarks.md) against quiche, quinn and msquic.
+  in both roles, a [published benchmark table](docs/benchmarks.md) against quiche, quinn and msquic, and
+  [measured numbers against TCP](docs/why-quic.md) under delay, loss and an address change.
 - **No system OpenSSL.** Cryptography and certificates come from OpenSSL 3.5, pinned, signature-checked, built by this
   repository and statically linked behind one small C shim, `ksl`.
 
@@ -214,6 +215,8 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
   trends and the negative tests, generated from those artifacts.
 - [docs/benchmarks.md](docs/benchmarks.md) — goodput, CPU per GB and handshakes per second against quiche, quinn and
   msquic, with the method and its caveats (one Apple Silicon host; the amd64 peer images run emulated).
+- [docs/why-quic.md](docs/why-quic.md) — HTTP/3 against HTTP/1.1 and HTTP/2 over TCP under emulated delay and loss:
+  downloads, head-of-line blocking, connection setup, an address change mid-download, and when QUIC does not help.
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.
 - [docs/verifying.md](docs/verifying.md) — verifying a release: signatures, Gradle dependency verification, SBOM and
   provenance, rebuilding the native libraries.

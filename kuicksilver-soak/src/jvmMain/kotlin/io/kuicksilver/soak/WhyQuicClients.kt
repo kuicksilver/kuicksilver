@@ -141,12 +141,14 @@ internal fun whyQuicClient(args: List<String>) {
         }
         for (rep in 1..reps) {
             val c0 = cpu.processCpuTime
+            val t0 = System.nanoTime()
             val run =
                 try {
                     withTimeout(timeout) { once() }
                 } catch (e: Exception) {
+                    // a failed run: how long it took to fail, no bytes
                     System.err.println("why-quic: $client $protocol $scenario run $rep failed: $e")
-                    Run(false, timeout.inWholeMilliseconds / 1000.0, 0, 1)
+                    Run(false, (System.nanoTime() - t0) / 1e9, 0, 1)
                 }
             val c1 = cpu.processCpuTime
             println(

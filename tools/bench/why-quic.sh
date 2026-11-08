@@ -125,7 +125,7 @@ run() {
   [ "$(docker exec "$name" "${java[@]}" header)" = "$header" ] || { echo "why-quic: the client's CSV header differs from the script's" >&2; exit 1; }
   {
     echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "commit: $(git -C "$root" rev-parse HEAD)$(git -C "$root" diff --quiet HEAD -- . ':!docs' || echo ' (with local changes)')"
+    echo "commit: $(git -C "$root" rev-parse HEAD)$(git -C "$root" diff --quiet HEAD -- . ':!*.md' ':!docs' || echo ' (with local changes)')"
     echo "host: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc) CPUs, $(uname -sr)"
     echo "docker: $(docker version -f 'server {{.Server.Version}}, {{.Server.Os}}/{{.Server.Arch}}') ($(docker info -f '{{.OperatingSystem}}, kernel {{.KernelVersion}}, {{.NCPU}} CPUs, {{.MemTotal}} bytes'))"
     echo "image: $image $(docker image inspect -f '{{.Id}}' "$image")"
@@ -176,11 +176,17 @@ def secs(rs, scale=1.0, fmt="{:.2f}"):
 def cols(scenario): return [k for k in order if sel(scenario=scenario, client=k[0], protocol=k[1])]
 blocks = {}
 c = cols("download"); cells = sorted({(int(r["rtt_ms"]), float(r["loss_pct"])) for r in sel(scenario="download")})
-t = ["| RTT | loss | " + " | ".join(label[k] for k in c) + " |", "|---|---|" + "---|" * len(c)]
+def med(rs):
+    ok = [float(r["seconds"]) for r in rs if r["ok"] == "1"]; return statistics.median(ok) if ok else None
+tcp = [k for k in c if k[1] in ("h1", "h2")]
+t = ["| RTT | loss | " + " | ".join(label[k] for k in c) + " | h3 / fastest TCP |", "|---|---|" + "---|" * (len(c) + 1)]
 for rtt, loss in cells:
-    t.append(f"| {rtt} ms | {loss:g} % | " + " | ".join(secs(sel(scenario="download", client=k[0], protocol=k[1], rtt_ms=rtt, loss_pct=f"{loss:g}")) for k in c) + " |")
+    one = lambda k: sel(scenario="download", client=k[0], protocol=k[1], rtt_ms=rtt, loss_pct=f"{loss:g}")
+    h3, best = med(one(("kuicksilver", "h3"))), min((m for m in (med(one(k)) for k in tcp) if m is not None), default=None)
+    t.append(f"| {rtt} ms | {loss:g} % | " + " | ".join(secs(one(k)) for k in c) + f" | {h3 / best:.2f} |" if h3 and best else " | - |")
 n = sorted({len(sel(scenario="download", client=k[0], protocol=k[1], rtt_ms=r, loss_pct=f"{l:g}")) for k in c for r, l in cells})
-blocks["download"] = t + ["", f"Seconds to the last byte of 10 MiB on a new connection (handshake included), median / p90 of {', '.join(map(str, n))} runs per cell."]
+blocks["download"] = t + ["", f"Seconds to the last byte of 10 MiB on a new connection (handshake included), median / p90 of {' or '.join(map(str, n))} runs per cell "
+                          "(failed runs are counted, not timed). The last column: Kuicksilver h3's median over the smallest median of the TCP columns."]
 c = cols("hol"); cells = sorted({float(r["loss_pct"]) for r in sel(scenario="hol")})
 t = ["| RTT | loss | " + " | ".join(label[k] for k in c) + " |", "|---|---|" + "---|" * len(c)]
 for loss in cells:
@@ -207,11 +213,14 @@ for k in cols("download"):
     rs = [r for r in sel(scenario="download", client=k[0], protocol=k[1], rtt_ms=20, loss_pct=0) if r["ok"] == "1"]
     v = [float(r["client_cpu_s"]) / int(r["bytes"]) * 1e9 for r in rs if int(r["bytes"]) > 0]
     if v: t.append(f"| {label[k]} | {statistics.median(v):.1f} / {p90(v):.1f} | {len(v)} |")
-blocks["cpu"] = t + ["", "The client JVM's process CPU time (user and system, all threads, garbage collection and JIT included) over the 10 MiB downloads at 20 ms and no loss, per 10^9 bytes; the kernel's TCP work on the receive path is only partly in it."]
+blocks["cpu"] = t + ["", "The client JVM's process CPU time (user and system, all threads, garbage collection and JIT included) over the 10 MiB "
+                     "downloads at 20 ms and no loss, per 10^9 bytes. Each run includes a new client and a full handshake, so fixed costs weigh in; "
+                     "the kernel's TCP and UDP work on the receive path is only partly in it."]
 blocks["env"] = [f"- Measured {env.get('date', '?')} on commit `{env.get('commit', '?')[:12]}`{' (with local changes)' if 'local changes' in env.get('commit', '') else ''}.",
                  f"- Host: {env.get('host', '?')}; Docker: {env.get('docker', '?')}.",
                  f"- {env.get('java', '?')}; OkHttp `{env.get('okhttp', '?').removesuffix('.jar')}`.",
-                 f"- Network: {env.get('network', '?')}.", f"- Runs: {env.get('phases', '?')}."]
+                 f"- Network: {env.get('network', '?')}; {env.get('softnet drops', '?')}.",
+                 f"- Runs: {env.get('runs', '?')}." + (f" {env['parallel'][0].upper()}{env['parallel'][1:]}." if 'parallel' in env else "")]
 text = open(page).read()
 for name, lines in blocks.items():
     pat = re.compile(rf"(<!-- why-quic:begin {name} -->\n).*?(<!-- why-quic:end {name} -->)", re.S)

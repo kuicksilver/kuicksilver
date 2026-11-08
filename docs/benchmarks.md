@@ -12,6 +12,8 @@ after](#021-before-and-after)); the pairs of two peers and the amd64 calibration
 commit `c08bc57b` (0.2.0 plus 17 commits), which is also the "before" of that section. They are measurements, not
 promises, and the comparison has limits that matter more than the numbers. Read the next section first.
 
+How HTTP/3 compares with HTTP/1.1 and HTTP/2 over TCP under delay and loss is in [Why QUIC](why-quic.md).
+
 The raw data is in [benchmarks/](benchmarks/) (`goodput.csv`, `cpu.csv`, `handshakes.csv`, and `env.txt` with the host,
 Docker and every image digest). `tools/bench/run-table.sh` regenerates all of it (see [Reproducing](#reproducing)).
 

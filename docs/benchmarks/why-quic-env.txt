@@ -1,0 +1,12 @@
+date: 2026-11-08T18:48:58Z
+commit: bc8ac9e1d270f65e191a59dccdb96c5955c157a3 (the tree had uncommitted edits to CHANGELOG.md and README.md only)
+host: Apple M4 Max, 14 CPUs, Darwin 25.6.0
+docker: server 29.9.2, linux/arm64 (Docker Desktop, kernel 7.0.14-linuxkit, 14 CPUs, 15690371072 bytes)
+image: kuicksilver-interop:local sha256:cd0e1d7b53cd505f51e17e05fb166bff8d69521a3946c700d360252963a57dc3
+java: openjdk version "21.0.12.1" 2026-08-18
+libksl: linux-aarch_64/libksl_7_linux_aarch_64.so
+okhttp: okhttp-jvm-5.3.2.jar
+network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, no rate limit, VM netdev_max_backlog 100000 during the run
+runs: download,hol,connect,rebind; 15 per cell, 5 per download cell with loss; 2 warm-up runs per cell; timeout 600 s per run
+parallel: the download cells with loss ran at the same time, one container per RTT and loss; every other cell ran alone
+softnet drops: 0 packets dropped by the kernel's input backlog during the run (netdev_max_backlog 100000)
