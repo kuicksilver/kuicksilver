@@ -16,13 +16,12 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
-import io.kuicksilver.tls.TlsIdentity
 
 /**
  * The import block docs/guide/deployment.md shows for its samples (`guide:deployment:imports`), in a package of its own so
  * that every import is a real one: [everyDeploymentImport] uses each.
  */
-fun everyDeploymentImport(identity: TlsIdentity) {
+fun everyDeploymentImport(identity: io.kuicksilver.tls.TlsIdentity) {
     lateinit var engine: KuicksilverApplicationEngine
     val server =
         embeddedServer(Kuicksilver, configure = {

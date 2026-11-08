@@ -159,7 +159,7 @@ Android-only extension; the iOS and macOS one, without arguments, has the same n
 test, a gateway) imports at least one of them under another name:
 
 ```kotlin
-// guide:ktor:both-engines-imports
+// guide:ktor:both-engines-aliases
 import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 // guide:ktor:both-engines
@@ -439,6 +439,7 @@ has no deadline of its own, give the wait one:
 
 ```kotlin
 // guide:ktor:drain-wait
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 server.engine.http3Advertising = Http3Advertising.Drain
 // wait until the HTTP/3 connections are gone, or for 10 minutes at most (Drain has no deadline of its own)
 withTimeoutOrNull(10.minutes) {
@@ -1251,11 +1252,15 @@ val client = HttpClient(Kuicksilver) {
   Authentication); otherwise the server refuses it with `InvalidPurpose` (alert 43). One without that extension is
   accepted.
 - **A client without a certificate**, against `Required`: the server ends the handshake with the TLS alert
-  `certificate_required` (116). Over TCP the call fails with an exception whose message ends in "TLS alert received from
-  the peer: certificate_required (116)"; over QUIC with `QuicException.ConnectionLost.TransportClosed` with `code` 0x174
-  (0x0100 + 116) and a `TlsException.AlertReceived` as its cause. In `Auto` and `Preferred` mode the call then tries TCP,
-  where it fails the same way: the TCP failure is thrown, with the HTTP/3 one in its `suppressed` list. The server counts the failure in `handshakesFailedTls`
-  (`engine.http3Stats`) and `tlsHandshakeFailed` of its event listener.
+  `certificate_required` (116). Over TCP (`H1Only`) the call fails with an
+  `IOException` (Ktor's `ClosedByteChannelException`) whose message is "TLS alert received from the peer:
+  certificate_required (116)" and whose root cause is a `TlsException.AlertReceived`; the client's side of the TLS
+  handshake has completed by then, so the alert ends the request. Over QUIC (`H3Only`) the call fails with
+  `QuicException.ConnectionLost.TransportClosed`, `code` 0x174 (0x0100 + 116), with a `TlsException.AlertReceived` as
+  its cause. In `Preferred` mode HTTP/3 fails that way first (the event listener's `raceEnded` or `fallback` gets that
+  `TransportClosed`), the call goes on over TCP and fails there as over TCP, with no `suppressed` exceptions: the TCP
+  setup did not fail. The server counts the failure by transport: over QUIC in
+  `handshakesFailedTls` (`engine.http3Stats`), over TCP in its event listener's `tlsHandshakeFailed`.
 - **0-RTT.** A server that asks for client certificates cannot accept 0-RTT: `quicEarlyData = true` together with a
   `clientAuth` other than `None` fails the start with `IllegalArgumentException` "earlyData cannot be combined with client
   certificates" ([0-RTT](#0-rtt-opt-in-experimental)). A client with an `identity` may keep `earlyData` on; such a
@@ -1515,6 +1520,7 @@ on Android `android.util.Log` is the usual target):
 ```kotlin
 fun logLine(line: String) = println(line)   // your logging library
 // guide:ktor:protocol-log
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
         // the engine's own line per call that HTTP/3 could have served, into your logging
@@ -1660,8 +1666,9 @@ val server = embeddedServer(Kuicksilver, configure = {
 
 A replay can only repeat requests the policy runs early; the server also limits how often and where:
 
-1. **A short window.** A ticket's 0-RTT is accepted only while its age, as the client claims it, matches the server's
-   own within OpenSSL's fixed 10 seconds (RFC 9846 section 8.3), so a recorded flight is useless soon after.
+1. **A short window.** A ticket's 0-RTT is accepted only while the ticket's age by the server's clock lies within
+   [claimed − 1 s, claimed + 9 s] of the age the client claims (OpenSSL's fixed window, 10 s wide; RFC 9846 section 8.3),
+   so a recorded flight is useless at most 10 s after the original.
 2. **Once per ticket, per process.** A process-wide replay register remembers every ticket whose 0-RTT it accepted,
    for at least 20 seconds (longer than the window), and refuses that ticket's 0-RTT a second time. Every listener and
    every `udpSocketCount` loop of the process shares it. When it is full (it uses at most 1 MiB), 0-RTT is refused

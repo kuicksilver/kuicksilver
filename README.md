@@ -78,9 +78,19 @@ server engines, and is licensed under Apache-2.0.
 the release in preparation: every guide says "version `0.3.0` or newer", and features the guides mark as 0.3.0 (the
 HTTP/3 kill switch and `Http3Advertising`, certificate reload, the QUIC connection limits of the server engine, HTTP/2,
 WebTransport, among others; see the [CHANGELOG](CHANGELOG.md)) are not in 0.2.1. Until 0.3.0 is on Maven Central, build
-it from a checkout of `main`: `./gradlew publishToMavenLocal` (prerequisites in [CONTRIBUTING.md](CONTRIBUTING.md#building))
-publishes `0.3.0-SNAPSHOT` into `~/.m2`; add `mavenLocal()` to your repositories and use `0.3.0-SNAPSHOT` as the BOM
-version below. For 0.2.1, read the documentation of the `v0.2.1` tag.
+it from a checkout of `main` and use `0.3.0-SNAPSHOT` as the BOM version below, with `mavenLocal()` in your
+repositories. `./gradlew publishToMavenLocal` publishes every target, so it needs everything in
+[CONTRIBUTING.md](CONTRIBUTING.md#building): Docker (OpenSSL and `libksl` for Linux and Windows), the Android NDK and,
+on macOS, Xcode. For a JVM application,
+
+```sh
+./gradlew publishJvmPublicationToMavenLocal publishKotlinMultiplatformPublicationToMavenLocal :kuicksilver-bom:publishToMavenLocal
+```
+
+publishes only the JVM jars, the multiplatform metadata and the BOM: no Android AAR (no NDK) and no Kotlin/Native
+klibs. The metadata still runs the C interop of every native target, so OpenSSL is still built for each of them (Docker,
+and Xcode on macOS), and the jar carries the native library of the machine that built it only (on an Apple Silicon Mac,
+macOS arm64), so the application runs on that kind of machine alone. For 0.2.1, read the documentation of the `v0.2.1` tag.
 
 Each block pins every Kuicksilver module with the bill of materials (`kuicksilver-bom`) and every Ktor module with
 Ktor's (Kuicksilver needs Ktor 3.6.x, [Supported Ktor versions](docs/guide/ktor.md#supported-ktor-versions)). A module

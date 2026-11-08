@@ -184,8 +184,8 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
 ## Checks
 
 The project runs these scripts on `samples/ios` before a release, so they need a checkout of this repository; their
-results are below. For your own app you need only `tools/check/ios-private-api.py`, a single Python 3 file without
-dependencies beyond Xcode's command-line tools: take it from the tag of the version you use
+results are below. For your own app you need only `tools/check/ios-private-api.py`, a single Python 3 file that needs a full
+Xcode (the iOS SDK and `nm`; the Command Line Tools alone have no iOS SDK): take it from the tag of the version you use
 (`https://raw.githubusercontent.com/kuicksilver/kuicksilver/v<version>/tools/check/ios-private-api.py`) and run it on
 your Release binary, `python3 ios-private-api.py "$(xcrun --sdk iphoneos --show-sdk-path)" <your app's executable>`. It
 lists any symbol that no public SDK library exports and the required-reason API categories it finds, which the privacy

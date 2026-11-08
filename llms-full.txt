@@ -77,10 +77,16 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.io.IOException
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.readString
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
@@ -97,14 +103,17 @@ run as `GuideSamplesTest` (`kuicksilver-quic/src/jvmTest`).
 
 Two programs that speak a protocol of their own over QUIC, without HTTP: the server runs on the JVM (or on Kotlin/Native
 Linux, Apple or Windows, which serve on the accelerated socket), the client on any target, a Kotlin/Native executable
-included. Both name the same ALPN; the client verifies the server against a private CA.
+included. Both name the same ALPN; the client verifies the server against a private CA. The block is common code: a
+test compiles it for the JVM and every Kotlin/Native target and runs it with the common tests.
 
 ```kotlin
-val chainPem = File("fullchain.pem").readText()   // the server's certificate chain, leaf first
-val keyPem = File("privkey.pem").readText()       // its PKCS#8 key
-val caPem = File("ca.pem").readText()             // the CA the client trusts
-val scope = CoroutineScope(Dispatchers.Default)
+val dir = "/etc/my-proto"   // where the PEM files are
 // guide:quic:custom-alpn
+// the PEM files, read with kotlinx-io: common code, the same on every target
+val chainPem = SystemFileSystem.source(Path(dir, "fullchain.pem")).buffered().use { it.readString() }   // leaf first
+val keyPem = SystemFileSystem.source(Path(dir, "privkey.pem")).buffered().use { it.readString() }       // PKCS#8
+val caPem = SystemFileSystem.source(Path(dir, "ca.pem")).buffered().use { it.readString() }             // the client trusts it
+val scope = CoroutineScope(Dispatchers.Default)
 // ALPN: both sides list it, or the handshake ends with no_application_protocol (120)
 val myProtocol = listOf("my-proto/1")
 // the server: JVM, or Kotlin/Native on Linux, Apple and Windows
@@ -333,7 +342,7 @@ design in [ADR-0015](https://github.com/kuicksilver/kuicksilver/blob/main/docs/a
 
 > **Replay warning.** An attacker who sees the client's first flight can send it to the server again (RFC 9846
 > section 8). Write early only what is safe to execute twice, and act on anything else only after
-> `awaitHandshake()`. The server limits replays (OpenSSL's ±10 s ticket-age check, one use per ticket in a replay
+> `awaitHandshake()`. The server limits replays (OpenSSL's ticket-age check, a window 10 s wide, one use per ticket in a replay
 > register shared by the endpoint's loops, tickets bound to the configuration that issued them), but a replay into
 > another server process with shared ticket keys passes the age check alone.
 
@@ -2103,7 +2112,7 @@ Android-only extension; the iOS and macOS one, without arguments, has the same n
 test, a gateway) imports at least one of them under another name:
 
 ```kotlin
-// guide:ktor:both-engines-imports
+// guide:ktor:both-engines-aliases
 import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 // guide:ktor:both-engines
@@ -2383,6 +2392,7 @@ has no deadline of its own, give the wait one:
 
 ```kotlin
 // guide:ktor:drain-wait
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 server.engine.http3Advertising = Http3Advertising.Drain
 // wait until the HTTP/3 connections are gone, or for 10 minutes at most (Drain has no deadline of its own)
 withTimeoutOrNull(10.minutes) {
@@ -3195,11 +3205,15 @@ val client = HttpClient(Kuicksilver) {
   Authentication); otherwise the server refuses it with `InvalidPurpose` (alert 43). One without that extension is
   accepted.
 - **A client without a certificate**, against `Required`: the server ends the handshake with the TLS alert
-  `certificate_required` (116). Over TCP the call fails with an exception whose message ends in "TLS alert received from
-  the peer: certificate_required (116)"; over QUIC with `QuicException.ConnectionLost.TransportClosed` with `code` 0x174
-  (0x0100 + 116) and a `TlsException.AlertReceived` as its cause. In `Auto` and `Preferred` mode the call then tries TCP,
-  where it fails the same way: the TCP failure is thrown, with the HTTP/3 one in its `suppressed` list. The server counts the failure in `handshakesFailedTls`
-  (`engine.http3Stats`) and `tlsHandshakeFailed` of its event listener.
+  `certificate_required` (116). Over TCP (`H1Only`) the call fails with an
+  `IOException` (Ktor's `ClosedByteChannelException`) whose message is "TLS alert received from the peer:
+  certificate_required (116)" and whose root cause is a `TlsException.AlertReceived`; the client's side of the TLS
+  handshake has completed by then, so the alert ends the request. Over QUIC (`H3Only`) the call fails with
+  `QuicException.ConnectionLost.TransportClosed`, `code` 0x174 (0x0100 + 116), with a `TlsException.AlertReceived` as
+  its cause. In `Preferred` mode HTTP/3 fails that way first (the event listener's `raceEnded` or `fallback` gets that
+  `TransportClosed`), the call goes on over TCP and fails there as over TCP, with no `suppressed` exceptions: the TCP
+  setup did not fail. The server counts the failure by transport: over QUIC in
+  `handshakesFailedTls` (`engine.http3Stats`), over TCP in its event listener's `tlsHandshakeFailed`.
 - **0-RTT.** A server that asks for client certificates cannot accept 0-RTT: `quicEarlyData = true` together with a
   `clientAuth` other than `None` fails the start with `IllegalArgumentException` "earlyData cannot be combined with client
   certificates" ([0-RTT](#0-rtt-opt-in-experimental)). A client with an `identity` may keep `earlyData` on; such a
@@ -3459,6 +3473,7 @@ on Android `android.util.Log` is the usual target):
 ```kotlin
 fun logLine(line: String) = println(line)   // your logging library
 // guide:ktor:protocol-log
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
         // the engine's own line per call that HTTP/3 could have served, into your logging
@@ -3604,8 +3619,9 @@ val server = embeddedServer(Kuicksilver, configure = {
 
 A replay can only repeat requests the policy runs early; the server also limits how often and where:
 
-1. **A short window.** A ticket's 0-RTT is accepted only while its age, as the client claims it, matches the server's
-   own within OpenSSL's fixed 10 seconds (RFC 9846 section 8.3), so a recorded flight is useless soon after.
+1. **A short window.** A ticket's 0-RTT is accepted only while the ticket's age by the server's clock lies within
+   [claimed − 1 s, claimed + 9 s] of the age the client claims (OpenSSL's fixed window, 10 s wide; RFC 9846 section 8.3),
+   so a recorded flight is useless at most 10 s after the original.
 2. **Once per ticket, per process.** A process-wide replay register remembers every ticket whose 0-RTT it accepted,
    for at least 20 seconds (longer than the window), and refuses that ticket's 0-RTT a second time. Every listener and
    every `udpSocketCount` loop of the process shares it. When it is full (it uses at most 1 MiB), 0-RTT is refused
@@ -3924,7 +3940,11 @@ Kubernetes node), not in the image.
   network namespace whose `net.ipv4.ip_unprivileged_port_start` is at or below the port. In Kubernetes that sysctl is a
   "safe" one since 1.22, so a pod may set it without node changes (not together with `hostNetwork`;
   [Kubernetes: sysctls](https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/)); with Docker,
-  `docker run --sysctl net.ipv4.ip_unprivileged_port_start=443 ...` does the same. On a host with systemd,
+  `docker run --sysctl net.ipv4.ip_unprivileged_port_start=443 ...` does the same. Docker's own documentation says
+  non-root containers cannot bind ports below 1024 "especially in Kubernetes and Docker Engine < 20.10"
+  ([Docker: Hardened Images, troubleshooting](https://docs.docker.com/dhi/how-to/troubleshoot/)), so a newer engine may
+  already allow it: `docker run --rm my-server-image cat /proc/sys/net/ipv4/ip_unprivileged_port_start` prints the value
+  your containers get. On a host with systemd,
   `AmbientCapabilities=CAP_NET_BIND_SERVICE` next to `User=` in the unit grants the capability to the server process
   alone. Or bind an unprivileged port (8443) and map 443 to it in front: then the engine's `Alt-Svc` names 8443, so send
   your own header ([Ports and Alt-Svc](#ports-and-alt-svc)).
@@ -3935,6 +3955,7 @@ A pod spec with all three (a non-root user, a read-only root file system, port 4
 spec:
   securityContext:
     runAsNonRoot: true
+    runAsUser: 10001                 # a non-root user ID
     sysctls:
       - name: net.ipv4.ip_unprivileged_port_start
         value: "443"
@@ -4501,7 +4522,7 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 | `tls` (constructor) | `TlsConfig` |  | client or server role | 0.3.0 | name to verify, trust, ALPN; identity on a server |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | on a server, its `connectionIdLength` must equal the endpoint's | 0.2.0 | transport settings |
 | client `earlyData` (*experimental*) | `EarlyDataState` | `Disabled` | `Disabled`, `Allowed`, `Required` | 0.2.0 | keep the server's session tickets (per endpoint, single use) and send 0-RTT through `QuicEndpoint.connectEarly`; `Required` fails the connection with `ZeroRttRejected` when 0-RTT is refused or impossible ([0-RTT](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#0-rtt-opt-in-experimental)) |
-| server `earlyData` (*experimental*) | `Boolean` | `false` | not with client certificates | 0.2.0 | accept 0-RTT: fresh tickets only (±10 s ticket age), once per ticket, only for the configuration that issued it |
+| server `earlyData` (*experimental*) | `Boolean` | `false` | not with client certificates | 0.2.0 | accept 0-RTT: fresh tickets only (the ticket's age within a 10 s window: [claimed − 1 s, claimed + 9 s]), once per ticket, only for the configuration that issued it |
 | server `earlyDataContext` (*experimental*) | `ByteArray?` | `null` | at most 256 bytes | 0.2.0 | application settings bound into tickets (`Http3Endpoint` puts its SETTINGS here) |
 | client `tokenStore` (*experimental*) | `QuicTokenStore?` | `null` |  | 0.3.0 | keep the servers' NEW_TOKEN tokens and present one on the next connection to the same server name and port: no Retry round trip; links those connections ([Address tokens](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#address-tokens-new_token)) |
 | server `preferredAddress` (*experimental*) | `PreferredAddress?` | `null` | IP literals, ports 1..65535, not unspecified or multicast | 0.3.0 | also listen on these addresses (one per family) and offer them in `preferred_address`; clients that follow move there after validating the path ([Migration and paths](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#migration-and-paths)) |
@@ -4955,7 +4976,7 @@ its own `handshakeTimeout` ended (the Ktor server sets it through `quic`).
 | The client's platform verifier waits on slow OCSP or AIA fetches (`TrustConfig.Platform` on Apple and Windows) | the handshake stalls after the server's certificate arrives (qlog) | allow the verifier's network access, or verify against `AnchoredCa` |
 | The server's answers leave from another address than the one the client sent to (a host with several addresses, a floating IP, a VIP for direct server return, with the portable socket or before 0.3.0) | `tcpdump` on the server shows answers whose source differs from the destination of the client's Initials; TCP to the same address works | bind the connector's `host` to that address, or use the accelerated socket ([Deploying: Reply addresses](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#reply-addresses)) |
 | Many clients behind one source address (a source NAT, `kube-proxy` with `externalTrafficPolicy: Cluster`, a UDP proxy) hit the stateless answer limit, 8 per second per address | `statelessRateLimited` grows while Retry packets or refusals are due; only some clients fail | keep the client addresses (`externalTrafficPolicy: Local`); the Ktor server engine does not let you change that limit ([Deploying: Kubernetes](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#kubernetes)) |
-| A tunnel or link on the path drops 1200-byte UDP datagrams (every datagram that carries an Initial is at least 1200 bytes, RFC 9000 section 14.1) | small UDP gets through, `tcpdump` on the client shows Initials going out and nothing back, or the server sees none | fix the tunnel's MTU: QUIC cannot run below 1200 bytes; after the handshake a smaller path is [black-hole detection](#transfers-stall-over-a-vpn-or-tunnel-mtu-black-hole)'s case |
+| A tunnel or link on the path drops 1200-byte UDP datagrams (every client Initial datagram is at least 1200 bytes, RFC 9000 section 14.1) | small UDP gets through, `tcpdump` on the client shows Initials going out and nothing back, or the server sees none | fix the tunnel's MTU: QUIC cannot run below 1200 bytes; after the handshake a smaller path is [black-hole detection](#transfers-stall-over-a-vpn-or-tunnel-mtu-black-hole)'s case |
 | The server's UDP port is closed and the network answers with ICMP unreachable | `tcpdump` on the client shows the ICMP answer | the server's listener ([The server serves HTTP/1.1 but no HTTP/3](#the-server-serves-http11-but-no-http3)); Kuicksilver does not report ICMP yet, so the client waits for its timeout (`fallback = UdpUnreachable` is reserved for it) |
 
 With `ConnectionLost.VersionNegotiation` instead ("version negotiation failed: server offers [<versions>], we support
@@ -5664,8 +5685,8 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
 ### Checks
 
 The project runs these scripts on `samples/ios` before a release, so they need a checkout of this repository; their
-results are below. For your own app you need only `tools/check/ios-private-api.py`, a single Python 3 file without
-dependencies beyond Xcode's command-line tools: take it from the tag of the version you use
+results are below. For your own app you need only `tools/check/ios-private-api.py`, a single Python 3 file that needs a full
+Xcode (the iOS SDK and `nm`; the Command Line Tools alone have no iOS SDK): take it from the tag of the version you use
 (`https://raw.githubusercontent.com/kuicksilver/kuicksilver/v<version>/tools/check/ios-private-api.py`) and run it on
 your Release binary, `python3 ios-private-api.py "$(xcrun --sdk iphoneos --show-sdk-path)" <your app's executable>`. It
 lists any symbol that no public SDK library exports and the required-reason API categories it finds, which the privacy

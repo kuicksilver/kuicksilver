@@ -83,8 +83,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    0.3.0-rc1 leaves the status line at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks). While a
    minor version is in preparation on `main`, the README's Install blocks already name it and its status line and
    "Versions" paragraph say it is not published yet; the release commit of that version turns them into "X.Y.Z is on
-   Maven Central" and drops the build-it-yourself note (the script refuses the release while the status line still names
-   the previous version). For a final version of
+   Maven Central" and drops the build-it-yourself note, and `docs/guide/ios.md` is bumped in the same commit as the
+   README (its dependency line and xcframework URL). The script refuses the release while the status line still names
+   the previous version, and while the README still says "release in preparation" or "Until X.Y.Z is on Maven Central". For a final version of
    the newest line, the supported-versions table of `SECURITY.md` names it too ("0.2.1 today"; the script does not check
    this). The same commit carries the regenerated reliability page [reliability.md](reliability.md): its numbers are
    never typed by hand. Generate it before the commit, from the artifacts that exist then: the gate record of the last

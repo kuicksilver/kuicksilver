@@ -48,10 +48,16 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.io.IOException
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.readString
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
@@ -61,11 +67,11 @@ import kotlin.time.Duration.Companion.seconds
  * The import block docs/guide/quic.md shows for its samples (`guide:quic:imports`), in a package of its own so that every
  * import is a real one: [everyQuicImport] uses each, so a name that moves breaks this file.
  */
-suspend fun everyQuicImport(
-    chainPem: String,
-    keyPem: String,
-    caPem: String,
-) {
+suspend fun everyQuicImport(dir: String) {
+    val chainPem = SystemFileSystem.source(Path(dir, "fullchain.pem")).buffered().use { it.readString() }
+    val keyPem = SystemFileSystem.source(Path(dir, "privkey.pem")).buffered().use { it.readString() }
+    val caPem = SystemFileSystem.source(Path(dir, "ca.pem")).buffered().use { it.readString() }
+    CoroutineScope(Dispatchers.Default).launch { }
     val serverTls =
         tlsConfig(TlsRole.Server) {
             alpn = listOf("my-proto/1")

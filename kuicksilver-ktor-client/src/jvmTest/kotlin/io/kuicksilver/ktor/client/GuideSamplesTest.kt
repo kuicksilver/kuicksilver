@@ -375,6 +375,50 @@ class GuideSamplesTest {
                 assertIs<QuicException.ConnectionLost.TransportClosed>(without, without.toString())
                 assertEquals(0x0174L, without.code)
                 assertIs<TlsException.AlertReceived>(without.cause, without.toString())
+                // over TCP (H1Only), and in Preferred mode, where HTTP/3 fails first and the call goes on over TCP: there the TLS
+                // handshake completes on the client's side and the alert ends the request, so the TCP failure is thrown alone
+                val h3Failures = mutableListOf<Throwable?>()
+                for (mode in listOf(Http3DiscoveryMode.H1Only, Http3DiscoveryMode.Preferred)) {
+                    val e =
+                        assertFails {
+                            HttpClient(Kuicksilver) {
+                                engine {
+                                    trust = ClientFixtures.trust
+                                    http3 { discovery = mode }
+                                    eventListener =
+                                        object : KuicksilverEventListener() {
+                                            override fun raceEnded(
+                                                request: HttpRequestData,
+                                                winner: HttpProtocolVersion,
+                                                headStart: kotlin.time.Duration,
+                                                h3Failure: Throwable?,
+                                            ) {
+                                                h3Failures += h3Failure
+                                            }
+
+                                            override fun fallback(
+                                                request: HttpRequestData,
+                                                cause: Throwable,
+                                            ) {
+                                                h3Failures += cause
+                                            }
+                                        }
+                                }
+                            }.use { c -> c.get("https://127.0.0.1:$port/") }
+                        }
+                    assertEquals("TLS alert received from the peer: certificate_required (116)", e.message, "$mode: $e")
+                    assertIs<TlsException.AlertReceived>(generateSequence(e) { it.cause }.last(), "$mode: $e")
+                    assertEquals(emptyList(), e.suppressed.toList(), "$mode: $e")
+                    if (mode == Http3DiscoveryMode.H1Only) {
+                        assertEquals(emptyList(), h3Failures, "H1Only never tries HTTP/3")
+                    } else {
+                        // HTTP/3 was tried first and failed with the alert: CRYPTO_ERROR 0x0100 + 116
+                        assertTrue(
+                            h3Failures.any { it is QuicException.ConnectionLost.TransportClosed && it.code == 0x0174L },
+                            "$h3Failures",
+                        )
+                    }
+                }
             } finally {
                 server.stopSuspend(100, 1000)
             }

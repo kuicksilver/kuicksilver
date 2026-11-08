@@ -20,11 +20,8 @@ import io.kuicksilver.http3.capsuleConfig
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.webTransport
-import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
-import io.kuicksilver.tls.TlsConfig
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.io.readString
@@ -34,10 +31,10 @@ import kotlinx.io.readString
  * import is a real one: [everyHttp3Import] uses each, so a name that moves breaks this file.
  */
 suspend fun everyHttp3Import(
-    serverTls: TlsConfig,
-    clientTls: TlsConfig,
-    quicConnection: QuicConnection,
-) = coroutineScope {
+    serverTls: io.kuicksilver.tls.TlsConfig,
+    clientTls: io.kuicksilver.tls.TlsConfig,
+    quicConnection: io.kuicksilver.quic.QuicConnection,
+) = kotlinx.coroutines.coroutineScope {
     val settings = http3Settings { enableConnectProtocol = true }
     val server =
         Http3Endpoint.bind(

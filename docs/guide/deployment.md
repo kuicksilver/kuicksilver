@@ -173,7 +173,11 @@ Kubernetes node), not in the image.
   network namespace whose `net.ipv4.ip_unprivileged_port_start` is at or below the port. In Kubernetes that sysctl is a
   "safe" one since 1.22, so a pod may set it without node changes (not together with `hostNetwork`;
   [Kubernetes: sysctls](https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/)); with Docker,
-  `docker run --sysctl net.ipv4.ip_unprivileged_port_start=443 ...` does the same. On a host with systemd,
+  `docker run --sysctl net.ipv4.ip_unprivileged_port_start=443 ...` does the same. Docker's own documentation says
+  non-root containers cannot bind ports below 1024 "especially in Kubernetes and Docker Engine < 20.10"
+  ([Docker: Hardened Images, troubleshooting](https://docs.docker.com/dhi/how-to/troubleshoot/)), so a newer engine may
+  already allow it: `docker run --rm my-server-image cat /proc/sys/net/ipv4/ip_unprivileged_port_start` prints the value
+  your containers get. On a host with systemd,
   `AmbientCapabilities=CAP_NET_BIND_SERVICE` next to `User=` in the unit grants the capability to the server process
   alone. Or bind an unprivileged port (8443) and map 443 to it in front: then the engine's `Alt-Svc` names 8443, so send
   your own header ([Ports and Alt-Svc](#ports-and-alt-svc)).
@@ -184,6 +188,7 @@ A pod spec with all three (a non-root user, a read-only root file system, port 4
 spec:
   securityContext:
     runAsNonRoot: true
+    runAsUser: 10001                 # a non-root user ID
     sysctls:
       - name: net.ipv4.ip_unprivileged_port_start
         value: "443"

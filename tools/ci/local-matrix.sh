@@ -135,6 +135,7 @@ step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py
 step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check
 step "lint: links (Markdown, llms.txt)"         bash tools/check/links.sh
 step "lint: guide samples (guide-sync)"          bash tools/check/guide-sync.sh
+step "lint: guide-sync negative controls"        bash tools/check/guide-sync-test.sh
 step "lint: configuration tables vs the code"    bash tools/check/config-table.sh
 step "lint: config-table negative controls"      bash tools/check/config-table-test.sh
 step "lint: troubleshooting messages vs the code" bash tools/check/troubleshooting-msgs.sh

@@ -78,10 +78,16 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.io.IOException
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.readString
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
@@ -98,14 +104,17 @@ run as `GuideSamplesTest` (`kuicksilver-quic/src/jvmTest`).
 
 Two programs that speak a protocol of their own over QUIC, without HTTP: the server runs on the JVM (or on Kotlin/Native
 Linux, Apple or Windows, which serve on the accelerated socket), the client on any target, a Kotlin/Native executable
-included. Both name the same ALPN; the client verifies the server against a private CA.
+included. Both name the same ALPN; the client verifies the server against a private CA. The block is common code: a
+test compiles it for the JVM and every Kotlin/Native target and runs it with the common tests.
 
 ```kotlin
-val chainPem = File("fullchain.pem").readText()   // the server's certificate chain, leaf first
-val keyPem = File("privkey.pem").readText()       // its PKCS#8 key
-val caPem = File("ca.pem").readText()             // the CA the client trusts
-val scope = CoroutineScope(Dispatchers.Default)
+val dir = "/etc/my-proto"   // where the PEM files are
 // guide:quic:custom-alpn
+// the PEM files, read with kotlinx-io: common code, the same on every target
+val chainPem = SystemFileSystem.source(Path(dir, "fullchain.pem")).buffered().use { it.readString() }   // leaf first
+val keyPem = SystemFileSystem.source(Path(dir, "privkey.pem")).buffered().use { it.readString() }       // PKCS#8
+val caPem = SystemFileSystem.source(Path(dir, "ca.pem")).buffered().use { it.readString() }             // the client trusts it
+val scope = CoroutineScope(Dispatchers.Default)
 // ALPN: both sides list it, or the handshake ends with no_application_protocol (120)
 val myProtocol = listOf("my-proto/1")
 // the server: JVM, or Kotlin/Native on Linux, Apple and Windows
@@ -334,7 +343,7 @@ design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sid
 
 > **Replay warning.** An attacker who sees the client's first flight can send it to the server again (RFC 9846
 > section 8). Write early only what is safe to execute twice, and act on anything else only after
-> `awaitHandshake()`. The server limits replays (OpenSSL's ±10 s ticket-age check, one use per ticket in a replay
+> `awaitHandshake()`. The server limits replays (OpenSSL's ticket-age check, a window 10 s wide, one use per ticket in a replay
 > register shared by the endpoint's loops, tickets bound to the configuration that issued them), but a replay into
 > another server process with shared ticket keys passes the age check alone.
 

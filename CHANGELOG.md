@@ -413,7 +413,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   per-target Gradle blocks and the BOM, and the guides gained mutual TLS, per-request protocol logging, a complete raw
   QUIC example with a custom ALPN, a 0-RTT section for application authors, Kubernetes health checks, NAT idle timeouts,
   container notes (glibc, a read-only root file system, port 443 without root), an `EngineMain` `application.conf` and a
-  handshake-timeout diagnosis procedure.
+  handshake-timeout diagnosis procedure. `tools/check/guide-sync.sh` requires an import block to equal its test's imports
+  (negative controls in `guide-sync-test.sh`), and `tools/release/local-release.sh` refuses a README that still calls the
+  version it releases the release in preparation.
 
 ### Changed
 

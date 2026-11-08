@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.guide.both
 
-// guide:ktor:both-engines-imports
+// guide:ktor:both-engines-aliases
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText

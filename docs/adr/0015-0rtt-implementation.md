@@ -49,7 +49,7 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
 
 ### Anti-replay (server only)
 
-1. **Freshness:** OpenSSL's ±10 s ticket-age check. ADR-0013's `maxEarlyDataAge` knob is dropped. The allowance is a
+1. **Freshness:** OpenSSL's ticket-age check, a window 10 s wide ([claimed − 1 s, claimed + 9 s], see below). ADR-0013's `maxEarlyDataAge` knob is dropped. The allowance is a
    compile-time constant in OpenSSL, and the client's claimed age is not exposed to a callback, so a narrower window
    would need an OpenSSL patch, which was rejected.
 2. **Replay register:** there is one `ZeroRttReplayRegister` per process (`ProcessReplayRegister`), shared by every
