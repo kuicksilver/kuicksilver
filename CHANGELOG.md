@@ -404,6 +404,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/2 client: the first request on a new connection no longer waits for the server's SETTINGS (RFC 9113 §3.4), which
+  saves one round trip per new connection. Until the server's SETTINGS arrive its settings have their initial values
+  (§6.5.2: no stream limit); the server's SETTINGS must still arrive within the connect timeout, else the connection ends
+  with SETTINGS_TIMEOUT and its calls fail with `ConnectTimeoutException`, as before. Streams refused because a smaller
+  SETTINGS_MAX_CONCURRENT_STREAMS arrived after them go again and do not retire the connection.
+  `H2ClientConnection.start` (internal API) gained `prefaceTimeout` and returns at once.
 - TLS over TCP: the reader pump decrypts all the ciphertext a transport read brings before it hands the plaintext on (up
   to 64 KiB in one write instead of one write per 16 KiB record) and wakes the drainer only after records that carried no
   application data: the thread wake-ups between the pumps were the largest client CPU cost. A 10 MiB HTTP/1.1 download

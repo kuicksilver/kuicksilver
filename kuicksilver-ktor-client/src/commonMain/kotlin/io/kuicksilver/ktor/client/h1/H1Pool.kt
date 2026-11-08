@@ -1001,7 +1001,9 @@ internal class H1Pool(
                             sessions,
                         )
                     if (h2Ok && tls.negotiatedAlpn == "h2") {
-                        // RFC 9113 section 3.2: h2 over TLS; the server's preface (its SETTINGS) within the connect timeout
+                        // RFC 9113 section 3.2: h2 over TLS. Section 3.4: the request goes out right after our preface, without
+                        // waiting for the server's; its preface (its SETTINGS) must still arrive within the connect timeout, or
+                        // the connection ends with SETTINGS_TIMEOUT and its requests fail with ConnectTimeoutException
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         val client =
                             try {
@@ -1031,6 +1033,7 @@ internal class H1Pool(
                                             null
                                         }
                                     },
+                                    prefaceTimeout = data.connectTimeoutMillis(config).milliseconds,
                                 )
                             } catch (e: Throwable) {
                                 tls.close()

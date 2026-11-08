@@ -8,6 +8,7 @@
 
 package io.kuicksilver.ktor.client.h2
 
+import io.ktor.client.plugins.ConnectTimeoutException
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.client.request.ResponseAdapterAttributeKey
@@ -186,6 +187,9 @@ internal suspend fun h2Exchange(
     } catch (e: Throwable) {
         release() // this attempt is over: its stream must not hold the connection or a stream slot for the repeat
         if (e !is Http2Exception) throw e
+        // RFC 9113 section 3.4: the request went out before the server's preface, which never came within the connect timeout
+        // (the connection ended with SETTINGS_TIMEOUT): the connect timed out, as it would have before the request
+        if (conn.client.serverPrefaceMissed) throw ConnectTimeoutException(data, e)
         val consumed = bodyStarted && !body.isReplayable()
         // on the stream, or for the whole connection: a GOAWAY with HTTP_1_1_REQUIRED reports the streams above its last
         // one as refused (not processed), and those up to it as lost with the connection: those may have been processed
@@ -202,8 +206,11 @@ internal suspend fun h2Exchange(
             throw H2Http11Required(e, consumed, mayRepeat)
         }
         // REFUSED_STREAM twice on one connection retires it (OkHttp RealConnection.trackFailure); the streams a GOAWAY
-        // refuses are not counted (the connection is going away already, and one GOAWAY may refuse many)
+        // refuses are not counted (the connection is going away already, and one GOAWAY may refuse many), nor those opened
+        // before the server's SETTINGS: under the initial unlimited SETTINGS_MAX_CONCURRENT_STREAMS (RFC 9113 sections 3.4,
+        // 6.5.2) more may have gone out than the limit that arrived, and section 5.1.2 lets the server refuse those
         if (e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.REFUSED_STREAM && conn.client.goAwayCode == null &&
+            !stream.openedBeforeServerSettings &&
             conn.refusedStreams.addAndFetch(1) >= 2
         ) {
             conn.client.shutdown()

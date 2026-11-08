@@ -25,7 +25,9 @@ internal enum class Role { CLIENT, SERVER }
  *
  * - Preface and SETTINGS (sections 3.4, 6.5): queued at construction; the peer's first frame must be SETTINGS; ours must
  *   be acknowledged within [Http2Settings.settingsAckTimeout] of being written or the connection ends with
- *   SETTINGS_TIMEOUT.
+ *   SETTINGS_TIMEOUT. A client opens streams at once, under the section 6.5.2 initial values of the server's settings
+ *   (section 3.4); a server preface that has not arrived by [expectPeerPrefaceBy]'s deadline ends the connection with
+ *   SETTINGS_TIMEOUT too (our SETTINGS cannot be acknowledged before it).
  * - Streams (section 5.1): the client opens odd streams with [openStream], the server answers with [sendHeaders]. Server
  *   push is never used: a client sends SETTINGS_ENABLE_PUSH = 0 and refuses PUSH_PROMISE.
  * - Field compression (section 4.3.1): a field list is HPACK-encoded when [poll] writes it, never when it is queued, so
@@ -114,6 +116,14 @@ internal class H2ConnectionCore(
 
     private var prefaceLeft = if (client) 0 else H2.PREFACE.size
     private var peerSettingsSeen = false
+    private var peerPrefaceDeadline = -1L
+
+    /** The peer's connection preface (its first SETTINGS) arrived. */
+    val peerPrefaceReceived: Boolean get() = peerSettingsSeen
+
+    /** The connection ended because the peer's preface had not arrived by the [expectPeerPrefaceBy] deadline. */
+    var peerPrefaceMissed: Boolean = false
+        private set
     internal var settingsSentAt = -1L // when [poll] wrote our SETTINGS; -1 before
     internal var settingsUnacked = 1
     internal var rttNanos = 100_000_000L // until the SETTINGS acknowledgement measures it
@@ -519,6 +529,17 @@ internal class H2ConnectionCore(
                 headerReady.isNotEmpty() ||
                 dataReady.isNotEmpty()
 
+    /**
+     * Ends the connection with SETTINGS_TIMEOUT (RFC 9113 section 6.5.3) when the peer's preface (section 3.4: its SETTINGS,
+     * the first frame it sends) has not arrived by [deadline] (nanoseconds, the clock of [onTimeout]). A client sends its
+     * requests without waiting for the server's preface (section 3.4: "clients are permitted to send additional frames to
+     * the server immediately after sending the client connection preface"), so this bounds how long they wait for a server
+     * that never answers. Our SETTINGS are not acknowledged before the peer's preface either.
+     */
+    fun expectPeerPrefaceBy(deadline: Long) {
+        if (!peerSettingsSeen) peerPrefaceDeadline = deadline
+    }
+
     /** The next deadline (nanoseconds) for [onTimeout], or null. */
     fun nextTimeout(): Long? {
         if (closed) return null
@@ -528,6 +549,7 @@ internal class H2ConnectionCore(
             t = t?.let { minOf(it, v) } ?: v
         }
         if (settingsUnacked > 0 && settingsSentAt >= 0) at(settingsSentAt + settings.settingsAckTimeout.inWholeNanoseconds)
+        if (!peerSettingsSeen && peerPrefaceDeadline >= 0) at(peerPrefaceDeadline)
         if (inBlock) at(blockStartedAt + settings.maxHeaderBlockTime.inWholeNanoseconds)
         if (gracefulPing >= 0) at(gracefulDeadline)
         return t
@@ -536,6 +558,10 @@ internal class H2ConnectionCore(
     fun onTimeout(now: Long) {
         lastNow = now
         if (closed) return
+        if (!peerSettingsSeen && peerPrefaceDeadline >= 0 && now >= peerPrefaceDeadline) {
+            peerPrefaceMissed = true
+            return connectionError(Http2ErrorCode.SETTINGS_TIMEOUT, "no connection preface (SETTINGS) from the peer in time")
+        }
         if (settingsUnacked > 0 && settingsSentAt >= 0 && now - settingsSentAt >= settings.settingsAckTimeout.inWholeNanoseconds) {
             return connectionError(Http2ErrorCode.SETTINGS_TIMEOUT, "SETTINGS not acknowledged within ${settings.settingsAckTimeout}")
         }

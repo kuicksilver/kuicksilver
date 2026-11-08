@@ -11,7 +11,6 @@ import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.core.Role
 import io.kuicksilver.http2.message.H2Messages
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlin.time.Duration
 import kotlin.time.TimeSource
@@ -49,6 +48,12 @@ public class H2ClientConnection private constructor(
 
     /** Why the connection ended, when it did. */
     public val closeCause: Throwable? get() = rt.closeCause
+
+    /**
+     * The connection ended because the server's preface (its SETTINGS, RFC 9113 section 3.4) did not arrive within the
+     * `prefaceTimeout` of [start]: the streams opened meanwhile failed with SETTINGS_TIMEOUT.
+     */
+    public val serverPrefaceMissed: Boolean get() = rt.peerPrefaceMissed
 
     /** When the last reserved stream was released, on the connection's monotonic clock (milliseconds). */
     public val idleSinceMillis: Long get() = rt.idleSince / 1_000_000
@@ -109,9 +114,15 @@ public class H2ClientConnection private constructor(
 
     public companion object {
         /**
-         * Starts the connection on [input] and [output] (the client preface and SETTINGS go out at once) and returns once
-         * the server's SETTINGS arrived (its preface, RFC 9113 section 3.4); the caller bounds that wait (the engine's
-         * connect timeout), and a cancelled or failed start closes the transport. [scope] owns the connection's
+         * Starts the connection on [input] and [output] (the client preface and SETTINGS go out at once) and returns at once,
+         * without waiting for the server's preface: RFC 9113 section 3.4, "To avoid unnecessary latency, clients are
+         * permitted to send additional frames to the server immediately after sending the client connection preface,
+         * without waiting to receive the server connection preface". Until the server's SETTINGS arrive, its settings have
+         * their initial values (section 6.5.2: SETTINGS_MAX_CONCURRENT_STREAMS unlimited, a 65 535-byte window, 16 384-byte
+         * frames); streams opened beyond a limit that arrives later are refused by the server (REFUSED_STREAM, section
+         * 5.1.2), and no new ones are opened beyond it. When the server's preface has not arrived within [prefaceTimeout],
+         * the connection ends with SETTINGS_TIMEOUT (section 6.5.3: our SETTINGS cannot be acknowledged before it) and its
+         * streams fail with it ([serverPrefaceMissed]); [Duration.INFINITE] for no bound. [scope] owns the connection's
          * coroutines; [closeTransport] closes the socket under the channels; [onChange] hears that capacity or usability
          * changed (from any thread, without suspending). [pingInterval]: a PING that often, and the connection ends when
          * one is still unanswered at the next; [Duration.INFINITE] for none. [clock] gives monotonic nanoseconds.
@@ -133,6 +144,7 @@ public class H2ClientConnection private constructor(
             clock: () -> Long = monotonicNanos(),
             connectionErrorOf: (Throwable) -> Http2ErrorCode? = { null },
             closeTransportGracefully: (() -> Unit)? = null,
+            prefaceTimeout: Duration = Duration.INFINITE,
         ): H2ClientConnection {
             val rt =
                 H2Runtime(
@@ -148,13 +160,8 @@ public class H2ClientConnection private constructor(
                     connectionErrorOf = connectionErrorOf,
                     closeTransportGracefully = closeTransportGracefully,
                 )
+            rt.expectPeerPrefaceWithin(prefaceTimeout.nanosOrMax())
             rt.start()
-            try {
-                rt.prefaceReceived.await()
-            } catch (e: Throwable) {
-                rt.abort(e as? CancellationException ?: e)
-                throw e
-            }
             return H2ClientConnection(rt)
         }
     }
@@ -168,6 +175,12 @@ public class H2ClientStream internal constructor(
 ) {
     /** The stream identifier. */
     public val id: Int get() = s.id
+
+    /**
+     * Opened before the server's preface arrived (RFC 9113 section 3.4), when its SETTINGS_MAX_CONCURRENT_STREAMS was not
+     * known yet: a REFUSED_STREAM on it may only mean that the limit, once known, was below the streams opened meanwhile.
+     */
+    public val openedBeforeServerSettings: Boolean get() = s.beforePeerSettings
 
     /** The final response head; interim (1xx) responses are skipped. Throws [Http2Exception] when the stream fails first. */
     public suspend fun response(): H2ResponseHead = s.head.await()

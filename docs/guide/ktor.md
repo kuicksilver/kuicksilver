@@ -499,7 +499,12 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
 - **Flow control follows the application's reading**: the server gets window back as the body is read, so a body the
   application does not read stops the server at the stream window (512 KiB, growing to 6 MiB while the application
   keeps up) instead of filling memory.
-- **Deadlines.** The server's SETTINGS (its preface) must arrive within the connect timeout; ours must be acknowledged
+- **No wait for the server's SETTINGS.** The first request goes out right after our preface (RFC 9113 §3.4), saving a
+  round trip on every new connection; until the server's SETTINGS arrive its settings have their initial values (§6.5.2:
+  no stream limit). Streams opened beyond a smaller SETTINGS_MAX_CONCURRENT_STREAMS that arrives later are refused by the
+  server (REFUSED_STREAM, not processed) and go again; those refusals do not retire the connection.
+- **Deadlines.** The server's SETTINGS (its preface) must arrive within the connect timeout, else the connection ends with
+  SETTINGS_TIMEOUT and its calls fail with `ConnectTimeoutException`; ours must be acknowledged
   within `settings.settingsAckTimeout` (10 s). A connection quiet for 10 s is checked with a PING before it takes a
   request (half the connect timeout at most, 5 s; one PING per connection, shared by the requests that wait); one that
   does not answer takes no new request and the request goes to a new connection. Calls still running on it are not cut:

@@ -62,6 +62,11 @@ internal class StreamRt(
     val id: Int,
     /** A response to a HEAD request, which has no content whatever its content-length says (RFC 9110 section 6.4.1). */
     private val headRequest: Boolean,
+    /**
+     * A client stream opened before the server's preface (its SETTINGS, RFC 9113 section 3.4) arrived, under the initial
+     * values of section 6.5.2: SETTINGS_MAX_CONCURRENT_STREAMS was not known yet.
+     */
+    val beforePeerSettings: Boolean = false,
 ) {
     /** Content delivered by the core and not yet pulled by [body]. */
     val chunks = ArrayDeque<ByteArray>()
@@ -160,6 +165,16 @@ internal class H2Runtime(
 
     /** Completed by the peer's first SETTINGS (its preface, RFC 9113 section 3.4); failed when the connection ends first. */
     val prefaceReceived = CompletableDeferred<Unit>()
+
+    /** The connection ended because the peer's preface did not arrive by the deadline of [expectPeerPrefaceWithin]. */
+    val peerPrefaceMissed: Boolean get() = lock.withLock { core.peerPrefaceMissed }
+
+    /** Ends the connection with SETTINGS_TIMEOUT unless the peer's preface arrives within [nanos] from now (the core's timer). */
+    fun expectPeerPrefaceWithin(nanos: Long) {
+        if (nanos == Long.MAX_VALUE) return
+        val now = clock()
+        withCore { expectPeerPrefaceBy(if (now > Long.MAX_VALUE - nanos) Long.MAX_VALUE else now + nanos) }
+    }
 
     /** Completed when the connection is over, with nothing left to write. */
     val closed = CompletableDeferred<Unit>()
@@ -794,7 +809,7 @@ internal class H2Runtime(
         try {
             withCore {
                 val id = openStream(fields, endStream)
-                val rt = StreamRt(this@H2Runtime, id, headRequest)
+                val rt = StreamRt(this@H2Runtime, id, headRequest, beforePeerSettings = !peerPrefaceReceived)
                 rt.localEnded = endStream
                 this@H2Runtime.streams[id] = rt
                 s = rt
