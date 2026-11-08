@@ -104,6 +104,14 @@ internal class H1Connection(
     override fun closeTransportOrderly() {
         orderly?.invoke() ?: closeTransport()
     }
+
+    /**
+     * Ends the reading side at once (a timeout fired): whoever waits on [input] fails now, not when the orderly close is
+     * over (the peer's close_notify, or its bound); the output still says goodbye.
+     */
+    fun cancelInput(cause: Throwable) {
+        input.cancel(cause)
+    }
 }
 
 /**
@@ -683,6 +691,12 @@ internal class H1Pool(
                 if (whole && !tlsFailed) conn.closeOrderly() else conn.close()
             }
 
+            /** A timeout expired: the reader is cut first, so the call's timeout surfaces on time; then the close. */
+            fun closeAfterExpiry() {
+                conn.cancelInput(kotlinx.io.IOException("the socket timeout expired"))
+                closeAfterFailure(null)
+            }
+
             try {
                 val requestTime = GMTDate()
                 // the socket timeout measures inactivity in both directions (Ktor: "maximum time of inactivity between two
@@ -694,7 +708,7 @@ internal class H1Pool(
                 var bodySent = false
 
                 suspend fun exchangeOnce(): HttpResponseData =
-                    withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterFailure(null) }) {
+                    withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterExpiry() }) {
                         writeHeaders(
                             data,
                             output,
@@ -785,7 +799,7 @@ internal class H1Pool(
                     try {
                         when (webSocketKeys) {
                             null -> exchangeOnce()
-                            else -> connectingWithin(data, onExpiry = { closeAfterFailure(null) }) { exchangeOnce() }
+                            else -> connectingWithin(data, onExpiry = { closeAfterExpiry() }) { exchangeOnce() }
                         }
                     } finally {
                         held?.release()

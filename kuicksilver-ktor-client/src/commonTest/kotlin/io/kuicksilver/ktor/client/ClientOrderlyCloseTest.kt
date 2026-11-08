@@ -23,6 +23,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -101,6 +102,33 @@ class ClientOrderlyCloseTest {
                     assertTrue(runCatching { c.get("https://127.0.0.1:$port/") }.isFailure)
                 }
                 assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
+            }
+        }
+
+    /**
+     * The socket timeout fires on time against a hung server that never answers our close_notify: the orderly close runs
+     * behind the call (its reader is cut at once), not in front of its SocketTimeoutException.
+     */
+    @Test fun negative_socketTimeoutFiresOnTimeAgainstAHungServer() =
+        clientTest {
+            val clean = CompletableDeferred<Boolean>()
+            val release = CompletableDeferred<Unit>()
+            tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, _ ->
+                readRequest(input)
+                clean.complete(input.endsCleanly())
+                release.await() // never answers the client's close_notify, holds the connection
+            }) { port ->
+                testClient(block = { install(HttpTimeout) { socketTimeoutMillis = 300 } }).use { c ->
+                    val start =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    val e = runCatching { c.get("https://127.0.0.1:$port/") }.exceptionOrNull()
+                    val took = start.elapsedNow()
+                    assertTrue(e is io.ktor.client.network.sockets.SocketTimeoutException, "failed with $e")
+                    assertTrue(took < 800.milliseconds, "the timeout of 300 ms surfaced after $took")
+                    assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
+                }
+                release.complete(Unit)
             }
         }
 
