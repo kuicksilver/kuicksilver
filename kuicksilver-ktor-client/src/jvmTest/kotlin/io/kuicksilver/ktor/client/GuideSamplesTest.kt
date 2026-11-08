@@ -5,6 +5,7 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.HttpClientEngineFactory
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.engine.http
 import io.ktor.client.plugins.HttpTimeout
@@ -55,6 +56,7 @@ class GuideSamplesTest {
                 it.parentFile
             }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
         assertTrue("guide:ktor:client" in guide, "marker client")
+        assertTrue("guide:ktor:minimal-client" in guide, "marker minimal-client")
         assertTrue("guide:ktor:pool" in guide, "marker pool")
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
@@ -297,6 +299,36 @@ class GuideSamplesTest {
             assertEquals(1 shl 20, config.http2.settings.initialStreamWindow)
         }
     }
+
+    // The guide's minimal client uses the platform trust store; the test server's certificate comes from a test CA, so the
+    // sample's `HttpClient(Kuicksilver)` resolves to this member, which adds that CA and nothing else.
+    @Suppress("FunctionName")
+    private fun HttpClient(engine: HttpClientEngineFactory<KuicksilverEngineConfig>): HttpClient =
+        io.ktor.client.HttpClient(engine) { engine { trust = ClientFixtures.trust } }
+
+    @Test fun minimalClientSample() =
+        clientTest {
+            val served = MutableStateFlow(0)
+            val (server, port) =
+                testServer {
+                    routing {
+                        get("/") {
+                            served.value++
+                            call.respondText("hello")
+                        }
+                    }
+                }
+            val url = "https://127.0.0.1:$port/"
+            try {
+                // guide:ktor:minimal-client
+                val client = HttpClient(Kuicksilver)
+                println(client.get(url).bodyAsText())
+                client.close()
+                assertEquals(1, served.value)
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
 
     @Test fun clientSample() {
         // guide:ktor:client

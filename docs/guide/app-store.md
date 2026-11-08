@@ -5,6 +5,21 @@ SPDX-License-Identifier: Apache-2.0
 
 # Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)
 
+**What this page is for.** It tells the owner of an iOS, Mac App Store or notarized macOS app that embeds Kuicksilver what
+to answer Apple (export compliance, privacy manifest, App Review) and what to file with the U.S. export authority, with
+templates to copy.
+
+**Before you start**
+
+- Your app links Kuicksilver: the klibs `io.kuicksilver:kuicksilver-http3`, `-quic` or `-ktor-client` (version `0.3.0` or
+  newer), or `Kuicksilver.xcframework`, which you build yourself from `samples/ios/kuicksilver-swift` (not published yet;
+  [iOS: Choosing how to consume it](ios.md#choosing-how-to-consume-it)).
+- Minimum OS versions: iOS 15; macOS 12 (Kotlin/Native) or macOS 11 (JVM) ([Platforms](../stability.md#platforms)).
+- You can open your app in App Store Connect and edit its `Info.plist`.
+
+**How to use this page.** This is a procedure, not an API: work through sections 1 to 6 in order, then copy what you
+need from [Templates](#templates). The iOS build itself is in [iOS](ios.md).
+
 This page walks through what Apple and the U.S. export rules ask of an app that embeds Kuicksilver, and ends with
 templates you can copy and fill in. The iOS build itself (frameworks, privacy manifest, size, device checks) is in
 [ios.md](ios.md).

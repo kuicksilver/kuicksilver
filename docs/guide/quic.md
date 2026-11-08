@@ -5,6 +5,24 @@ SPDX-License-Identifier: Apache-2.0
 
 # QUIC with Kuicksilver
 
+**What this page is for.** It explains the QUIC layer on its own: configuring, binding an endpoint, opening streams, and the
+transport features (0-RTT, migration, congestion control, load balancing, datagrams, qlog). For HTTP/3 see
+[HTTP/3](http3.md); for Ktor see [Ktor engines](ktor.md).
+
+**Before you start**
+
+- Dependency: `io.kuicksilver:kuicksilver-quic:0.3.0` or newer (it brings `kuicksilver-tls`).
+  Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+  ([Kotlin version](../stability.md#kotlin-version)).
+- Platforms: JVM 17 or newer, Android `minSdk` 24, iOS 15, macOS 12 (macOS 11 on the JVM), Linux, Windows
+  ([Platforms](../stability.md#platforms)).
+- A `TlsConfig` with ALPN set: a server needs an identity (certificate chain and private key), a client needs a trust
+  configuration ([TLS: Configuration](tls.md#configuration)).
+
+**Minimal example.** [Binding an endpoint and connecting](#binding-an-endpoint-and-connecting) opens a connection;
+[Opening a stream and echoing](#opening-a-stream-and-echoing) and [Accepting on the server](#accepting-on-the-server) are
+the two sides of an echo.
+
 Kuicksilver's QUIC layer (`io.kuicksilver:kuicksilver-quic`) implements QUIC v1 (RFC 9000/9001/9002) and, when
 configured, the compatible version negotiation of RFC 9368/9369 towards QUIC v2 (RFC 9369). There are two levels of
 API: a coroutine wrapper (`QuicEndpoint`/`QuicConnection`/`QuicStream`) for applications, and a sans-IO core

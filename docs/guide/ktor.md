@@ -5,6 +5,53 @@ SPDX-License-Identifier: Apache-2.0
 
 # Ktor engines
 
+**What this page is for.** It covers the Ktor server and client engines: starting a TLS and HTTP/3 server, making HTTP/3
+requests with `HttpClient(Kuicksilver)`, and the options and behaviour around them (limits, fallback, proxies,
+observability).
+
+**Before you start**
+
+- Dependencies: `io.kuicksilver:kuicksilver-ktor-server` and/or `io.kuicksilver:kuicksilver-ktor-client`, version
+  `0.3.0` or newer. Ktor 3.6.x, with all `io.ktor` artifacts on the same version
+  ([Supported Ktor versions](#supported-ktor-versions)).
+- Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+  ([Kotlin version](../stability.md#kotlin-version)).
+- Platforms: JVM 17 or newer, Android `minSdk` 24, iOS 15, macOS 12 (macOS 11 on the JVM), Linux, Windows
+  ([Platforms](../stability.md#platforms)).
+- A server needs a certificate chain and private key (PEM). A client needs none: it trusts the platform's store unless you
+  set `trust`.
+
+<a id="minimal-example"></a>
+**Minimal example.** A server with one route, and a client that makes one request to it (run the client inside a coroutine, for example
+`runBlocking { }`):
+
+```kotlin
+val chainPem = File("fullchain.pem").readText()
+val keyPem = File("privkey.pem").readText()
+// guide:ktor:minimal-server
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+        port = 8443
+    }
+}) {
+    routing {
+        get("/") { call.respondText("hello") }
+    }
+}
+server.start(wait = true)
+```
+
+```kotlin
+val url = "https://example.com:8443/"   // the host name in the certificate
+// guide:ktor:minimal-client
+val client = HttpClient(Kuicksilver)
+println(client.get(url).bodyAsText())
+client.close()
+```
+
+The client trusts the platform's store, so the server's certificate must chain to a CA it knows and name the host in the URL. The complete server,
+with client certificates, is under [Server](#server); the complete client, under [Client](#client).
+
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
 (`kuicksilver-http3`); both also speak HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), opt-in on the server ([HTTP/2 on the server](#http2-on-the-server)). The code blocks below compile and run as `GuideSamplesTest`
@@ -39,7 +86,7 @@ server.start(wait = true)
   right before the CRLF, which 0.2.0 and Go's net/http tolerate): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
   `BadRequestException` (Ktor answers 400 unless the application handles it) and the connection closes. An HTTP/1.1
   request without a Host field, or any request with two, gets 400 and the connection closed (RFC 9112 section 3.2).
-  The engine cannot act as a CONNECT proxy yet (planned for 0.3.0): a CONNECT reaches the application, but a 2xx answer
+  The engine cannot act as a CONNECT proxy (not supported in 0.3.0): a CONNECT reaches the application, but a 2xx answer
   goes out as `501 Not Implemented` with a warning in the application log, since a 2xx would promise a tunnel; every
   CONNECT ends its connection (RFC 9931 section 8). The engine's own 400 has the fixed body `Bad Request`
   (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`.
@@ -577,7 +624,7 @@ the server closed meanwhile is detected when it is taken from the pool and repla
 
 | Mode | Behaviour |
 |---|---|
-| `Auto` (default) | HTTP/1.1 first; HTTP/3 once the origin announced it with `Alt-Svc` (see below) |
+| `Auto` (default) | HTTP/1.1 first; HTTP/3 once the origin announced it with `Alt-Svc` ([Discovery and Alt-Svc](#discovery-and-alt-svc)) |
 | `Preferred` | HTTP/3 by prior knowledge, falling back to HTTP/1.1 (like `curl --http3`); `quicHints` gives the same treatment to listed origins in `Auto` mode |
 | `H3Only` | HTTP/3 only (like `curl --http3-only`): failures are reported, never retried over TCP; an `http://` or `ws://` request (HTTP/3 needs `https`, RFC 9114 section 3.1), and with a proxy configured every request, fails with `UnsupportedOperationException` |
 | `H1Only` | no HTTP/3: TCP only, which is HTTP/1.1, or HTTP/2 when the server offers it ([HTTP/2 on the client](#http2-on-the-client)) |
@@ -1295,8 +1342,8 @@ HTTP/3 did not reach the client.
 tests drive raw TCP sockets, so an HTTP/3 run would repeat them unchanged; WebSockets over HTTP/3 are covered by the
 engine's tests and by the client contract's `WebSocketTest` in `Kuicksilver-h3` mode. The test client is
 `HttpClient(Kuicksilver)` (a test-only dependency on `kuicksilver-ktor-client`), the plugins the suites install are
-Ktor 3.6.0's (test scope only). On the JVM: 143 tests, 135 pass, 8 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
-`@Http1Only` over HTTP/3 (the two keep-alive tests and chunked encoding), two tests `@Ignore`d upstream, and `testFragmentedFlagsFromTheFirstFrame` (below). The
+Ktor 3.6.0's (test scope only). On the JVM: 143 tests, 135 pass, 8 skip: `@Http2Only` (HTTP/2 server push, which Kuicksilver does not implement),
+`@Http1Only` over HTTP/3 (the two keep-alive tests and chunked encoding), two tests `@Ignore`d upstream, and `testFragmentedFlagsFromTheFirstFrame` (it sends RSV1 without a negotiated extension, which the engine refuses with 1002). The
 multipart uploads (streamed bodies of unknown length, chunked over HTTP/1.1) run over HTTP/3 too. Adapted: the test base (ports from the engine's resolved
 connectors, the TLS identity from the test CA, real time instead of virtual time), the paths of the local-file and
 static-resource tests (this module's layout and package), and `funkyChunked`, which expects a CRLF inside a quoted

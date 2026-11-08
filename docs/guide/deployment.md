@@ -5,6 +5,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Deploying the HTTP/3 server
 
+**What this page is for.** It is for the person who runs `embeddedServer(Kuicksilver)` in production and needs HTTP/3 to
+work: ports, firewalls, containers, load balancers, certificates, host settings and how to check from both ends.
+
+**Before you start**
+
+- A server built with `io.kuicksilver:kuicksilver-ktor-server` (version `0.3.0` or newer) and Ktor 3.6.x, on JVM 17 or
+  newer or as a Kotlin/Native server on Linux, macOS or Windows ([Platforms](../stability.md#platforms)).
+- A certificate chain and private key (PEM) for the host name clients use. HTTP/3 uses the same certificate as TLS over TCP.
+- Control over the network path: you can open the same port number on TCP and on UDP.
+
+**Minimal example.** The server that this page deploys is the one in [Ktor engines: Minimal example](ktor.md#minimal-example) (a
+`tlsConnector` with an identity; it serves HTTP/1.1 on TCP and HTTP/3 on UDP, same port). What has to reach it is in
+[Ports and Alt-Svc](#ports-and-alt-svc), and [Checking a deployment](#checking-a-deployment) shows how to test it.
+
 This guide is for running `embeddedServer(Kuicksilver)` in production with HTTP/3 working: what has to reach the server,
 what the host and the network in front of it need, and how to check from both ends why a client does or does not use
 HTTP/3. The engine's options are in [Ktor: Server](ktor.md#server) and the
@@ -42,7 +56,7 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
 
 - Map the same number on both sides (`443` outside to `443` inside), so the engine's header is right as it is.
 - Or let the application send its own `Alt-Svc`. The engine never replaces an `Alt-Svc` the application set, so the
-  application then also follows the run-time switch `engine.http3Advertising` (below) itself. Use it only on
+  application then also follows the run-time switch `engine.http3Advertising` ([Turning HTTP/3 off without a restart](#turning-http3-off-without-a-restart)) itself. Use it only on
   connectors that do serve HTTP/3: not on a plain connector without TLS, not on one with an `sniSelector`, and not when
   the start logged "HTTP/3 is not served ..." (a UDP bind failure, a platform without a QUIC server, `udpSocketCount`
   above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
@@ -71,7 +85,7 @@ The client side has its own rule: the Kuicksilver client ignores an alternative 
 an origin on a privileged one, as Chromium does ([Ktor: Discovery and Alt-Svc](ktor.md#discovery-and-alt-svc)).
 So for an origin on `https://host/` (port 443), HTTP/3 must also be reachable on a port below 1024, in practice UDP 443.
 
-`ma=86400` means clients remember the alternative for a day. To withdraw HTTP/3, use `Clear` or `Drain` (below), which
+`ma=86400` means clients remember the alternative for a day. To withdraw HTTP/3, use `Clear` or `Drain` ([Turning HTTP/3 off without a restart](#turning-http3-off-without-a-restart)), which
 send `Alt-Svc: clear`, rather than closing the UDP port, and keep that mode for at least 24 hours: `clear` only reaches
 clients that come back over TCP, so a client that cached the alternative and returns within its `ma` still tries QUIC.
 Clients that find the UDP port closed wait for their QUIC attempt to time out before they fall back. `altSvc = false` (`kuicksilver.altSvc` with `EngineMain`) stops the
@@ -114,10 +128,10 @@ EXPOSE 443/tcp 443/udp
 ```
 
 `EXPOSE` only documents ports; the `-p` mappings publish them. With `-p 8443:443/udp` (another host port) the engine's
-`Alt-Svc` names 443, which is wrong outside: map the same number or send your own header ([above](#ports-and-alt-svc)).
+`Alt-Svc` names 443, which is wrong outside: map the same number or send your own header ([Ports and Alt-Svc](#ports-and-alt-svc)).
 On Linux, `--network host` skips Docker's port mapping, and the engine binds the host's ports directly.
 
-The UDP buffer limits are kernel settings of the host ([below](#udp-socket-buffers)). Set them on the host (the
+The UDP buffer limits are kernel settings of the host ([UDP socket buffers](#udp-socket-buffers)). Set them on the host (the
 Kubernetes node), not in the image.
 
 ### Kubernetes
@@ -131,7 +145,7 @@ metadata:
   name: my-server
 spec:
   type: LoadBalancer
-  externalTrafficPolicy: Local   # keep the client's address (see below)
+  externalTrafficPolicy: Local   # keeps the client's address; see "The client's address" below the manifest
   selector:
     app: my-server
   ports:
@@ -196,7 +210,7 @@ Notes on specific products (checked 2026-11-05):
   Client IP preservation "can't be disabled for UDP, TCP\_UDP, QUIC, and TCP\_QUIC target groups"
   ([AWS: NLB target groups](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-target-groups.html)),
   so the per-IP limit sees real clients. Use TCP\_UDP with Kuicksilver. The QUIC and TCP\_QUIC listeners route by
-  QUIC connection ID: **not verified** with Kuicksilver's QUIC-LB connection IDs (below).
+  QUIC connection ID: **not verified** with Kuicksilver's QUIC-LB connection IDs ([Connection IDs and several instances](#connection-ids-and-several-instances)).
 - **Cloudflare** (proxied hostname): HTTP/3 ends at Cloudflare's edge; "HTTP/3 connection to the origin is not yet
   supported" ([Cloudflare: HTTP/3](https://developers.cloudflare.com/speed/optimization/protocol/http3/)). Cloudflare then
   reaches a Kuicksilver origin over TCP, and the origin's UDP port only serves clients that reach it directly. Set
@@ -364,7 +378,7 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
   Retry under handshake load; `ConnectionAdmission.AlwaysRetry` always does. Clients that bring a valid address token skip
   it.
 - **Hard limits.** `quicMaxConnections` 10 000, `quicMaxConnectionsPerIp` 256 and `quicAcceptQueue` 128 per listener
-  (below), and stateless answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per
+  ([QUIC connection limits](#quic-connection-limits)), and stateless answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per
   address and 1000 in total, which the engine does not let you change. What goes beyond is dropped and such clients see
   a handshake timeout; a full accept queue instead refuses at once with CONNECTION_REFUSED. This is why a source NAT in front
   of the server matters ([Kubernetes](#kubernetes)): every client behind it shares both per-address limits.
@@ -397,7 +411,7 @@ when many clients reach the server from one address:
 - Kubernetes `kube-proxy` with `externalTrafficPolicy: Cluster`, which may source-NAT packets to a node's address
   ([Kubernetes](#kubernetes)); with `Local` the client's address is kept and the default fits;
 - a UDP load balancer or proxy that sends from its own address (nginx `stream` by default,
-  [above](#what-can-sit-in-front-of-the-server)). The engine reads no PROXY protocol header on UDP, so such a proxy cannot
+  [What can sit in front of the server](#what-can-sit-in-front-of-the-server)). The engine reads no PROXY protocol header on UDP, so such a proxy cannot
   pass the client's address on.
 
 A client over the per-address limit gets no answer and fails at its handshake timeout; a Kuicksilver client then falls
