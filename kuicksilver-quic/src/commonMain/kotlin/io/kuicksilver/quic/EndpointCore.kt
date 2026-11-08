@@ -412,6 +412,8 @@ public class EndpointCore internal constructor(
     internal fun attach(
         core: ConnectionCore,
         issuance: CidIssuance = CidIssuance.Full,
+        /** Admission reserved the connection's slot ([pendingSlot]): it takes that one instead of a new one. */
+        slotReserved: Boolean = false,
     ) {
         core.registrar = registrar
         tokenSink?.let { sink ->
@@ -420,11 +422,12 @@ public class EndpointCore internal constructor(
         }
         if (testHoldNewConnectionIds && core.role == TlsRole.Server) core.cids.holdNewCidsForTest = true
         registry.add(core.localCid, core)
-        if (!core.holdsSlot) { // a client connection: admission took a server connection's slot before it was made
-            slots.acquireUnchecked()
-            core.holdsSlot = true
-        }
+        if (!slotReserved) slots.acquireUnchecked() // a client connection: counted, past the limits
         connections += core
+        // the slot is the connection's from the moment remove() can find it: a failure before this point leaves a reserved
+        // slot to admission, which gives it back
+        core.holdsSlot = true
+        if (slotReserved) pendingSlot = null
         markDirty(core)
         // rotated IDs route and reset like the first one
         if (core.role == TlsRole.Client && grouped) core.cids.generator = { r -> route.newCid(r, client = true) }

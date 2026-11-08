@@ -39,8 +39,8 @@ internal sealed class ConnectionSlots {
     /** Gives back a slot taken by [acquire] (with its [ip]) or [acquireUnchecked] (null). */
     abstract fun release(ip: AddressClass.IpKey?)
 
-    /** Addresses holding connections, for `QuicResourceProbe` (a group's loops report it once, on loop 0). */
-    abstract fun addressesForProbe(loopIndex: Int): Int
+    /** Addresses holding connections, for `QuicResourceProbe` (which counts a group's shared slots once). */
+    abstract val addresses: Int
 
     /** One endpoint's slots, used on its loop's thread only. */
     class Local : ConnectionSlots() {
@@ -72,7 +72,7 @@ internal sealed class ConnectionSlots {
             if (n <= 0) perIp.remove(ip) else perIp[ip] = n
         }
 
-        override fun addressesForProbe(loopIndex: Int): Int = perIp.size
+        override val addresses: Int get() = perIp.size
     }
 
     /**
@@ -88,7 +88,7 @@ internal sealed class ConnectionSlots {
         private val k0 = random.nextLong()
         private val k1 = random.nextLong()
         private val count = AtomicInt(0)
-        private val addresses = AtomicInt(0)
+        private val held = AtomicInt(0)
 
         private class Entry(
             val hash: Long,
@@ -105,17 +105,19 @@ internal sealed class ConnectionSlots {
             maxTotal: Int,
             maxPerIp: Int?,
         ): Int {
+            // the address first, the total last: a full address never holds one of the last total slots, even briefly, so
+            // it cannot make a concurrent Initial of another address be refused
+            if (count.load() >= maxTotal) return -1
+            val before = change(ip) { n -> if (maxPerIp != null && n >= maxPerIp) n else n + 1 }
+            if (maxPerIp != null && before >= maxPerIp) return -1
             while (true) {
                 val t = count.load()
-                if (t >= maxTotal) return -1
-                if (count.compareAndSet(t, t + 1)) break
+                if (t >= maxTotal) {
+                    change(ip) { n -> if (n > 0) n - 1 else 0 } // the endpoint filled up meanwhile: the address slot goes back
+                    return -1
+                }
+                if (count.compareAndSet(t, t + 1)) return before
             }
-            val before = change(ip) { n -> if (maxPerIp != null && n >= maxPerIp) n else n + 1 }
-            if (maxPerIp != null && before >= maxPerIp) {
-                count.decrementAndFetch() // the address is full: no slot after all
-                return -1
-            }
-            return before
         }
 
         override fun acquireUnchecked() {
@@ -127,7 +129,7 @@ internal sealed class ConnectionSlots {
             count.decrementAndFetch()
         }
 
-        override fun addressesForProbe(loopIndex: Int): Int = if (loopIndex == 0) addresses.load() else 0
+        override val addresses: Int get() = held.load()
 
         /** Replaces the count of [ip] by [update] of it (0: the entry goes) with one compare-and-set of its bucket; the count before. */
         private inline fun change(
@@ -156,9 +158,9 @@ internal sealed class ConnectionSlots {
                     }
                 if (buckets.compareAndSetAt(at, b, next)) {
                     if (old == 0) {
-                        addresses.incrementAndFetch()
+                        held.incrementAndFetch()
                     } else if (n == 0) {
-                        addresses.decrementAndFetch()
+                        held.decrementAndFetch()
                     }
                     return old
                 }

@@ -50,7 +50,10 @@ public object QuicResourceProbe {
         for (k in keys) out[k] = 0L
         val tracked = loops.load()
         out["quic.loops"] = tracked.size.toLong()
+        // a group's loops share one table of connection slots: counted once, through whichever of its loops is still tracked
+        val countedSlots = HashSet<io.kuicksilver.quic.endpoint.ConnectionSlots>()
         for (loop in tracked) {
+            val firstOfItsSlots = countedSlots.add(loop.core.slots)
             val one =
                 withContext(loop.dispatcher) {
                     val c = loop.core
@@ -61,7 +64,7 @@ public object QuicResourceProbe {
                             .sumOf { it.streams.size }
                             .toLong(),
                         c.registry.size.toLong(),
-                        c.slots.addressesForProbe(c.loopIndex).toLong(),
+                        (if (firstOfItsSlots) c.slots.addresses else 0).toLong(),
                         c.byRemote.size.toLong(),
                         loop.timers.count.toLong(),
                         c.accepted.size.toLong(),

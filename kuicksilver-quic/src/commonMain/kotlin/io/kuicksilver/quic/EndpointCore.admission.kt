@@ -250,12 +250,10 @@ private fun EndpointCore.admitValidated(
         }
     }
     config.maxConnectionLifetime?.let { core.lifetimeDeadline = now + it }
-    // the connection takes the slot reserved for it as it joins the endpoint: from now on its removal gives it back (an
-    // Initial that does not decrypt too); a failure before this point leaves the slot to the caller, which gives it back
+    // the connection takes the slot reserved for it as attach adds it to the endpoint: from then on its removal gives it back
+    // (an Initial that does not decrypt too); a failure before that leaves the slot to the caller, which gives it back
     core.admissionIpKey = ipKey
-    core.holdsSlot = true
-    pendingSlot = null
-    attach(core, issued.issuance)
+    attach(core, issued.issuance, slotReserved = true)
     // after attach: the sequence-1 ID a preferred address issues must route here (the registrar is set) before the first packet;
     // one re-encoding of the transport parameters for both changes. A preferred socket that failed is no longer offered
     // ... nor to a connection whose QUIC-LB ID is plaintext or unroutable: it hands out no second ID (draft-ietf-quic-load-balancers-21

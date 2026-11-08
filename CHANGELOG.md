@@ -593,7 +593,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   compare-and-set, never larger than the connections themselves). A slot is reserved when an Initial passes the limits,
   given back when no connection comes of it (policy refusal, Retry, an Initial that does not decrypt), and released when
   the connection is removed or its loop closes. `ConnectionAttempt.connections` and `connectionsFromAddress` count the
-  whole endpoint too. One loop behaves as before.
+  whole endpoint too. One loop behaves as before. Upgrading with `loops > 1` (the Ktor engine's `udpSocketCount`): the
+  limits are now endpoint-wide, so multiply the old values by the loop count to keep the same capacity.
 - HTTP/3: a server's `respond()` no longer fails when the client stops the request stream right after receiving the
   response HEADERS (a client abandoning a rejected CONNECT does so at once). The HEADERS frame was already handed to QUIC,
   but the flush after it met the client's STOP_SENDING and `respond()` threw a raw `ClosedWriteChannelException` and

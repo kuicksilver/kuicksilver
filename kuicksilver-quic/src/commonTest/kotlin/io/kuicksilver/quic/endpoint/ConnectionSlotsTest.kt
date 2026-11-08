@@ -16,7 +16,6 @@ import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** The slots of `maxConnections` and `maxConnectionsPerIp`, alone and shared by a loop group. */
@@ -39,7 +38,7 @@ class ConnectionSlotsTest {
         slots.release(ip(1))
         slots.release(ip(2))
         assertEquals(0, slots.total)
-        assertEquals(0, slots.addressesForProbe(0), "no entry is left once every connection is gone")
+        assertEquals(0, slots.addresses, "no entry is left once every connection is gone")
         assertEquals(0, slots.acquire(ip(3), 3, null), "null: no per-address limit")
     }
 
@@ -77,8 +76,7 @@ class ConnectionSlotsTest {
                     }.awaitAll()
                 assertEquals(0, worst.load(), "a limit was passed")
                 assertEquals(0, slots.total)
-                assertEquals(0, slots.addressesForProbe(0))
-                assertTrue(slots.addressesForProbe(1) == 0)
+                assertEquals(0, slots.addresses)
             }
         }
 }

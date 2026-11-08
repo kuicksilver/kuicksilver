@@ -440,7 +440,7 @@ class EndpointCoreTest {
         l0.remove(s)
         assertEquals(0, slots.total)
         assertNotNull(feed(l1, firstInitial(cep.connect(clientConfig(), a2, now)), InetSocketAddress("10.0.0.1", 1113)))
-        assertEquals(1, slots.addressesForProbe(0))
+        assertEquals(1, slots.addresses)
     }
 
     /** A loop that closes (a failed loop included) gives back the slots its connections held; the other loops go on. */
@@ -450,7 +450,7 @@ class EndpointCoreTest {
         assertNotNull(feed(l0, firstInitial(cep.connect(clientConfig(), a2, now)), a1))
         l0.close()
         assertEquals(0, slots.total)
-        assertEquals(0, slots.addressesForProbe(0))
+        assertEquals(0, slots.addresses)
         assertNotNull(feed(l1, firstInitial(cep.connect(clientConfig(), a2, now)), a1))
     }
 
@@ -469,7 +469,7 @@ class EndpointCoreTest {
         val (r0, _, retried) = sharedPair(io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
         assertNull(feed(r0, good, a1))
         assertEquals(0, retried.total, "asked for a Retry")
-        assertEquals(0, retried.addressesForProbe(0))
+        assertEquals(0, retried.addresses)
     }
 
     @Test fun acceptQueueCap32() {
