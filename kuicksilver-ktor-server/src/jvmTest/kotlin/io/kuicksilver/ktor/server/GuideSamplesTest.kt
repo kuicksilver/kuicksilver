@@ -59,6 +59,7 @@ class GuideSamplesTest {
                 it.parentFile
             }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
         assertTrue("guide:ktor:server" in guide, "marker server")
+        assertTrue("guide:ktor:minimal-server" in guide, "marker minimal-server")
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
         assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
         assertTrue("guide:ktor:certificate-rotation" in guide, "marker certificate-rotation")
@@ -302,6 +303,39 @@ class GuideSamplesTest {
                 }
             }
         }
+
+    @Test fun minimalServerSample() {
+        // guide:ktor:minimal-server
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+                    host = "127.0.0.1"
+                    port = 0
+                }
+            }) {
+                routing {
+                    get("/") { call.respondText("hello") }
+                }
+            }
+        server.start(wait = false)
+        try {
+            val response =
+                runBlocking {
+                    withTimeout(30.seconds) {
+                        val port =
+                            server.engine
+                                .resolvedConnectors()
+                                .first()
+                                .port
+                        rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                    }
+                }
+            assertTrue(response.startsWith("HTTP/1.1 200"), response)
+            assertTrue(response.endsWith("hello"), response)
+        } finally {
+            server.stop(100, 500)
+        }
+    }
 
     @Test fun serverSample() {
         // guide:ktor:server

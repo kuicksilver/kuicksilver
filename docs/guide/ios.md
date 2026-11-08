@@ -5,6 +5,23 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver on iOS
 
+**What this page is for.** It is for an iOS app developer who wants to add Kuicksilver, through Kotlin Multiplatform or
+SwiftPM: what to depend on, how it links, what Apple's privacy manifest and networking rules mean for it, and how to
+check the size and the build.
+
+**Before you start**
+
+- Kotlin 2.4.x with the targets `iosArm64` and `iosSimulatorArm64` (Kotlin/Native needs Kotlin 2.4.x,
+  [Kotlin version](../stability.md#kotlin-version)), or a Swift-only app; iOS 15 or newer.
+- Kuicksilver's binaries are built with Xcode 27.0; apps on Kotlin 2.4.20 may build with Xcode 26.4 or 27.0
+  ([Platforms](../stability.md#platforms)).
+- Dependency: `io.kuicksilver:kuicksilver-http3:0.3.0` or newer (or `-quic`, `-ktor-client`) for Kotlin Multiplatform. For
+  Swift, `Kuicksilver.xcframework`, which you build yourself from `samples/ios/kuicksilver-swift` (not published yet).
+
+**Minimal example.** The Gradle setup is in [Kotlin Multiplatform: klibs and one framework](#kotlin-multiplatform-klibs-and-one-framework),
+the SwiftPM one in [Swift only](#swift-only-kuicksilverxcframework-and-swiftpm), and a running app in
+[`samples/ios`](../../samples/ios/README.md).
+
 Kuicksilver runs on iOS through Kotlin/Native (`iosArm64`, `iosSimulatorArm64`). OpenSSL 3.5 and the `ksl` C shim are
 linked statically into your app with every OpenSSL symbol renamed to `ksl_ossl_*` (ADR-0007), so another OpenSSL or
 BoringSSL in the same app does not clash with it. The QUIC socket is the accelerated `ksl` socket (ECN, DF; no GSO/GRO
@@ -32,7 +49,7 @@ kotlin {
         it.binaries.framework { baseName = "Shared"; isStatic = true }
     }
     sourceSets.commonMain.dependencies {
-        implementation("io.kuicksilver:kuicksilver-http3:0.2.0")   // or -quic, -ktor-client
+        implementation("io.kuicksilver:kuicksilver-http3:0.3.0")   // or -quic, -ktor-client
     }
 }
 ```
@@ -82,7 +99,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "Kuicksilver",
-            url: "https://example.com/releases/0.2.0/Kuicksilver.xcframework.zip",
+            url: "https://example.com/releases/0.3.0/Kuicksilver.xcframework.zip",
             checksum: "<contents of checksum.txt>"
         ),
     ]
@@ -105,7 +122,7 @@ no collected data, one API category.
 | Disk space, active keyboards, user defaults | none | | not declared |
 
 `sysctlbyname` (OpenSSL reads the `hw.optional.arm.*` CPU features) is not on Apple's list. Check your own build with
-`tools/check/ios-private-api.py` (below): it prints a `required-reason` line per category it finds. Debug builds of a
+`tools/check/ios-private-api.py` ([Checks](#checks)): it prints a `required-reason` line per category it finds. Debug builds of a
 Kotlin framework import far more (`getattrlist`, `clock_gettime`, …) because they link the per-library caches with
 every platform binding; only the Release link is what you ship.
 

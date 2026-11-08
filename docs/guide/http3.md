@@ -5,6 +5,22 @@ SPDX-License-Identifier: Apache-2.0
 
 # HTTP/3 with Kuicksilver
 
+**What this page is for.** It explains the HTTP/3 layer on its own, without Ktor: QPACK, requests and responses, endpoints,
+0-RTT, shutdown, priorities, Extended CONNECT, capsules and WebTransport. If you use Ktor, start with [Ktor engines](ktor.md).
+
+**Before you start**
+
+- Dependency: `io.kuicksilver:kuicksilver-http3:0.3.0` or newer (it brings `kuicksilver-quic` and `kuicksilver-tls`).
+  Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+  ([Kotlin version](../stability.md#kotlin-version)).
+- Platforms: JVM 17 or newer, Android `minSdk` 24, iOS 15, macOS 12 (macOS 11 on the JVM), Linux, Windows
+  ([Platforms](../stability.md#platforms)).
+- A server needs a `TlsIdentity` (certificate chain and private key); a client needs a trust configuration
+  (`TrustConfig.Platform` by default). See [TLS: Configuration](tls.md#configuration).
+
+**Minimal example.** A server that answers requests is [Serving requests](#serving-requests), a client request is
+[Client requests](#client-requests), and both start from [Endpoints and connections](#endpoints-and-connections).
+
 Kuicksilver's HTTP/3 layer (`io.kuicksilver:kuicksilver-http3`) implements HTTP/3 (RFC 9114) with QPACK (RFC 9204),
 extensible priorities (RFC 9218), Extended CONNECT (RFC 9220) and HTTP datagrams (RFC 9297) on top of
 `kuicksilver-quic`. Server push is not implemented. The frame and QPACK codecs are sans-IO (ADR-0004); the connection

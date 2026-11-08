@@ -5,6 +5,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Troubleshooting
 
+**What this page is for.** It lists the symptoms you may see with Kuicksilver (an exception, a log line, a counter that does
+not move), what causes each one and what to do about it.
+
+**Before you start**
+
+- Have the exact text or code of the failure: the exception type and message, the log line, or the counter name.
+- Know the module you use (QUIC, HTTP/3, the Ktor client or server) and its version. The entries describe 0.3.0 behaviour;
+  some entries name the release that changed the behaviour ("since 0.2.1", "since 0.3.0"); the CHANGELOG lists every change.
+- A logger or a counter helps more than guessing; [Getting more information](#getting-more-information) shows how to turn them on.
+
+**How to use this page.** Search the page for the exact text, or find it in [Find your symptom](#find-your-symptom); the
+table sends you to the entry. Every option named here is listed with its default in the
+[configuration reference](configuration.md).
+
 Symptoms you may see with Kuicksilver, what causes them and what to do. Names of types, options and messages are the
 ones in the code; a message shown as `"…"` is the exception's or log line's text with the variable parts in angle
 brackets. Every option is listed with its default in the [configuration reference](configuration.md).
@@ -62,7 +76,7 @@ within `QuicConfig.handshakeTimeout` (10 s).
 
 | Cause | How to tell | Fix |
 |---|---|---|
-| UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only) | the server's `EndpointStats.datagramsReceived` does not move; TCP to the same port works; the Ktor client's `kuicksilverDiagnostics.fallback` is `HandshakeTimeout`, later `BrokenAlternative` | open UDP on the port ([Deploying the HTTP/3 server](deployment.md#firewalls-and-security-groups)); with the Ktor client use `Http3DiscoveryMode.Auto` or `Preferred`, which fall back to HTTP/1.1 ([below](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
+| UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only) | the server's `EndpointStats.datagramsReceived` does not move; TCP to the same port works; the Ktor client's `kuicksilverDiagnostics.fallback` is `HandshakeTimeout`, later `BrokenAlternative` | open UDP on the port ([Deploying the HTTP/3 server](deployment.md#firewalls-and-security-groups)); with the Ktor client use `Http3DiscoveryMode.Auto` or `Preferred`, which fall back to HTTP/1.1 ([The Ktor client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
 | The server refuses silently: `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached | server `EndpointStats.connectionsRefusedLimits`, `initialsDropped` (Ktor server: `engine.http3Stats`) | raise the limits in `quicEndpointConfig { }` (Ktor server: `quicMaxConnections`, `quicMaxConnectionsPerIp`) or spread the load |
 | Wrong address or port, nothing listening | no server traffic at all; on Kotlin/Native a QUIC server needs the accelerated socket | check `QuicEndpoint.localAddress` on the server and the address the client resolved |
 | Heavy loss on the first flight (radio links, a peer using `X25519MLKEM768`, whose first flights span two datagrams) | the qlog shows Initial retransmissions at 1 s, 2 s, 4 s | lower `QuicConfig.initialRtt` (default 333 ms, at most 10 s), see [QUIC: Configuration](quic.md#configuration); a client endpoint that already finished a connection to the same server address starts from its last smoothed RTT on its own |
@@ -143,7 +157,7 @@ client knows at once), or it drops the Initial silently (the client waits for it
 | `invalidTokens`, `retriesSent` | `INVALID_TOKEN` | a Retry token that expired or came from another address (the client moved, or a load balancer sent the second Initial to another server) | keep a client's packets on one server; see [Deploying](deployment.md) |
 
 The Ktor engines have their own limits: the client waits for a free connection beyond `maxConnectionsCount` or
-`maxConnectionsPerRoute` and fails with `ConnectTimeoutException` when the connect timeout runs out first ([below](#requests-wait-and-then-fail-with-connecttimeoutexception)).
+`maxConnectionsPerRoute` and fails with `ConnectTimeoutException` when the connect timeout runs out first ([requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception)).
 
 ### `QuicClientConfig` or `QuicServerConfig` cannot be built
 
@@ -186,7 +200,7 @@ unused connections on the client side.
   instance behind a load balancer: reset tokens come from a key of the endpoint that issued the connection
   ([QUIC: Stateless reset](quic.md#stateless-reset)). Such an endpoint may answer with a Stateless Reset (only to a short-header packet whose
   connection ID has its format and loop index, or with QUIC-LB its configuration and server ID, and within its stateless rate limit), but its token does not match, so the client ignores it (counted in `ConnectionStats.invalidResets`), and the connection ends with
-  "Idle timeout" instead ([above](#idle-timeout-after-30s)). Behind a load balancer, keep each client on one instance
+  "Idle timeout" instead ([Idle timeout](#idle-timeout-after-30s)). Behind a load balancer, keep each client on one instance
   ([Deploying the HTTP/3 server: Connection IDs and several instances](deployment.md#connection-ids-and-several-instances)),
   or let a QUIC-LB load balancer route by connection ID ([QUIC: Behind a load balancer](quic.md#behind-a-load-balancer)).
 - `ConnectionLost.ApplicationClosed` ("application closed by <Local|Peer>: code <n> (<reason>)"): an application
@@ -275,7 +289,7 @@ row while a large packet is unanswered, bring the connection back to 1200 and pa
   (default 1452, 1200..65527; a `QuicEndpoint` refuses more than 1500 with "maxUdpPayloadSize <n> exceeds the endpoint
   runtime's 1500-byte datagram slots").
 - `pathMtu` stuck at 1200 on a healthy path means the socket has no DF: the portable socket is in use
-  ([below](#the-accelerated-socket-is-not-used)).
+  ([the accelerated socket is not used](#the-accelerated-socket-is-not-used)).
 
 ### Throughput is far below the link
 
@@ -352,7 +366,7 @@ loops are not held up. Use fewer loops than cores and keep blocking work off the
 - A server must be allowed through the Windows firewall for inbound UDP and TCP on its port
   ([Deploying the HTTP/3 server](deployment.md#firewalls-and-security-groups)).
 - `keylogFile` on the JVM is refused (Windows has no POSIX permission view); on Kotlin/Native the file is only
-  created ([below](#key-logging-is-refused)).
+  created ([key logging is refused](#key-logging-is-refused)).
 
 ### macOS and iOS
 
@@ -451,10 +465,10 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 | `Http3Disabled` | `http3 { http3Allowed }` returned false: check the remote configuration behind it |
 | `NoAlternative` | `Auto` mode and the origin has not announced `h3` in `Alt-Svc` yet, or the entry expired; the first request always goes over HTTP/1.1. Use `quicHints` or `Preferred` for origins you know speak HTTP/3, and `FileAltSvcStore` to keep alternatives across restarts |
 | `BrokenAlternative` | HTTP/3 to this origin failed while HTTP/1.1 worked (UDP blocked, a QUIC error), so the alternative is skipped for 5 minutes, doubling per repeat up to 2 days; `altSvcMarkedBroken` reported it. Set `networkId` so a network change forgets the marks |
-| `Race` | the race went to HTTP/1.1: QUIC did not finish within its head start (1.5 x the origin's smoothed RTT, 250 ms without history, 100 ms..2 s; `hardDelay` overrides it), and on a network where QUIC was never seen working HTTP/1.1 starts after 10 ms. The QUIC setup goes on and serves the next requests |
+| `Race` | the race went to HTTP/1.1: QUIC did not finish within its head start (1.5 x the origin's smoothed RTT, 250 ms without history, 100 ms..2 s; `hardDelay` overrides it), and (since 0.3.0) on a network where QUIC was never seen working HTTP/1.1 starts after 10 ms. The QUIC setup goes on and serves the next requests |
 | `ExistingConnection` | an HTTP/3 connection to the origin was already open and carries the call |
 | `WebSocket` | a WebSocket starts on HTTP/1.1 until the origin has an HTTP/3 connection that allows Extended CONNECT (RFC 9220) |
-| `Fallback` | HTTP/3 failed for this request and it is repeated over TCP; `fallback` says why (below) |
+| `Fallback` | HTTP/3 failed for this request and it is repeated over TCP; `fallback` says why ([the `FallbackReason` table](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
 | `HttpsRecord` | an endpoint of the origin's HTTPS record (`http3 { httpsRecords }`) that offers one transport only: TCP (its ALPN set has no `h3`), or HTTP/3 without TCP (`no-default-alpn`), so nothing raced |
 
 `response.kuicksilverDiagnostics?.fallback` (`FallbackReason`, also `fallback=` in the engine's log line) names the cause
@@ -496,7 +510,7 @@ back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3
 
 ### Requests go through a proxy, or not, unexpectedly
 
-The Ktor client follows the platform's proxy settings by default (`proxyResolver = ProxyResolvers.System`), so a
+Since 0.3.0 the Ktor client follows the platform's proxy settings by default (`proxyResolver = ProxyResolvers.System`), so a
 request may go through a proxy you did not configure in code, over HTTP/1.1 (`protocolSelected` reports
 `ProtocolReason.Proxy`). Set `proxyResolver = ProxyResolvers.None` to connect directly, exempt the host in the
 settings (`no_proxy`, the OS bypass list), or set `proxy` explicitly. On macOS, iOS and Windows a proxy

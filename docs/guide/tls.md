@@ -5,6 +5,23 @@ SPDX-License-Identifier: Apache-2.0
 
 # TLS with Kuicksilver
 
+**What this page is for.** It explains the TLS layer on its own: building a `TlsConfig`, trust and certificate checks, TLS
+over a socket or any channel, session resumption, key logging and key exchange groups. QUIC, Ktor and the socket wrapper all
+use the same configuration object.
+
+**Before you start**
+
+- Dependency: `io.kuicksilver:kuicksilver-tls:0.3.0` or newer (the socket wrapper is `io.kuicksilver:kuicksilver-ktor-network`).
+  Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+  ([Kotlin version](../stability.md#kotlin-version)).
+- Platforms: JVM 17 or newer, Android `minSdk` 24, iOS 15, macOS 12 (macOS 11 on the JVM), Linux, Windows
+  ([Platforms](../stability.md#platforms)).
+- A client needs the server's name and a trust configuration; a server needs a `TlsIdentity` (certificate chain and
+  private key).
+
+**Minimal example.** [Configuration](#configuration) builds a client and a server `TlsConfig`; [TLS over a socket](#tls-over-a-socket)
+runs a handshake over TCP.
+
 Kuicksilver's TLS layer (`io.kuicksilver:kuicksilver-tls`) runs TLS 1.3 (RFC 9846; the default, as RFC 9852 asks) and,
 when asked, TLS 1.2 under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) over OpenSSL 3.5 on every Kotlin Multiplatform target. The same configuration object drives QUIC handshakes,
 TLS over TCP and the `ktor-network` socket wrapper. The code blocks below compile and run as `GuideSamplesTest`.
@@ -155,7 +172,7 @@ a server and for a client certificate alike.
 | Android | the platform `TrustManager`, including the app's Network Security Config (whose `cleartextTrafficPermitted` the Ktor client also honours for `http://`) | the platform's policy |
 | Apple (macOS, iOS) | `SecTrust` with the SSL policy for the host name: the keychain and the system roots | the platform's policy; an incomplete required check is `UnknownRevocationStatus` |
 | Windows (mingwX64) | CryptoAPI: `CertGetCertificateChain` for the `serverAuth` (or, for a client certificate, `clientAuth`) usage with the presented intermediates, then `CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL)` with the host name: the Windows root store, missing intermediates fetched through AIA | the leaf's status is checked; a revoked leaf is `Revoked`, an unknown status is ignored (soft fail, as browsers); network fetches share a 10 s budget and run off the handshake's thread |
-| Linux (Native) | OpenSSL inside `ksl` with the system CA bundle (below) | none |
+| Linux (Native) | OpenSSL inside `ksl` with the system CA bundle ([Linux trust store](#linux-trust-store)) | none |
 
 Windows errors map to `VerifyReason`: `CERT_E_UNTRUSTEDROOT` and chaining failures to `UnknownIssuer`, `CERT_E_EXPIRED` to
 `Expired` or `NotYetValid`, `CERT_E_CN_NO_MATCH` to `HostnameMismatch`, `CRYPT_E_REVOKED` and `CERT_E_REVOKED` to `Revoked`,

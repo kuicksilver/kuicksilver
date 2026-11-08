@@ -5,6 +5,25 @@ SPDX-License-Identifier: Apache-2.0
 
 # Configuration reference
 
+**What this page is for.** It is the reference for every Kuicksilver option: type, default, accepted range, the release
+that introduced it and what it does. Use it to look up one option; the guides explain how options work together.
+
+**Before you start**
+
+- Options belong to the modules `io.kuicksilver:kuicksilver-quic`, `-tls`, `-http3`, `-http2`, `-ktor-client` and
+  `-ktor-server` (version `0.3.0` or newer; the *Since* column names the release of each option;
+  `io.kuicksilver:kuicksilver-bom` pins the modules to one version). A module brings along the modules it is built on,
+  so you add the highest one you use.
+- Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+  ([Kotlin version](../stability.md#kotlin-version)). The engine options need Ktor 3.6.x
+  ([Ktor: Supported Ktor versions](ktor.md#supported-ktor-versions)).
+- Know which object you configure: the table in [Where each option is set](#where-each-option-is-set) maps each one to
+  its Kotlin, Ktor client, Ktor server and `EngineMain` spelling.
+
+**How to use this page.** Find the object in the contents line or search the page for the option name; each section
+links the guide that explains it. A minimal working setup is in [Ktor: Server](ktor.md#server) and
+[Ktor: Client](ktor.md#client).
+
 Every option of Kuicksilver in one place: its type, its default as the code sets it, the range the builder
 accepts and what it does. The guides explain how the options work together; each section links its guide. Options
 marked *experimental* need `@OptIn(ExperimentalKuicksilverApi::class)`, *delicate* ones
@@ -148,10 +167,10 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | 0.2.0 | TLS 1.3 is the default (RFC 9852); `Tls12And13` allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only); renegotiation is always refused, and on an `h2` connection a peer's attempt ends it (RFC 9113 section 9.2.1) |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) | at least one; QUIC refuses `TLS_AES_128_CCM_8_SHA256` | 0.2.0 | TLS 1.3 suites in preference order |
 | `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | 0.2.0 | certificate chain and key; `TlsIdentity.reloadable(...)` for one replaced at run time ([TLS guide](tls.md#rotating-the-server-certificate)) |
-| `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([below](#trustconfig)) |
+| `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([TrustConfig](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | 0.2.0 | `None`, `Optional` or `Required` client certificates |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
-| `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see below | 0.2.0 | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
+| `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see [SessionTicketConfig](#sessionticketconfig) | 0.2.0 | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
 | `keylog` (*delicate*) | `KeylogSink?` | `null` |  | 0.2.0 | TLS secrets as RFC 9850 key log lines ([Key logging](tls.md#key-logging)) |
 | `handshakeTimeout` | `Duration` | 10 s | positive (`Duration.INFINITE`: no deadline) | 0.2.0 | TLS over TCP only (QUIC uses `QuicConfig.handshakeTimeout`) |
 | `genericAlerts` | `Boolean` | `false` |  | 0.2.0 | send `handshake_failure` instead of the specific alert |
@@ -342,7 +361,7 @@ Guide: [Ktor: Client](ktor.md#client).
 
 | Option | Type | Default | Since | What it does |
 |---|---|---|---|---|
-| `tlsConnector(identity) { … }` |  |  | 0.2.0 | a TLS connector: HTTP/1.1 (and HTTP/2 with `http2`) over TLS on TCP and HTTP/3 on UDP on the same port (below) |
+| `tlsConnector(identity) { … }` |  |  | 0.2.0 | a TLS connector: HTTP/1.1 (and HTTP/2 with `http2`) over TLS on TCP and HTTP/3 on UDP on the same port ([Ktor: HTTP/3 on the server](ktor.md#http3-on-the-server)) |
 | `identity` | `TlsIdentity?` | `null` | 0.2.0 | turns every plain connector (`port = …`, `connector { }`) into a TLS connector; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](ktor.md#certificate-rotation)) |
 | `identityReloadInterval` (*experimental*) | `Duration?` | `null` | 0.3.0 | at least 1 s; how often the PEM files `EngineMain` read are checked for a renewed certificate (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](ktor.md#certificate-rotation)) |
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | 0.2.0 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
