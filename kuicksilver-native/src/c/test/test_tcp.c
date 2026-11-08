@@ -222,6 +222,85 @@ static void test_tls12(void) {
     END();
 }
 
+/* RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error (Section 5.4.1) of type PROTOCOL_ERROR".
+   OpenSSL refuses every renegotiation itself (SSL_OP_NO_RENEGOTIATION: a no_renegotiation warning) and the session goes on, so
+   ksl reports the attempt (KSL_GET_RENEGOTIATION) for the caller to decide; a read that refused one stops there (KSL_OK with
+   nothing read), so that nothing the peer sent after it is read before the caller looked. */
+static int renegotiation_seen(ksl_ssl *s) {
+    uint8_t b = 0xff;
+    size_t n = 0;
+    return ksl_ssl_get(s, KSL_GET_RENEGOTIATION, &b, 1, &n) == KSL_OK && n == 1 ? b : -1;
+}
+static void test_renegotiation_attempt_reported(void) {
+    SECTION("tcp_tls12_renegotiation_attempt_reported");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    uint8_t r[64];
+    size_t n;
+    /* a server's HelloRequest on an established session */
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        CHECK(echo_bytes(c, s, 100) && renegotiation_seen(c) == 0 && renegotiation_seen(s) == 0,
+              "control: no renegotiation reported on an ordinary session");
+        CHECK(ksl_tcp_write(s, (const uint8_t *)"before", 6, &n) == KSL_OK, "data before the HelloRequest");
+        SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
+        CHECK(SSL_renegotiate(s->ssl) == 1, "the server asks for renegotiation");
+        (void)SSL_do_handshake(s->ssl);
+        ERR_clear_error();
+        CHECK(ksl_tcp_write(s, (const uint8_t *)"after", 5, &n) == KSL_OK, "data after the HelloRequest");
+        shuttle(s, c);
+        CHECK(ksl_tcp_read(c, r, sizeof r, &n) == KSL_OK && n == 6 && !memcmp(r, "before", 6) &&
+                  renegotiation_seen(c) == 0,
+              "the data before the HelloRequest is read first, no renegotiation yet");
+        CHECK(ksl_tcp_read(c, r, sizeof r, &n) == KSL_OK && n == 0,
+              "the read that refused the HelloRequest stops there (nothing read)");
+        CHECK(renegotiation_seen(c) == 1, "the client reports the server's renegotiation attempt");
+        CHECK(SSL_get_options(c->ssl) & SSL_OP_NO_RENEGOTIATION, "renegotiation stays refused");
+        uint8_t out[256];
+        CHECK(ksl_tcp_drain(c, out, sizeof out, &n) == KSL_OK && n > 0,
+              "the no_renegotiation warning waits in the pair");
+        CHECK(ksl_tcp_read(c, r, sizeof r, &n) == KSL_OK && n == 5 && !memcmp(r, "after", 5),
+              "the session goes on: the data after it is read next");
+        CHECK(renegotiation_seen(c) == 1, "the report stays");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+    }
+    /* a client's renegotiation ClientHello on an established session */
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        SSL_clear_options(c->ssl, SSL_OP_NO_RENEGOTIATION);
+        CHECK(SSL_renegotiate(c->ssl) == 1, "the client asks for renegotiation");
+        (void)SSL_do_handshake(c->ssl);
+        ERR_clear_error();
+        shuttle(c, s);
+        CHECK(renegotiation_seen(s) == 0, "nothing reported before the server reads");
+        CHECK(ksl_tcp_read(s, r, sizeof r, &n) == KSL_OK && n == 0 && renegotiation_seen(s) == 1,
+              "the server reports the client's renegotiation attempt");
+        CHECK(renegotiation_seen(c) == 0, "negative: a renegotiation of our own is not the peer's");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+    }
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    /* TLS 1.3 has no renegotiation (RFC 9846 section 4.1.2): nothing to report */
+    cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+    sc = server_ctx("server");
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 100) && renegotiation_seen(c) == 0,
+              "TLS 1.3: no renegotiation reported");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+    }
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    END();
+}
+
 /* Answers a paused verification with a rejection (unknown_ca), as Kotlin's verifier does for an untrusted chain */
 static int reject_chain(ksl_ssl *s, int rc, void *a) {
     (void)a;
@@ -1680,8 +1759,9 @@ static void test_record_limits_per_cipher(void) {
         ksl_ssl_free(c);
         ksl_ssl_free(s);
     }
-    /* one read must not write past the limit either (review M1): 40 HelloRequests fed at once, one ksl_tcp_read. With OpenSSL's
-       SSL_MODE_AUTO_RETRY one SSL_read_ex went through all of them, an alert for each */
+    /* a read must not write past the limit either (review M1): 40 HelloRequests fed at once. With OpenSSL's SSL_MODE_AUTO_RETRY
+       one SSL_read_ex went through all of them, an alert for each. Each read now stops at the HelloRequest it refused (KSL_OK,
+       nothing read; KSL_GET_RENEGOTIATION), and the reads that follow, without a drain, end the session at the limit */
     {
         ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
         CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
@@ -1695,9 +1775,16 @@ static void test_record_limits_per_cipher(void) {
             ERR_clear_error();
             shuttle(s, c);
         }
-        CHECK(ksl_tcp_read(c, r, sizeof r, &n) == KSL_ERROR && last_message_has(c, "record limit"),
-              "negative: one read of 40 HelloRequests ends at the limit");
-        CHECK(c->records_sent <= start + 6, "no record written past the limit by one read");
+        int rc = KSL_OK, reads = 0;
+        while (rc == KSL_OK && reads < 40) {
+            rc = ksl_tcp_read(c, r, sizeof r, &n);
+            reads++;
+            if (rc == KSL_OK && n)
+                break; /* no application data was sent */
+        }
+        CHECK(rc == KSL_ERROR && last_message_has(c, "record limit"),
+              "negative: the reads of 40 HelloRequests end at the limit");
+        CHECK(c->records_sent <= start + 6, "no record written past the limit by any read");
         ksl_ssl_free(c);
         ksl_ssl_free(s);
     }
@@ -2260,6 +2347,7 @@ void run_tcp(void) {
     test_echo();
     test_truncation();
     test_tls12();
+    test_renegotiation_attempt_reported();
     test_client_verification_still_refuses();
     test_resumption();
     test_resumption_bounded();

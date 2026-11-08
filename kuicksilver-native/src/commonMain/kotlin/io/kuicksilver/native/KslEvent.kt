@@ -65,6 +65,12 @@ public object KslConst {
     /** 16 bytes: per encryption level 0..3, 4 bytes big-endian, CRYPTO bytes provided and not yet read by TLS (additive in ABI 6). */
     public const val GET_QUIC_PENDING: Int = 10
 
+    /**
+     * TCP, 1 byte: 1 once the peer attempted a TLS 1.2 renegotiation on the established session, which OpenSSL refused with a
+     * no_renegotiation warning (RFC 9113 section 9.2.1; additive in ABI 7). The read that refused it answers 0 bytes.
+     */
+    public const val GET_RENEGOTIATION: Int = 11
+
     public const val SET_SNI: Int = 1
     public const val SET_VERIFY_NAME: Int = 2
     public const val SET_QUIC_VERSION: Int = 3

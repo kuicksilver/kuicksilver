@@ -35,7 +35,8 @@ extern "C" {
    later 0.3.0 additions go under 7; additive under 7: ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
    ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_sender (send-only clones
-   of one UDP socket, one sender thread each) */
+   of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
+   section 9.2.1) */
 
 /* return codes */
 #define KSL_OK 0
@@ -95,6 +96,10 @@ extern "C" {
 /* clang-format off */
 #define KSL_GET_EARLY_DATA 9 /* 1 byte: 0 not attempted, 1 rejected, 2 accepted (final once EncryptedExtensions is sent / received) */
 #define KSL_GET_QUIC_PENDING 10 /* 16 bytes: per level 0..3, 4 bytes big-endian, CRYPTO bytes provided and not yet read by TLS */
+#define KSL_GET_RENEGOTIATION 11 /* TCP, 1 byte: 1 once the peer attempted a TLS 1.2 renegotiation on the established session (a
+                                      server's HelloRequest, a client's ClientHello), which OpenSSL refused with a no_renegotiation
+                                      warning; the session goes on. RFC 9113 section 9.2.1 makes it a connection error on HTTP/2.
+                                      The ksl_tcp_read that refused it stops there (KSL_OK, nothing read). Additive in ABI 7 */
 /* clang-format on */
 
 /* ksl_ssl_set keys */
@@ -297,8 +302,9 @@ int ksl_tcp_drain(ksl_ssl *, uint8_t *out, size_t cap, size_t *written);
 /* Takes at most one record's worth (16 KiB, or the negotiated max_fragment_length) per call (ABI 7); KSL_WANT_READ when the pair has no
    room: drain it and retry with the same bytes and the same length, from this or another buffer */
 int ksl_tcp_write(ksl_ssl *, const uint8_t *plaintext, size_t len, size_t *consumed);
-/* KSL_EOF after close_notify; KSL_OK with *read 0 when the read must write first and the pair has no room: drain, then read again
-   (records already fed may wait behind it, not for more input) */
+/* KSL_EOF after close_notify; KSL_OK with *read 0 when the read must write first and the pair has no room, or when it refused the
+   peer's renegotiation attempt (KSL_GET_RENEGOTIATION; ABI 7): drain, then read again (records already fed may wait behind it, not
+   for more input) */
 int ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);
 int ksl_tcp_shutdown(ksl_ssl *); /* sends close_notify; KSL_OK when the peer's arrived */
 /* Ends a session whose application failed with a fatal internal_error alert instead of close_notify (RFC 9846 section 6.1), where

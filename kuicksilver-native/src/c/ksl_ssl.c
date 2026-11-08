@@ -291,6 +291,10 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
         uint8_t b = st == SSL_EARLY_DATA_ACCEPTED ? 2 : st == SSL_EARLY_DATA_REJECTED ? 1 : 0;
         return copy_out(out, cap, len, &b, 1);
     }
+    case KSL_GET_RENEGOTIATION: {
+        uint8_t b = s->renegotiations > 0;
+        return copy_out(out, cap, len, &b, 1);
+    }
     default:
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown getter");
         return KSL_ERROR;
@@ -653,6 +657,17 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
                 ((uint8_t *)(uintptr_t)buf)[4] = SSL_KEY_UPDATE_NOT_REQUESTED;
         }
     }
+    /* RFC 9113 section 9.2.1: "A deployment of HTTP/2 over TLS 1.2 MUST disable renegotiation. An endpoint MUST treat a TLS
+       renegotiation as a connection error (Section 5.4.1) of type PROTOCOL_ERROR." OpenSSL refuses one itself (SSL_OP_NO_RENEGOTIATION:
+       a no_renegotiation warning, tls_process_hello_req, tls_process_client_hello) and tells nobody; the session goes on. This
+       callback sees the message before OpenSSL processes it: a HelloRequest to a client, a ClientHello to a server, on a TLS 1.2
+       session whose handshake is done (s->done; a HelloRequest during a handshake is skipped by OpenSSL, RFC 5246 section 7.4.1.1,
+       and asks for nothing). KSL_GET_RENEGOTIATION reports it; ksl_tcp_read stops at the read that refused it. */
+    if (s->mode == KSL_MODE_TCP && !write_p && s->done && content_type == SSL3_RT_HANDSHAKE && len >= 1 &&
+        SSL_version(ssl) < TLS1_3_VERSION &&
+        m[0] == (s->owner->role == KSL_CLIENT ? SSL3_MT_HELLO_REQUEST : SSL3_MT_CLIENT_HELLO) &&
+        s->renegotiations < UINT32_MAX)
+        s->renegotiations++;
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO &&
         s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);

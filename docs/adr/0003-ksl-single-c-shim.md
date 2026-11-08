@@ -97,3 +97,13 @@ own send scratch and refuses to receive (`KSL_E_NOT_SUPPORTED`); the descriptor 
 the group (ADR-0006, "One socket, several senders"). With it the error code `KSL_E_NO_MEMORY` (0xff000d): a failed
 allocation in `ksl_udp_sender` or `ksl_udp_open`, which answered `KSL_E_BAD_ARG` for it before. JNI `KslNative.udpSender`, cinterop `ksl_udp_sender`, Kotlin
 `Ksl.udpSender` and `KslUdpSocket.sender()`. 81 functions.
+
+Renegotiation report, additive under 7 (HTTP/2 over TLS 1.2, RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS
+renegotiation as a connection error (Section 5.4.1) of type PROTOCOL_ERROR"): OpenSSL refuses every renegotiation itself
+(`SSL_OP_NO_RENEGOTIATION`, a no_renegotiation warning) and the session went on without a word to the caller. The message
+callback of a TCP session (`ksl_msg_cb`) now counts what asks for one on an established TLS 1.2 session, a HelloRequest to a
+client or a ClientHello to a server, before OpenSSL refuses it; the getter `KSL_GET_RENEGOTIATION` (11, one byte) reports it, and
+the `ksl_tcp_read` that refused one answers `KSL_OK` with nothing read, as for a read that must write first, so that the caller
+drains the warning and looks before it reads what the peer sent after it. No function is added: 81 functions. Kotlin:
+`KslConst.GET_RENEGOTIATION`; `TlsConnection` fails the input of an `h2` connection with it, and the HTTP/2 client turns that
+into PROTOCOL_ERROR.
