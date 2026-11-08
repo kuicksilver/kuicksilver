@@ -122,6 +122,8 @@ struct ksl_ssl {
     int app_keys_out;       /* our application keys are in use (ksl_msg_cb): records count from here */
     int limit_due;          /* a read reached the record limit: the next call ends the session (ksl_tcp_read) */
     uint64_t record_limit;  /* records the current keys may protect (RFC 9846 5.5), per AEAD; 0 = not yet known */
+    uint32_t
+        renegotiations; /* TCP, TLS 1.2: renegotiations the peer attempted on the established session (ksl_msg_cb) */
     /* keylog lines */
     char *keylog;
     size_t keylog_len, keylog_cap;

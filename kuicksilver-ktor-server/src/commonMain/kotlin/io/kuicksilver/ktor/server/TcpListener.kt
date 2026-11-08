@@ -395,9 +395,9 @@ internal const val H2_ALPN = "h2"
 /**
  * The TLS configuration of a TCP connector: ALPN `h2` before `http/1.1` when [KuicksilverApplicationEngine.Configuration.http2]
  * is set (the server picks by its own order, so a client that offers both gets HTTP/2, RFC 7301 section 3.2), else
- * `http/1.1` alone. HTTP/2 is offered only over TLS 1.3: RFC 9113 section 9.2.1 makes a TLS 1.2 renegotiation a
- * connection error, which the TLS layer cannot report (OpenSSL refuses renegotiation on its own, ksl_ctx.c), and section
- * 9.2.2 restricts the TLS 1.2 cipher suites; the server negotiates TLS 1.3 only, so this holds for every connector.
+ * `http/1.1` alone. HTTP/2 is offered only over TLS 1.3, so the TLS 1.2 rules of RFC 9113 sections 9.2.1 and 9.2.2 do not
+ * arise here (the client keeps them: a renegotiation is a connection error of type PROTOCOL_ERROR there); the server
+ * negotiates TLS 1.3 only, so this holds for every connector.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnector): io.kuicksilver.tls.TlsConfig {

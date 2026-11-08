@@ -38,6 +38,7 @@ import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.Duration.Companion.seconds
 
 /** A lock for the short, non-suspending sections around the core: it is also taken from completion handlers. */
 internal class SpinLock {
@@ -127,6 +128,17 @@ internal class H2Runtime(
     private val onRequest: ((StreamRt, io.kuicksilver.http2.message.H2Request) -> Unit)? = null,
     /** A server's fields for the responses the runtime makes itself (the 431): the engine's `date`, say. */
     private val ownResponseFields: () -> List<Pair<String, String>> = { emptyList() },
+    /**
+     * The code of the connection error (RFC 9113 section 5.4.1) a failure of [input] stands for, when the transport reports
+     * something the protocol makes one (a TLS 1.2 renegotiation, section 9.2.1: PROTOCOL_ERROR); null: the connection was lost.
+     */
+    private val connectionErrorOf: (Throwable) -> Http2ErrorCode? = { null },
+    /**
+     * Ends the transport in order once the protocol is over and everything was written (the last GOAWAY flushed into
+     * [output]): the transport's own close (TLS close_notify) goes after those bytes, bounded by its owner. Null:
+     * [closeTransport]. A transport that failed or was lost is always closed with [closeTransport].
+     */
+    private val closeTransportGracefully: (() -> Unit)? = null,
 ) {
     private val client = role == Role.CLIENT
     val lock = SpinLock()
@@ -528,7 +540,14 @@ internal class H2Runtime(
                 }
 
                 !e.byPeer && ended -> {
-                    Http2Exception.ConnectionClosed(e.code, byPeer = false, e.notProcessed, "the connection ended with ${e.code}")
+                    val local = localError
+                    Http2Exception.ConnectionClosed(
+                        e.code,
+                        byPeer = false,
+                        e.notProcessed,
+                        "the connection ended with ${e.code}" + (local?.let { ": ${it.second}" } ?: ""),
+                        local?.first,
+                    )
                 }
 
                 else -> {
@@ -595,7 +614,7 @@ internal class H2Runtime(
                 val n = input.readAvailable(buf, 0, buf.size)
                 if (n < 0) {
                     // a channel closed with a cause answers -1 too: the cause says it failed, not ended
-                    lost(input.closedCause ?: IOException("the peer closed the connection"))
+                    transportFailed(input.closedCause ?: IOException("the peer closed the connection"))
                     return
                 }
                 if (n == 0) continue
@@ -607,12 +626,33 @@ internal class H2Runtime(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            lost(e)
+            transportFailed(e)
         }
     }
 
+    /**
+     * The input failed with [cause]: a connection error when [connectionErrorOf] says the transport reported one (GOAWAY with
+     * its code on the output, which still works; RFC 9113 section 5.4.1), else the connection was lost.
+     */
+    private fun transportFailed(cause: Throwable) {
+        val code = connectionErrorOf(cause)
+        if (code == null) {
+            lost(cause)
+            return
+        }
+        // the transport's own reason, not a channel's wrapper of it
+        val reason = generateSequence(cause) { it.cause }.mapNotNull { it.message }.lastOrNull() ?: "the transport failed"
+        lock.withLock { if (localError == null) localError = cause to reason }
+        withCore { goAway(code, reason.encodeToByteArray(), graceful = false, now = clock()) }
+        onChange()
+    }
+
+    /** Why this side ended the connection with a connection error the transport reported ([transportFailed]), and its reason. */
+    @Volatile private var localError: Pair<Throwable, String>? = null
+
     private suspend fun writeLoop() {
         val buf = ByteArray(WRITE_BUFFER)
+        var drained = false
         try {
             while (true) {
                 val n = withCore { poll(buf, 0, clock()) }
@@ -622,7 +662,10 @@ internal class H2Runtime(
                     continue
                 }
                 output.flush()
-                if (lock.withLock { core.isClosed && !core.wantsWrite }) break
+                if (lock.withLock { core.isClosed && !core.wantsWrite }) {
+                    drained = true
+                    break
+                }
                 kick.receive()
             }
         } catch (e: CancellationException) {
@@ -630,7 +673,9 @@ internal class H2Runtime(
         } catch (e: Throwable) {
             lost(e)
         } finally {
-            closeTransportOnce()
+            // RFC 9113 section 5.4.1 and 6.8: the last GOAWAY is in the output; a transport that is still sound is closed
+            // in order behind it (a hard close would drop what the transport has not sent yet)
+            closeTransportOnce(graceful = drained && (transportLost == null || lostInOrder))
             closed.complete(Unit)
             job.cancel()
         }
@@ -648,8 +693,9 @@ internal class H2Runtime(
             if (nextPing <= now) {
                 val unanswered = lock.withLock { awaitingPong >= 0 }
                 if (unanswered) {
-                    // OkHttp's pingInterval: a PING still unanswered when the next one is due ends the connection
-                    lost(IOException("no PING acknowledgement within ${pingIntervalNanos / 1_000_000} ms"))
+                    // OkHttp's pingInterval: a PING still unanswered when the next one is due ends the connection; the
+                    // transport is sound as far as we know, so its GOAWAY goes out first (RFC 9113 section 5.4.1)
+                    lost(IOException("no PING acknowledgement within ${pingIntervalNanos / 1_000_000} ms"), inOrder = true)
                     return
                 }
                 withCore { awaitingPong = ping(now) }
@@ -662,8 +708,15 @@ internal class H2Runtime(
         }
     }
 
-    /** The transport failed or ended under the core ([cause]): every open stream fails, and the transport is closed. */
-    fun lost(cause: Throwable) {
+    /**
+     * The transport failed or ended under the core ([cause]): every open stream fails, and the transport is closed. [inOrder]:
+     * the transport itself is sound (a peer that stopped answering), so the GOAWAY is written and the transport closed in
+     * order behind it, or hard after [IN_ORDER_CLOSE_BOUND] when the writer cannot get it out.
+     */
+    fun lost(
+        cause: Throwable,
+        inOrder: Boolean = false,
+    ) {
         val first =
             lock.withLock {
                 if (transportLost == null && !core.isClosed) {
@@ -674,12 +727,24 @@ internal class H2Runtime(
                 }
             }
         // the core reports every stream (those that never went out as not processed) and its end
+        if (first && inOrder) lostInOrder = true
         if (first) withCore { goAway(Http2ErrorCode.INTERNAL_ERROR, ByteArray(0), graceful = false, now = clock()) }
-        closeTransportOnce()
+        if (first && inOrder) {
+            scope.launch(CoroutineName("kuicksilver-h2-close")) {
+                if (withTimeoutOrNull(IN_ORDER_CLOSE_BOUND) { closed.await() } == null) closeTransportOnce(graceful = false)
+            }
+        } else {
+            closeTransportOnce(graceful = false)
+        }
     }
 
-    private fun closeTransportOnce() {
-        if (transportClosed.compareAndSet(false, true)) runCatching { closeTransport() }
+    /** [lost] was told the transport is sound: the writer closes it in order. */
+    @Volatile private var lostInOrder = false
+
+    private fun closeTransportOnce(graceful: Boolean) {
+        if (!transportClosed.compareAndSet(false, true)) return
+        val gracefully = closeTransportGracefully
+        runCatching { if (graceful && gracefully != null) gracefully() else closeTransport() }
     }
 
     // ---- the driver's actions ----
@@ -1069,6 +1134,8 @@ internal class H2Runtime(
     fun abort(cause: Throwable) = lost(cause)
 
     private companion object {
+        /** How long a connection [lost] in order waits for its writer before the transport is closed hard. */
+        val IN_ORDER_CLOSE_BOUND = 2.seconds
         const val READ_BUFFER = 16_384
         const val WRITE_BUFFER = 65_536
         const val SEND_CHUNK = 16_384

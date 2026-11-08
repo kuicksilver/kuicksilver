@@ -88,6 +88,31 @@ public class TlsConnection private constructor(
     public var negotiatedAlpn: String? = null
         private set
 
+    /**
+     * Whether the peer attempted a TLS 1.2 renegotiation on this connection: a server's HelloRequest, a client's ClientHello
+     * after the handshake. Every renegotiation is refused (a no_renegotiation warning) and the connection goes on, except on a
+     * connection that negotiated `h2`: RFC 9113 section 9.2.1, "An endpoint MUST treat a TLS renegotiation as a connection error
+     * (Section 5.4.1) of type PROTOCOL_ERROR", so there [input] fails with [TlsException.Protocol] once the plaintext that came
+     * before the attempt was read, and [output] stays open for the HTTP/2 layer's GOAWAY. True from before that failure on.
+     */
+    @InternalKuicksilverApi
+    public val renegotiationAttempted: Boolean get() = renegotiation
+
+    @Volatile private var renegotiation = false
+
+    /**
+     * Whether this TLS 1.3 connection failed because the peer sent a handshake message TLS 1.3 does not allow after the
+     * handshake here and OpenSSL refused it with unexpected_message: a server's CertificateRequest, since ksl never offers
+     * post_handshake_auth (RFC 9846 section 4.6.2), and any other. RFC 9113 section 9.2.3: "HTTP/2 clients MUST treat a TLS
+     * post-handshake CertificateRequest message as a connection error (Section 5.4.1) of type PROTOCOL_ERROR"; OpenSSL fails
+     * on the message before anyone sees its type, so the HTTP/2 layer takes every such refusal on `h2` for one. True from
+     * before [input] fails with it.
+     */
+    @InternalKuicksilverApi
+    public val postHandshakeMessageRefused: Boolean get() = refusedAfterHandshake
+
+    @Volatile private var refusedAfterHandshake = false
+
     /** The TLS version in use; [TlsVersion.Tls12] only when [TlsConfig.versions] allowed it. */
     public var protocolVersion: TlsVersion = TlsVersion.Tls13
         private set
@@ -390,8 +415,12 @@ public class TlsConnection private constructor(
                         } catch (
                             e: KslException.Internal,
                         ) {
+                            if (refusedPostHandshakeMessage(protocolVersion, e)) refusedAfterHandshake = true
                             throw e.toTlsFailure(presented).first
                         }
+                    // a read that refused the peer's renegotiation answers nothing read (ksl_tcp_read): what came after it is
+                    // read only once this looked
+                    if (r == 0) checkRenegotiation()
                     when {
                         r > 0 -> {
                             // a ticket that preceded these bytes is cached before the application sees them: a
@@ -437,6 +466,25 @@ public class TlsConnection private constructor(
             // the plaintext decrypted before the failure (a truncation: the transport ended without close_notify) is still
             // the application's; it gets the failure once it has read that, never a clean end
             inputView.failAfterBuffered(e as? TlsException ?: TlsException.Protocol(null, e.message ?: "transport failure", e))
+        }
+    }
+
+    /**
+     * Notes a renegotiation the peer attempted (TLS 1.2 only; ksl refused it) and lets its no_renegotiation warning leave. On a
+     * connection that negotiated `h2` it ends the input (RFC 9113 section 9.2.1: a connection error of type PROTOCOL_ERROR,
+     * which the HTTP/2 layer sends); elsewhere the connection goes on.
+     */
+    private suspend fun checkRenegotiation() {
+        if (renegotiation || protocolVersion != TlsVersion.Tls12) return
+        if (lock.withLock { Ksl.sslGet(s(), KslConst.GET_RENEGOTIATION)[0].toInt() } == 0) return
+        renegotiation = true
+        drainRequests.trySend(Unit)
+        if (negotiatedAlpn == HTTP2_ALPN) {
+            throw TlsException.Protocol(
+                null,
+                "the peer attempted a TLS renegotiation, which HTTP/2 forbids (RFC 9113 section 9.2.1: a connection error of type PROTOCOL_ERROR)",
+                null,
+            )
         }
     }
 
@@ -723,6 +771,32 @@ public class TlsConnection private constructor(
          * keeps as many as it uses at once. A server cannot see the client's parallelism before the connections arrive.
          */
         internal const val TCP_TICKETS: Int = 6
+
+        /** The ALPN identifier of HTTP/2 over TLS (RFC 9113 section 3.2), whose connections a renegotiation ends (section 9.2.1). */
+        private const val HTTP2_ALPN = "h2"
+
+        /**
+         * Whether [e], a read's failure on an established connection of [version], is OpenSSL refusing a post-handshake
+         * message: TLS 1.3, unexpected_message (10) sent by us, OpenSSL's SSL_R_UNEXPECTED_MESSAGE (ERR_LIB_SSL 20, reason 244).
+         * Tied to OpenSSL 3.5 (the pinned 3.5.9, gradle/openssl.toml): in `ssl/statem/statem_clnt.c`,
+         * `ossl_statem_client13_read_transition` accepts in TLS_ST_OK only NewSessionTicket, KeyUpdate and a CertificateRequest
+         * after post_handshake_auth was sent (`s->post_handshake_auth == SSL_PHA_EXT_SENT`, which ksl never sends), and
+         * `ossl_statem_client_read_transition` ends any other message with `SSLfatal(s, SSL3_AD_UNEXPECTED_MESSAGE,
+         * SSL_R_UNEXPECTED_MESSAGE)` before its body is read, so no message callback sees it; ksl packs that error
+         * (`ksl_pack_openssl_error`) and the alert sent (`info_cb`). Check both again when the OpenSSL pin moves to another
+         * minor or major version. No peer can be driven to send the message (an OpenSSL server refuses
+         * SSL_verify_client_post_handshake without the client's extension), so tests build the failure ksl reports.
+         */
+        internal fun refusedPostHandshakeMessage(
+            version: TlsVersion,
+            e: KslException.Internal,
+        ): Boolean =
+            version == TlsVersion.Tls13 && e.alert and 0x1ff == UNEXPECTED_MESSAGE_ALERT && e.lib == ERR_LIB_SSL &&
+                e.reason == SSL_R_UNEXPECTED_MESSAGE
+
+        private const val UNEXPECTED_MESSAGE_ALERT = 10
+        private const val ERR_LIB_SSL = 20
+        private const val SSL_R_UNEXPECTED_MESSAGE = 244
 
         /**
          * Runs a client handshake over [transportIn]/[transportOut] and returns once it completed and the server passed

@@ -613,6 +613,49 @@ class H2RuntimeTest {
             a.release()
         }
 
+    /**
+     * A transport failure the engine maps to a connection error (RFC 9113 section 9.2.1: a TLS renegotiation is a connection
+     * error of type PROTOCOL_ERROR): GOAWAY with that code goes out on the output, which still works, and the streams fail
+     * with the code and the transport's reason, not as a lost connection.
+     */
+    @Test fun negative_transportFailureMappedToAConnectionErrorSendsGoAway() =
+        runTest {
+            class Renegotiated : kotlinx.io.IOException("the peer attempted a TLS renegotiation")
+            val w = Wire()
+            val srv = RawServer(w)
+            val deferred =
+                backgroundScope.async {
+                    H2ClientConnection.start(
+                        w.toClient,
+                        w.toServer,
+                        Http2Settings(),
+                        backgroundScope,
+                        Duration.INFINITE,
+                        { w.close() },
+                        clock = clock(),
+                        connectionErrorOf = { e ->
+                            if (generateSequence(e) { it.cause }.any { it is Renegotiated }) Http2ErrorCode.PROTOCOL_ERROR else null
+                        },
+                    )
+                }
+            runCurrent()
+            srv.settings()
+            val client = deferred.await()
+            val a = client.get()
+            runCurrent()
+            srv.read()
+            w.toClient.cancel(Renegotiated()) // the TLS layer failed the input; the output stays open
+            runCurrent()
+            val e = assertFailsWith<Http2Exception.ConnectionClosed> { a.response() }
+            assertEquals(Http2ErrorCode.PROTOCOL_ERROR, e.code)
+            assertFalse(e.byPeer)
+            assertTrue("renegotiation" in e.message.orEmpty(), "the reason reaches the call: ${e.message}")
+            val goAway = srv.read().filterIsInstance<Frame.GoAway>().single()
+            assertEquals(Http2ErrorCode.PROTOCOL_ERROR.code, goAway.errorCode)
+            assertFalse(client.isUsable)
+            a.release()
+        }
+
     @Test fun negative_pingTimeoutClosesConnection() =
         runTest {
             val (srv, deferred) = raw(pingInterval = 1.seconds)

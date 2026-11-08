@@ -2173,8 +2173,12 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   wait for it within their connect timeout. Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
   (`HttpTimeout`), and with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its
   calls fail; with neither, a connection that dies mid-exchange holds the call until TCP gives up, as over HTTP/1.1.
-- **TLS 1.3 only.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers only `http/1.1`:
-  RFC 9113 section 9.2.1 requires a TLS 1.2 renegotiation to fail an HTTP/2 connection, which the TLS layer cannot report.
+- **TLS 1.2.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers `h2` too, and a server
+  without TLS 1.3 gets HTTP/2 over TLS 1.2 under RFC 9113 section 9.2: SNI from the URL's host, no TLS compression, and
+  the TLS 1.2 suites of the profile, ECDHE with an AEAD (`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256 among them),
+  none of which section 9.2.2 prohibits. Renegotiation stays refused: a server that asks for one (a HelloRequest) ends
+  the connection with PROTOCOL_ERROR (section 9.2.1) and the calls on it fail with `Http2Exception.ConnectionClosed`
+  (`code == PROTOCOL_ERROR`, `byPeer == false`); over HTTP/1.1 the renegotiation is refused and the connection goes on.
 - **Events and diagnostics.** `protocolSelected` comes once the connection is in hand and names its protocol
   (`HTTP_2_0`), then `connectionAcquired(HTTP_2_0, reused)`; the race reports `raceEnded(winner = HTTP_2_0)`; and
   `ProtocolDiagnostics.protocol` is `HTTP_2_0` (its `fallback` still says why HTTP/3 was not used).
@@ -3650,7 +3654,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 |---|---|---|---|---|---|
 | `alpn` | `List<String>` | empty | each name 1..255 UTF-8 bytes, the list at most 255 bytes on the wire; QUIC needs at least one | 0.2.0 | ALPN protocol IDs in preference order |
 | `serverName` | `String?` | `null` | a client needs it (or `TrustConfig.ExpectedName`) | 0.2.0 | SNI and the name the certificate must match; an IP literal is verified but never sent as SNI. Servers ignore it |
-| `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | 0.2.0 | TLS 1.3 is the default (RFC 9852); `Tls12And13` allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) |
+| `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | 0.2.0 | TLS 1.3 is the default (RFC 9852); `Tls12And13` allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only); renegotiation is always refused, and on an `h2` connection a peer's attempt ends it (RFC 9113 section 9.2.1) |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) | at least one; QUIC refuses `TLS_AES_128_CCM_8_SHA256` | 0.2.0 | TLS 1.3 suites in preference order |
 | `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | 0.2.0 | certificate chain and key; `TlsIdentity.reloadable(...)` for one replaced at run time ([TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-server-certificate)) |
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([below](#trustconfig)) |
@@ -3811,7 +3815,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 
 | Option | Type | Default | Since | What it does |
 |---|---|---|---|---|
-| `enabled` | `Boolean` | `true` | 0.3.0 | offer `h2` and `http/1.1` in ALPN on every `https://` connection over TCP (not WebSockets); `false` offers only `http/1.1`, as in 0.2 |
+| `enabled` | `Boolean` | `true` | 0.3.0 | offer `h2` and `http/1.1` in ALPN on every `https://` connection over TCP (not WebSockets), over TLS 1.3 and, when `tls` allows it, TLS 1.2 (a server's renegotiation request then ends the connection with PROTOCOL_ERROR, RFC 9113 section 9.2.1); `false` offers only `http/1.1`, as in 0.2 |
 | `settings` | `Http2Settings` | `Http2Settings()` | 0.3.0 | our SETTINGS, windows (512 KiB per stream growing to 6 MiB, 768 KiB per connection growing to 15 MiB) and the limits held against the server (64 KiB field sections, 10 s for our SETTINGS to be acknowledged, the flood limits; threat model 3.23) |
 | `pingInterval` | `Duration` | `Duration.INFINITE` | 0.3.0 | a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms, else the engine's creation fails with `IllegalArgumentException` |
 

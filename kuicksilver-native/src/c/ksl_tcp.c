@@ -184,6 +184,7 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
         return KSL_WANT_READ;
     static const char *why = "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)";
     uint64_t limit = record_limit(s);
+    uint32_t renegotiations = s->renegotiations;
     for (;;) {
         if (s->limit_due || (limit != KSL_NO_RECORD_LIMIT && s->records_sent + 2 >= limit)) {
             (void)abort_session(s, why);
@@ -203,6 +204,12 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
             return KSL_ERROR;
         }
         int e = SSL_get_error(s->ssl, r);
+        /* the peer's renegotiation attempt was refused in this read (KSL_GET_RENEGOTIATION): it stops here, as for a read that
+           must write first, so that the caller drains the no_renegotiation warning and looks before reading what came after it */
+        if (e == SSL_ERROR_WANT_READ && s->renegotiations != renegotiations) {
+            ERR_clear_error();
+            return KSL_OK;
+        }
         if (e == SSL_ERROR_WANT_READ && BIO_ctrl_pending(SSL_get_rbio(s->ssl)) > 0)
             continue;
         /* it must write first and the pair is full: KSL_OK with nothing read, so the caller drains and reads again rather than

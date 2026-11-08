@@ -256,8 +256,11 @@ internal class H2Pool(
         return next
     }
 
-    /** Closes every connection (the engine is closing; its calls are done). */
-    fun closeAll() {
+    /**
+     * Closes every connection (the engine is closing; its calls are done): GOAWAY (NO_ERROR, RFC 9113 section 6.8), written
+     * and closed in order, within [bound]; a connection still open after it is closed at once.
+     */
+    suspend fun closeAll(bound: kotlin.time.Duration) {
         val all =
             lock.withLock {
                 val l = routes.values.flatMap { it.conns }
@@ -265,10 +268,9 @@ internal class H2Pool(
                 routes.values.removeAll { it.watchers <= 0 }
                 l
             }
-        for (c in all) {
-            c.client.shutdown()
-            c.close()
-        }
+        for (c in all) c.client.shutdown()
+        kotlinx.coroutines.withTimeoutOrNull(bound) { for (c in all) c.client.awaitClosed() }
+        for (c in all) c.close()
     }
 
     /** Connections (the resource probe). */

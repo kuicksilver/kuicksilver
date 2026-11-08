@@ -61,6 +61,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -80,6 +81,8 @@ internal class H1Connection(
     val output: ByteWriteChannel,
     val key: String,
     createdAt: Long = 0,
+    /** Ends the TLS session in order (close_notify) and then the socket, bounded; null: as [closeTransport]. */
+    private val orderly: (() -> Unit)? = null,
 ) : PooledConnection(key, createdAt) {
     /** What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). */
     val input: HeadLimitedInput = HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES)
@@ -96,6 +99,18 @@ internal class H1Connection(
     override fun closeTransport() {
         tls?.close()
         socket.close()
+    }
+
+    override fun closeTransportOrderly() {
+        orderly?.invoke() ?: closeTransport()
+    }
+
+    /**
+     * Ends the reading side at once (a timeout fired): whoever waits on [input] fails now, not when the orderly close is
+     * over (the peer's close_notify, or its bound); the output still says goodbye.
+     */
+    fun cancelInput(cause: Throwable) {
+        input.cancel(cause)
     }
 }
 
@@ -116,6 +131,39 @@ internal class H1Pool(
     private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
     private val clock: () -> Long = monotonicMillis(),
 ) {
+    /**
+     * Orderly closes in progress ([closeOrderly]): TLS close_notify after what was written, bounded by
+     * [ORDERLY_CLOSE_TIMEOUT]. Not the engine's request job; [closeAll] waits for them before the selector goes.
+     */
+    private val closers = CoroutineScope(selector.coroutineContext.minusKey(Job) + SupervisorJob() + CoroutineName("kuicksilver-close"))
+
+    /**
+     * Ends [tls] in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
+     * "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has already
+     * sent some error alert"), a short wait for the peer's, then [rawOut] flushed so that it all reaches the wire before the
+     * FIN. Bounded by [ORDERLY_CLOSE_TIMEOUT]; past it, and when the engine is closed meanwhile, the connection is closed
+     * hard. Runs in [closers], never in the caller.
+     */
+    private fun closeOrderly(
+        tls: TlsConnection,
+        rawOut: ByteWriteChannel,
+        tcp: Socket,
+    ) {
+        // ATOMIC: an engine closed meanwhile still runs the finally block, which closes the connection hard
+        @OptIn(DelicateCoroutinesApi::class)
+        closers.launch(start = CoroutineStart.ATOMIC) {
+            try {
+                withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) {
+                    tls.shutdown(drainTimeout = ORDERLY_CLOSE_TIMEOUT)
+                    rawOut.flushAndClose()
+                }
+            } finally {
+                tls.close()
+                tcp.close()
+            }
+        }
+    }
+
     /** The HTTP/2 connections' coroutines: not the engine's request job, which waits for its children before the cleanup. */
     private val h2Scope = CoroutineScope(selector.coroutineContext.minusKey(Job) + SupervisorJob() + CoroutineName("kuicksilver-h2"))
 
@@ -172,11 +220,32 @@ internal class H1Pool(
      */
     fun evictExpired(): Long? = listOfNotNull(pool.evictExpired(), h2.evictExpired()).minOrNull()
 
+    /**
+     * Closes every connection: GOAWAY (NO_ERROR) on every HTTP/2 connection, written and closed in order (RFC 9113 section
+     * 6.8; at most [ORDERLY_CLOSE_TIMEOUT]), then the idle HTTP/1.1 connections with close_notify, and waits for the
+     * orderly closes (at most twice [ORDERLY_CLOSE_TIMEOUT]): about 3 s at most in all. The hard part (pool shutdown, the
+     * closes cut off, the scopes and the session cache) always runs, also when the caller is cancelled, and is over when
+     * this returns, so the selector may go next.
+     */
     suspend fun closeAll() {
-        h2.closeAll()
-        h2Scope.cancel()
-        pool.shutdown()
-        sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
+        withContext(NonCancellable) {
+            try {
+                h2.closeAll(ORDERLY_CLOSE_TIMEOUT)
+                pool.shutdown()
+                withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT * 2) {
+                    closers.coroutineContext[Job]!!
+                        .children
+                        .toList()
+                        .forEach { it.join() }
+                }
+            } finally {
+                pool.shutdown() // idempotent; a close cut off before it still frees the idle connections
+                // closes still running end hard (their finally closes TLS and the socket) before the selector goes
+                closers.coroutineContext[Job]!!.cancelAndJoin()
+                h2Scope.cancel()
+                sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
+            }
+        }
     }
 
     private fun keyOf(
@@ -223,7 +292,7 @@ internal class H1Pool(
         data: HttpRequestData,
         key: String,
     ): Boolean =
-        config.http2.enabled && data.url.protocol.isSecure() && tls13Only &&
+        config.http2.enabled && data.url.protocol.isSecure() &&
             !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !upgrades(data.body) && !h2Refused.isRefused(key)
 
     /** A body that takes over the connection (`Upgrade`): HTTP/2 has no such thing (RFC 9113 section 8.6), so HTTP/1.1. */
@@ -233,17 +302,6 @@ internal class H1Pool(
             is OutgoingContent.ContentWrapper -> upgrades(body.delegate())
             else -> false
         }
-
-    /**
-     * Whether the engine's TLS is TLS 1.3 only (the default). RFC 9113 section 9.2.1 makes a TLS 1.2 renegotiation a
-     * connection error of type PROTOCOL_ERROR, and the TLS layer cannot report one: OpenSSL answers a server's
-     * HelloRequest itself (no_renegotiation, SSL_OP_NO_RENEGOTIATION in ksl_ctx.c) and the connection goes on. So a client
-     * configured to allow TLS 1.2 offers only http/1.1 rather than run HTTP/2 against that MUST; TLS 1.2 is opt-in, for
-     * peers without TLS 1.3 (TlsVersions.Tls12And13).
-     */
-    private val tls13Only: Boolean by lazy {
-        config.tlsConfigFor("localhost", listOf("http/1.1")).versions == io.kuicksilver.tls.TlsVersions.Tls13
-    }
 
     /**
      * An idle connection for [key] ([Obtained.reused]), else a new one once the limits allow; waiting for room and
@@ -614,6 +672,31 @@ internal class H1Pool(
             var held = obtained.held
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
+            // the whole request went out (headers and a body written in this call); a streamed body says so itself
+            val requestOut = CompletableDeferred<Unit>()
+
+            // RFC 9846 section 6.1: an exchange that failed after the whole request went out (a malformed response head,
+            // a timeout, the call cancelled) leaves our write side whole: the connection ends with close_notify (a TLS 1.3
+            // client cannot send an error alert). A request cut off, or a TLS session that failed, is closed at once.
+            fun closeAfterFailure(e: Throwable?) {
+                val sender = bodyJob
+                val whole =
+                    if (sender == null) {
+                        requestOut.isCompleted
+                    } else {
+                        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                        sender.sent.isCompleted && sender.sent.getCompleted()
+                    }
+                val tlsFailed = generateSequence(e) { it.cause }.any { it is TlsException }
+                if (whole && !tlsFailed) conn.closeOrderly() else conn.close()
+            }
+
+            /** A timeout expired: the reader is cut first, so the call's timeout surfaces on time; then the close. */
+            fun closeAfterExpiry() {
+                conn.cancelInput(kotlinx.io.IOException("the socket timeout expired"))
+                closeAfterFailure(null)
+            }
+
             try {
                 val requestTime = GMTDate()
                 // the socket timeout measures inactivity in both directions (Ktor: "maximum time of inactivity between two
@@ -625,7 +708,7 @@ internal class H1Pool(
                 var bodySent = false
 
                 suspend fun exchangeOnce(): HttpResponseData =
-                    withSocketInactivityTimeout(data, activity, onExpiry = { conn.close() }) {
+                    withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterExpiry() }) {
                         writeHeaders(
                             data,
                             output,
@@ -641,6 +724,7 @@ internal class H1Pool(
                                 bodyJob = sendBodyConcurrently(data, conn, output, callContext)
                             } else {
                                 writeBody(data, output, callContext)
+                                requestOut.complete(Unit)
                             }
                         }
                         // `Expect: 100-continue` (RFC 9110 section 10.1.1): the body waits for the server's 100 Continue, or a
@@ -672,7 +756,13 @@ internal class H1Pool(
                                     // sender is cancelled too, so one waiting for the application's body (not for the
                                     // connection, which the close fails) ends now rather than at its next write
                                     AfterResponse.Close -> {
-                                        conn.close()
+                                        // with no request body still going out the connection ends in order (close_notify)
+                                        val sender = bodyJob
+                                        if (sender == null || (sender.sent.isCompleted && sender.failure == null)) {
+                                            conn.closeOrderly()
+                                        } else {
+                                            conn.close()
+                                        }
                                         bodyJob?.job?.cancel()
                                         released(false)
                                     }
@@ -682,19 +772,20 @@ internal class H1Pool(
                                     AfterResponse.CloseAfterUpload -> {
                                         val job = bodyJob?.job
                                         if (job == null) {
-                                            conn.close()
+                                            conn.closeOrderly()
                                             released(false)
                                         } else {
-                                            job.invokeOnCompletion {
-                                                conn.close()
+                                            job.invokeOnCompletion { cause ->
+                                                // in order once the body went out whole; a failed upload is cut off
+                                                if (cause == null && bodyJob.failure == null) conn.closeOrderly() else conn.close()
                                                 released(false)
                                             }
                                         }
                                     }
 
                                     AfterResponse.HandOver -> {
-                                        callContext[Job]?.invokeOnCompletion {
-                                            conn.close()
+                                        callContext[Job]?.invokeOnCompletion { cause ->
+                                            if (cause == null) conn.closeOrderly() else conn.close()
                                             released(false)
                                         }
                                     }
@@ -708,7 +799,7 @@ internal class H1Pool(
                     try {
                         when (webSocketKeys) {
                             null -> exchangeOnce()
-                            else -> connectingWithin(data, onExpiry = { conn.close() }) { exchangeOnce() }
+                            else -> connectingWithin(data, onExpiry = { closeAfterExpiry() }) { exchangeOnce() }
                         }
                     } finally {
                         held?.release()
@@ -727,12 +818,12 @@ internal class H1Pool(
                 return response
             } catch (e: CancellationException) {
                 held?.release()
-                conn.close()
+                closeAfterFailure(e)
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 throw e
             } catch (e: Throwable) {
                 held?.release()
-                conn.close()
+                closeAfterFailure(e)
                 // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 bodyJob?.failure?.let { throw it }
@@ -924,7 +1015,22 @@ internal class H1Pool(
                                         tls.close()
                                         tcp.close()
                                     },
+                                    // the last GOAWAY is in tls.output: it goes out, then close_notify (RFC 9113 sections
+                                    // 5.4.1 and 6.8, RFC 9846 section 6.1)
+                                    closeTransportGracefully = { closeOrderly(tls, rawOut, tcp) },
                                     onChange = { h2.bump(key) },
+                                    // RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error
+                                    // (Section 5.4.1) of type PROTOCOL_ERROR"; the TLS layer ends the input of an h2 connection
+                                    // at the server's HelloRequest (TLS 1.2 only) and says so. Section 9.2.3: "HTTP/2 clients MUST
+                                    // treat a TLS post-handshake CertificateRequest message as a connection error ... of type
+                                    // PROTOCOL_ERROR"; OpenSSL refuses it (no post_handshake_auth offered) and the TLS layer says so
+                                    connectionErrorOf = {
+                                        if (tls.renegotiationAttempted || tls.postHandshakeMessageRefused) {
+                                            io.kuicksilver.http2.Http2ErrorCode.PROTOCOL_ERROR
+                                        } else {
+                                            null
+                                        }
+                                    },
                                 )
                             } catch (e: Throwable) {
                                 tls.close()
@@ -932,7 +1038,7 @@ internal class H1Pool(
                             }
                         return H2Conn(client, key, clock())
                     }
-                    H1Connection(tcp, tls, tls.input, tls.output, key, clock())
+                    H1Connection(tcp, tls, tls.input, tls.output, key, clock(), orderly = { closeOrderly(tls, rawOut, tcp) })
                 } else {
                     H1Connection(tcp, null, rawIn, rawOut, key, clock())
                 }
@@ -1013,6 +1119,9 @@ private val MIN_ATTEMPT_DELAY = 10.milliseconds
 
 /** OkHttp has no floor; below 100 ms a PING timer would end connections on any ordinary delay. */
 private val MIN_PING_INTERVAL = 100.milliseconds
+
+/** The bound of an orderly close: the last bytes and close_notify out, and the peer's close_notify awaited, in all. */
+internal val ORDERLY_CLOSE_TIMEOUT = 1.seconds
 
 /** [H1Pool]'s answers from the pool: a permit to open a connection, or a change of the route's HTTP/2 connections. */
 private val PERMIT = Any()

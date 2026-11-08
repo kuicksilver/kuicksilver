@@ -14,6 +14,8 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.readAvailable
+import io.kuicksilver.http2.Http2ErrorCode
+import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.native.KslLoader
 import io.netty.bootstrap.ServerBootstrap
 import io.netty.buffer.Unpooled
@@ -29,6 +31,7 @@ import io.netty.handler.codec.http2.DefaultHttp2Headers
 import io.netty.handler.codec.http2.DefaultHttp2HeadersFrame
 import io.netty.handler.codec.http2.Http2DataFrame
 import io.netty.handler.codec.http2.Http2FrameCodecBuilder
+import io.netty.handler.codec.http2.Http2GoAwayFrame
 import io.netty.handler.codec.http2.Http2HeadersFrame
 import io.netty.handler.codec.http2.Http2MultiplexHandler
 import io.netty.handler.codec.http2.Http2ResetFrame
@@ -36,7 +39,9 @@ import io.netty.handler.codec.http2.Http2SecurityUtil
 import io.netty.handler.ssl.ApplicationProtocolConfig
 import io.netty.handler.ssl.ApplicationProtocolNames
 import io.netty.handler.ssl.ApplicationProtocolNegotiationHandler
+import io.netty.handler.ssl.SslCloseCompletionEvent
 import io.netty.handler.ssl.SslContextBuilder
+import io.netty.handler.ssl.SslHandler
 import io.netty.handler.ssl.SslProvider
 import io.netty.handler.ssl.SupportedCipherSuiteFilter
 import kotlinx.coroutines.CompletableDeferred
@@ -57,6 +62,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -72,6 +78,12 @@ class H2InteropTest {
         private val group: NioEventLoopGroup,
         private val channel: Channel,
         val resets: CompletableDeferred<Long>,
+        /** The error codes of the GOAWAY frames the client sent, in order. */
+        val goAways: kotlinx.coroutines.channels.Channel<Long>,
+        /** Completed when a connection received the client's close_notify (Netty's SslCloseCompletionEvent). */
+        val closeNotify: CompletableDeferred<Unit>,
+        /** The first failure of a connection's TLS (the JDK's, reaching the end of the pipeline). */
+        val tlsFailure: CompletableDeferred<Throwable>,
     ) : AutoCloseable {
         override fun close() {
             channel.close().syncUninterruptibly()
@@ -140,6 +152,17 @@ class H2InteropTest {
                         gzip("compressed text".encodeToByteArray())
                     }
 
+                    "/renegotiate" -> {
+                        // TLS 1.2: a HelloRequest on the established connection (the JDK's engine started again), no answer
+                        ctx
+                            .channel()
+                            .parent()
+                            .pipeline()
+                            .get(SslHandler::class.java)
+                            .renegotiate()
+                        return
+                    }
+
                     "/endless" -> {
                         ctx.write(DefaultHttp2HeadersFrame(headers))
                         // more than the client's windows: the client cancels before the end
@@ -157,7 +180,7 @@ class H2InteropTest {
         }
     }
 
-    private fun netty(): Netty {
+    private fun netty(tlsVersion: String = "TLSv1.3"): Netty {
         val cf = CertificateFactory.getInstance("X.509")
         val chain = listOf(TestCerts.server).map { cf.generateCertificate(ByteArrayInputStream(it)) as X509Certificate }
         val key = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
@@ -165,7 +188,7 @@ class H2InteropTest {
             SslContextBuilder
                 .forServer(key, *chain.toTypedArray())
                 .sslProvider(SslProvider.JDK)
-                .protocols("TLSv1.3")
+                .protocols(tlsVersion)
                 .ciphers(Http2SecurityUtil.CIPHERS, SupportedCipherSuiteFilter.INSTANCE)
                 .applicationProtocolConfig(
                     ApplicationProtocolConfig(
@@ -176,6 +199,9 @@ class H2InteropTest {
                     ),
                 ).build()
         val resets = CompletableDeferred<Long>()
+        val goAways = kotlinx.coroutines.channels.Channel<Long>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val closeNotify = CompletableDeferred<Unit>()
+        val tlsFailure = CompletableDeferred<Throwable>()
         val group = NioEventLoopGroup(2)
         val channel =
             ServerBootstrap()
@@ -185,6 +211,27 @@ class H2InteropTest {
                     object : ChannelInitializer<SocketChannel>() {
                         override fun initChannel(ch: SocketChannel) {
                             ch.pipeline().addLast(ssl.newHandler(ch.alloc()))
+                            ch.pipeline().addLast(
+                                object : ChannelInboundHandlerAdapter() {
+                                    override fun userEventTriggered(
+                                        ctx: ChannelHandlerContext,
+                                        evt: Any,
+                                    ) {
+                                        if (evt is SslCloseCompletionEvent && evt.isSuccess) closeNotify.complete(Unit)
+                                        super.userEventTriggered(ctx, evt)
+                                    }
+
+                                    @Deprecated("Deprecated in Java")
+                                    @Suppress("OVERRIDE_DEPRECATION")
+                                    override fun exceptionCaught(
+                                        ctx: ChannelHandlerContext,
+                                        cause: Throwable,
+                                    ) {
+                                        tlsFailure.complete(cause)
+                                        ctx.close()
+                                    }
+                                },
+                            )
                             ch.pipeline().addLast(
                                 object : ApplicationProtocolNegotiationHandler(ApplicationProtocolNames.HTTP_1_1) {
                                     override fun configurePipeline(
@@ -202,6 +249,18 @@ class H2InteropTest {
                                                 },
                                             ),
                                         )
+                                        ctx.pipeline().addLast(
+                                            object : ChannelInboundHandlerAdapter() {
+                                                override fun channelRead(
+                                                    ctx: ChannelHandlerContext,
+                                                    msg: Any,
+                                                ) {
+                                                    if (msg is Http2GoAwayFrame) goAways.trySend(msg.errorCode())
+                                                    io.netty.util.ReferenceCountUtil
+                                                        .release(msg)
+                                                }
+                                            },
+                                        )
                                     }
                                 },
                             )
@@ -210,7 +269,7 @@ class H2InteropTest {
                 ).bind(InetSocketAddress("127.0.0.1", 0))
                 .syncUninterruptibly()
                 .channel()
-        return Netty((channel.localAddress() as InetSocketAddress).port, group, channel, resets)
+        return Netty((channel.localAddress() as InetSocketAddress).port, group, channel, resets, goAways, closeNotify, tlsFailure)
     }
 
     @Test fun getAndPostAndParallel() =
@@ -261,6 +320,58 @@ class H2InteropTest {
                     }
                     assertEquals(0x8L, withTimeout(10.seconds) { n.resets.await() }) // CANCEL
                 }
+            }
+        }
+
+    /**
+     * HTTP/2 over TLS 1.2 (RFC 9113 section 9.2): a client that allows TLS 1.2 offers `h2` and speaks it with a server that
+     * has only TLS 1.2, under the ECDHE + AEAD suites of its profile (none of them prohibited by section 9.2.2).
+     */
+    @Test fun tls12ServerGetsH2() =
+        clientTest {
+            netty("TLSv1.2").use { n ->
+                testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                    val r = c.get("https://127.0.0.1:${n.port}/hello")
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                    assertEquals("netty/hello", r.bodyAsText())
+                    assertEquals("netty/again", c.get("https://127.0.0.1:${n.port}/again").bodyAsText())
+                    assertEquals(1, (c.engine as KuicksilverEngine).h1.h2.connectionCount)
+                }
+            }
+        }
+
+    /**
+     * RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error (Section 5.4.1) of type
+     * PROTOCOL_ERROR." The server asks for renegotiation (a HelloRequest) while the request is in flight: the call fails with
+     * PROTOCOL_ERROR raised by this client, not with a TLS failure or a lost connection.
+     */
+    @Test fun negative_tls12RenegotiationIsAProtocolError() =
+        clientTest {
+            netty("TLSv1.2").use { n ->
+                testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                    val e = runCatching { withTimeout(10.seconds) { c.get("https://127.0.0.1:${n.port}/renegotiate") } }.exceptionOrNull()
+                    val closed = generateSequence(e) { it.cause }.filterIsInstance<Http2Exception.ConnectionClosed>().firstOrNull()
+                    assertEquals(Http2ErrorCode.PROTOCOL_ERROR, closed?.code, "the call failed with $e")
+                    assertEquals(false, closed?.byPeer)
+                    // the renegotiation was refused (RFC 9113 section 9.2.1: disabled): the JDK fails on our no_renegotiation
+                    // warning, as OpenSSL does (a peer that asked "presumably had a good reason"), so it never reads the
+                    // GOAWAY that follows it; ClientOrderlyCloseTest shows the GOAWAY of a connection error reaching a server
+                    val refusal = withTimeout(10.seconds) { n.tlsFailure.await() }
+                    assertTrue(
+                        "no_renegotiation" in generateSequence(refusal) { it.cause }.joinToString { it.message.orEmpty() },
+                        "$refusal",
+                    )
+                }
+            }
+        }
+
+    /** An engine that closes its idle HTTP/2 connection sends GOAWAY (NO_ERROR) and then close_notify (RFC 9113 section 6.8). */
+    @Test fun closingTheEngineSendsGoAwayAndCloseNotify() =
+        clientTest {
+            netty().use { n ->
+                testClient().use { c -> assertEquals("netty/x", c.get("https://127.0.0.1:${n.port}/x").bodyAsText()) }
+                assertEquals(Http2ErrorCode.NO_ERROR.code, withTimeout(10.seconds) { n.goAways.receive() })
+                withTimeout(10.seconds) { n.closeNotify.await() }
             }
         }
 

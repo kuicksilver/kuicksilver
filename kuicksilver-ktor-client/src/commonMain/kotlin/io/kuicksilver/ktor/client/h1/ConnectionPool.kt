@@ -63,6 +63,18 @@ internal abstract class PooledConnection(
         pool?.slotReturned(this)
     }
 
+    /**
+     * [close] for a connection that ends in order (idle, or its last exchange complete): the transport says goodbye
+     * first where it can (TLS close_notify, RFC 9846 section 6.1), bounded; the slot comes back at once.
+     */
+    fun closeOrderly() {
+        if (closedFlag.compareAndSet(0, 1)) closeTransportOrderly()
+        pool?.slotReturned(this)
+    }
+
+    /** Closes the transport in order; called once, instead of [closeTransport]. */
+    protected open fun closeTransportOrderly(): Unit = closeTransport()
+
     /** True for the one caller that gives the slot back. */
     internal fun claimSlot(): Boolean = slotFlag.compareAndSet(0, 1)
 }
@@ -439,8 +451,9 @@ internal class ConnectionPool<C : PooledConnection>(
         for (w in l) w.result.complete(w.connection)
     }
 
+    /** Connections the pool closes are idle or done with their exchange: in order. */
     private fun closeAll(l: List<C>) {
-        for (c in l) c.close()
+        for (c in l) c.closeOrderly()
     }
 
     private companion object {
