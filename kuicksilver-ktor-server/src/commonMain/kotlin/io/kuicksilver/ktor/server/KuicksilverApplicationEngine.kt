@@ -239,8 +239,8 @@ public class KuicksilverApplicationEngine(
         public var udpSocketCount: Int = 1
 
         /**
-         * The most QUIC connections each HTTP/3 listener holds at once, handshakes in flight included
-         * (`QuicEndpointConfig.maxConnections`): beyond it a new client's Initial is dropped silently and counted in
+         * The most QUIC connections each HTTP/3 listener holds at once, handshakes in flight included, over all its
+         * [udpSocketCount] loops together (`QuicEndpointConfig.maxConnections`): beyond it a new client's Initial is dropped silently and counted in
          * `EndpointStats.connectionsRefusedLimits` ([KuicksilverApplicationEngine.http3Stats]). At least 1; default 10,000.
          * `EngineMain` key `kuicksilver.quicMaxConnections`.
          *
@@ -254,8 +254,8 @@ public class KuicksilverApplicationEngine(
             }
 
         /**
-         * The most QUIC connections one client IP holds at once on each HTTP/3 listener, ports ignored
-         * (`QuicEndpointConfig.maxConnectionsPerIp`); null turns the limit off. Beyond it a new client's Initial is dropped
+         * The most QUIC connections one client IP holds at once on each HTTP/3 listener, over all its [udpSocketCount] loops
+         * together, ports ignored (`QuicEndpointConfig.maxConnectionsPerIp`); null turns the limit off. Beyond it a new client's Initial is dropped
          * silently (the client fails at its handshake timeout) and counted in `EndpointStats.connectionsRefusedLimits`.
          * Behind a NAT, Kubernetes `kube-proxy` with `externalTrafficPolicy: Cluster`, or a UDP load balancer that does not
          * keep client addresses, every client shares one address: raise it to about [quicMaxConnections] there, or turn
@@ -272,7 +272,7 @@ public class KuicksilverApplicationEngine(
             }
 
         /**
-         * Handshaken QUIC connections waiting for the engine's HTTP/3 accept loop on each listener
+         * Handshaken QUIC connections waiting for the engine's HTTP/3 accept loop on each listener, all its loops together
          * (`QuicEndpointConfig.acceptQueue`): while this many wait, a new client is refused at once with CONNECTION_REFUSED,
          * counted in `EndpointStats.connectionsRefusedAcceptQueue`. At least 1; default 128. `EngineMain` key
          * `kuicksilver.quicAcceptQueue`.

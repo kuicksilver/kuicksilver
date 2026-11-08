@@ -138,7 +138,7 @@ internal object AddressClass {
 
     /** A hash key over the IP address alone (port ignored), for per-address counting. */
     class IpKey(
-        private val bytes: ByteArray,
+        val bytes: ByteArray,
     ) {
         override fun equals(other: Any?): Boolean = other is IpKey && other.bytes.contentEquals(bytes)
 

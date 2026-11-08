@@ -61,7 +61,7 @@ public object QuicResourceProbe {
                             .sumOf { it.streams.size }
                             .toLong(),
                         c.registry.size.toLong(),
-                        c.perIp.size.toLong(),
+                        c.slots.addressesForProbe(c.loopIndex).toLong(),
                         c.byRemote.size.toLong(),
                         loop.timers.count.toLong(),
                         c.accepted.size.toLong(),

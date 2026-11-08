@@ -16,9 +16,9 @@ public class ConnectionAttempt internal constructor(
     public val remote: InetSocketAddress,
     /** Server connections whose handshake has not been confirmed yet. */
     public val inflightHandshakes: Int,
-    /** Every connection this endpoint holds, in any state. */
+    /** Every connection this endpoint holds over all its loops, in any state (this attempt not included). */
     public val connections: Int,
-    /** Connections whose peer shares this client's IP address (port ignored). */
+    /** Connections of this endpoint (all its loops) whose peer shares this client's IP address (port ignored). */
     public val connectionsFromAddress: Int,
     /** Bytes buffered by the unfinished handshakes: undecryptable packets held for later keys and out-of-order CRYPTO data. */
     public val handshakeBufferBytes: Long,

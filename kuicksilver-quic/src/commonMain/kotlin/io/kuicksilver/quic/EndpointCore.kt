@@ -64,6 +64,8 @@ public class EndpointCore internal constructor(
     sharedTokens: AddressTokens?,
     /** A group's QUIC-LB state, shared by its loops (this endpoint is one owner); null makes this endpoint's own when it has a `loadBalancer`. */
     sharedLb: QuicLbState? = null,
+    /** A group's connection slots, shared by its loops so the limits bound the whole endpoint; null makes this endpoint's own. */
+    sharedSlots: io.kuicksilver.quic.endpoint.ConnectionSlots? = null,
 ) {
     /** An endpoint with its own Retry, NEW_TOKEN and reset keys; [loopIndex] is its routing byte in a group (0 alone). */
     public constructor(config: QuicEndpointConfig, random: Random, loopIndex: Int = 0) : this(config, random, loopIndex, null)
@@ -261,8 +263,13 @@ public class EndpointCore internal constructor(
 
     internal val earlyPendingForTest: Int get() = earlyPending.values.sumOf { it.size }
 
-    /** Connections per client IP (ports ignored) for `maxConnectionsPerIp`. */
-    internal val perIp = HashMap<Any, Int>()
+    /** The slots of `maxConnections` and `maxConnectionsPerIp` (client IP, ports ignored); a group's loops share them. */
+    internal val slots: io.kuicksilver.quic.endpoint.ConnectionSlots =
+        sharedSlots ?: io.kuicksilver.quic.endpoint.ConnectionSlots
+            .Local()
+
+    /** The address of the slot [acquire][io.kuicksilver.quic.endpoint.ConnectionSlots.acquire]d for the Initial being admitted, until a connection takes it. */
+    internal var pendingSlot: AddressClass.IpKey? = null
     internal var statelessResets = 0L
     internal var statelessRateLimited = 0L
     internal var retriesSent = 0L
@@ -413,6 +420,10 @@ public class EndpointCore internal constructor(
         }
         if (testHoldNewConnectionIds && core.role == TlsRole.Server) core.cids.holdNewCidsForTest = true
         registry.add(core.localCid, core)
+        if (!core.holdsSlot) { // a client connection: admission took a server connection's slot before it was made
+            slots.acquireUnchecked()
+            core.holdsSlot = true
+        }
         connections += core
         markDirty(core)
         // rotated IDs route and reset like the first one
@@ -952,6 +963,8 @@ public class EndpointCore internal constructor(
         // every release runs even when one before it threw; the first failure is rethrown at the end
         val r = Releaser()
         try {
+            // a group's slots outlive this loop: what its connections held goes back first (a loop that failed included)
+            for (c in connections) releaseSlot(c)
             for (c in connections) r.release { c.release() }
         } finally {
             // the endpoint's own buffers and keys even when a connection's release failed
@@ -960,7 +973,6 @@ public class EndpointCore internal constructor(
             byRemote.clear() // with the lists above: nothing keeps a released connection reachable through a closed endpoint
             dirty.clear()
             earlyPending.clear()
-            perIp.clear()
             registry.clear()
             r.release { vnBuffer.close() }
             r.release { resetKey.close() }
@@ -1043,12 +1055,15 @@ public class EndpointCore internal constructor(
         }
         core.onRemoteChanged =
             null
-        core.admissionIpKey?.let { k ->
-            val n =
-                (perIp[k] ?: 1) - 1
-            if (n <= 0) perIp.remove(k) else perIp[k] = n
-            core.admissionIpKey = null
-        }
+        releaseSlot(core)
+    }
+
+    /** Gives back [core]'s slot of the connection limits (and of its client's address), once. */
+    private fun releaseSlot(core: ConnectionCore) {
+        if (!core.holdsSlot) return
+        core.holdsSlot = false
+        slots.release(core.admissionIpKey)
+        core.admissionIpKey = null
     }
 
     /** Connections in creation order (for the loop). */

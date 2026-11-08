@@ -365,8 +365,8 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
   it.
 - **Hard limits.** `quicMaxConnections` 10 000, `quicMaxConnectionsPerIp` 256 and `quicAcceptQueue` 128 per listener
   (below), and stateless answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per
-  address and 1000 in total, which the engine does not let you change; what goes beyond is dropped (a full accept queue
-  is refused with CONNECTION_REFUSED instead), and such clients see a handshake timeout. This is why a source NAT in front
+  address and 1000 in total, which the engine does not let you change. What goes beyond is dropped and such clients see
+  a handshake timeout; a full accept queue instead refuses at once with CONNECTION_REFUSED. This is why a source NAT in front
   of the server matters ([Kubernetes](#kubernetes)): every client behind it shares both per-address limits.
 - **TCP connection limits.** `maxTcpConnections` (10 000 per connector: at the limit the connector stops accepting and
   the OS backlog holds new clients; keep it below `ulimit -n`) and `maxTcpConnectionsPerIp` (off by default: behind a
@@ -379,7 +379,8 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
 
 ### QUIC connection limits
 
-Three engine options (*experimental*, 0.3.0) set the QUIC endpoint limits of every HTTP/3 listener
+Three engine options (*experimental*, 0.3.0) set the QUIC endpoint limits of every HTTP/3 listener. Each bounds the
+listener as a whole, over all its `udpSocketCount` loops, whatever loop a connection lands on
 ([configuration](configuration.md#ktor-server-engine); with `EngineMain` the keys `kuicksilver.quicMaxConnections`,
 `kuicksilver.quicMaxConnectionsPerIp`, `0` for off, and `kuicksilver.quicAcceptQueue`):
 

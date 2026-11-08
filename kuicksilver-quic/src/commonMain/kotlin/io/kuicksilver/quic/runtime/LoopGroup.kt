@@ -54,6 +54,11 @@ internal class LoopGroup private constructor(
     private val pendingAccept = AtomicInt(0)
     private val acceptQueue = EndpointLoop.acceptChannel(pendingAccept)
 
+    /** `maxConnections` and `maxConnectionsPerIp` over every loop: each loop's core takes and gives back these slots. */
+    internal val slots =
+        io.kuicksilver.quic.endpoint.ConnectionSlots
+            .Shared(KslRandom.newSource())
+
     /** The client's session tickets, shared by every loop: `connect` picks loops round-robin (ADR-0015). */
     private val sessions = io.kuicksilver.tls.SessionCache()
     private val next = AtomicInt(0)

@@ -750,7 +750,7 @@ A server decides per new client Initial whether to create a connection. `handleD
 unknown Initial (1200 bytes, a supported version, a DCID of at least 8 bytes, no reflective source port such as 53 or
 123) and copies it into a bounded queue of `initialQueueCap` (1024) entries; the loop then calls `processPending` once
 per receive batch. That step checks the Retry token, the accept queue, the hard limits (`maxConnections`,
-`maxConnectionsPerIp`, 256 per IP by default) and asks `ConnectionAdmission.admit(attempt)`, which answers `Allow`,
+`maxConnectionsPerIp`, 256 per IP by default; both count the whole endpoint, every loop, as `acceptQueue` does) and asks `ConnectionAdmission.admit(attempt)`, which answers `Allow`,
 `Retry`, `Drop` or `Close(code)`. `acceptQueue` (128 by default, shared by all loops) counts only the connections
 waiting for `accept()`, not the handshakes in flight (unvalidated Initials from spoofed sources must not lock real
 clients out). While it is full, a new client Initial is answered statelessly with an Initial CONNECTION_CLOSE carrying

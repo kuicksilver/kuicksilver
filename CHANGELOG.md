@@ -586,6 +586,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: `maxConnections` and `maxConnectionsPerIp` bound the endpoint as a whole with `loops > 1`. Each loop counted its
+  own connections, so N loops admitted up to N times either limit (SO_REUSEPORT spreads one address's source ports over
+  the loops, and the in-process dispatch hashes new clients' connection IDs). The loops of a group now share the slots:
+  one counter for the total, and a table of the addresses holding connections (keyed-hash buckets replaced by
+  compare-and-set, never larger than the connections themselves). A slot is reserved when an Initial passes the limits,
+  given back when no connection comes of it (policy refusal, Retry, an Initial that does not decrypt), and released when
+  the connection is removed or its loop closes. `ConnectionAttempt.connections` and `connectionsFromAddress` count the
+  whole endpoint too. One loop behaves as before.
 - HTTP/3: a server's `respond()` no longer fails when the client stops the request stream right after receiving the
   response HEADERS (a client abandoning a rejected CONNECT does so at once). The HEADERS frame was already handed to QUIC,
   but the flush after it met the client's STOP_SENDING and `respond()` threw a raw `ClosedWriteChannelException` and
