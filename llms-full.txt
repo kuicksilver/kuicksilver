@@ -749,7 +749,7 @@ A server decides per new client Initial whether to create a connection. `handleD
 unknown Initial (1200 bytes, a supported version, a DCID of at least 8 bytes, no reflective source port such as 53 or
 123) and copies it into a bounded queue of `initialQueueCap` (1024) entries; the loop then calls `processPending` once
 per receive batch. That step checks the Retry token, the accept queue, the hard limits (`maxConnections`,
-`maxConnectionsPerIp`, 256 per IP by default) and asks `ConnectionAdmission.admit(attempt)`, which answers `Allow`,
+`maxConnectionsPerIp`, 256 per IP by default; both count the whole endpoint, every loop, as `acceptQueue` does) and asks `ConnectionAdmission.admit(attempt)`, which answers `Allow`,
 `Retry`, `Drop` or `Close(code)`. `acceptQueue` (128 by default, shared by all loops) counts only the connections
 waiting for `accept()`, not the handshakes in flight (unvalidated Initials from spoofed sources must not lock real
 clients out). While it is full, a new client Initial is answered statelessly with an Initial CONNECTION_CLOSE carrying
@@ -1772,8 +1772,11 @@ is given up after the abort wait, so for that moment the descriptors in use can 
   and outgoing connections the application opens. Above it `accept()` fails with EMFILE; the engine then backs off
   (5 ms doubling to 1 s) instead of spinning, but clients wait until descriptors free up.
 - `EngineMain` keys `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off).
-- HTTP/3 has its own limits in the QUIC endpoint, `maxConnections` and `maxConnectionsPerIp` (the same 10,000 and 256),
-  which the engine does not let you change yet ([deployment guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#security-limits)).
+- HTTP/3 has its own limits in the QUIC endpoint, `quicMaxConnections` and `quicMaxConnectionsPerIp` (the same 10,000
+  and 256, but the per-address one on by default), and `quicAcceptQueue` (128): *experimental* since 0.3.0, `EngineMain`
+  keys `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off) and
+  `kuicksilver.quicAcceptQueue`. Behind a NAT or `kube-proxy` raise the per-address one
+  ([deployment guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#quic-connection-limits)); `engine.http3Stats` counts the clients they refused.
 
 #### HTTP/3 on the server
 
@@ -2719,6 +2722,9 @@ after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsH
 TCP client closed at accept, before TLS, with the reason: `per-IP limit` or `HTTP/2 repeat offender`; see [Connection
 limits](#connection-limits)), and `requestStarted` / `requestEnded`
 around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
+On the running engine, `engine.http3Stats` (0.3.0) gives the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
+listener, one per connector serving HTTP/3: datagrams, drops, refusals by the admission policy, the connection limits
+and the accept queue, handshakes ([Deploying: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#observability)).
 
 ```kotlin
 // guide:ktor:server-observability
@@ -3177,8 +3183,8 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   node's address. "If you set `service.spec.externalTrafficPolicy` to the value `Local`, kube-proxy only proxies proxy
   requests to local endpoints, and does not forward traffic to other nodes. This approach preserves the original source
   IP address" ([Kubernetes: Using Source IP](https://kubernetes.io/docs/tutorials/services/source-ip/)). This matters more
-  for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`maxConnectionsPerIp`, 256), and
-  that limit cannot be changed from the Ktor engine yet ([Security limits](#security-limits)); the TCP connectors'
+  for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`quicMaxConnectionsPerIp`, 256):
+  behind a source NAT raise it or turn it off ([QUIC connection limits](#quic-connection-limits)); the TCP connectors'
   per-address limit, `maxTcpConnectionsPerIp`, is off by default and should stay off behind a source NAT. Behind a source NAT, every
   client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
   packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
@@ -3227,7 +3233,8 @@ Notes on specific products (checked 2026-11-05):
   "configures a listening socket for working with datagrams", with `reuseport` "to handle packets from the same address
   and port in the same session"
   ([nginx: stream listen](https://nginx.org/en/docs/stream/ngx_stream_core_module.html#listen)). By default nginx connects
-  to the upstream from its own address, so every client shares nginx's address against the per-IP limit.
+  to the upstream from its own address, so every client shares nginx's address against the per-IP limit
+  ([QUIC connection limits](#quic-connection-limits)).
 - **Google Cloud (GKE) and Azure:** whether their load balancers take TCP and UDP on one port in one Service was **not
   verified** for this page; see their documentation.
 - **HAProxy, Envoy, Caddy, other CDNs:** **not verified**. The table above still applies: find out whether the product
@@ -3380,11 +3387,11 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
 - **Retry.** `quicAdmission` (a `ConnectionAdmission`) decides per new client. The default asks unvalidated clients for a
   Retry under handshake load; `ConnectionAdmission.AlwaysRetry` always does. Clients that bring a valid address token skip
   it.
-- **Hard limits.** `maxConnections` 10 000, `maxConnectionsPerIp` 256 and `acceptQueue` 128 per listener, and stateless
-  answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per address and 1000 in
-  total; what goes beyond is dropped, and such clients see a handshake timeout. The engine does not let you change these
-  yet ([configuration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-server-engine)). This is why a source NAT in front of the server matters
-  ([Kubernetes](#kubernetes)): every client behind it shares both limits.
+- **Hard limits.** `quicMaxConnections` 10 000, `quicMaxConnectionsPerIp` 256 and `quicAcceptQueue` 128 per listener
+  (below), and stateless answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per
+  address and 1000 in total, which the engine does not let you change. What goes beyond is dropped and such clients see
+  a handshake timeout; a full accept queue instead refuses at once with CONNECTION_REFUSED. This is why a source NAT in front
+  of the server matters ([Kubernetes](#kubernetes)): every client behind it shares both per-address limits.
 - **TCP connection limits.** `maxTcpConnections` (10 000 per connector: at the limit the connector stops accepting and
   the OS backlog holds new clients; keep it below `ulimit -n`) and `maxTcpConnectionsPerIp` (off by default: behind a
   proxy, load balancer, SNAT or NAT every client shares one address; enable it, e.g. 256, only when the server faces
@@ -3393,6 +3400,48 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
 - **Transport and HTTP/3 settings.** `quic` (a `QuicConfig`: idle timeout, windows, congestion control), `http3Settings`,
   and on TCP `requestHeaderTimeoutSeconds` and `connectionIdleTimeoutSeconds` against slow clients
   ([Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#server)).
+
+#### QUIC connection limits
+
+Three engine options (*experimental*, 0.3.0) set the QUIC endpoint limits of every HTTP/3 listener. Each bounds the
+listener as a whole, over all its `udpSocketCount` loops, whatever loop a connection lands on
+([configuration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-server-engine); with `EngineMain` the keys `kuicksilver.quicMaxConnections`,
+`kuicksilver.quicMaxConnectionsPerIp`, `0` for off, and `kuicksilver.quicAcceptQueue`):
+
+| Option | Default | Over the limit |
+|---|---|---|
+| `quicMaxConnections` | 10 000 | a new client's Initial is dropped silently; counted in `connectionsRefusedLimits` |
+| `quicMaxConnectionsPerIp` | 256 (`null` is off) | the same, per client IP address (ports ignored) |
+| `quicAcceptQueue` | 128 | handshaken connections the accept loop has not taken yet; a new client is refused with CONNECTION_REFUSED (`connectionsRefusedAcceptQueue`) |
+
+The per-address limit counts the address the server sees. Raise it (up to `quicMaxConnections`) or set it to `null`
+when many clients reach the server from one address:
+
+- a NAT or carrier-grade NAT in front of many users (an office, a campus, a mobile network);
+- Kubernetes `kube-proxy` with `externalTrafficPolicy: Cluster`, which may source-NAT packets to a node's address
+  ([Kubernetes](#kubernetes)); with `Local` the client's address is kept and the default fits;
+- a UDP load balancer or proxy that sends from its own address (nginx `stream` by default,
+  [above](#what-can-sit-in-front-of-the-server)). The engine reads no PROXY protocol header on UDP, so such a proxy cannot
+  pass the client's address on.
+
+A client over the per-address limit gets no answer and fails at its handshake timeout; a Kuicksilver client then falls
+back to TCP and marks the alternative broken. Keep `quicMaxConnections` as the overall bound, and keep the limit where
+the server sees real client addresses: it is what stops one address from taking every connection slot. The stateless
+answer limit (8 per second per address) still applies to everyone behind a shared address.
+
+```kotlin
+// guide:deployment:quic-limits
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    quicMaxConnectionsPerIp = 4_096   // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+}) {
+    routing { get("/") { call.respondText("ok") } }
+}
+server.start(wait = false)
+// for a metrics gauge: clients dropped by quicMaxConnections or quicMaxConnectionsPerIp since the start
+val refusedByLimits = server.engine.http3Stats.sumOf { it.connectionsRefusedLimits }
+```
 
 ### Observability
 
@@ -3404,9 +3453,14 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
 - `qlog = AsyncQlogSink(DirectoryQlogSink(dir), sampleEvery = 100)` writes a trace per sampled connection, for
   [qvis](https://qvis.quictools.info/).
 
-See [Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#observability-experimental) for a sample. The engine does not expose the endpoint's
-`EndpointStats` counters (refusals, datagrams received). On the server, "does any QUIC arrive at all?" is answered by
-`connectionListener`, a debug log, or a packet capture.
+- `engine.http3Stats` (*experimental*, 0.3.0) returns the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
+  listener, one per connector serving HTTP/3; each read is a fresh snapshot, safe from any thread, for a metrics gauge.
+  `datagramsReceived` answers "does any QUIC arrive at all?"; `connectionsRefusedLimits` growing means clients hit
+  `quicMaxConnections` or `quicMaxConnectionsPerIp` ([QUIC connection limits](#quic-connection-limits)),
+  `connectionsRefusedAcceptQueue` the accept queue, `connectionsRefusedAdmission` the admission policy.
+
+See [Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#observability-experimental) for a sample of the listeners. A debug log or a packet
+capture answers the same question without code.
 
 ### Checking a deployment
 
@@ -3428,7 +3482,8 @@ sudo tcpdump -ni any udp port 443
 network namespace (`nsenter -t <pid> -n tcpdump ...`) or on the host's published port.
 
 `curl --http3-only` fails when QUIC does not get through, so it tells a blocked UDP path apart from a client that just
-chose TCP ([curl: HTTP/3](https://curl.se/docs/http3.html)).
+chose TCP ([curl: HTTP/3](https://curl.se/docs/http3.html)). The repository runs this block as it stands against the
+engine in a container (`tools/check/deployment-guide.sh`), so the commands stay current.
 
 From a Kuicksilver client, every response says how it was served and, if not over HTTP/3, why:
 `response.kuicksilverDiagnostics?.fallback`, or one log line per call with `engine { logger = KuicksilverLogger.stderr(LogLevel.Info) }`
@@ -3444,7 +3499,7 @@ alternative from an earlier run; HTTP/3 starts from the next call.
 | `Alt-Svc: clear` | `engine.http3Advertising` is `Clear` or `Drain` |
 | `Alt-Svc` names the wrong port | a port mapping or load balancer with another number: map the same number or send your own header ([Ports and Alt-Svc](#ports-and-alt-svc)) |
 | `curl --http3-only` times out, `tcpdump` shows nothing | UDP is blocked before the server: firewall, security group, `-p .../udp` missing, the Service has no UDP port, the load balancer has no UDP listener |
-| `tcpdump` shows Initials, no answer | the host firewall drops them; the per-IP or stateless rate limit or the admission policy drops them (all clients behind one NAT address); answers leave from another source address ([reply addresses](#reply-addresses)) |
+| `tcpdump` shows Initials, no answer | the host firewall drops them; the per-IP or stateless rate limit or the admission policy drops them (all clients behind one NAT address: `engine.http3Stats` shows `connectionsRefusedLimits` growing, [QUIC connection limits](#quic-connection-limits)); answers leave from another source address ([reply addresses](#reply-addresses)) |
 | `curl --http3-only` fails with a TLS error | the certificate does not cover the name, or a connector with `sniSelector` (no HTTP/3) |
 | Client `fallback = HandshakeTimeout`, then `BrokenAlternative` | UDP blocked on the client's network or in front of the server |
 | Client `fallback = Refused` | the server is in `Drain`, stopping, or its accept queue is full (`h3Failure` code 0x2, CONNECTION_REFUSED: transient, the next call tries HTTP/3 again); another code: the server's QUIC listener |
@@ -3477,7 +3532,7 @@ variables](#system-properties-and-environment-variables) · [fixed limits](#fixe
 | Object | Kotlin API | Ktor client | Ktor server | `EngineMain` key |
 |---|---|---|---|---|
 | [`QuicConfig`](#quicconfig) | `quicConfig { }` | `engine { quic = … }` | `quic = …` (`quicMaxIdleTimeout`) | |
-| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount` |
+| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicMaxConnections`, `quicMaxConnectionsPerIp`, `quicAcceptQueue`, `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount`, `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp`, `kuicksilver.quicAcceptQueue` |
 | [`TlsConfig`](#tlsconfig) | `tlsConfig(role) { }` | `engine { trust = …; identity = …; tls { } }` | `tlsConnector(identity) { }` | `kuicksilver.tls.*` |
 | [`Http3Settings`](#http3settings) | `http3Settings { }` | `engine { http3 { settings = … } }` | `http3Settings = …` | `kuicksilver.http3` (on/off) |
 | [`Http2Settings`](#http2settings) | `Http2Settings(…)` | `engine { http2 { settings = … } }` | `http2Settings = …` | `kuicksilver.http2` (on/off) |
@@ -3553,14 +3608,14 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 |---|---|---|---|---|---|
 | `server` | `QuicServerConfig?` | `null` |  | 0.2.0 | the server side; `null` is a client-only endpoint, which admits no connection |
 | `crypto` | `QuicCrypto` | `KslQuicCrypto` |  | 0.2.0 | TLS and packet protection (OpenSSL through `ksl`) |
-| `maxConnections` | `Int` | 10 000 | at least 1 | 0.2.0 | beyond this many connections new Initials are dropped silently |
+| `maxConnections` | `Int` | 10 000 | at least 1 | 0.2.0 | beyond this many connections new Initials are dropped silently; counts the whole endpoint, all `loops` (since 0.3.0; before, each loop) |
 | `acceptQueue` | `Int` | 128 | at least 1 | 0.2.0 | handshaken connections waiting for `accept()`, over all loops; while full, a new client is refused statelessly with CONNECTION_REFUSED (0x02). Handshakes in flight do not count |
 | `dispatcher` | `CoroutineDispatcher?` | `null` (`Dispatchers.Default.limitedParallelism(1)`) | must stay `null` with `loops > 1` | 0.2.0 | the single-threaded dispatcher of the endpoint loop. While datagrams keep coming the loop reads the ones already queued on this thread; only on its own dispatcher (`null`) does it also wait there up to 1 ms for the next ones (not on Windows), so a dispatcher set here, shared with a UI or a second endpoint, is never held in a socket wait |
 | `io` | `(suspend (InetSocketAddress) -> DatagramIo)?` | `null` (`DatagramIo.open` with `IoPreference.Accelerated`) |  | 0.2.0 | how the loop opens its socket; `MemoryNetwork.open` runs the endpoint in memory ([Testing](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#testing-your-application)) |
 | `connectionIdLength` | `Int` (bytes) | 8 | 4..20; must equal the `QuicConfig.connectionIdLength` of the server and of every client connection | 0.2.0 | length used to parse short headers |
 | `admission` | `ConnectionAdmission` | `ConnectionAdmission.default()` |  | 0.2.0 | decides per new client Initial: `Allow`, `Retry`, `Drop` or `Close(code)`. `default(maxInflightHandshakes = 256, maxHandshakeBufferBytes = 8 MiB)` asks an unvalidated client for a Retry above either and lets in one a Retry or NEW_TOKEN token validated; `ConnectionAdmission.AlwaysRetry` validates every address first |
 | `initialQueueCap` | `Int` | 1024 | at least 1 | 0.2.0 | new Initials queued for admission per receive batch; more are dropped |
-| `maxConnectionsPerIp` | `Int?` | 256 | positive or `null` (no limit) | 0.2.0 | connections one client IP may hold, ports ignored; the excess is dropped silently |
+| `maxConnectionsPerIp` | `Int?` | 256 | positive or `null` (no limit) | 0.2.0 | connections one client IP may hold, ports ignored, over the whole endpoint, all `loops` (since 0.3.0; before, each loop); the excess is dropped silently |
 | `maxConnectionLifetime` | `Duration?` | `null` (none) | positive or `null` | 0.2.0 | server connections older than this close with NO_ERROR ("connection lifetime reached") |
 | `rejectInitialFromReflectivePorts` | `Boolean` | `true` |  | 0.2.0 | drop Initials from source ports 53, 123, 1900, 5353 and 11211 (reflection attacks) |
 | `statelessPerAddressPerSecond` | `Int` | 8 | at least 1 | 0.2.0 | stateless answers (Retry, Version Negotiation, Stateless Reset, refusals) per client address per second |
@@ -3807,6 +3862,9 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `quic` | `QuicConfig` | `QuicConfig.Default` | 0.2.0 | QUIC transport of the HTTP/3 listeners |
 | `quicMaxIdleTimeout` | `Duration?` | `null` | 0.2.0 | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | 0.2.0 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; every platform since 0.3.0) |
+| `quicMaxConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; QUIC connections each HTTP/3 listener holds over all its `udpSocketCount` loops, handshakes included (`QuicEndpointConfig.maxConnections`); beyond it new Initials are dropped silently (`EndpointStats.connectionsRefusedLimits`) |
+| `quicMaxConnectionsPerIp` (*experimental*) | `Int?` | 256 | 0.3.0 | at least 1, or `null` (off); QUIC connections of one client IP on each HTTP/3 listener over all its loops, ports ignored (`QuicEndpointConfig.maxConnectionsPerIp`); beyond it new Initials are dropped silently and the client times out. Behind a NAT, `kube-proxy` with `externalTrafficPolicy: Cluster` or a UDP load balancer that does not keep client addresses every client shares one address: raise it or turn it off ([QUIC connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#quic-connection-limits)) |
+| `quicAcceptQueue` (*experimental*) | `Int` | 128 | 0.3.0 | at least 1; handshaken QUIC connections waiting for the HTTP/3 accept loop on each listener (`QuicEndpointConfig.acceptQueue`); while full, a new client is refused with CONNECTION_REFUSED (`EndpointStats.connectionsRefusedAcceptQueue`) |
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | 0.2.0 | Retry policy |
 | `quicLoadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | 0.3.0 | QUIC-LB connection IDs of every HTTP/3 listener (`QuicEndpointConfig.loadBalancer`; its length must equal `quic.connectionIdLength`); `engine.updateLoadBalancer(next)` changes it on the running engine ([Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)) |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings |
@@ -3817,11 +3875,12 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `qlog` (*experimental*) | `QlogSink?` | `null` | 0.2.0 | added to `quic` |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` | 0.2.0 | lifecycle of every QUIC connection |
 | `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | 0.2.0 | connection and request events over every protocol |
+| `engine.http3Stats` (*experimental*, on the running engine) | `List<EndpointStats>` | empty before the start | 0.3.0 | the QUIC endpoint counters of every HTTP/3 listener, one per connector serving HTTP/3: datagrams, drops, refusals by admission, limits and the accept queue, handshakes ([Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#observability)) |
 | `engine.http3Advertising` (*experimental*, on the running engine) | `Http3Advertising` | `On` | 0.3.0 | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1 and HTTP/3 responses, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused with CONNECTION_REFUSED); read per response and per new client ([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-on-the-server)) |
 | `shutdownGracePeriod`, `shutdownTimeout` (Ktor) |  | Ktor's | 0.2.0 | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#graceful-stop)) |
 
-The other `QuicEndpointConfig` limits of the HTTP/3 listener (`maxConnections`, `acceptQueue`, `maxConnectionsPerIp`, …)
-keep their defaults and are not configurable from the engine. Ktor's `connectionGroupSize`,
+The other `QuicEndpointConfig` limits of the HTTP/3 listener (`initialQueueCap`, `maxConnectionLifetime`, the stateless
+rate limits, …) keep their defaults and are not configurable from the engine. Ktor's `connectionGroupSize`,
 `workerGroupSize` and `callGroupSize` are not used (the engine runs on `Dispatchers.IO`).
 
 #### TLS connector
@@ -3842,7 +3901,8 @@ keep their defaults and are not configurable from the engine. Ktor's `connection
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.http2RepeatOffenderPenalty`,
-`kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
+`kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
+`kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 ### ktor-network
@@ -3913,7 +3973,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 |---|---|---|
 | Logger | `QuicEndpointConfig.logger = KuicksilverLogger.stderr(LogLevel.Debug)`; Ktor client `engine { logger = … }`; Ktor server `logger = …` | `Debug`: each connection's lifecycle (`"<client\|server> connection <id> opened, peer <address>"`, `"connection <id> handshake complete, ALPN <alpn>"`, `"connection <id> path changed (<reason>): <old> -> <new>"`, `"connection <id> closed[ before its handshake completed]: <reason>"`); `Info`: an endpoint shutting down or closing; `Warn`: degradations such as the fallback to the portable socket; `Error`: an endpoint loop that died. Lines on standard error start with `kuicksilver: <LEVEL>` |
 | Connection listener | `QuicEndpointConfig.listener` (Ktor: `http3 { connectionListener }`, server `connectionListener`) | `onOpened`, `onHandshakeCompleted`, `onZeroRtt`, `onPathChanged` and `onClosed` with the `QuicException.ConnectionLost` reason |
-| Endpoint counters | `QuicEndpoint.stats` / `Http3Endpoint.stats` (`EndpointStats`) | refusals (`connectionsRefusedAcceptQueue`, `connectionsRefusedAdmission`, `connectionsRefusedLimits`, `connectionsRefusedShutdown`, `initialsDropped`), failed handshakes (`handshakesFailedTimeout`, `handshakesFailedTls`, `handshakesFailedOther`), 0-RTT, datagrams dropped at the socket or in a queue, path validations, internal failures (`uncaughtFailures`, `sendFailures`, `listenerFailures`) |
+| Endpoint counters | `QuicEndpoint.stats` / `Http3Endpoint.stats` (`EndpointStats`); Ktor server `engine.http3Stats` | refusals (`connectionsRefusedAcceptQueue`, `connectionsRefusedAdmission`, `connectionsRefusedLimits`, `connectionsRefusedShutdown`, `initialsDropped`), failed handshakes (`handshakesFailedTimeout`, `handshakesFailedTls`, `handshakesFailedOther`), 0-RTT, datagrams dropped at the socket or in a queue, path validations, internal failures (`uncaughtFailures`, `sendFailures`, `listenerFailures`) |
 | Connection counters | `QuicConnection.stats` (`ConnectionStats`) | `smoothedRtt`, `minRtt`, `cwnd`, `bytesInFlight`, `lostPackets`, `ptoCount`, `pathMtu`, `ecnState`, `datagramsDropped`, `datagramsDroppedSend`, `datagramsDroppedSocket`, `glitchTokensSpent`, `authenticationFailures`, `invalidResets` |
 | qlog | `quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(dir)) }`; Ktor client `http3 { qlog = … }`; Ktor server `qlog = …` | one `<odcid>_<client\|server>_<random>.sqlog` file (JSON-SEQ) per connection, in a directory only this user can change, readable with qvis; `ConnectionInfo.id` and the logger's `<id>` are the same original destination connection ID |
 | Ktor client events | `engine { eventListener = object : KuicksilverEventListener() { … } }` | why a protocol was chosen (`protocolSelected` with a `ProtocolReason`), the race (`raceEnded`), `altSvcUsed`, `altSvcMarkedBroken`, `fallback`, `retry`, pool reuse |
@@ -3940,7 +4000,7 @@ within `QuicConfig.handshakeTimeout` (10 s).
 | Cause | How to tell | Fix |
 |---|---|---|
 | UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only) | the server's `EndpointStats.datagramsReceived` does not move; TCP to the same port works; the Ktor client's `kuicksilverDiagnostics.fallback` is `HandshakeTimeout`, later `BrokenAlternative` | open UDP on the port ([Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#firewalls-and-security-groups)); with the Ktor client use `Http3DiscoveryMode.Auto` or `Preferred`, which fall back to HTTP/1.1 ([below](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
-| The server refuses silently: `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached | server `EndpointStats.connectionsRefusedLimits`, `initialsDropped` | raise the limits in `quicEndpointConfig { }` or spread the load |
+| The server refuses silently: `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached | server `EndpointStats.connectionsRefusedLimits`, `initialsDropped` (Ktor server: `engine.http3Stats`) | raise the limits in `quicEndpointConfig { }` (Ktor server: `quicMaxConnections`, `quicMaxConnectionsPerIp`) or spread the load |
 | Wrong address or port, nothing listening | no server traffic at all; on Kotlin/Native a QUIC server needs the accelerated socket | check `QuicEndpoint.localAddress` on the server and the address the client resolved |
 | Heavy loss on the first flight (radio links, a peer using `X25519MLKEM768`, whose first flights span two datagrams) | the qlog shows Initial retransmissions at 1 s, 2 s, 4 s | lower `QuicConfig.initialRtt` (default 333 ms, at most 10 s), see [QUIC: Configuration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#configuration); a client endpoint that already finished a connection to the same server address starts from its last smoothed RTT on its own |
 | The client's platform verifier waits on slow OCSP or AIA fetches (`TrustConfig.Platform` on Apple and Windows) | the handshake stalls after the server's certificate arrives (qlog) | allow the verifier's network access, or verify against `AnchoredCa` |
@@ -4012,9 +4072,9 @@ client knows at once), or it drops the Initial silently (the client waits for it
 
 | Counter | The client sees | Cause | Action |
 |---|---|---|---|
-| `connectionsRefusedAcceptQueue` | `TransportClosed(code = 0x02)` | `acceptQueue` (128) handshaken connections wait for `accept()` | accept faster, or raise `acceptQueue` |
+| `connectionsRefusedAcceptQueue` | `TransportClosed(code = 0x02)` | `acceptQueue` (128) handshaken connections wait for `accept()` | accept faster, or raise `acceptQueue` (Ktor server: `quicAcceptQueue`) |
 | `connectionsRefusedShutdown` | `TransportClosed(code = 0x02)` | `QuicEndpoint.shutdown` (the Ktor server's `stop`) is running | connect to another instance; wait for the new one |
-| `connectionsRefusedLimits`, `initialsDropped` | nothing, then "Handshake timeout after 10s" | `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached (not exposed to Ktor server users, who keep the defaults), `initialQueueCap` overflow, or an Initial from a reflective source port (53, 123, 1900, 5353, 11211) | raise the limit in `quicEndpointConfig { }`, or find the client that holds the connections; a NAT puts many users behind one IP |
+| `connectionsRefusedLimits`, `initialsDropped` | nothing, then "Handshake timeout after 10s" | `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached (Ktor server: `quicMaxConnections`, `quicMaxConnectionsPerIp`), `initialQueueCap` overflow, or an Initial from a reflective source port (53, 123, 1900, 5353, 11211) | raise the limit in `quicEndpointConfig { }` (Ktor server: [QUIC connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#quic-connection-limits)), or find the client that holds the connections; a NAT puts many users behind one IP |
 | `connectionsRefusedAdmission` | nothing, or the `ConnectionAdmission` close code | your `ConnectionAdmission` said `Drop` or `Close(code)`, or the Ktor server is in `Drain` (it refuses new QUIC clients through its admission policy: `TransportClosed(code = 0x02)`); the default asks an unvalidated client for a Retry (it does not drop it) above 256 handshakes in flight or 8 MiB of handshake data | check the admission policy and its `maxInflightHandshakes` |
 | `statelessRateLimited` | nothing | Retry, Version Negotiation, Stateless Reset or refusals withheld by `statelessPerAddressPerSecond` (8) or `statelessTotalPerSecond` (1000) | a flood or a scan; raise the limits only if real clients are hit |
 | `invalidTokens`, `retriesSent` | `INVALID_TOKEN` | a Retry token that expired or came from another address (the client moved, or a load balancer sent the second Initial to another server) | keep a client's packets on one server; see [Deploying](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md) |

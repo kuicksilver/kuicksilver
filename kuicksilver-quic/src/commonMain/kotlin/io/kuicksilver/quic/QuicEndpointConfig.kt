@@ -220,7 +220,10 @@ public class QuicEndpointConfig private constructor(
      * default.
      */
     public val crypto: QuicCrypto,
-    /** New Initial packets are dropped silently beyond this many connections. */
+    /**
+     * New Initial packets are dropped silently beyond this many connections, counted over the whole endpoint: every one of its
+     * [loops], client connections included.
+     */
     public val maxConnections: Int,
     /**
      * Handshaken connections waiting for `accept()` (shared by all [loops]), never more. While this many wait, a new client
@@ -247,7 +250,10 @@ public class QuicEndpointConfig private constructor(
     public val admission: ConnectionAdmission,
     /** Initials waiting for [admission] after one receive batch; more are dropped (1024 by default). */
     public val initialQueueCap: Int,
-    /** Connections one client IP may hold at once, ports ignored; null disables the limit. The excess is dropped silently. */
+    /**
+     * Connections one client IP may hold at once on the whole endpoint (over all [loops], wherever a connection lives), ports
+     * ignored; null disables the limit. The excess is dropped silently.
+     */
     public val maxConnectionsPerIp: Int?,
     /** A server connection older than this is closed with NO_ERROR, whatever its activity; null means no limit. */
     public val maxConnectionLifetime: Duration?,

@@ -122,7 +122,7 @@ internal class EndpointLoop private constructor(
         var i: PacketBatch? = null
         var o: PacketBatch? = null
         try {
-            c = EndpointCore(config, KslRandom.newSource(), index, tokens, lb)
+            c = EndpointCore(config, KslRandom.newSource(), index, tokens, lb, group?.slots)
             core = c
             i = PacketBatch(16, SLOT_SIZE, allocate)
             inBatch = i

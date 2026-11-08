@@ -546,7 +546,10 @@ public class ConnectionCore internal constructor(
     internal var lifetimeDeadline: TimeMark = TimeMark.NEVER
 
     /** The per-IP counting key the endpoint registered this connection under (null for client connections). */
-    internal var admissionIpKey: Any? = null
+    internal var admissionIpKey: io.kuicksilver.quic.core.AddressClass.IpKey? = null
+
+    /** Whether this connection holds a slot of its endpoint's connection limits (EndpointCore.slots), from creation to removal. */
+    internal var holdsSlot: Boolean = false
 
     /** Bytes this unfinished handshake holds: undecryptable packets waiting for keys, out-of-order CRYPTO data and CRYPTO data TLS has not read (`ConnectionAttempt.handshakeBufferBytes` for admission). */
     internal val handshakeBufferBytes: Long get() = receiver.bufferedBytes + cryptoStreams.bufferedBytes + tlsPendingBytes

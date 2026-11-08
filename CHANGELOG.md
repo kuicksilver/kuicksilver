@@ -379,6 +379,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   logged at most once per 5 minutes. `HttpClient.closeHttp3Connections()` sends GOAWAY on every pooled HTTP/3 connection
   and closes each once its calls are done (a request handed one just before goes again on a new connection), and sends
   every open WebTransport session `WT_DRAIN_SESSION`.
+- Ktor server: the QUIC endpoint limits of the HTTP/3 listeners are set from the engine configuration, experimental:
+  `quicMaxConnections` (10,000), `quicMaxConnectionsPerIp` (256; `null` turns it off) and `quicAcceptQueue` (128), with
+  the same defaults and ranges as `QuicEndpointConfig`, and `EngineMain` keys `kuicksilver.quicMaxConnections`,
+  `kuicksilver.quicMaxConnectionsPerIp` (`0` is off) and `kuicksilver.quicAcceptQueue`. Behind a NAT, Kubernetes
+  `kube-proxy` with `externalTrafficPolicy: Cluster` or a UDP proxy that sends from its own address every client shares
+  one address and hit the fixed 256 per address; raise or turn off the limit there (docs/guide/deployment.md, "QUIC
+  connection limits").
+- Ktor server: `engine.http3Stats` (experimental) returns the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
+  listener: datagrams, drops, refusals by admission, the connection limits and the accept queue, handshakes. The engine
+  gave no access to them before.
+- Build: `tools/check/deployment-guide.sh` runs the commands of docs/guide/deployment.md, "Checking a deployment"
+  (`curl --http3-only`, the `Alt-Svc` check, `tcpdump`), as they stand against the engine in one Docker container; a step
+  of the local matrix and of the CI `linux-native` job.
 
 ### Changed
 
@@ -581,6 +594,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: `maxConnections` and `maxConnectionsPerIp` bound the endpoint as a whole with `loops > 1`. Each loop counted its
+  own connections, so N loops admitted up to N times either limit (SO_REUSEPORT spreads one address's source ports over
+  the loops, and the in-process dispatch hashes new clients' connection IDs). The loops of a group now share the slots:
+  one counter for the total, and a table of the addresses holding connections (keyed-hash buckets replaced by
+  compare-and-set, never larger than the connections themselves). A slot is reserved when an Initial passes the limits,
+  given back when no connection comes of it (policy refusal, Retry, an Initial that does not decrypt), and released when
+  the connection is removed or its loop closes. `ConnectionAttempt.connections` and `connectionsFromAddress` count the
+  whole endpoint too. One loop behaves as before. Upgrading with `loops > 1` (the Ktor engine's `udpSocketCount`): the
+  limits are now endpoint-wide, so multiply the old values by the loop count to keep the same capacity.
 - HTTP/3: a server's `respond()` no longer fails when the client stops the request stream right after receiving the
   response HEADERS (a client abandoning a rejected CONNECT does so at once). The HEADERS frame was already handed to QUIC,
   but the flush after it met the client's STOP_SENDING and `respond()` threw a raw `ClosedWriteChannelException` and

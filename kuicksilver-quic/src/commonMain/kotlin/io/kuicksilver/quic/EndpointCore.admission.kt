@@ -67,8 +67,8 @@ internal fun EndpointCore.admitOne(
         statelessInitialClose(data, profile, from, TransportError.CONNECTION_REFUSED, now)
         return false
     }
-    // ---- hard limits: no policy may lift them ----
-    if (connections.size >= config.maxConnections) {
+    // ---- hard limits: no policy may lift them; a loop group's loops share them (EndpointCore.slots) ----
+    if (slots.total >= config.maxConnections) {
         initialsDropped++
         refusedLimits++
         return false
@@ -81,25 +81,33 @@ internal fun EndpointCore.admitOne(
         return false
     }
     val ipKey = AddressClass.ipKey(from)
-    val fromIp = perIp[ipKey] ?: 0
-    config.maxConnectionsPerIp?.let {
-        if (fromIp >= it) {
-            initialsDropped++
-            refusedLimits++
-            return false
-        }
+    // both limits at once, atomically across the group's loops; the slot goes back below unless a connection takes it
+    val fromIp = slots.acquire(ipKey, config.maxConnections, config.maxConnectionsPerIp)
+    if (fromIp < 0) {
+        initialsDropped++
+        refusedLimits++
+        return false
     }
-    // the replay register last, after the hard limits: a token is spent only by an attempt the policy gets to see (RFC 9000 section 8.1.4)
-    val newTokenNonce = (check as? TokenCheck.NewTokenValid)?.nonce
-    if (newTokenNonce != null) {
-        if (tokens.admitNewToken(newTokenNonce, now)) {
-            newTokensAccepted++
-        } else {
-            newTokensRejected++ // a replay, or the register is full: fail closed, as a client without a token
-            check = TokenCheck.Absent
+    pendingSlot = ipKey
+    val created =
+        try {
+            // the replay register last, after the hard limits: a token is spent only by an attempt the policy gets to see (RFC 9000
+            // section 8.1.4)
+            val newTokenNonce = (check as? TokenCheck.NewTokenValid)?.nonce
+            if (newTokenNonce != null) {
+                if (tokens.admitNewToken(newTokenNonce, now)) {
+                    newTokensAccepted++
+                } else {
+                    newTokensRejected++ // a replay, or the register is full: fail closed, as a client without a token
+                    check = TokenCheck.Absent
+                }
+            }
+            admitValidated(e, data, length, from, now, inflight, handshakeBuffer, profile, check, fromIp, ipKey)
+        } finally {
+            // no connection took the slot (the policy refused, a Retry, a failure): it goes back
+            pendingSlot?.let { slots.release(it) }
+            pendingSlot = null
         }
-    }
-    val created = admitValidated(e, data, length, from, now, inflight, handshakeBuffer, profile, check, fromIp, ipKey)
     if (!created && check is TokenCheck.NewTokenValid) tokens.releaseNewToken(check.nonce) // the client may show it again
     return created
 }
@@ -116,14 +124,14 @@ private fun EndpointCore.admitValidated(
     profile: VersionProfile,
     check: TokenCheck,
     fromIp: Int,
-    ipKey: Any,
+    ipKey: AddressClass.IpKey,
 ): Boolean {
     val server = config.server!!
     val tokens = addressTokens!!
     val validated = check is TokenCheck.Valid || check is TokenCheck.NewTokenValid
     val decision =
         try {
-            config.admission.admit(ConnectionAttempt(from, inflight, connections.size, fromIp, handshakeBuffer, validated))
+            config.admission.admit(ConnectionAttempt(from, inflight, slots.total - 1, fromIp, handshakeBuffer, validated))
         } catch (
             t: Throwable,
         ) {
@@ -242,7 +250,10 @@ private fun EndpointCore.admitValidated(
         }
     }
     config.maxConnectionLifetime?.let { core.lifetimeDeadline = now + it }
-    attach(core, issued.issuance)
+    // the connection takes the slot reserved for it as attach adds it to the endpoint: from then on its removal gives it back
+    // (an Initial that does not decrypt too); a failure before that leaves the slot to the caller, which gives it back
+    core.admissionIpKey = ipKey
+    attach(core, issued.issuance, slotReserved = true)
     // after attach: the sequence-1 ID a preferred address issues must route here (the registrar is set) before the first packet;
     // one re-encoding of the transport parameters for both changes. A preferred socket that failed is no longer offered
     // ... nor to a connection whose QUIC-LB ID is plaintext or unroutable: it hands out no second ID (draft-ietf-quic-load-balancers-21
@@ -269,8 +280,6 @@ private fun EndpointCore.admitValidated(
         return false
     } // the Initial did not decrypt: no state for a datagram anyone can forge (threat-model 3.2)
     connectionsCreated++ // only now: a forged Initial creates nothing
-    core.admissionIpKey = ipKey
-    perIp[ipKey] = fromIp + 1
     accepted += core
     if (serverEarly != null) replayEarly(core, core.initialKeyCid, now)
     return true

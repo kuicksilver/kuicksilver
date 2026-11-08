@@ -27,7 +27,7 @@ variables](#system-properties-and-environment-variables) · [fixed limits](#fixe
 | Object | Kotlin API | Ktor client | Ktor server | `EngineMain` key |
 |---|---|---|---|---|
 | [`QuicConfig`](#quicconfig) | `quicConfig { }` | `engine { quic = … }` | `quic = …` (`quicMaxIdleTimeout`) | |
-| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount` |
+| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicMaxConnections`, `quicMaxConnectionsPerIp`, `quicAcceptQueue`, `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount`, `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp`, `kuicksilver.quicAcceptQueue` |
 | [`TlsConfig`](#tlsconfig) | `tlsConfig(role) { }` | `engine { trust = …; identity = …; tls { } }` | `tlsConnector(identity) { }` | `kuicksilver.tls.*` |
 | [`Http3Settings`](#http3settings) | `http3Settings { }` | `engine { http3 { settings = … } }` | `http3Settings = …` | `kuicksilver.http3` (on/off) |
 | [`Http2Settings`](#http2settings) | `Http2Settings(…)` | `engine { http2 { settings = … } }` | `http2Settings = …` | `kuicksilver.http2` (on/off) |
@@ -103,14 +103,14 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 |---|---|---|---|---|---|
 | `server` | `QuicServerConfig?` | `null` |  | 0.2.0 | the server side; `null` is a client-only endpoint, which admits no connection |
 | `crypto` | `QuicCrypto` | `KslQuicCrypto` |  | 0.2.0 | TLS and packet protection (OpenSSL through `ksl`) |
-| `maxConnections` | `Int` | 10 000 | at least 1 | 0.2.0 | beyond this many connections new Initials are dropped silently |
+| `maxConnections` | `Int` | 10 000 | at least 1 | 0.2.0 | beyond this many connections new Initials are dropped silently; counts the whole endpoint, all `loops` (since 0.3.0; before, each loop) |
 | `acceptQueue` | `Int` | 128 | at least 1 | 0.2.0 | handshaken connections waiting for `accept()`, over all loops; while full, a new client is refused statelessly with CONNECTION_REFUSED (0x02). Handshakes in flight do not count |
 | `dispatcher` | `CoroutineDispatcher?` | `null` (`Dispatchers.Default.limitedParallelism(1)`) | must stay `null` with `loops > 1` | 0.2.0 | the single-threaded dispatcher of the endpoint loop. While datagrams keep coming the loop reads the ones already queued on this thread; only on its own dispatcher (`null`) does it also wait there up to 1 ms for the next ones (not on Windows), so a dispatcher set here, shared with a UI or a second endpoint, is never held in a socket wait |
 | `io` | `(suspend (InetSocketAddress) -> DatagramIo)?` | `null` (`DatagramIo.open` with `IoPreference.Accelerated`) |  | 0.2.0 | how the loop opens its socket; `MemoryNetwork.open` runs the endpoint in memory ([Testing](quic.md#testing-your-application)) |
 | `connectionIdLength` | `Int` (bytes) | 8 | 4..20; must equal the `QuicConfig.connectionIdLength` of the server and of every client connection | 0.2.0 | length used to parse short headers |
 | `admission` | `ConnectionAdmission` | `ConnectionAdmission.default()` |  | 0.2.0 | decides per new client Initial: `Allow`, `Retry`, `Drop` or `Close(code)`. `default(maxInflightHandshakes = 256, maxHandshakeBufferBytes = 8 MiB)` asks an unvalidated client for a Retry above either and lets in one a Retry or NEW_TOKEN token validated; `ConnectionAdmission.AlwaysRetry` validates every address first |
 | `initialQueueCap` | `Int` | 1024 | at least 1 | 0.2.0 | new Initials queued for admission per receive batch; more are dropped |
-| `maxConnectionsPerIp` | `Int?` | 256 | positive or `null` (no limit) | 0.2.0 | connections one client IP may hold, ports ignored; the excess is dropped silently |
+| `maxConnectionsPerIp` | `Int?` | 256 | positive or `null` (no limit) | 0.2.0 | connections one client IP may hold, ports ignored, over the whole endpoint, all `loops` (since 0.3.0; before, each loop); the excess is dropped silently |
 | `maxConnectionLifetime` | `Duration?` | `null` (none) | positive or `null` | 0.2.0 | server connections older than this close with NO_ERROR ("connection lifetime reached") |
 | `rejectInitialFromReflectivePorts` | `Boolean` | `true` |  | 0.2.0 | drop Initials from source ports 53, 123, 1900, 5353 and 11211 (reflection attacks) |
 | `statelessPerAddressPerSecond` | `Int` | 8 | at least 1 | 0.2.0 | stateless answers (Retry, Version Negotiation, Stateless Reset, refusals) per client address per second |
@@ -357,6 +357,9 @@ Guide: [Ktor: Client](ktor.md#client).
 | `quic` | `QuicConfig` | `QuicConfig.Default` | 0.2.0 | QUIC transport of the HTTP/3 listeners |
 | `quicMaxIdleTimeout` | `Duration?` | `null` | 0.2.0 | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | 0.2.0 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; every platform since 0.3.0) |
+| `quicMaxConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; QUIC connections each HTTP/3 listener holds over all its `udpSocketCount` loops, handshakes included (`QuicEndpointConfig.maxConnections`); beyond it new Initials are dropped silently (`EndpointStats.connectionsRefusedLimits`) |
+| `quicMaxConnectionsPerIp` (*experimental*) | `Int?` | 256 | 0.3.0 | at least 1, or `null` (off); QUIC connections of one client IP on each HTTP/3 listener over all its loops, ports ignored (`QuicEndpointConfig.maxConnectionsPerIp`); beyond it new Initials are dropped silently and the client times out. Behind a NAT, `kube-proxy` with `externalTrafficPolicy: Cluster` or a UDP load balancer that does not keep client addresses every client shares one address: raise it or turn it off ([QUIC connection limits](deployment.md#quic-connection-limits)) |
+| `quicAcceptQueue` (*experimental*) | `Int` | 128 | 0.3.0 | at least 1; handshaken QUIC connections waiting for the HTTP/3 accept loop on each listener (`QuicEndpointConfig.acceptQueue`); while full, a new client is refused with CONNECTION_REFUSED (`EndpointStats.connectionsRefusedAcceptQueue`) |
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | 0.2.0 | Retry policy |
 | `quicLoadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | 0.3.0 | QUIC-LB connection IDs of every HTTP/3 listener (`QuicEndpointConfig.loadBalancer`; its length must equal `quic.connectionIdLength`); `engine.updateLoadBalancer(next)` changes it on the running engine ([Behind a load balancer](quic.md#behind-a-load-balancer)) |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings |
@@ -367,11 +370,12 @@ Guide: [Ktor: Client](ktor.md#client).
 | `qlog` (*experimental*) | `QlogSink?` | `null` | 0.2.0 | added to `quic` |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` | 0.2.0 | lifecycle of every QUIC connection |
 | `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | 0.2.0 | connection and request events over every protocol |
+| `engine.http3Stats` (*experimental*, on the running engine) | `List<EndpointStats>` | empty before the start | 0.3.0 | the QUIC endpoint counters of every HTTP/3 listener, one per connector serving HTTP/3: datagrams, drops, refusals by admission, limits and the accept queue, handshakes ([Observability](deployment.md#observability)) |
 | `engine.http3Advertising` (*experimental*, on the running engine) | `Http3Advertising` | `On` | 0.3.0 | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1 and HTTP/3 responses, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused with CONNECTION_REFUSED); read per response and per new client ([Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)) |
 | `shutdownGracePeriod`, `shutdownTimeout` (Ktor) |  | Ktor's | 0.2.0 | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](ktor.md#graceful-stop)) |
 
-The other `QuicEndpointConfig` limits of the HTTP/3 listener (`maxConnections`, `acceptQueue`, `maxConnectionsPerIp`, …)
-keep their defaults and are not configurable from the engine. Ktor's `connectionGroupSize`,
+The other `QuicEndpointConfig` limits of the HTTP/3 listener (`initialQueueCap`, `maxConnectionLifetime`, the stateless
+rate limits, …) keep their defaults and are not configurable from the engine. Ktor's `connectionGroupSize`,
 `workerGroupSize` and `callGroupSize` are not used (the engine runs on `Dispatchers.IO`).
 
 ### TLS connector
@@ -392,7 +396,8 @@ keep their defaults and are not configurable from the engine. Ktor's `connection
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.http2RepeatOffenderPenalty`,
-`kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
+`kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
+`kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 ## ktor-network

@@ -159,8 +159,8 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   node's address. "If you set `service.spec.externalTrafficPolicy` to the value `Local`, kube-proxy only proxies proxy
   requests to local endpoints, and does not forward traffic to other nodes. This approach preserves the original source
   IP address" ([Kubernetes: Using Source IP](https://kubernetes.io/docs/tutorials/services/source-ip/)). This matters more
-  for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`maxConnectionsPerIp`, 256), and
-  that limit cannot be changed from the Ktor engine yet ([Security limits](#security-limits)); the TCP connectors'
+  for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`quicMaxConnectionsPerIp`, 256):
+  behind a source NAT raise it or turn it off ([QUIC connection limits](#quic-connection-limits)); the TCP connectors'
   per-address limit, `maxTcpConnectionsPerIp`, is off by default and should stay off behind a source NAT. Behind a source NAT, every
   client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
   packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
@@ -209,7 +209,8 @@ Notes on specific products (checked 2026-11-05):
   "configures a listening socket for working with datagrams", with `reuseport` "to handle packets from the same address
   and port in the same session"
   ([nginx: stream listen](https://nginx.org/en/docs/stream/ngx_stream_core_module.html#listen)). By default nginx connects
-  to the upstream from its own address, so every client shares nginx's address against the per-IP limit.
+  to the upstream from its own address, so every client shares nginx's address against the per-IP limit
+  ([QUIC connection limits](#quic-connection-limits)).
 - **Google Cloud (GKE) and Azure:** whether their load balancers take TCP and UDP on one port in one Service was **not
   verified** for this page; see their documentation.
 - **HAProxy, Envoy, Caddy, other CDNs:** **not verified**. The table above still applies: find out whether the product
@@ -362,11 +363,11 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
 - **Retry.** `quicAdmission` (a `ConnectionAdmission`) decides per new client. The default asks unvalidated clients for a
   Retry under handshake load; `ConnectionAdmission.AlwaysRetry` always does. Clients that bring a valid address token skip
   it.
-- **Hard limits.** `maxConnections` 10 000, `maxConnectionsPerIp` 256 and `acceptQueue` 128 per listener, and stateless
-  answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per address and 1000 in
-  total; what goes beyond is dropped, and such clients see a handshake timeout. The engine does not let you change these
-  yet ([configuration](configuration.md#ktor-server-engine)). This is why a source NAT in front of the server matters
-  ([Kubernetes](#kubernetes)): every client behind it shares both limits.
+- **Hard limits.** `quicMaxConnections` 10 000, `quicMaxConnectionsPerIp` 256 and `quicAcceptQueue` 128 per listener
+  (below), and stateless answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per
+  address and 1000 in total, which the engine does not let you change. What goes beyond is dropped and such clients see
+  a handshake timeout; a full accept queue instead refuses at once with CONNECTION_REFUSED. This is why a source NAT in front
+  of the server matters ([Kubernetes](#kubernetes)): every client behind it shares both per-address limits.
 - **TCP connection limits.** `maxTcpConnections` (10 000 per connector: at the limit the connector stops accepting and
   the OS backlog holds new clients; keep it below `ulimit -n`) and `maxTcpConnectionsPerIp` (off by default: behind a
   proxy, load balancer, SNAT or NAT every client shares one address; enable it, e.g. 256, only when the server faces
@@ -375,6 +376,48 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
 - **Transport and HTTP/3 settings.** `quic` (a `QuicConfig`: idle timeout, windows, congestion control), `http3Settings`,
   and on TCP `requestHeaderTimeoutSeconds` and `connectionIdleTimeoutSeconds` against slow clients
   ([Ktor: Server](ktor.md#server)).
+
+### QUIC connection limits
+
+Three engine options (*experimental*, 0.3.0) set the QUIC endpoint limits of every HTTP/3 listener. Each bounds the
+listener as a whole, over all its `udpSocketCount` loops, whatever loop a connection lands on
+([configuration](configuration.md#ktor-server-engine); with `EngineMain` the keys `kuicksilver.quicMaxConnections`,
+`kuicksilver.quicMaxConnectionsPerIp`, `0` for off, and `kuicksilver.quicAcceptQueue`):
+
+| Option | Default | Over the limit |
+|---|---|---|
+| `quicMaxConnections` | 10 000 | a new client's Initial is dropped silently; counted in `connectionsRefusedLimits` |
+| `quicMaxConnectionsPerIp` | 256 (`null` is off) | the same, per client IP address (ports ignored) |
+| `quicAcceptQueue` | 128 | handshaken connections the accept loop has not taken yet; a new client is refused with CONNECTION_REFUSED (`connectionsRefusedAcceptQueue`) |
+
+The per-address limit counts the address the server sees. Raise it (up to `quicMaxConnections`) or set it to `null`
+when many clients reach the server from one address:
+
+- a NAT or carrier-grade NAT in front of many users (an office, a campus, a mobile network);
+- Kubernetes `kube-proxy` with `externalTrafficPolicy: Cluster`, which may source-NAT packets to a node's address
+  ([Kubernetes](#kubernetes)); with `Local` the client's address is kept and the default fits;
+- a UDP load balancer or proxy that sends from its own address (nginx `stream` by default,
+  [above](#what-can-sit-in-front-of-the-server)). The engine reads no PROXY protocol header on UDP, so such a proxy cannot
+  pass the client's address on.
+
+A client over the per-address limit gets no answer and fails at its handshake timeout; a Kuicksilver client then falls
+back to TCP and marks the alternative broken. Keep `quicMaxConnections` as the overall bound, and keep the limit where
+the server sees real client addresses: it is what stops one address from taking every connection slot. The stateless
+answer limit (8 per second per address) still applies to everyone behind a shared address.
+
+```kotlin
+// guide:deployment:quic-limits
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    quicMaxConnectionsPerIp = 4_096   // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+}) {
+    routing { get("/") { call.respondText("ok") } }
+}
+server.start(wait = false)
+// for a metrics gauge: clients dropped by quicMaxConnections or quicMaxConnectionsPerIp since the start
+val refusedByLimits = server.engine.http3Stats.sumOf { it.connectionsRefusedLimits }
+```
 
 ## Observability
 
@@ -386,9 +429,14 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
 - `qlog = AsyncQlogSink(DirectoryQlogSink(dir), sampleEvery = 100)` writes a trace per sampled connection, for
   [qvis](https://qvis.quictools.info/).
 
-See [Ktor: Observability](ktor.md#observability-experimental) for a sample. The engine does not expose the endpoint's
-`EndpointStats` counters (refusals, datagrams received). On the server, "does any QUIC arrive at all?" is answered by
-`connectionListener`, a debug log, or a packet capture.
+- `engine.http3Stats` (*experimental*, 0.3.0) returns the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
+  listener, one per connector serving HTTP/3; each read is a fresh snapshot, safe from any thread, for a metrics gauge.
+  `datagramsReceived` answers "does any QUIC arrive at all?"; `connectionsRefusedLimits` growing means clients hit
+  `quicMaxConnections` or `quicMaxConnectionsPerIp` ([QUIC connection limits](#quic-connection-limits)),
+  `connectionsRefusedAcceptQueue` the accept queue, `connectionsRefusedAdmission` the admission policy.
+
+See [Ktor: Observability](ktor.md#observability-experimental) for a sample of the listeners. A debug log or a packet
+capture answers the same question without code.
 
 ## Checking a deployment
 
@@ -410,7 +458,8 @@ sudo tcpdump -ni any udp port 443
 network namespace (`nsenter -t <pid> -n tcpdump ...`) or on the host's published port.
 
 `curl --http3-only` fails when QUIC does not get through, so it tells a blocked UDP path apart from a client that just
-chose TCP ([curl: HTTP/3](https://curl.se/docs/http3.html)).
+chose TCP ([curl: HTTP/3](https://curl.se/docs/http3.html)). The repository runs this block as it stands against the
+engine in a container (`tools/check/deployment-guide.sh`), so the commands stay current.
 
 From a Kuicksilver client, every response says how it was served and, if not over HTTP/3, why:
 `response.kuicksilverDiagnostics?.fallback`, or one log line per call with `engine { logger = KuicksilverLogger.stderr(LogLevel.Info) }`
@@ -426,7 +475,7 @@ alternative from an earlier run; HTTP/3 starts from the next call.
 | `Alt-Svc: clear` | `engine.http3Advertising` is `Clear` or `Drain` |
 | `Alt-Svc` names the wrong port | a port mapping or load balancer with another number: map the same number or send your own header ([Ports and Alt-Svc](#ports-and-alt-svc)) |
 | `curl --http3-only` times out, `tcpdump` shows nothing | UDP is blocked before the server: firewall, security group, `-p .../udp` missing, the Service has no UDP port, the load balancer has no UDP listener |
-| `tcpdump` shows Initials, no answer | the host firewall drops them; the per-IP or stateless rate limit or the admission policy drops them (all clients behind one NAT address); answers leave from another source address ([reply addresses](#reply-addresses)) |
+| `tcpdump` shows Initials, no answer | the host firewall drops them; the per-IP or stateless rate limit or the admission policy drops them (all clients behind one NAT address: `engine.http3Stats` shows `connectionsRefusedLimits` growing, [QUIC connection limits](#quic-connection-limits)); answers leave from another source address ([reply addresses](#reply-addresses)) |
 | `curl --http3-only` fails with a TLS error | the certificate does not cover the name, or a connector with `sniSelector` (no HTTP/3) |
 | Client `fallback = HandshakeTimeout`, then `BrokenAlternative` | UDP blocked on the client's network or in front of the server |
 | Client `fallback = Refused` | the server is in `Drain`, stopping, or its accept queue is full (`h3Failure` code 0x2, CONNECTION_REFUSED: transient, the next call tries HTTP/3 again); another code: the server's QUIC listener |

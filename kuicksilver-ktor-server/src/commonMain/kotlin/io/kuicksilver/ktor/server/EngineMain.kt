@@ -18,7 +18,8 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files: the deployment port then serves TLS
  * and HTTP/3), `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate, e.g. `1h`;
  * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
- * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`,
+ * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
+ * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`,
  * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
  * server).
  */
@@ -32,8 +33,8 @@ public object EngineMain {
     /**
      * The server [main] would run, not started yet. Throws [IllegalArgumentException] when only one of the two
      * `kuicksilver.tls.*` file keys is set, `kuicksilver.tls.reloadInterval` is set without them or is not a duration of
-     * at least 1 second (or `0`), a boolean key is not `true`/`false`, or `kuicksilver.maxTcpConnections` or
-     * `kuicksilver.maxTcpConnectionsPerIp` is not a whole number in range.
+     * at least 1 second (or `0`), a boolean key is not `true`/`false`, or `kuicksilver.maxTcpConnections`,
+     * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range.
      */
     public fun createServer(args: Array<String>): EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration> {
         val config = CommandLineConfig(args)
@@ -110,6 +111,27 @@ public object EngineMain {
             ?.let {
                 @OptIn(ExperimentalKuicksilverApi::class)
                 maxTcpConnectionsPerIp = parseCount("kuicksilver.maxTcpConnectionsPerIp", it).takeIf { n -> n != 0 }
+            }
+        config
+            .propertyOrNull("kuicksilver.quicMaxConnections")
+            ?.getString()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                quicMaxConnections = parseCount("kuicksilver.quicMaxConnections", it)
+            }
+        config
+            .propertyOrNull("kuicksilver.quicMaxConnectionsPerIp")
+            ?.getString()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                quicMaxConnectionsPerIp = parseCount("kuicksilver.quicMaxConnectionsPerIp", it).takeIf { n -> n != 0 }
+            }
+        config
+            .propertyOrNull("kuicksilver.quicAcceptQueue")
+            ?.getString()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                quicAcceptQueue = parseCount("kuicksilver.quicAcceptQueue", it)
             }
         config
             .propertyOrNull("kuicksilver.altSvc")

@@ -29,6 +29,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine : io/
 	public fun <init> (Lio/ktor/server/application/ApplicationEnvironment;Lio/ktor/events/Events;ZLio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lkotlin/jvm/functions/Function0;)V
 	public final fun getConfiguration ()Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;
 	public final fun getHttp3Advertising ()Lio/kuicksilver/ktor/server/Http3Advertising;
+	public final fun getHttp3Stats ()Ljava/util/List;
 	public final fun setHttp3Advertising (Lio/kuicksilver/ktor/server/Http3Advertising;)V
 	public fun start (Z)Lio/ktor/server/engine/ApplicationEngine;
 	public fun startSuspend (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -55,9 +56,12 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getMaxTcpConnectionsPerIp ()Ljava/lang/Integer;
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
+	public final fun getQuicAcceptQueue ()I
 	public final fun getQuicAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
 	public final fun getQuicEarlyData ()Z
 	public final fun getQuicLoadBalancer ()Lio/kuicksilver/quic/QuicLbConfig;
+	public final fun getQuicMaxConnections ()I
+	public final fun getQuicMaxConnectionsPerIp ()Ljava/lang/Integer;
 	public final fun getQuicMaxIdleTimeout-FghU774 ()Lkotlin/time/Duration;
 	public final fun getRequestHeaderTimeoutSeconds ()I
 	public final fun getUdpSocketCount ()I
@@ -79,9 +83,12 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun setMaxTcpConnectionsPerIp (Ljava/lang/Integer;)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
+	public final fun setQuicAcceptQueue (I)V
 	public final fun setQuicAdmission (Lio/kuicksilver/quic/ConnectionAdmission;)V
 	public final fun setQuicEarlyData (Z)V
 	public final fun setQuicLoadBalancer (Lio/kuicksilver/quic/QuicLbConfig;)V
+	public final fun setQuicMaxConnections (I)V
+	public final fun setQuicMaxConnectionsPerIp (Ljava/lang/Integer;)V
 	public final fun setQuicMaxIdleTimeout-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setRequestHeaderTimeoutSeconds (I)V
 	public final fun setUdpSocketCount (I)V

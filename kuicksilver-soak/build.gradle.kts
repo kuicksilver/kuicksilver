@@ -21,13 +21,18 @@ kotlin {
     val h2spec: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
         binaries.executable("h2specServer", listOf(org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.DEBUG)) { entryPoint = "io.kuicksilver.soak.h2specServerMain"; baseName = "h2spec-server" }
     }
-    linuxX64(h2spec); linuxArm64(); macosArm64(h2spec)
+    // the deployment guide's server (tools/check/deployment-guide.sh), run in a Linux container of the host's architecture
+    val deployment: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
+        binaries.executable("deploymentServer", listOf(org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.DEBUG)) { entryPoint = "io.kuicksilver.soak.deploymentServerMain"; baseName = "deployment-server" }
+    }
+    linuxX64 { h2spec(); deployment() }; linuxArm64(deployment); macosArm64(h2spec)
     applyDefaultHierarchyTemplate()
     sourceSets {
         all { languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi"); languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi") }
         commonMain.dependencies {
             implementation(project(":kuicksilver-ktor-client"))
             implementation(project(":kuicksilver-ktor-server"))
+            implementation(libs.ktor.server.auto.head.response) // the deployment server answers the guide's `curl -I`
             implementation(libs.kotlinx.io.core)
         }
         commonTest.dependencies { implementation(kotlin("test")) }

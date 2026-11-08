@@ -55,6 +55,8 @@ class DispatchedGroupTest {
         crypto: QuicCrypto = NullCryptoProvider,
         acceptQueue: Int = 1024,
         admission: ConnectionAdmission? = null,
+        maxConnections: Int = 10_000,
+        maxConnectionsPerIp: Int? = 256,
     ) = QuicEndpointConfig
         .Builder()
         .apply {
@@ -62,6 +64,8 @@ class DispatchedGroupTest {
             this.crypto = crypto
             this.loops = loops
             this.acceptQueue = acceptQueue
+            this.maxConnections = maxConnections
+            this.maxConnectionsPerIp = maxConnectionsPerIp
             admission?.let { this.admission = it }
             io = { net.open(it) }
         }.build()
@@ -89,6 +93,94 @@ class DispatchedGroupTest {
         }
 
     private suspend fun group(cfg: QuicEndpointConfig): LoopGroup = QuicEndpoint.bind(serverAddr, cfg) as LoopGroup
+
+    /**
+     * Connects every one of [cs] with a 2 s handshake timeout and returns how many succeeded (the others were dropped by a
+     * hard limit and time out); the connections stay open, so the server holds them.
+     */
+    private suspend fun connectedOf(cs: List<QuicEndpoint>): Int {
+        val quick =
+            QuicClientConfig
+                .Builder(CoreFixtures.client())
+                .apply { quic = io.kuicksilver.quic.quicConfig { handshakeTimeout = 2.seconds } }
+                .build()
+        return kotlinx.coroutines.coroutineScope {
+            cs.map { async { runCatching { it.connect(serverAddr, quick) }.isSuccess } }.awaitAll().count { it }
+        }
+    }
+
+    /**
+     * `maxConnectionsPerIp` bounds the whole endpoint, not each loop: with four loops and a limit of 2, eight clients of one
+     * address (eight ports, their Initials hashed over the loops) get two connections, and the rest are dropped and counted.
+     */
+    @Test fun negative_perIpLimitHoldsAcrossLoops() =
+        runBlocking {
+            withTimeout(60.seconds) {
+                val net = MemoryNetwork()
+                val g = group(serverConfig(net, maxConnectionsPerIp = 2))
+                val cs =
+                    List(8) { i ->
+                        val io = net.open(InetSocketAddress("10.0.1.1", 1000 + i))
+                        QuicEndpoint.bind(io.localAddress, clientEndpointConfig(io))
+                    }
+                try {
+                    assertEquals(2, connectedOf(cs), "connections from one address over four loops: ${g.statsForTest()}")
+                    assertTrue(g.stats.connectionsRefusedLimits >= 6, "${g.stats}")
+                } finally {
+                    cs.forEach { it.close() }
+                    g.close()
+                }
+            }
+        }
+
+    /** `maxConnections` bounds the whole endpoint too: four loops with a limit of 2 hold two connections of eight clients. */
+    @Test fun negative_maxConnectionsHoldsAcrossLoops() =
+        runBlocking {
+            withTimeout(60.seconds) {
+                val net = MemoryNetwork()
+                val g = group(serverConfig(net, maxConnections = 2, maxConnectionsPerIp = null))
+                val cs = clients(net, 8)
+                try {
+                    assertEquals(2, connectedOf(cs), "connections over four loops: ${g.statsForTest()}")
+                    assertTrue(g.stats.connectionsRefusedLimits >= 6, "${g.stats}")
+                } finally {
+                    cs.forEach { it.close() }
+                    g.close()
+                }
+            }
+        }
+
+    /**
+     * A slot comes back when its connection is gone: with a per-address limit of 1 over four loops, a second client of the
+     * address (eight tries, eight ports: whatever loop each lands on) is dropped while the first connection lives, and connects
+     * once the server removed it.
+     */
+    @Test fun negative_perIpSlotHeldUntilClose() =
+        runBlocking {
+            withTimeout(60.seconds) {
+                val net = MemoryNetwork()
+                val g = group(serverConfig(net, maxConnectionsPerIp = 1))
+                val cs =
+                    List(9) { i ->
+                        val io = net.open(InetSocketAddress("10.0.1.1", 1000 + i))
+                        QuicEndpoint.bind(io.localAddress, clientEndpointConfig(io))
+                    }
+                try {
+                    val first = cs[0].connect(serverAddr, clientConfig)
+                    val served = g.accept()
+                    assertEquals(0, connectedOf(cs.subList(1, 9)), "a second connection of the address while the first lives")
+                    served.close()
+                    first.closed.await()
+                    // the server removes its side after its closing period; a try before that is dropped and times out
+                    var second = false
+                    while (!second) second = connectedOf(cs.subList(1, 2)) == 1
+                    assertEquals(1L, g.stats.connectionsActive, "${g.stats}")
+                } finally {
+                    cs.forEach { it.close() }
+                    g.close()
+                }
+            }
+        }
 
     /** New clients' Initials hash over every loop: 128 connections, each loop creates at least 8. One socket for the group. */
     @Test fun connectionsSpreadOverFourLoops() =

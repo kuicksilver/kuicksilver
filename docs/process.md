@@ -86,8 +86,8 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **64 steps**; a release needs `--with-interop --with-windows`, which makes **69** (and `--with-browser`
-adds a Chrome WebTransport run, 70). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
+default it has **65 steps**; a release needs `--with-interop --with-windows`, which makes **70** (and `--with-browser`
+adds a Chrome WebTransport run, 71). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
 refuses to start if either fails. What the steps cover:
 
 | Area | Steps (names as the script prints them) |
@@ -99,7 +99,7 @@ refuses to start if either fails. What the steps cover:
 | JVM on Windows | every module's JVM suite in the Windows 11 VM against the mingw-w64 dll (`--with-windows`) |
 | Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the exports and OpenSSL of `libksl.so`, the device tests on the emulator (`androidConnectedCheck`), and the connection migration test against a server on the host (`androidMigrationDeviceTest`) |
 | Native macOS and iOS | `macosArm64` tests, `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled, OpenSSL symbol prefix |
-| Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix |
+| Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix; the deployment guide's commands in a container (`tools/check/deployment-guide.sh`: `curl --http3-only` and `tcpdump` against the engine's Linux executable) |
 | Native Windows | the `mingwX64` test executables are linked here, not run: they run in the hosted CI's `windows` job (stage 6) |
 | C | the `ksl` C tests under ASan and UBSan on macOS; on Linux x64 and arm64 in Docker without sanitizers, with the ICMP error-queue tests required to have run |
 | Fuzzing | the committed fuzz inputs of the Jazzer targets as regression tests |

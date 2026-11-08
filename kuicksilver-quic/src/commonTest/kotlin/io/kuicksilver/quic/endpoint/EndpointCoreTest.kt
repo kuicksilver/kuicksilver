@@ -409,6 +409,69 @@ class EndpointCoreTest {
         assertTrue(stateless(srv).isEmpty())
     }
 
+    /** Two loops' cores sharing a group's slots, a limit of one connection per address. */
+    private fun sharedPair(
+        admission: io.kuicksilver.quic.ConnectionAdmission? = null,
+    ): Triple<EndpointCore, EndpointCore, ConnectionSlots> {
+        val slots = ConnectionSlots.Shared(Random(9))
+        val cfg =
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                    crypto = NullCryptoProvider
+                    maxConnectionsPerIp = 1
+                    admission?.let { this.admission = it }
+                }.build()
+        return Triple(EndpointCore(cfg, Random(5), 0, null, null, slots), EndpointCore(cfg, Random(6), 1, null, null, slots), slots)
+    }
+
+    /**
+     * `maxConnectionsPerIp` over two cores of a group: the second connection of an address is dropped on the other loop too,
+     * and the slot comes back when the first connection is removed.
+     */
+    @Test fun negative_sharedSlotsBoundTheGroup() {
+        val (l0, l1, slots) = sharedPair()
+        val cep = clientEndpoint()
+        val s = assertNotNull(feed(l0, firstInitial(cep.connect(clientConfig(), a2, now)), a1))
+        assertNull(feed(l1, firstInitial(cep.connect(clientConfig(), a2, now)), InetSocketAddress("10.0.0.1", 1112)))
+        assertEquals(1L, l1.stats.connectionsRefusedLimits)
+        assertEquals(1, slots.total)
+        l0.remove(s)
+        assertEquals(0, slots.total)
+        assertNotNull(feed(l1, firstInitial(cep.connect(clientConfig(), a2, now)), InetSocketAddress("10.0.0.1", 1113)))
+        assertEquals(1, slots.addresses)
+    }
+
+    /** A loop that closes (a failed loop included) gives back the slots its connections held; the other loops go on. */
+    @Test fun sharedSlotsReturnWhenALoopCloses() {
+        val (l0, l1, slots) = sharedPair()
+        val cep = clientEndpoint()
+        assertNotNull(feed(l0, firstInitial(cep.connect(clientConfig(), a2, now)), a1))
+        l0.close()
+        assertEquals(0, slots.total)
+        assertEquals(0, slots.addresses)
+        assertNotNull(feed(l1, firstInitial(cep.connect(clientConfig(), a2, now)), a1))
+    }
+
+    /** An Initial that creates no connection keeps no slot: a forged one, one the policy drops, one asked for a Retry. */
+    @Test fun negative_noSlotKeptWithoutAConnection() {
+        val cep = clientEndpoint()
+        val good = firstInitial(cep.connect(clientConfig(), a2, now))
+        val junk = good.copyOf()
+        for (i in 200 until junk.size) junk[i] = (junk[i].toInt() xor 0x5a).toByte()
+        val (l0, _, slots) = sharedPair()
+        assertNull(feed(l0, junk, a1))
+        assertEquals(0, slots.total, "a forged Initial")
+        val (d0, _, dropped) = sharedPair(io.kuicksilver.quic.ConnectionAdmission { io.kuicksilver.quic.AdmissionDecision.Drop })
+        assertNull(feed(d0, good, a1))
+        assertEquals(0, dropped.total, "dropped by the policy")
+        val (r0, _, retried) = sharedPair(io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
+        assertNull(feed(r0, good, a1))
+        assertEquals(0, retried.total, "asked for a Retry")
+        assertEquals(0, retried.addresses)
+    }
+
     @Test fun acceptQueueCap32() {
         val srv = server(acceptQueue = 2)
         val cep = clientEndpoint()

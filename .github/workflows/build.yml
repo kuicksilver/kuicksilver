@@ -262,6 +262,9 @@ jobs:
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the module list splits into arguments on purpose
           bash tools/ci/run-kexe.sh linux/amd64 kuicksilver-openssl-linux-x64 linuxX64 $KSL_LINK_MODULES
+      - name: 'docker: deployment guide commands (linux-x64)'
+        # docs/guide/deployment.md "Checking a deployment" (curl --http3-only, tcpdump) against the linuxX64 server in one container
+        run: KSL_GRADLE="$G" bash tools/check/deployment-guide.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mingw-test-exe
