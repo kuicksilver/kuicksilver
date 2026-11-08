@@ -193,12 +193,13 @@ static void open_in_place(const char *name, ksl_key *w, ksl_key *r) {
             CHECK(!memcmp(pl + len, before + len, 16),
                   "a rejected packet's tag is left as it came (a Stateless Reset check reads it)");
 #if OPENSSL_VERSION_MAJOR < 4
-            /* OpenSSL 4 records the failing source location of a rejected tag with a heap allocation (ERR_set_debug, under
-             * EVP_DecryptFinal_ex), which ksl cannot avoid; the allocation-free path holds for the pinned 3.5 only */
             if (allocs >= 0)
                 CHECK(allocs == 0, "a rejected packet allocates nothing either");
 #else
-            (void)allocs;
+            /* OpenSSL 4's GCM and ChaCha20-Poly1305 providers raise PROV_R_BAD_DECRYPT on a bad tag, and ERR_raise's
+             * ERR_set_debug copies the file and function name: two allocations, freed by the ERR_clear_error in ksl_open */
+            if (allocs >= 0)
+                CHECK(allocs <= 2, "a rejected packet allocates at most the error record's file and function names");
 #endif
         }
         /* the key still opens the genuine packet after the failures (the cipher context was left reusable) */

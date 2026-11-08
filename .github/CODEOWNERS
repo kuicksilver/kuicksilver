@@ -8,6 +8,7 @@
 # Native code, the OpenSSL pin and the build of OpenSSL
 /kuicksilver-native/                @kuicksilver-maintainers
 /gradle/openssl.toml                @kuicksilver-maintainers
+/gradle/openssl-next.toml           @kuicksilver-maintainers
 /tools/openssl/                     @kuicksilver-maintainers
 /tools/prefix/                      @kuicksilver-maintainers
 

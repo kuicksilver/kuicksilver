@@ -2,7 +2,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Builds and runs the ksl C tests with ASan/UBSan against the host OpenSSL build. Usage: tools/c-test.sh [target] [extra cflags]
-# KSL_OPENSSL_OUT: the directory holding the OpenSSL builds (default build/openssl; the CI job openssl-next uses build/openssl-next).
+# KSL_OPENSSL_OUT: the directory holding the OpenSSL builds (default build/openssl); only the location, not the pin profile (KSL_OPENSSL_PIN for the build scripts).
 # mingw-x64: cross-built with the Kotlin/Native llvm + mingw sysroot (no sanitizers); runs on a Windows host (CI), under wine64 when
 # it is installed, else is only built. KSL_TSAN=1 (host targets): ThreadSanitizer instead of ASan/UBSan, into ksl_test_tsan; any
 # report fails the run, so a data race between threads cannot pass as a green test: halt_on_error stops at the first report (on

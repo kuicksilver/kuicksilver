@@ -15,6 +15,9 @@ val buildJniHost = tasks.register<Exec>("buildJniHost") {
     group = "native"; description = "Builds libksl for the host JVM classifier ($hostClassifier)"
     dependsOn("opensslBuild" + (if (hostClassifier == "osx-aarch_64") "MacosArm64" else if (hostClassifier == "osx-x86_64") "MacosX64" else if (hostClassifier == "linux-aarch_64") "LinuxArm64" else if (hostClassifier == "linux-x86_64") "LinuxX64" else "MingwX64"))
     inputs.files(fileTree("src/c"), fileTree("src/jni"), root.resolve("tools/build-jni.sh"))
+    // the OpenSSL it links: provenance.txt names the tarball and the SHA-256 of both archives, so another pin or a rebuilt OpenSSL reruns the build
+    val hostOpenssl = when (hostClassifier) { "osx-aarch_64" -> "macos-arm64"; "osx-x86_64" -> "macos-x64"; "linux-aarch_64" -> "linux-arm64"; "linux-x86_64" -> "linux-x64"; else -> "mingw-x64" }
+    inputs.files(root.resolve("build/openssl/$hostOpenssl/provenance.txt"))
     outputs.dir(jniOut.map { it.dir("resources") })
     commandLine("bash", root.resolve("tools/build-jni.sh").path, hostClassifier, jniOut.get().asFile.path)
 }

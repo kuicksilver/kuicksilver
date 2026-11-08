@@ -17,6 +17,9 @@ inputs:
   openssl-cache:
     description: name of the OpenSSL build cache (tools/openssl/build.sh's own cache directory and the source tarball); empty = none
     default: ''
+  pin:
+    description: the OpenSSL pin profile the cache key hashes (gradle/openssl-next.toml for the openssl-next job)
+    default: gradle/openssl.toml
 runs:
   using: composite
   steps:
@@ -82,4 +85,4 @@ runs:
           build/openssl-work/cache
           build/openssl-work/src/*.tar.gz
           build/openssl-work/src/*.tar.gz.asc
-        key: openssl-${{ inputs.openssl-cache }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'gradle/openssl-next.toml', 'gradle/toolchains.toml', 'tools/openssl/**') }}
+        key: openssl-${{ inputs.openssl-cache }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.pin, 'gradle/toolchains.toml', 'tools/openssl/**') }}

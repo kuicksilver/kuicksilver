@@ -12,6 +12,7 @@ set -euo pipefail
 U2604=ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
 U2404=ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 maxmajor="${KSL_SYSTEM_OPENSSL_MAX_MAJOR:-3}"   # -> -DKSL_SYSTEM_OPENSSL_MAX_MAJOR; the runtime package and soname follow it (libssl$maxmajor, libssl.so.$maxmajor)
+[[ $maxmajor =~ ^[0-9]+$ ]] || { echo "KSL_SYSTEM_OPENSSL_MAX_MAJOR must be a number, got '$maxmajor'" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 probe='#include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +23,7 @@ build() { # image: compiles the probe against the image's libssl headers into bu
   docker run --rm --platform linux/amd64 -v "$root:/w" -w /w "$1" bash -c "apt-get -qq update >/dev/null && apt-get -qq install -y gcc libssl-dev >/dev/null 2>&1; echo '$probe' > /tmp/probe.c; gcc -std=c11 -DKSL_SYSTEM_OPENSSL -DKSL_SYSTEM_OPENSSL_MAX_MAJOR=$maxmajor -Ikuicksilver-native/src/c /tmp/probe.c kuicksilver-native/src/c/ksl_*.c -lssl -lcrypto -lresolv -ldl -o build/sys-openssl/probe && dpkg -s libssl-dev | grep ^Version"
 }
 run() { # image expected-code [env]: runs the probe built above against the image's runtime libssl
-  docker run --rm --platform linux/amd64 -v "$root:/w" -w /w ${3:+-e "$3"} "$1" bash -c "apt-get -qq update >/dev/null && apt-get -qq install -y libssl${maxmajor}t64 >/dev/null 2>&1 || apt-get -qq install -y libssl$maxmajor >/dev/null 2>&1; build/sys-openssl/probe $2"
+  docker run --rm --platform linux/amd64 -v "$root:/w" -w /w ${3:+-e "$3"} "$1" bash -c "apt-get -qq update >/dev/null && apt-get -qq install -y libssl${maxmajor}t64 >/dev/null 2>&1 || apt-get -qq install -y libssl$maxmajor >/dev/null 2>&1; if [ $maxmajor != 3 ]; then ls /usr/lib/*/libssl.so.$maxmajor >/dev/null || { echo no libssl.so.$maxmajor in the image; exit 3; }; fi; build/sys-openssl/probe $2"
 }
 echo "== build against ubuntu:26.04 headers (OpenSSL 3.5)"; build "$U2604"
 echo "== ubuntu:26.04 runtime: expect KSL_OK (0)"; run "$U2604" 0

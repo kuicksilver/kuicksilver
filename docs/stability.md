@@ -155,8 +155,9 @@ operating system.
   newest 4.x release on linux-x64 and macos-arm64 and runs the C tests and a JVM smoke test against it. Its pin is
   `gradle/openssl-next.toml` (version, tarball SHA-256 and signing key, verified like the 3.5 pin); the build scripts
   take it from `KSL_OPENSSL_PIN` and Gradle from `-Pkuicksilver.openssl.pin=gradle/openssl-next.toml`. One C test
-  assertion is skipped against 4.x: OpenSSL 4 allocates on a rejected AEAD tag (`ERR_set_debug`), so "a rejected packet
-  allocates nothing" holds on 3.5 only.
+  assertion is relaxed against 4.x: the 4.x GCM and ChaCha20-Poly1305 providers raise an error on a rejected AEAD tag, which
+  allocates the error record's file and function names (freed by `ksl_open`), so "a rejected packet allocates nothing"
+  holds on 3.5 and "at most two allocations" on 4.x.
 - **System OpenSSL (Linux, `KSL_SYSTEM_OPENSSL` builds).** The accepted range is OpenSSL 3.5 up to the major version
   `KSL_SYSTEM_OPENSSL_MAX_MAJOR` (`kuicksilver-native/src/c/ksl_internal.h`), **3** by default: a `libssl.so.4` is
   refused with `KslException.Version` (`KSL_INIT_VERSION`), and the C test `negative_system4_0RefusedByDefault` keeps it
