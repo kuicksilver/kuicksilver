@@ -404,6 +404,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS over TCP: the reader pump decrypts all the ciphertext a transport read brings before it hands the plaintext on (up
+  to 64 KiB in one write instead of one write per 16 KiB record) and wakes the drainer only after records that carried no
+  application data: the thread wake-ups between the pumps were the largest client CPU cost. A 10 MiB HTTP/1.1 download
+  over a paced 200 Mbit/s, 100 ms path took 0.44 s of client CPU instead of 0.57 s (median of 20); HTTP/2 about the same.
 - Ktor server: `udpSocketCount` above 1 serves HTTP/3 on every platform with a QUIC server (macOS, iOS and Windows
   included, the loops sharing one socket there); before, those platforms logged "HTTP/3 is not served" and answered over
   HTTP/1.1 without `Alt-Svc`. See docs/guide/ktor.md.
