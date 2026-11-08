@@ -56,6 +56,21 @@ In protocol terms: QUIC v1 and v2 (RFC 9000/9001/9002/9369, datagrams of RFC 922
 HTTP/3 with QPACK (RFC 9114/9204, priorities of RFC 9218, Extended CONNECT and WebSockets of RFC 9220, HTTP datagrams
 of RFC 9297), TLS 1.3 over TCP, and Ktor 3.6 client and server engines on top of them.
 
+### How Kuicksilver differs from other Kotlin QUIC libraries
+
+Other QUIC libraries a Kotlin project can use make different choices. [kwik](https://github.com/ptrd/kwik) is QUIC
+written in Java with its own TLS 1.3, for the JVM, with HTTP/3 in the separate flupke library, under LGPL-3.0.
+[quic-kmp](https://github.com/vitorpamplona/quic-kmp) is QUIC v1 and v2 written in Kotlin with its own TLS 1.3 over
+the platform's JCA, for the JVM and Android, with HTTP/3, QPACK and WebTransport building blocks and no Ktor engine,
+under MIT. [netonframework/quic](https://github.com/netonframework/quic) is a Kotlin port of quinn's QUIC v1 transport
+on OpenSSL 4.0, for Kotlin/Native and the JVM, with HTTP/3 kept in a separate library, under Apache-2.0. Netty's QUIC
+codec ([netty/netty](https://github.com/netty/netty), formerly
+[netty-incubator-codec-quic](https://github.com/netty/netty-incubator-codec-quic)) binds Cloudflare quiche and
+BoringSSL through JNI on the JVM, and Ktor 3.6's experimental HTTP/3 server engine is built on it, under Apache-2.0.
+Kuicksilver puts QUIC v1 and v2, HTTP/3 and QPACK in Kotlin on every target listed under [Platforms](#platforms) (JVM,
+Android, iOS, macOS, Linux, Windows), uses OpenSSL built into its own native library for TLS, ships Ktor client and
+server engines, and is licensed under Apache-2.0.
+
 ## Quick start
 
 Artifacts are on Maven Central:
