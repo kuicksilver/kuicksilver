@@ -117,7 +117,8 @@ run() {
   extra=""   # the lossy cells' containers (global: the trap runs after this function returns)
   # netem hands the loopback its due packets in bursts, and the kernel's per-CPU input backlog (net.core.netdev_max_backlog,
   # 1000 by default, one value for the whole Docker VM) dropped thousands of them at 0 % loss: raised for the run, restored after
-  backlog=$(vm_sysctl net.core.netdev_max_backlog)
+  # a run killed before its trap leaves the bench value behind: restore the kernel's default then
+  backlog=$(vm_sysctl net.core.netdev_max_backlog); [ "$backlog" = 100000 ] && backlog=1000
   trap 'docker rm -f "$name" $extra >/dev/null 2>&1 || true; vm_sysctl net.core.netdev_max_backlog "$backlog" >/dev/null' EXIT
   vm_sysctl net.core.netdev_max_backlog 100000 >/dev/null
   drops0=$(softnet_drops)
@@ -125,14 +126,17 @@ run() {
   [ "$(docker exec "$name" "${java[@]}" header)" = "$header" ] || { echo "why-quic: the client's CSV header differs from the script's" >&2; exit 1; }
   {
     echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "commit: $(git -C "$root" rev-parse HEAD)$(git -C "$root" diff --quiet HEAD -- . ':!*.md' ':!docs' || echo ' (with local changes)')"
+    dirty=$(git -C "$root" status --porcelain --untracked-files=no | awk '{print $2}' | paste -sd ' ' -)
+    echo "commit: $(git -C "$root" rev-parse HEAD)${dirty:+ (the tree had uncommitted edits to: $dirty)}"
     echo "host: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc) CPUs, $(uname -sr)"
     echo "docker: $(docker version -f 'server {{.Server.Version}}, {{.Server.Os}}/{{.Server.Arch}}') ($(docker info -f '{{.OperatingSystem}}, kernel {{.KernelVersion}}, {{.NCPU}} CPUs, {{.MemTotal}} bytes'))"
     echo "image: $image $(docker image inspect -f '{{.Id}}' "$image")"
     echo "java: $(docker exec "$name" java -version 2>&1 | head -1)"
-    echo "libksl: $cls/$so"
+    echo "libksl: $cls/$so sha256 $(shasum -a 256 "$jni/$cls/$so" | cut -d' ' -f1)"
+    echo "soak jar: sha256 $(shasum -a 256 "$lib/kuicksilver-soak-jvm.jar" | cut -d' ' -f1)"
     echo "okhttp: $(cd "$lib" && ls okhttp-jvm-*.jar)"
-    echo "network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, no rate limit, VM netdev_max_backlog 100000 during the run"
+    echo "tcp: $(docker exec "$name" sh -c 'echo "congestion control $(cat /proc/sys/net/ipv4/tcp_congestion_control), cubic hystart $(cat /sys/module/tcp_cubic/parameters/hystart 2>/dev/null || echo unreadable) (detect $(cat /sys/module/tcp_cubic/parameters/hystart_detect 2>/dev/null || echo unreadable))"')"
+    echo "network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, no rate limit"
     echo "runs: $phases; $reps per cell, $lossy_reps per download cell with loss; $warmup warm-up runs per cell; timeout $timeout s per run"
     [ "$parallel" = 1 ] && echo "parallel: the download cells with loss ran at the same time, one container per RTT and loss; every other cell ran alone"
   } > "$out/env.txt"
@@ -150,7 +154,7 @@ run() {
   else
     matrix | awk '$1 == "download" && $4 != 0' | cells "$name" "$out/why-quic.csv" "$out/client.log"
   fi
-  echo "softnet drops: $(( $(softnet_drops) - drops0 )) packets dropped by the kernel's input backlog during the run (netdev_max_backlog 100000)" >> "$out/env.txt"
+  echo "softnet drops: $(( $(softnet_drops) - drops0 )) packets dropped by the kernel's input backlog during the run (VM netdev_max_backlog 100000 for the run)" >> "$out/env.txt"
   echo "results in $out" >&2
 }
 
@@ -183,7 +187,7 @@ t = ["| RTT | loss | " + " | ".join(label[k] for k in c) + " | h3 / fastest TCP 
 for rtt, loss in cells:
     one = lambda k: sel(scenario="download", client=k[0], protocol=k[1], rtt_ms=rtt, loss_pct=f"{loss:g}")
     h3, best = med(one(("kuicksilver", "h3"))), min((m for m in (med(one(k)) for k in tcp) if m is not None), default=None)
-    t.append(f"| {rtt} ms | {loss:g} % | " + " | ".join(secs(one(k)) for k in c) + f" | {h3 / best:.2f} |" if h3 and best else " | - |")
+    t.append(f"| {rtt} ms | {loss:g} % | " + " | ".join(secs(one(k)) for k in c) + (f" | {h3 / best:.2f} |" if h3 and best else " | - |"))
 n = sorted({len(sel(scenario="download", client=k[0], protocol=k[1], rtt_ms=r, loss_pct=f"{l:g}")) for k in c for r, l in cells})
 blocks["download"] = t + ["", f"Seconds to the last byte of 10 MiB on a new connection (handshake included), median / p90 of {' or '.join(map(str, n))} runs per cell "
                           "(failed runs are counted, not timed). The last column: Kuicksilver h3's median over the smallest median of the TCP columns."]
@@ -192,7 +196,7 @@ t = ["| RTT | loss | " + " | ".join(label[k] for k in c) + " |", "|---|---|" + "
 for loss in cells:
     t.append(f"| 100 ms | {loss:g} % | " + " | ".join(secs(sel(scenario="hol", client=k[0], protocol=k[1], loss_pct=f"{loss:g}")) for k in c) + " |")
 n = sorted({len(sel(scenario="hol", client=k[0], protocol=k[1])) // max(1, len(cells)) for k in c})
-blocks["hol"] = t + ["", f"Seconds from issuing 20 requests of 50 KiB at once to the last response's last byte, on a connection opened by one request before; median / p90 of {', '.join(map(str, n))} runs per cell."]
+blocks["hol"] = t + ["", f"Seconds from issuing 20 requests of 50 KiB at once to the last response's last byte, after one request opened the first connection (HTTP/1.1 opens its other 5 connections, handshakes included, inside the timed window); median / p90 of {', '.join(map(str, n))} runs per cell."]
 t = ["| client | time to first byte, ms (median / p90) | in RTTs (median) | runs |", "|---|---|---|---|"]
 for k in cols("connect"):
     rs = sel(scenario="connect", client=k[0], protocol=k[1]); ok = [float(r["seconds"]) * 1000 for r in rs if r["ok"] == "1"]
@@ -216,11 +220,13 @@ for k in cols("download"):
 blocks["cpu"] = t + ["", "The client JVM's process CPU time (user and system, all threads, garbage collection and JIT included) over the 10 MiB "
                      "downloads at 20 ms and no loss, per 10^9 bytes. Each run includes a new client and a full handshake, so fixed costs weigh in; "
                      "the kernel's TCP and UDP work on the receive path is only partly in it."]
-blocks["env"] = [f"- Measured {env.get('date', '?')} on commit `{env.get('commit', '?')[:12]}`{' (with local changes)' if 'local changes' in env.get('commit', '') else ''}.",
+blocks["env"] = [f"- Measured {env.get('date', '?')} on commit `{env.get('commit', '?')[:12]}`{env.get('commit', '?')[40:]}.",
                  f"- Host: {env.get('host', '?')}; Docker: {env.get('docker', '?')}.",
                  f"- {env.get('java', '?')}; OkHttp `{env.get('okhttp', '?').removesuffix('.jar')}`.",
                  f"- Network: {env.get('network', '?')}; {env.get('softnet drops', '?')}.",
                  f"- Runs: {env.get('runs', '?')}." + (f" {env['parallel'][0].upper()}{env['parallel'][1:]}." if 'parallel' in env else "")]
+if "tcp" in env:
+    blocks["env"].insert(3, f"- TCP: {env['tcp']}; libksl {env.get('libksl', '?')}; kuicksilver-soak jar {env.get('soak jar', '?')}.")
 text = open(page).read()
 for name, lines in blocks.items():
     pat = re.compile(rf"(<!-- why-quic:begin {name} -->\n).*?(<!-- why-quic:end {name} -->)", re.S)

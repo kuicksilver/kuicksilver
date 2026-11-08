@@ -13,7 +13,7 @@ machine's measurements over an emulated network, not promises. Read [How it was 
 and [When QUIC does not help](#when-quic-does-not-help) too.
 
 <!-- why-quic:begin env -->
-- Measured 2026-11-08T18:48:58Z on commit `bc8ac9e1d270`.
+- Measured 2026-11-08T18:48:58Z on commit `bc8ac9e1d270` (the tree had uncommitted edits to: CHANGELOG.md README.md).
 - Host: Apple M4 Max, 14 CPUs, Darwin 25.6.0; Docker: server 29.9.2, linux/arm64 (Docker Desktop, kernel 7.0.14-linuxkit, 14 CPUs, 15690371072 bytes).
 - openjdk version "21.0.12.1" 2026-08-18; OkHttp `okhttp-jvm-5.3.2`.
 - Network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, no rate limit, VM netdev_max_backlog 100000 during the run; 0 packets dropped by the kernel's input backlog during the run (netdev_max_backlog 100000).
@@ -22,12 +22,13 @@ and [When QUIC does not help](#when-quic-does-not-help) too.
 
 In short, on this setup:
 
-- **Under loss** HTTP/3 finished a 10 MiB download sooner than every TCP client in every cell; the gap was small at 1 %
-  loss and larger at 3 % and 5 %.
+- **Under loss** HTTP/3 finished a 10 MiB download sooner than every TCP client in 8 of the 9 lossy cells; at 200 ms and
+  1 % loss it was level with OkHttp's HTTP/2 within the spread of 5 runs. The gap was small at 1 % loss and larger at
+  3 % and 5 %.
 - **A new connection** answered after about two round trips over HTTP/3 and one with 0-RTT, against three or more over
   TCP.
-- **An address change** cost the HTTP/3 download a fraction of a second; every TCP download lost its connection and
-  needed a second request to finish.
+- **An address change** (a NAT rebinding, emulated by a relay) cost the HTTP/3 download a fraction of a second; every TCP
+  download was reset by the relay and needed a second request to finish.
 - **Twenty small requests under loss** took about as long over HTTP/3 as over HTTP/2, and six HTTP/1.1 connections were
   faster than both.
 
@@ -46,10 +47,10 @@ In short, on this setup:
   here: it uses the JDK's TLS and the kernel's TCP as most JVM applications do. HTTP/1.1 clients open up to 6
   connections to the server, as browsers do; HTTP/2 and HTTP/3 use one. Ktor's CIO engine is not in the tables: its
   TLS stops at 1.2, and the Kuicksilver server speaks TLS 1.3 only.
-- **Kuicksilver's own TCP client is slower than OkHttp at 100 and 200 ms without loss.** The receive buffer of its JVM
-  socket stayed near 150 KiB during a download while OkHttp's grew to megabytes (`ss -tmi` in the container), so it
-  moves about one buffer per round trip. This is an open issue of the engine, not of TCP: read the OkHttp columns for
-  what TCP does. With loss the congestion window is the limit and the TCP clients are close to each other.
+- **Kuicksilver's own TCP client was slower than OkHttp at 100 and 200 ms without loss.** During one such download the
+  receive buffer of its socket (`ss -tmi` in the container) stayed near 150 KiB, while OkHttp's grew to megabytes; why
+  was not established, and the engine's TCP throughput is being worked on separately, so these columns will be measured
+  again. Read the OkHttp columns for what TCP does here. With loss the TCP clients are close to each other.
 - **The server is Kuicksilver for every protocol**, so the HTTP/1.1 and HTTP/2 columns measure Kuicksilver's TCP
   server as well. Both stacks use CUBIC: Kuicksilver's own for QUIC, the Linux kernel's for TCP.
 - **Each cell is a fresh client process** that runs two unrecorded warm-up runs over the bare loopback; then the
@@ -79,8 +80,9 @@ One `GET` of 10 MiB on a new connection.
 Seconds to the last byte of 10 MiB on a new connection (handshake included), median / p90 of 5 or 15 runs per cell (failed runs are counted, not timed). The last column: Kuicksilver h3's median over the smallest median of the TCP columns.
 <!-- why-quic:end download -->
 
-With loss, every HTTP/3 median is below every TCP median of the same row, and the last column shows the gap growing
-from 1 % to 3 % and 5 % loss. Both stacks run CUBIC, so the difference lies in how each detects and repairs losses
+With loss, the HTTP/3 median is below every TCP median of its row in 8 of the 9 cells. The exception is 200 ms and 1 %
+loss, where it is level with OkHttp's HTTP/2 within the spread of 5 runs. At 1 % loss the last column stays close to 1;
+at 3 % and 5 % it is lower. Both stacks run CUBIC, so the difference lies in how each detects and repairs losses
 (RFC 9002 against the kernel's TCP recovery), which this run does not take apart. Without loss HTTP/3 is also ahead,
 but this network has no bottleneck: the time is the climb of the congestion window, and the TCP runs spread more from
 run to run (compare the p90s), so those rows say little about throughput on a real link.
@@ -97,7 +99,7 @@ stream; HTTP/1.1 spreads them over 6 connections.
 | 100 ms | 0 % | 0.80 / 0.83 | 1.66 / 1.70 | 0.90 / 0.92 | 1.36 / 1.83 | 0.72 / 0.73 |
 | 100 ms | 2 % | 7.89 / 10.85 | 9.24 / 13.16 | 1.55 / 1.73 | 8.19 / 10.62 | 1.72 / 2.00 |
 
-Seconds from issuing 20 requests of 50 KiB at once to the last response's last byte, on a connection opened by one request before; median / p90 of 15 runs per cell.
+Seconds from issuing 20 requests of 50 KiB at once to the last response's last byte, after one request opened the first connection (HTTP/1.1 opens its other 5 connections, handshakes included, inside the timed window); median / p90 of 15 runs per cell.
 <!-- why-quic:end hol -->
 
 Without loss both HTTP/2 clients took longer than HTTP/3 and HTTP/1.1; both talk to Kuicksilver's HTTP/2 server, which
@@ -127,25 +129,32 @@ the request in its first flight. The 0-RTT runs reuse one client: its connection
 | OkHttp h1 | 492 / 501 | 4.9 | 15 |
 <!-- why-quic:end connect -->
 
-The TCP rows above three round trips are the clients', not TCP's (packet captures in the container):
+Three of the TCP rows take one round trip more than TCP and TLS 1.3 need. Packet captures in the container showed where,
+not why:
 
-- **Kuicksilver h2** sends its first request only after the server's next flight (its session tickets and first HTTP/2
-  frames) has arrived, one round trip after its own TLS Finished. RFC 9113 section 3.4 lets a client send requests right after its connection preface;
-  the engine does not do that yet.
-- **OkHttp** on the JDK writes its TLS 1.3 ChangeCipherSpec record on its own and then its Finished and the request; with
-  Nagle's algorithm on (OkHttp's sockets do not set `TCP_NODELAY`) the second write waits for the server's ACK of the
-  first, one round trip.
+- **Kuicksilver h2**: the first request left only after the server's second flight had arrived, one round trip after
+  the client's TLS Finished. This is being worked on separately, and the row will be measured again.
+- **OkHttp** on the JDK (the h1 capture; the h2 row takes as long): the client's 6-byte ChangeCipherSpec record went out
+  on its own, and its Finished and the request followed only after the server had acknowledged it.
 
 ## Address change mid-download
 
-A 50 MiB download through a NAT in front of the server (`RebindRelay` in `kuicksilver-soak`, in the server process):
-once half the file has passed, the NAT forgets the mapping, as home routers and carrier NATs do after a timeout or a
-restart, and the client's packets reach the server from a new port. A QUIC server takes this as a NAT rebinding
-(RFC 9000 section 9.3), validates the new path and carries on; a TCP server answers the segments from the new port with
-a reset, so the connection is gone. The client then does what a download manager does: it asks for the rest with
-`Range` on a new connection. The NAT runs on the same loopback, so each packet crosses it twice and the delay per
-crossing is a quarter of the 100 ms RTT; there is no loss. "Without" is the same download through the NAT with no
-rebinding.
+A 50 MiB download through a relay in front of the server (`RebindRelay` in `kuicksilver-soak`, in the server process)
+that stands in for a NAT losing its mapping, as home routers and carrier NATs do after a timeout or a restart. The relay
+runs on the same loopback, and there is no loss; the delay per loopback crossing is a quarter of the 100 ms RTT.
+
+- **UDP** is forwarded datagram by datagram: the QUIC connection is one end-to-end path with a 100 ms RTT. Once 25 MiB
+  have passed towards the client, the relay sends the client's datagrams from a new port and closes the old one; the
+  server takes this as a NAT rebinding (RFC 9000 section 9.3), validates the new path and carries on.
+- **TCP** is relayed as two connections, client to relay and relay to server, each with a 50 ms RTT and its own
+  congestion control. That favours TCP in the "without" column: two short control loops climb faster than one long
+  one. Once 25 MiB have passed, the relay closes both connections with `SO_LINGER` 0, so each end gets a reset at once.
+  A real NAT does not do that: a server answers segments from a new port with a reset, but the client hears of it only
+  when its own next segment goes out from the new mapping, and a NAT that drops the old mapping's packets silently
+  leaves the client waiting for its read timeout.
+
+After a failed request the client does what a download manager does: it asks for the rest with `Range` on a new
+connection. "Without" is the same download through the relay with no rebinding.
 
 <!-- why-quic:begin rebind -->
 | client | finished in one request | requests (median) | seconds with the rebind (median / p90) | seconds without (median / p90) | cost of the rebind (median) |
@@ -159,9 +168,9 @@ rebinding.
 The download is 50 MiB through the NAT relay at an RTT of 100 ms; "with the rebind" counts the runs that got every byte, resumed ones included.
 <!-- why-quic:end rebind -->
 
-Every HTTP/3 download finished in its one request; no TCP download did. This setup is the kind one for TCP: the reset
-reaches the client at once, and the client resumes with `Range`. A client without resume logic fails the download, and
-a NAT that drops the old mapping's packets silently leaves a TCP client waiting for its read timeout. A device that
+Every HTTP/3 download finished in its one request; no TCP download did. The TCP cost here is a kind case: the reset
+reaches the client at once, and the client resumes with `Range`; a client without resume logic fails the download. A
+device that
 moves to another network (Wi-Fi to cellular) gets a new address rather than a new port; Kuicksilver follows it with
 `Http3ConnectionMigration` ([Connection migration](guide/ktor.md#connection-migration)), which this run does not
 measure.
@@ -175,8 +184,8 @@ measure.
   was about as fast as one HTTP/2 connection, and several HTTP/1.1 connections were faster than both.
 - **CPU.** QUIC runs in user space and encrypts every packet on its own, so Kuicksilver's HTTP/3 spends more CPU per GB than
   OkHttp over the kernel's TCP; [Benchmarks](benchmarks.md#cpu-per-gb) has the server and client figures over bulk transfers.
-  The client side of the downloads above (Kuicksilver's own TCP client spent more than either, another open item of the
-  engine):
+  The client side of the downloads above (Kuicksilver's own TCP client spent more than either; its rows will be measured
+  again with the engine's TCP work):
 
 <!-- why-quic:begin cpu -->
 | client | client CPU s per GB (median / p90) | runs |
@@ -216,4 +225,9 @@ CPU). Every other cell ran alone, before them, with 15 runs. The script raises t
 backlog dropped thousands of the packets netem releases in bursts, at 0 % loss, and TCP retransmitted them. The
 environment above counts the drops during the run. The one failed OkHttp run (200 ms, 5 % loss) ended with "unexpected
 end of stream" before its response head; its row's `seconds` is the 600 s timeout, which the harness at the measured
-commit wrote for every failed run (it now writes how long the run took to fail).
+commit wrote for every failed run (it now writes how long the run took to fail). The commit line of
+`why-quic-env.txt` was edited by hand after the run: the script wrote "(with local changes)" for the uncommitted
+CHANGELOG.md and README.md edits, and now names such files itself. The published run also predates the script's
+recording of the TCP congestion control and HyStart setting and of the SHA-256 of the soak jar and `libksl`, so the
+environment above does not show them; the relay's closing of the old UDP socket and its pruning of idle flows also
+came after it (during the run the old socket stayed open and dropped what reached it).

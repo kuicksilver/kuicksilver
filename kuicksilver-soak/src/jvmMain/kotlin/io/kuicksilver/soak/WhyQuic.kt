@@ -131,7 +131,7 @@ internal fun whyQuicServer(
  * A NAT in front of the server on [listenPort] (UDP and TCP), forwarding to [serverPort] from a port of its own per client
  * flow. A line `arm` on [controlPort] arms the next new flow: once it has carried [after] bytes towards the client, the
  * NAT forgets its mapping. A UDP flow then leaves from a new port (the server sees a NAT rebinding, RFC 9000 section 9.3;
- * datagrams the server still sends to the old port are dropped); a TCP flow is reset on both sides, as the server answers
+ * the old port's socket is closed); a TCP flow is reset on both sides, as the server answers
  * a segment from the new port with RST.
  */
 internal class RebindRelay(
@@ -165,6 +165,7 @@ internal class RebindRelay(
     ) {
         lateinit var up: DatagramChannel
         var down = 0L
+        var lastSeen = System.nanoTime()
 
         fun open(selector: Selector) {
             up = DatagramChannel.open().bind(InetSocketAddress(loopback, 0))
@@ -173,6 +174,15 @@ internal class RebindRelay(
             up.configureBlocking(false)
             up.register(selector, SelectionKey.OP_READ, this)
         }
+
+        /** A new upstream port; the old socket is closed, so what the server still sends to it is lost. */
+        fun rebind(selector: Selector) {
+            val old = up
+            open(selector)
+            old.close()
+        }
+
+        fun close() = up.close()
     }
 
     private fun udpLoop(front: DatagramChannel) {
@@ -184,12 +194,20 @@ internal class RebindRelay(
         val server = InetSocketAddress(loopback, serverPort)
         val flows = HashMap<SocketAddress, Flow>()
         val buf = ByteBuffer.allocateDirect(65_536)
+        var pruned = System.nanoTime()
         while (true) {
-            selector.select()
+            selector.select(1_000)
+            val now = System.nanoTime()
+            if (now - pruned > 10_000_000_000L) {
+                // flows of finished clients: a minute without a datagram either way
+                pruned = now
+                flows.values.removeAll { f -> (now - f.lastSeen > 60_000_000_000L).also { if (it) f.close() } }
+            }
             val keys = selector.selectedKeys().iterator()
             while (keys.hasNext()) {
                 val key = keys.next()
                 keys.remove()
+                if (!key.isValid) continue // a flow pruned above
                 val ch = key.channel() as DatagramChannel
                 val flow = key.attachment() as Flow?
                 while (true) {
@@ -198,13 +216,16 @@ internal class RebindRelay(
                     buf.flip()
                     if (flow == null) {
                         val f = flows.getOrPut(from) { Flow(from, armed.getAndSet(false)).also { it.open(selector) } }
+                        f.lastSeen = now
                         f.up.send(buf, server)
                     } else if (ch === flow.up) {
+                        flow.lastSeen = now
                         flow.down += buf.remaining()
                         front.send(buf, flow.client)
                         if (flow.armed && flow.down >= after) {
                             flow.armed = false
-                            flow.open(selector) // the old socket stays open and drops what still arrives on it
+                            flow.rebind(selector)
+                            break // ch was the old socket, closed now
                         }
                     }
                 }
