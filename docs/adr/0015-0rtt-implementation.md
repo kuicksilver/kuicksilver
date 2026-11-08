@@ -97,8 +97,10 @@ a connection whose handshake does not complete. A replayer cannot complete the h
 
 - A QUIC server issues tickets only when `QuicServerConfig.earlyData` is on. They are two per handshake, as the review
   asks (`KSL_OPT_NUM_TICKETS` 2), and use the same process-wide rotating keys (or `SessionTicketConfig.keys`) and the
-  same session context as TCP, prefixed `quic|`. Early data with client authentication is a configuration error in
-  0.2.0.
+  same session context as TCP, prefixed `quic|`. A server that asks for client certificates cannot accept 0-RTT:
+  `QuicServerConfig.Builder.build()` throws `IllegalArgumentException` ("earlyData cannot be combined with client
+  certificates") when `earlyData` is on and `clientAuth` is not `None`, and the Ktor server engine's start fails with it
+  (`quicEarlyData` on a connector that asks for client certificates).
 - A QUIC client resumes only when `QuicClientConfig.earlyData` is not `Disabled`. Tickets live in the endpoint's own
   `SessionCache`, which is per engine (shared by all loops of a `LoopGroup`, since `connect` picks loops round-robin)
   and cleared on close. The cache key is the same as for TCP plus the ALPN list,

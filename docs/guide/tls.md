@@ -22,6 +22,38 @@ use the same configuration object.
 **Minimal example.** [Configuration](#configuration) builds a client and a server `TlsConfig`; [TLS over a socket](#tls-over-a-socket)
 runs a handshake over TCP.
 
+<a id="imports"></a>
+**Imports.** The code blocks on this page start after their imports; these are the imports they use, and the test that
+compiles them fails when a name moves. `Dispatchers.IO` needs `kotlinx.coroutines.IO` in common and Native code.
+Experimental and delicate API needs `@file:OptIn(...)` or the module-wide opt-in ([stability](../stability.md#stability-levels)).
+
+```kotlin
+// guide:tls:imports
+import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.aSocket
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.network.sockets.openWriteChannel
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readLine
+import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.ktor.network.tls
+import io.kuicksilver.native.KslLoader
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.PinScope
+import io.kuicksilver.tls.SpkiSha256
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.TrustConfig
+import io.kuicksilver.tls.keylogFile
+import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.seconds
+```
+
 Kuicksilver's TLS layer (`io.kuicksilver:kuicksilver-tls`) runs TLS 1.3 (RFC 9846; the default, as RFC 9852 asks) and,
 when asked, TLS 1.2 under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) over OpenSSL 3.5 on every Kotlin Multiplatform target. The same configuration object drives QUIC handshakes,
 TLS over TCP and the `ktor-network` socket wrapper. The code blocks below compile and run as `GuideSamplesTest`.

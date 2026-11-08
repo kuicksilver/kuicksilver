@@ -31,15 +31,24 @@ import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -66,6 +75,10 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:websocket-deflate-server" in guide, "marker websocket-deflate-server")
         assertTrue("guide:ktor:http3-advertising" in guide, "marker http3-advertising")
         assertTrue("guide:ktor:http2-server" in guide, "marker http2-server")
+        assertTrue("guide:ktor:mtls-server" in guide, "marker mtls-server")
+        assertTrue("guide:ktor:drain-wait" in guide, "marker drain-wait")
+        assertTrue("guide:ktor:reload-from-files" in guide, "marker reload-from-files")
+        assertTrue("guide:ktor:zero-rtt-replayable" in guide, "marker zero-rtt-replayable")
     }
 
     private object Metrics {
@@ -106,7 +119,7 @@ class GuideSamplesTest {
             embeddedServer(Kuicksilver, configure = {
                 tlsConnector(identity) { port = 0 }
                 quicEarlyData = true
-                http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() } // or keep the default: safe methods early
+                http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() } // or keep the default: unsafe requests wait
             }, module = Application::module)
         assertTrue(server.engine.configuration.http3Settings.earlyData is Http3EarlyDataPolicy.Reject425)
     }
@@ -212,6 +225,7 @@ class GuideSamplesTest {
             }.map { File(it, "docs/guide/deployment.md") }.first { it.exists() }.readText()
         assertTrue("guide:deployment:public-alt-svc" in guide, "marker public-alt-svc")
         assertTrue("guide:deployment:quic-limits" in guide, "marker quic-limits")
+        assertTrue("guide:deployment:health" in guide, "marker health")
     }
 
     @Test fun quicLimitsSample() {
@@ -370,6 +384,224 @@ class GuideSamplesTest {
             assertTrue(response.endsWith("hello, 0 certificates"), response)
         } finally {
             server.stop(100, 500)
+        }
+    }
+
+    @Test fun mtlsServerSample() {
+        val clientCaPem = TestCerts.toPem("CERTIFICATE", TestCerts.testCa) // the guide reads it from a file
+        // guide:ktor:mtls-server
+        val clientCa = Certificate.parsePem(clientCaPem) // the CA that issues the client certificates
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+                    host = "127.0.0.1"
+                    port = 0
+                    clientAuth = ClientAuth.Required // no handshake without a client certificate that chains to clientCa
+                    trust = TrustConfig.AnchoredCa(clientCa)
+                }
+            }) {
+                routing {
+                    get("/whoami") { call.respondText("client ${call.request.peerCertificates.first().dnsNames}") }
+                }
+            }
+        server.start(wait = false)
+        try {
+            runBlocking {
+                withTimeout(30.seconds) {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+                    val get = "GET /whoami HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n"
+                    val identity = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())
+                    val withCertificate = rawHttp(port, get, ServerFixtures.clientTls(identity = identity))
+                    assertTrue(withCertificate.startsWith("HTTP/1.1 200"), withCertificate)
+                    assertTrue(withCertificate.endsWith("client [client.test]"), withCertificate)
+                    // without one the server ends the handshake with certificate_required (RFC 9846 section 4.5.1.3)
+                    val without = assertFails { rawHttp(port, get) }
+                    assertTrue("certificate_required (116)" in without.message.orEmpty(), without.toString())
+                }
+            }
+        } finally {
+            server.stop(100, 500)
+        }
+    }
+
+    @Test fun drainWaitSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+            }, module = Application::module)
+        server.start(wait = false)
+        try {
+            runBlocking {
+                withTimeout(30.seconds) {
+                    // guide:ktor:drain-wait
+                    server.engine.http3Advertising = Http3Advertising.Drain
+                    // wait until the HTTP/3 connections are gone, or for 10 minutes at most (Drain has no deadline of its own)
+                    withTimeoutOrNull(10.minutes) {
+                        while (server.engine.http3Stats.sumOf { it.connectionsActive } > 0) delay(1.seconds)
+                    }
+                    // now the maintenance; afterwards:
+                    server.engine.http3Advertising = Http3Advertising.On
+                }
+            }
+            assertEquals(1, server.engine.http3Stats.size, "one HTTP/3 listener")
+            assertEquals(0L, server.engine.http3Stats.sumOf { it.connectionsActive })
+        } finally {
+            server.stop(100, 500)
+            identity.close()
+        }
+    }
+
+    @Test fun healthSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:deployment:health
+        lateinit var engine: KuicksilverApplicationEngine
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+            }) {
+                routing {
+                    // for the readiness and liveness probes: the kubelet probes over TCP (httpGet with scheme HTTPS)
+                    get("/healthz") { call.respondText("ok") }
+                    // for a metrics scraper: is QUIC arriving, and is it refused?
+                    get("/metrics/quic") {
+                        val s = engine.http3Stats
+                        call.respondText(
+                            "datagrams_received ${s.sumOf { it.datagramsReceived }}\n" +
+                                "connections_active ${s.sumOf { it.connectionsActive }}\n" +
+                                "refused_limits ${s.sumOf { it.connectionsRefusedLimits }}\n" +
+                                "handshakes_failed_timeout ${s.sumOf { it.handshakesFailedTimeout }}\n" +
+                                "http3_advertising ${engine.http3Advertising}\n",
+                        )
+                    }
+                }
+            }
+        engine = server.engine
+
+        server.start(wait = false)
+        try {
+            runBlocking {
+                withTimeout(30.seconds) {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+                    val health = rawHttp(port, "GET /healthz HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                    assertTrue(health.startsWith("HTTP/1.1 200") && health.endsWith("ok"), health)
+                    val metrics = rawHttp(port, "GET /metrics/quic HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                    assertTrue(metrics.contains("\r\n\r\ndatagrams_received 0\n"), metrics)
+                    assertTrue(metrics.endsWith("http3_advertising On\n"), metrics)
+                }
+            }
+        } finally {
+            server.stop(100, 500)
+            identity.close()
+        }
+    }
+
+    @Test fun zeroRttReplayableSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:ktor:zero-rtt-replayable
+        val policy =
+            Http3EarlyDataPolicy.WaitForHandshake(replayable = { request ->
+                request.method == "GET" && request.path.orEmpty().startsWith("/static/") // only these may run before the handshake
+            })
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+                quicEarlyData = true
+                http3Settings = http3Settings { earlyData = policy }
+            }) {
+                routing {
+                    get("/feed") {
+                        if (call.request.receivedEarly) { /* a replay is possible here: no side effects */ }
+                        call.respondText("feed")
+                    }
+                }
+            }
+
+        assertTrue(server.engine.configuration.http3Settings.earlyData === policy) // ServerH3Test runs early requests
+        identity.close()
+    }
+
+    @Test fun reloadFromFilesSample() {
+        val dir = Files.createTempDirectory("kuicksilver-reload").toFile()
+        val chainFile = File(dir, "fullchain.pem").apply { writeText(chainPem) }
+        val keyFile = File(dir, "privkey.pem").apply { writeText(keyPem) }
+
+        // guide:ktor:reload-from-files
+        fun readKeyChars(file: File): CharArray {
+            val bytes = file.readBytes()
+            try {
+                return CharArray(bytes.size) { bytes[it].toInt().toChar() }
+            } finally {
+                bytes.fill(0)
+            }
+        }
+
+        // guide:ktor:reload-from-files
+        fun reloadIfChanged(
+            identity: TlsIdentity.Reloadable,
+            chainFile: File,
+            keyFile: File,
+            served: Long,
+        ): Long {
+            val modified = chainFile.lastModified()
+            if (modified == served) return served
+            return try {
+                val next = TlsIdentity.fromPem(chainFile.readText(), readKeyChars(keyFile)) // fails while the key does not match yet
+                try {
+                    identity.reload(next) // refuses an expired certificate, or one not valid yet
+                } catch (e: TlsException) {
+                    next.close() // a refused identity is still ours to close
+                    throw e
+                }
+                modified
+            } catch (e: TlsException) {
+                served // the old identity keeps serving; tried again at the next check
+            } catch (e: IOException) {
+                served
+            }
+        }
+
+        // guide:ktor:reload-from-files
+        val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainFile.readText(), readKeyChars(keyFile)))
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+            }) {
+                launch {
+                    var served = chainFile.lastModified()
+                    while (true) {
+                        delay(1.hours)
+                        served = reloadIfChanged(identity, chainFile, keyFile, served)
+                    }
+                }
+                module()
+            }
+
+        server.start(wait = false) // the watch waits its hour; the stop cancels it with the application
+        try {
+            val first = chainFile.lastModified()
+            assertEquals(first, reloadIfChanged(identity, chainFile, keyFile, first), "unchanged files: nothing to do")
+            // the renewed certificate written before its key (certbot's order): refused, the old identity keeps serving
+            chainFile.writeText(TestCerts.toPem("CERTIFICATE", TestCerts.serverViaIntermediate))
+            chainFile.setLastModified(first + 10_000)
+            assertEquals(first, reloadIfChanged(identity, chainFile, keyFile, first))
+            assertEquals(Certificate(TestCerts.server), identity.current.chain[0])
+            // then the key: the next check serves the pair
+            keyFile.writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverViaIntermediateKey))
+            assertEquals(first + 10_000, reloadIfChanged(identity, chainFile, keyFile, first))
+            assertEquals(Certificate(TestCerts.serverViaIntermediate), identity.current.chain[0])
+        } finally {
+            server.stop(100, 500)
+            identity.close()
+            dir.deleteRecursively()
         }
     }
 }

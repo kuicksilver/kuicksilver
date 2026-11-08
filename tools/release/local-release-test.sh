@@ -141,7 +141,8 @@ t "dry run: placeholder date (warning only)"             ok:WARN                
 git checkout -q main
 
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
-# version of its fallbacks, except that before the release commit the README and the iOS guide name the last published one
+# version of its fallbacks, except that before the release commit the README's status line names the last published
+# version ("X.Y.Z is on Maven Central") while its dependency blocks and the iOS guide already name the line's version
 new_repo "$tmp/real"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
@@ -150,9 +151,9 @@ for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/
   mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
 done
 line=$(sed -n 's/.*getOrElse("\([0-9]*\.[0-9]*\.[0-9]*\)-SNAPSHOT").*/\1/p' build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts)
-published=$(sed -n 's/.*"io\.kuicksilver:kuicksilver-ktor-client:\([^"]*\)".*/\1/p' README.md | head -1)
+published=$(sed -n 's/.* \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\) is on Maven Central.*/\1/p' README.md | head -1)
 printf '# Changelog\n\n## [%s] - 2026-01-01\n' "$line" > CHANGELOG.md; git add -A; git commit -qm real
-want=""; [ "$published" = "$line" ] || want=$(printf 'README.md names %s instead of %s\ndocs/guide/ios.md names %s instead of %s' "$published" "$line" "$published" "$line" | sort)
+want=""; [ "$published" = "$line" ] || want=$(printf 'README.md names %s instead of %s' "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line")
 out=$(bash tools/release/local-release.sh "$line" --dry-run 2>&1)
 have=$(grep 'WARN' <<< "$out" | sed -e 's/^ *WARN (a release would refuse): //' -e 's/ (the commit that prepares.*//' | sort)
 if [ -n "$line" ] && [ -n "$published" ] && [ "$have" = "$want" ]; then verdict=ok; pass=$((pass+1)); else verdict=FAIL; fail=$((fail+1)); fi

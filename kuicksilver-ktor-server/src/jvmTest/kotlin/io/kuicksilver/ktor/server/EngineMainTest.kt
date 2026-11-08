@@ -77,6 +77,49 @@ class EngineMainTest {
             }
         }
 
+    /**
+     * The `application.conf` of docs/guide/ktor.md ("EngineMain and configuration keys"), loaded as it stands with `-config`:
+     * only the port, the module and the two file paths are replaced, so a key the guide shows and the engine no longer reads
+     * (or reads otherwise) fails here.
+     */
+    @Test fun guideApplicationConfStarts() =
+        serverTest {
+            val guide =
+                generateSequence(File("").absoluteFile) { it.parentFile }
+                    .map { File(it, "docs/guide/ktor.md") }
+                    .first { it.exists() }
+                    .readText()
+            val block = guide.substringAfter("```hocon\n").substringBefore("```")
+            val chain = File(dir, "fullchain.pem").apply { writeText(TestCerts.toPem("CERTIFICATE", TestCerts.server)) }
+            val key = File(dir, "privkey.pem").apply { writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)) }
+            val conf =
+                block
+                    .replace("port = 443", "port = 0\n        host = \"127.0.0.1\"")
+                    .replace("com.example.ApplicationKt.module", module)
+                    .replace("/etc/letsencrypt/live/example.com/fullchain.pem", chain.path)
+                    .replace("/etc/letsencrypt/live/example.com/privkey.pem", key.path)
+            assertTrue(conf.contains(chain.path) && conf.contains(key.path) && conf.contains(module), conf)
+            val file = File(dir, "application.conf").apply { writeText(conf) }
+            val server = EngineMain.createServer(arrayOf("-config=${file.path}"))
+            server.startSuspend(false)
+            try {
+                val c = server.engine.configuration
+                assertEquals(1.hours, @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) c.identityReloadInterval)
+                assertEquals(4096, @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) c.quicMaxConnectionsPerIp)
+                val resp =
+                    rawHttp(
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port,
+                        get,
+                    )
+                assertTrue(resp.endsWith("engine main") && resp.contains("Alt-Svc: h3="), resp)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun ktorSslKeysOnJvm() =
         serverTest {
             val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())

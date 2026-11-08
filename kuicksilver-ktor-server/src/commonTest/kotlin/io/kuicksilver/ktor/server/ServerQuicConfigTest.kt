@@ -13,6 +13,8 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.IO
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -23,6 +25,27 @@ import kotlin.time.Duration.Companion.seconds
 /** How `quic` and `quicMaxIdleTimeout` combine into the HTTP/3 listeners' QUIC settings. */
 class ServerQuicConfigTest {
     @kotlin.test.BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /**
+     * 0-RTT and client certificates do not go together (`QuicServerConfig` refuses `earlyData` with a `clientAuth` other than
+     * None; docs/guide/ktor.md, "Mutual TLS"): `quicEarlyData` on an engine whose TLS connector asks for client certificates
+     * fails the start with that message, instead of serving HTTP/3 without 0-RTT or HTTP/1.1 alone.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_quicEarlyDataWithClientCertificatesFailsTheStart() =
+        h3ServerTest {
+            for (auth in listOf(ClientAuth.Optional, ClientAuth.Required)) {
+                val e =
+                    assertFailsWith<IllegalArgumentException>("clientAuth $auth") {
+                        tlsServer({ quicEarlyData = true }, connector = {
+                            clientAuth = auth
+                            trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                        }) {}
+                    }
+                assertEquals("earlyData cannot be combined with client certificates", e.message, "clientAuth $auth")
+            }
+        }
 
     @Test fun quicMaxIdleTimeoutAppliesWhileQuicIsUnset() {
         val c = KuicksilverApplicationEngine.Configuration().apply { quicMaxIdleTimeout = 7.seconds }

@@ -74,6 +74,32 @@ fields before its message.
 `QuicException.ConnectionLost.Timeout` with `kind = TimeoutKind.Handshake`: nothing the handshake needed came back
 within `QuicConfig.handshakeTimeout` (10 s).
 
+**Which timeout fired.** A raw QUIC `connect` has one timer, `QuicConfig.handshakeTimeout`. The Ktor client has two for an
+HTTP/3 setup, and the earlier one ends it: the connect timeout (`HttpTimeout`'s `connectTimeoutMillis`, else the engine's
+`connectTimeout`, 10 s) and the QUIC handshake timer (`engine { quic = quicConfig { handshakeTimeout = ... } }`, 10 s; with
+`http3 { earlyData = true }` it is cut to the connect timeout). Either way the response's diagnostics say
+`fallback = HandshakeTimeout`; `h3Failure` tells them apart: a `ConnectTimeoutException` is the connect timeout, a
+`QuicException.ConnectionLost.Timeout` (`h3Failure=Timeout` in the engine's log line) is the handshake timer. In `H3Only`
+mode the call fails with that exception itself. On the server, `EndpointStats.handshakesFailedTimeout` counts handshakes
+its own `handshakeTimeout` ended (the Ktor server sets it through `quic`).
+
+**Finding the cause, in order.** Each step rules out a row of the table below:
+
+1. Does TCP work to the same host and port (`curl -sI https://host:port/`)? If not, the host or the port is wrong, or the
+   server is down: this is not a QUIC problem.
+2. Does `curl --http3-only -sI https://host:port/` connect from the same network as the client? If it does, the problem is
+   the client's network or its configuration (a VPN, a proxy, `H1Only`); if it does not, go on.
+3. Does UDP reach the server? `sudo tcpdump -ni any udp port <port>` on the server, or `EndpointStats.datagramsReceived`
+   (Ktor server: `engine.http3Stats`) while the client tries. Nothing arrives: a firewall, a security group, a missing
+   UDP port mapping or load balancer listener (first row).
+4. Initials arrive: are they refused or dropped? `connectionsRefusedLimits`, `initialsDropped` and `statelessRateLimited`
+   growing point at the limits (second row, and source NAT below).
+5. The server answers (`datagramsSent` grows, `tcpdump` shows packets going out): does the client get them? Compare the
+   source address of the answers with the address the client sent to (reply addresses below), and look for a tunnel with
+   a small MTU on the path.
+6. The handshake starts and stalls: a qlog of both sides ([QUIC: qlog](quic.md#qlog)) shows where, for instance
+   retransmitted Initials (loss) or a long pause after the server's certificate (the platform verifier).
+
 | Cause | How to tell | Fix |
 |---|---|---|
 | UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only) | the server's `EndpointStats.datagramsReceived` does not move; TCP to the same port works; the Ktor client's `kuicksilverDiagnostics.fallback` is `HandshakeTimeout`, later `BrokenAlternative` | open UDP on the port ([Deploying the HTTP/3 server](deployment.md#firewalls-and-security-groups)); with the Ktor client use `Http3DiscoveryMode.Auto` or `Preferred`, which fall back to HTTP/1.1 ([The Ktor client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
@@ -81,6 +107,10 @@ within `QuicConfig.handshakeTimeout` (10 s).
 | Wrong address or port, nothing listening | no server traffic at all; on Kotlin/Native a QUIC server needs the accelerated socket | check `QuicEndpoint.localAddress` on the server and the address the client resolved |
 | Heavy loss on the first flight (radio links, a peer using `X25519MLKEM768`, whose first flights span two datagrams) | the qlog shows Initial retransmissions at 1 s, 2 s, 4 s | lower `QuicConfig.initialRtt` (default 333 ms, at most 10 s), see [QUIC: Configuration](quic.md#configuration); a client endpoint that already finished a connection to the same server address starts from its last smoothed RTT on its own |
 | The client's platform verifier waits on slow OCSP or AIA fetches (`TrustConfig.Platform` on Apple and Windows) | the handshake stalls after the server's certificate arrives (qlog) | allow the verifier's network access, or verify against `AnchoredCa` |
+| The server's answers leave from another address than the one the client sent to (a host with several addresses, a floating IP, a VIP for direct server return, with the portable socket or before 0.3.0) | `tcpdump` on the server shows answers whose source differs from the destination of the client's Initials; TCP to the same address works | bind the connector's `host` to that address, or use the accelerated socket ([Deploying: Reply addresses](deployment.md#reply-addresses)) |
+| Many clients behind one source address (a source NAT, `kube-proxy` with `externalTrafficPolicy: Cluster`, a UDP proxy) hit the stateless answer limit, 8 per second per address | `statelessRateLimited` grows while Retry packets or refusals are due; only some clients fail | keep the client addresses (`externalTrafficPolicy: Local`); the Ktor server engine does not let you change that limit ([Deploying: Kubernetes](deployment.md#kubernetes)) |
+| A tunnel or link on the path drops 1200-byte UDP datagrams (every datagram that carries an Initial is at least 1200 bytes, RFC 9000 section 14.1) | small UDP gets through, `tcpdump` on the client shows Initials going out and nothing back, or the server sees none | fix the tunnel's MTU: QUIC cannot run below 1200 bytes; after the handshake a smaller path is [black-hole detection](#transfers-stall-over-a-vpn-or-tunnel-mtu-black-hole)'s case |
+| The server's UDP port is closed and the network answers with ICMP unreachable | `tcpdump` on the client shows the ICMP answer | the server's listener ([The server serves HTTP/1.1 but no HTTP/3](#the-server-serves-http11-but-no-http3)); Kuicksilver does not report ICMP yet, so the client waits for its timeout (`fallback = UdpUnreachable` is reserved for it) |
 
 With `ConnectionLost.VersionNegotiation` instead ("version negotiation failed: server offers [<versions>], we support
 [<versions>]") the server speaks none of `QuicConfig.versions`; add `VersionProfile.V2` or `V1` as the server expects.
@@ -153,7 +183,7 @@ client knows at once), or it drops the Initial silently (the client waits for it
 | `connectionsRefusedShutdown` | `TransportClosed(code = 0x02)` | `QuicEndpoint.shutdown` (the Ktor server's `stop`) is running | connect to another instance; wait for the new one |
 | `connectionsRefusedLimits`, `initialsDropped` | nothing, then "Handshake timeout after 10s" | `maxConnections` (10 000) or `maxConnectionsPerIp` (256) reached (Ktor server: `quicMaxConnections`, `quicMaxConnectionsPerIp`), `initialQueueCap` overflow, or an Initial from a reflective source port (53, 123, 1900, 5353, 11211) | raise the limit in `quicEndpointConfig { }` (Ktor server: [QUIC connection limits](deployment.md#quic-connection-limits)), or find the client that holds the connections; a NAT puts many users behind one IP |
 | `connectionsRefusedAdmission` | nothing, or the `ConnectionAdmission` close code | your `ConnectionAdmission` said `Drop` or `Close(code)`, or the Ktor server is in `Drain` (it refuses new QUIC clients through its admission policy: `TransportClosed(code = 0x02)`); the default asks an unvalidated client for a Retry (it does not drop it) above 256 handshakes in flight or 8 MiB of handshake data | check the admission policy and its `maxInflightHandshakes` |
-| `statelessRateLimited` | nothing | Retry, Version Negotiation, Stateless Reset or refusals withheld by `statelessPerAddressPerSecond` (8) or `statelessTotalPerSecond` (1000) | a flood or a scan; raise the limits only if real clients are hit |
+| `statelessRateLimited` | nothing | Retry, Version Negotiation, Stateless Reset or refusals withheld by `statelessPerAddressPerSecond` (8) or `statelessTotalPerSecond` (1000) | a flood or a scan; when real clients are hit, raise the limits in `quicEndpointConfig { }` (QUIC API). The Ktor server engine keeps them at their defaults and offers no option: make clients reach it from their own addresses instead ([Deploying: Kubernetes](deployment.md#kubernetes)) |
 | `invalidTokens`, `retriesSent` | `INVALID_TOKEN` | a Retry token that expired or came from another address (the client moved, or a load balancer sent the second Initial to another server) | keep a client's packets on one server; see [Deploying](deployment.md) |
 
 The Ktor engines have their own limits: the client waits for a free connection beyond `maxConnectionsCount` or
@@ -233,8 +263,10 @@ it with the stack trace of its `cause`.
 - `ConnectionLost.ZeroRttRejected` ("0-RTT rejected"): the server rejected 0-RTT and chose another ALPN than the ticket's,
   or the client asked for `EarlyDataState.Required` and got no 0-RTT. Retry on a new connection with `connectEarly` off
   or `Allowed`.
-- 0-RTT never happens: the server needs `QuicServerConfig.earlyData = true` (Ktor server `quicEarlyData`), it is
-  refused with client certificates, a ticket is single-use and lives in the endpoint (or Ktor engine) that received
+- 0-RTT never happens: the server needs `QuicServerConfig.earlyData = true` (Ktor server `quicEarlyData`); a server
+  that asks for client certificates cannot accept 0-RTT (building a `QuicServerConfig` with `earlyData = true` and a
+  `clientAuth` other than `None` throws `IllegalArgumentException` "earlyData cannot be combined with client
+  certificates", and the Ktor server's start fails the same way); a ticket is single-use and lives in the endpoint (or Ktor engine) that received
   it, and a server whose configuration changed (ALPN, transport limits, HTTP/3 SETTINGS) refuses old tickets. The
   counters `zeroRttOffered`, `zeroRttAccepted` and `zeroRttRejected`, and `ConnectionListener.onZeroRtt`, show the
   outcome. Background: [ADR-0015](../adr/0015-0rtt-implementation.md).

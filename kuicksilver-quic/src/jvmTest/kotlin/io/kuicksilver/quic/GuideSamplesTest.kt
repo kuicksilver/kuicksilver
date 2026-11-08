@@ -17,9 +17,14 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslCrypto
 import io.kuicksilver.tls.KslQuicCrypto
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.TrustConfig
+import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -44,6 +49,84 @@ class GuideSamplesTest {
 
     private val tlsClientConfig = CoreFixtures.client()
     private val tlsServerConfig = CoreFixtures.server()
+
+    @Test fun customAlpnSample(): Unit =
+        runBlocking {
+            val chainPem = TestCerts.toPem("CERTIFICATE", TestCerts.server)
+            val keyPem = TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)
+            val caPem = TestCerts.toPem("CERTIFICATE", TestCerts.testCa)
+            val scope = this
+            withTimeout(60.seconds) {
+                // guide:quic:custom-alpn
+                // ALPN: both sides list it, or the handshake ends with no_application_protocol (120)
+                val myProtocol = listOf("my-proto/1")
+                // the server: JVM, or Kotlin/Native on Linux, Apple and Windows
+                val serverTls =
+                    tlsConfig(TlsRole.Server) {
+                        alpn = myProtocol
+                        identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+                    }
+                val server =
+                    QuicEndpoint.bind(
+                        InetSocketAddress("127.0.0.1", 0),
+                        quicEndpointConfig {
+                            this.server =
+                                quicServerConfig(
+                                    serverTls,
+                                ) { quic = quicConfig { maxIdleTimeout = 30.seconds } }
+                        },
+                    )
+                val serving =
+                    scope.launch {
+                        server.incomingConnections().collect { connection ->
+                            launch {
+                                // datagrams: each one sent back as it comes
+                                try {
+                                    connection.datagrams.collect { d: Datagram -> connection.sendDatagram(d.data) }
+                                } catch (e: IOException) {
+                                    // the flow ends with the connection's QuicException.ConnectionLost
+                                }
+                            }
+                            launch {
+                                // streams: one line in, one line out (the flow completes when the connection ends)
+                                connection.incomingStreams().collect { stream ->
+                                    launch {
+                                        try {
+                                            val line = stream.input.readLine(LineEnding.Lenient) ?: return@launch
+                                            stream.output.writeStringUtf8("echo: $line\n")
+                                            stream.output.flushAndClose()
+                                        } catch (e: IOException) {
+                                            // the client reset the stream or left
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                // the client: any target, Kotlin/Native included
+                val clientTls =
+                    tlsConfig(TlsRole.Client) {
+                        serverName = "server.test" // SNI, and the name the server's certificate must carry
+                        alpn = myProtocol
+                        trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) // a private CA; TrustConfig.Platform for a public one
+                    }
+                val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
+                val connection = client.connect(InetSocketAddress("127.0.0.1", server.localAddress.port), quicClientConfig(clientTls))
+                val stream = connection.openBidi()
+                stream.output.writeStringUtf8("ping\n")
+                stream.output.flushAndClose()
+                val reply: String? = stream.input.readLine(LineEnding.Lenient) // "echo: ping"
+                connection.sendDatagram("tick".encodeToByteArray()) // a ByteArray out; datagrams are never retransmitted
+                val echoed: Datagram = connection.datagrams.first() // a Datagram in; its payload is echoed.data, a ByteArray
+                connection.close(code = 0, reason = "done")
+                client.close()
+
+                assertEquals("echo: ping", reply)
+                assertEquals("tick", echoed.data.decodeToString())
+                server.close()
+                serving.join() // the flow completes once the endpoint closes
+            }
+        }
 
     @Test fun configSample() {
         // guide:quic:config
@@ -270,7 +353,7 @@ class GuideSamplesTest {
             }
         }
 
-    private class Datagram(
+    private class ReceivedDatagram(
         val buffer: PacketBuffer,
         val length: Int,
         val from: InetSocketAddress,
@@ -294,7 +377,7 @@ class GuideSamplesTest {
             assertTrue(buffer.capacity >= length)
         }
 
-        fun receiveOrWaitUntil(deadline: TimeMark): Datagram? {
+        fun receiveOrWaitUntil(deadline: TimeMark): ReceivedDatagram? {
             if (++iterations == 3) running = false
             return null
         }

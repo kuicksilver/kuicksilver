@@ -49,8 +49,125 @@ println(client.get(url).bodyAsText())
 client.close()
 ```
 
-The client trusts the platform's store, so the server's certificate must chain to a CA it knows and name the host in the URL. The complete server,
-with client certificates, is under [Server](#server); the complete client, under [Client](#client).
+The client trusts the platform's store, so the server's certificate must chain to a CA it knows and name the host in the URL. The complete server
+is under [Server](#server), the complete client under [Client](#client), and both with client certificates under
+[Mutual TLS](#mutual-tls-client-certificates).
+
+<a id="imports"></a>
+**Imports.** The code blocks on this page start after their imports; these are the imports they use, and the test that
+compiles them fails when a name moves. The server engine and the client engine are two objects with the same name,
+`Kuicksilver`: `io.kuicksilver.ktor.server.Kuicksilver` for `embeddedServer(Kuicksilver)` and
+`io.kuicksilver.ktor.client.Kuicksilver` for `HttpClient(Kuicksilver)`. Experimental API (`@ExperimentalKuicksilverApi`)
+needs an opt-in: `@file:OptIn(ExperimentalKuicksilverApi::class)` at the top of the file, as the blocks show, or
+`languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")` for the whole module
+([stability](../stability.md#stability-levels)).
+
+```kotlin
+// guide:ktor:server-imports
+import io.ktor.http.HttpProtocolVersion
+import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.install
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
+import io.ktor.server.routing.routing
+import io.ktor.server.websocket.WebSockets
+import io.ktor.utils.io.copyTo
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http3.Http3EarlyDataPolicy
+import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
+import io.kuicksilver.ktor.server.Http3Advertising
+import io.kuicksilver.ktor.server.Kuicksilver
+import io.kuicksilver.ktor.server.KuicksilverServerEventListener
+import io.kuicksilver.ktor.server.peerCertificates
+import io.kuicksilver.ktor.server.priority
+import io.kuicksilver.ktor.server.receivedEarly
+import io.kuicksilver.ktor.server.webTransport
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.qlog.AsyncQlogSink
+import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TrustConfig
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
+import java.io.IOException
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+```
+
+```kotlin
+// guide:ktor:client-imports
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.ProxyBuilder
+import io.ktor.client.engine.http
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.api.createClientPlugin
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.request.HttpRequestData
+import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpProtocolVersion
+import io.ktor.utils.io.discard
+import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.writeFully
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Kuicksilver
+import io.kuicksilver.ktor.client.KuicksilverEventListener
+import io.kuicksilver.ktor.client.ProtocolReason
+import io.kuicksilver.ktor.client.ProxyCredentials
+import io.kuicksilver.ktor.client.ProxyResolver
+import io.kuicksilver.ktor.client.ResolvedProxy
+import io.kuicksilver.ktor.client.closeHttp3Connections
+import io.kuicksilver.ktor.client.kuicksilverDiagnostics
+import io.kuicksilver.ktor.client.priority
+import io.kuicksilver.ktor.client.updatePriority
+import io.kuicksilver.ktor.client.webTransport
+import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.qlog.AsyncQlogSink
+import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.SpkiSha256
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TrustConfig
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.io.readString
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+```
+
+The Android sample under [Connection migration](#connection-migration) also needs `android.net.ConnectivityManager`,
+`io.kuicksilver.ktor.client.Http3ConnectionMigration` and `io.kuicksilver.ktor.client.followDefaultNetwork` (an
+Android-only extension; the iOS and macOS one, without arguments, has the same name). A file that uses both engines (a
+test, a gateway) imports at least one of them under another name:
+
+```kotlin
+// guide:ktor:both-engines-imports
+import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
+import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
+// guide:ktor:both-engines
+val server = embeddedServer(KuicksilverServer, configure = {
+    tlsConnector(identity) { port = 8443 }
+}, module = Application::module)
+val client = HttpClient(KuicksilverClient)
+```
 
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
@@ -97,7 +214,8 @@ server.start(wait = true)
   and chain under the alias become the identity, and a trust store makes client certificates required, as in Ktor's
   Netty and Jetty engines. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
 - `call.request.peerCertificates` is the client certificate chain as the TLS layer validated it (empty without client
-  authentication). Ktor has no equivalent.
+  authentication). Ktor has no equivalent. Requiring client certificates, and presenting one from the client:
+  [Mutual TLS](#mutual-tls-client-certificates).
 - Slow and silent clients (slowloris): a client has `requestHeaderTimeoutSeconds` (*experimental*, 30 s) to send a
   complete request head, counted from the accepted TCP connection for the first request (the TLS handshake included)
   and from the end of the previous response on a keep-alive connection; header bytes trickling in do not extend it. One
@@ -315,6 +433,24 @@ cached alternative service entries".
 - The value is per engine and is not kept across restarts: a new engine starts at `On`. Behind a load balancer set it on
   every instance.
 
+Before maintenance, wait for the drained connections to go before you stop the server or block UDP. `engine.http3Stats`
+counts them (`connectionsActive`, every HTTP/3 connection the listeners still hold, closing ones included); since `Drain`
+has no deadline of its own, give the wait one:
+
+```kotlin
+// guide:ktor:drain-wait
+server.engine.http3Advertising = Http3Advertising.Drain
+// wait until the HTTP/3 connections are gone, or for 10 minutes at most (Drain has no deadline of its own)
+withTimeoutOrNull(10.minutes) {
+    while (server.engine.http3Stats.sumOf { it.connectionsActive } > 0) delay(1.seconds)
+}
+// now the maintenance; afterwards:
+server.engine.http3Advertising = Http3Advertising.On
+```
+
+What is left when the deadline passes is a long-lived stream (a WebSocket or WebTransport session over HTTP/3): end it
+in the application, or let the server's [graceful stop](#graceful-stop) cut it.
+
 ### WebSockets over HTTP/3
 
 With `webSocketsOverHttp3 = true` (the default) the HTTP/3 listener advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL` and
@@ -414,6 +550,63 @@ for ownership, resumption and key compromise). The same works for `identity` in 
 connectors served over TLS); on the JVM, an `sslConnector` keystore is read once, so build the identity with
 `TlsIdentity.fromKeyStore` and wrap it yourself instead.
 
+With `embeddedServer` the application decides when to reload. A check of the files once an hour, from the application's
+own coroutine scope (it ends when the server stops):
+
+```kotlin
+val chainFile = File("/etc/letsencrypt/live/example.com/fullchain.pem")
+val keyFile = File("/etc/letsencrypt/live/example.com/privkey.pem")
+// guide:ktor:reload-from-files
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+/** A PEM key file as a CharArray without a String of it (PEM is ASCII); the bytes are wiped. */
+fun readKeyChars(file: File): CharArray {
+    val bytes = file.readBytes()
+    try {
+        return CharArray(bytes.size) { bytes[it].toInt().toChar() }
+    } finally {
+        bytes.fill(0)
+    }
+}
+
+/** Reloads [identity] when the chain file changed since [served] (its modification time); returns the time now served. */
+fun reloadIfChanged(identity: TlsIdentity.Reloadable, chainFile: File, keyFile: File, served: Long): Long {
+    val modified = chainFile.lastModified()
+    if (modified == served) return served
+    return try {
+        val next = TlsIdentity.fromPem(chainFile.readText(), readKeyChars(keyFile))   // fails while the key does not match yet
+        try {
+            identity.reload(next)                          // refuses an expired certificate, or one not valid yet
+        } catch (e: TlsException) {
+            next.close()                                   // a refused identity is still ours to close
+            throw e
+        }
+        modified
+    } catch (e: TlsException) {
+        served                                             // the old identity keeps serving; tried again at the next check
+    } catch (e: IOException) {
+        served
+    }
+}
+
+val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainFile.readText(), readKeyChars(keyFile)))
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+}) {
+    launch {
+        var served = chainFile.lastModified()
+        while (true) {
+            delay(1.hours)
+            served = reloadIfChanged(identity, chainFile, keyFile, served)
+        }
+    }
+    module()
+}
+```
+
+`reload` itself writes nothing to a log: log the outcome where `reloadIfChanged` returns (with `EngineMain` the engine
+logs it, below). To see from outside which certificate a server presents, `openssl s_client -connect <host>:443
+-servername <host> </dev/null | openssl x509 -noout -dates -serial` shows the dates and serial of the leaf served over TCP.
+
 With `EngineMain`, set `kuicksilver.tls.reloadInterval` (`1h`, `30m`, ...; off by default) and the engine checks the
 PEM files of `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` that often (the configuration's
 `identityReloadInterval`). It reloads when the chain file holds other certificates than those served: a chain read
@@ -447,6 +640,35 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
+
+An `application.conf` (HOCON) for a TLS and HTTP/3 server on port 443 whose certificate certbot renews; every key not
+set keeps the default of the table above. The `kuicksilver-ktor-server` tests load this block as it stands (with their
+own paths, port and module), so its keys stay current:
+
+```hocon
+ktor {
+    deployment {
+        port = 443                     # TCP for HTTP/1.1 over TLS and UDP for HTTP/3, the same number
+    }
+    application {
+        modules = [ com.example.ApplicationKt.module ]
+    }
+}
+kuicksilver {
+    tls {
+        certificateChain = "/etc/letsencrypt/live/example.com/fullchain.pem"
+        privateKey = "/etc/letsencrypt/live/example.com/privkey.pem"
+        reloadInterval = 1h
+    }
+    quicMaxConnectionsPerIp = 4096     # behind a NAT or kube-proxy; see deployment.md
+}
+```
+
+The application's main class is `io.kuicksilver.ktor.server.EngineMain` (in Gradle: `application { mainClass.set("io.kuicksilver.ktor.server.EngineMain") }`),
+and `-config=<file>` picks another file, as with Ktor's own engines. The private key must be an unencrypted PKCS#8 file
+(`-----BEGIN PRIVATE KEY-----`, which certbot writes); convert an older `BEGIN RSA PRIVATE KEY` or `BEGIN EC PRIVATE KEY`
+file with `openssl pkcs8 -topk8 -nocrypt -in old.pem -out privkey.pem`. `TlsIdentity.fromPem` has a `password`
+parameter, but encrypted keys are refused with `TlsException.Config` whatever it holds: decrypt the key before.
 
 ## Client
 
@@ -976,6 +1198,72 @@ println(stream.input.readBuffer().readString())
 session.close(0, "done")                           // the session's own connection closes with it
 ```
 
+## Mutual TLS (client certificates)
+
+A server that admits only clients with a certificate from its own CA sets `clientAuth = ClientAuth.Required` and an
+`AnchoredCa` trust on the TLS connector:
+
+```kotlin
+val clientCaPem = File("client-ca.pem").readText()
+// guide:ktor:mtls-server
+val clientCa = Certificate.parsePem(clientCaPem)   // the CA that issues the client certificates
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+        port = 443
+        clientAuth = ClientAuth.Required           // no handshake without a client certificate that chains to clientCa
+        trust = TrustConfig.AnchoredCa(clientCa)
+    }
+}) {
+    routing {
+        get("/whoami") { call.respondText("client ${call.request.peerCertificates.first().dnsNames}") }
+    }
+}
+server.start(wait = true)
+```
+
+The client presents its certificate with `identity`, for HTTP/3, HTTP/2 and HTTP/1.1 alike:
+
+```kotlin
+// guide:ktor:mtls-client
+val identity = TlsIdentity.fromPem(clientChainPem, clientKeyPem.toCharArray())   // every target; the key array is zeroed
+val client = HttpClient(Kuicksilver) {
+    engine {
+        this.identity = identity                                            // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
+        trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem))   // or keep Platform for a public server certificate
+    }
+}
+```
+
+- **The server.** `clientAuth` is `None` (the default), `Optional` (a certificate is asked for; a client without one
+  still connects, and `peerCertificates` is empty) or `Required` (the handshake fails without one). Any value but `None`
+  needs `trust = TrustConfig.AnchoredCa(...)`, optionally inside `TrustConfig.Pinned`, the only trust for client
+  certificates; without it the start fails with `TlsException.Config`. The setting applies to the TCP side and the HTTP/3
+  side of the connector. `call.request.peerCertificates` is the client's chain as it was validated, leaf first, over
+  TCP or QUIC. On the JVM, an `sslConnector` with a trust store requires client certificates the same way.
+- **The client's key.** `TlsIdentity.fromPem(chain, key)` works on every target: the chain in PEM, leaf first, and the
+  private key as one unencrypted PKCS#8 block (`-----BEGIN PRIVATE KEY-----`) in a `CharArray`. On the JVM (not
+  Android) `TlsIdentity.fromPkcs12(bytes, password)` and `TlsIdentity.fromKeyStore(keyStore, alias, password)` read a
+  `.p12` file or a `KeyStore` directly. Elsewhere convert a `.p12` once:
+  `openssl pkcs12 -in client.p12 -nokeys -out client-chain.pem` and
+  `openssl pkcs12 -in client.p12 -nocerts -nodes | openssl pkcs8 -topk8 -nocrypt -out client-key.pem`. The key has to
+  be importable: a key that never leaves Android Keystore or the Apple Keychain cannot be used.
+- **The client certificate.** One that carries an extended key usage must list `clientAuth` (TLS Web Client
+  Authentication); otherwise the server refuses it with `InvalidPurpose` (alert 43). One without that extension is
+  accepted.
+- **A client without a certificate**, against `Required`: the server ends the handshake with the TLS alert
+  `certificate_required` (116). Over TCP the call fails with an exception whose message ends in "TLS alert received from
+  the peer: certificate_required (116)"; over QUIC with `QuicException.ConnectionLost.TransportClosed` with `code` 0x174
+  (0x0100 + 116) and a `TlsException.AlertReceived` as its cause. In `Auto` and `Preferred` mode the call then tries TCP,
+  where it fails the same way: the TCP failure is thrown, with the HTTP/3 one in its `suppressed` list. The server counts the failure in `handshakesFailedTls`
+  (`engine.http3Stats`) and `tlsHandshakeFailed` of its event listener.
+- **0-RTT.** A server that asks for client certificates cannot accept 0-RTT: `quicEarlyData = true` together with a
+  `clientAuth` other than `None` fails the start with `IllegalArgumentException` "earlyData cannot be combined with client
+  certificates" ([0-RTT](#0-rtt-opt-in-experimental)). A client with an `identity` may keep `earlyData` on; such a
+  server never offers it 0-RTT, so its connections use full handshakes.
+- **Rotation.** The server's own identity can be a `TlsIdentity.Reloadable` ([Certificate rotation](#certificate-rotation)).
+  The client CA in `trust` is read when the server starts; a new client CA takes a restart (put the old and the new CA in
+  the bundle during the change).
+
 ## Priorities (experimental)
 
 Both engines read and write RFC 9218 extensible priorities (the API is `@ExperimentalKuicksilverApi`). Over HTTP/3 the
@@ -1130,10 +1418,13 @@ embeddedServer(Kuicksilver, configure = {
 **Client.** `engine { eventListener = ... }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
 `protocolSelected` with a `ProtocolReason` (`Configuration`, `NotSecure`, `ExistingConnection`, `Race`, `NoAlternative`,
-`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`, `HttpsRecord`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
-`altSvcMarkedBroken`; `fallback` from HTTP/3 to HTTP/1.1; `retry` (a request the server did not process after GOAWAY, a
-stale pooled HTTP/1.1 connection); `connectionAcquired` (reused or new) and `connectionReleased` (kept for the next request
-or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
+`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`, `HttpsRecord`; on the TCP path it comes once the
+connection is in hand, with `HTTP_2_0` when the server picked `h2`, since 0.3.0); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed`,
+`httpsRecordUsed` (an endpoint of the origin's HTTPS record) and `altSvcMarkedBroken`; `fallback` from HTTP/3 to TCP,
+with the HTTP/3 failure itself (not the `FallbackReason`, which is on the response, below); `retry` (a request the server
+did not process after GOAWAY, HTTP_1_1_REQUIRED over HTTP/2, a stale pooled HTTP/1.1 connection, a 417); `connectionAcquired`
+(reused or new) and `connectionReleased` (kept for the next request or closed); `connectionMigrated` (an HTTP/3 connection
+followed the network, [Connection migration](#connection-migration)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin
@@ -1198,6 +1489,7 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `GoAway` | the server refused the request with GOAWAY on every attempt | the server is stopping |
 | `StreamFailed` | one HTTP/3 stream failed and the idempotent request went again over HTTP/1.1 | `h3Failure` |
 | `Other` | any other HTTP/3 failure | `h3Failure` |
+| `H2Refused` | the server answered HTTP/2 with HTTP_1_1_REQUIRED (RFC 9113 section 7), on this call or lately (the route offers only `http/1.1` for 5 minutes, doubling up to 2 days), so the call went over HTTP/1.1; why HTTP/3 was not used is in the log line as `h3Fallback=` | the server's HTTP/2 support for that route ([HTTP/2 on the client](#http2-on-the-client)) |
 
 The engine's `logger` gets one line per call that HTTP/3 could have served but did not (a lost race, a fallback, a
 broken alternative, a proxy) at `http3 { diagnosticsLogLevel }`, `Info` by default — which the default logger, warnings
@@ -1213,6 +1505,41 @@ It names the method, scheme, host, port (when not the default) and path — neve
 often carry tokens — and the HTTP/3 failure by its type only (a peer's reason phrase is not logged). `broken since: <reason>`
 says why a broken alternative was marked, `marked broken` that this call's failure marked it, `attempts=<n>` appears
 from two attempts on.
+
+**Logging every request.** The protocol and the reason come from three places, and one client can feed all three into
+one log: the response's diagnostics (protocol, `reason`, `fallback`, `h3Failure`) for every call that got a response,
+the event listener's `fallback` for the HTTP/3 failure as it happens (it has the exception, not the `FallbackReason`),
+and the engine's own line through a `KuicksilverLogger` (an interface of two methods; here into the application's log,
+on Android `android.util.Log` is the usual target):
+
+```kotlin
+fun logLine(line: String) = println(line)   // your logging library
+// guide:ktor:protocol-log
+val client = HttpClient(Kuicksilver) {
+    engine {
+        // the engine's own line per call that HTTP/3 could have served, into your logging
+        logger = object : KuicksilverLogger {
+            override fun isEnabled(level: LogLevel) = level >= LogLevel.Info
+            override fun log(level: LogLevel, message: String, cause: Throwable?) = logLine("$level $message")
+        }
+        // the HTTP/3 failure itself, when it happens; why the call did not use HTTP/3 is on the response
+        eventListener = object : KuicksilverEventListener() {
+            override fun fallback(request: HttpRequestData, cause: Throwable) = logLine("HTTP/3 failed for ${request.url.host}: $cause")
+        }
+    }
+    // one line per response: the protocol and why
+    install(createClientPlugin("ProtocolLog") {
+        onResponse { response ->
+            val d = response.kuicksilverDiagnostics ?: return@onResponse
+            logLine("${response.call.request.url} -> ${d.protocol} (${d.reason}, fallback=${d.fallback}, h3Failure=${d.h3Failure})")
+        }
+    })
+}
+```
+
+The first call to a new origin in `Auto` mode logs `https://example.com/ -> HTTP/1.1 (NoAlternative, fallback=NoAlternative,
+h3Failure=null)`; a later one over HTTP/3 `-> HTTP/3 (...)` with `fallback=null`. `response.call.request.url` carries
+the query: log `encodedPath` instead when queries hold tokens.
 
 A call that fails has no response and so no diagnostics: its exception says what happened. When both the HTTP/3 and the
 HTTP/1.1 setups failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`. The diagnostics live as long
@@ -1241,23 +1568,31 @@ until `timeoutMillis` after it began at most.
 
 ## 0-RTT (opt-in, experimental)
 
-Both engines can resume HTTP/3 connections with 0-RTT ([ADR-0015](../adr/0015-0rtt-implementation.md)). It is off by
-default.
+Both engines can resume HTTP/3 connections with 0-RTT ([ADR-0015](../adr/0015-0rtt-implementation.md)): a returning
+client sends its first requests with its first flight, one round trip earlier. It is off by default on both sides, it
+exists only over QUIC (HTTP/1.1 and HTTP/2 over TCP never send or accept early data), and the price is that an early
+request can be **replayed**: an attacker who recorded the client's first flight can send it to the server again
+(RFC 9846 section 8). This section is everything an application needs to decide whether to turn it on.
 
-- **Server:** set `quicEarlyData = true` in the engine configuration. GET, HEAD and OPTIONS requests that arrive in
-  0-RTT run before the handshake completes, and `call.request.receivedEarly` is true for them. Every other request
-  waits for the handshake. `http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers
-  `425 Too Early` instead (an assignment: a bare `http3Settings { ... }` inside `configure` only builds a value and
-  changes nothing).
+- **Server:** set `quicEarlyData = true` in the engine configuration. Requests the early-data policy calls replayable
+  (GET, HEAD and OPTIONS by default) that arrive in 0-RTT run before the handshake completes, and
+  `call.request.receivedEarly` is true for them. Every other early request waits for the handshake (the default policy,
+  `Http3EarlyDataPolicy.WaitForHandshake()`): a replayed copy never completes the handshake, so it never runs.
+  `http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers those with `425 Too Early`
+  instead, without running the handler, and the client repeats them after its handshake (RFC 8470 section 5.2);
+  replayable requests still run early under both policies. Assign it (a bare `http3Settings { ... }` inside `configure`
+  only builds a value and changes nothing). Without `quicEarlyData` the server issues no session tickets for QUIC, so
+  HTTP/3 clients run a full handshake every time.
 - **Behind a gateway** (with or without `quicEarlyData`): a CDN or reverse proxy that forwards a request it received in
   early data marks it `Early-Data: 1` (RFC 8470 section 5.1), and such a request may be a replay whatever the state of
   the connection it arrives on. Over HTTP/1.1 and HTTP/3 the server engine sets `call.request.receivedEarly` for it and
   answers `425 Too Early` to any such request the early-data policy does not declare replayable (over HTTP/1.1: anything
   but GET, HEAD and OPTIONS), without running the handler; the gateway forwards the 425 and its client retries after
   its handshake. Gate side effects on `receivedEarly`, not on the TLS state of your own connection.
-- **Client:** set `http3 { earlyData = true }`. The engine keeps the servers' session tickets for its lifetime, and
-  on a new connection to a server it has a ticket for, it sends GET, HEAD and OPTIONS requests without a body in 0-RTT.
-  Other requests wait for the handshake. A `425` is retried once. 0-RTT keeps the h3/h1 race and the fallback intact:
+- **Client:** set `http3 { earlyData = true }`. On a new connection to a server it has a ticket for, the engine sends
+  GET, HEAD and OPTIONS requests without a body in 0-RTT; other requests wait for the handshake. A `425` is retried
+  once; when the server rejects 0-RTT as a whole, the early requests are repeated once on the same connection after its
+  handshake (neither counts in `attempts`). 0-RTT keeps the h3/h1 race and the fallback intact:
   - A 0-RTT connection wins the race at once only on a network where QUIC was already seen working; elsewhere it must
     complete its handshake first, as in Chromium, so a network that drops UDP loses nothing over HTTP/1.1.
   - QUIC counts as working on the network, the alternative as working, and the connection's RTT is remembered only
@@ -1266,6 +1601,12 @@ default.
     on a path that went dark fails then and falls back to HTTP/1.1, not after `handshakeTimeout`.
   - A request that waits for the handshake (POST, or anything with a body) has not been sent when the handshake fails:
     it goes over HTTP/1.1 like any request whose HTTP/3 connection could not be set up.
+- **Tickets on the client** live in memory, in the engine's QUIC endpoint, for as long as the `HttpClient` lives: each
+  is used once, checked against the current `trust` before use, and dropped when the client closes. Nothing is
+  persisted, so after an app restart (or a new `HttpClient`) the first connection to each server is a full handshake,
+  and 0-RTT starts from the next one.
+- **Client certificates:** a server that asks for them cannot accept 0-RTT, and `quicEarlyData = true` with a
+  `clientAuth` other than `None` fails the start ([Mutual TLS](#mutual-tls-client-certificates)).
 
 ```kotlin
 // guide:ktor:zero-rtt-server
@@ -1273,7 +1614,7 @@ default.
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector(identity) { port = 443 }
     quicEarlyData = true
-    http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }   // or keep the default: safe methods early
+    http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }   // or keep the default: unsafe requests wait
 }, module = Application::module)
 // guide:ktor:zero-rtt-client
 val client = HttpClient(Kuicksilver) {
@@ -1281,8 +1622,64 @@ val client = HttpClient(Kuicksilver) {
 }
 ```
 
-> **Replay warning.** An attacker can replay a 0-RTT request (RFC 9846 section 8). Turn this on only when the handlers
-> of GET, HEAD and OPTIONS have no side effects.
+### What must not run early
+
+Turn 0-RTT on only when every request the policy calls replayable is safe to execute twice. Check the handlers of
+GET, HEAD and OPTIONS (and of anything you add to `replayable`) for:
+
+- state they change: counters, rate limits and quotas, "mark as read", a cart, a vote;
+- one-time things a GET consumes: a sign-in or password-reset link, an e-mail confirmation, a download token, a nonce;
+- actions behind a GET: sign-in or sign-out, sending a message or a push notification, starting a job, a payment;
+- records that must be exact: billing or audit entries written per request.
+
+An early request carries the same cookies and `Authorization` header as the original, so a replay is authorized too:
+authentication does not make a state-changing request safe. Reads are fine. When some GETs change state, narrow the
+policy instead of turning 0-RTT off, and keep `receivedEarly` checks in handlers that cannot be moved:
+
+```kotlin
+// guide:ktor:zero-rtt-replayable
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val policy = Http3EarlyDataPolicy.WaitForHandshake(replayable = { request ->
+    request.method == "GET" && request.path.orEmpty().startsWith("/static/")   // only these may run before the handshake
+})
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    quicEarlyData = true
+    http3Settings = http3Settings { earlyData = policy }
+}) {
+    routing {
+        get("/feed") {
+            if (call.request.receivedEarly) { /* a replay is possible here: no side effects */ }
+            call.respondText("feed")
+        }
+    }
+}
+```
+
+### How the server limits replays
+
+A replay can only repeat requests the policy runs early; the server also limits how often and where:
+
+1. **A short window.** A ticket's 0-RTT is accepted only while its age, as the client claims it, matches the server's
+   own within OpenSSL's fixed 10 seconds (RFC 9846 section 8.3), so a recorded flight is useless soon after.
+2. **Once per ticket, per process.** A process-wide replay register remembers every ticket whose 0-RTT it accepted,
+   for at least 20 seconds (longer than the window), and refuses that ticket's 0-RTT a second time. Every listener and
+   every `udpSocketCount` loop of the process shares it. When it is full (it uses at most 1 MiB), 0-RTT is refused
+   and the handshake goes on in 1-RTT: it fails closed.
+3. **The configuration that issued the ticket.** A ticket allows 0-RTT only for the same ALPN, transport parameters and
+   HTTP/3 SETTINGS; any change costs one 1-RTT handshake. A ticket is also bound to the certificate it was issued
+   under, so after a [certificate reload](#certificate-rotation) old tickets resume nothing.
+4. **The handshake.** A replayed flight never completes the handshake (the attacker lacks the key), so what waits for
+   it, or got a 425, never runs from a replay.
+
+**Several processes.** The register is per process. Session ticket keys are generated per process by default, so a
+ticket issued by one instance resumes nothing on another (the client just runs a full handshake there), and a replay
+sent to another instance gets no 0-RTT. With ticket keys shared between processes (`SessionTicketConfig.keys` in a `TlsConfig` of
+the QUIC API; the Ktor server engine always uses the keys its process generated), or a server restarted within the
+10-second window with the same keys, a replayed flight
+can be accepted once per process: a replayable request may then run once more on each. Keep that in mind before
+calling a request replayable on a multi-instance deployment. The threat model lists this residue
+([threat model 3.8](../spec/threat-model.md#38-0-rtt-and-replay)).
 
 ## Supported Ktor versions
 

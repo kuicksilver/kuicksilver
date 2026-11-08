@@ -88,11 +88,13 @@ short: QUIC needs a TLS 1.3 stack with an interface that Apple's TLS APIs do not
 ## 3. Privacy manifest
 
 Ship [`kuicksilver-native/apple/PrivacyInfo.xcprivacy`](../../kuicksilver-native/apple/PrivacyInfo.xcprivacy) or
-merge its entries into your app's manifest ([ios.md, Privacy manifest](ios.md#privacy-manifest) explains the audit):
+merge its entries into your app's manifest (the Maven artifacts do not carry the file; [template 6](#6-privacy-manifest)
+below is the same manifest, ready to paste) ([ios.md, Privacy manifest](ios.md#privacy-manifest) explains the audit):
 no tracking, no collected data, and one required-reason category, file timestamp APIs with reason `C617.1` (OpenSSL's
 file loaders and the key-log file check call `stat`/`fstat`/`lstat` on files inside the app container). Apple requires
 manifests on iOS, iPadOS, tvOS, visionOS and watchOS; a macOS app may carry the same file. Re-run
-`tools/check/ios-private-api.py` on your Release binary when you upgrade: it prints the required-reason APIs it finds.
+`tools/check/ios-private-api.py` on your Release binary when you upgrade: it prints the required-reason APIs it finds
+(a single file; [ios.md, Checks](ios.md#checks) says how to run it without the repository).
 
 ## 4. Info.plist and entitlements
 
@@ -139,9 +141,11 @@ non-exempt encryption, no French declaration, no OpenSSL in the binary. Choose K
         distribute in France.
   - [ ] Privacy manifest included; `ios-private-api.py` on the Release binary reports no non-public symbols and no
         required-reason API missing from the manifest.
-  - [ ] `tools/check/ios-symbols.sh` passes (no symbol clash with another OpenSSL/BoringSSL in the app).
-  - [ ] Size impact measured (`tools/check/ios-size.sh`: about 3.4 MB for OpenSSL + Kuicksilver, about 5.6 MB with
-        the Kotlin runtime in an app that has no other Kotlin).
+  - [ ] Another OpenSSL or BoringSSL in the app: nothing to do, Kuicksilver's OpenSSL symbols are renamed (the project's
+        `tools/check/ios-symbols.sh` proves it for each release, [ios.md, Checks](ios.md#checks)).
+  - [ ] Size impact measured from your app's linker map (the project's measurement, on the 0.2.0 code: about 3.4 MB
+        for OpenSSL + Kuicksilver, about 5.6 MB with the Kotlin runtime in an app that has no other Kotlin;
+        [ios.md, Size](ios.md#size)).
   - [ ] Tested on a device, Wi-Fi and cellular, and on NAT64.
   - [ ] `NSLocalNetworkUsageDescription`/`NSBonjourServices` present if and only if the app uses the LAN.
   - [ ] Review notes filled in (template below), with a test server the reviewer can reach without an account.
