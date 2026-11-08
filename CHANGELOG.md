@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - CI: the non-blocking job `openssl-next` (weekly, or `only=openssl-next` by hand) builds the newest OpenSSL 4.x release
   (4.1.0, pinned by version, SHA-256 and signing key in `gradle/openssl-next.toml`) on linux-x64 and macos-arm64 and runs
   the `ksl` C tests and a JVM smoke test against it. It is never required and produces no release artifact; 0.3.0 stays on
-  OpenSSL 3.5 LTS. `KSL_OPENSSL_PIN` (`tools/openssl/fetch.sh`, `build.sh`), `-Pkuicksilver.openssl.pin` select the pin
+  OpenSSL 3.5 LTS. `KSL_OPENSSL_PIN` (`tools/openssl/fetch.sh`, `build.sh`) and `-Pkuicksilver.openssl.pin` select the pin
   profile; `KSL_OPENSSL_OUT` (`tools/c-test.sh`) only names the directory of the OpenSSL builds.
 - System OpenSSL builds (Linux): the accepted version range has one switch, `KSL_SYSTEM_OPENSSL_MAX_MAJOR` (default 3), and
   `tools/ci/system-openssl.sh` follows it. OpenSSL 4.x is prepared but still refused by default (`KSL_INIT_VERSION`); a C
