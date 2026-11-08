@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `tools/docs/site.sh <version> <outdir>` builds it locally, offline once the dependencies are cached;
   `.github/workflows/pages.yml` publishes it when a GitHub release is published (docs/release.md, "Every release").
   `./gradlew :dokkaGenerate` writes the API reference alone to `build/dokka/html`.
+- Docs: [Why QUIC](docs/why-quic.md), HTTP/3 against HTTP/1.1 and HTTP/2 over TCP (Kuicksilver's own TCP client and
+  OkHttp) with measured numbers: 10 MiB downloads over a grid of RTT and loss, 20 parallel requests (head-of-line
+  blocking), time to first byte on a new connection (with 0-RTT), and an address change in the middle of a 50 MiB
+  download, plus when QUIC does not help. `tools/bench/why-quic.sh` runs it in one container with `tc netem` on the
+  loopback and generates the page's tables from `docs/benchmarks/why-quic.csv`; OkHttp is a dependency of the
+  unpublished `kuicksilver-soak` module only.
 - CI: the non-blocking job `openssl-next` (weekly, or `only=openssl-next` by hand) builds the newest OpenSSL 4.x release
   (4.1.0, pinned by version, SHA-256 and signing key in `gradle/openssl-next.toml`) on linux-x64 and macos-arm64 and runs
   the `ksl` C tests and a JVM smoke test against it. It is never required and produces no release artifact; 0.3.0 stays on

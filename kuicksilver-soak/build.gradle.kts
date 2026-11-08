@@ -35,6 +35,8 @@ kotlin {
             implementation(libs.ktor.server.auto.head.response) // the deployment server answers the guide's `curl -I`
             implementation(libs.kotlinx.io.core)
         }
+        // the why-QUIC comparison (tools/bench/why-quic.sh): OkHttp, the TCP client it measures against, on the JVM only
+        jvmMain.dependencies { implementation(libs.okhttp) }
         commonTest.dependencies { implementation(kotlin("test")) }
         jvmTest.dependencies { implementation(kotlin("test-junit5")) }
     }
@@ -77,4 +79,12 @@ tasks.register<Sync>("installH2specServer") {
     group = "distribution"
     from(tasks.named("jvmJar")); from(configurations["jvmRuntimeClasspath"])
     into(layout.buildDirectory.dir("install/h2spec-server/lib"))
+}
+
+// The why-QUIC server and clients (tools/bench/why-quic.sh) on the JVM: the same layout as installH2specServer, run inside the
+// bench container with java -cp over build/install/why-quic/lib and the main class io.kuicksilver.soak.WhyQuicKt.
+tasks.register<Sync>("installWhyQuic") {
+    group = "distribution"
+    from(tasks.named("jvmJar")); from(configurations["jvmRuntimeClasspath"])
+    into(layout.buildDirectory.dir("install/why-quic/lib"))
 }
