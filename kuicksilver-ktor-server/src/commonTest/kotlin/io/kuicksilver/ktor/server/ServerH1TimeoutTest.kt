@@ -40,6 +40,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -118,6 +119,42 @@ class ServerH1TimeoutTest {
                     val answer =
                         withTimeout(15.seconds) { rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n") }
                     assertTrue(answer.startsWith("HTTP/1.1 200"), answer)
+                } finally {
+                    stuck.close()
+                }
+            } finally {
+                selector.close()
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The TLS handshake is part of the first request's head: `requestHeaderTimeoutSeconds` bounds it, not a shorter deadline
+     * of the TLS layer (`TlsConfig.handshakeTimeout`, 10 s). Before, a client whose handshake took longer than 10 s (its
+     * Finished retransmitted on a lossy 200 ms path) was cut after it had sent its request, which it saw as the connection
+     * closed before any response. Here a client sends its ClientHello and stalls: the connection is still open after 10 s,
+     * and closed at the 12 s head deadline. Takes some 12 s.
+     */
+    @Test fun slowTlsHandshakeIsBoundedByTheHeadDeadlineOnly() =
+        serverTest {
+            val (server, port) =
+                tlsServer(
+                    configure = { requestHeaderTimeoutSeconds = 12 },
+                ) { routing { get("/") { call.respondText("ok") } } }
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                val hello = clientHello(selector)
+                val stuck = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                try {
+                    val w = stuck.openWriteChannel()
+                    w.writeFully(hello)
+                    w.flush()
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
+                    // open past the TLS layer's 10 s (counted from the accept, a moment before the count above)
+                    assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
+                        withTimeout(10_500.milliseconds) { server.engine.openTcpSockets.first { it == 0 } }
+                    }
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 0 } }
                 } finally {
                     stuck.close()
                 }

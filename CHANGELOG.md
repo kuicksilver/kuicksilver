@@ -613,6 +613,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server: the TLS handshake of a TCP connection was cut after 10 s (`TlsConfig.handshakeTimeout`'s default), not at
+  `requestHeaderTimeoutSeconds` (30 s) as documented. A client on a slow, lossy path (200 ms, 5 % loss) whose last
+  handshake flight needed retransmissions had its connection closed after it had sent its request, and saw "unexpected end
+  of stream". The request-head deadline alone bounds the handshake now.
 - QUIC: `maxConnections` and `maxConnectionsPerIp` bound the endpoint as a whole with `loops > 1`. Each loop counted its
   own connections, so N loops admitted up to N times either limit (SO_REUSEPORT spreads one address's source ports over
   the loops, and the in-process dispatch hashes new clients' connection IDs). The loops of a group now share the slots:

@@ -14,6 +14,7 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
+import kotlin.time.Duration
 
 /**
  * A TLS connector on every platform: HTTP/1.1 over TLS on TCP and, unless turned off, HTTP/3 on UDP on the
@@ -42,8 +43,15 @@ public class KuicksilverTlsConnector private constructor(
     override val type: ConnectorType get() = ConnectorType.HTTPS
 
     /** The server TLS configuration for [alpn] (`http/1.1` on TCP, `h3` on QUIC). */
-    public fun tlsConfig(alpn: List<String>): TlsConfig =
+    public fun tlsConfig(alpn: List<String>): TlsConfig = tlsConfig(alpn, null)
+
+    /** [tlsConfig] with the TLS-over-TCP handshake deadline [handshakeTimeout] (null: `TlsConfig`'s default). */
+    internal fun tlsConfig(
+        alpn: List<String>,
+        handshakeTimeout: Duration?,
+    ): TlsConfig =
         tlsConfig(TlsRole.Server) {
+            handshakeTimeout?.let { this.handshakeTimeout = it }
             this.alpn = alpn
             identity = this@KuicksilverTlsConnector.identity
             clientAuth = this@KuicksilverTlsConnector.clientAuth

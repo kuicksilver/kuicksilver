@@ -397,13 +397,16 @@ internal const val H2_ALPN = "h2"
  * is set (the server picks by its own order, so a client that offers both gets HTTP/2, RFC 7301 section 3.2), else
  * `http/1.1` alone. HTTP/2 is offered only over TLS 1.3, so the TLS 1.2 rules of RFC 9113 sections 9.2.1 and 9.2.2 do not
  * arise here (the client keeps them: a renegotiation is a connection error of type PROTOCOL_ERROR there); the server
- * negotiates TLS 1.3 only, so this holds for every connector.
+ * negotiates TLS 1.3 only, so this holds for every connector. The handshake has no deadline of its own (`TlsConfig`'s
+ * 10 s): it is part of the first request's head, which [KuicksilverApplicationEngine.Configuration.requestHeaderTimeoutSeconds]
+ * bounds from the accepted connection on. With the 10 s of its own a client on a slow, lossy path (200 ms, 5 % loss)
+ * whose Finished needed retransmissions was cut at 10 s after it had sent its request, well inside the documented 30 s.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnector): io.kuicksilver.tls.TlsConfig {
-    val h1 = tls.tlsConfig(listOf("http/1.1"))
+    val h1 = tls.tlsConfig(listOf("http/1.1"), Duration.INFINITE)
     if (!configuration.http2 || h1.versions != io.kuicksilver.tls.TlsVersions.Tls13) return h1
-    return tls.tlsConfig(listOf(H2_ALPN, "http/1.1"))
+    return tls.tlsConfig(listOf(H2_ALPN, "http/1.1"), Duration.INFINITE)
 }
 
 /**
