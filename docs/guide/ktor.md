@@ -107,8 +107,11 @@ is given up after the abort wait, so for that moment the descriptors in use can 
   and outgoing connections the application opens. Above it `accept()` fails with EMFILE; the engine then backs off
   (5 ms doubling to 1 s) instead of spinning, but clients wait until descriptors free up.
 - `EngineMain` keys `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off).
-- HTTP/3 has its own limits in the QUIC endpoint, `maxConnections` and `maxConnectionsPerIp` (the same 10,000 and 256),
-  which the engine does not let you change yet ([deployment guide](deployment.md#security-limits)).
+- HTTP/3 has its own limits in the QUIC endpoint, `quicMaxConnections` and `quicMaxConnectionsPerIp` (the same 10,000
+  and 256, but the per-address one on by default), and `quicAcceptQueue` (128): *experimental* since 0.3.0, `EngineMain`
+  keys `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off) and
+  `kuicksilver.quicAcceptQueue`. Behind a NAT or `kube-proxy` raise the per-address one
+  ([deployment guide](deployment.md#quic-connection-limits)); `engine.http3Stats` counts the clients they refused.
 
 ### HTTP/3 on the server
 
@@ -1054,6 +1057,9 @@ after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsH
 TCP client closed at accept, before TLS, with the reason: `per-IP limit` or `HTTP/2 repeat offender`; see [Connection
 limits](#connection-limits)), and `requestStarted` / `requestEnded`
 around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
+On the running engine, `engine.http3Stats` (0.3.0) gives the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
+listener, one per connector serving HTTP/3: datagrams, drops, refusals by the admission policy, the connection limits
+and the accept queue, handshakes ([Deploying: Observability](deployment.md#observability)).
 
 ```kotlin
 // guide:ktor:server-observability

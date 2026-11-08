@@ -371,6 +371,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   logged at most once per 5 minutes. `HttpClient.closeHttp3Connections()` sends GOAWAY on every pooled HTTP/3 connection
   and closes each once its calls are done (a request handed one just before goes again on a new connection), and sends
   every open WebTransport session `WT_DRAIN_SESSION`.
+- Ktor server: the QUIC endpoint limits of the HTTP/3 listeners are set from the engine configuration, experimental:
+  `quicMaxConnections` (10,000), `quicMaxConnectionsPerIp` (256; `null` turns it off) and `quicAcceptQueue` (128), with
+  the same defaults and ranges as `QuicEndpointConfig`, and `EngineMain` keys `kuicksilver.quicMaxConnections`,
+  `kuicksilver.quicMaxConnectionsPerIp` (`0` is off) and `kuicksilver.quicAcceptQueue`. Behind a NAT, Kubernetes
+  `kube-proxy` with `externalTrafficPolicy: Cluster` or a UDP proxy that sends from its own address every client shares
+  one address and hit the fixed 256 per address; raise or turn off the limit there (docs/guide/deployment.md, "QUIC
+  connection limits").
+- Ktor server: `engine.http3Stats` (experimental) returns the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
+  listener: datagrams, drops, refusals by admission, the connection limits and the accept queue, handshakes. The engine
+  gave no access to them before.
+- Build: `tools/check/deployment-guide.sh` runs the commands of docs/guide/deployment.md, "Checking a deployment"
+  (`curl --http3-only`, the `Alt-Svc` check, `tcpdump`), as they stand against the engine in one Docker container; a step
+  of the local matrix and of the CI `linux-native` job.
 
 ### Changed
 

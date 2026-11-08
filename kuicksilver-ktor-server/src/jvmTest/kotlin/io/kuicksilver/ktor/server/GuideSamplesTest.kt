@@ -210,6 +210,31 @@ class GuideSamplesTest {
                 it.parentFile
             }.map { File(it, "docs/guide/deployment.md") }.first { it.exists() }.readText()
         assertTrue("guide:deployment:public-alt-svc" in guide, "marker public-alt-svc")
+        assertTrue("guide:deployment:quic-limits" in guide, "marker quic-limits")
+    }
+
+    @Test fun quicLimitsSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:deployment:quic-limits
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+                quicMaxConnectionsPerIp = 4_096 // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+            }) {
+                routing { get("/") { call.respondText("ok") } }
+            }
+        server.start(wait = false)
+        // for a metrics gauge: clients dropped by quicMaxConnections or quicMaxConnectionsPerIp since the start
+        val refusedByLimits = server.engine.http3Stats.sumOf { it.connectionsRefusedLimits }
+
+        try {
+            assertEquals(0L, refusedByLimits)
+            assertEquals(4_096, server.engine.configuration.quicMaxConnectionsPerIp)
+            assertEquals(1, server.engine.http3Stats.size, "one HTTP/3 listener")
+        } finally {
+            server.stop(100, 500)
+            identity.close()
+        }
     }
 
     @Test fun publicAltSvcSample() {

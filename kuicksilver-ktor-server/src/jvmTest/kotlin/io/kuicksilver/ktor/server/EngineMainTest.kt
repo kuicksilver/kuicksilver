@@ -156,6 +156,32 @@ class EngineMainTest {
         assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.maxTcpConnectionsPerIp=-1") }
     }
 
+    /**
+     * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off) and `kuicksilver.quicAcceptQueue` set
+     * the QUIC endpoint limits.
+     */
+    @Test fun quicLimitKeys() {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        fun limits(vararg extra: String): Triple<Int, Int?, Int> {
+            val c = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra)).engine.configuration
+            return Triple(c.quicMaxConnections, c.quicMaxConnectionsPerIp, c.quicAcceptQueue)
+        }
+        assertEquals(Triple(10_000, 256, 128), limits(), "the defaults")
+        assertEquals(
+            Triple(500, 4096, 512),
+            limits(
+                "-P:kuicksilver.quicMaxConnections=500",
+                "-P:kuicksilver.quicMaxConnectionsPerIp=4096",
+                "-P:kuicksilver.quicAcceptQueue=512",
+            ),
+        )
+        assertEquals(Triple(10_000, null, 128), limits("-P:kuicksilver.quicMaxConnectionsPerIp=0"))
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicMaxConnections=0") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicAcceptQueue=0") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicAcceptQueue=many") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicMaxConnectionsPerIp=-1") }
+    }
+
     @Test fun reloadIntervalKeyParsed() {
         assertEquals(30.seconds, EngineMain.parseReloadInterval("30s"))
         assertEquals(1.hours, EngineMain.parseReloadInterval("1h"))

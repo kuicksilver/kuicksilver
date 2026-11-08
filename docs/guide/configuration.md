@@ -27,7 +27,7 @@ variables](#system-properties-and-environment-variables) · [fixed limits](#fixe
 | Object | Kotlin API | Ktor client | Ktor server | `EngineMain` key |
 |---|---|---|---|---|
 | [`QuicConfig`](#quicconfig) | `quicConfig { }` | `engine { quic = … }` | `quic = …` (`quicMaxIdleTimeout`) | |
-| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount` |
+| [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicMaxConnections`, `quicMaxConnectionsPerIp`, `quicAcceptQueue`, `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount`, `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp`, `kuicksilver.quicAcceptQueue` |
 | [`TlsConfig`](#tlsconfig) | `tlsConfig(role) { }` | `engine { trust = …; identity = …; tls { } }` | `tlsConnector(identity) { }` | `kuicksilver.tls.*` |
 | [`Http3Settings`](#http3settings) | `http3Settings { }` | `engine { http3 { settings = … } }` | `http3Settings = …` | `kuicksilver.http3` (on/off) |
 | [`Http2Settings`](#http2settings) | `Http2Settings(…)` | `engine { http2 { settings = … } }` | `http2Settings = …` | `kuicksilver.http2` (on/off) |
@@ -357,6 +357,9 @@ Guide: [Ktor: Client](ktor.md#client).
 | `quic` | `QuicConfig` | `QuicConfig.Default` | 0.2.0 | QUIC transport of the HTTP/3 listeners |
 | `quicMaxIdleTimeout` | `Duration?` | `null` | 0.2.0 | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | 0.2.0 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; every platform since 0.3.0) |
+| `quicMaxConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; QUIC connections each HTTP/3 listener holds, handshakes included (`QuicEndpointConfig.maxConnections`); beyond it new Initials are dropped silently (`EndpointStats.connectionsRefusedLimits`) |
+| `quicMaxConnectionsPerIp` (*experimental*) | `Int?` | 256 | 0.3.0 | at least 1, or `null` (off); QUIC connections of one client IP on each HTTP/3 listener, ports ignored (`QuicEndpointConfig.maxConnectionsPerIp`); beyond it new Initials are dropped silently and the client times out. Behind a NAT, `kube-proxy` with `externalTrafficPolicy: Cluster` or a UDP load balancer that does not keep client addresses every client shares one address: raise it or turn it off ([QUIC connection limits](deployment.md#quic-connection-limits)) |
+| `quicAcceptQueue` (*experimental*) | `Int` | 128 | 0.3.0 | at least 1; handshaken QUIC connections waiting for the HTTP/3 accept loop on each listener (`QuicEndpointConfig.acceptQueue`); while full, a new client is refused with CONNECTION_REFUSED (`EndpointStats.connectionsRefusedAcceptQueue`) |
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | 0.2.0 | Retry policy |
 | `quicLoadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | 0.3.0 | QUIC-LB connection IDs of every HTTP/3 listener (`QuicEndpointConfig.loadBalancer`; its length must equal `quic.connectionIdLength`); `engine.updateLoadBalancer(next)` changes it on the running engine ([Behind a load balancer](quic.md#behind-a-load-balancer)) |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings |
@@ -367,11 +370,12 @@ Guide: [Ktor: Client](ktor.md#client).
 | `qlog` (*experimental*) | `QlogSink?` | `null` | 0.2.0 | added to `quic` |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` | 0.2.0 | lifecycle of every QUIC connection |
 | `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | 0.2.0 | connection and request events over every protocol |
+| `engine.http3Stats` (*experimental*, on the running engine) | `List<EndpointStats>` | empty before the start | 0.3.0 | the QUIC endpoint counters of every HTTP/3 listener, one per connector serving HTTP/3: datagrams, drops, refusals by admission, limits and the accept queue, handshakes ([Observability](deployment.md#observability)) |
 | `engine.http3Advertising` (*experimental*, on the running engine) | `Http3Advertising` | `On` | 0.3.0 | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1 and HTTP/3 responses, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused with CONNECTION_REFUSED); read per response and per new client ([Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)) |
 | `shutdownGracePeriod`, `shutdownTimeout` (Ktor) |  | Ktor's | 0.2.0 | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](ktor.md#graceful-stop)) |
 
-The other `QuicEndpointConfig` limits of the HTTP/3 listener (`maxConnections`, `acceptQueue`, `maxConnectionsPerIp`, …)
-keep their defaults and are not configurable from the engine. Ktor's `connectionGroupSize`,
+The other `QuicEndpointConfig` limits of the HTTP/3 listener (`initialQueueCap`, `maxConnectionLifetime`, the stateless
+rate limits, …) keep their defaults and are not configurable from the engine. Ktor's `connectionGroupSize`,
 `workerGroupSize` and `callGroupSize` are not used (the engine runs on `Dispatchers.IO`).
 
 ### TLS connector
@@ -392,7 +396,8 @@ keep their defaults and are not configurable from the engine. Ktor's `connection
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.http2RepeatOffenderPenalty`,
-`kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off), `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
+`kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
+`kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 ## ktor-network

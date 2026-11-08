@@ -238,6 +238,54 @@ public class KuicksilverApplicationEngine(
          */
         public var udpSocketCount: Int = 1
 
+        /**
+         * The most QUIC connections each HTTP/3 listener holds at once, handshakes in flight included
+         * (`QuicEndpointConfig.maxConnections`): beyond it a new client's Initial is dropped silently and counted in
+         * `EndpointStats.connectionsRefusedLimits` ([KuicksilverApplicationEngine.http3Stats]). At least 1; default 10,000.
+         * `EngineMain` key `kuicksilver.quicMaxConnections`.
+         *
+         * @throws IllegalArgumentException when set below 1.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var quicMaxConnections: Int = 10_000
+            set(value) {
+                require(value >= 1) { "quicMaxConnections must be at least 1" }
+                field = value
+            }
+
+        /**
+         * The most QUIC connections one client IP holds at once on each HTTP/3 listener, ports ignored
+         * (`QuicEndpointConfig.maxConnectionsPerIp`); null turns the limit off. Beyond it a new client's Initial is dropped
+         * silently (the client fails at its handshake timeout) and counted in `EndpointStats.connectionsRefusedLimits`.
+         * Behind a NAT, Kubernetes `kube-proxy` with `externalTrafficPolicy: Cluster`, or a UDP load balancer that does not
+         * keep client addresses, every client shares one address: raise it to about [quicMaxConnections] there, or turn
+         * it off (docs/guide/deployment.md, "QUIC connection limits"). At least 1, or null; default 256. `EngineMain` key
+         * `kuicksilver.quicMaxConnectionsPerIp` (`0` is off).
+         *
+         * @throws IllegalArgumentException when set below 1.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var quicMaxConnectionsPerIp: Int? = 256
+            set(value) {
+                require(value == null || value >= 1) { "quicMaxConnectionsPerIp must be at least 1, or null" }
+                field = value
+            }
+
+        /**
+         * Handshaken QUIC connections waiting for the engine's HTTP/3 accept loop on each listener
+         * (`QuicEndpointConfig.acceptQueue`): while this many wait, a new client is refused at once with CONNECTION_REFUSED,
+         * counted in `EndpointStats.connectionsRefusedAcceptQueue`. At least 1; default 128. `EngineMain` key
+         * `kuicksilver.quicAcceptQueue`.
+         *
+         * @throws IllegalArgumentException when set below 1.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var quicAcceptQueue: Int = 128
+            set(value) {
+                require(value >= 1) { "quicAcceptQueue must be at least 1" }
+                field = value
+            }
+
         /** Admission of new QUIC connections (Retry above a handshake threshold by default); Ktor-Netty's `quicTokenHandler`. */
         public var quicAdmission: ConnectionAdmission? = null
 
@@ -374,6 +422,20 @@ public class KuicksilverApplicationEngine(
         for (e in endpoints) e.checkLoadBalancer(config)
         for (e in endpoints) e.updateLoadBalancer(config)
     }
+
+    /**
+     * The statistics of every HTTP/3 listener's QUIC endpoint (`Http3Endpoint.stats`: datagrams, drops, admission and limit
+     * refusals, handshakes; docs/guide/quic.md, "Observability"), one per TLS connector serving HTTP/3, in the order of
+     * the connectors. Empty before the start completes and when no connector serves HTTP/3; after a stop the endpoints'
+     * final counts. Each read takes a new snapshot; safe from any thread.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public val http3Stats: List<io.kuicksilver.quic.EndpointStats>
+        get() = startedH3Endpoints.map { it.stats }
+
+    /** [h3Endpoints] as published once the start completed (empty before): what [http3Stats] reads from other threads. */
+    @Volatile
+    private var startedH3Endpoints: List<Http3Endpoint> = emptyList()
 
     /** The server job's scope while it runs (null before the start): where [http3Advertising] sends its GOAWAY round. */
     @Volatile
@@ -523,6 +585,7 @@ public class KuicksilverApplicationEngine(
                     // the failure reaches the caller through startupJob; rethrowing it here would make it an uncaught coroutine exception, which terminates a Kotlin/Native process (seen on Linux arm64)
                     if (cause is CancellationException) throw cause else return@launch
                 }
+                startedH3Endpoints = h3.map { it.endpoint }
                 startupJob.complete(Unit)
                 startIdentityWatcher()
                 stopRequest.join()

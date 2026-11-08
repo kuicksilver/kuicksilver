@@ -110,6 +110,9 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
                     }.build()
             connectionIdLength = quic.connectionIdLength
             loops = configuration.udpSocketCount
+            maxConnections = configuration.quicMaxConnections
+            maxConnectionsPerIp = configuration.quicMaxConnectionsPerIp
+            acceptQueue = configuration.quicAcceptQueue
             // the HTTP/3 switch first: under Drain every new client is refused with CONNECTION_REFUSED, statelessly, whatever the
             // policy (RFC 9000 section 5.2.2: a server that refuses a new connection SHOULD send an Initial CONNECTION_CLOSE with
             // CONNECTION_REFUSED; sections 10.2.3 and 20.1)
