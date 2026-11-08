@@ -284,15 +284,38 @@ static void test_renegotiation_attempt_reported(void) {
         ksl_ssl_free(c);
         ksl_ssl_free(s);
     }
+    /* negative: a HelloRequest during the handshake asks for nothing (RFC 5246 section 7.4.1.1: the client ignores it; OpenSSL
+       skips it): a plaintext one fed to the client ahead of the server's first flight is not reported (the s->done gate) */
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(ksl_drive(c) == KSL_WANT_READ, "the client's ClientHello");
+        shuttle(c, s);
+        static const uint8_t hello_request[] = {0x16, 0x03, 0x03, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00};
+        size_t used = 0;
+        CHECK(ksl_tcp_feed(c, hello_request, sizeof hello_request, &used) == KSL_OK && used == sizeof hello_request,
+              "a HelloRequest record ahead of the ServerHello");
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "the handshake completes past it");
+        CHECK(renegotiation_seen(c) == 0, "negative: a HelloRequest during the handshake is not reported");
+        CHECK(echo_bytes(c, s, 100) && renegotiation_seen(c) == 0, "nor later");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+    }
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
-    /* TLS 1.3 has no renegotiation (RFC 9846 section 4.1.2): nothing to report */
+    /* TLS 1.3 has no renegotiation (RFC 9846 section 4.1.2): its post-handshake messages, KeyUpdate both ways and
+       NewSessionTicket, are not reported */
     cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
     sc = server_ctx("server");
     {
         ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
         CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 100) && renegotiation_seen(c) == 0,
               "TLS 1.3: no renegotiation reported");
+        CHECK(ksl_ssl_key_update(c, 1) == KSL_OK && echo_bytes(c, s, 100) && ksl_ssl_key_update(s, 1) == KSL_OK &&
+                  echo_bytes(c, s, 100),
+              "TLS 1.3: KeyUpdates both ways, update_requested");
+        CHECK(ksl_ssl_new_session_ticket(s) == KSL_OK && echo_bytes(c, s, 100), "TLS 1.3: a NewSessionTicket");
+        CHECK(renegotiation_seen(c) == 0 && renegotiation_seen(s) == 0,
+              "negative: TLS 1.3 KeyUpdate and NewSessionTicket are not reported");
         ksl_ssl_free(c);
         ksl_ssl_free(s);
     }
