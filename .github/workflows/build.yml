@@ -100,6 +100,12 @@ jobs:
         run: |
           bash tools/check/llms-full.sh --check
           bash tools/check/llms-full-test.sh
+      - name: 'lint: documentation site tools (guide rendering, versions, link check)'
+        # the guide renderer is pinned by hash in tools/docs/requirements.txt, like clang-format below
+        run: |
+          python3 -m venv "$RUNNER_TEMP/docs-venv"
+          "$RUNNER_TEMP/docs-venv/bin/pip" install --quiet --require-hashes -r tools/docs/requirements.txt
+          DOCS_PYTHON="$RUNNER_TEMP/docs-venv/bin/python" bash tools/docs/site-test.sh
       - name: 'lint: SPDX headers'
         run: bash tools/check/spdx.sh .
       - name: 'lint: C formatting (clang-format, .clang-format)'
@@ -425,6 +431,13 @@ jobs:
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_ARCH_CHECKS
+      - name: 'docs: API reference and site (Dokka, no warnings)'
+        # the strict gate before a release: any undocumented public declaration or unresolved KDoc link fails here, not in
+        # pages.yml after the tag (tools/docs/site.sh, tools/docs/api-baseline.properties)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/docs-venv"
+          "$RUNNER_TEMP/docs-venv/bin/pip" install --quiet --require-hashes -r tools/docs/requirements.txt
+          DOCS_PYTHON="$RUNNER_TEMP/docs-venv/bin/python" GRADLE_ARGS="--stacktrace" bash tools/docs/site.sh 0.3.0-SNAPSHOT "$RUNNER_TEMP/site"
       - name: 'openssl: no-sslkeylog (macos-arm64)'
         run: bash tools/check/keylog-disabled.sh build/openssl/macos-arm64/include
       - name: 'c-tests: macos-arm64 (ASan/UBSan)'

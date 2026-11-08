@@ -18,11 +18,11 @@ public expect sealed class TlsException(
         /** The alert description code (RFC 9846 section 6), e.g. 42 for `bad_certificate`, 48 for `unknown_ca`. */
         public val code: Int
 
-        /** The RFC 9846 name of [code], e.g. `bad_certificate`, or `alert_<code>` for one without a known name. */
+        /** The RFC 9846 name of [code][TlsException.AlertReceived.code], e.g. `bad_certificate`, or `alert_<code>` for one without a known name. */
         public val description: String
     }
 
-    /** Peer certificate verification failed; the alert sent is derived from [reason]. */
+    /** Peer certificate verification failed; the alert sent is derived from [reason][TlsException.Verify.reason]. */
     public class Verify(
         reason: VerifyReason,
         chain: List<Certificate>,
@@ -34,7 +34,7 @@ public expect sealed class TlsException(
         public val chain: List<Certificate>
     }
 
-    /** A protocol error reported by OpenSSL or the shim; [openSslCode] is `(lib shl 16) or reason` when known. */
+    /** A protocol error reported by OpenSSL or the shim; [openSslCode][TlsException.Protocol.openSslCode] is `(lib shl 16) or reason` when known. */
     public class Protocol(
         openSslCode: Int?,
         message: String,

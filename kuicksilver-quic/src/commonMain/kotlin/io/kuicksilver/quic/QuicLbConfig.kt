@@ -7,31 +7,31 @@ import io.kuicksilver.tls.LoadBalancerKey
 
 /**
  * A QUIC-LB configuration (draft-ietf-quic-load-balancers-21, experimental: the draft is not an RFC yet and may change): the
- * server connection IDs this endpoint issues carry [serverId], so a QUIC-LB load balancer in front of a pool of servers routes
+ * server connection IDs this endpoint issues carry [serverId][QuicLbConfig.serverId], so a QUIC-LB load balancer in front of a pool of servers routes
  * every packet of a connection to the server that holds it, also after the client's address changed (docs/guide/quic.md,
  * "Behind a load balancer").
  *
- * A connection ID is `first octet || server ID || nonce`, [connectionIdLength] = 1 + server ID + [nonceLength] bytes, which
- * must equal `QuicEndpointConfig.connectionIdLength`. The first octet holds [configId] in its three high bits and the length
- * of the rest in its five low bits (draft section 3: config rotation, length self-description). With a [key] the server ID
+ * A connection ID is `first octet || server ID || nonce`, [connectionIdLength] = 1 + server ID + [nonceLength][QuicLbConfig.nonceLength] bytes, which
+ * must equal `QuicEndpointConfig.connectionIdLength`. The first octet holds [configId][QuicLbConfig.configId] in its three high bits and the length
+ * of the rest in its five low bits (draft section 3: config rotation, length self-description). With a [key][QuicLbConfig.key] the server ID
  * and nonce are encrypted with AES-128 (one pass when they are 16 bytes together, else a four-pass Feistel network, draft
  * section 5.4), so only the load balancer can read the server ID; without one they travel in clear and anyone can tell which
  * server a connection is on.
  *
- * The configuration agent of the pool assigns [configId], [serverId], [nonceLength] and the key; the load balancers must have
+ * The configuration agent of the pool assigns [configId][QuicLbConfig.configId], [serverId][QuicLbConfig.serverId], [nonceLength][QuicLbConfig.nonceLength] and the key; the load balancers must have
  * the same values before the servers issue connection IDs with them (draft section 3.1).
  *
  * @param configId The config rotation codepoint, 0..6 (7 marks unroutable connection IDs and is never a configuration).
  * @param serverId This server's ID, 1..15 bytes; copied.
- * @param nonceLength Nonce bytes, at least 4; [serverId] and the nonce are at most 19 bytes together.
+ * @param nonceLength Nonce bytes, at least 4; `serverId` and the nonce are at most 19 bytes together.
  * @param key The AES-128 key, made with `QuicCrypto.newLoadBalancerKey(bytes)` (which wipes `bytes`; the key material then
  * lives in the native layer only), or null for plaintext connection IDs. The caller owns it; an endpoint takes its own copy
  * when it is given this configuration (at build or [QuicEndpoint.updateLoadBalancer]), so the caller may close it after
  * that. Draft section 9.6: "the server MUST NOT reuse a nonce until it switches to a configuration with new keys". Within
  * a process no nonce of a key and nonce length (in clear: of a nonce length) is ever used twice, whatever the endpoints
- * and server IDs that share them. Across processes that holds only with [nonceReservation]; without one, the operator
+ * and server IDs that share them. Across processes that holds only with [nonceReservation][QuicLbConfig.nonceReservation]; without one, the operator
  * must give every process start a key no earlier process used (a fresh key per process start and per instance). A
- * plaintext configuration (no key) must have a [nonceReservation]: IllegalArgumentException otherwise.
+ * plaintext configuration (no key) must have a [nonceReservation][QuicLbConfig.nonceReservation]: IllegalArgumentException otherwise.
  * @param nonceReservation Where the nonce counter of this key and nonce length (in clear: of this nonce length, with a
  * stored permutation secret) survives a restart; see [QuicLbNonceReservation]. Every configuration that shares the nonce
  * space must bring the same instance, or none. Null (with a key only): nonces start at a random point in each process.
@@ -60,7 +60,7 @@ public class QuicLbConfig(
     }
 
     /**
-     * A keyed fingerprint of [key] (its encryption of a block no connection ID or Feistel pass ever encrypts), never the key:
+     * A keyed fingerprint of [key][QuicLbConfig.key] (its encryption of a block no connection ID or Feistel pass ever encrypts), never the key:
      * configurations with the same key share one nonce space. Null without a key.
      */
     internal val keyFingerprint: String? =
@@ -78,7 +78,7 @@ public class QuicLbConfig(
     /** True when the server ID and nonce are encrypted. */
     public val encrypted: Boolean get() = key != null
 
-    /** The length of every connection ID under this configuration: 1 + server ID + [nonceLength]. */
+    /** The length of every connection ID under this configuration: 1 + server ID + [nonceLength][QuicLbConfig.nonceLength]. */
     public val connectionIdLength: Int get() = 1 + sid.size + nonceLength
 
     internal val serverIdLength: Int get() = sid.size
@@ -126,6 +126,7 @@ public interface QuicLbNonceReservation {
      */
     public fun secret(): ByteArray
 
+    /** Holds [BLOCK]. */
     public companion object {
         /** Nonces reserved per [store]. */
         public const val BLOCK: Long = 65_536

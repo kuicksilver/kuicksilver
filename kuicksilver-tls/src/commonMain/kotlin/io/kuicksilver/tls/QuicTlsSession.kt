@@ -73,7 +73,7 @@ public sealed interface DriveResult {
     public object WantRead : DriveResult
 
     /**
-     * The handshake is paused for certificate verification; call [QuicTlsSession.resumeVerify]. [chain] is the presented chain, leaf first.
+     * The handshake is paused for certificate verification; call [QuicTlsSession.resumeVerify]. [chain][DriveResult.WantVerify.chain] is the presented chain, leaf first.
      *
      * @property chain the certificates the peer presented, leaf first, not yet trusted.
      */
@@ -84,7 +84,7 @@ public sealed interface DriveResult {
         ) : DriveResult
 
     /**
-     * Fatal; [alert] is the TLS alert the transport sends as `CONNECTION_CLOSE 0x0100 + alert` (null when none applies).
+     * Fatal; [alert][DriveResult.Failed.alert] is the TLS alert the transport sends as `CONNECTION_CLOSE 0x0100 + alert` (null when none applies).
      * Every later [QuicTlsSession.drive] returns the same result.
      *
      * @property exception what failed, for the application.
@@ -101,7 +101,7 @@ public sealed interface DriveResult {
 /** Events produced by the TLS layer for the QUIC transport (RFC 9001 section 4). */
 public sealed interface TlsEvent {
     /**
-     * Handshake bytes for the peer, to send in CRYPTO frames at [level] (RFC 9001 section 4.1.3).
+     * Handshake bytes for the peer, to send in CRYPTO frames at [level][TlsEvent.CryptoData.level] (RFC 9001 section 4.1.3).
      *
      * @property level the encryption level whose packets carry the data.
      * @property data the bytes, in order; a fresh array the receiver owns.
@@ -150,7 +150,7 @@ public sealed interface TlsEvent {
 
     /**
      * Client: the server sent a NewSessionTicket (RFC 9846 section 4.7.1); only for sessions created with early data
-     * (`QuicCrypto.newSession(config, earlyData = true)`). The receiver owns [ticket] and closes it or stores it.
+     * (`QuicCrypto.newSession(config, earlyData = true)`). The receiver owns [ticket][TlsEvent.SessionTicket.ticket] and closes it or stores it.
      *
      * @property ticket the resumable session.
      */
@@ -172,7 +172,7 @@ public enum class EarlyDataState {
     /** No resumption and no 0-RTT (the default). */
     Disabled,
 
-    /** Resume with a stored ticket and send 0-RTT when the ticket allows it; [earlyDataAccepted] tells the server's answer. */
+    /** Resume with a stored ticket and send 0-RTT when the ticket allows it; [earlyDataAccepted][QuicTlsSession.earlyDataAccepted] tells the server's answer. */
     Allowed,
 
     /** As [Allowed], but a missing ticket or a rejection fails the connection instead of falling back to 1-RTT. */
@@ -301,7 +301,7 @@ public interface QuicTlsSession : AutoCloseable {
      * anchors, time, host name and purpose and returns false when it no longer passes; the pins are checked again on the
      * cached validated chain when the resumed handshake completes. With any other trust (the platform verifier on the JVM,
      * Android, Apple platforms and Windows, a custom verifier, TOFU) this call checks nothing: the verdict is run again on the
-     * cached chain only by [SessionCache.takeQuic], which hands out a ticket only after it passed. A ticket kept by the caller,
+     * cached chain only by `SessionCache.takeQuic`, which hands out a ticket only after it passed. A ticket kept by the caller,
      * or taken for another [TlsConfig] than this session's, resumes on the verdict of the handshake that issued it.
      */
     @ExperimentalKuicksilverApi

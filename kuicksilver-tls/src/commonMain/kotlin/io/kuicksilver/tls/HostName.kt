@@ -21,10 +21,13 @@ public class HostName private constructor(
     public val value: String,
     public val isIpLiteral: Boolean,
 ) {
+    /** Equal when the normalized names are. */
     override fun equals(other: Any?): Boolean = other is HostName && other.value == value
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = value.hashCode()
 
+    /** The normalized name. */
     override fun toString(): String = value
 
     /** Holds [normalize], the only way to make a [HostName]. */

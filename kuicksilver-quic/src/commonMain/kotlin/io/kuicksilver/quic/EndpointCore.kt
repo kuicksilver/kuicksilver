@@ -67,7 +67,7 @@ public class EndpointCore internal constructor(
     /** A group's connection slots, shared by its loops so the limits bound the whole endpoint; null makes this endpoint's own. */
     sharedSlots: io.kuicksilver.quic.endpoint.ConnectionSlots? = null,
 ) {
-    /** An endpoint with its own Retry, NEW_TOKEN and reset keys; [loopIndex] is its routing byte in a group (0 alone). */
+    /** An endpoint with its own Retry, NEW_TOKEN and reset keys; [loopIndex][EndpointCore.loopIndex] is its routing byte in a group (0 alone). */
     public constructor(config: QuicEndpointConfig, random: Random, loopIndex: Int = 0) : this(config, random, loopIndex, null)
 
     // [random] must be a CSPRNG in production (the runtime passes a per-loop `RAND_bytes` stream): every connection of this endpoint draws its

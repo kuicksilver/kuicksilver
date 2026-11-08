@@ -55,6 +55,12 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    configuration on the host, online, first, so the host must reach the repositories when the gate starts; if it
    refuses with "the Docker JVM steps would not resolve offline", run the command it prints and see
    `build/ci/preflight-deps.log`.
+7. **GitHub Pages** for the documentation site (before the first release that publishes it, 0.3.0): *Settings → Pages →
+   Build and deployment → Source: GitHub Actions*, which creates the `github-pages` environment. Its deployment rule
+   allows only the default branch, and `.github/workflows/pages.yml` deploys from the release tag: *Settings →
+   Environments → github-pages → Deployment branches and tags → Add deployment branch or tag rule*, type Tag, pattern
+   `v*`. The workflow creates the `gh-pages` branch on its first run; it is only the store of the published versions,
+   never served as a branch.
 
 ## Every release
 
@@ -155,6 +161,14 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    not name a branch with unreleased API). The index refreshes from GitHub; nothing is uploaded.
 8. Interop images: after the tag is pushed, *Actions → interop-image → Run workflow* on the tag `v<version>` publishes
    the two QUIC Interop Runner endpoint images to GHCR ([below](#interop-images-on-ghcr)).
+9. Documentation site (from 0.3.0): publishing the GitHub release starts `.github/workflows/pages.yml`, which builds the
+   guide and the API reference of the tag (`tools/docs/site.sh <version>`), adds them to the `gh-pages` branch under
+   `/<version>/` (earlier versions stay), points `/latest/` at the newest final release and deploys the branch to
+   <https://kuicksilver.github.io/kuicksilver/> with `actions/deploy-pages` (Pages enabled once: [step 7](#once-accounts-keys-dns) above).
+   Check the version's pages once the run is green; *Actions → pages → Run workflow* with the version rebuilds one. Runs
+   update `gh-pages` one at a time and a later run can cancel one still waiting: re-run a cancelled `pages` run. Each
+   version adds about 30 MB (0.3.0-SNAPSHOT: 29 MB) and `/latest/` is a copy of one (stored once in git); GitHub Pages allows a
+   1 GB site, so past about 30 versions the oldest ones are removed from `gh-pages` by hand.
 
 ## Releasing from a maintenance branch
 

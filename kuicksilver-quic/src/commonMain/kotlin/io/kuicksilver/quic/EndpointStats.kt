@@ -27,7 +27,7 @@ public class EndpointStats internal constructor(
     public val admissionContractViolations: Long,
     /**
      * Connections this endpoint created so far: client connections opened, plus server connections admitted whose first
-     * Initial decrypted (a forged or corrupted Initial creates none and counts in [datagramsDroppedUndecryptable]); closed
+     * Initial decrypted (a forged or corrupted Initial creates none and counts in [datagramsDroppedUndecryptable][EndpointStats.datagramsDroppedUndecryptable]); closed
      * ones still count.
      */
     public val connectionsCreated: Long = 0,
@@ -79,7 +79,7 @@ public class EndpointStats internal constructor(
     /** UDP datagrams handed to the endpoint's sockets, stateless answers included. */
     @property:ExperimentalKuicksilverApi
     public val datagramsSent: Long = 0,
-    /** Datagrams the sockets did not take: a send that failed or took only part of a batch (see [sendFailures]); loss recovery repairs them. */
+    /** Datagrams the sockets did not take: a send that failed or took only part of a batch (see [sendFailures][EndpointStats.sendFailures]); loss recovery repairs them. */
     @property:ExperimentalKuicksilverApi
     public val datagramsDroppedSocket: Long = 0,
     /** Datagrams dropped because a bounded queue was full: the Initial admission queue (`initialQueueCap`) or a loop's queue of datagrams forwarded by another loop. */
@@ -90,7 +90,7 @@ public class EndpointStats internal constructor(
     public val datagramsDroppedUndecryptable: Long = 0,
     /**
      * Datagrams no connection took that got no answer: unknown connection IDs without a Stateless Reset, packets the cheap Initial checks
-     * discard, answers withheld by the rate limit, and datagrams for a preferred address that went down ([preferredAddressFailures]).
+     * discard, answers withheld by the rate limit, and datagrams for a preferred address that went down ([preferredAddressFailures][EndpointStats.preferredAddressFailures]).
      */
     @property:ExperimentalKuicksilverApi
     public val datagramsDroppedStateless: Long = 0,
@@ -103,7 +103,7 @@ public class EndpointStats internal constructor(
     /** Exceptions that escaped a coroutine of the endpoint loop (none is expected): counted instead of reaching the thread's uncaught-exception handler. */
     @property:ExperimentalKuicksilverApi
     public val uncaughtFailures: Long = 0,
-    /** Socket sends that threw (a filter, an unreachable route); their datagrams count in [datagramsDroppedSocket]. */
+    /** Socket sends that threw (a filter, an unreachable route); their datagrams count in [datagramsDroppedSocket][EndpointStats.datagramsDroppedSocket]. */
     @property:ExperimentalKuicksilverApi
     public val sendFailures: Long = 0,
     /** Exceptions out of a [ConnectionListener] callback or a [KuicksilverLogger]. */
@@ -209,6 +209,7 @@ public class EndpointStats internal constructor(
             datagramsDispatchDropped + o.datagramsDispatchDropped,
         )
 
+    /** For logs. */
     @OptIn(ExperimentalKuicksilverApi::class)
     override fun toString(): String =
         "EndpointStats(initialsDropped=$initialsDropped, retriesSent=$retriesSent, invalidTokens=$invalidTokens, " +

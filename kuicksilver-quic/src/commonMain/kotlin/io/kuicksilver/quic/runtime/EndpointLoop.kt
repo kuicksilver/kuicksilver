@@ -384,7 +384,7 @@ internal class EndpointLoop private constructor(
     @Volatile private var endpointSocketLost: SocketDefunctException? = null
 
     /**
-     * [socket] is gone ([SocketDefunctException]): it is not used again, and every connection reports [PathEvent.SocketLost] for
+     * [socket] is gone ([SocketDefunctException]): it is not used again, and every connection reports `PathEvent.SocketLost` for
      * its paths on it, once. Loop dispatcher only.
      */
     internal fun socketLost(
@@ -910,7 +910,7 @@ internal class EndpointLoop private constructor(
 /**
  * Prepares [config] on `Dispatchers.IO` (the configuration's key copy, derived key and nonce space; a nonce reservation's
  * first `store` may fsync), commits it on [loop]'s dispatcher, and prepares again when another change retired the entry it
- * reused ([QuicLbState.StaleConfiguration]). A prepared configuration is discarded only when it was not committed: a caller
+ * reused (`QuicLbState.StaleConfiguration`). A prepared configuration is discarded only when it was not committed: a caller
  * cancelled after the commit leaves it in force.
  */
 internal suspend fun applyLoadBalancer(

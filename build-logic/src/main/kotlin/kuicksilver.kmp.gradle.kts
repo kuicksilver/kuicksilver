@@ -15,6 +15,71 @@ plugins {
 group = "io.kuicksilver"
 version = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
 
+// API reference (Dokka HTML), aggregated by kuicksilver.docs in the root project and published by tools/docs/site.sh.
+// Source links point at the release tag v<version>; a -SNAPSHOT has no tag and links to main.
+private val docsVersion = version.toString()
+private val docsSourceRef = if (docsVersion.endsWith("-SNAPSHOT")) "main" else "v$docsVersion"
+private val defaultLinkLists = mapOf(
+    "kotlinStdlib" to "kotlinStdlib.package-list",
+    "jdk" to "jdk.element-list",
+    "androidSdk" to "androidSdk.package-list",
+    "androidX" to "androidX.package-list",
+)
+private val externalApiDocs = mapOf(
+    "kotlinx-coroutines" to "https://kotlinlang.org/api/kotlinx.coroutines/",
+    "kotlinx-io" to "https://kotlinlang.org/api/kotlinx-io/",
+    "ktor" to "https://api.ktor.io/",
+)
+dokka {
+    moduleName.set(project.name)
+    moduleVersion.set(docsVersion)
+    // only these local values are captured by the lazy link configuration below (configuration cache)
+    val defaultLinkFiles: Map<String, java.net.URI> = defaultLinkLists.mapValues { rootProject.file("docs/api/package-lists/${it.value}").toURI() }
+    dokkaSourceSets.configureEach {
+        // Module.md: the module and package descriptions (Dokka's module documentation format)
+        if (layout.projectDirectory.file("Module.md").asFile.exists()) includes.from(layout.projectDirectory.file("Module.md"))
+        // test source sets are not API
+        if (name.endsWith("Test")) suppress.set(true)
+        // -Pkuicksilver.docs.reportUndocumented: a warning for every public declaration without KDoc, counted by tools/docs/site.sh
+        reportUndocumented.set(providers.gradleProperty("kuicksilver.docs.reportUndocumented").map { it != "false" }.orElse(false))
+        sourceLink {
+            localDirectory.set(layout.projectDirectory)
+            remoteUrl("https://github.com/kuicksilver/kuicksilver/blob/$docsSourceRef/${project.name}")
+            remoteLineSuffix.set("#L")
+        }
+        // every package-list is read from the repository (refreshed by tools/docs/package-lists.sh), never downloaded, so
+        // an offline build keeps the external links: Dokka's default links (stdlib, JDK, Android, AndroidX) get the
+        // repository copy, and the three libraries the API exposes are added
+        jdkVersion.set(17)   // the JVM API level of the published jars (-Xjdk-release=17): the JDK 17 javadoc
+        externalDocumentationLinks.configureEach { defaultLinkFiles[name]?.let { packageListUrl.set(it) } }
+        for ((key, docsUrl) in externalApiDocs) {
+            externalDocumentationLinks.register(key) {
+                url(docsUrl)
+                packageListUrl.set(rootProject.file("docs/api/package-lists/$key.package-list").toURI())
+            }
+        }
+    }
+}
+
+// the undocumented-declaration warnings are only printed when Dokka runs: with the property, the module's Dokka run is
+// never up to date or taken from the cache (tools/docs/site.sh counts them against tools/docs/api-baseline.properties)
+if (providers.gradleProperty("kuicksilver.docs.reportUndocumented").map { it != "false" }.getOrElse(false)) {
+    tasks.withType<org.jetbrains.dokka.gradle.tasks.DokkaGenerateModuleTask>().configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+    }
+}
+
+// strict gate of the site build: with the property, any Dokka warning (an undocumented public declaration, an unresolved
+// KDoc link) fails the module's run, so none can come back; the ratchet in tools/docs/api-baseline.properties stays as the
+// second check of the finished pages
+if (providers.gradleProperty("kuicksilver.docs.reportUndocumented").map { it != "false" }.getOrElse(false)) {
+    dokka { dokkaPublications.configureEach { failOnWarning.set(true) } }
+}
+
+// @InternalKuicksilverApi declarations stay out of the API reference (kuicksilver-dokka)
+dependencies { dokkaPlugin(project(":kuicksilver-dokka")) }
+
 // `<package>.<Class>.**` of the top-level @InternalKuicksilverApi classes in the main sources (see the ABI filter below)
 val internalAbiPatterns: Provider<List<String>> =
     providers.provider { internalClassPatterns(kotlin.sourceSets.filterNot { it.name.endsWith("Test") }.flatMap { it.kotlin.srcDirs }) }
@@ -87,6 +152,12 @@ kotlin {
         }
     }
 }
+
+// jvmCommonMain (JVM and Android) has no compilation of its own, so Dokka gets no classpath for it and renders the
+// dependency types it uses (SelectorManager, HttpClientEngineFactory) as error classes: it gets the JVM one (declared by
+// the kotlin block above)
+val jvmDocsClasspath = configurations.named("jvmCompileClasspath")
+dokka { dokkaSourceSets.matching { it.name == "jvmCommonMain" }.configureEach { classpath.from(jvmDocsClasspath) } }
 
 // Every published artifact (jar, AAR) carries the project LICENSE and NOTICE and the OpenSSL license it links statically (Apache-2.0 section 4(a)/(d)).
 val licenseResources = tasks.register<Sync>("licenseResources") {

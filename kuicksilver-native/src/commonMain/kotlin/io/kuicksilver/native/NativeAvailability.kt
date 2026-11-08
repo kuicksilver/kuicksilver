@@ -17,10 +17,10 @@ public sealed interface NativeAvailability {
     public data object Available : NativeAvailability
 
     /**
-     * The library cannot be used in this process; Kuicksilver transports would throw [cause] on first use.
+     * The library cannot be used in this process; Kuicksilver transports would throw [cause][NativeAvailability.Unavailable.cause] on first use.
      *
      * @property reason the kind of failure, for deciding whether to fall back silently or to report a broken installation.
-     * @property detail a human-readable explanation (the message of [cause]) for logs; not meant to be parsed.
+     * @property detail a human-readable explanation (the message of [cause][NativeAvailability.Unavailable.cause]) for logs; not meant to be parsed.
      * @property cause the exception the load attempt raised, usually a [KslException]; [KslLoader.ensureLoaded] throws this
      *   same instance. Null only when the failure raised no exception.
      */
@@ -29,6 +29,7 @@ public sealed interface NativeAvailability {
         public val detail: String,
         public val cause: Throwable?,
     ) : NativeAvailability {
+        /** For logs: the reason and the detail. */
         override fun toString(): String = "Unavailable($reason: $detail)"
     }
 }

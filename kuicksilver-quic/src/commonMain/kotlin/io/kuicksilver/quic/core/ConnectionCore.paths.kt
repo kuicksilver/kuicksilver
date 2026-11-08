@@ -350,7 +350,7 @@ internal fun ConnectionCore.preferredSocketDown(): Boolean {
 
 /**
  * Client, once the handshake is confirmed (RFC 9000 section 9.6): a path to the server's preferred address of the family in use,
- * under validation with the server's sequence-1 ID. Once only; nothing when [QuicConfig.followPreferredAddress] is off, the server
+ * under validation with the server's sequence-1 ID. Once only; nothing when `QuicConfig.followPreferredAddress` is off, the server
  * offers no address of this family, uses zero-length IDs, or points a client that reached it on a public address at a local one
  * (or any connection at an unspecified, multicast or broadcast address: threat-model 3.14).
  */

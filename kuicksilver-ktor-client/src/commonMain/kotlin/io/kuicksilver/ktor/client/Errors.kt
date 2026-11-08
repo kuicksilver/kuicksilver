@@ -82,7 +82,7 @@ internal fun ByteReadChannel.withSocketTimeout(request: HttpRequestData): ByteRe
  * connection, after it may have processed it: a request that is not idempotent, or whose body cannot be sent again, is
  * not repeated over HTTP/1.1 by the engine (RFC 9110 section 9.2.2). The route (origin and proxy) now offers only
  * HTTP/1.1 (`FallbackReason.H2Refused`), so the application may send the request again and it goes over HTTP/1.1.
- * [cause] is the `Http2Exception` the server's answer produced.
+ * [cause][Http11RequiredException.cause] is the `Http2Exception` the server's answer produced.
  */
 @io.kuicksilver.annotations.ExperimentalKuicksilverApi
 public class Http11RequiredException(

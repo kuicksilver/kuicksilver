@@ -20,7 +20,7 @@ public sealed class Http3Exception(
 ) : IOException(message, cause),
     CopyableThrowable<Http3Exception> {
     /**
-     * An HTTP/3 error code on the connection ([streamId] null) or on one stream; an unknown code reads as H3_NO_ERROR.
+     * An HTTP/3 error code on the connection ([streamId][Http3Exception.Protocol.streamId] null) or on one stream; an unknown code reads as H3_NO_ERROR.
      *
      * @property h3Code the [Http3ErrorCode], already normalized: an unknown code is [Http3ErrorCode.NO_ERROR] (RFC 9114 section 9).
      * @property initiator [Initiator.Peer] when the other side sent the code, [Initiator.Local] when this endpoint closed or reset.
@@ -32,6 +32,7 @@ public sealed class Http3Exception(
         public val streamId: Long?,
         message: String? = null,
     ) : Http3Exception(message ?: "${Http3ErrorCode.name(h3Code)} from $initiator${streamId?.let { " on stream $it" } ?: ""}") {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): Protocol = Protocol(h3Code, initiator, streamId, message)
     }
 
@@ -45,6 +46,7 @@ public sealed class Http3Exception(
         public val code: Long,
         message: String? = null,
     ) : Http3Exception(message ?: Http3ErrorCode.name(code)) {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): Qpack = Qpack(code, message)
     }
 
@@ -78,6 +80,7 @@ public sealed class Http3Exception(
         /** "request not processed by the server", or why the request was not sent at all. */
         override val message: String? get() = detail ?: super.message
 
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         @OptIn(ExperimentalKuicksilverApi::class)
         override fun createCopy(): RequestNotProcessed = RequestNotProcessed(retrySafe, neverSent, message ?: "")
 
@@ -94,6 +97,7 @@ public sealed class Http3Exception(
     public class Settings(
         message: String,
     ) : Http3Exception(message) {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): Settings = Settings(message ?: "")
     }
 
@@ -107,6 +111,7 @@ public sealed class Http3Exception(
         public val streamId: Long,
         public val reason: String,
     ) : Http3Exception("malformed message on stream $streamId: $reason") {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): MessageError = MessageError(streamId, reason)
     }
 
@@ -126,19 +131,21 @@ public sealed class Http3Exception(
         public val streamId: Long,
         public val limit: Long,
     ) : Http3Exception("field section on stream $streamId exceeds $limit bytes") {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): FieldSectionTooLarge = FieldSectionTooLarge(streamId, limit)
     }
 
     /**
-     * Extended CONNECT answered with a non-2xx [status] (RFC 9220 section 3).
+     * Extended CONNECT answered with a non-2xx [status][Http3Exception.ConnectRejected.status] (RFC 9220 section 3).
      *
      * @property status the final `:status` the server sent, such as 501 for an unknown protocol.
-     * @property headers the response fields that came with [status].
+     * @property headers the response fields that came with [status][Http3Exception.ConnectRejected.status].
      */
     public class ConnectRejected(
         public val status: Int,
         public val headers: Http3Headers,
     ) : Http3Exception("CONNECT rejected with status $status") {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): ConnectRejected = ConnectRejected(status, headers)
     }
 

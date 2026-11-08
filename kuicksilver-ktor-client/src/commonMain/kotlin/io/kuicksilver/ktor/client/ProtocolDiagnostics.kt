@@ -129,7 +129,7 @@ public class ProtocolDiagnostics internal constructor() {
     }
 
     /**
-     * The details of [line] without the request: `HTTP/1.1 (fallback=HandshakeTimeout, alt=example.com:443 via AltSvc,
+     * The details of `line` without the request: `HTTP/1.1 (fallback=HandshakeTimeout, alt=example.com:443 via AltSvc,
      * raced, headStart=10ms)`.
      */
     override fun toString(): String = StringBuilder().also { details(it) }.toString()

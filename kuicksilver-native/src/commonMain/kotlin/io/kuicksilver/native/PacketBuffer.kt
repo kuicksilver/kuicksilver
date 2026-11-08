@@ -41,6 +41,7 @@ public expect class PacketBuffer : AutoCloseable {
         length: Int,
     )
 
+    /** Frees the native memory (Kotlin/Native) or drops the direct buffer for the GC (JVM); the buffer cannot be used afterwards. */
     override fun close()
 
     /** Factory for buffers; extensions such as [of] hang off it. */

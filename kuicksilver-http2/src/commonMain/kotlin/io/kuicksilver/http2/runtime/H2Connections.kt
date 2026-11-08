@@ -79,7 +79,7 @@ public class H2ClientConnection private constructor(
     /**
      * Opens a request stream on a slot of [tryReserve]: the control data (RFC 9113 section 8.3.1) and the regular
      * [fields] (lowercase, no connection-specific fields), checked as the server would check them
-     * (IllegalArgumentException otherwise). [endStream]: there is no content. [head]: a HEAD request, whose response has no
+     * (IllegalArgumentException otherwise). [endStream]: there is no content. `head`: a HEAD request, whose response has no
      * content (RFC 9110 section 9.3.2). Throws [Http2Exception] with `notProcessed` when this connection can take no new
      * stream; the slot is used up either way, and comes back with [H2ClientStream.release] or here on a failure.
      */

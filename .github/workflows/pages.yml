@@ -1,0 +1,184 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Documentation site on GitHub Pages (https://kuicksilver.github.io/kuicksilver/, docs/release.md "Every release"): the
+# guide and the API reference of each release under /<version>/, /latest/ and a landing page (tools/docs/site.sh).
+#
+#   openssl-mingw (ubuntu) ── build (xcode-27) ── publish (ubuntu) ── deploy (ubuntu, actions/deploy-pages)
+#
+# build checks out the release tag and builds that version's pages. The Dokka build compiles every target's sources, so
+# it runs on the macOS image with the pinned Xcode, like build.yml's apple job, and gets the mingw OpenSSL from
+# openssl-mingw, which builds it in Docker exactly as build.yml's openssl-docker job does. publish adds the version to
+# the gh-pages branch, which keeps every published version, recomputes /latest/ and the landing page, and pushes the
+# branch; deploy publishes that tree with actions/deploy-pages. Runs on a published release, or by hand for a version
+# (from 0.3.0, the first release with tools/docs/site.sh). Never on push.
+name: pages
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: released version to (re)build the site for, without the v (e.g. 0.3.0); its tag v<version> must exist
+        required: true
+        type: string
+permissions: {}
+defaults:
+  run:
+    shell: bash
+env:
+  VERSION_IN: ${{ inputs.version || github.event.release.tag_name }}
+
+jobs:
+  openssl-mingw:
+    # the mingw-x64 OpenSSL of build.yml's openssl-docker job, built the same way (fetch.sh checks the tarball's signature
+    # and SHA-256) and from the same cache
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: 'pages: version'
+        id: version
+        run: |
+          v="${VERSION_IN#v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "::error::version '$VERSION_IN' is not X.Y.Z[-alpha|beta|rcN]"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ steps.version.outputs.version }}
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/openssl-work/cache
+            build/openssl-work/src/*.tar.gz
+            build/openssl-work/src/*.tar.gz.asc
+          key: openssl-docker-mingw-x64-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/**') }}
+      - name: 'openssl: fetch and verify'
+        run: bash tools/openssl/fetch.sh
+      - name: 'openssl: build mingw-x64'
+        run: bash tools/openssl/build-docker.sh mingw-x64
+      - name: 'openssl: no-sslkeylog (mingw-x64)'
+        run: bash tools/check/keylog-disabled.sh build/openssl/mingw-x64/include
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openssl-mingw-x64
+          path: build/openssl/mingw-x64
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: openssl-mingw
+    runs-on: xcode-27   # Xcode 27.0 (27A266a, gradle/toolchains.toml) is only on this preview image; macos-26 has 26.x
+    permissions:
+      contents: read
+    timeout-minutes: 240
+    outputs:
+      version: ${{ needs.openssl-mingw.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ needs.openssl-mingw.outputs.version }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          ndk: 'true'
+          xcode: 'true'
+          konan: 'linux_x64 linux_arm64 mingw_x64'
+          openssl-cache: apple
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openssl-mingw-x64
+          path: build/openssl/mingw-x64
+      - name: 'pages: markdown-it-py (tools/docs/requirements.txt, pinned by hash)'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/docs-venv"
+          "$RUNNER_TEMP/docs-venv/bin/pip" install --quiet --require-hashes -r tools/docs/requirements.txt
+      - name: 'pages: build the site of this version'
+        env:
+          VERSION: ${{ needs.openssl-mingw.outputs.version }}
+        run: |
+          DOCS_PYTHON="$RUNNER_TEMP/docs-venv/bin/python" GRADLE_ARGS="--stacktrace -x :kuicksilver-native:buildJniHost" \
+            bash tools/docs/site.sh "$VERSION" "$RUNNER_TEMP/site"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-version
+          path: ${{ runner.temp }}/site/${{ needs.openssl-mingw.outputs.version }}
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: reports-pages
+          path: '**/build/reports/'
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # push the gh-pages branch, the store of every published version
+    timeout-minutes: 30
+    concurrency:
+      # one update of gh-pages at a time, none cancelled: each run adds a version to what the previous one pushed. A run
+      # that is cancelled anyway must be re-run (docs/release.md)
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}   # this workflow's tools/docs/site.py; only build checks out the tag
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site-version
+          path: ${{ runner.temp }}/new
+      - name: 'pages: add the version to gh-pages'
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          site="$RUNNER_TEMP/gh-pages"
+          basic="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$basic"
+          auth="AUTHORIZATION: basic $basic"
+          url="https://github.com/$REPO.git"
+          rc=0; git -c http.extraheader="$auth" ls-remote --exit-code --heads "$url" gh-pages > /dev/null || rc=$?
+          case "$rc" in
+            0) git -c http.extraheader="$auth" clone --quiet --depth 1 --branch gh-pages --single-branch "$url" "$site" ;;
+            2) git init --quiet -b gh-pages "$site" ;;   # no gh-pages yet: the first publication starts the branch
+            *) echo "::error::git ls-remote $url failed ($rc)"; exit 1 ;;
+          esac
+          rm -rf "${site:?}/$VERSION"
+          cp -R "$RUNNER_TEMP/new" "$site/$VERSION"
+          python3 -I tools/docs/site.py index "$site"
+          python3 -I tools/docs/site.py check "$site"
+          cd "$site"
+          git add -A
+          if git diff --cached --quiet; then echo "gh-pages already has this version"; exit 0; fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet -m "Documentation site: $VERSION"
+          git -c http.extraheader="$auth" push --quiet "$url" HEAD:refs/heads/gh-pages
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/gh-pages
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write      # deploy to GitHub Pages
+      id-token: write   # the OIDC token actions/deploy-pages authenticates with
+    timeout-minutes: 15
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

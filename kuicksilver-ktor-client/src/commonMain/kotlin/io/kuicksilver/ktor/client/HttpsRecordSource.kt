@@ -32,7 +32,7 @@ public sealed interface HttpsRecordSource {
     public data object System : HttpsRecordSource
 
     /**
-     * The operating system's resolver, as [System], whose answers are cryptographically protected whenever [isProtected]
+     * The operating system's resolver, as [System], whose answers are cryptographically protected whenever [isProtected][HttpsRecordSource.ProtectedSystem.isProtected]
      * says so: then a failed lookup abandons the request (RFC 9460 section 3.1), as with `Exchange(secure = true)`.
      * Called once per request, on the call's coroutine; it must be quick, and one that throws counts as false. On Android
      * `HttpsRecordSource.followingPrivateDns(connectivity)` builds one that reports Android's strict Private DNS (DNS over
@@ -45,7 +45,7 @@ public sealed interface HttpsRecordSource {
     ) : HttpsRecordSource
 
     /**
-     * Lookups through [exchange]: it gets a DNS query in wire format (RFC 1035 section 4.1, ID 0 and RD set, as RFC 8484
+     * Lookups through [exchange][HttpsRecordSource.Exchange.exchange]: it gets a DNS query in wire format (RFC 1035 section 4.1, ID 0 and RD set, as RFC 8484
      * section 4.1 asks for DNS over HTTPS) and returns the response in wire format, for example the body of a POST to a
      * DoH server with `Content-Type: application/dns-message`. The engine has no DoH client of its own. An exchange that
      * throws, or returns something that is not the response to the query, counts as a failed lookup.

@@ -5,7 +5,7 @@ package io.kuicksilver.ktor.client
 import io.ktor.http.Url
 
 /**
- * One alternative service of an origin (RFC 7838 section 3): `protocol="host:port"`, valid until [expiresAtEpochMillis].
+ * One alternative service of an origin (RFC 7838 section 3): `protocol="host:port"`, valid until [expiresAtEpochMillis][AltSvcEntry.expiresAtEpochMillis].
  *
  * @property protocol the ALPN protocol id of the alternative; the engine stores and uses only `h3`.
  * @property host the alternative's host; null when the header left it empty, meaning the origin's own host.
@@ -23,11 +23,14 @@ public class AltSvcEntry(
     public val expiresAtEpochMillis: Long,
     public val persist: Boolean,
 ) {
+    /** Equal when the protocol, host, port and persist flag are. */
     override fun equals(other: Any?): Boolean =
         other is AltSvcEntry && protocol == other.protocol && host == other.host && port == other.port && persist == other.persist
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = ((protocol.hashCode() * 31 + host.hashCode()) * 31 + port) * 31 + persist.hashCode()
 
+    /** For logs. */
     override fun toString(): String = "$protocol=\"${host ?: ""}:$port\" (expires $expiresAtEpochMillis${if (persist) ", persist" else ""})"
 }
 

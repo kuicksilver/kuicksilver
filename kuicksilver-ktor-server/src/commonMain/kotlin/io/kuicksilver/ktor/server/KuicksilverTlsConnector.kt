@@ -17,10 +17,12 @@ import io.kuicksilver.tls.tlsConfig
 
 /**
  * A TLS connector on every platform: HTTP/1.1 over TLS on TCP and, unless turned off, HTTP/3 on UDP on the
- * same port. [clientAuth] `Optional` asks for a client certificate without requiring one; [trust] verifies it.
+ * same port. [clientAuth][KuicksilverTlsConnector.clientAuth] `Optional` asks for a client certificate without requiring one; [trust][KuicksilverTlsConnector.trust] verifies it.
  */
 public class KuicksilverTlsConnector private constructor(
+    /** The host name or address to bind. */
     override val host: String,
+    /** The port to bind, shared by TCP and QUIC. */
     override val port: Int,
     /**
      * The server certificate chain and key, shared by TCP and QUIC. A `TlsIdentity.Reloadable` replaces them at run time:
@@ -29,7 +31,7 @@ public class KuicksilverTlsConnector private constructor(
     public val identity: TlsIdentity,
     /** Whether a client certificate is asked for ([ClientAuth.Optional]) or required ([ClientAuth.Required]). */
     public val clientAuth: ClientAuth,
-    /** Verifies client certificates (`TrustConfig.AnchoredCa`, optionally pinned); needed unless [clientAuth] is None. */
+    /** Verifies client certificates (`TrustConfig.AnchoredCa`, optionally pinned); needed unless [clientAuth][KuicksilverTlsConnector.clientAuth] is None. */
     public val trust: TrustConfig?,
     /** The TLS 1.3 cipher suites in preference order. */
     public val cipherSuites: CipherSuites,
@@ -39,6 +41,7 @@ public class KuicksilverTlsConnector private constructor(
      */
     public val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)?,
 ) : EngineConnectorConfig {
+    /** Always HTTPS. */
     override val type: ConnectorType get() = ConnectorType.HTTPS
 
     /** The server TLS configuration for [alpn] (`http/1.1` on TCP, `h3` on QUIC). */
@@ -56,6 +59,7 @@ public class KuicksilverTlsConnector private constructor(
     public fun withPort(port: Int): KuicksilverTlsConnector =
         KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector)
 
+    /** For logs. */
     override fun toString(): String = "HTTPS (Kuicksilver TLS) $host:$port"
 
     /**

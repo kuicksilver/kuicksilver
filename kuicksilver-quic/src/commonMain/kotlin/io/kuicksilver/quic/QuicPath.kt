@@ -41,17 +41,19 @@ public interface QuicPath {
 
 /** What happens to a connection's paths; collect [QuicConnection.pathEvents]. */
 public sealed interface PathEvent {
-    /** [path] answered our PATH_CHALLENGE (RFC 9000 section 8.2.3), or the handshake validated it. */
+    /** [path][PathEvent.Validated.path] answered our PATH_CHALLENGE (RFC 9000 section 8.2.3), or the handshake validated it. */
     public class Validated internal constructor(
+        /** The path that was validated. */
         public val path: QuicPath,
     ) : PathEvent
 
     /**
-     * [path] never answered within the validation timeout, max(3 x PTO, 6 x initial RTT) (RFC 9000 section 8.2.4), or [reason] says
+     * [path][PathEvent.Failed.path] never answered within the validation timeout, max(3 x PTO, 6 x initial RTT) (RFC 9000 section 8.2.4), or [reason][PathEvent.Failed.reason] says
      * why it could not be probed.
      */
     public class Failed
         internal constructor(
+            /** The path that could not be validated. */
             public val path: QuicPath,
             /** Why the validation failed. */
             @property:ExperimentalKuicksilverApi public val reason: PathFailureReason,
@@ -62,17 +64,20 @@ public sealed interface PathEvent {
         }
 
     /**
-     * The connection now sends on [new] instead of [old]: our own migration, the peer's, a NAT rebinding or a fallback after a failed
-     * validation, as [reason] says (RFC 9000 section 9).
+     * The connection now sends on [new][PathEvent.Changed.new] instead of [old][PathEvent.Changed.old]: our own migration, the peer's, a NAT rebinding or a fallback after a failed
+     * validation, as [reason][PathEvent.Changed.reason] says (RFC 9000 section 9).
      */
     public class Changed internal constructor(
+        /** The path packets went to before. */
         public val old: QuicPath,
+        /** The path packets go to now. */
         public val new: QuicPath,
+        /** Why the connection changed its path. */
         public val reason: PathChangeReason,
     ) : PathEvent
 
     /**
-     * The socket under [path] is gone ([cause], a [SocketDefunctException]): iOS reclaimed it while the app was suspended, or
+     * The socket under [path][PathEvent.SocketLost.path] is gone ([cause][PathEvent.SocketLost.cause], a [SocketDefunctException]): iOS reclaimed it while the app was suspended, or
      * its interface went down. Reported once per path, for every path on that socket; the loop stops reading and writing it.
      * The connection itself stays open until its idle timeout: move it to a fresh socket with [QuicConnection.rebind] (or
      * [QuicConnection.migrate]); a [NetworkMigrator] does so on its own when the lost path is the active one.

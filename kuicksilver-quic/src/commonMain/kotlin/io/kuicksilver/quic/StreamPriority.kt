@@ -5,7 +5,7 @@ package io.kuicksilver.quic
 import io.kuicksilver.annotations.InternalKuicksilverApi
 
 /**
- * Send priority of a stream (RFC 9218 semantics at the transport): lower [urgency] first; [incremental] streams share their level
+ * Send priority of a stream (RFC 9218 semantics at the transport): lower [urgency][StreamPriority.urgency] first; [incremental][StreamPriority.incremental] streams share their level
  * round-robin.
  *
  * @property urgency 0 (most urgent) to 7; 3 by default, as in RFC 9218 section 4.1. IllegalArgumentException outside that range.
@@ -19,10 +19,13 @@ public class StreamPriority(
         require(urgency in 0..7) { "urgency must be 0..7" }
     }
 
+    /** Equal when the urgency and the incremental flag are. */
     override fun equals(other: Any?): Boolean = other is StreamPriority && other.urgency == urgency && other.incremental == incremental
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = urgency * 2 + if (incremental) 1 else 0
 
+    /** For logs. */
     override fun toString(): String = "StreamPriority(urgency=$urgency, incremental=$incremental)"
 
     /** Holds [Default]. */

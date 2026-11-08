@@ -33,10 +33,13 @@ public class VersionProfile private constructor(
             PacketType.OneRtt -> throw IllegalArgumentException("short header")
         }
 
+    /** For logs. */
     override fun toString(): String = "VersionProfile(0x${version.toUInt().toString(16).padStart(8, '0')})"
 
+    /** Equal when the version numbers are. */
     override fun equals(other: Any?): Boolean = other is VersionProfile && other.version == version
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = version
 
     /** The versions this stack implements, [V1] and [V2], and [of] to look one up by number. */

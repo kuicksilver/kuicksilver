@@ -21,10 +21,13 @@ public class Http3Headers(
     /** These fields followed by [other]'s; nothing is merged or replaced. */
     public operator fun plus(other: Http3Headers): Http3Headers = Http3Headers(fields + other.fields)
 
+    /** Equal when the fields, in order, are. */
     override fun equals(other: Any?): Boolean = other is Http3Headers && other.fields == fields
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = fields.hashCode()
 
+    /** For logs. */
     override fun toString(): String = fields.joinToString(prefix = "Http3Headers(", postfix = ")") { "${it.first}: ${it.second}" }
 
     /** Shorthands for building field sections. */

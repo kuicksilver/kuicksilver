@@ -48,18 +48,18 @@ public class QuicConfig private constructor(
     public val handshakeTimeout: Duration,
     /**
      * PING interval while the application is quiet; null disables keep-alive. Positive and finite, and at most 3/4 of
-     * [maxIdleTimeout] unless that is [Duration.ZERO] (then only the peer's idle timeout applies, and keep-alive is what holds
+     * [maxIdleTimeout][QuicConfig.maxIdleTimeout] unless that is [Duration.ZERO] (then only the peer's idle timeout applies, and keep-alive is what holds
      * the connection). PINGs go out at least every half of the effective idle timeout, so a peer with a shorter timeout than
      * this interval does not close the connection (as quic-go's `KeepAlivePeriod`).
      */
     public val keepAlive: Duration?,
     /**
      * Receive window of each stream at its start, in bytes (`initial_max_stream_data_*`, RFC 9000 section 4.1); it doubles up to
-     * [maxStreamWindow] while the application reads faster than the window allows.
+     * [maxStreamWindow][QuicConfig.maxStreamWindow] while the application reads faster than the window allows.
      */
     public val initialStreamWindow: Long,
     /**
-     * Receive window of the whole connection at its start, in bytes (`initial_max_data`); grows up to [maxConnectionWindow] and stays at
+     * Receive window of the whole connection at its start, in bytes (`initial_max_data`); grows up to [maxConnectionWindow][QuicConfig.maxConnectionWindow] and stays at
      * least 1.5 x the largest stream window.
      */
     public val initialConnectionWindow: Long,
@@ -98,7 +98,7 @@ public class QuicConfig private constructor(
     /** Versions in preference order (RFC 9368 section 3: the client's Available Versions). Default is v1 only. */
     public val versions: List<VersionProfile>,
     /**
-     * The version of a client's first flight (its Chosen Version); null means the first of [versions]. Lets a client
+     * The version of a client's first flight (its Chosen Version); null means the first of [versions][QuicConfig.versions]. Lets a client
      * prefer v2 while still starting in v1 and upgrading through compatible negotiation (RFC 9368 section 2.3).
      */
     public val initialVersion: VersionProfile?,
@@ -225,7 +225,7 @@ public class QuicConfig private constructor(
             resetStreamAt,
         ).also { it.newPathInitialRtt = newPathInitialRtt }
 
-    /** The version a client starts with: [initialVersion] or the first of [versions]. */
+    /** The version a client starts with: [initialVersion][QuicConfig.initialVersion] or the first of [versions][QuicConfig.versions]. */
     public val firstVersion: VersionProfile get() = initialVersion ?: versions[0]
 
     /**

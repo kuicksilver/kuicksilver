@@ -41,8 +41,10 @@ public class Certificate(
      */
     public val notAfterEpochSeconds: Long get() = parsed.notAfter ?: Der.fail()
 
+    /** Equal when the encoded certificates are. */
     override fun equals(other: Any?): Boolean = other is Certificate && other.encoded.contentEquals(encoded)
 
+    /** Consistent with [equals]. */
     override fun hashCode(): Int = encoded.contentHashCode()
 
     /** Never throws: diagnostics of a certificate the walker cannot read show no names. */

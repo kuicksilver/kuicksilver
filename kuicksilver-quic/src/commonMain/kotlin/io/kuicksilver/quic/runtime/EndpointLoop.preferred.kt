@@ -46,7 +46,7 @@ internal suspend fun EndpointLoop.followCapabilities(
     }
 }
 
-/** The socket a slot of [out] goes out on: the endpoint's, the preferred one of [to]'s family, or the one of the connection's path. */
+/** The socket a slot of `out` goes out on: the endpoint's, the preferred one of [to]'s family, or the one of the connection's path. */
 internal fun EndpointLoop.ioFor(
     rt: ConnectionRuntime,
     path: PathId,

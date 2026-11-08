@@ -28,7 +28,7 @@ import kotlin.time.Duration.Companion.seconds
  * (reordering, a delay spike) is undone (section 5.5.11). Sizes are bytes, rates bytes per second, times nanoseconds; the
  * arithmetic saturates instead of wrapping. Nothing here allocates after construction.
  *
- * [random] desynchronises the bandwidth probes of flows sharing a bottleneck (the 2-3 s probe wait); without one the jitter is
+ * `random` desynchronises the bandwidth probes of flows sharing a bottleneck (the 2-3 s probe wait); without one the jitter is
  * derived from the send and ACK times, which differ between flows.
  */
 @ExperimentalKuicksilverApi
@@ -678,7 +678,7 @@ public class Bbr(
         bwProbeWaitNanos = PROBE_WAIT_BASE_NANOS + nextRandom(now, PROBE_WAIT_JITTER_NANOS + 1)
     }
 
-    /** Uniform in `0 until bound`: from [random], or splitmix64 over the time of the call when the caller gave none. */
+    /** Uniform in `0 until bound`: from `random`, or splitmix64 over the time of the call when the caller gave none. */
     private fun nextRandom(
         now: TimeMark,
         bound: Long,

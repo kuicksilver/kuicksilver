@@ -6,6 +6,7 @@ plugins {
     id("kuicksilver.layers")
     id("kuicksilver.coverage")
     id("kuicksilver.release")
+    id("kuicksilver.docs")
 }
 
 // R8 for the keep-rule smoke runs (tools/check/android-keep-rules.sh, service-keep-rules.sh): AGP bundles its own copy and

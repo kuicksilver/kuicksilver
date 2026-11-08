@@ -83,7 +83,7 @@ public enum class PathFailureReason {
 }
 
 /**
- * Thrown by [QuicConnection.migrate] when the new path could not be validated; [reason] says why. An IllegalStateException, as the
+ * Thrown by [QuicConnection.migrate] when the new path could not be validated; [reason][PathValidationException.reason] says why. An IllegalStateException, as the
  * failure was before this type existed.
  */
 @ExperimentalKuicksilverApi
@@ -112,7 +112,7 @@ public enum class MigrationRefusal {
 
 /**
  * Thrown by [QuicConnection.addPath] (and so [QuicConnection.migrate] and a [NetworkMigrator]) when the transport refuses a
- * new path before anything is sent on it; [reason] says why. An IllegalStateException, as the refusal was before this type
+ * new path before anything is sent on it; [reason][MigrationRefusedException.reason] says why. An IllegalStateException, as the refusal was before this type
  * existed.
  */
 @ExperimentalKuicksilverApi

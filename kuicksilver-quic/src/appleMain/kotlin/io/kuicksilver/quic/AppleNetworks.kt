@@ -79,7 +79,7 @@ public enum class NwInterfaceType {
 
 /**
  * The network a satisfied default path runs over, as [nwPathUpdates] reports it: the path's preferred interface, the first
- * one `nw_path_enumerate_interfaces` lists (the order of preference, as `NWPath.availableInterfaces`). Two keys are equal when [interfaceIndex] and [interfaceType] are, which makes it
+ * one `nw_path_enumerate_interfaces` lists (the order of preference, as `NWPath.availableInterfaces`). Two keys are equal when [interfaceIndex][NwPathKey.interfaceIndex] and [interfaceType][NwPathKey.interfaceType] are, which makes it
  * the `N` of a [NetworkMigrator]: a change of key is a change of network, a path update that keeps the interface (a new
  * address, a DNS change) is not.
  */
@@ -92,11 +92,11 @@ public class NwPathKey(
     /** The interface's BSD name (`en0`, `pdp_ip0`), for logs; not part of equality. */
     public val interfaceName: String,
 ) {
-    /** Equal [interfaceIndex] and [interfaceType]. */
+    /** Equal [interfaceIndex][NwPathKey.interfaceIndex] and [interfaceType][NwPathKey.interfaceType]. */
     override fun equals(other: Any?): Boolean =
         other is NwPathKey && other.interfaceIndex == interfaceIndex && other.interfaceType == interfaceType
 
-    /** From [interfaceIndex] and [interfaceType]. */
+    /** From [interfaceIndex][NwPathKey.interfaceIndex] and [interfaceType][NwPathKey.interfaceType]. */
     override fun hashCode(): Int = interfaceIndex * 31 + interfaceType.hashCode()
 
     /** For logs. */

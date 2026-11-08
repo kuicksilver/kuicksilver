@@ -292,7 +292,7 @@ public class KuicksilverApplicationEngine(
         /**
          * The QUIC-LB configuration of every HTTP/3 listener's connection IDs (`QuicEndpointConfig.loadBalancer`,
          * draft-ietf-quic-load-balancers-21; docs/guide/quic.md, "Behind a load balancer"); null (the default) for none. Its
-         * [QuicLbConfig.connectionIdLength] must equal `quic.connectionIdLength`. Change it on the running engine with
+         * `QuicLbConfig.connectionIdLength` must equal `quic.connectionIdLength`. Change it on the running engine with
          * [KuicksilverApplicationEngine.updateLoadBalancer].
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -467,6 +467,7 @@ public class KuicksilverApplicationEngine(
         }
     }
 
+    /** Starts the server and suspends until it listens; with [wait] true it also suspends until it stops. */
     override suspend fun startSuspend(wait: Boolean): ApplicationEngine {
         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
         io.kuicksilver.ktor.network.KtorVersionPolicy
@@ -478,8 +479,10 @@ public class KuicksilverApplicationEngine(
         return this
     }
 
+    /** Starts the server and blocks until it listens; with [wait] true it also blocks until it stops. */
     override fun start(wait: Boolean): ApplicationEngine = runBlocking { startSuspend(wait) }
 
+    /** Stops the server: running requests get [gracePeriodMillis] to finish, and are cancelled after that; the whole stop gets [timeoutMillis]. */
     override suspend fun stopSuspend(
         gracePeriodMillis: Long,
         timeoutMillis: Long,
@@ -497,6 +500,7 @@ public class KuicksilverApplicationEngine(
         }
     }
 
+    /** Stops the server like [stopSuspend], blocking the calling thread. */
     override fun stop(
         gracePeriodMillis: Long,
         timeoutMillis: Long,

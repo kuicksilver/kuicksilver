@@ -487,7 +487,7 @@ public expect object KslLoader {
 
     /**
      * Whether `libksl` can be used in this process; never throws (except for fatal VM errors such as
-     * [OutOfMemoryError][kotlin.OutOfMemoryError]). Performs the same single load attempt as [ensureLoaded] (whichever is
+     * `OutOfMemoryError`). Performs the same single load attempt as [ensureLoaded] (whichever is
      * called first loads, the other reuses the outcome) and keeps the outcome for the life of the process, both
      * [NativeAvailability.Available] and [NativeAvailability.Unavailable]: a later call never retries. Thread-safe: every
      * caller sees the same outcome (on the JVM and Android concurrent first calls wait for the one attempt).

@@ -72,10 +72,16 @@ public class TlsSocket private constructor(
     private val raw: Socket,
     private val rawOut: ByteWriteChannel,
     public val tls: TlsConnection,
+    /** The context of the coroutines of this socket. */
     override val coroutineContext: CoroutineContext,
 ) : Socket {
+    /** The job of the underlying TCP socket. */
     override val socketContext: Job get() = raw.socketContext
+
+    /** The local address of the underlying TCP socket. */
     override val localAddress: SocketAddress get() = raw.localAddress
+
+    /** The remote address of the underlying TCP socket. */
     override val remoteAddress: SocketAddress get() = raw.remoteAddress
 
     /** The peer's verified certificate chain, leaf first; empty when it sent none (see [TlsConnection.peerCertificates]). */
@@ -135,7 +141,7 @@ public class TlsSocket private constructor(
      * (a handler that threw mid-response), or the pump does, the connection never ends with `close_notify`: a
      * `close_notify` and a FIN would end the stream as if complete, and a peer reading a body delimited by the
      * connection's close would take the cut one for the whole. It ends with the fatal alert internal_error after what was
-     * sent, then a FIN, where OpenSSL can send one (RFC 9846 section 6.1; [failTls]), else with a reset ([abortTls]). A
+     * sent, then a FIN, where OpenSSL can send one (RFC 9846 section 6.1; `failTls`), else with a reset (`abortTls`). A
      * channel closed normally ends with `close_notify` on [close].
      */
     @OptIn(InternalAPI::class)
@@ -193,6 +199,7 @@ public class TlsSocket private constructor(
         }
     }
 
+    /** Closes the socket, like [close]. */
     override fun dispose(): Unit = close()
 
     /** The socket under the TLS session ([bytesSent]). */
@@ -218,7 +225,7 @@ public class TlsSocket private constructor(
      * everything sent before ([TlsConnection.abortOutput]; a TLS 1.3 server, a TLS 1.2 client), the raw socket then
      * closes with a FIN (the peer fails on the alert, so a FIN cannot pass for a clean end), and is reset when it has not
      * closed after [ALERT_CLOSE_TIMEOUT] (a peer that stopped reading). Where no alert can be sent, or the transport did
-     * not take it, the connection is reset at once ([abortTls]).
+     * not take it, the connection is reset at once (`abortTls`).
      */
     private suspend fun failTls(cause: Throwable) {
         val alerted = runCatching { tls.abortOutput(cause, ALERT_CLOSE_TIMEOUT) }.getOrDefault(false)

@@ -106,6 +106,7 @@ public class Http3Connection private constructor(
         session.close(code, reason)
     }
 
+    /** Closes with H3_NO_ERROR, without waiting for the close to finish. */
     override fun close() {
         session.scope.launch { session.close(Http3ErrorCode.NO_ERROR, "") }
     }

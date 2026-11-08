@@ -19,6 +19,7 @@ import kotlin.reflect.KClass
  * (docs/guide/ktor.md, "Supported Ktor versions").
  */
 public data object Kuicksilver : HttpClientEngineFactory<KuicksilverEngineConfig> {
+    /** Creates an engine configured by [block]. */
     @OptIn(InternalKuicksilverApi::class)
     override fun create(block: KuicksilverEngineConfig.() -> Unit): HttpClientEngine {
         KtorVersionPolicy.check(*KTOR_ARTIFACTS.toTypedArray())

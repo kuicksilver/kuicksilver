@@ -20,7 +20,7 @@ public sealed class Http2Exception(
     /** The server did not process the request: it may be retried on another connection (RFC 9113 section 8.7). */
     public abstract val notProcessed: Boolean
 
-    /** The stream was reset with [code] (RST_STREAM, or a GOAWAY that excluded it); [byPeer] when the server did it. */
+    /** The stream was reset with [code][Http2Exception.StreamReset.code] (RST_STREAM, or a GOAWAY that excluded it); [byPeer][Http2Exception.StreamReset.byPeer] when the server did it. */
     public class StreamReset internal constructor(
         /** The stream identifier. */
         public val streamId: Int,
@@ -34,7 +34,7 @@ public sealed class Http2Exception(
 
     /**
      * The connection ended before the exchange did: a GOAWAY with an error, a connection error, a PING that went
-     * unanswered, or the transport closed or failed ([cause]).
+     * unanswered, or the transport closed or failed ([cause][Http2Exception.ConnectionClosed.cause]).
      */
     public class ConnectionClosed internal constructor(
         /** The GOAWAY error code, when the connection ended with one. */

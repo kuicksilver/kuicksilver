@@ -75,7 +75,7 @@ internal object AddressClass {
 
     /**
      * Where a client must never be sent by a public server (threat-model 3.14, as `AltSvcDestination` rules): loopback, link-local,
-     * private (RFC 1918, RFC 6598, `fc00::/7`), unspecified, multicast or broadcast. [localOnly] with an origin on such an
+     * private (RFC 1918, RFC 6598, `fc00::/7`), unspecified, multicast or broadcast. `localOnly` with an origin on such an
      * address: only the always-refused classes (unspecified, multicast, broadcast) count.
      */
     fun isUnsafeDestination(

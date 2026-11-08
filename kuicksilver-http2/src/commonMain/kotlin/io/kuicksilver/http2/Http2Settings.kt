@@ -80,6 +80,7 @@ public class Http2Settings(
         require(glitchBurst >= 1 && glitchesPerSecond >= 0) { "glitchBurst must be positive and glitchesPerSecond not negative" }
     }
 
+    /** For logs: every setting. */
     override fun toString(): String =
         "Http2Settings(headerTableSize=$headerTableSize, maxConcurrentStreams=$maxConcurrentStreams, " +
             "initialStreamWindow=$initialStreamWindow, maxStreamWindow=$maxStreamWindow, " +

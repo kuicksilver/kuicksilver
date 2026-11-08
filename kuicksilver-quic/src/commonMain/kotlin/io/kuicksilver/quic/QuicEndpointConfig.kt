@@ -70,7 +70,7 @@ public class QuicClientConfig private constructor(
         @ExperimentalKuicksilverApi
         public var tokenStore: QuicTokenStore? = null
 
-        /** A [QuicClientConfig]; IllegalArgumentException for a server [tls], `TlsException.Config` for one QUIC cannot use. */
+        /** A [QuicClientConfig]; IllegalArgumentException for a server [tls][QuicClientConfig.Builder.tls], `TlsException.Config` for one QUIC cannot use. */
         public fun build(): QuicClientConfig {
             require(tls.role == TlsRole.Client) { "client config needs a client TlsConfig" }
             tls.checkQuicCompatible()
@@ -186,7 +186,7 @@ public class QuicServerConfig private constructor(
         @ExperimentalKuicksilverApi
         public var preferredAddress: PreferredAddress? = null
 
-        /** A [QuicServerConfig]; IllegalArgumentException for a client [tls], `TlsException.Config` for one QUIC cannot use. */
+        /** A [QuicServerConfig]; IllegalArgumentException for a client [tls][QuicServerConfig.Builder.tls], `TlsException.Config` for one QUIC cannot use. */
         public fun build(): QuicServerConfig {
             require(tls.role == TlsRole.Server) { "server config needs a server TlsConfig" }
             tls.checkQuicCompatible()
@@ -222,16 +222,16 @@ public class QuicEndpointConfig private constructor(
     public val crypto: QuicCrypto,
     /**
      * New Initial packets are dropped silently beyond this many connections, counted over the whole endpoint: every one of its
-     * [loops], client connections included.
+     * [loops][QuicEndpointConfig.loops], client connections included.
      */
     public val maxConnections: Int,
     /**
-     * Handshaken connections waiting for `accept()` (shared by all [loops]), never more. While this many wait, a new client
+     * Handshaken connections waiting for `accept()` (shared by all [loops][QuicEndpointConfig.loops]), never more. While this many wait, a new client
      * Initial is answered statelessly with an Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED (0x02), under the
      * stateless rate limits, so the client fails at once instead of at its handshake timeout and no TLS handshake is spent
      * on it; a handshake admitted earlier that completes while this many wait is closed with CONNECTION_REFUSED instead of
      * joining the queue. Handshakes in flight are not counted (unvalidated, possibly spoofed Initials must not lock real
-     * clients out); they are bounded by [maxConnections], [maxConnectionsPerIp] and the [ConnectionAdmission] policy.
+     * clients out); they are bounded by [maxConnections][QuicEndpointConfig.maxConnections], [maxConnectionsPerIp][QuicEndpointConfig.maxConnectionsPerIp] and the [ConnectionAdmission] policy.
      */
     public val acceptQueue: Int,
     /**
@@ -248,10 +248,10 @@ public class QuicEndpointConfig private constructor(
     public val connectionIdLength: Int,
     /** Decides per new client Initial: create, Retry, drop or refuse; the default asks for a Retry above 256 handshakes in flight or 8 MiB of handshake buffers. */
     public val admission: ConnectionAdmission,
-    /** Initials waiting for [admission] after one receive batch; more are dropped (1024 by default). */
+    /** Initials waiting for [admission][QuicEndpointConfig.admission] after one receive batch; more are dropped (1024 by default). */
     public val initialQueueCap: Int,
     /**
-     * Connections one client IP may hold at once on the whole endpoint (over all [loops], wherever a connection lives), ports
+     * Connections one client IP may hold at once on the whole endpoint (over all [loops][QuicEndpointConfig.loops], wherever a connection lives), ports
      * ignored; null disables the limit. The excess is dropped silently.
      */
     public val maxConnectionsPerIp: Int?,

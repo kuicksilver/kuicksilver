@@ -29,9 +29,9 @@ import kotlin.time.Duration
  * @property duplicatesDropped Packets discarded because their packet number had already been received.
  * @property undecryptableBuffered Packets held now until the keys to decrypt them arrive (RFC 9001 section 5.7).
  * @property reassemblyRanges Out-of-order ranges held now across the receive buffers of all streams.
- * @property pathBytesReceived Bytes received on [currentPath] alone; see [pathBytesSent].
+ * @property pathBytesReceived Bytes received on [currentPath][ConnectionStats.currentPath] alone; see [pathBytesSent][ConnectionStats.pathBytesSent].
  * @property ecnCeEvents Congestion events the peer's CE reports caused on our sending, at most one per recovery period; see
- *   [ecnCeReceived].
+ *   [ecnCeReceived][ConnectionStats.ecnCeReceived].
  */
 public class ConnectionStats internal constructor(
     public val minRtt: Duration,
@@ -67,7 +67,7 @@ public class ConnectionStats internal constructor(
     public val invalidResets: Long,
     /** Glitch tokens the peer spent on useless work (docs/guide/quic.md, "Glitch protection"); 0 for an honest peer. */
     public val glitchTokensSpent: Long,
-    /** Bytes sent and received on [currentPath] alone (RFC 9000 section 9.3.1: at most 3x the received bytes go out before the path is validated). */
+    /** Bytes sent and received on [currentPath][ConnectionStats.currentPath] alone (RFC 9000 section 9.3.1: at most 3x the received bytes go out before the path is validated). */
     public val pathBytesSent: Long,
     public val pathBytesReceived: Long,
     /** ECN validation of the current path (RFC 9000 section 13.4.2). */

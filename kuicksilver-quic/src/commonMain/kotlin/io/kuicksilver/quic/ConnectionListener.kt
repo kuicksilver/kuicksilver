@@ -74,5 +74,6 @@ public class ConnectionInfo internal constructor(
     /** The peer's address on the path the connection sends on now; read it inside a callback (it is the loop's view). */
     public val remoteAddress: InetSocketAddress get() = remote()
 
+    /** For logs: the role and the connection ID. */
     override fun toString(): String = "ConnectionInfo($role $id)"
 }

@@ -87,7 +87,7 @@ public class CipherSuites(
  * and lifetime too. Clients ignore it.
  *
  * The keys never live on the Kotlin heap (threat model 3.7): generated keys are made and rotated inside the native library,
- * and explicit [keys] are copied there on construction, after which every array in the list is zeroed.
+ * and explicit `keys` are copied there on construction, after which every array in the list is zeroed.
  *
  * @param keys explicit 80-byte entries (name 16 | AES-256 32 | HMAC-SHA256 32, at most 64), first encrypts, for servers in
  *   several processes that must resume each other's tickets; null (the default) = keys generated in this process. The arrays
@@ -97,9 +97,9 @@ public class CipherSuites(
  * @property rotateEvery how often the process-wide generated keys rotate (default 1 day, positive, at most 7 days); the previous key
  *   still decrypts until the next rotation. The generated keys are one set per process, shared by every server that uses them:
  *   configurations with different periods rotate the same keys, so the shortest period in use sets the pace (a ticket then
- *   resumes for at least one such period). Explicit [keys] are not rotated by the library. A longer period lets one stolen
+ *   resumes for at least one such period). Explicit `keys` are not rotated by the library. A longer period lets one stolen
  *   ticket key decrypt more resumed sessions (RFC 9846 section 4.7.1).
- * @property ticketLifetime how long an issued ticket resumes (default 12 hours, at least 1 second, at most [rotateEvery] / 2,
+ * @property ticketLifetime how long an issued ticket resumes (default 12 hours, at least 1 second, at most [rotateEvery][SessionTicketConfig.rotateEvery] / 2,
  *   whole seconds);
  *   a longer lifetime widens the window in which resumptions can be linked to one client.
  */

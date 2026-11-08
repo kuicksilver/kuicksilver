@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Release to Maven Central (docs/release.md, "Every release"), started by hand with the version to publish.
 #
-#   gate (ubuntu): the version, the main branch, a green build.yml run for this commit ── publish (macos-26)
+#   gate (ubuntu): the version, the main branch, a green build.yml run for this commit ── publish (xcode-27)
 #
 # publish runs ONE Gradle invocation on one macOS runner (Apple targets need macOS, Linux and mingw cross-compile there;
 # the plugin makes one Central deployment per invocation). The kuicksilver-native jar's JNI libraries are not rebuilt:
@@ -60,7 +60,7 @@ jobs:
 
   publish:
     needs: gate
-    runs-on: macos-26
+    runs-on: xcode-27   # Xcode 27.0 (27A266a, gradle/toolchains.toml) is only on this preview image; macos-26 has 26.x
     permissions:
       actions: read   # the artifacts of the build.yml run
       contents: read

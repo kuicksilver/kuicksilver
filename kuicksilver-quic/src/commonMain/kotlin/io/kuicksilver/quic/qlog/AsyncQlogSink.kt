@@ -21,12 +21,12 @@ import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 
 /**
- * A [QlogSink] that never blocks the endpoint loop (docs/guide/quic.md, "qlog"): [delegate]'s `open`, `write` and `close`
- * run on [dispatcher], one at a time, while the loop only queues them. The queue holds at most [queueCapacity] records
+ * A [QlogSink] that never blocks the endpoint loop (docs/guide/quic.md, "qlog"): `delegate`'s `open`, `write` and `close`
+ * run on `dispatcher`, one at a time, while the loop only queues them. The queue holds at most [queueCapacity][AsyncQlogSink.queueCapacity] records
  * over all connections; a record that finds it full is dropped and counted in [dropped], so a slow disk loses trace lines,
  * never throughput. Opening and closing a trace are never dropped (one each per traced connection).
  *
- * [sampleEvery] traces one connection in N (the 1st, the N+1st, ...); the others are not traced at all, which keeps
+ * [sampleEvery][AsyncQlogSink.sampleEvery] traces one connection in N (the 1st, the N+1st, ...); the others are not traced at all, which keeps
  * qlog affordable on a busy server. [close] stops the writer after what is queued; [flush] waits for it.
  *
  * @property queueCapacity Records queued at most; at least 1.
@@ -76,7 +76,7 @@ public class AsyncQlogSink(
     /** Records dropped because the queue was full. */
     public val dropped: Long get() = droppedCount.load()
 
-    /** Exceptions out of [delegate]: each one ends tracing of its connection. */
+    /** Exceptions out of `delegate`: each one ends tracing of its connection. */
     public val failures: Long get() = failureCount.load()
     private val failureCount = AtomicLong(0)
 
@@ -162,7 +162,7 @@ public class AsyncQlogSink(
         return t
     }
 
-    /** Waits until everything queued before the call has reached [delegate]. */
+    /** Waits until everything queued before the call has reached `delegate`. */
     public suspend fun flush() {
         val done = CompletableDeferred<Unit>()
         if (ops.trySend(Barrier(done)).isFailure) return

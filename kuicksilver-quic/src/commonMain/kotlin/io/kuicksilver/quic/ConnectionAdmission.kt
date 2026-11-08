@@ -29,6 +29,7 @@ public class ConnectionAttempt internal constructor(
      */
     public val addressValidated: Boolean,
 ) {
+    /** For logs. */
     override fun toString(): String =
         "ConnectionAttempt($remote, inflight=$inflightHandshakes, connections=$connections, fromAddress=$connectionsFromAddress, handshakeBuffer=$handshakeBufferBytes, validated=$addressValidated)"
 }
@@ -37,6 +38,7 @@ public class ConnectionAttempt internal constructor(
 public sealed interface AdmissionDecision {
     /** Create the connection. */
     public object Allow : AdmissionDecision {
+        /** For logs. */
         override fun toString(): String = "Allow"
     }
 
@@ -45,26 +47,32 @@ public sealed interface AdmissionDecision {
      * already answered one (its Retry token validated the address).
      */
     public object Retry : AdmissionDecision {
+        /** For logs. */
         override fun toString(): String = "Retry"
     }
 
     /** Discard the Initial silently; the client times out. */
     public object Drop : AdmissionDecision {
+        /** For logs. */
         override fun toString(): String = "Drop"
     }
 
-    /** Refuse with a stateless Initial CONNECTION_CLOSE carrying [code] (RFC 9000 section 10.2.3), for example [TransportError.CONNECTION_REFUSED]. */
+    /** Refuse with a stateless Initial CONNECTION_CLOSE carrying [code][AdmissionDecision.Close.code] (RFC 9000 section 10.2.3), for example [TransportError.CONNECTION_REFUSED]. */
     public class Close(
+        /** The transport error code sent in the CONNECTION_CLOSE. */
         public val code: Long,
     ) : AdmissionDecision {
         init {
             require(code in 0..((1L shl 62) - 1)) { "error code must be 0..2^62-1" }
         }
 
+        /** Equal when the codes are. */
         override fun equals(other: Any?): Boolean = other is Close && other.code == code
 
+        /** Consistent with [equals]. */
         override fun hashCode(): Int = code.hashCode()
 
+        /** For logs. */
         override fun toString(): String = "Close($code)"
     }
 }
