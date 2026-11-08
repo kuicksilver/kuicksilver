@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 /* RFC 9001 and RFC 9369 Appendix A vectors through ksl_key_*, ksl_seal/open, ksl_header_mask, ksl_retry_tag. */
 #include "test_common.h"
+#include <openssl/opensslv.h>
 #include "vectors_rfc9001.h"
 #include "vectors_rfc9369.h"
 
@@ -191,8 +192,15 @@ static void open_in_place(const char *name, ksl_key *w, ksl_key *r) {
             CHECK(wiped, "negative: a rejected packet's payload is wiped, no plaintext left behind");
             CHECK(!memcmp(pl + len, before + len, 16),
                   "a rejected packet's tag is left as it came (a Stateless Reset check reads it)");
+#if OPENSSL_VERSION_MAJOR < 4
             if (allocs >= 0)
                 CHECK(allocs == 0, "a rejected packet allocates nothing either");
+#else
+            /* OpenSSL 4's GCM and ChaCha20-Poly1305 providers raise PROV_R_BAD_DECRYPT on a bad tag, and ERR_raise's
+             * ERR_set_debug copies the file and function name: two allocations, freed by the ERR_clear_error in ksl_open */
+            if (allocs >= 0)
+                CHECK(allocs <= 2, "a rejected packet allocates at most the error record's file and function names");
+#endif
         }
         /* the key still opens the genuine packet after the failures (the cipher context was left reusable) */
         memcpy(pl, sealed, (size_t)n);

@@ -146,12 +146,24 @@ when it links. The check (in `kuicksilver-ktor-network`):
 Every artifact links OpenSSL statically; applications get OpenSSL fixes from Kuicksilver releases, not from their
 operating system.
 
-- **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is out of scope for now. The pin, **3.5.9** today, is in
+- **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is not supported yet (it is built and tested in CI only, below). The pin, **3.5.9** today, is in
   `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL release signing key; the
   build verifies both before compiling (`tools/openssl/fetch.sh`).
   `ksl` has a code path for OpenSSL 4.1, where `X509_check_host` and `X509_check_ip_asc` are deprecated
-  (`ksl_match_name` in `kuicksilver-native/src/c/ksl_verify.c`). It was compiled and its C tests run against 4.1.0 on a
-  developer machine only, not in CI; no artifact is built with it.
+  (`ksl_match_name` in `kuicksilver-native/src/c/ksl_verify.c`). No artifact is built with 4.x. The CI job
+  `openssl-next` (weekly, or `only=openssl-next` by hand; never required, never a source of release artifacts) builds the
+  newest 4.x release on linux-x64 and macos-arm64 and runs the C tests and a JVM smoke test against it. Its pin is
+  `gradle/openssl-next.toml` (version, tarball SHA-256 and signing key, verified like the 3.5 pin); the build scripts
+  take it from `KSL_OPENSSL_PIN` and Gradle from `-Pkuicksilver.openssl.pin=gradle/openssl-next.toml`. One C test
+  assertion is relaxed against 4.x: the 4.x GCM and ChaCha20-Poly1305 providers raise an error on a rejected AEAD tag, which
+  allocates the error record's file and function names (freed by `ksl_open`), so "a rejected packet allocates nothing"
+  holds on 3.5 and "at most two allocations" on 4.x.
+- **System OpenSSL (Linux, `KSL_SYSTEM_OPENSSL` builds).** The accepted range is OpenSSL 3.5 up to the major version
+  `KSL_SYSTEM_OPENSSL_MAX_MAJOR` (`kuicksilver-native/src/c/ksl_internal.h`), **3** by default: a `libssl.so.4` is
+  refused with `KslException.Version` (`KSL_INIT_VERSION`), and the C test `negative_system4_0RefusedByDefault` keeps it
+  so. OpenSSL 4.x is prepared but **not supported in 0.3.0**: building with `-DKSL_SYSTEM_OPENSSL_MAX_MAJOR=4` is the
+  single switch that would open the range, and `tools/ci/system-openssl.sh` follows it (`KSL_SYSTEM_OPENSSL_MAX_MAJOR=4`
+  selects the `libssl4` runtime package and soname `libssl.so.4`). Published artifacts never use a system OpenSSL.
 - **Updates** follow the commitments in [SECURITY.md, OpenSSL](../SECURITY.md#openssl): a Kuicksilver release with the
   fixed OpenSSL within 72 hours of an OpenSSL advisory for a Critical or High issue reachable through Kuicksilver,
   within 7 days for a reachable Moderate or Low one, in the next planned release for issues that are not reachable, and

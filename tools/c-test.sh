@@ -2,6 +2,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Builds and runs the ksl C tests with ASan/UBSan against the host OpenSSL build. Usage: tools/c-test.sh [target] [extra cflags]
+# KSL_OPENSSL_OUT: the directory holding the OpenSSL builds (default build/openssl); only the location, not the pin profile (KSL_OPENSSL_PIN for the build scripts).
 # mingw-x64: cross-built with the Kotlin/Native llvm + mingw sysroot (no sanitizers); runs on a Windows host (CI), under wine64 when
 # it is installed, else is only built. KSL_TSAN=1 (host targets): ThreadSanitizer instead of ASan/UBSan, into ksl_test_tsan; any
 # report fails the run, so a data race between threads cannot pass as a green test: halt_on_error stops at the first report (on
@@ -9,7 +10,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; cd "$root"
 target="${1:-$( [ "$(uname)" = Darwin ] && echo macos-arm64 || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )}"
-O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built (tools/openssl/build.sh $target)"; exit 2; }
+O="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built (tools/openssl/build.sh $target)"; exit 2; }
 out="$root/build/c-test"; mkdir -p "$out"
 CC="${CC:-clang}"; san="${SAN--fsanitize=address,undefined -fno-sanitize-recover=undefined}"   # SAN= (empty) disables the sanitizers (manylinux gcc has no libasan)
 libs=$( [ "$(uname)" = Darwin ] || echo "-lresolv -lpthread -ldl" ); defs="-DKSL_TEST_TCP -DKSL_TEST"; exe=ksl_test

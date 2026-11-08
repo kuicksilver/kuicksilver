@@ -7,7 +7,8 @@
 #                                           configure-target.txt must say once path tokens are dropped; openssl.gradle.kts)
 #   targets: macos-arm64 ios-arm64 ios-sim-arm64 android-arm64 android-x86_64 android-arm
 #            linux-x64 linux-arm64 mingw-x64 linux-x64-kn linux-arm64-kn
-# Env: ANDROID_NDK_ROOT (android), KONAN_SYSROOT (-kn targets), CC override, OPT (default -Os),
+# Env: KSL_OPENSSL_PIN=<pin profile> (default gradle/openssl.toml; gradle/openssl-next.toml builds the 4.x of the CI job openssl-next),
+#      ANDROID_NDK_ROOT (android), KONAN_SYSROOT (-kn targets), CC override, OPT (default -Os),
 #      KSL_OPENSSL_FRESH=1  never take the cache: configure and compile from the source fetch.sh just verified (release)
 # Next to the archives: configure-flags.txt, configure-target.txt and provenance.txt (the pinned tarball SHA-256, the target
 # line and the SHA-256 of libcrypto.a and libssl.a), which -Pkuicksilver.openssl.prebuilt compares before reusing a build.
@@ -16,7 +17,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
 print_only=0; [ "${1:-}" = "--print-target" ] && { print_only=1; shift; }
 target="${1:?target}"
 root="$here/../.."; out="${KSL_OPENSSL_WORK:-$root/build/openssl-work}"
-toml="$root/gradle/openssl.toml"
+# KSL_OPENSSL_PIN: another pin profile, a path from the repository root (gradle/openssl-next.toml: the CI job openssl-next)
+pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;; *) toml="$root/$pin" ;; esac
+[ -f "$toml" ] || { echo "no pin profile $toml" >&2; exit 1; }
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$toml")
 src="$out/src/openssl-$version"
 [ "$print_only" = 1 ] || [ -d "$src" ] || { echo "run fetch.sh first" >&2; exit 1; }
