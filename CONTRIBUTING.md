@@ -89,6 +89,7 @@ bash tools/check/links.sh                                        # relative link
 bash tools/check/doc-refs.sh                                     # docs: paths, anchors, symbols; docs and comments: private markers
 bash tools/check/rfc-table.sh                                    # the RFC compliance summary table: status, version, details link
 bash tools/check/guide-sync.sh                                   # the guides' code samples match their GuideSamplesTest blocks
+bash tools/check/guide-sync-test.sh                              # negative controls of guide-sync.sh
 bash tools/docs/site.sh 0.3.0-SNAPSHOT build/site                # the documentation site (Dokka API reference + guide as HTML); install lines in the script; fails when the API counts differ from tools/docs/api-baseline.properties
 ./gradlew -Pkuicksilver.docs.reportUndocumented :dokkaGenerate   # the API reference alone, warning on every public declaration without KDoc
 tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them

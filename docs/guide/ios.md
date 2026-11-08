@@ -130,8 +130,11 @@ How to include it:
 
 - **Kuicksilver.xcframework** carries the file in each framework; nothing to do.
 - **A KMP app** (Kuicksilver is linked statically into your framework, and a static framework has no bundle of its
-  own): merge the entries into your app's `PrivacyInfo.xcprivacy`. If your app has none, add Kuicksilver's file to the
-  app target's Copy Bundle Resources, as the sample does. If you have one, add the `NSPrivacyAccessedAPICategoryFileTimestamp`
+  own): merge the entries into your app's `PrivacyInfo.xcprivacy`. The Maven artifacts (klibs) do not carry the file,
+  so you need nothing from this repository: the complete manifest, with the same entries, is
+  [App Store: Templates, 6. Privacy manifest](app-store.md#6-privacy-manifest), ready to paste; the repository's file
+  at the tag of the version you use (`v0.3.0`, ...) is the reference. If your app has no manifest, save that template as
+  `PrivacyInfo.xcprivacy` in the app target (Copy Bundle Resources), as the sample does with Kuicksilver's file. If you have one, add the `NSPrivacyAccessedAPICategoryFileTimestamp`
   entry with `C617.1` (keep your own reasons next to it).
 - If your app persists TOFU pins in user defaults or reads timestamps for its own purposes, that is your code's use:
   declare it with your own reason.
@@ -180,6 +183,15 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
 
 ## Checks
 
+The project runs these scripts on `samples/ios` before a release, so they need a checkout of this repository; their
+results are below. For your own app you need only `tools/check/ios-private-api.py`, a single Python 3 file that needs a full
+Xcode (the iOS SDK and `nm`; the Command Line Tools alone have no iOS SDK): take it from the tag of the version you use
+(`https://raw.githubusercontent.com/kuicksilver/kuicksilver/v<version>/tools/check/ios-private-api.py`) and run it on
+your Release binary, `python3 ios-private-api.py "$(xcrun --sdk iphoneos --show-sdk-path)" <your app's executable>`. It
+lists any symbol that no public SDK library exports and the required-reason API categories it finds, which the privacy
+manifest must declare. Your app's own size impact comes from its linker map (`LD_GENERATE_MAP_FILE = YES`), as in
+[Size](#size).
+
 | Script | What it proves |
 |---|---|
 | `tools/check/ios-sample-smoke.sh` | the sample builds for the simulator, `-smoke` launch passes (server, echo, HTTP/3 over loopback), and the XCTest bundle calling the facade from Swift passes |
@@ -187,9 +199,11 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
 | `tools/check/ios-private-api.py <sdk> <binary>` | every undefined symbol is exported by a public `.tbd` of the SDK (no private API), plus the required-reason report |
 | `tools/check/ios-size.sh` | the size budget below, from the linker map of a Release arm64 build |
 
-Results of 2026-10-13 (Xcode 27.0, iOS 27.0 SDK and simulator): all pass. Size and imports re-measured on 2026-10-14
-on the 0.2.0 code (`ios-size.sh`, `ios-private-api.py`): the Release arm64 app imports 647 symbols, all from
-public SDK libraries; the Release Kotlin framework 354, likewise.
+Results of 2026-10-13 (Xcode 27.0, iOS 27.0 SDK and simulator), **on the 0.2.0 code**: all pass. Size and imports
+re-measured on 2026-10-14, also on the 0.2.0 code (`ios-size.sh`, `ios-private-api.py`): the Release arm64 app imports
+647 symbols, all from public SDK libraries; the Release Kotlin framework 354, likewise. These numbers have not been
+measured again for 0.3.0; the release gate of 0.3.0 runs the scripts again, and this page will name that version once
+it has.
 
 ## Size
 
@@ -208,7 +222,7 @@ Linked bytes of `samples/ios` (Release, arm64, `-dead_strip`), from the linker m
 | **Kuicksilver's contribution** | **5.60** |
 | the sample's Swift code and the rest | 0.10 |
 
-Measured on 2026-10-14 on the 0.2.0 code (Xcode 27.0). The whole executable is 8316 KiB (8.1 MiB) before stripping and
+Measured on 2026-10-14 **on the 0.2.0 code** (Xcode 27.0; not measured again for 0.3.0 yet). The whole executable is 8316 KiB (8.1 MiB) before stripping and
 5955 KiB (5.8 MiB) after (`strip -x`, as an App Store build does). A KMP app that already ships Kotlin pays only for the
 OpenSSL, `ksl` and Kuicksilver rows (about 3.4 MB); the runtime, stdlib and coroutines are shared with the rest of its
 Kotlin code. The App Store applies app thinning and compression on top.

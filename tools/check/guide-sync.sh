@@ -18,6 +18,9 @@
 # - Every guide line must appear in the test block, in order; the test may have extra lines (assertions, timeouts).
 # - A guide line `@file:OptIn(...)` (a sample that uses experimental API says so) names markers the test file that holds
 #   the block opts in to with its own `@file:OptIn`; keep the test file's opt-ins to what its samples show.
+# - A marker whose name ends in `imports` (`// guide:quic:imports`, `// guide:ktor:server-imports`) marks the import list
+#   of a test file of its own: there the guide block must equal the test block exactly, line for line. (A block that
+#   shows a few imports only, such as `guide:ktor:both-engines-aliases`, is named otherwise and compared as a subset.)
 # - Every ```kotlin block of a guide carries a marker, unless the line before the fence is
 #   `<!-- guide-sync: not compiled (<why>) -->` (a build script, say).
 set -euo pipefail
@@ -155,6 +158,18 @@ for key, glines in guides.items():
         cands = [o for run in tests[key] for _, o in run]
         near = [o for o in cands if o.split('(')[0] == glines[gi][1].split('(')[0]]
         if near: print(f'    test:  {near[0]}')
+# an import block (a marker whose name ends in "imports") is the whole import list of a file of its own: the guide shows
+# exactly the test's imports, so an import dropped from the guide (or added to the test only) is a drift, not a subset
+for key, glines in guides.items():
+    if not key.split(':')[1].split(' ')[0].endswith('imports') or key not in tests: continue
+    g = [n for n, _ in glines]
+    t = [n for run in tests[key] for n, _ in run]
+    if g != t:
+        drifts += 1
+        print(f'DRIFT {key} ({guide_where[key]} vs {test_where[key]}): an import block must equal the test file\'s imports exactly')
+        for x in sorted(set(t) - set(g)): print(f'    only in the test:  {x}')
+        for x in sorted(set(g) - set(t)): print(f'    only in the guide: {x}')
+        if set(g) == set(t): print('    same imports, other order')
 def optin_classes(lines):
     return {c for l in lines for c in re.findall(r'(\w+)::class', l)}
 for key, wanted in file_optins.items():

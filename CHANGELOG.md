@@ -415,6 +415,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Build: `tools/check/deployment-guide.sh` runs the commands of docs/guide/deployment.md, "Checking a deployment"
   (`curl --http3-only`, the `Alt-Svc` check, `tcpdump`), as they stand against the engine in one Docker container; a step
   of the local matrix and of the CI `linux-native` job.
+- Docs: every guide shows the imports of its samples (compiled by the guide tests), the README has an Install section with
+  per-target Gradle blocks and the BOM, and the guides gained mutual TLS, per-request protocol logging, a complete raw
+  QUIC example with a custom ALPN, a 0-RTT section for application authors, Kubernetes health checks, NAT idle timeouts,
+  container notes (glibc, a read-only root file system, port 443 without root), an `EngineMain` `application.conf` and a
+  handshake-timeout diagnosis procedure. `tools/check/guide-sync.sh` requires an import block to equal its test's imports
+  (negative controls in `guide-sync-test.sh`), and `tools/release/local-release.sh` refuses a README that still calls the
+  version it releases the release in preparation.
 
 ### Changed
 

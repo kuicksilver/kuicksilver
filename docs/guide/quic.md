@@ -19,15 +19,188 @@ transport features (0-RTT, migration, congestion control, load balancing, datagr
 - A `TlsConfig` with ALPN set: a server needs an identity (certificate chain and private key), a client needs a trust
   configuration ([TLS: Configuration](tls.md#configuration)).
 
-**Minimal example.** [Binding an endpoint and connecting](#binding-an-endpoint-and-connecting) opens a connection;
+**Minimal example.** [A complete example](#a-complete-example-custom-alpn-streams-and-datagrams) runs both sides of an
+application protocol of your own (its ALPN, a stream, datagrams) with every value defined;
+[Binding an endpoint and connecting](#binding-an-endpoint-and-connecting) opens a connection;
 [Opening a stream and echoing](#opening-a-stream-and-echoing) and [Accepting on the server](#accepting-on-the-server) are
 the two sides of an echo.
+
+<a id="imports"></a>
+**Imports.** The code blocks on this page start after their imports; these are the imports they use, and the test that
+compiles them fails when a name moves. `InetSocketAddress` is ktor-network's `io.ktor.network.sockets.InetSocketAddress`
+on every target, not `java.net.InetSocketAddress`. Experimental API needs `@file:OptIn(ExperimentalKuicksilverApi::class)`
+or the module-wide opt-in ([stability](../stability.md#stability-levels)). The Android and Apple samples under
+[Network changes](#network-changes) also use `io.kuicksilver.quic.followDefaultNetwork` (one extension per platform), and
+[Testing your application](#testing-your-application) uses `io.kuicksilver.testing.MemoryNetwork`.
+
+```kotlin
+// guide:quic:imports
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.discard
+import io.ktor.utils.io.readLine
+import io.ktor.utils.io.writeFully
+import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.quic.ConnectionAdmission
+import io.kuicksilver.quic.ConnectionCore
+import io.kuicksilver.quic.ConnectionInfo
+import io.kuicksilver.quic.ConnectionListener
+import io.kuicksilver.quic.Datagram
+import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.DatagramPolicy
+import io.kuicksilver.quic.DatagramSendResult
+import io.kuicksilver.quic.Ecn
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.MemoryTokenStore
+import io.kuicksilver.quic.NetworkMigrator
+import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.PathEvent
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.QuicLbConfig
+import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.incomingConnections
+import io.kuicksilver.quic.incomingStreams
+import io.kuicksilver.quic.qlog.AsyncQlogSink
+import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.quic.quicClientConfig
+import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.quicEndpointConfig
+import io.kuicksilver.quic.quicServerConfig
+import io.kuicksilver.quic.rebind
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.KslQuicCrypto
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.TrustConfig
+import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.io.IOException
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.readString
+import kotlin.random.Random
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+```
 
 Kuicksilver's QUIC layer (`io.kuicksilver:kuicksilver-quic`) implements QUIC v1 (RFC 9000/9001/9002) and, when
 configured, the compatible version negotiation of RFC 9368/9369 towards QUIC v2 (RFC 9369). There are two levels of
 API: a coroutine wrapper (`QuicEndpoint`/`QuicConnection`/`QuicStream`) for applications, and a sans-IO core
 (`ConnectionCore`/`EndpointCore`) for callers with their own event loop (ADR-0004). The code blocks below compile and
 run as `GuideSamplesTest` (`kuicksilver-quic/src/jvmTest`).
+
+## A complete example: custom ALPN, streams and datagrams
+
+Two programs that speak a protocol of their own over QUIC, without HTTP: the server runs on the JVM (or on Kotlin/Native
+Linux, Apple or Windows, which serve on the accelerated socket), the client on any target, a Kotlin/Native executable
+included. Both name the same ALPN; the client verifies the server against a private CA. The block is common code: a
+test compiles it for the JVM and every Kotlin/Native target and runs it with the common tests.
+
+```kotlin
+val dir = "/etc/my-proto"   // where the PEM files are
+// guide:quic:custom-alpn
+// the PEM files, read with kotlinx-io: common code, the same on every target
+val chainPem = SystemFileSystem.source(Path(dir, "fullchain.pem")).buffered().use { it.readString() }   // leaf first
+val keyPem = SystemFileSystem.source(Path(dir, "privkey.pem")).buffered().use { it.readString() }       // PKCS#8
+val caPem = SystemFileSystem.source(Path(dir, "ca.pem")).buffered().use { it.readString() }             // the client trusts it
+val scope = CoroutineScope(Dispatchers.Default)
+// ALPN: both sides list it, or the handshake ends with no_application_protocol (120)
+val myProtocol = listOf("my-proto/1")
+// the server: JVM, or Kotlin/Native on Linux, Apple and Windows
+val serverTls = tlsConfig(TlsRole.Server) {
+    alpn = myProtocol
+    identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+}
+val server = QuicEndpoint.bind(
+    InetSocketAddress("0.0.0.0", 4433),
+    quicEndpointConfig { this.server = quicServerConfig(serverTls) { quic = quicConfig { maxIdleTimeout = 30.seconds } } },
+)
+val serving = scope.launch {
+    server.incomingConnections().collect { connection ->
+        launch {
+            // datagrams: each one sent back as it comes
+            try {
+                connection.datagrams.collect { d: Datagram -> connection.sendDatagram(d.data) }
+            } catch (e: IOException) { /* the flow ends with the connection's QuicException.ConnectionLost */ }
+        }
+        launch {
+            // streams: one line in, one line out (the flow completes when the connection ends)
+            connection.incomingStreams().collect { stream ->
+                launch {
+                    try {
+                        val line = stream.input.readLine(LineEnding.Lenient) ?: return@launch
+                        stream.output.writeStringUtf8("echo: $line\n")
+                        stream.output.flushAndClose()
+                    } catch (e: IOException) { /* the client reset the stream or left */ }
+                }
+            }
+        }
+    }
+}
+// the client: any target, Kotlin/Native included
+val clientTls = tlsConfig(TlsRole.Client) {
+    serverName = "server.test"   // SNI, and the name the server's certificate must carry
+    alpn = myProtocol
+    trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem))   // a private CA; TrustConfig.Platform for a public one
+}
+val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
+val connection = client.connect(InetSocketAddress("server.test", 4433), quicClientConfig(clientTls))
+val stream = connection.openBidi()
+stream.output.writeStringUtf8("ping\n")
+stream.output.flushAndClose()
+val reply: String? = stream.input.readLine(LineEnding.Lenient)    // "echo: ping"
+connection.sendDatagram("tick".encodeToByteArray())               // a ByteArray out; datagrams are never retransmitted
+val echoed: Datagram = connection.datagrams.first()               // a Datagram in; its payload is echoed.data, a ByteArray
+connection.close(code = 0, reason = "done")
+client.close()
+```
+
+- **ALPN.** Any non-empty list of protocol names; the server picks the first of its own that the client offers. Without
+  a common one the server closes with the TLS alert `no_application_protocol` (120) and the client sees
+  `TransportClosed(code = 0x0178)` ([troubleshooting](troubleshooting.md#the-handshake-fails-with-an-alpn-mismatch)).
+- **Names.** `connect` resolves a host name in the `InetSocketAddress` once, through the system resolver, and uses the
+  first address; `serverName` in the TLS configuration is what goes into SNI and what the certificate is checked against,
+  so connecting to an IP literal with `serverName` set works.
+- **Reading lines.** `readLine(LineEnding.Lenient)` (ktor-io) reads one line and accepts both `\n` and `\r\n`; it returns
+  null at the end of the stream. The other samples on this page and the README read the same way.
+- **Datagrams.** `sendDatagram` takes a `ByteArray`; `datagrams` is a `Flow<Datagram>` whose `data` is the payload. Both
+  sides support datagrams by default; see [Datagrams](#datagrams-rfc-9221) for the queues, the size limit and what
+  `trySendDatagram` answers.
+
+A Kotlin/Native executable for this client needs nothing beyond the dependency; the klib carries OpenSSL and `ksl`
+statically. On Linux the binary needs glibc, the system zlib (`libz.so.1`) and `libresolv.so.2` where it runs
+([Platforms](../stability.md#platforms)). Replace `0.3.0` with the version you use:
+
+<!-- guide-sync: not compiled (a Gradle build script) -->
+```kotlin
+// build.gradle.kts
+plugins {
+    kotlin("multiplatform") version "2.4.20"   // Kotlin/Native consumers need Kotlin 2.4.x
+}
+repositories { mavenCentral() }
+kotlin {
+    jvm()                                      // the server
+    linuxX64 { binaries.executable { entryPoint = "com.example.main" } }
+    macosArm64 { binaries.executable { entryPoint = "com.example.main" } }
+    sourceSets.commonMain.dependencies {
+        implementation(project.dependencies.platform("io.kuicksilver:kuicksilver-bom:0.3.0"))
+        implementation("io.kuicksilver:kuicksilver-quic")
+    }
+}
+```
+
+`./gradlew linkReleaseExecutableLinuxX64` writes `build/bin/linuxX64/releaseExecutable/<project>.kexe`.
 
 ## Configuration
 
@@ -170,7 +343,7 @@ design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sid
 
 > **Replay warning.** An attacker who sees the client's first flight can send it to the server again (RFC 9846
 > section 8). Write early only what is safe to execute twice, and act on anything else only after
-> `awaitHandshake()`. The server limits replays (OpenSSL's ±10 s ticket-age check, one use per ticket in a replay
+> `awaitHandshake()`. The server limits replays (OpenSSL's ticket-age check, a window 10 s wide, one use per ticket in a replay
 > register shared by the endpoint's loops, tickets bound to the configuration that issued them), but a replay into
 > another server process with shared ticket keys passes the age check alone.
 
@@ -203,8 +376,11 @@ after the first `connect` usually finds none and does a full handshake (`earlyDa
   `EarlyDataState.Required` was asked for, the connection closes with `QuicException.ConnectionLost.ZeroRttRejected`.
 - **Server side.** With `earlyData = true`, `accept()` returns a connection as soon as its 0-RTT is accepted, so the
   application can answer in 0.5-RTT. `QuicStream.receivedEarly` marks streams whose data came in 0-RTT.
-  `earlyDataContext` binds application settings into tickets, and `Http3Endpoint` puts its SETTINGS there. 0-RTT
-  cannot be combined with client certificates.
+  `earlyDataContext` binds application settings into tickets, and `Http3Endpoint` puts its SETTINGS there.
+- **Client certificates.** A server that asks for client certificates cannot accept 0-RTT: building a
+  `QuicServerConfig` with `earlyData = true` and a `clientAuth` other than `None` throws `IllegalArgumentException`
+  ("earlyData cannot be combined with client certificates"), and the Ktor server's `quicEarlyData` fails the start the
+  same way. A client with an identity may still ask for 0-RTT; such a server never offers it.
 - **Keys.** The client drops its 0-RTT key when the 1-RTT key arrives. The server drops its 0-RTT key 3 PTO after the
   first 1-RTT packet (RFC 9001 section 4.9.3).
 

@@ -27,9 +27,10 @@ SPDX-License-Identifier: Apache-2.0
   with the project id once the entry exists. -->
 </p>
 
-> **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.0 is on Maven Central. Do
-> not use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which
-> API is stable and which is experimental.
+> **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.1 is on Maven Central. This
+> README and the guides describe 0.3.0, the release in preparation ([Install](#install) says how to use it before it is
+> published). Do not use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md)
+> says which API is stable and which is experimental.
 
 ```kotlin
 val client = HttpClient(Kuicksilver)          // HTTP/1.1 first, HTTP/3 once the server announces it
@@ -72,16 +73,98 @@ Kuicksilver puts QUIC v1 and v2, HTTP/3 and QPACK in Kotlin on every target list
 Android, iOS, macOS, Linux, Windows), uses OpenSSL built into its own native library for TLS, ships Ktor client and
 server engines, and is licensed under Apache-2.0.
 
-## Quick start
+## Install
 
-Artifacts are on Maven Central:
+**Versions.** 0.2.1 is the current release. The guides, the API reference and the snippets here describe **0.3.0**,
+the release in preparation: every guide says "version `0.3.0` or newer", and features the guides mark as 0.3.0 (the
+HTTP/3 kill switch and `Http3Advertising`, certificate reload, the QUIC connection limits of the server engine, HTTP/2,
+WebTransport, among others; see the [CHANGELOG](CHANGELOG.md)) are not in 0.2.1. Until 0.3.0 is on Maven Central, build
+it from a checkout of `main` and use `0.3.0-SNAPSHOT` as the BOM version below, with `mavenLocal()` in your
+repositories. `./gradlew publishToMavenLocal` publishes every target, so it needs everything in
+[CONTRIBUTING.md](CONTRIBUTING.md#building): Docker (OpenSSL and `libksl` for Linux and Windows), the Android NDK and,
+on macOS, Xcode. For a JVM application,
+
+```sh
+./gradlew publishJvmPublicationToMavenLocal publishKotlinMultiplatformPublicationToMavenLocal :kuicksilver-bom:publishToMavenLocal
+```
+
+publishes only the JVM jars, the multiplatform metadata and the BOM: no Android AAR (no NDK) and no Kotlin/Native
+klibs. The metadata still runs the C interop of every native target, so OpenSSL is still built for each of them (Docker,
+and Xcode on macOS), and the jar carries the native library of the machine that built it only (on an Apple Silicon Mac,
+macOS arm64), so the application runs on that kind of machine alone. For 0.2.1, read the documentation of the `v0.2.1` tag.
+
+Each block pins every Kuicksilver module with the bill of materials (`kuicksilver-bom`) and every Ktor module with
+Ktor's (Kuicksilver needs Ktor 3.6.x, [Supported Ktor versions](docs/guide/ktor.md#supported-ktor-versions)). A module
+brings the modules it is built on; the native library (OpenSSL 3.5 and `ksl`) comes with `kuicksilver-native`, nothing
+needs to be installed on the system. The imports of every snippet are at the top of each guide (for example
+[Ktor engines: Imports](docs/guide/ktor.md#imports)).
+
+A JVM server (JVM 17 or newer; Kotlin 2.3 or newer):
 
 ```kotlin
 // build.gradle.kts
+plugins {
+    kotlin("jvm") version "2.4.20"
+    application
+}
+repositories { mavenCentral() }
 dependencies {
-    implementation("io.kuicksilver:kuicksilver-ktor-client:0.2.0")
+    implementation(platform("io.kuicksilver:kuicksilver-bom:0.3.0"))
+    implementation(platform("io.ktor:ktor-bom:3.6.1"))
+    implementation("io.kuicksilver:kuicksilver-ktor-server")
+    implementation("io.ktor:ktor-server-core")
+}
+// your main(), or io.kuicksilver.ktor.server.EngineMain with an application.conf (docs/guide/ktor.md)
+application { mainClass.set("com.example.MainKt") }
+```
+
+An Android app with the Ktor client (`minSdk` 24; the AAR carries the native libraries for arm64-v8a, armeabi-v7a and
+x86_64, the `INTERNET` and `ACCESS_NETWORK_STATE` permissions and its R8 rules):
+
+```kotlin
+// app/build.gradle.kts
+dependencies {
+    implementation(platform("io.kuicksilver:kuicksilver-bom:0.3.0"))
+    implementation(platform("io.ktor:ktor-bom:3.6.1"))
+    implementation("io.kuicksilver:kuicksilver-ktor-client")
+    implementation("io.ktor:ktor-client-core")
 }
 ```
+
+Kotlin Multiplatform with iOS (Kotlin 2.4.x for Kotlin/Native; one static framework for all the app's Kotlin code,
+[iOS guide](docs/guide/ios.md)):
+
+```kotlin
+// shared/build.gradle.kts
+kotlin {
+    listOf(iosArm64(), iosSimulatorArm64()).forEach {
+        it.binaries.framework { baseName = "Shared"; isStatic = true }
+    }
+    sourceSets.commonMain.dependencies {
+        implementation(project.dependencies.platform("io.kuicksilver:kuicksilver-bom:0.3.0"))
+        implementation(project.dependencies.platform("io.ktor:ktor-bom:3.6.1"))
+        implementation("io.kuicksilver:kuicksilver-ktor-client")   // or kuicksilver-http3, kuicksilver-quic
+    }
+}
+```
+
+A Kotlin/Native program (`linuxX64`, `linuxArm64`, `macosArm64`, `mingwX64`; Kotlin 2.4.x), here with raw QUIC
+([QUIC: A complete example](docs/guide/quic.md#a-complete-example-custom-alpn-streams-and-datagrams)):
+
+```kotlin
+// build.gradle.kts
+plugins { kotlin("multiplatform") version "2.4.20" }
+repositories { mavenCentral() }
+kotlin {
+    linuxX64 { binaries.executable { entryPoint = "com.example.main" } }
+    sourceSets.commonMain.dependencies {
+        implementation(project.dependencies.platform("io.kuicksilver:kuicksilver-bom:0.3.0"))
+        implementation("io.kuicksilver:kuicksilver-quic")
+    }
+}
+```
+
+## Quick start
 
 The snippets below are taken from the guides, which say what every option does.
 
@@ -136,7 +219,7 @@ val server = QuicEndpoint.bind(
 )
 val incoming = server.accept()
 val echoed = incoming.acceptStream()
-echoed.output.writeStringUtf8(echoed.input.readUTF8Line() ?: "")
+echoed.output.writeStringUtf8(echoed.input.readLine(LineEnding.Lenient) ?: "")
 echoed.output.flushAndClose()
 
 // client
@@ -145,12 +228,13 @@ val connection = client.connect(serverAddress, quicClientConfig(tlsClientConfig)
 val stream = connection.openBidi()
 stream.output.writeStringUtf8("ping\n")
 stream.output.flushAndClose()
-val reply = stream.input.readUTF8Line()
+val reply = stream.input.readLine(LineEnding.Lenient)
 connection.close(code = 0, reason = "done")
 ```
 
 `quic` is a `quicConfig { }`, `tlsServerConfig` / `tlsClientConfig` are `tlsConfig(TlsRole.Server / Client) { }`
-with ALPN set. Datagrams, stream priorities, connection migration and the sans-IO core are in
+with ALPN set; [QUIC: A complete example](docs/guide/quic.md#a-complete-example-custom-alpn-streams-and-datagrams)
+defines every one of them, with a protocol of its own and datagrams. Datagrams, stream priorities, connection migration and the sans-IO core are in
 [docs/guide/quic.md](docs/guide/quic.md); HTTP/3 without Ktor is in [docs/guide/http3.md](docs/guide/http3.md).
 
 ## Modules

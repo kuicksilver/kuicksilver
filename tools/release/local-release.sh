@@ -165,6 +165,10 @@ if [ "$base" = "$version" ]; then
       | sed -E 's/^io\.kuicksilver:kuicksilver-[a-z0-9-]+://; s/^releases\/([^/]*)\/$/\1/; s/ is on Maven Central$//' | sort -u | tr '\n' ' ' || true)
     [ "$have" = "$version " ] || refuse "$f names ${have:-no version }instead of $version (the commit that prepares $version sets the coordinates)"
   done
+  # while a version is prepared on main, the README says so; the release commit of that version removes it (docs/release.md)
+  if grep -qE "release in preparation|Until $(printf '%s' "$version" | sed 's/\./\\./g') is on Maven Central" README.md; then
+    refuse "README.md still calls $version the release in preparation (\"release in preparation\" or \"Until $version is on Maven Central\"): the release commit removes that note"
+  fi
 fi
 # the local gate: tools/ci/local-matrix.sh writes build/ci/gate/<commit>.stamp at its end
 stamp="build/ci/gate/$head.stamp"

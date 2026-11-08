@@ -19,6 +19,24 @@ work: ports, firewalls, containers, load balancers, certificates, host settings 
 `tlsConnector` with an identity; it serves HTTP/1.1 on TCP and HTTP/3 on UDP, same port). What has to reach it is in
 [Ports and Alt-Svc](#ports-and-alt-svc), and [Checking a deployment](#checking-a-deployment) shows how to test it.
 
+**Imports.** The Kotlin blocks on this page use these imports (the rest of the server's imports are in
+[Ktor engines: Imports](ktor.md#imports)):
+
+```kotlin
+// guide:deployment:imports
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.response.header
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
+import io.ktor.server.routing.routing
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.ktor.server.Http3Advertising
+import io.kuicksilver.ktor.server.Kuicksilver
+import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
+```
+
 This guide is for running `embeddedServer(Kuicksilver)` in production with HTTP/3 working: what has to reach the server,
 what the host and the network in front of it need, and how to check from both ends why a client does or does not use
 HTTP/3. The engine's options are in [Ktor: Server](ktor.md#server) and the
@@ -134,6 +152,63 @@ On Linux, `--network host` skips Docker's port mapping, and the engine binds the
 The UDP buffer limits are kernel settings of the host ([UDP socket buffers](#udp-socket-buffers)). Set them on the host (the
 Kubernetes node), not in the image.
 
+### The image
+
+- **A glibc base image.** The native library inside the JVM jar is built for glibc 2.17 or newer and needs
+  `libresolv.so.2` (part of glibc) since 0.3.0. musl is not supported: on an Alpine image (or any `-alpine` tag) the
+  library does not load, `KslLoader.availability()` is `Unavailable` and the server cannot start its TLS connectors. Use an
+  image built on a glibc distribution (Debian, Ubuntu, RHEL and its derivatives). A Kotlin/Native server on Linux needs
+  glibc too (2.19 on x64, 2.25 on arm64), plus the system zlib (`libz.so.1`) and `libresolv.so.2`, so `scratch` and
+  images without a C library do not work; a Native client that verifies with `TrustConfig.Platform` also needs a CA
+  bundle (`ca-certificates`; [TLS: Linux trust store](tls.md#linux-trust-store)). [Platforms](../stability.md#platforms)
+  has every floor.
+- **A read-only root file system, or a `noexec` temporary directory.** On the JVM the native library is extracted on
+  first use into `<java.io.tmpdir>/kuicksilver-native-<user>` and loaded from there ([TLS: Native library
+  availability](tls.md#native-library-availability)). With `readOnlyRootFilesystem: true` that write fails, and with a
+  `noexec` `/tmp` the load fails ("... if the work directory is mounted noexec set -Dkuicksilver.native.workdir"). Set
+  `-Dkuicksilver.native.workdir` to a directory on a writable volume that allows executables, such as an `emptyDir`.
+  Name a directory *below* the volume's mount point: the loader creates it with owner-only permissions and refuses a
+  directory that another user owns or can write to, as the root of a volume often is.
+- **Port 443 without root.** On Linux, binding a port below 1024, TCP and UDP alike, needs `CAP_NET_BIND_SERVICE`, or a
+  network namespace whose `net.ipv4.ip_unprivileged_port_start` is at or below the port. In Kubernetes that sysctl is a
+  "safe" one since 1.22, so a pod may set it without node changes (not together with `hostNetwork`;
+  [Kubernetes: sysctls](https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/)); with Docker,
+  `docker run --sysctl net.ipv4.ip_unprivileged_port_start=443 ...` does the same. Docker's own documentation says
+  non-root containers cannot bind ports below 1024 "especially in Kubernetes and Docker Engine < 20.10"
+  ([Docker: Hardened Images, troubleshooting](https://docs.docker.com/dhi/how-to/troubleshoot/)), so a newer engine may
+  already allow it: `docker run --rm my-server-image cat /proc/sys/net/ipv4/ip_unprivileged_port_start` prints the value
+  your containers get. On a host with systemd,
+  `AmbientCapabilities=CAP_NET_BIND_SERVICE` next to `User=` in the unit grants the capability to the server process
+  alone. Or bind an unprivileged port (8443) and map 443 to it in front: then the engine's `Alt-Svc` names 8443, so send
+  your own header ([Ports and Alt-Svc](#ports-and-alt-svc)).
+
+A pod spec with all three (a non-root user, a read-only root file system, port 443):
+
+```yaml
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001                 # a non-root user ID
+    sysctls:
+      - name: net.ipv4.ip_unprivileged_port_start
+        value: "443"
+  containers:
+    - name: my-server
+      image: my-server-image          # a glibc base, not Alpine
+      securityContext:
+        readOnlyRootFilesystem: true
+      env:
+        - name: JAVA_TOOL_OPTIONS
+          value: "-Dkuicksilver.native.workdir=/var/lib/ksl/native"
+      ports:
+        - { containerPort: 443, protocol: TCP }
+        - { containerPort: 443, protocol: UDP }
+      volumeMounts:
+        - { name: ksl, mountPath: /var/lib/ksl }
+  volumes:
+    - { name: ksl, emptyDir: {} }
+```
+
 ### Kubernetes
 
 A `Service` carries the TCP and the UDP port as two entries with the same number:
@@ -192,6 +267,63 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   `Alt-Svc: clear` for the whole origin, not just that pod, so clients that get one drop the alternative until another
   response announces it again. Use `Drain` to take HTTP/3 out of service, not for routine restarts.
 
+### Health checks
+
+The kubelet probes a container with `exec`, `grpc`, `httpGet` or `tcpSocket`
+([Kubernetes: probes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/)): none of
+them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched from outside.
+
+- **Readiness and liveness** go to an HTTP route over TLS: `httpGet` with `scheme: HTTPS` ("the kubelet sends an HTTPS
+  request skipping the certificate verification", same page), on the TLS connector's port.
+- **The HTTP/3 side** is checked by a canary outside the cluster (`curl --http3-only`, as in [Checking a
+  deployment](#checking-a-deployment), or a Kuicksilver client in `H3Only` mode) and by the endpoint counters as metrics:
+  `datagramsReceived` that stops growing while TCP traffic goes on means UDP no longer reaches the pod;
+  `connectionsRefusedLimits` growing means clients hit `quicMaxConnections` or `quicMaxConnectionsPerIp`
+  ([QUIC connection limits](#quic-connection-limits)); `handshakesFailedTimeout` growing means clients start handshakes
+  that never finish (lost answers, [Reply addresses](#reply-addresses)).
+- **`Drain` is not unreadiness.** Under `Clear` or `Drain` the pod still serves HTTP/1.1 and HTTP/2, so keep its probes
+  passing; `http3Advertising` is part of the metrics instead. A [graceful stop](ktor.md#graceful-stop) stops accepting
+  TCP connections, so the probes fail during it on their own; a `preStop` delay lets the Service drop the pod before that.
+
+```kotlin
+// guide:deployment:health
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+lateinit var engine: KuicksilverApplicationEngine
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+}) {
+    routing {
+        // for the readiness and liveness probes: the kubelet probes over TCP (httpGet with scheme HTTPS)
+        get("/healthz") { call.respondText("ok") }
+        // for a metrics scraper: is QUIC arriving, and is it refused?
+        get("/metrics/quic") {
+            val s = engine.http3Stats
+            call.respondText(
+                "datagrams_received ${s.sumOf { it.datagramsReceived }}\n" +
+                    "connections_active ${s.sumOf { it.connectionsActive }}\n" +
+                    "refused_limits ${s.sumOf { it.connectionsRefusedLimits }}\n" +
+                    "handshakes_failed_timeout ${s.sumOf { it.handshakesFailedTimeout }}\n" +
+                    "http3_advertising ${engine.http3Advertising}\n",
+            )
+        }
+    }
+}
+engine = server.engine
+```
+
+```yaml
+      readinessProbe:
+        httpGet: { path: /healthz, port: 443, scheme: HTTPS }
+        periodSeconds: 10
+      livenessProbe:
+        httpGet: { path: /healthz, port: 443, scheme: HTTPS }
+        periodSeconds: 20
+        failureThreshold: 3
+```
+
+Keep `/metrics/quic` off the public internet (a separate connector or port, or a network policy); the counters say
+nothing secret, but they are not for clients.
+
 ## Load balancers and proxies
 
 ### What can sit in front of the server
@@ -229,6 +361,28 @@ Notes on specific products (checked 2026-11-05):
   verified** for this page; see their documentation.
 - **HAProxy, Envoy, Caddy, other CDNs:** **not verified**. The table above still applies: find out whether the product
   passes QUIC through at layer 4 or terminates HTTP/3.
+
+### NATs and idle connections
+
+A QUIC connection with no packets for the idle timeout ends (`maxIdleTimeout`, 30 s by default, the smaller of both
+sides'). A NAT, a stateful firewall or the node's connection tracking can forget an idle UDP flow sooner. RFC 9000
+section 10.1.2: "Though REQ-5 in [RFC4787] recommends a 2-minute timeout interval, experience shows that sending packets
+every 30 seconds is necessary to prevent the majority of middleboxes from losing state for UDP flows". What happens then:
+
+- The client sends next: its packet gets a new mapping, often a new port, and the server sees a NAT rebinding. The
+  connection survives (path validation, [QUIC: Migration and paths](quic.md#migration-and-paths)), unless a 4-tuple
+  hashing load balancer sends the new flow to another instance ([Connection IDs and several
+  instances](#connection-ids-and-several-instances)).
+- The server sends next (a response the client waits for, a WebSocket message): its packets go to the forgotten mapping
+  and are lost until the client sends something.
+
+`QuicConfig.keepAlive` sends a PING often enough to keep the path warm, at least every half of the effective idle
+timeout, at most 3/4 of `maxIdleTimeout`. Set it on the side that keeps a quiet connection it cares about, usually the
+client: on the Ktor client `engine { quic = quicConfig { keepAlive = 15.seconds } }`, on the Ktor server
+`quic = quicConfig { keepAlive = 15.seconds }` (every connection of the listener then sends a PING that often, which a
+server with many idle clients pays for). The Ktor client closes HTTP/3 connections that carry no request after its own
+`idleTimeout` (5 minutes) whatever `keepAlive` says. TCP has the same problem with longer timers (`ktor.deployment.connectionIdleTimeoutSeconds`, 45 s,
+closes idle HTTP/1.1 connections first).
 
 ### Reply addresses
 

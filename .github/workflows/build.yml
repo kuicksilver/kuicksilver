@@ -87,7 +87,9 @@ jobs:
       - name: 'lint: links (Markdown, llms.txt)'
         run: bash tools/check/links.sh
       - name: 'lint: guide code samples match GuideSamplesTest'
-        run: bash tools/check/guide-sync.sh
+        run: |
+          bash tools/check/guide-sync.sh
+          bash tools/check/guide-sync-test.sh
       - name: 'lint: configuration tables match the configuration classes'
         run: |
           bash tools/check/config-table.sh

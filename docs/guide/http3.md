@@ -21,6 +21,35 @@ SPDX-License-Identifier: Apache-2.0
 **Minimal example.** A server that answers requests is [Serving requests](#serving-requests), a client request is
 [Client requests](#client-requests), and both start from [Endpoints and connections](#endpoints-and-connections).
 
+<a id="imports"></a>
+**Imports.** The code blocks on this page start after their imports; these are the imports they use, and the test that
+compiles them fails when a name moves. `InetSocketAddress` is ktor-network's, on every target. Experimental API needs
+`@file:OptIn(ExperimentalKuicksilverApi::class)` or the module-wide opt-in ([stability](../stability.md#stability-levels)).
+
+```kotlin
+// guide:http3:imports
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.writeFully
+import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.Capsule
+import io.kuicksilver.http3.Http3Connection
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.capsuleConfig
+import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.webTransport
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.io.readString
+```
+
 Kuicksilver's HTTP/3 layer (`io.kuicksilver:kuicksilver-http3`) implements HTTP/3 (RFC 9114) with QPACK (RFC 9204),
 extensible priorities (RFC 9218), Extended CONNECT (RFC 9220) and HTTP datagrams (RFC 9297) on top of
 `kuicksilver-quic`. Server push is not implemented. The frame and QPACK codecs are sans-IO (ADR-0004); the connection

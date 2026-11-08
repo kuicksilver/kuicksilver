@@ -17,9 +17,14 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslCrypto
 import io.kuicksilver.tls.KslQuicCrypto
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.TrustConfig
+import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -270,7 +275,7 @@ class GuideSamplesTest {
             }
         }
 
-    private class Datagram(
+    private class ReceivedDatagram(
         val buffer: PacketBuffer,
         val length: Int,
         val from: InetSocketAddress,
@@ -294,7 +299,7 @@ class GuideSamplesTest {
             assertTrue(buffer.capacity >= length)
         }
 
-        fun receiveOrWaitUntil(deadline: TimeMark): Datagram? {
+        fun receiveOrWaitUntil(deadline: TimeMark): ReceivedDatagram? {
             if (++iterations == 3) running = false
             return null
         }
