@@ -115,6 +115,10 @@ public class H2ClientConnection private constructor(
          * coroutines; [closeTransport] closes the socket under the channels; [onChange] hears that capacity or usability
          * changed (from any thread, without suspending). [pingInterval]: a PING that often, and the connection ends when
          * one is still unanswered at the next; [Duration.INFINITE] for none. [clock] gives monotonic nanoseconds.
+         * [connectionErrorOf] maps a failure of [input] to the code of a connection error (RFC 9113 section 5.4.1) when the
+         * transport reports something the protocol makes one, a TLS 1.2 renegotiation (section 9.2.1: PROTOCOL_ERROR): GOAWAY
+         * with that code goes out on [output] and the streams fail with it; null (the default) takes the failure for a lost
+         * connection.
          */
         public suspend fun start(
             input: ByteReadChannel,
@@ -125,8 +129,21 @@ public class H2ClientConnection private constructor(
             closeTransport: () -> Unit,
             onChange: () -> Unit = {},
             clock: () -> Long = monotonicNanos(),
+            connectionErrorOf: (Throwable) -> Http2ErrorCode? = { null },
         ): H2ClientConnection {
-            val rt = H2Runtime(Role.CLIENT, settings, input, output, scope, clock, pingInterval.nanosOrMax(), closeTransport, onChange)
+            val rt =
+                H2Runtime(
+                    Role.CLIENT,
+                    settings,
+                    input,
+                    output,
+                    scope,
+                    clock,
+                    pingInterval.nanosOrMax(),
+                    closeTransport,
+                    onChange,
+                    connectionErrorOf = connectionErrorOf,
+                )
             rt.start()
             try {
                 rt.prefaceReceived.await()

@@ -505,8 +505,12 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   wait for it within their connect timeout. Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
   (`HttpTimeout`), and with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its
   calls fail; with neither, a connection that dies mid-exchange holds the call until TCP gives up, as over HTTP/1.1.
-- **TLS 1.3 only.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers only `http/1.1`:
-  RFC 9113 section 9.2.1 requires a TLS 1.2 renegotiation to fail an HTTP/2 connection, which the TLS layer cannot report.
+- **TLS 1.2.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers `h2` too, and a server
+  without TLS 1.3 gets HTTP/2 over TLS 1.2 under RFC 9113 section 9.2: SNI from the URL's host, no TLS compression, and
+  the TLS 1.2 suites of the profile, ECDHE with an AEAD (`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256 among them),
+  none of which section 9.2.2 prohibits. Renegotiation stays refused: a server that asks for one (a HelloRequest) ends
+  the connection with PROTOCOL_ERROR (section 9.2.1) and the calls on it fail with `Http2Exception.ConnectionClosed`
+  (`code == PROTOCOL_ERROR`, `byPeer == false`); over HTTP/1.1 the request is refused and the connection goes on.
 - **Events and diagnostics.** `protocolSelected` comes once the connection is in hand and names its protocol
   (`HTTP_2_0`), then `connectionAcquired(HTTP_2_0, reused)`; the race reports `raceEnded(winner = HTTP_2_0)`; and
   `ProtocolDiagnostics.protocol` is `HTTP_2_0` (its `fallback` still says why HTTP/3 was not used).

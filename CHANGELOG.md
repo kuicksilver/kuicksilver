@@ -27,6 +27,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   docs/guide/quic.md, "Several loops on one port". Measured on an M4 Max (docs/benchmarks.md, "Several loops on one
   socket"): 4 loops complete 3.3–3.5 times the handshakes of one; 8 bulk connections move 1.2–1.3 times the bytes,
   capped by the receiver's one `recvmsg` per datagram on Darwin.
+- Native: `KSL_GET_RENEGOTIATION`, a getter that reports a peer's TLS 1.2 renegotiation attempt on an established TCP
+  session (a server's HelloRequest, a client's ClientHello), which OpenSSL refuses with a `no_renegotiation` warning as
+  before; the `ksl_tcp_read` that refused one answers `KSL_OK` with nothing read, so the caller looks before it reads what
+  came after it. Additive under ABI 7. `TlsConnection` fails the input of an `h2` connection at such an attempt (RFC 9113
+  section 9.2.1) and reports it on any connection (`renegotiationAttempted`, internal API); other protocols go on as
+  before.
 - Native: `ksl_udp_sender`, a send-only clone of a `ksl_udp` socket with its own send scratch, so several threads send on
   one UDP socket (one per clone); it shares the descriptor, which closes with the last close of the group in any order,
   copies the granted flags (GSO/USO, ECN, DF, PKTINFO), and refuses to receive (`KSL_E_NOT_SUPPORTED`). Linux, Apple and
@@ -153,8 +159,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `Http2Exception` (experimental, in `kuicksilver-http2`). Responses are checked against RFC 9113 section 8 (a malformed
   one fails the call); flow control follows the application's reading; the server's preface must arrive within the
   connect timeout, a connection quiet for 10 s is checked with a PING before it takes a request, and an optional PING
-  interval closes a silent connection. HTTP/2 needs TLS 1.3: a client that allows TLS 1.2 offers only `http/1.1`
-  (RFC 9113 section 9.2.1). Configuration: experimental
+  interval closes a silent connection. A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers
+  `h2` too and speaks it with a TLS 1.2 server (RFC 9113 section 9.2: SNI, no compression, ECDHE with AEAD suites only,
+  none of them prohibited by section 9.2.2); a server's renegotiation request (a HelloRequest) is refused and ends the
+  connection with a connection error of type PROTOCOL_ERROR (section 9.2.1), the calls on it failing with
+  `Http2Exception.ConnectionClosed`. Configuration: experimental
   `engine { http2 { enabled; settings; pingInterval } }` (`Http2ClientConfig`); `enabled = false` offers only
   `http/1.1`, as in 0.2. The HTTP/3 kill switch (`http3Allowed`) does not turn HTTP/2 off. Responses report
   `HttpProtocolVersion.HTTP_2_0`, as do `ProtocolDiagnostics.protocol`, `connectionAcquired` and the race's

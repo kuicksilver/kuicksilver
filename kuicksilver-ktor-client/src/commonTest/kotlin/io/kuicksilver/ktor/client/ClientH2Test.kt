@@ -182,20 +182,16 @@ class ClientH2Test {
         }
 
     /**
-     * RFC 9113 section 9.2.1: over TLS 1.2 a renegotiation must be a connection error, which the TLS layer cannot report
-     * (OpenSSL answers a HelloRequest itself with no_renegotiation). A client that allows TLS 1.2 therefore offers only
-     * http/1.1; the default, TLS 1.3 only, offers h2.
+     * A client that allows TLS 1.2 offers h2 too (RFC 9113 section 9.2): a TLS 1.2 renegotiation, which section 9.2.1 makes a
+     * connection error, is reported by the TLS layer and fails the connection with PROTOCOL_ERROR (H2InteropTest, against a
+     * TLS 1.2 server). Here the server has TLS 1.3 and picks h2.
      */
-    @Test fun tls12AllowedOffersOnlyHttp11() =
+    @Test fun tls12AllowedStillOffersH2() =
         clientTest {
-            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }, h1 = { _, input, output ->
-                readRequest(input)
-                output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nh1")
-                runCatching { input.readBuffer() }
-            }) { port, log ->
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, log ->
                 testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
-                    assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
-                    assertEquals(listOf<String?>("http/1.1"), log.protocols)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                    assertEquals(listOf<String?>("h2"), log.protocols)
                 }
             }
         }

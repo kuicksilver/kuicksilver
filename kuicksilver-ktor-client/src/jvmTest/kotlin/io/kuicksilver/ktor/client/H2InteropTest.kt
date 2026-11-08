@@ -14,6 +14,8 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.readAvailable
+import io.kuicksilver.http2.Http2ErrorCode
+import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.native.KslLoader
 import io.netty.bootstrap.ServerBootstrap
 import io.netty.buffer.Unpooled
@@ -37,6 +39,7 @@ import io.netty.handler.ssl.ApplicationProtocolConfig
 import io.netty.handler.ssl.ApplicationProtocolNames
 import io.netty.handler.ssl.ApplicationProtocolNegotiationHandler
 import io.netty.handler.ssl.SslContextBuilder
+import io.netty.handler.ssl.SslHandler
 import io.netty.handler.ssl.SslProvider
 import io.netty.handler.ssl.SupportedCipherSuiteFilter
 import kotlinx.coroutines.CompletableDeferred
@@ -140,6 +143,17 @@ class H2InteropTest {
                         gzip("compressed text".encodeToByteArray())
                     }
 
+                    "/renegotiate" -> {
+                        // TLS 1.2: a HelloRequest on the established connection (the JDK's engine started again), no answer
+                        ctx
+                            .channel()
+                            .parent()
+                            .pipeline()
+                            .get(SslHandler::class.java)
+                            .renegotiate()
+                        return
+                    }
+
                     "/endless" -> {
                         ctx.write(DefaultHttp2HeadersFrame(headers))
                         // more than the client's windows: the client cancels before the end
@@ -157,7 +171,7 @@ class H2InteropTest {
         }
     }
 
-    private fun netty(): Netty {
+    private fun netty(tlsVersion: String = "TLSv1.3"): Netty {
         val cf = CertificateFactory.getInstance("X.509")
         val chain = listOf(TestCerts.server).map { cf.generateCertificate(ByteArrayInputStream(it)) as X509Certificate }
         val key = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
@@ -165,7 +179,7 @@ class H2InteropTest {
             SslContextBuilder
                 .forServer(key, *chain.toTypedArray())
                 .sslProvider(SslProvider.JDK)
-                .protocols("TLSv1.3")
+                .protocols(tlsVersion)
                 .ciphers(Http2SecurityUtil.CIPHERS, SupportedCipherSuiteFilter.INSTANCE)
                 .applicationProtocolConfig(
                     ApplicationProtocolConfig(
@@ -260,6 +274,40 @@ class H2InteropTest {
                         resp.bodyAsChannel().readAvailable(buf, 0, buf.size)
                     }
                     assertEquals(0x8L, withTimeout(10.seconds) { n.resets.await() }) // CANCEL
+                }
+            }
+        }
+
+    /**
+     * HTTP/2 over TLS 1.2 (RFC 9113 section 9.2): a client that allows TLS 1.2 offers `h2` and speaks it with a server that
+     * has only TLS 1.2, under the ECDHE + AEAD suites of its profile (none of them prohibited by section 9.2.2).
+     */
+    @Test fun tls12ServerGetsH2() =
+        clientTest {
+            netty("TLSv1.2").use { n ->
+                testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                    val r = c.get("https://127.0.0.1:${n.port}/hello")
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                    assertEquals("netty/hello", r.bodyAsText())
+                    assertEquals("netty/again", c.get("https://127.0.0.1:${n.port}/again").bodyAsText())
+                    assertEquals(1, (c.engine as KuicksilverEngine).h1.h2.connectionCount)
+                }
+            }
+        }
+
+    /**
+     * RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error (Section 5.4.1) of type
+     * PROTOCOL_ERROR." The server asks for renegotiation (a HelloRequest) while the request is in flight: the call fails with
+     * PROTOCOL_ERROR raised by this client, not with a TLS failure or a lost connection.
+     */
+    @Test fun negative_tls12RenegotiationIsAProtocolError() =
+        clientTest {
+            netty("TLSv1.2").use { n ->
+                testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                    val e = runCatching { withTimeout(10.seconds) { c.get("https://127.0.0.1:${n.port}/renegotiate") } }.exceptionOrNull()
+                    val closed = generateSequence(e) { it.cause }.filterIsInstance<Http2Exception.ConnectionClosed>().firstOrNull()
+                    assertEquals(Http2ErrorCode.PROTOCOL_ERROR, closed?.code, "the call failed with $e")
+                    assertEquals(false, closed?.byPeer)
                 }
             }
         }

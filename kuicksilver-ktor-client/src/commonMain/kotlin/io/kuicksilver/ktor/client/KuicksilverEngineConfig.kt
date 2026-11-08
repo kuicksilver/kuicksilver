@@ -217,9 +217,10 @@ public class Http3ClientConfig {
  * `http/1.1` in ALPN, and a server that picks `h2` gets one multiplexed connection per route instead of up to
  * `maxConnectionsPerRoute` HTTP/1.1 connections. Never for `http://` (no cleartext HTTP/2, h2c) and never for WebSockets
  * (RFC 8441 is not supported yet: they offer `http/1.1` only). HTTP/3 is unaffected, and so is its kill switch
- * (`http3 { http3Allowed }` turns HTTP/3 off, not HTTP/2). HTTP/2 needs TLS 1.3 only (the default): a `tls` block that allows
- * TLS 1.2 offers `http/1.1` only (RFC 9113 section 9.2.1 makes a TLS 1.2 renegotiation a connection error, which the TLS
- * layer cannot report).
+ * (`http3 { http3Allowed }` turns HTTP/3 off, not HTTP/2). A `tls` block that allows TLS 1.2 (`versions =
+ * TlsVersions.Tls12And13`) offers `h2` as well (RFC 9113 section 9.2): over TLS 1.2 renegotiation stays refused, and a server
+ * that asks for one (a HelloRequest) ends the connection with a connection error of type PROTOCOL_ERROR (section 9.2.1);
+ * the TLS 1.2 suites are ECDHE with an AEAD only, none of them prohibited by section 9.2.2.
  */
 @ExperimentalKuicksilverApi
 @KuicksilverDsl
@@ -256,7 +257,7 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * Further TLS settings, applied after [trust] and [identity] (so the block may replace them). ALPN and the server name
      * come from the request (`h3`, or `h2` and `http/1.1`; the URL's host) and are set after the block: values the block
      * gives them are not used. Verify another name with `TrustConfig.ExpectedName` instead. Allowing TLS 1.2 here
-     * (`versions = TlsVersions.Tls12And13`) turns HTTP/2 off: see [Http2ClientConfig].
+     * (`versions = TlsVersions.Tls12And13`) keeps HTTP/2 on: see [Http2ClientConfig].
      */
     public var tls: TlsConfig.Builder.() -> Unit = {}
 

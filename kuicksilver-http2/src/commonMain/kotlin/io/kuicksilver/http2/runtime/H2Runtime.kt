@@ -127,6 +127,11 @@ internal class H2Runtime(
     private val onRequest: ((StreamRt, io.kuicksilver.http2.message.H2Request) -> Unit)? = null,
     /** A server's fields for the responses the runtime makes itself (the 431): the engine's `date`, say. */
     private val ownResponseFields: () -> List<Pair<String, String>> = { emptyList() },
+    /**
+     * The code of the connection error (RFC 9113 section 5.4.1) a failure of [input] stands for, when the transport reports
+     * something the protocol makes one (a TLS 1.2 renegotiation, section 9.2.1: PROTOCOL_ERROR); null: the connection was lost.
+     */
+    private val connectionErrorOf: (Throwable) -> Http2ErrorCode? = { null },
 ) {
     private val client = role == Role.CLIENT
     val lock = SpinLock()
@@ -528,7 +533,14 @@ internal class H2Runtime(
                 }
 
                 !e.byPeer && ended -> {
-                    Http2Exception.ConnectionClosed(e.code, byPeer = false, e.notProcessed, "the connection ended with ${e.code}")
+                    val local = localError
+                    Http2Exception.ConnectionClosed(
+                        e.code,
+                        byPeer = false,
+                        e.notProcessed,
+                        "the connection ended with ${e.code}" + (local?.let { ": ${it.second}" } ?: ""),
+                        local?.first,
+                    )
                 }
 
                 else -> {
@@ -595,7 +607,7 @@ internal class H2Runtime(
                 val n = input.readAvailable(buf, 0, buf.size)
                 if (n < 0) {
                     // a channel closed with a cause answers -1 too: the cause says it failed, not ended
-                    lost(input.closedCause ?: IOException("the peer closed the connection"))
+                    transportFailed(input.closedCause ?: IOException("the peer closed the connection"))
                     return
                 }
                 if (n == 0) continue
@@ -607,9 +619,29 @@ internal class H2Runtime(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            lost(e)
+            transportFailed(e)
         }
     }
+
+    /**
+     * The input failed with [cause]: a connection error when [connectionErrorOf] says the transport reported one (GOAWAY with
+     * its code on the output, which still works; RFC 9113 section 5.4.1), else the connection was lost.
+     */
+    private fun transportFailed(cause: Throwable) {
+        val code = connectionErrorOf(cause)
+        if (code == null) {
+            lost(cause)
+            return
+        }
+        // the transport's own reason, not a channel's wrapper of it
+        val reason = generateSequence(cause) { it.cause }.mapNotNull { it.message }.lastOrNull() ?: "the transport failed"
+        lock.withLock { if (localError == null) localError = cause to reason }
+        withCore { goAway(code, reason.encodeToByteArray(), graceful = false, now = clock()) }
+        onChange()
+    }
+
+    /** Why this side ended the connection with a connection error the transport reported ([transportFailed]), and its reason. */
+    @Volatile private var localError: Pair<Throwable, String>? = null
 
     private suspend fun writeLoop() {
         val buf = ByteArray(WRITE_BUFFER)

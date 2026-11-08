@@ -223,7 +223,7 @@ internal class H1Pool(
         data: HttpRequestData,
         key: String,
     ): Boolean =
-        config.http2.enabled && data.url.protocol.isSecure() && tls13Only &&
+        config.http2.enabled && data.url.protocol.isSecure() &&
             !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !upgrades(data.body) && !h2Refused.isRefused(key)
 
     /** A body that takes over the connection (`Upgrade`): HTTP/2 has no such thing (RFC 9113 section 8.6), so HTTP/1.1. */
@@ -233,17 +233,6 @@ internal class H1Pool(
             is OutgoingContent.ContentWrapper -> upgrades(body.delegate())
             else -> false
         }
-
-    /**
-     * Whether the engine's TLS is TLS 1.3 only (the default). RFC 9113 section 9.2.1 makes a TLS 1.2 renegotiation a
-     * connection error of type PROTOCOL_ERROR, and the TLS layer cannot report one: OpenSSL answers a server's
-     * HelloRequest itself (no_renegotiation, SSL_OP_NO_RENEGOTIATION in ksl_ctx.c) and the connection goes on. So a client
-     * configured to allow TLS 1.2 offers only http/1.1 rather than run HTTP/2 against that MUST; TLS 1.2 is opt-in, for
-     * peers without TLS 1.3 (TlsVersions.Tls12And13).
-     */
-    private val tls13Only: Boolean by lazy {
-        config.tlsConfigFor("localhost", listOf("http/1.1")).versions == io.kuicksilver.tls.TlsVersions.Tls13
-    }
 
     /**
      * An idle connection for [key] ([Obtained.reused]), else a new one once the limits allow; waiting for room and
@@ -925,6 +914,12 @@ internal class H1Pool(
                                         tcp.close()
                                     },
                                     onChange = { h2.bump(key) },
+                                    // RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error
+                                    // (Section 5.4.1) of type PROTOCOL_ERROR"; the TLS layer ends the input of an h2 connection
+                                    // at the server's HelloRequest (TLS 1.2 only) and says so
+                                    connectionErrorOf = {
+                                        if (tls.renegotiationAttempted) io.kuicksilver.http2.Http2ErrorCode.PROTOCOL_ERROR else null
+                                    },
                                 )
                             } catch (e: Throwable) {
                                 tls.close()
