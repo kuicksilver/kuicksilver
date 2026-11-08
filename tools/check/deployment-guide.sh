@@ -10,14 +10,17 @@
 # each under `bash -o pipefail`, and each must succeed. Then: the Alt-Svc command printed `h3=":443"`, the
 # `curl --http3-only` command got `HTTP/3 200`, and tcpdump saw UDP to port 443. The guide's other blocks change the host
 # (sysctl) or start containers themselves (docker run) and do not run here.
-# Needs Docker; builds the image kuicksilver-deployment-guide:local the first time (its apt-get needs the network then).
+# Needs Docker; builds the image kuicksilver-deployment-guide:<Dockerfile hash> the first time and after every change of the
+# Dockerfile (its apt-get needs the network then).
 # Usage: deployment-guide.sh [--no-build]   (--no-build: the server executable is already linked)
 # KSL_GRADLE overrides the Gradle command (default: ./gradlew --max-workers=2). Output in build/deployment-guide/.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 gradle=${KSL_GRADLE:-./gradlew --max-workers=2}
-image=kuicksilver-deployment-guide:local
+# tagged by the Dockerfile's hash: a changed Dockerfile builds a new image instead of reusing the old one
+if command -v sha256sum > /dev/null; then sha=(sha256sum); else sha=(shasum -a 256); fi
+image="kuicksilver-deployment-guide:$("${sha[@]}" < tools/check/deployment-guide.Dockerfile | cut -c1-12)"
 build=1
 for a in "$@"; do
   case "$a" in
