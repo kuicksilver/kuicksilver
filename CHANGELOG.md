@@ -582,6 +582,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client: connections it ends in order end with TLS `close_notify` (RFC 9846 section 6.1): an HTTP/1.1 connection after
+  a `Connection: close` response or a finished upgrade, idle connections evicted or closed with the engine, and HTTP/2
+  connections after their last GOAWAY; before, the socket was closed without one, and the server saw a truncation. The
+  close waits for the peer's `close_notify` and the socket's last bytes within 1 s, in the background; closing the engine
+  waits for those closes. A failed exchange still cuts its connection at once.
+- HTTP/2 client: the GOAWAY of a connection error, of an unanswered PING and of closing the engine reached the server
+  only by chance: the TLS session was closed as soon as the GOAWAY was handed to it (RFC 9113 section 5.4.1). The
+  transport now closes in order behind it. A TLS 1.3 post-handshake CertificateRequest from a server (which OpenSSL
+  refuses, as no post_handshake_auth is offered) fails the connection's calls with PROTOCOL_ERROR (RFC 9113 section
+  9.2.3) instead of a TLS failure.
+
 - HTTP/3: a server's `respond()` no longer fails when the client stops the request stream right after receiving the
   response HEADERS (a client abandoning a rejected CONNECT does so at once). The HEADERS frame was already handed to QUIC,
   but the flush after it met the client's STOP_SENDING and `respond()` threw a raw `ClosedWriteChannelException` and

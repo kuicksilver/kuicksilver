@@ -100,6 +100,19 @@ public class TlsConnection private constructor(
 
     @Volatile private var renegotiation = false
 
+    /**
+     * Whether this TLS 1.3 connection failed because the peer sent a handshake message TLS 1.3 does not allow after the
+     * handshake here and OpenSSL refused it with unexpected_message: a server's CertificateRequest, since ksl never offers
+     * post_handshake_auth (RFC 9846 section 4.6.2), and any other. RFC 9113 section 9.2.3: "HTTP/2 clients MUST treat a TLS
+     * post-handshake CertificateRequest message as a connection error (Section 5.4.1) of type PROTOCOL_ERROR"; OpenSSL fails
+     * on the message before anyone sees its type, so the HTTP/2 layer takes every such refusal on `h2` for one. True from
+     * before [input] fails with it.
+     */
+    @InternalKuicksilverApi
+    public val postHandshakeMessageRefused: Boolean get() = refusedAfterHandshake
+
+    @Volatile private var refusedAfterHandshake = false
+
     /** The TLS version in use; [TlsVersion.Tls12] only when [TlsConfig.versions] allowed it. */
     public var protocolVersion: TlsVersion = TlsVersion.Tls13
         private set
@@ -402,11 +415,12 @@ public class TlsConnection private constructor(
                         } catch (
                             e: KslException.Internal,
                         ) {
+                            if (refusedPostHandshakeMessage(protocolVersion, e)) refusedAfterHandshake = true
                             throw e.toTlsFailure(presented).first
                         }
                     // a read that refused the peer's renegotiation answers nothing read (ksl_tcp_read): what came after it is
                     // read only once this looked
-                    if (r <= 0) checkRenegotiation()
+                    if (r == 0) checkRenegotiation()
                     when {
                         r > 0 -> {
                             // a ticket that preceded these bytes is cached before the application sees them: a
@@ -760,6 +774,21 @@ public class TlsConnection private constructor(
 
         /** The ALPN identifier of HTTP/2 over TLS (RFC 9113 section 3.2), whose connections a renegotiation ends (section 9.2.1). */
         private const val HTTP2_ALPN = "h2"
+
+        /**
+         * Whether [e], a read's failure on an established connection of [version], is OpenSSL refusing a post-handshake
+         * message: TLS 1.3, unexpected_message (10) sent by us, OpenSSL's SSL_R_UNEXPECTED_MESSAGE (ERR_LIB_SSL 20, reason 244).
+         */
+        internal fun refusedPostHandshakeMessage(
+            version: TlsVersion,
+            e: KslException.Internal,
+        ): Boolean =
+            version == TlsVersion.Tls13 && e.alert and 0x1ff == UNEXPECTED_MESSAGE_ALERT && e.lib == ERR_LIB_SSL &&
+                e.reason == SSL_R_UNEXPECTED_MESSAGE
+
+        private const val UNEXPECTED_MESSAGE_ALERT = 10
+        private const val ERR_LIB_SSL = 20
+        private const val SSL_R_UNEXPECTED_MESSAGE = 244
 
         /**
          * Runs a client handshake over [transportIn]/[transportOut] and returns once it completed and the server passed

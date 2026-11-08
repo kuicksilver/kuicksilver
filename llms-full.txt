@@ -2175,7 +2175,7 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   the TLS 1.2 suites of the profile, ECDHE with an AEAD (`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256 among them),
   none of which section 9.2.2 prohibits. Renegotiation stays refused: a server that asks for one (a HelloRequest) ends
   the connection with PROTOCOL_ERROR (section 9.2.1) and the calls on it fail with `Http2Exception.ConnectionClosed`
-  (`code == PROTOCOL_ERROR`, `byPeer == false`); over HTTP/1.1 the request is refused and the connection goes on.
+  (`code == PROTOCOL_ERROR`, `byPeer == false`); over HTTP/1.1 the renegotiation is refused and the connection goes on.
 - **Events and diagnostics.** `protocolSelected` comes once the connection is in hand and names its protocol
   (`HTTP_2_0`), then `connectionAcquired(HTTP_2_0, reused)`; the race reports `raceEnded(winner = HTTP_2_0)`; and
   `ProtocolDiagnostics.protocol` is `HTTP_2_0` (its `fallback` still says why HTTP/3 was not used).

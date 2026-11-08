@@ -118,7 +118,9 @@ public class H2ClientConnection private constructor(
          * [connectionErrorOf] maps a failure of [input] to the code of a connection error (RFC 9113 section 5.4.1) when the
          * transport reports something the protocol makes one, a TLS 1.2 renegotiation (section 9.2.1: PROTOCOL_ERROR): GOAWAY
          * with that code goes out on [output] and the streams fail with it; null (the default) takes the failure for a lost
-         * connection.
+         * connection. [closeTransportGracefully] ends the transport in order once the protocol is over and the last frames,
+         * a GOAWAY among them, are in [output] (with TLS: those bytes, then close_notify; RFC 9113 sections 5.4.1, 6.8),
+         * bounded by the caller; null uses [closeTransport], which also closes a failed or lost transport at once.
          */
         public suspend fun start(
             input: ByteReadChannel,
@@ -130,6 +132,7 @@ public class H2ClientConnection private constructor(
             onChange: () -> Unit = {},
             clock: () -> Long = monotonicNanos(),
             connectionErrorOf: (Throwable) -> Http2ErrorCode? = { null },
+            closeTransportGracefully: (() -> Unit)? = null,
         ): H2ClientConnection {
             val rt =
                 H2Runtime(
@@ -143,6 +146,7 @@ public class H2ClientConnection private constructor(
                     closeTransport,
                     onChange,
                     connectionErrorOf = connectionErrorOf,
+                    closeTransportGracefully = closeTransportGracefully,
                 )
             rt.start()
             try {
