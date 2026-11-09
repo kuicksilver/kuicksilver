@@ -127,6 +127,43 @@ class ServerH1TimeoutTest {
             }
         }
 
+    /**
+     * The TLS handshake is part of the first request's head: `requestHeaderTimeoutSeconds` bounds it, not a shorter deadline
+     * of the TLS layer (`TlsConfig.handshakeTimeout`, 10 s). Before, a client whose handshake took longer than 10 s (its
+     * Finished retransmitted on a lossy 200 ms path) was cut after it had sent its request, which it saw as the connection
+     * closed before any response. Here a client sends its ClientHello and stalls, with a 20 s head deadline: the connection
+     * is still open 12 s after it was accepted (2 s past the TLS layer's deadline), and closed by the head deadline (8 s
+     * later, with room to spare). Takes some 20 s.
+     */
+    @Test fun slowTlsHandshakeIsBoundedByTheHeadDeadlineOnly() =
+        serverTest {
+            val (server, port) =
+                tlsServer(
+                    configure = { requestHeaderTimeoutSeconds = 20 },
+                ) { routing { get("/") { call.respondText("ok") } } }
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                val hello = clientHello(selector)
+                val stuck = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                try {
+                    val w = stuck.openWriteChannel()
+                    w.writeFully(hello)
+                    w.flush()
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
+                    // open 2 s past the TLS layer's 10 s (counted from the accept, a moment before the count above)
+                    assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
+                        withTimeout(12.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                    }
+                    withTimeout(20.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                } finally {
+                    stuck.close()
+                }
+            } finally {
+                selector.close()
+                server.stop(100, 500)
+            }
+        }
+
     /** A head left unfinished on a plain connector gets 408 and the connection closes. */
     @Test fun negative_unfinishedHeadGets408() =
         serverTest {

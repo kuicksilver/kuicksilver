@@ -325,6 +325,10 @@ internal class H1Pool(
         var conn: H1Connection? = null
         var stream: H2Conn? = null
         var reused = false
+        // the connect timeout's start: a new HTTP/2 connection's wait for the server's SETTINGS gets what is left of it
+        val connectStarted =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
         try {
             withTimeout(data.connectTimeoutMillis(config)) {
                 // a request that may use HTTP/2 also watches its route: a stream that frees up, or a connection that
@@ -379,7 +383,9 @@ internal class H1Pool(
                         val dialer = offerH2 && signal != null
                         val opened =
                             try {
-                                connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns, offerH2).also { pool.adopt(it) }
+                                connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns, offerH2, connectStarted).also {
+                                    pool.adopt(it)
+                                }
                             } catch (e: Throwable) {
                                 pool.releasePermit(key)
                                 if (dialer) h2.endDial(key, null)
@@ -951,6 +957,9 @@ internal class H1Pool(
         key: String,
         dns: RequestDns,
         h2Ok: Boolean = false,
+        connectStarted: kotlin.time.TimeMark =
+            kotlin.time.TimeSource.Monotonic
+                .markNow(),
     ): PooledConnection {
         val (host, port) = if (proxy != null) proxy.host to proxy.port else url.host to url.port
         // through socks5:// (names resolved here) each address of the origin in turn while the proxy answers "network
@@ -1001,7 +1010,9 @@ internal class H1Pool(
                             sessions,
                         )
                     if (h2Ok && tls.negotiatedAlpn == "h2") {
-                        // RFC 9113 section 3.2: h2 over TLS; the server's preface (its SETTINGS) within the connect timeout
+                        // RFC 9113 section 3.2: h2 over TLS. Section 3.4: the request goes out right after our preface, without
+                        // waiting for the server's; its preface (its SETTINGS) must still arrive within the connect timeout, or
+                        // the connection ends with SETTINGS_TIMEOUT (h2Exchange maps that to the call's failure)
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         val client =
                             try {
@@ -1031,6 +1042,10 @@ internal class H1Pool(
                                             null
                                         }
                                     },
+                                    // what the connect timeout left after TCP, the proxy and TLS (at least 1 ms)
+                                    prefaceTimeout =
+                                        (data.connectTimeoutMillis(config).milliseconds - connectStarted.elapsedNow())
+                                            .coerceAtLeast(1.milliseconds),
                                 )
                             } catch (e: Throwable) {
                                 tls.close()

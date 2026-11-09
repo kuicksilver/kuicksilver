@@ -425,6 +425,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/2 client: the first request on a new connection no longer waits for the server's SETTINGS (RFC 9113 §3.4), which
+  saves one round trip per new connection. Only that request goes out before them: the other requests for the route wait
+  for the SETTINGS (and their SETTINGS_MAX_CONCURRENT_STREAMS) rather than open streams under the initial "unlimited" of
+  §6.5.2 or connections of their own. The server's SETTINGS must still arrive within what the connect timeout left after
+  TCP and TLS, else the connection ends with SETTINGS_TIMEOUT: the call fails with `ConnectTimeoutException` when its
+  request had no content or the content had not started, else with `Http2Exception.ConnectionClosed` (SETTINGS_TIMEOUT),
+  so that `HttpRequestRetry` does not take a request whose body went out for one that never left. A server that refuses
+  that first stream all the same (REFUSED_STREAM) does not count against the connection. `H2ClientConnection.start`
+  (internal API) gained `prefaceTimeout` and returns at once; `tryReserve` grants one stream until the server's SETTINGS.
+- TLS over TCP: the reader pump decrypts all the ciphertext a transport read brings before it hands the plaintext on (up
+  to 64 KiB in one write instead of one write per 16 KiB record) and wakes the drainer only after records that carried no
+  application data: the thread wake-ups between the pumps were the largest client CPU cost. A 10 MiB HTTP/1.1 download
+  over a paced 200 Mbit/s, 100 ms path took 0.44 s of client CPU instead of 0.57 s (median of 20); HTTP/2 about the same.
 - Ktor server: `udpSocketCount` above 1 serves HTTP/3 on every platform with a QUIC server (macOS, iOS and Windows
   included, the loops sharing one socket there); before, those platforms logged "HTTP/3 is not served" and answered over
   HTTP/1.1 without `Alt-Svc`. See docs/guide/ktor.md.
@@ -624,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server: the TLS handshake of a TCP connection was cut after 10 s (`TlsConfig.handshakeTimeout`'s default), not at
+  `requestHeaderTimeoutSeconds` (30 s) as documented. A client on a slow, lossy path (200 ms, 5 % loss) whose last
+  handshake flight needed retransmissions had its connection closed after it had sent its request, and saw "unexpected end
+  of stream". The request-head deadline alone bounds the handshake now.
 - QUIC: `maxConnections` and `maxConnectionsPerIp` bound the endpoint as a whole with `loops > 1`. Each loop counted its
   own connections, so N loops admitted up to N times either limit (SO_REUSEPORT spreads one address's source ports over
   the loops, and the in-process dispatch hashes new clients' connection IDs). The loops of a group now share the slots:

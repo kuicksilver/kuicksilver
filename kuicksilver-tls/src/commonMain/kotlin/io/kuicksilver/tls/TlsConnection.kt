@@ -7,6 +7,7 @@ package io.kuicksilver.tls
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
@@ -56,6 +57,16 @@ public class TlsConnection private constructor(
     internal suspend fun <T> withSslForTest(block: (Long) -> T): T = lock.withLock { block(s()) }
 
     private val scope = CoroutineScope(context + SupervisorJob(context[Job]) + Dispatchers.Default)
+
+    /** The record framing of everything fed to ksl, the handshake included (the reader pump counts records with it). */
+    private val framing = RecordFraming()
+
+    /** Tests: asked before each of the reader pump's feeds; true makes it as if ksl refused the ciphertext. */
+    @Volatile internal var refuseFeedForTest: (() -> Boolean)? = null
+
+    /** Whether the record framing was lost (tests). */
+    internal val framingLostForTest: Boolean get() = framing.lost
+
     private val inputChannel = ByteChannel(autoFlush = true)
     private val inputView = DeliverThenFail(inputChannel)
     private val outputChannel = ByteChannel(autoFlush = true)
@@ -355,6 +366,7 @@ public class TlsConnection private constructor(
             ) {
                 throw TlsException.Protocol(null, "ksl refused ciphertext", null)
             }
+            framing.complete(buf, off, used) // the handshake's reads can end inside the first record after it
             off += used
         }
     }
@@ -382,6 +394,9 @@ public class TlsConnection private constructor(
     private val drainLock = Mutex()
     private val drainBuffer = ByteArray(16 * 1024)
 
+    /** Times the reader pump woke the drainer after a pass of records (tests: not after passes of application data). */
+    @Volatile internal var drainWakeupsForTest: Int = 0
+
     /** Signalled by the reader pump when what it fed may have produced ciphertext (handshake messages, alerts, key updates). */
     private val drainRequests = Channel<Unit>(Channel.CONFLATED)
 
@@ -402,58 +417,126 @@ public class TlsConnection private constructor(
         }
     }
 
+    /**
+     * Decrypts the peer's records into [input]. Per pass it takes all the ciphertext the transport holds (up to
+     * [READ_CHUNK]), feeds it a record's worth at a time and gathers the plaintext of every record decrypted meanwhile,
+     * handing it to [input] in one write. Each hand-over to another coroutine can cost a thread wake-up, which cost more
+     * than the decryption: the drainer is asked to send what reading produced only when it can have produced something
+     * (a pass of records that carried no application data: a KeyUpdate, a NewSessionTicket, an alert; a renegotiation
+     * refused; the peer's close_notify; ksl waiting to write), not after every pass of application data.
+     */
     private suspend fun readerPump() {
-        val cipher = ByteArray(16 * 1024)
-        val plain = ByteArray(16 * 1024)
-        try {
+        val cipher = ByteArray(READ_CHUNK)
+        val plain = ByteArray(READ_CHUNK)
+        var have = 0 // plaintext gathered in [plain], not handed to the application yet
+        // the records of a pass: those whose last byte was fed, and the reads that gave application data (one per record,
+        // SSL_read takes one record at a time); more of the first means a record without application data
+        var recordsInPass = 0
+        var dataReadsInPass = 0
+        var firstPass = true
+
+        // a ticket that preceded these bytes is cached before the application sees them: a client that reads one response
+        // and closes would otherwise cancel this pump first
+        suspend fun deliver() {
+            rememberSession()
+            if (have == 0) return
+            inputChannel.writeFully(plain, 0, have)
+            have = 0
+        }
+
+        /** Reads every record ksl can decrypt now; false when the input ended (close_notify, or the drainer failed). */
+        suspend fun decryptAvailable(): Boolean {
             while (true) {
-                // drain plaintext already decryptable
-                while (true) {
-                    val r =
-                        try {
-                            lock.withLock { Ksl.tcpRead(s(), plain, 0, plain.size) }
-                        } catch (
-                            e: KslException.Internal,
-                        ) {
-                            if (refusedPostHandshakeMessage(protocolVersion, e)) refusedAfterHandshake = true
-                            throw e.toTlsFailure(presented).first
-                        }
-                    // a read that refused the peer's renegotiation answers nothing read (ksl_tcp_read): what came after it is
-                    // read only once this looked
-                    if (r == 0) checkRenegotiation()
-                    when {
-                        r > 0 -> {
-                            // a ticket that preceded these bytes is cached before the application sees them: a
-                            // client that reads one response and closes would otherwise cancel this pump first
-                            rememberSession()
-                            inputChannel.writeFully(plain, 0, r)
-                        }
-
-                        r == 0 -> {
-                            // ksl must write first (a handshake message under way) and its pair is full: the records
-                            // already fed are read once the drainer made room, not when the transport brings more input
-                            drained.tryReceive()
-                            drainRequests.trySend(Unit)
-                            // closed when the drainer failed, which ended the input with its failure
-                            if (drained.receiveCatching().isClosed) return
-                        }
-
-                        r == -KslConst.EOF -> {
-                            drainRequests.trySend(Unit)
-                            inputChannel.flushAndClose()
-                            return
-                        }
-
-                        else -> {
-                            break
-                        } // WANT_READ
+                if (plain.size - have < MAX_PLAINTEXT_RECORD) deliver()
+                val r =
+                    try {
+                        // at most one record per call (SSL_read): offering more only makes the JNI layer copy and wipe more
+                        lock.withLock { Ksl.tcpRead(s(), plain, have, MAX_PLAINTEXT_RECORD) }
+                    } catch (
+                        e: KslException.Internal,
+                    ) {
+                        deliver() // the plaintext before the failure stays the application's
+                        if (refusedPostHandshakeMessage(protocolVersion, e)) refusedAfterHandshake = true
+                        throw e.toTlsFailure(presented).first
                     }
+                when {
+                    r > 0 -> {
+                        have += r
+                        dataReadsInPass++
+                    }
+
+                    r == 0 -> {
+                        // a read that refused the peer's renegotiation answers nothing read (ksl_tcp_read): the plaintext
+                        // before it goes first, and what came after it is read only once this looked
+                        deliver()
+                        checkRenegotiation()
+                        // ksl must write first (a handshake message under way) and its pair is full: the records already
+                        // fed are read once the drainer made room, not when the transport brings more input
+                        drained.tryReceive()
+                        drainRequests.trySend(Unit)
+                        // closed when the drainer failed, which ended the input with its failure
+                        if (drained.receiveCatching().isClosed) return false
+                    }
+
+                    r == -KslConst.EOF -> {
+                        deliver()
+                        drainRequests.trySend(Unit)
+                        inputChannel.flushAndClose()
+                        return false
+                    }
+
+                    else -> {
+                        return true
+                    } // WANT_READ
                 }
-                drainRequests.trySend(Unit)
-                rememberSession()
-                val n = transportIn.readAvailable(cipher, 0, cipher.size)
+            }
+        }
+        try {
+            if (!decryptAvailable()) return
+            while (true) {
+                // nothing more to decrypt: what was gathered goes to the application before the pump waits for the transport.
+                // A record without application data may have produced ciphertext (an alert; an answer to the peer's
+                // KeyUpdate, which RFC 9846 section 4.7.3 wants "prior to sending its next Application Data record", and the
+                // writer pump drains before that anyway): the drainer sends it now. The pass before the first transport read
+                // always asks (records that came with the handshake's last flight), and so does every pass once the record
+                // framing could not be followed
+                if (firstPass || framing.lost || recordsInPass > dataReadsInPass) {
+                    drainWakeupsForTest++
+                    drainRequests.trySend(Unit)
+                }
+                firstPass = false
+                recordsInPass = 0
+                dataReadsInPass = 0
+                deliver()
+                var n = transportIn.readAvailable(cipher, 0, cipher.size)
                 if (n < 0) throw TlsException.Protocol(null, "transport closed without close_notify (truncation)", null)
-                feed(cipher, n)
+                // one read gives at most one buffer segment (8 KiB): what else is there already joins this pass. A transport
+                // that failed meanwhile throws its cause here even with bytes buffered (ktor's readBuffer): the bytes read so
+                // far are fed first, and the next pass's read reports the failure
+                try {
+                    while (n < cipher.size && transportIn.availableForRead > 0) {
+                        val more = transportIn.readAvailable(cipher, n, cipher.size - n)
+                        if (more <= 0) break
+                        n += more
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    // reported by the next pass's first read
+                }
+                var off = 0
+                while (off < n) {
+                    // a record's worth at a time: ksl's pair takes some 17 KiB, and the JNI layer copies all it is offered
+                    val len = minOf(n - off, FEED_CHUNK)
+                    val used = if (refuseFeedForTest?.invoke() == true) 0 else lock.withLock { Ksl.tcpFeed(s(), cipher, off, len) }
+                    if (used <= 0) {
+                        deliver() // the plaintext of this pass before the refusal stays the application's
+                        throw TlsException.Protocol(null, "ksl refused ciphertext", null)
+                    }
+                    recordsInPass += framing.complete(cipher, off, used)
+                    off += used
+                    if (!decryptAvailable()) return
+                }
             }
         } catch (
             e: CancellationException,
@@ -771,6 +854,15 @@ public class TlsConnection private constructor(
          * keeps as many as it uses at once. A server cannot see the client's parallelism before the connections arrive.
          */
         internal const val TCP_TICKETS: Int = 6
+
+        /** Ciphertext the reader pump takes from the transport, and plaintext it gathers, per pass. */
+        internal const val READ_CHUNK: Int = 64 * 1024
+
+        /** The most plaintext one TLS record carries (RFC 9846 section 5.1: 2^14 bytes). */
+        internal const val MAX_PLAINTEXT_RECORD: Int = 16 * 1024
+
+        /** Ciphertext fed to ksl per call: a whole record (2^14 + 256 bytes and its header) fits ksl's pair of some 17 KiB. */
+        internal const val FEED_CHUNK: Int = 16 * 1024 + 256 + 5
 
         /** The ALPN identifier of HTTP/2 over TLS (RFC 9113 section 3.2), whose connections a renegotiation ends (section 9.2.1). */
         private const val HTTP2_ALPN = "h2"
@@ -1186,5 +1278,54 @@ private class DeliverThenFail(
 
     override fun cancel(cause: Throwable?) {
         inner.cancel(cause)
+    }
+}
+
+/**
+ * Follows the TLS record framing of the ciphertext fed to ksl (RFC 9846 section 5.1: a 5-byte header whose last two bytes
+ * are the length) to count the records whose last byte went in; it follows a connection from its first byte, the
+ * handshake's included. A header that cannot be one (anything unexpected) makes it [lost] for good: the reader pump then wakes the drainer after every pass, as
+ * it always did.
+ */
+internal class RecordFraming {
+    private val header = ByteArray(5)
+    private var headerHave = 0
+    private var bodyLeft = 0
+
+    var lost: Boolean = false
+        private set
+
+    /** Accounts for [len] bytes of [buf] from [off]; returns how many records they completed. */
+    fun complete(
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int {
+        var p = off
+        val end = off + len
+        var done = 0
+        while (p < end && !lost) {
+            if (bodyLeft > 0) {
+                val k = minOf(bodyLeft, end - p)
+                bodyLeft -= k
+                p += k
+                if (bodyLeft == 0) done++
+                continue
+            }
+            header[headerHave++] = buf[p++]
+            if (headerHave < header.size) continue
+            headerHave = 0
+            val type = header[0].toInt() and 0xff
+            val length = ((header[3].toInt() and 0xff) shl 8) or (header[4].toInt() and 0xff)
+            // content types 20..24 (RFC 9846 section 5.1, RFC 6520), legacy version 3.x, at most 2^14 + 2048 bytes (TLS 1.2)
+            if (type !in 20..24 || header[1].toInt() != 3 || length > (1 shl 14) + 2048) {
+                lost = true
+            } else if (length == 0) {
+                done++
+            } else {
+                bodyLeft = length
+            }
+        }
+        return done
     }
 }

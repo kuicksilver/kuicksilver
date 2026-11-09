@@ -8,6 +8,7 @@
 
 package io.kuicksilver.ktor.client.h2
 
+import io.ktor.client.plugins.ConnectTimeoutException
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.client.request.ResponseAdapterAttributeKey
@@ -186,6 +187,14 @@ internal suspend fun h2Exchange(
     } catch (e: Throwable) {
         release() // this attempt is over: its stream must not hold the connection or a stream slot for the repeat
         if (e !is Http2Exception) throw e
+        // RFC 9113 section 3.4: the request's HEADERS went out before the server's preface, which never came within the
+        // connect timeout (the connection ended with SETTINGS_TIMEOUT). A request without content, or whose content had not
+        // started, fails as a connect timeout (HttpRequestRetry may send it again: a server that never spoke HTTP/2 to us
+        // took nothing more than its head); one whose content had started fails with the connection's end itself, so that
+        // nothing takes it for a request that never left
+        if (conn.client.serverPrefaceMissed && stream.openedBeforeServerSettings && !bodyStarted) {
+            throw ConnectTimeoutException(data, e)
+        }
         val consumed = bodyStarted && !body.isReplayable()
         // on the stream, or for the whole connection: a GOAWAY with HTTP_1_1_REQUIRED reports the streams above its last
         // one as refused (not processed), and those up to it as lost with the connection: those may have been processed
@@ -202,8 +211,11 @@ internal suspend fun h2Exchange(
             throw H2Http11Required(e, consumed, mayRepeat)
         }
         // REFUSED_STREAM twice on one connection retires it (OkHttp RealConnection.trackFailure); the streams a GOAWAY
-        // refuses are not counted (the connection is going away already, and one GOAWAY may refuse many)
+        // refuses are not counted (the connection is going away already, and one GOAWAY may refuse many), nor the stream
+        // opened before the server's SETTINGS (RFC 9113 section 3.4): it went out before the server's limit was known, and
+        // section 5.1.2 lets the server refuse it under a limit of 0
         if (e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.REFUSED_STREAM && conn.client.goAwayCode == null &&
+            !stream.openedBeforeServerSettings &&
             conn.refusedStreams.addAndFetch(1) >= 2
         ) {
             conn.client.shutdown()
