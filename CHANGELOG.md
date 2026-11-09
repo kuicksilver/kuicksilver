@@ -637,6 +637,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server: a response whose content is a channel that failed (`call.respond(channel)`, `ReadChannelContent`; a proxy
+  relaying an upstream body that was cut) went out as complete over HTTP/1.1 and HTTP/3 when the failure was recorded
+  before the engine read the channel, or while it waited for the client: ktor-io's `copyTo`, under Ktor's
+  `respondFromChannel`, stops on a channel failed with a cause as at its end, without throwing. Without a Content-Length
+  the response then ended with the last chunk (RFC 9112 section 7.1) or a FIN (RFC 9114 section 4.1), and the client took
+  the cut body for the whole one. The failure now cuts the response short: the connection ends without the last chunk,
+  the HTTP/3 stream is reset. HTTP/2 already reset the stream.
 - Ktor server: the TLS handshake of a TCP connection was cut after 10 s (`TlsConfig.handshakeTimeout`'s default), not at
   `requestHeaderTimeoutSeconds` (30 s) as documented. A client on a slow, lossy path (200 ms, 5 % loss) whose last
   handshake flight needed retransmissions had its connection closed after it had sent its request, and saw "unexpected end

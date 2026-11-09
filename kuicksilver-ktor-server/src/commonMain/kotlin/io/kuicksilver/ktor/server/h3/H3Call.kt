@@ -32,6 +32,7 @@ import io.kuicksilver.ktor.server.ReceivedEarlyKey
 import io.kuicksilver.ktor.server.RequestPriorityKey
 import io.kuicksilver.ktor.server.WebTransportRequestKey
 import io.kuicksilver.ktor.server.WebTransportUpgrade
+import io.kuicksilver.ktor.server.failureIsNoEnd
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
@@ -239,6 +240,11 @@ internal open class H3Response(
 
     override suspend fun respondNoContent(content: OutgoingContent.NoContent) {
         start().finish()
+    }
+
+    /** A channel that failed cuts the response short (a reset, RFC 9114 section 4.1), never ends it with a FIN ([failureIsNoEnd]). */
+    override suspend fun respondFromChannel(readChannel: ByteReadChannel) {
+        super.respondFromChannel(readChannel.failureIsNoEnd())
     }
 
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
