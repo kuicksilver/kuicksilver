@@ -7,22 +7,30 @@ package io.kuicksilver.ktor.network
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.SocketAddress
+import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
+import io.ktor.utils.io.cancel
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.reader
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writer
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
@@ -32,6 +40,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * A failed handshake closes its socket in stages, as RFC 9112 section 9.6 describes for an HTTP server's last response:
@@ -130,8 +140,87 @@ class TlsHandshakeFailureCloseTest {
             assertIs<TlsException>(handshake.await())
         }
 
+    /** The handshake's own deadline passed: the peer is silent, and the socket closes at once, with no wait for it. */
+    @Test fun aHandshakeThatTimedOutClosesWithoutWaitingForThePeer() =
+        runTest {
+            val peer = PeerSocket(coroutineContext[ContinuationInterceptor]!!)
+            val handshake = async { runCatching { peer.tlsServer(serverConfig { handshakeTimeout = 1.seconds }) }.exceptionOrNull() }
+            peer.closed.await()
+            assertEquals(1.seconds.inWholeMilliseconds, currentTime, "closed at the handshake's deadline")
+            assertIs<TlsException.Protocol>(handshake.await())
+        }
+
+    /** A caller's deadline that passes during the wait for the peer leaves the handshake's own failure the one thrown. */
+    @Test fun aCallersDeadlineDuringTheWaitKeepsTheHandshakeFailure() =
+        runTest {
+            val peer = PeerSocket(coroutineContext[ContinuationInterceptor]!!)
+            val handshake =
+                async { runCatching { withTimeoutOrNull(500.milliseconds) { peer.tlsServer(serverConfig()) } } }
+            peer.sendMalformedClientHello()
+            peer.readAlertAndFin()
+            peer.closed.await()
+            assertEquals(500L, currentTime, "the caller's deadline ended the wait")
+            val result = handshake.await()
+            assertIs<TlsException>(result.exceptionOrNull(), "the handshake's failure was replaced: $result")
+        }
+
+    /** A client's failed handshake waits for the server's close for [TlsSocket.CLIENT_ALERT_LINGER] at most. */
+    @Test fun aClientsFailedHandshakeWaitsForTheServerBriefly() =
+        runTest {
+            val peer = PeerSocket(coroutineContext[ContinuationInterceptor]!!)
+            val handshake = async { runCatching { peer.tls(clientConfig()) }.exceptionOrNull() }
+            // a ServerHello with an empty body, which the client answers with a fatal alert
+            peer.toServer.writeFully(byteArrayOf(0x16, 0x03, 0x03, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00))
+            peer.toServer.flush()
+            val sent = peer.fromServer.readBuffer().readByteArray() // the ClientHello, the alert, then the FIN
+            assertTrue(sent.isNotEmpty() && sent[0] == HANDSHAKE_RECORD, "the ClientHello first")
+            val start = currentTime
+            peer.closed.await()
+            assertEquals(TlsSocket.CLIENT_ALERT_LINGER.inWholeMilliseconds, currentTime - start)
+            assertIs<TlsException>(handshake.await())
+        }
+
+    /**
+     * After the handshake: an application stream that failed ends with the fatal alert internal_error and a FIN (RFC 9846
+     * section 6.1), then the socket reads and drops what the peer still sends until it closes, as after a failed handshake.
+     */
+    @Test fun negative_aFailedStreamReadsWhatThePeerStillSendsUntilItsCloseBeforeClosing() =
+        runBlocking {
+            withTimeout(20.seconds) {
+                val peer = PeerSocket(coroutineContext[ContinuationInterceptor]!!)
+                val clientIn = ByteChannel()
+                val fin = CompletableDeferred<Unit>()
+                launch {
+                    peer.fromServer.copyTo(clientIn)
+                    fin.complete(Unit)
+                    clientIn.flushAndClose()
+                }
+                val server = async { peer.tlsServer(serverConfig()) }
+                val clientJob = Job()
+                try {
+                    TlsConnection.client(clientIn, peer.toServer, clientConfig(), clientJob)
+                    val out = server.await().openWriteChannel()
+                    out.writeFully("part of a response".encodeToByteArray())
+                    out.flush()
+                    out.cancel(IOException("the handler failed"))
+                    fin.await() // the alert, then the FIN
+                    assertFalse(peer.closed.isCompleted, "closed while the peer may still be sending: what it sends would meet a reset")
+                    peer.toServer.writeFully(ByteArray(16 * 1024))
+                    peer.toServer.flush()
+                    assertFalse(peer.closed.isCompleted, "closed before the peer's own close")
+                    peer.toServer.flushAndClose()
+                    peer.closed.await()
+                } finally {
+                    clientJob.cancel()
+                }
+            }
+        }
+
     private companion object {
         /** The record content type of an alert (RFC 9846 section 5.1). */
         const val ALERT_RECORD: Byte = 21
+
+        /** The record content type of a handshake message. */
+        const val HANDSHAKE_RECORD: Byte = 22
     }
 }

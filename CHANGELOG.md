@@ -658,8 +658,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still be sending (a TLS 1.3 client sends its request right after its Finished, before it learns that a server that
   requires a client certificate refuses it). Those bytes met a reset, which on Windows erases the alert from the peer's
   receive buffer: the client saw "An established connection was aborted" instead of `certificate_required`. The close is
-  now staged as RFC 9112 section 9.6 describes: after the alert and the FIN, what the peer sends is read and dropped until
-  it closes too, for 2 s and 256 KiB at most, then the socket closes.
+  now staged as RFC 9112 section 9.6 describes: after the alert and the FIN, what the peer sends is read and dropped (at
+  the TCP layer; TLS processes nothing after its alert) until it closes too, for 2 s and 256 KiB at most (250 ms after a
+  client's failed handshake; no wait after the handshake's own deadline), then the socket closes. A stream that fails
+  after the handshake, whose internal_error alert goes out the same way, closes the same way.
 - Ktor engines, WebSockets: a connection that failed in the middle of a frame (a reset while the session's reader was
   behind, or while a compressed message was inflated) ended the session's input as if the peer had closed the stream,
   without the failure. The input now fails with the connection's cause.
