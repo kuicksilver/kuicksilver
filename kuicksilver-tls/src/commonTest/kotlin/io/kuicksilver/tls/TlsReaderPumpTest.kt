@@ -19,6 +19,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -81,6 +82,18 @@ class TlsReaderPumpTest {
 
         suspend fun deliverRecord() {
             toClient.writeFully(records.receive())
+        }
+
+        /**
+         * The next records, at least [bytes] of them, in one write (one transport read on the client's side); returns the
+         * sizes of the records delivered.
+         */
+        suspend fun deliverAtLeast(bytes: Int): List<Int> {
+            var all = ByteArray(0)
+            val sizes = ArrayList<Int>()
+            while (all.size < bytes) all += records.receive().also { sizes += it.size }
+            toClient.writeFully(all)
+            return sizes
         }
 
         private suspend fun readFully(
@@ -212,6 +225,146 @@ class TlsReaderPumpTest {
             } finally {
                 c.close()
                 s.close()
+            }
+        }
+
+    /**
+     * The client's first application data reaches the server in the same transport read as its Finished, the read ending
+     * inside a record: the record framing follows the handshake's feeds too, so it is not lost, and the server's drainer
+     * stays quiet for the data that follows.
+     */
+    @Test fun firstApplicationDataInTheReadOfTheFinishedKeepsTheFraming(): Unit =
+        runBlocking {
+            val pair = HeldClientPair()
+            val (cd, sd) = connect(TcpFixtures.client(), TcpFixtures.server(), pair)
+            val c = withTimeout(20.seconds) { cd.await() } // a TLS 1.3 client is done once its Finished is written
+            val data = ByteArray(1 shl 20) { (it * 7).toByte() }
+            val send =
+                async {
+                    c.output.writeFully(data, 0, data.size)
+                    c.output.flush()
+                }
+            // the Finished and more than the handshake's 16 KiB read of application data, released at once
+            withTimeout(20.seconds) { while (pair.held < 40_000) pair.grew.receive() }
+            pair.release()
+            val s = withTimeout(20.seconds) { sd.await() }
+            try {
+                val got = withTimeout(30.seconds) { s.input.readExactly(data.size) }
+                send.await()
+                assertContentEquals(data, got)
+                kotlin.test.assertFalse(s.framingLostForTest, "the framing was lost after the handshake")
+                assertTrue(s.drainWakeupsForTest <= 2, "the drainer woke ${s.drainWakeupsForTest} times for application data")
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
+
+    /**
+     * A pair whose client-to-server direction passes the ClientHello and then holds everything until [release], which
+     * hands it over in one write.
+     */
+    private inner class HeldClientPair : ChannelPair() {
+        private val fromClient = ByteChannel(autoFlush = true)
+        private val toServer = ByteChannel(autoFlush = true)
+        private val buffer = kotlinx.io.Buffer()
+        private val released = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+        @kotlin.concurrent.Volatile var held = 0L
+        val grew = Channel<Unit>(Channel.CONFLATED)
+
+        override val clientOut: ByteWriteChannel get() = fromClient
+        override val serverIn: ByteReadChannel get() = toServer
+
+        init {
+            relays.launch {
+                val buf = ByteArray(65_536)
+                var first = true
+                while (true) {
+                    val n = fromClient.readAvailable(buf, 0, buf.size)
+                    if (n < 0) break
+                    if (first || released.isCompleted) {
+                        first = false
+                        toServer.writeFully(buf, 0, n)
+                    } else {
+                        synchronizedAppend(buf, n)
+                    }
+                }
+            }
+        }
+
+        private val lock = kotlinx.coroutines.sync.Mutex()
+
+        private suspend fun synchronizedAppend(
+            buf: ByteArray,
+            n: Int,
+        ) {
+            lock.lock()
+            try {
+                if (released.isCompleted) {
+                    toServer.writeFully(buf, 0, n)
+                    return
+                }
+                buffer.write(buf, 0, n)
+                held = buffer.size
+            } finally {
+                lock.unlock()
+            }
+            grew.trySend(Unit)
+        }
+
+        suspend fun release() {
+            lock.lock()
+            try {
+                val all = buffer.readByteArray()
+                toServer.writeFully(all)
+                released.complete(Unit)
+            } finally {
+                lock.unlock()
+            }
+        }
+    }
+
+    /**
+     * ksl refuses ciphertext in the middle of a pass: the plaintext the pass decrypted before reaches the application, and
+     * the failure comes after it, as for any failure after data.
+     */
+    @Test fun negative_plaintextBeforeARefusedFeedIsDelivered(): Unit =
+        runBlocking {
+            val pair = RelayPair()
+            val (c, s) = both(pair)
+            try {
+                val ping = "ready".encodeToByteArray()
+                s.output.writeFully(ping, 0, ping.size)
+                s.output.flush()
+                withTimeout(10.seconds) { c.input.readExactly(ping.size) }
+                pair.manual = true
+                // more than one feed's worth arrives in one read: the first feed takes the records that fit (and part of the
+                // next), the second feed is refused
+                var feeds = 0
+                c.refuseFeedForTest = { ++feeds >= 2 }
+                val data = ByteArray(4 * TlsConnection.MAX_PLAINTEXT_RECORD) { (it * 3).toByte() }
+                s.output.writeFully(data, 0, data.size)
+                s.output.flush()
+                val sizes = pair.deliverAtLeast(TlsConnection.FEED_CHUNK + 1)
+                // the plaintext of the records wholly inside the first feed (TLS 1.3: header 5, content type 1, tag 16)
+                var fed = 0
+                var plain = 0
+                for (size in sizes) {
+                    if (fed + size > TlsConnection.FEED_CHUNK) break
+                    fed += size
+                    plain += size - 22
+                }
+                assertTrue(plain > 0)
+                val first = withTimeout(10.seconds) { c.input.readExactly(plain) }
+                assertContentEquals(data.copyOf(plain), first)
+                val e = kotlin.test.assertFails { withTimeout(10.seconds) { c.input.readExactly(1) } }
+                val tls = generateSequence(e) { it.cause }.filterIsInstance<TlsException>().firstOrNull()
+                assertTrue(tls?.message?.contains("refused ciphertext") == true, "got $e")
+            } finally {
+                c.close()
+                s.close()
+                relays.cancel()
             }
         }
 

@@ -7,6 +7,7 @@ package io.kuicksilver.tls
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
@@ -56,6 +57,16 @@ public class TlsConnection private constructor(
     internal suspend fun <T> withSslForTest(block: (Long) -> T): T = lock.withLock { block(s()) }
 
     private val scope = CoroutineScope(context + SupervisorJob(context[Job]) + Dispatchers.Default)
+
+    /** The record framing of everything fed to ksl, the handshake included (the reader pump counts records with it). */
+    private val framing = RecordFraming()
+
+    /** Tests: asked before each of the reader pump's feeds; true makes it as if ksl refused the ciphertext. */
+    @Volatile internal var refuseFeedForTest: (() -> Boolean)? = null
+
+    /** Whether the record framing was lost (tests). */
+    internal val framingLostForTest: Boolean get() = framing.lost
+
     private val inputChannel = ByteChannel(autoFlush = true)
     private val inputView = DeliverThenFail(inputChannel)
     private val outputChannel = ByteChannel(autoFlush = true)
@@ -355,6 +366,7 @@ public class TlsConnection private constructor(
             ) {
                 throw TlsException.Protocol(null, "ksl refused ciphertext", null)
             }
+            framing.complete(buf, off, used) // the handshake's reads can end inside the first record after it
             off += used
         }
     }
@@ -422,7 +434,6 @@ public class TlsConnection private constructor(
         var recordsInPass = 0
         var dataReadsInPass = 0
         var firstPass = true
-        val framing = RecordFraming()
 
         // a ticket that preceded these bytes is cached before the application sees them: a client that reads one response
         // and closes would otherwise cancel this pump first
@@ -497,13 +508,19 @@ public class TlsConnection private constructor(
                 recordsInPass = 0
                 dataReadsInPass = 0
                 deliver()
-                val n = transportIn.readAvailable(cipher, 0, cipher.size)
+                var n = transportIn.readAvailable(cipher, 0, cipher.size)
                 if (n < 0) throw TlsException.Protocol(null, "transport closed without close_notify (truncation)", null)
+                // one read gives at most one buffer segment (8 KiB): what else is there already joins this pass
+                while (n < cipher.size && transportIn.availableForRead > 0) {
+                    val more = transportIn.readAvailable(cipher, n, cipher.size - n)
+                    if (more <= 0) break
+                    n += more
+                }
                 var off = 0
                 while (off < n) {
                     // a record's worth at a time: ksl's pair takes some 17 KiB, and the JNI layer copies all it is offered
                     val len = minOf(n - off, FEED_CHUNK)
-                    val used = lock.withLock { Ksl.tcpFeed(s(), cipher, off, len) }
+                    val used = if (refuseFeedForTest?.invoke() == true) 0 else lock.withLock { Ksl.tcpFeed(s(), cipher, off, len) }
                     if (used <= 0) {
                         deliver() // the plaintext of this pass before the refusal stays the application's
                         throw TlsException.Protocol(null, "ksl refused ciphertext", null)
@@ -1258,8 +1275,8 @@ private class DeliverThenFail(
 
 /**
  * Follows the TLS record framing of the ciphertext fed to ksl (RFC 9846 section 5.1: a 5-byte header whose last two bytes
- * are the length) to count the records whose last byte went in. A header that cannot be one (the handshake fed part of a
- * record, or anything unexpected) makes it [lost] for good: the reader pump then wakes the drainer after every pass, as
+ * are the length) to count the records whose last byte went in; it follows a connection from its first byte, the
+ * handshake's included. A header that cannot be one (anything unexpected) makes it [lost] for good: the reader pump then wakes the drainer after every pass, as
  * it always did.
  */
 internal class RecordFraming {
