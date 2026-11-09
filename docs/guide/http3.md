@@ -196,7 +196,9 @@ while (true) {
 
 Malformed requests never reach `acceptRequest`: their stream is reset with `H3_MESSAGE_ERROR` (that includes a
 `content-length` that is not digits or conflicts with another; identical repeats collapse to one field). A response
-field the validator rejects makes `respond` throw and resets the stream with `H3_INTERNAL_ERROR`. A request body the
+field the validator rejects makes `respond` throw and resets the stream with `H3_INTERNAL_ERROR`. A response whose
+`output` the application cancels (with any cause) is abandoned: the stream is reset with `H3_REQUEST_CANCELLED` (RFC
+9114 section 4.1.1), never ended with a FIN. A request body the
 application has not finished reading when its response is complete is dropped with `STOP_SENDING H3_NO_ERROR`; the
 client's upload then ends with `QuicException.StreamError.Stopped` (code `H3_NO_ERROR`) in its body channel, and the
 stream is retired as soon as the client's FIN or reset arrives, so unread uploads never exhaust the stream credit. Field

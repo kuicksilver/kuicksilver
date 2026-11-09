@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.server.h3
 
 import io.ktor.http.Headers
 import io.ktor.http.HeadersBuilder
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
@@ -20,6 +21,7 @@ import io.ktor.server.engine.BaseApplicationResponse
 import io.ktor.server.request.RequestCookies
 import io.ktor.server.request.encodeParameters
 import io.ktor.server.response.ResponseHeaders
+import io.ktor.util.cio.use
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
@@ -32,6 +34,7 @@ import io.kuicksilver.ktor.server.ReceivedEarlyKey
 import io.kuicksilver.ktor.server.RequestPriorityKey
 import io.kuicksilver.ktor.server.WebTransportRequestKey
 import io.kuicksilver.ktor.server.WebTransportUpgrade
+import io.kuicksilver.ktor.server.copyContentFrom
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
@@ -239,6 +242,20 @@ internal open class H3Response(
 
     override suspend fun respondNoContent(content: OutgoingContent.NoContent) {
         start().finish()
+    }
+
+    /**
+     * A channel that failed cuts the response short (the stream is reset, RFC 9114 section 4.1.1), never ends it with a FIN
+     * ([copyContentFrom]). A response without content (HEAD, 204, 304) does not read the channel: it ends after its head.
+     */
+    override suspend fun respondFromChannel(readChannel: ByteReadChannel) {
+        val status = statusCode.value
+        if (call.request.local.method == HttpMethod.Head || status == 204 || status == 304) {
+            readChannel.cancel(null)
+            start().finish()
+            return
+        }
+        responseChannel().use { copyContentFrom(readChannel, headers[HttpHeaders.ContentLength]?.toLong()) }
     }
 
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {

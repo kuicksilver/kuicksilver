@@ -1262,7 +1262,8 @@ private class DeliverThenFail(
 
     override val closedCause: Throwable? get() = failure ?: inner.closedCause
 
-    override val isClosedForRead: Boolean get() = failure == null && inner.isClosedForRead
+    // in this order: the failure is recorded before inner closes, so a failure between the two reads is never a clean end
+    override val isClosedForRead: Boolean get() = inner.isClosedForRead && failure == null
 
     override val readBuffer: kotlinx.io.Source get() {
         val f = failure

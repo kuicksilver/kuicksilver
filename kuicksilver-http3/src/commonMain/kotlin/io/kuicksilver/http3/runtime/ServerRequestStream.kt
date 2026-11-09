@@ -45,6 +45,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -571,11 +572,13 @@ internal class ResponseWriterImpl(
                     st.output.flushAndClose()
                     request?.responseComplete()
                 }
-            } catch (e: CancellationException) {
-                throw e
             } catch (e: Throwable) {
-                // the application failed mid-body
-                if (H3Session.transportCause(e) == null) runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
+                // the pump itself was cancelled (the connection is gone): nothing more goes out
+                if (e is CancellationException && !isActive) throw e
+                // the application's content failed mid-body, a channel cancelled with a CancellationException included: the
+                // response is abandoned after partial processing, "it SHOULD abort its response stream with the error code
+                // H3_REQUEST_CANCELLED" (RFC 9114 section 4.1.1); never left without a FIN or a reset
+                if (H3Session.transportCause(e) == null) runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
                 channel.cancel(session.map(e))
                 request?.done()
             }

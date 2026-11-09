@@ -272,8 +272,9 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
             handleFailure(call, error)
         } finally {
             // a call that failed after Ktor committed its response (an upgrade that failed before its answer went out)
-            // cannot get the 500 any more: the stream is reset, never left waiting for an answer (RFC 9114 section 8.1)
-            if (!call.response.answered) runCatching { req.reset(Http3ErrorCode.INTERNAL_ERROR) }
+            // cannot get the 500 any more: the response is abandoned after partial processing, so the stream is reset with
+            // H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), never left waiting for an answer
+            if (!call.response.answered) runCatching { req.reset(Http3ErrorCode.REQUEST_CANCELLED) }
             events.emit("requestEnded") { requestEnded(HttpProtocolVersion.HTTP_3_0, call, failure) }
         }
     }

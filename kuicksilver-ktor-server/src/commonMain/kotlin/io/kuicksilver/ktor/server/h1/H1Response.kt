@@ -18,6 +18,7 @@ import io.ktor.http.cio.encodeChunked
 import io.ktor.http.content.OutgoingContent
 import io.ktor.server.engine.BaseApplicationResponse
 import io.ktor.server.response.ResponseHeaders
+import io.ktor.util.cio.use
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.asByteWriteChannel
@@ -26,6 +27,7 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.server.ServerWebSocketInput
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
+import io.kuicksilver.ktor.server.copyContentFrom
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -152,13 +154,17 @@ internal class H1Response(
         super.respondWriteChannelContent(content)
     }
 
-    /** As [respondWriteChannelContent]: the application's channel is not read for a response without content. */
+    /**
+     * As [respondWriteChannelContent]: the application's channel is not read for a response without content. A channel
+     * that failed cuts the response short, never ends it with the last chunk (RFC 9112 section 7.1) or, delimited by the
+     * close, with a FIN (section 8; [copyContentFrom]).
+     */
     override suspend fun respondFromChannel(readChannel: ByteReadChannel) {
         if (contentDropped()) {
             responseChannel()
             return
         }
-        super.respondFromChannel(readChannel)
+        responseChannel().use { copyContentFrom(readChannel, headers[HttpHeaders.ContentLength]?.toLong()) }
     }
 
     /** Whether the application's content of this response is dropped, decided before its head goes out. */

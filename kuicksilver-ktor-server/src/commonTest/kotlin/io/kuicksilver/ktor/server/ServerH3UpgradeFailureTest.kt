@@ -27,7 +27,8 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * Every HTTP/3 request stream ends, whatever happens to its call: a call that fails after Ktor committed its response
  * (an upgrade's own failure, before its answer went out) cannot get Ktor's 500 any more, so the engine resets the stream
- * with H3_INTERNAL_ERROR (RFC 9114 section 8.1) instead of leaving the client waiting for an answer that never comes.
+ * with H3_REQUEST_CANCELLED, a response abandoned after partial processing (RFC 9114 section 4.1.1), instead of leaving
+ * the client waiting for an answer that never comes.
  */
 class ServerH3UpgradeFailureTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -49,7 +50,7 @@ class ServerH3UpgradeFailureTest {
                     val failure = runCatching { withTimeout(10.seconds) { c.connect(request, "websocket") } }.exceptionOrNull()
                     assertTrue(failure !is TimeoutCancellationException, "the request stream ends, not a 10 s wait")
                     assertTrue(failure is Http3Exception.Protocol, "the client sees the stream reset: $failure")
-                    assertEquals(Http3ErrorCode.INTERNAL_ERROR, failure.h3Code, "with H3_INTERNAL_ERROR")
+                    assertEquals(Http3ErrorCode.REQUEST_CANCELLED, failure.h3Code, "with H3_REQUEST_CANCELLED")
                 } finally {
                     c.close()
                 }
@@ -78,7 +79,7 @@ class ServerH3UpgradeFailureTest {
                     val failure = runCatching { withTimeout(10.seconds) { c.webTransport(request) } }.exceptionOrNull()
                     assertTrue(failure !is TimeoutCancellationException, "the request stream ends, not a 10 s wait")
                     assertTrue(failure is Http3Exception.Protocol, "the client sees the stream reset: $failure")
-                    assertEquals(Http3ErrorCode.INTERNAL_ERROR, failure.h3Code, "with H3_INTERNAL_ERROR")
+                    assertEquals(Http3ErrorCode.REQUEST_CANCELLED, failure.h3Code, "with H3_REQUEST_CANCELLED")
                 } finally {
                     c.close()
                 }

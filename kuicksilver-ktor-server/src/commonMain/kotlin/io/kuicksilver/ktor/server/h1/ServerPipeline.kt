@@ -59,6 +59,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -1070,7 +1071,16 @@ private suspend fun ByteReadChannel.copyToClient(
         // a response whose handler failed is "closed for read" too, also before this copy reached it (it waited behind
         // a pipelined one): it ends the connection, never with the next response sent in its place
         closedCause?.let { throw it }
-    } catch (cause: Throwable) {
+    } catch (thrown: Throwable) {
+        // a response channel cancelled with a CancellationException (an application's writer whose job was cancelled) is a
+        // failed response, not this connection's cancellation: as such it would end the connection with a FIN, which ends a
+        // response delimited by the close as complete (RFC 9112 section 6.3 item 8, section 8)
+        val cause =
+            if (thrown is CancellationException && currentCoroutineContext().isActive) {
+                IOException("the response failed: ${thrown.message}", thrown)
+            } else {
+                thrown
+            }
         cancel(cause)
         // none of it went out: the caller ends the connection cleanly. Part of it went out: only a failure (a reset) keeps
         // the client from taking that part for the whole response (one delimited by the close, or chunked)

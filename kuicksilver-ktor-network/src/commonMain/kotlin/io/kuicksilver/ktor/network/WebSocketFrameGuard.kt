@@ -230,13 +230,20 @@ public fun guardWebSocketInput(
                     }
                 }
                 out.writeFully(header, 0, n)
-                if (length > 0 && input.copyTo(out, length) < length) break
+                if (length > 0 && input.copyTo(out, length) < length) {
+                    // ktor-io's copyTo stops on an input failed with a cause as at its end, without the cause
+                    input.closedCause?.let { throw it }
+                    break
+                }
                 out.flush()
                 if (untilClose && opcode == OPCODE_CLOSE) break
             }
             out.flushAndClose()
         } catch (_: EOFException) {
-            out.flushAndClose() // the stream ended (between or inside frames): so does the session's input, as before
+            // the stream ended (between or inside frames): so does the session's input. ktor-io's readFully answers an input
+            // failed with a cause with an EOFException too: that one fails the session's input with the cause
+            val cause = input.closedCause
+            if (cause == null) out.flushAndClose() else out.cancel(cause)
         } catch (cause: Throwable) {
             out.cancel(cause)
         } finally {
