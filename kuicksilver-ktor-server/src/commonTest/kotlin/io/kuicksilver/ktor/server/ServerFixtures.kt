@@ -12,6 +12,7 @@ import io.ktor.server.application.serverConfig
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.applicationEnvironment
 import io.ktor.server.engine.embeddedServer
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
@@ -123,7 +124,7 @@ internal suspend fun rawHttp(
             val out = StringBuilder()
             val b = ByteArray(8192)
             while (true) {
-                val n = r.readAvailable(b, 0, b.size)
+                val n = r.readOrFail(b)
                 if (n < 0) break
                 out.append(b.decodeToString(0, n))
             }
@@ -134,6 +135,18 @@ internal suspend fun rawHttp(
     } finally {
         selector.close()
     }
+}
+
+/**
+ * One read into [b]; -1 once [this] ended cleanly. A channel that failed throws its failure: ktor's `readAvailable` answers -1
+ * for a failed channel as for an ended one when the failure was recorded before the read started (a read suspended at that
+ * moment gets it thrown), so a TLS session the server ended with an alert while the request was still being written read as
+ * an empty response.
+ */
+internal suspend fun ByteReadChannel.readOrFail(b: ByteArray): Int {
+    val n = readAvailable(b, 0, b.size)
+    if (n < 0) closedCause?.let { throw it }
+    return n
 }
 
 /**
@@ -168,7 +181,7 @@ internal suspend fun slowHttp(
             val start = TimeSource.Monotonic.markNow()
             var total = 0L
             while (true) {
-                val n = r.readAvailable(b, 0, b.size)
+                val n = r.readOrFail(b)
                 if (n < 0) break
                 out.append(b.decodeToString(0, n))
                 total += n

@@ -603,7 +603,10 @@ class ClientH2Test {
             }) { port ->
                 testClient(engine = { connectTimeout = 500.milliseconds }).use { c ->
                     assertFailsWith<io.ktor.client.network.sockets.ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
-                    assertEquals(0, engine(c).h1.pool.liveCount)
+                    // the connection was in the pool (the request went out before the server's preface): the call fails as
+                    // the connection ends, and its slot comes back once its transport is closed, in the pool's own
+                    // coroutine; unusable meanwhile, it takes no other request
+                    withTimeout(5.seconds) { while (engine(c).h1.pool.liveCount != 0) kotlinx.coroutines.delay(10) }
                 }
             }
         }
