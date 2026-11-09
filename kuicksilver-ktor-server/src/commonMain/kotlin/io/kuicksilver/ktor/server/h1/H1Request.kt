@@ -25,6 +25,7 @@ import io.ktor.util.network.hostname
 import io.ktor.util.network.port
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
+import io.kuicksilver.ktor.server.failureIsNoEnd
 
 internal class H1Request(
     call: PipelineCall,
@@ -38,7 +39,8 @@ internal class H1Request(
 ) : BaseApplicationRequest(call) {
     override val cookies: RequestCookies by lazy { RequestCookies(this) }
 
-    override val engineReceiveChannel: ByteReadChannel = input
+    /** A body the connection cut short fails every read with the cause, as on HTTP/2 and HTTP/3 ([failureIsNoEnd]). */
+    override val engineReceiveChannel: ByteReadChannel = input.failureIsNoEnd()
 
     override var engineHeaders: Headers = fields
 

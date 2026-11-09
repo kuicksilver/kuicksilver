@@ -643,7 +643,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `respondFromChannel`, stops on a channel failed with a cause as at its end, without throwing. Without a Content-Length
   the response then ended with the last chunk (RFC 9112 section 7.1) or a FIN (RFC 9114 section 4.1), and the client took
   the cut body for the whole one. The failure now cuts the response short: the connection ends without the last chunk,
-  the HTTP/3 stream is reset. HTTP/2 already reset the stream.
+  the HTTP/3 stream is reset. HTTP/2 already reset the stream. Likewise an HTTP/1.1 request body the connection cut
+  short (the client closed or reset it mid-upload) now fails the handler's `readAvailable` with the cause instead of
+  answering -1 as at a complete body, as the HTTP/2 and HTTP/3 request bodies already did.
 - Ktor engines, WebSockets: a connection that failed in the middle of a frame (a reset while the session's reader was
   behind, or while a compressed message was inflated) ended the session's input as if the peer had closed the stream,
   without the failure. The input now fails with the connection's cause.

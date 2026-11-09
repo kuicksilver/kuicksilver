@@ -11,6 +11,7 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.connector
 import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -27,6 +28,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -296,6 +298,50 @@ class ServerH1BodyTest {
                 assertTrue(r.startsWith("HTTP/1.1 403 "), r)
                 assertFalse(r.contains("100 Continue"), r)
                 assertTrue(r.contains("\r\nConnection: close\r\n"), r)
+            }
+        }
+
+    /**
+     * A request body the connection cut short fails the handler's reads with the cause, as on HTTP/2 and HTTP/3: the
+     * application's own loop on `readAvailable` cannot take the cut upload for a whole one. The body channel was ktor-io's
+     * `ByteChannel`, closed with the failure, whose `readAvailable` answers -1 once the failure is recorded before the read.
+     */
+    @Test fun negative_aCutUploadFailsTheHandlersReadAvailable() =
+        serverTest {
+            val outcome = CompletableDeferred<Result<Int>>()
+            plainServer(idleSeconds = 30, module = {
+                routing {
+                    post("/upload") {
+                        val body = call.receiveChannel()
+                        // the failure recorded before the handler reads: the case where ktor-io answers -1
+                        while (body.closedCause == null) yield()
+                        outcome.complete(
+                            runCatching {
+                                var total = 0
+                                val b = ByteArray(64)
+                                while (true) {
+                                    val n = body.readAvailable(b, 0, b.size)
+                                    if (n < 0) break
+                                    total += n
+                                }
+                                total
+                            },
+                        )
+                    }
+                }
+            }) { port ->
+                val selector = SelectorManager(Dispatchers.IO)
+                try {
+                    val socket = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    val w = socket.openWriteChannel(autoFlush = true)
+                    w.writeStringUtf8("POST /upload HTTP/1.1\r\nHost: s\r\nContent-Length: 100\r\n\r\n0123456789")
+                    w.flushAndClose() // 10 of the 100 bytes, then the client's FIN
+                    val result = withTimeout(10.seconds) { outcome.await() }
+                    assertTrue(result.isFailure, "the handler read a cut upload to a clean end: ${result.getOrNull()} bytes")
+                    socket.close()
+                } finally {
+                    selector.close()
+                }
             }
         }
 }
