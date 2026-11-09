@@ -654,6 +654,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   engine cuts a failed chunked response itself before the call ends: the chunk encoder's cut, resumed on
   `Dispatchers.Unconfined`, came after the end of the call when the content failed inside another unconfined resumption,
   and the response then ended cleanly without its last chunk, a pipelined response following it on the connection.
+- Ktor engines, TLS over TCP: a failed handshake closed the socket right after its alert and FIN, while the peer might
+  still be sending (a TLS 1.3 client sends its request right after its Finished, before it learns that a server that
+  requires a client certificate refuses it). Those bytes met a reset, which on Windows erases the alert from the peer's
+  receive buffer: the client saw "An established connection was aborted" instead of `certificate_required`. The close is
+  now staged as RFC 9112 section 9.6 describes: after the alert and the FIN, what the peer sends is read and dropped until
+  it closes too, for 2 s and 256 KiB at most, then the socket closes.
 - Ktor engines, WebSockets: a connection that failed in the middle of a frame (a reset while the session's reader was
   behind, or while a compressed message was inflated) ended the session's input as if the peer had closed the stream,
   without the failure. The input now fails with the connection's cause.

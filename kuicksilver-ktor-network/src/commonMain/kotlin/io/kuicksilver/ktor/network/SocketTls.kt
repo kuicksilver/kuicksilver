@@ -9,11 +9,13 @@ import io.ktor.network.sockets.SocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedByteChannelException
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.reader
 import io.ktor.utils.io.writer
 import io.kuicksilver.annotations.InternalKuicksilverApi
@@ -27,6 +29,8 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
@@ -256,6 +260,31 @@ public class TlsSocket private constructor(
         /** How long a failed stream's internal_error alert and FIN may take to leave before the connection is reset instead. */
         internal val ALERT_CLOSE_TIMEOUT: Duration = 3.seconds
 
+        /** How long a failed handshake reads and drops what the peer still sends before the socket closes ([lingerAfterAlert]). */
+        internal val ALERT_LINGER: Duration = 2.seconds
+
+        /** How much a failed handshake reads and drops at most before the socket closes ([lingerAfterAlert]). */
+        internal const val ALERT_LINGER_BYTES: Long = 256L * 1024
+
+        /**
+         * After a failed handshake, whose alert and FIN are on their way: reads and drops what the peer still sends until it
+         * closes too, for [ALERT_LINGER] and [ALERT_LINGER_BYTES] at most, before the socket closes. A close over input that
+         * is unread, or that arrives after it, makes the kernel answer with a reset, and a reset can erase the alert from the
+         * peer's receive buffer before the peer read it (Windows discards what it has not delivered): a client that had sent
+         * its request right after its Finished (TLS 1.3, a server that requires a certificate it did not send) saw "connection
+         * aborted" instead of certificate_required. The close is staged as RFC 9112 section 9.6 describes for the last
+         * response: the write side first, then reading until the peer's close, then the full close.
+         */
+        private suspend fun ByteReadChannel.lingerAfterAlert() {
+            try {
+                withTimeoutOrNull(ALERT_LINGER) { discard(ALERT_LINGER_BYTES) }
+            } catch (_: CancellationException) {
+                currentCoroutineContext().ensureActive() // a cancelled caller; a channel cancelled under it is no reason to stop
+            } catch (_: Throwable) {
+                // the peer reset the connection, or the socket failed: nothing left to protect the alert from
+            }
+        }
+
         internal suspend fun start(
             raw: Socket,
             config: TlsConfig,
@@ -274,8 +303,12 @@ public class TlsSocket private constructor(
                         TlsConnection.server(rawIn, rawOut, config, ctx)
                     }
                 } catch (t: Throwable) {
-                    runCatching { rawOut.flushAndClose() }
-                    raw.close()
+                    try {
+                        runCatching { rawOut.flushAndClose() }
+                        if (t !is CancellationException) rawIn.lingerAfterAlert()
+                    } finally {
+                        raw.close()
+                    }
                     throw t
                 }
             return TlsSocket(raw, rawOut, tls, ctx).also { if (config.role == TlsRole.Client) it.closeTimeout = CLOSE_TIMEOUT }
