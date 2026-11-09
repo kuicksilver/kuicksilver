@@ -46,7 +46,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
-import kotlin.time.TimeSource
 
 /**
  * A response whose content is a channel that failed (`call.respond(channel)`, a proxy relaying an upstream body that was
@@ -142,6 +141,13 @@ class ServerFailedChannelResponseTest {
                     get("/io") { call.respond(HelloThenFails(IOException("the upstream body was cut"), gate)) }
                     get("/cancelled") { call.respond(HelloThenFails(CancellationException("the upstream call was cancelled"), gate)) }
                     get("/length") { call.respond(lengthThenFails()) }
+                    get("/read-from-throws") {
+                        call.respond(
+                            object : OutgoingContent.ReadChannelContent() {
+                                override fun readFrom(): ByteReadChannel = throw IllegalStateException("no content to give")
+                            },
+                        )
+                    }
                     head("/head-failed") { call.respond(failedChannel()) }
                     get("/204-failed") {
                         call.respond(
@@ -163,12 +169,12 @@ class ServerFailedChannelResponseTest {
         }
     }
 
-    /** Set once the read loop of [h1] has ended. */
-    @Volatile private var clientDone = false
+    /** Opened once the read loop of [h1] has ended. */
+    private val clientDone = ThreadLatch()
 
     /**
      * Opens [gate] as a content channel failed from a coroutine on Dispatchers.Unconfined does: from inside an unconfined
-     * event loop, on a Dispatchers.IO thread that then stays busy until the read of [h1] has ended. What the gate resumes
+     * event loop, on a Dispatchers.IO thread that is then held ([ThreadLatch]) until the read of [h1] has ended. What the gate resumes
      * (the copy of the content, which runs on Dispatchers.Unconfined) runs in that loop, and fails; what that failure
      * resumes in turn (the chunk encoder, unconfined too) queues behind the busy task, so the call ends before it ran.
      */
@@ -178,10 +184,7 @@ class ServerFailedChannelResponseTest {
         val busy = CompletableDeferred<Unit>()
         scope.launch(Dispatchers.Unconfined) {
             busy.await()
-            val start = TimeSource.Monotonic.markNow()
-            @Suppress("ControlFlowWithEmptyBody")
-            while (!clientDone && start.elapsedNow() < 10.seconds) {
-            }
+            clientDone.await(20.seconds) // the thread itself: a suspension would let the queued tasks run
         }
         scope.launch(Dispatchers.Unconfined) {
             opened.await()
@@ -228,7 +231,7 @@ class ServerFailedChannelResponseTest {
                     } catch (e: IOException) {
                         true
                     } finally {
-                        clientDone = true
+                        clientDone.open()
                     }
                 return out.toString() to failed
             } finally {
@@ -330,6 +333,25 @@ class ServerFailedChannelResponseTest {
                 val (resp, failed) =
                     h1(plain, "GET /io HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", openGate = ::openGateFromAnUnconfinedLoop)
                 assertCutChunked(resp, failed)
+            }
+        }
+
+    /**
+     * Content that fails before the response head was written cuts nothing: the call is answered 500 as any failed one
+     * (Ktor's handleFailure, nothing committed on the wire), and the kept-alive connection answers the next request.
+     */
+    @Test fun aContentThatFailsBeforeTheHeadGetsA500AndKeepsTheConnection() =
+        serverTest {
+            withServer { plain, _ ->
+                val (resp, failed) =
+                    h1(
+                        plain,
+                        "GET /read-from-throws HTTP/1.1\r\nHost: s\r\n\r\nGET /length HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                    )
+                assertTrue(resp.startsWith("HTTP/1.1 500 "), resp)
+                assertEquals(2, Regex("HTTP/1\\.1 ").findAll(resp).count(), resp)
+                assertTrue(resp.endsWith("\r\n\r\nhello"), resp)
+                assertFalse(failed, "the connection was cut: $resp")
             }
         }
 

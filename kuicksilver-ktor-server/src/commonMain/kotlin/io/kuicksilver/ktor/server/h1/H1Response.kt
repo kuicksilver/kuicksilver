@@ -231,6 +231,7 @@ internal class H1Response(
             }
             builder.emptyLine()
             output.writePacket(builder.build())
+            headWritten = true
             if (tunnelRefused) output.writeFully(TUNNEL_NOT_SUPPORTED)
 
             if (!contentReady) {
@@ -337,13 +338,18 @@ internal class H1Response(
      * Meanwhile the call ended (the engine's call phase handles the failure, the call returns normally) and the pipeline
      * closed [output] cleanly; the encoder's failure then came too late, the cut response passed for a whole one without its
      * last chunk, and the next pipelined response followed it on the same connection. A response without content
-     * ([bodyDiscarded]) is complete on the wire: it ends as it is.
+     * ([bodyDiscarded]) is complete on the wire: it ends as it is. Nothing is cut before the head was written ([headWritten]):
+     * the call is then answered as any failed one (Ktor's `handleFailure`, a 500 where nothing was committed), and the
+     * connection goes on.
      */
     private fun failResponse(cause: Throwable) {
-        if (bodyDiscarded) return
+        if (bodyDiscarded || !headWritten) return
         chunkedChannel?.close(cause)
         output.close(cause)
     }
+
+    /** Set once the response head is in [output]: from then on a failed response can only be cut short ([failResponse]). */
+    private var headWritten = false
 
     /**
      * The body channel of a response without content (or with the engine's own, [tunnelRefused]) was handed out: its
