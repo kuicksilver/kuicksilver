@@ -650,7 +650,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   nor a reset. A channel that fails after all its Content-Length bytes leaves the response complete, and an HTTP/3 HEAD,
   204 or 304 no longer reads the channel. HTTP/2 already reset the stream. Likewise an HTTP/1.1 request body the
   connection cut short (the client closed or reset it mid-upload) now fails the handler's `readAvailable` with the cause
-  instead of answering -1 as at a complete body, as the HTTP/2 and HTTP/3 request bodies already did.
+  instead of answering -1 as at a complete body, as the HTTP/2 and HTTP/3 request bodies already did. On HTTP/1.1 the
+  engine cuts a failed chunked response itself before the call ends: the chunk encoder's cut, resumed on
+  `Dispatchers.Unconfined`, came after the end of the call when the content failed inside another unconfined resumption,
+  and the response then ended cleanly without its last chunk, a pipelined response following it on the connection.
 - Ktor engines, WebSockets: a connection that failed in the middle of a frame (a reset while the session's reader was
   behind, or while a compressed message was inflated) ended the session's input as if the peer had closed the stream,
   without the failure. The input now fails with the connection's cause.
