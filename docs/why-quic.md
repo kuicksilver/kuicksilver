@@ -39,8 +39,11 @@ In short, on this setup:
   crosses the container's loopback once. `tc netem` delays every packet by half the round-trip time (RTT), and a `tc`
   drop on the loopback's input loses packets at random in both directions: 1 % is one in 100, 2 % one in 50, 3 % one
   in 33, 5 % one in 20. The drop sees single packets, after the kernel has cut a UDP GSO batch or a TCP segment burst
-  into packets, so QUIC and TCP lose packets alike. There is no bandwidth limit: the times are set by the RTT, the
-  losses and each stack's congestion control and recovery, not by a link's rate. The kernel's TCP metrics cache is
+  into packets, so QUIC and TCP lose packets alike. The published run has no bandwidth limit: the times are set by the
+  RTT, the losses and each stack's congestion control and recovery, not by a link's rate. `KSL_WHYQUIC_RATE` (for
+  example `200mbit`) adds one: a netem rate on the loopback, end to end (a rebind cell's packets cross the loopback
+  twice, so they get twice the rate per crossing), with a queue of what the rate sends in the one-way delay plus 50 ms
+  rather than one that would add seconds of delay; the environment line records it. The kernel's TCP metrics cache is
   off, so each TCP connection starts fresh like each QUIC connection.
 - **The clients.** Kuicksilver's Ktor engine over HTTP/3 (`H3Only`), over HTTP/2 and over HTTP/1.1 (`H1Only`, with and
   without `http2 { enabled }`), and OkHttp 5 over HTTP/2 and HTTP/1.1 on the same JVM. OkHttp is the reference for TCP
@@ -48,9 +51,13 @@ In short, on this setup:
   connections to the server, as browsers do; HTTP/2 and HTTP/3 use one. Ktor's CIO engine is not in the tables: its
   TLS stops at 1.2, and the Kuicksilver server speaks TLS 1.3 only.
 - **Kuicksilver's own TCP client was slower than OkHttp at 100 and 200 ms without loss.** During one such download the
-  receive buffer of its socket (`ss -tmi` in the container) stayed near 150 KiB, while OkHttp's grew to megabytes; why
-  was not established, and the engine's TCP throughput is being worked on separately, so these columns will be measured
-  again. Read the OkHttp columns for what TCP does here. With loss the TCP clients are close to each other.
+  receive buffer of its socket (`ss -tmi` in the container) stayed near 150 KiB, while OkHttp's grew to megabytes. The
+  cause is this setup more than the client: without a rate netem hands over a whole window at once, and Linux 6.18+
+  receive-buffer autotuning (what the application copied minus what is still queued, measured per copied packet) then
+  sees one packet per round trip and leaves the window small for seconds, for OkHttp too; the client that escapes first
+  varies from run to run (2 to 24 s for 10 MiB at 100 ms). With a 200 Mbit/s rate both clients took about 2.1 s. These
+  columns will be measured again; read the OkHttp columns for what TCP does here. With loss the TCP clients are close to
+  each other.
 - **The server is Kuicksilver for every protocol**, so the HTTP/1.1 and HTTP/2 columns measure Kuicksilver's TCP
   server as well. Both stacks use CUBIC: Kuicksilver's own for QUIC, the Linux kernel's for TCP.
 - **Each cell is a fresh client process** that runs two unrecorded warm-up runs over the bare loopback; then the
@@ -215,6 +222,9 @@ cp build/bench/why-quic/why-quic.csv docs/benchmarks/why-quic.csv
 cp build/bench/why-quic/env.txt docs/benchmarks/why-quic-env.txt
 bash tools/bench/why-quic.sh table                              # rewrites the tables of this page
 ```
+
+`KSL_WHYQUIC_RATE=200mbit` (any `tc` rate: digits, an optional `k`, `m` or `g`, then `bit` or `bps`) runs the matrix
+over a rate-limited loopback; `--dry-run` refuses a value that is not a rate.
 
 The published run took about three hours. The full matrix (`KSL_WHYQUIC_REPS=15` everywhere, one cell after the other)
 would take about a day on the host above: one 10 MiB download at 200 ms and 5 % loss takes about five minutes over

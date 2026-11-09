@@ -29,6 +29,10 @@
 # then measures one skb per round trip and keeps a rate-limited receiver's window at its start for seconds: TCP clients
 # (ours and OkHttp alike) vary between 2 and 24 s for 10 MiB at 100 ms. The rate is one qdisc on the loopback, shared by
 # both directions (every packet crosses it once), so it is the path's bottleneck for the download and its ACKs together.
+# A rebind cell's packets cross the loopback twice (through the relay), so they get twice the rate per crossing: the path
+# keeps KSL_WHYQUIC_RATE end to end. With a rate, netem's queue holds what the rate sends in the one-way delay plus 50 ms
+# (at least 1000 packets of 1500 bytes), not 100000 packets: a deeper queue would add seconds of delay (bufferbloat) to
+# whichever protocol fills it. The rate is a tc rate: digits, an optional k, m or g, then bit (bits/s) or bps (bytes/s).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 header="scenario,client,protocol,rtt_ms,loss_pct,rep,ok,seconds,bytes,requests,client_cpu_s"
@@ -41,6 +45,14 @@ read -r -a rtts <<< "${KSL_WHYQUIC_RTTS:-20 100 200}"
 read -r -a losses <<< "${KSL_WHYQUIC_LOSSES:-0 1 3 5}"
 timeout=${KSL_WHYQUIC_TIMEOUT:-600}; warmup=${KSL_WHYQUIC_WARMUP:-2}; parallel=${KSL_WHYQUIC_PARALLEL:-0}
 rate=${KSL_WHYQUIC_RATE:-}
+
+# <tc rate> -> bits per second (tc's units: bit = bits/s, bps = bytes/s, k/m/g = 1000s); empty when not a rate
+rate_bits() {
+  [[ "$1" =~ ^([0-9]+(\.[0-9]+)?)([kKmMgG]?)(bit|bps)$ ]] || return 0
+  awk -v n="${BASH_REMATCH[1]}" -v p="${BASH_REMATCH[3]}" -v u="${BASH_REMATCH[4]}" 'BEGIN {
+    m = 1; p = tolower(p); if (p == "k") m = 1e3; else if (p == "m") m = 1e6; else if (p == "g") m = 1e9
+    if (u == "bps") m *= 8; printf "%.0f\n", n * m }'
+}
 transfer_clients=(kuicksilver:h3 kuicksilver:h2 kuicksilver:h1 okhttp:h2 okhttp:h1)
 connect_clients=(kuicksilver:h3-0rtt kuicksilver:h3 kuicksilver:h2 kuicksilver:h1 okhttp:h2 okhttp:h1)
 has() { [[ ",$phases," == *",$1,"* ]]; }
@@ -63,15 +75,24 @@ preflight() {
     echo "why-quic: no tc (or ethtool) in the container ($image): netem cannot emulate the network" >&2; bad=1; fi
   doc=$(head -1 "$csv_doc" 2>/dev/null || true)
   if [ "$doc" != "$header" ]; then echo "why-quic: CSV header differs from $csv_doc:" >&2; echo "  script: $header" >&2; echo "  docs:   ${doc:-<missing>}" >&2; bad=1; fi
+  if [ -n "$rate" ] && [ -z "$(rate_bits "$rate")" ]; then
+    echo "why-quic: KSL_WHYQUIC_RATE=$rate is not a tc rate (e.g. 200mbit, 25mbps)" >&2; bad=1; fi
   return $bad
 }
 
-netem() {   # inside the container: <one-way delay ms> <loss %> [rate, e.g. 200mbit]
+# netem's queue for <one-way delay ms> at <rate bits/s>: what the rate sends in the delay plus 50 ms, in 1500-byte packets,
+# at least 1000; 100000 without a rate
+netem_limit() {
+  [ -n "$2" ] || { echo 100000; return; }
+  awk -v d="$1" -v b="$2" 'BEGIN { n = int(b * (d + 50) / 1000 / 12000); printf "%.0f\n", (n < 1000 ? 1000 : n) }'
+}
+
+netem() {   # inside the container: <one-way delay ms> <loss %> [rate bits/s]
   local d=$1 l=$2 r=${3:-}
   # a new qdisc each time: "replace" keeps a rate set before when the new line names none
   tc qdisc del dev lo root 2>/dev/null || true
   # shellcheck disable=SC2046
-  tc qdisc add dev lo root netem delay "${d}ms" $([ -n "$r" ] && echo rate "$r") limit 100000
+  tc qdisc add dev lo root netem delay "${d}ms" $([ -n "$r" ] && echo rate "${r}bit") limit "$(netem_limit "$d" "$r")"
   tc filter del dev lo ingress 2>/dev/null || true
   if [ "$l" != 0 ]; then tc filter add dev lo parent ffff: matchall action gact pass random netrand drop "$(awk -v l="$l" 'BEGIN{printf "%d", 100 / l}')"; fi
 }
@@ -99,13 +120,16 @@ start() {
 
 # <container> <csv> <log>: runs the cells read from stdin in that container, one client process per cell
 cells() {
-  local scenario cp rtt loss n delay client protocol
+  local scenario cp rtt loss n delay client protocol bits
   while read -r scenario cp rtt loss n delay; do
     client=${cp%%:*}; protocol=${cp#*:}
+    # the rate per loopback crossing: a rebind cell's packets cross twice, so twice the rate keeps the path's
+    bits=$(rate_bits "$rate")
+    if [ -n "$bits" ] && [[ "$scenario" == rebind* ]]; then bits=$((bits * 2)); fi
     echo "== $(date +%H:%M:%S) $scenario $client $protocol rtt=$rtt loss=$loss runs=$n" >&2
     docker exec "$1" bash /bench/tools/why-quic.sh netem 0 0   # warm-up runs go over the bare loopback
     docker exec "$1" "${java[@]}" client --client "$client" --protocol "$protocol" --scenario "$scenario" --reps "$n" \
-      --warmup "$warmup" --rtt "$rtt" --loss "$loss" --timeout "$timeout" --after-warmup "bash /bench/tools/why-quic.sh netem $delay $loss $rate" \
+      --warmup "$warmup" --rtt "$rtt" --loss "$loss" --timeout "$timeout" --after-warmup "bash /bench/tools/why-quic.sh netem $delay $loss $bits" \
       2>>"$3" < /dev/null >> "$2" || echo "why-quic: cell failed: $scenario $cp $rtt $loss" >&2
   done
   docker exec "$1" bash /bench/tools/why-quic.sh netem 0 0
@@ -145,7 +169,7 @@ run() {
     echo "soak jar: sha256 $(shasum -a 256 "$lib/kuicksilver-soak-jvm.jar" | cut -d' ' -f1)"
     echo "okhttp: $(cd "$lib" && ls okhttp-jvm-*.jar)"
     echo "tcp: $(docker exec "$name" sh -c 'echo "congestion control $(cat /proc/sys/net/ipv4/tcp_congestion_control), cubic hystart $(cat /sys/module/tcp_cubic/parameters/hystart 2>/dev/null || echo unreadable) (detect $(cat /sys/module/tcp_cubic/parameters/hystart_detect 2>/dev/null || echo unreadable))"')"
-    echo "network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, $([ -n "$rate" ] && echo "rate $rate on the loopback" || echo "no rate limit")"
+    echo "network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, $([ -n "$rate" ] && echo "rate $rate end to end (twice that per crossing for rebind), netem queue = the rate's bytes in the one-way delay + 50 ms (at least 1000 packets)" || echo "no rate limit, netem queue 100000 packets")"
     echo "runs: $phases; $reps per cell, $lossy_reps per download cell with loss; $warmup warm-up runs per cell; timeout $timeout s per run"
     [ "$parallel" = 1 ] && echo "parallel: the download cells with loss ran at the same time, one container per RTT and loss; every other cell ran alone"
   } > "$out/env.txt"
