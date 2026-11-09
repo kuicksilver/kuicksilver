@@ -4,16 +4,20 @@ package io.kuicksilver.ktor.network.websocket
 
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.ktor.network.WS_RSV1
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.EOFException
+import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertTrue
 
 /**
@@ -207,5 +211,32 @@ class GuardInflateTest {
     @Test fun negative_newMessageInsideAFragmentedOneClosesWith1002() =
         guarded(frame(0x41, bytes(0xf2, 0x48)) + frame(0xC1, hello)) { out ->
             assertEquals(1002, out.last().closeCode)
+        }
+
+    /**
+     * A failed input fails the guarded channel with its cause, also when the failure comes while the guard waits for room
+     * for what a compressed frame inflated to: ktor-io's `readFully` answers a channel failed with a cause with an
+     * `EOFException`, as at the end of the input, and the guard ended its output cleanly.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun negative_aFailureInsideACompressedPayloadFailsTheOutput() =
+        runTest {
+            val deflater = MessageDeflater(9, 15, noContextTakeover = false)
+            val compressed = deflater.compress(ByteArray(32 * 1024 * 1024), fin = true)
+            deflater.close()
+            val raw = ByteChannel()
+            launch {
+                // more payload promised than sent: the guard reads it in pieces of 16 KiB
+                raw.writeFully(header(0xC2, compressed.size + 1000) + compressed)
+                raw.flush()
+            }
+            val inflate = WebSocketInflate(noContextTakeover = false, maxMessageSize = 64L * 1024 * 1024)
+            val out =
+                guardWebSocketInput(raw, WS_RSV1, untilClose = false, peerMasks = false, context = coroutineContext, inflate = inflate)
+            runCurrent() // the first 16 KiB inflate to more than the output holds: the guard waits for room
+            raw.cancel(IOException("connection reset"))
+            val e = assertFails { out.readBuffer() }
+            assertTrue(generateSequence(e) { it.cause }.any { it.message == "connection reset" }, e.stackTraceToString())
         }
 }
