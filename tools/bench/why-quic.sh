@@ -7,7 +7,7 @@
 #   why-quic.sh --dry-run          print the matrix; fail if the image has no tc or the CSV header differs from the docs copy
 #   why-quic.sh run [--out DIR]    measure (default DIR build/bench/why-quic-<date-time>): DIR/why-quic.csv, env.txt, logs
 #   why-quic.sh table              regenerate the tables of docs/why-quic.md from docs/benchmarks/why-quic.csv and -env.txt
-#   why-quic.sh netem <ms> <loss>  (inside the container) one-way delay and per-packet loss on the loopback
+#   why-quic.sh netem <ms> <loss> [rate]  (inside the container) one-way delay, per-packet loss and rate on the loopback
 # A run's CSV and env.txt become the published data with: cp DIR/why-quic.csv docs/benchmarks/why-quic.csv;
 # cp DIR/env.txt docs/benchmarks/why-quic-env.txt; then why-quic.sh table.
 # Prerequisites: the JVM distribution (./gradlew :kuicksilver-soak:installWhyQuic), the Linux libksl of the host's
@@ -16,14 +16,19 @@
 # The network: every packet crosses the loopback once (server and clients share the container), so netem's delay on the
 # loopback's egress is half the RTT and its loss (a tc gact drop on the loopback's ingress, after segmentation, so a UDP
 # GSO batch or a TSO segment loses one packet, not the batch) hits each direction. MTU 1500, TSO, GSO and UDP segmentation
-# off, no rate limit, no TCP metrics cache (tcp_no_metrics_save). Loss is a 1-in-N drop: 1 % = 1/100, 2 % = 1/50, 3 % = 1/33, 5 % = 1/20.
+# off, no rate limit unless KSL_WHYQUIC_RATE sets one, no TCP metrics cache (tcp_no_metrics_save). Loss is a 1-in-N drop: 1 % = 1/100, 2 % = 1/50, 3 % = 1/33, 5 % = 1/20.
 # The rebind runs go through a NAT relay in the server process (RebindRelay in kuicksilver-soak), so each packet crosses the
 # loopback twice and the delay per crossing is a quarter of the RTT.
 # Knobs: KSL_WHYQUIC_PHASES (download,hol,connect,rebind), KSL_WHYQUIC_REPS (15 runs per cell),
 # KSL_WHYQUIC_LOSSY_REPS (runs per download cell with loss; default KSL_WHYQUIC_REPS), KSL_WHYQUIC_RTTS ("20 100 200"),
 # KSL_WHYQUIC_LOSSES ("0 1 3 5"), KSL_WHYQUIC_TIMEOUT (600 s per run), KSL_WHYQUIC_WARMUP (2 unshaped runs per cell),
 # KSL_WHYQUIC_PARALLEL=1 (the download cells with loss at the same time, one container per RTT and loss: they wait on the
-# network, not the CPU, and take hours one after the other; every other cell still runs alone first).
+# network, not the CPU, and take hours one after the other; every other cell still runs alone first), KSL_WHYQUIC_RATE
+# (a netem rate such as 200mbit; default none). Without a rate netem releases a whole congestion window at once, and Linux
+# receive-buffer autotuning (6.18+: it measures what the application copied minus what is still queued, per copied skb)
+# then measures one skb per round trip and keeps a rate-limited receiver's window at its start for seconds: TCP clients
+# (ours and OkHttp alike) vary between 2 and 24 s for 10 MiB at 100 ms. The rate is one qdisc on the loopback, shared by
+# both directions (every packet crosses it once), so it is the path's bottleneck for the download and its ACKs together.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 header="scenario,client,protocol,rtt_ms,loss_pct,rep,ok,seconds,bytes,requests,client_cpu_s"
@@ -35,6 +40,7 @@ reps=${KSL_WHYQUIC_REPS:-15}; lossy_reps=${KSL_WHYQUIC_LOSSY_REPS:-$reps}
 read -r -a rtts <<< "${KSL_WHYQUIC_RTTS:-20 100 200}"
 read -r -a losses <<< "${KSL_WHYQUIC_LOSSES:-0 1 3 5}"
 timeout=${KSL_WHYQUIC_TIMEOUT:-600}; warmup=${KSL_WHYQUIC_WARMUP:-2}; parallel=${KSL_WHYQUIC_PARALLEL:-0}
+rate=${KSL_WHYQUIC_RATE:-}
 transfer_clients=(kuicksilver:h3 kuicksilver:h2 kuicksilver:h1 okhttp:h2 okhttp:h1)
 connect_clients=(kuicksilver:h3-0rtt kuicksilver:h3 kuicksilver:h2 kuicksilver:h1 okhttp:h2 okhttp:h1)
 has() { [[ ",$phases," == *",$1,"* ]]; }
@@ -60,9 +66,12 @@ preflight() {
   return $bad
 }
 
-netem() {   # inside the container: <one-way delay ms> <loss %>
-  local d=$1 l=$2
-  tc qdisc replace dev lo root netem delay "${d}ms" limit 100000
+netem() {   # inside the container: <one-way delay ms> <loss %> [rate, e.g. 200mbit]
+  local d=$1 l=$2 r=${3:-}
+  # a new qdisc each time: "replace" keeps a rate set before when the new line names none
+  tc qdisc del dev lo root 2>/dev/null || true
+  # shellcheck disable=SC2046
+  tc qdisc add dev lo root netem delay "${d}ms" $([ -n "$r" ] && echo rate "$r") limit 100000
   tc filter del dev lo ingress 2>/dev/null || true
   if [ "$l" != 0 ]; then tc filter add dev lo parent ffff: matchall action gact pass random netrand drop "$(awk -v l="$l" 'BEGIN{printf "%d", 100 / l}')"; fi
 }
@@ -96,7 +105,7 @@ cells() {
     echo "== $(date +%H:%M:%S) $scenario $client $protocol rtt=$rtt loss=$loss runs=$n" >&2
     docker exec "$1" bash /bench/tools/why-quic.sh netem 0 0   # warm-up runs go over the bare loopback
     docker exec "$1" "${java[@]}" client --client "$client" --protocol "$protocol" --scenario "$scenario" --reps "$n" \
-      --warmup "$warmup" --rtt "$rtt" --loss "$loss" --timeout "$timeout" --after-warmup "bash /bench/tools/why-quic.sh netem $delay $loss" \
+      --warmup "$warmup" --rtt "$rtt" --loss "$loss" --timeout "$timeout" --after-warmup "bash /bench/tools/why-quic.sh netem $delay $loss $rate" \
       2>>"$3" < /dev/null >> "$2" || echo "why-quic: cell failed: $scenario $cp $rtt $loss" >&2
   done
   docker exec "$1" bash /bench/tools/why-quic.sh netem 0 0
@@ -136,7 +145,7 @@ run() {
     echo "soak jar: sha256 $(shasum -a 256 "$lib/kuicksilver-soak-jvm.jar" | cut -d' ' -f1)"
     echo "okhttp: $(cd "$lib" && ls okhttp-jvm-*.jar)"
     echo "tcp: $(docker exec "$name" sh -c 'echo "congestion control $(cat /proc/sys/net/ipv4/tcp_congestion_control), cubic hystart $(cat /sys/module/tcp_cubic/parameters/hystart 2>/dev/null || echo unreadable) (detect $(cat /sys/module/tcp_cubic/parameters/hystart_detect 2>/dev/null || echo unreadable))"')"
-    echo "network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, no rate limit"
+    echo "network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, $([ -n "$rate" ] && echo "rate $rate on the loopback" || echo "no rate limit")"
     echo "runs: $phases; $reps per cell, $lossy_reps per download cell with loss; $warmup warm-up runs per cell; timeout $timeout s per run"
     [ "$parallel" = 1 ] && echo "parallel: the download cells with loss ran at the same time, one container per RTT and loss; every other cell ran alone"
   } > "$out/env.txt"
@@ -240,6 +249,6 @@ case "${1:-}" in
   --dry-run) matrix | awk 'BEGIN{print "scenario client:protocol rtt_ms loss_pct runs delay_ms"} {print} END{print NR " cells"}'; preflight && echo "preflight ok" ;;
   run) shift; run "$@" ;;
   table) table ;;
-  netem) netem "$2" "$3" ;;
+  netem) netem "$2" "$3" "${4:-}" ;;
   *) sed -n '4,10p' "$0" | sed 's/^# //' >&2; exit 2 ;;
 esac
