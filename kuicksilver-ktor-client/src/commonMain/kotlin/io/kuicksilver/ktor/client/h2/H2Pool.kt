@@ -78,18 +78,31 @@ internal class H2Pool(
      * the others wait for its outcome on the route's signal (as Go's `dialCall` dedups dials per address) and then use its
      * connection, or connect in parallel when it turned out HTTP/1.1. A route known to speak HTTP/1.1 never waits. [seen] is
      * the route's [version] from before the caller last looked for a stream ([reserve]): a change since (a connection
-     * registered, a stream freed, new SETTINGS) refuses too, so the caller looks again. True means the caller is now the
-     * route's dialer and must call [endDial].
+     * registered, a stream freed, new SETTINGS) refuses too, so the caller looks again, and so does a connection of the route
+     * that still waits for the server's SETTINGS (its one stream is taken until they come) or has room by now. True means
+     * the caller is now the route's dialer and must call [endDial].
      */
     fun tryStartDial(
         route: String,
         seen: Long,
-    ): Boolean =
-        lock.withLock {
+    ): Boolean {
+        val now = clock()
+        return lock.withLock {
             if (route in speaksH1) return@withLock true
             val r = routes.getOrPut(route) { Route() }
             when {
                 r.dialing -> {
+                    false
+                }
+
+                // a connection of the route still waits for the server's SETTINGS (it carries its first request only, RFC
+                // 9113 section 3.4), or has room now (its SETTINGS or a released stream came after the caller looked, and
+                // the bump that tells it follows): the caller waits for that bump and looks again instead of dialling. A
+                // connection that never gets its SETTINGS ends and is removed, which bumps too
+                r.conns.any { c ->
+                    c.client.isUsable && !pastLifetime(c, now) &&
+                        (!c.client.serverSettingsReceived || c.client.reservedStreams < c.client.peerMaxConcurrentStreams)
+                } -> {
                     false
                 }
 
@@ -106,6 +119,7 @@ internal class H2Pool(
                 }
             }
         }
+    }
 
     /** The connect of [tryStartDial] ended: [h2] true or false when it negotiated a protocol, null when it failed. */
     fun endDial(

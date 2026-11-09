@@ -75,7 +75,15 @@ public class H2ClientConnection private constructor(
      */
     public suspend fun checkHealth(timeoutMillis: Long): Boolean = rt.checkHealth(timeoutMillis)
 
-    /** Takes a stream slot within the peer's limit; false when the connection is full or not usable. */
+    /** The server's preface (its SETTINGS, RFC 9113 section 3.4) arrived; until then [tryReserve] grants one stream. */
+    public val serverSettingsReceived: Boolean get() = rt.peerPrefaceReceived
+
+    /**
+     * Takes a stream slot within the peer's limit; false when the connection is full or not usable. Before the server's
+     * SETTINGS arrive ([serverSettingsReceived]) it grants one slot only: the server's SETTINGS_MAX_CONCURRENT_STREAMS is not
+     * known yet, and streams beyond it would be refused (RFC 9113 section 5.1.2: with REFUSED_STREAM or PROTOCOL_ERROR).
+     * [onChange] tells when the SETTINGS arrive.
+     */
     public fun tryReserve(): Boolean = rt.tryReserve()
 
     /** Gives back a slot of [tryReserve] that was not used for a stream. */
@@ -118,9 +126,9 @@ public class H2ClientConnection private constructor(
          * without waiting for the server's preface: RFC 9113 section 3.4, "To avoid unnecessary latency, clients are
          * permitted to send additional frames to the server immediately after sending the client connection preface,
          * without waiting to receive the server connection preface". Until the server's SETTINGS arrive, its settings have
-         * their initial values (section 6.5.2: SETTINGS_MAX_CONCURRENT_STREAMS unlimited, a 65 535-byte window, 16 384-byte
-         * frames); streams opened beyond a limit that arrives later are refused by the server (REFUSED_STREAM, section
-         * 5.1.2), and no new ones are opened beyond it. When the server's preface has not arrived within [prefaceTimeout],
+         * their initial values (section 6.5.2: a 65 535-byte window, 16 384-byte frames), except that [tryReserve] grants one
+         * stream only until then: the server's SETTINGS_MAX_CONCURRENT_STREAMS is not known yet (its initial value,
+         * unlimited, would let a burst of requests go out that a smaller limit then refuses, section 5.1.2). When the server's preface has not arrived within [prefaceTimeout],
          * the connection ends with SETTINGS_TIMEOUT (section 6.5.3: our SETTINGS cannot be acknowledged before it) and its
          * streams fail with it ([serverPrefaceMissed]); [Duration.INFINITE] for no bound. [scope] owns the connection's
          * coroutines; [closeTransport] closes the socket under the channels; [onChange] hears that capacity or usability

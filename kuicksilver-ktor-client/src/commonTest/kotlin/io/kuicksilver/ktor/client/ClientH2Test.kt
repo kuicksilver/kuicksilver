@@ -18,6 +18,8 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readByteArray
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
@@ -604,6 +606,137 @@ class ClientH2Test {
                 }
             }
         }
+
+    /**
+     * The request's HEADERS went out before the server's preface, which never came: a request whose content had started
+     * does not fail as a connect timeout (`HttpRequestRetry` takes that for a request that never left and may send a POST
+     * again), but with the connection's end (SETTINGS_TIMEOUT); one without content does (the existing test above).
+     */
+    @Test fun negative_noServerSettingsAfterTheBodyStartedIsNotAConnectTimeout() =
+        clientTest {
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { _, _, input, _ ->
+                runCatching { input.readBuffer() }
+            }) { port ->
+                testClient(engine = { connectTimeout = 500.milliseconds }).use { c ->
+                    val e = assertFailsWith<Http2Exception.ConnectionClosed> { c.post("https://127.0.0.1:$port/") { setBody("payload") } }
+                    assertEquals(Http2ErrorCode.SETTINGS_TIMEOUT, e.code)
+                }
+            }
+        }
+
+    /**
+     * A server that sends its SETTINGS only after the first request arrived, with SETTINGS_MAX_CONCURRENT_STREAMS = 2, and
+     * resets with PROTOCOL_ERROR any stream above it (RFC 9113 section 5.1.2 lets it): ten calls started together all succeed
+     * on the route's one connection. Before the SETTINGS only the first request goes out; the others wait for them instead of opening
+     * streams under the initial "unlimited" or connections of their own.
+     */
+    @Test fun burstBeforeTheServerSettingsStaysWithinTheirLimit() =
+        clientTest {
+            val calls = 10
+            val violations = AtomicInt(0)
+            val connections = AtomicInt(0)
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { _, _, input, output ->
+                connections.addAndFetch(1)
+                strictH2Server(input, output, limit = 2, total = calls) { violations.addAndFetch(1) }
+            }) { port ->
+                // one connection per route, so that the server sees every request (a second connection would also be fine,
+                // but its server could not tell the last request it gets)
+                testClient(engine = { maxConnectionsPerRoute = 1 }).use { c ->
+                    val bodies =
+                        coroutineScope {
+                            (1..calls)
+                                .map { i ->
+                                    async { c.get("https://127.0.0.1:$port/$i").bodyAsText() }
+                                }.awaitAll()
+                        }
+                    assertEquals(List(calls) { "" }, bodies)
+                    assertEquals(0, violations.load(), "streams above the server's limit")
+                    assertEquals(1, connections.load(), "connections")
+                }
+            }
+        }
+
+    /**
+     * A raw HTTP/2 server: no SETTINGS until the first HEADERS arrived, then SETTINGS_MAX_CONCURRENT_STREAMS = [limit]. It
+     * answers (`:status 200`, END_STREAM) once [limit] streams are open, or all that are open once [total] requests came; a
+     * HEADERS above the limit is reset with PROTOCOL_ERROR and reported to [onViolation], and so is a second request that
+     * came before the client acknowledged the SETTINGS (sent before the client knew the limit).
+     */
+    private suspend fun strictH2Server(
+        input: io.ktor.utils.io.ByteReadChannel,
+        output: io.ktor.utils.io.ByteWriteChannel,
+        limit: Int,
+        total: Int,
+        onViolation: () -> Unit,
+    ) {
+        fun frame(
+            type: Int,
+            flags: Int,
+            stream: Int,
+            payload: ByteArray = ByteArray(0),
+        ): ByteArray =
+            byteArrayOf(
+                (payload.size shr 16).toByte(),
+                (payload.size shr 8).toByte(),
+                payload.size.toByte(),
+                type.toByte(),
+                flags.toByte(),
+                (stream ushr 24).toByte(),
+                (stream shr 16).toByte(),
+                (stream shr 8).toByte(),
+                stream.toByte(),
+            ) + payload
+        runCatching {
+            input.readByteArray(24) // the client preface
+            var settingsSent = false
+            var ackOwed = false
+            var acked = false // the client acknowledged our SETTINGS: it knows the limit from here on
+            val open = ArrayList<Int>()
+            var seen = 0
+            while (true) {
+                val head = input.readByteArray(9)
+                val len = ((head[0].toInt() and 0xff) shl 16) or ((head[1].toInt() and 0xff) shl 8) or (head[2].toInt() and 0xff)
+                val type = head[3].toInt() and 0xff
+                val flags = head[4].toInt() and 0xff
+                val stream =
+                    ((head[5].toInt() and 0x7f) shl 24) or ((head[6].toInt() and 0xff) shl 16) or
+                        ((head[7].toInt() and 0xff) shl 8) or (head[8].toInt() and 0xff)
+                input.readByteArray(len)
+                when {
+                    type == 4 && flags and 1 == 0 -> {
+                        if (settingsSent) output.writeFully(frame(4, 1, 0)) else ackOwed = true
+                    }
+
+                    type == 4 -> {
+                        acked = true
+                    }
+
+                    type == 1 -> {
+                        seen++
+                        // a client writes our SETTINGS' acknowledgement before any field block it queues after them: a
+                        // second request before it went out before the client knew the limit
+                        if (!acked && seen > 1) onViolation()
+                        if (!settingsSent) {
+                            settingsSent = true
+                            output.writeFully(frame(4, 0, 0, byteArrayOf(0, 3, 0, 0, 0, limit.toByte())))
+                            if (ackOwed) output.writeFully(frame(4, 1, 0))
+                        }
+                        if (open.size >= limit) {
+                            onViolation()
+                            output.writeFully(frame(3, 0, stream, byteArrayOf(0, 0, 0, 1))) // RST_STREAM PROTOCOL_ERROR
+                        } else {
+                            open += stream
+                        }
+                        if (open.size == limit || seen == total) {
+                            for (id in open) output.writeFully(frame(1, 0x5, id, byteArrayOf(0x88.toByte())))
+                            open.clear()
+                        }
+                    }
+                }
+                output.flush()
+            }
+        }
+    }
 
     @Test fun requestBodyRespectsPeerWindow() =
         clientTest {

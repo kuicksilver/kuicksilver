@@ -499,13 +499,15 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
 - **Flow control follows the application's reading**: the server gets window back as the body is read, so a body the
   application does not read stops the server at the stream window (512 KiB, growing to 6 MiB while the application
   keeps up) instead of filling memory.
-- **No wait for the server's SETTINGS.** The first request goes out right after our preface (RFC 9113 §3.4), saving a
-  round trip on every new connection; until the server's SETTINGS arrive its settings have their initial values (§6.5.2:
-  no stream limit). Streams opened beyond a smaller SETTINGS_MAX_CONCURRENT_STREAMS that arrives later are refused by the
-  server (REFUSED_STREAM, not processed) and go again; those refusals do not retire the connection.
-- **Deadlines.** The server's SETTINGS (its preface) must arrive within the connect timeout, else the connection ends with
-  SETTINGS_TIMEOUT and its calls fail with `ConnectTimeoutException`; ours must be acknowledged
-  within `settings.settingsAckTimeout` (10 s). A connection quiet for 10 s is checked with a PING before it takes a
+- **No wait for the server's SETTINGS.** The request that opens a connection goes out right after our preface (RFC 9113
+  §3.4), saving a round trip on every new connection. It is the only one before the server's SETTINGS: other requests for
+  the route wait for them and then open streams within their SETTINGS_MAX_CONCURRENT_STREAMS, so a burst never meets a
+  server's refusal (REFUSED_STREAM, or PROTOCOL_ERROR, which §5.1.2 also allows and which would fail the call).
+- **Deadlines.** The server's SETTINGS (its preface) must arrive within what the connect timeout left after TCP and TLS,
+  else the connection ends with SETTINGS_TIMEOUT: the call fails with `ConnectTimeoutException` when its request had no
+  content or the content had not started, else with `Http2Exception.ConnectionClosed` (a request whose body went out is
+  not one that never left). Ours must be acknowledged within `settings.settingsAckTimeout` (10 s) of the server's
+  preface. A connection quiet for 10 s is checked with a PING before it takes a
   request (half the connect timeout at most, 5 s; one PING per connection, shared by the requests that wait); one that
   does not answer takes no new request and the request goes to a new connection. Calls still running on it are not cut:
   the connection gets GOAWAY and closes once they are done (or closes at once when none run). With

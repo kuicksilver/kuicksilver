@@ -352,17 +352,19 @@ class H2RuntimeTest {
     ): Pair<RawServer, kotlinx.coroutines.Deferred<H2ClientConnection>> {
         val w = Wire()
         val r = RawServer(w)
+        // the tests here talk to a server that sent its SETTINGS: the connection is handed over once they arrived
         val client =
             backgroundScope.async {
-                H2ClientConnection.start(
-                    w.toClient,
-                    w.toServer,
-                    Http2Settings(),
-                    backgroundScope,
-                    pingInterval,
-                    { w.close() },
-                    clock = clock(),
-                )
+                H2ClientConnection
+                    .start(
+                        w.toClient,
+                        w.toServer,
+                        Http2Settings(),
+                        backgroundScope,
+                        pingInterval,
+                        { w.close() },
+                        clock = clock(),
+                    ).also { it.rt.prefaceReceived.await() }
             }
         runCurrent()
         return r to client
@@ -447,12 +449,12 @@ class H2RuntimeTest {
         }
 
     /**
-     * Requests opened under the initial unlimited SETTINGS_MAX_CONCURRENT_STREAMS (RFC 9113 sections 3.4, 6.5.2), then the
-     * server's SETTINGS allow fewer than are open: section 5.1.2 lets it refuse those beyond its limit (REFUSED_STREAM: not
-     * processed, section 8.7, so they may go again), the ones it took complete, and no new stream opens until the open
-     * ones are below the limit.
+     * Before the server's SETTINGS the connection grants one stream (the request that opened it): its
+     * SETTINGS_MAX_CONCURRENT_STREAMS is not known yet, and streams beyond it would be refused (RFC 9113 section 5.1.2). The
+     * SETTINGS raise that to the server's limit; a stream refused all the same (REFUSED_STREAM) is not processed (section
+     * 8.7) and says it was opened before them.
      */
-    @Test fun smallerMaxConcurrentStreamsAfterRequestsWentOut() =
+    @Test fun oneStreamUntilTheServerSettingsThenItsLimit() =
         runTest {
             val w = Wire()
             val srv = RawServer(w)
@@ -460,33 +462,86 @@ class H2RuntimeTest {
                 H2ClientConnection.start(w.toClient, w.toServer, Http2Settings(), backgroundScope, Duration.INFINITE, {
                     w.close()
                 }, clock = clock())
+            assertFalse(client.serverSettingsReceived)
             val a = client.get("/a")
+            assertFalse(client.tryReserve(), "one stream before the server's SETTINGS")
+            runCurrent()
+            assertEquals(1, srv.read().filterIsInstance<Frame.Headers>().size)
+            srv.settings(0x3 to 2L) // SETTINGS_MAX_CONCURRENT_STREAMS = 2
+            runCurrent()
+            assertTrue(client.serverSettingsReceived)
             val b = client.get("/b")
-            val c = client.get("/c")
-            runCurrent()
-            assertEquals(3, srv.read().filterIsInstance<Frame.Headers>().size)
-            srv.settings(0x3 to 1L) // SETTINGS_MAX_CONCURRENT_STREAMS = 1
-            srv.write(
-                FrameEncoder.rstStream(b.id, Http2ErrorCode.REFUSED_STREAM.code),
-                FrameEncoder.rstStream(c.id, Http2ErrorCode.REFUSED_STREAM.code),
-            )
-            runCurrent()
-            assertEquals(1L, client.peerMaxConcurrentStreams)
-            for (refused in listOf(b, c)) {
-                val e = assertFailsWith<Http2Exception.StreamReset> { refused.response() }
-                assertEquals(Http2ErrorCode.REFUSED_STREAM, e.code)
-                assertTrue(e.notProcessed)
-                assertTrue(refused.openedBeforeServerSettings)
-                refused.release()
-            }
-            runCurrent()
-            assertFalse(client.tryReserve(), "one stream is open and the server allows one")
-            srv.write(srv.headers(a.id, listOf(":status" to "200"), endStream = true))
-            assertEquals(200, a.response().status)
+            assertFalse(b.openedBeforeServerSettings)
+            assertFalse(client.tryReserve(), "two open, and the server allows two")
+            srv.write(FrameEncoder.rstStream(a.id, Http2ErrorCode.REFUSED_STREAM.code))
+            val e = assertFailsWith<Http2Exception.StreamReset> { a.response() }
+            assertEquals(Http2ErrorCode.REFUSED_STREAM, e.code)
+            assertTrue(e.notProcessed)
+            assertTrue(a.openedBeforeServerSettings)
             a.release()
             runCurrent()
             assertTrue(client.tryReserve(), "below the limit again")
             client.unreserve()
+            srv.write(srv.headers(b.id, listOf(":status" to "200"), endStream = true))
+            assertEquals(200, b.response().status)
+            b.release()
+        }
+
+    /**
+     * A preface deadline longer than `settingsAckTimeout` (10 s): our SETTINGS are not taken for unacknowledged before the
+     * server's preface could have come (it acknowledges only after its own, section 3.4), so the connection stands until
+     * the preface deadline and then fails as a missed preface. Once the preface came, the acknowledgement gets its 10 s
+     * from then.
+     */
+    @Test fun negative_prefaceDeadlineBeyondTheSettingsAckTimeout() =
+        runTest {
+            val w = Wire()
+            val srv = RawServer(w)
+            val client =
+                H2ClientConnection.start(
+                    w.toClient,
+                    w.toServer,
+                    Http2Settings(),
+                    backgroundScope,
+                    Duration.INFINITE,
+                    { w.close() },
+                    clock = clock(),
+                    prefaceTimeout = 30.seconds,
+                )
+            val s = client.get()
+            advanceTimeBy(29_000)
+            runCurrent()
+            assertTrue(client.isUsable, "no SETTINGS_TIMEOUT at 10 s while the preface may still come")
+            advanceTimeBy(1_001)
+            runCurrent()
+            val e = assertFailsWith<Http2Exception.ConnectionClosed> { s.response() }
+            assertEquals(Http2ErrorCode.SETTINGS_TIMEOUT, e.code)
+            assertTrue(client.serverPrefaceMissed)
+            s.release()
+
+            // a preface that comes at 20 s: the acknowledgement is due 10 s later, not at once
+            val w2 = Wire()
+            val srv2 = RawServer(w2)
+            val late =
+                H2ClientConnection.start(
+                    w2.toClient,
+                    w2.toServer,
+                    Http2Settings(),
+                    backgroundScope,
+                    Duration.INFINITE,
+                    { w2.close() },
+                    clock = clock(),
+                    prefaceTimeout = 30.seconds,
+                )
+            advanceTimeBy(20_000)
+            srv2.settings()
+            runCurrent()
+            assertTrue(late.isUsable, "the acknowledgement's time starts with the preface")
+            advanceTimeBy(10_001)
+            runCurrent()
+            assertFalse(late.isUsable, "no acknowledgement within 10 s of the preface")
+            assertFalse(late.serverPrefaceMissed)
+            srv.read()
         }
 
     @Test fun goAwayStreamsAboveLastIdAreNotProcessed() =

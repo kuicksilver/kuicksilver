@@ -405,11 +405,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Changed
 
 - HTTP/2 client: the first request on a new connection no longer waits for the server's SETTINGS (RFC 9113 §3.4), which
-  saves one round trip per new connection. Until the server's SETTINGS arrive its settings have their initial values
-  (§6.5.2: no stream limit); the server's SETTINGS must still arrive within the connect timeout, else the connection ends
-  with SETTINGS_TIMEOUT and its calls fail with `ConnectTimeoutException`, as before. Streams refused because a smaller
-  SETTINGS_MAX_CONCURRENT_STREAMS arrived after them go again and do not retire the connection.
-  `H2ClientConnection.start` (internal API) gained `prefaceTimeout` and returns at once.
+  saves one round trip per new connection. Only that request goes out before them: the other requests for the route wait
+  for the SETTINGS (and their SETTINGS_MAX_CONCURRENT_STREAMS) rather than open streams under the initial "unlimited" of
+  §6.5.2 or connections of their own. The server's SETTINGS must still arrive within what the connect timeout left after
+  TCP and TLS, else the connection ends with SETTINGS_TIMEOUT: the call fails with `ConnectTimeoutException` when its
+  request had no content or the content had not started, else with `Http2Exception.ConnectionClosed` (SETTINGS_TIMEOUT),
+  so that `HttpRequestRetry` does not take a request whose body went out for one that never left. A server that refuses
+  that first stream all the same (REFUSED_STREAM) does not count against the connection. `H2ClientConnection.start`
+  (internal API) gained `prefaceTimeout` and returns at once; `tryReserve` grants one stream until the server's SETTINGS.
 - TLS over TCP: the reader pump decrypts all the ciphertext a transport read brings before it hands the plaintext on (up
   to 64 KiB in one write instead of one write per 16 KiB record) and wakes the drainer only after records that carried no
   application data: the thread wake-ups between the pumps were the largest client CPU cost. A 10 MiB HTTP/1.1 download

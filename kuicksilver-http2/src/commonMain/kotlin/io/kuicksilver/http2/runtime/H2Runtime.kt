@@ -166,6 +166,9 @@ internal class H2Runtime(
     /** Completed by the peer's first SETTINGS (its preface, RFC 9113 section 3.4); failed when the connection ends first. */
     val prefaceReceived = CompletableDeferred<Unit>()
 
+    /** The peer's preface (its first SETTINGS) arrived. */
+    val peerPrefaceReceived: Boolean get() = lock.withLock { core.peerPrefaceReceived }
+
     /** The connection ended because the peer's preface did not arrive by the deadline of [expectPeerPrefaceWithin]. */
     val peerPrefaceMissed: Boolean get() = lock.withLock { core.peerPrefaceMissed }
 
@@ -772,7 +775,10 @@ internal class H2Runtime(
     /** Takes a stream slot within the peer's SETTINGS_MAX_CONCURRENT_STREAMS; false when full or not [usable]. */
     fun tryReserve(): Boolean =
         lock.withLock {
-            if (!usableLocked() || reserved >= core.peerMaxConcurrentStreams) {
+            // before the peer's preface one stream (the request that opened the connection): its SETTINGS_MAX_CONCURRENT_STREAMS
+            // is not known yet, and a burst under the initial "unlimited" (RFC 9113 section 6.5.2) would only be refused
+            val limit = if (core.peerPrefaceReceived) core.peerMaxConcurrentStreams else 1L
+            if (!usableLocked() || reserved >= limit) {
                 false
             } else {
                 reserved++

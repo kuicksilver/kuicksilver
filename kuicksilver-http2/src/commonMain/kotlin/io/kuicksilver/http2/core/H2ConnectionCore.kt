@@ -117,6 +117,7 @@ internal class H2ConnectionCore(
     private var prefaceLeft = if (client) 0 else H2.PREFACE.size
     private var peerSettingsSeen = false
     private var peerPrefaceDeadline = -1L
+    private var peerPrefaceAt = -1L // when the peer's preface arrived
 
     /** The peer's connection preface (its first SETTINGS) arrived. */
     val peerPrefaceReceived: Boolean get() = peerSettingsSeen
@@ -260,6 +261,7 @@ internal class H2ConnectionCore(
             // section 3.4: the peer's preface ends with a SETTINGS frame, its first frame
             if (f !is Frame.Settings || f.ack) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "the first frame is not SETTINGS")
             peerSettingsSeen = true
+            peerPrefaceAt = now
         }
         if (inBlock && (f !is Frame.Continuation || f.streamId != blockStream)) {
             // section 6.10: nothing may interleave a field block
@@ -540,6 +542,20 @@ internal class H2ConnectionCore(
         if (!peerSettingsSeen) peerPrefaceDeadline = deadline
     }
 
+    /**
+     * When our SETTINGS must have been acknowledged (section 6.5.3), or null. With a deadline for the peer's preface
+     * ([expectPeerPrefaceBy]) the acknowledgement is not awaited before that preface (the peer acknowledges only after
+     * it, section 3.4) and its time counts from the preface on: a peer that never answers is the preface deadline's, not
+     * this one's.
+     */
+    private fun settingsAckDeadline(): Long? {
+        if (settingsUnacked <= 0 || settingsSentAt < 0) return null
+        val timeout = settings.settingsAckTimeout.inWholeNanoseconds
+        if (peerPrefaceDeadline < 0) return settingsSentAt + timeout
+        if (!peerSettingsSeen) return null
+        return maxOf(settingsSentAt, peerPrefaceAt) + timeout
+    }
+
     /** The next deadline (nanoseconds) for [onTimeout], or null. */
     fun nextTimeout(): Long? {
         if (closed) return null
@@ -548,7 +564,7 @@ internal class H2ConnectionCore(
         fun at(v: Long) {
             t = t?.let { minOf(it, v) } ?: v
         }
-        if (settingsUnacked > 0 && settingsSentAt >= 0) at(settingsSentAt + settings.settingsAckTimeout.inWholeNanoseconds)
+        settingsAckDeadline()?.let { at(it) }
         if (!peerSettingsSeen && peerPrefaceDeadline >= 0) at(peerPrefaceDeadline)
         if (inBlock) at(blockStartedAt + settings.maxHeaderBlockTime.inWholeNanoseconds)
         if (gracefulPing >= 0) at(gracefulDeadline)
@@ -562,7 +578,7 @@ internal class H2ConnectionCore(
             peerPrefaceMissed = true
             return connectionError(Http2ErrorCode.SETTINGS_TIMEOUT, "no connection preface (SETTINGS) from the peer in time")
         }
-        if (settingsUnacked > 0 && settingsSentAt >= 0 && now - settingsSentAt >= settings.settingsAckTimeout.inWholeNanoseconds) {
+        if (settingsAckDeadline()?.let { now >= it } == true) {
             return connectionError(Http2ErrorCode.SETTINGS_TIMEOUT, "SETTINGS not acknowledged within ${settings.settingsAckTimeout}")
         }
         if (inBlock && now - blockStartedAt >= settings.maxHeaderBlockTime.inWholeNanoseconds) {
