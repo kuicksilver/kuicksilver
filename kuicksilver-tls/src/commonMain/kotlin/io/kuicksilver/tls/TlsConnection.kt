@@ -382,6 +382,9 @@ public class TlsConnection private constructor(
     private val drainLock = Mutex()
     private val drainBuffer = ByteArray(16 * 1024)
 
+    /** Times the reader pump woke the drainer after a pass of records (tests: not after passes of application data). */
+    @Volatile internal var drainWakeupsForTest: Int = 0
+
     /** Signalled by the reader pump when what it fed may have produced ciphertext (handshake messages, alerts, key updates). */
     private val drainRequests = Channel<Unit>(Channel.CONFLATED)
 
@@ -414,7 +417,12 @@ public class TlsConnection private constructor(
         val cipher = ByteArray(READ_CHUNK)
         val plain = ByteArray(READ_CHUNK)
         var have = 0 // plaintext gathered in [plain], not handed to the application yet
-        var plainInPass = false // this pass decrypted application data
+        // the records of a pass: those whose last byte was fed, and the reads that gave application data (one per record,
+        // SSL_read takes one record at a time); more of the first means a record without application data
+        var recordsInPass = 0
+        var dataReadsInPass = 0
+        var firstPass = true
+        val framing = RecordFraming()
 
         // a ticket that preceded these bytes is cached before the application sees them: a client that reads one response
         // and closes would otherwise cancel this pump first
@@ -443,7 +451,7 @@ public class TlsConnection private constructor(
                 when {
                     r > 0 -> {
                         have += r
-                        plainInPass = true
+                        dataReadsInPass++
                     }
 
                     r == 0 -> {
@@ -476,12 +484,18 @@ public class TlsConnection private constructor(
             if (!decryptAvailable()) return
             while (true) {
                 // nothing more to decrypt: what was gathered goes to the application before the pump waits for the transport.
-                // A pass without application data may have produced ciphertext (an alert; an answer to the peer's KeyUpdate,
-                // which RFC 9846 section 4.7.3 wants "prior to sending its next Application Data record", and the writer pump
-                // drains before that anyway): the drainer sends it now. The first pass asks too (what came with the
-                // handshake's last flight)
-                if (!plainInPass) drainRequests.trySend(Unit)
-                plainInPass = false
+                // A record without application data may have produced ciphertext (an alert; an answer to the peer's
+                // KeyUpdate, which RFC 9846 section 4.7.3 wants "prior to sending its next Application Data record", and the
+                // writer pump drains before that anyway): the drainer sends it now. The pass before the first transport read
+                // always asks (records that came with the handshake's last flight), and so does every pass once the record
+                // framing could not be followed
+                if (firstPass || framing.lost || recordsInPass > dataReadsInPass) {
+                    drainWakeupsForTest++
+                    drainRequests.trySend(Unit)
+                }
+                firstPass = false
+                recordsInPass = 0
+                dataReadsInPass = 0
                 deliver()
                 val n = transportIn.readAvailable(cipher, 0, cipher.size)
                 if (n < 0) throw TlsException.Protocol(null, "transport closed without close_notify (truncation)", null)
@@ -490,7 +504,11 @@ public class TlsConnection private constructor(
                     // a record's worth at a time: ksl's pair takes some 17 KiB, and the JNI layer copies all it is offered
                     val len = minOf(n - off, FEED_CHUNK)
                     val used = lock.withLock { Ksl.tcpFeed(s(), cipher, off, len) }
-                    if (used <= 0) throw TlsException.Protocol(null, "ksl refused ciphertext", null)
+                    if (used <= 0) {
+                        deliver() // the plaintext of this pass before the refusal stays the application's
+                        throw TlsException.Protocol(null, "ksl refused ciphertext", null)
+                    }
+                    recordsInPass += framing.complete(cipher, off, used)
                     off += used
                     if (!decryptAvailable()) return
                 }
@@ -1235,5 +1253,54 @@ private class DeliverThenFail(
 
     override fun cancel(cause: Throwable?) {
         inner.cancel(cause)
+    }
+}
+
+/**
+ * Follows the TLS record framing of the ciphertext fed to ksl (RFC 9846 section 5.1: a 5-byte header whose last two bytes
+ * are the length) to count the records whose last byte went in. A header that cannot be one (the handshake fed part of a
+ * record, or anything unexpected) makes it [lost] for good: the reader pump then wakes the drainer after every pass, as
+ * it always did.
+ */
+internal class RecordFraming {
+    private val header = ByteArray(5)
+    private var headerHave = 0
+    private var bodyLeft = 0
+
+    var lost: Boolean = false
+        private set
+
+    /** Accounts for [len] bytes of [buf] from [off]; returns how many records they completed. */
+    fun complete(
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int {
+        var p = off
+        val end = off + len
+        var done = 0
+        while (p < end && !lost) {
+            if (bodyLeft > 0) {
+                val k = minOf(bodyLeft, end - p)
+                bodyLeft -= k
+                p += k
+                if (bodyLeft == 0) done++
+                continue
+            }
+            header[headerHave++] = buf[p++]
+            if (headerHave < header.size) continue
+            headerHave = 0
+            val type = header[0].toInt() and 0xff
+            val length = ((header[3].toInt() and 0xff) shl 8) or (header[4].toInt() and 0xff)
+            // content types 20..24 (RFC 9846 section 5.1, RFC 6520), legacy version 3.x, at most 2^14 + 2048 bytes (TLS 1.2)
+            if (type !in 20..24 || header[1].toInt() != 3 || length > (1 shl 14) + 2048) {
+                lost = true
+            } else if (length == 0) {
+                done++
+            } else {
+                bodyLeft = length
+            }
+        }
+        return done
     }
 }
