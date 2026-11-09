@@ -241,7 +241,11 @@ public interface Http3ServerRequest {
 
 /** The body of a server response: bytes written to [output] become DATA frames. */
 public interface Http3ResponseWriter {
-    /** The response content; the transport's flow control applies backpressure to writes. */
+    /**
+     * The response content; the transport's flow control applies backpressure to writes. Cancelling it (with any cause, a
+     * CancellationException included) abandons the response: the stream is reset with H3_REQUEST_CANCELLED (RFC 9114
+     * section 4.1.1), never ended as if the content were complete.
+     */
     public val output: ByteWriteChannel
 
     /**

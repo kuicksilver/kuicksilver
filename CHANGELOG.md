@@ -640,12 +640,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server: a response whose content is a channel that failed (`call.respond(channel)`, `ReadChannelContent`; a proxy
   relaying an upstream body that was cut) went out as complete over HTTP/1.1 and HTTP/3 when the failure was recorded
   before the engine read the channel, or while it waited for the client: ktor-io's `copyTo`, under Ktor's
-  `respondFromChannel`, stops on a channel failed with a cause as at its end, without throwing. Without a Content-Length
-  the response then ended with the last chunk (RFC 9112 section 7.1) or a FIN (RFC 9114 section 4.1), and the client took
-  the cut body for the whole one. The failure now cuts the response short: the connection ends without the last chunk,
-  the HTTP/3 stream is reset. HTTP/2 already reset the stream. Likewise an HTTP/1.1 request body the connection cut
-  short (the client closed or reset it mid-upload) now fails the handler's `readAvailable` with the cause instead of
-  answering -1 as at a complete body, as the HTTP/2 and HTTP/3 request bodies already did.
+  `respondFromChannel`, stops on a channel failed with a cause as at its end, without throwing. The response then ended
+  with the last chunk (RFC 9112 section 7.1), with a FIN after a body delimited by the close (section 8), or with a FIN on
+  HTTP/3 (RFC 9114 section 4.1), and the client took the cut body for the whole one. The failure now cuts the response
+  short: the HTTP/1.1 connection is reset without the last chunk and carries no later response; the HTTP/3 stream is
+  reset with `H3_REQUEST_CANCELLED` (section 4.1.1), as it now is for any response body the application abandons (it was
+  `H3_INTERNAL_ERROR`). A channel cancelled with a `CancellationException` (a cancelled upstream call or `writer {}`) is a
+  failure too: on HTTP/1.1 it ended a close-delimited response with a FIN, on HTTP/3 it left the stream with neither a FIN
+  nor a reset. A channel that fails after all its Content-Length bytes leaves the response complete, and an HTTP/3 HEAD,
+  204 or 304 no longer reads the channel. HTTP/2 already reset the stream. Likewise an HTTP/1.1 request body the
+  connection cut short (the client closed or reset it mid-upload) now fails the handler's `readAvailable` with the cause
+  instead of answering -1 as at a complete body, as the HTTP/2 and HTTP/3 request bodies already did.
 - Ktor engines, WebSockets: a connection that failed in the middle of a frame (a reset while the session's reader was
   behind, or while a compressed message was inflated) ended the session's input as if the peer had closed the stream,
   without the failure. The input now fails with the connection's cause.
