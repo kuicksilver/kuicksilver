@@ -209,7 +209,7 @@ class ClientH2Test {
             tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
                 rawH2Server(input, output, answerOnce = index == 0)
             }) { port ->
-                testClient(engine = { connectTimeout = 4.seconds }).use { c ->
+                testClient(engine = { connectTimeout = 2.seconds }).use { c ->
                     val e = engine(c)
                     e.h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
                     assertEquals(200, c.get("https://127.0.0.1:$port/").status.value)
@@ -619,7 +619,7 @@ class ClientH2Test {
             tlsWithSilentUdp(listOf("h2"), silentUdp = false, acceptAfter = accept, handler = { _, _, input, _ ->
                 runCatching { input.readBuffer() }
             }) { port ->
-                testClient(engine = { connectTimeout = 2.seconds }).use { c ->
+                testClient(engine = { connectTimeout = 4.seconds }).use { c ->
                     val started =
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
