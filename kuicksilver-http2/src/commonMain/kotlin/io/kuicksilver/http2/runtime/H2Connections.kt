@@ -82,7 +82,7 @@ public class H2ClientConnection private constructor(
      * Takes a stream slot within the peer's limit; false when the connection is full or not usable. Before the server's
      * SETTINGS arrive ([serverSettingsReceived]) it grants one slot only: the server's SETTINGS_MAX_CONCURRENT_STREAMS is not
      * known yet, and streams beyond it would be refused (RFC 9113 section 5.1.2: with REFUSED_STREAM or PROTOCOL_ERROR).
-     * [onChange] tells when the SETTINGS arrive.
+     * The `onChange` callback given to `start` tells when the SETTINGS arrive.
      */
     public fun tryReserve(): Boolean = rt.tryReserve()
 
