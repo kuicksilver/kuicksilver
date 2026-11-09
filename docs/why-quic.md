@@ -42,8 +42,9 @@ In short, on this setup:
   into packets, so QUIC and TCP lose packets alike. The published run has no bandwidth limit: the times are set by the
   RTT, the losses and each stack's congestion control and recovery, not by a link's rate. `KSL_WHYQUIC_RATE` (for
   example `200mbit`) adds one: a netem rate on the loopback, end to end (a rebind cell's packets cross the loopback
-  twice, so they get twice the rate per crossing), with a queue of what the rate sends in the one-way delay plus 50 ms
-  rather than one that would add seconds of delay; the environment line records it. The kernel's TCP metrics cache is
+  twice, so they get twice the rate per crossing), with a queue of what the rate sends in twice the one-way delay plus
+  50 ms (the one qdisc carries both directions) rather than one that would add seconds of delay; the environment line
+  records it, and `netem-drops.txt` the packets each cell lost to a full queue rather than to the configured loss. The kernel's TCP metrics cache is
   off, so each TCP connection starts fresh like each QUIC connection.
 - **The clients.** Kuicksilver's Ktor engine over HTTP/3 (`H3Only`), over HTTP/2 and over HTTP/1.1 (`H1Only`, with and
   without `http2 { enabled }`), and OkHttp 5 over HTTP/2 and HTTP/1.1 on the same JVM. OkHttp is the reference for TCP
@@ -52,12 +53,9 @@ In short, on this setup:
   TLS stops at 1.2, and the Kuicksilver server speaks TLS 1.3 only.
 - **Kuicksilver's own TCP client was slower than OkHttp at 100 and 200 ms without loss.** During one such download the
   receive buffer of its socket (`ss -tmi` in the container) stayed near 150 KiB, while OkHttp's grew to megabytes. The
-  cause is this setup more than the client: without a rate netem hands over a whole window at once, and Linux 6.18+
-  receive-buffer autotuning (what the application copied minus what is still queued, measured per copied packet) then
-  sees one packet per round trip and leaves the window small for seconds, for OkHttp too; the client that escapes first
-  varies from run to run (2 to 24 s for 10 MiB at 100 ms). With a 200 Mbit/s rate both clients took about 2.1 s. These
-  columns will be measured again; read the OkHttp columns for what TCP does here. With loss the TCP clients are close to
-  each other.
+  TCP columns without loss vary a lot from run to run on this unpaced loopback; a re-measurement of the HTTP/1.1 and
+  HTTP/2 columns with a rate limit (`KSL_WHYQUIC_RATE`) is pending, and this note will be updated with it. Until then,
+  read the OkHttp columns for what TCP does here. With loss the TCP clients are close to each other.
 - **The server is Kuicksilver for every protocol**, so the HTTP/1.1 and HTTP/2 columns measure Kuicksilver's TCP
   server as well. Both stacks use CUBIC: Kuicksilver's own for QUIC, the Linux kernel's for TCP.
 - **Each cell is a fresh client process** that runs two unrecorded warm-up runs over the bare loopback; then the
