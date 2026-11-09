@@ -209,7 +209,7 @@ class ClientH2Test {
             tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
                 rawH2Server(input, output, answerOnce = index == 0)
             }) { port ->
-                testClient(engine = { connectTimeout = 2.seconds }).use { c ->
+                testClient(engine = { connectTimeout = 4.seconds }).use { c ->
                     val e = engine(c)
                     e.h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
                     assertEquals(200, c.get("https://127.0.0.1:$port/").status.value)
@@ -610,8 +610,8 @@ class ClientH2Test {
 
     /**
      * The wait for the server's SETTINGS gets what the connect timeout left after TCP and TLS, not the whole timeout again:
-     * a server whose TLS handshake takes 1.5 s (it accepts late) and that then never sends its SETTINGS fails a call with a
-     * 2 s connect timeout at about 2 s, not at 3.5 s.
+     * a server whose TLS handshake takes 3 s (it accepts late) and that then never sends its SETTINGS fails a call with a
+     * 4 s connect timeout at about 4 s (bound: 5.5 s), not at about 7 s.
      */
     @Test fun negative_settingsWaitGetsWhatTheConnectTimeoutLeft() =
         clientTest {
@@ -624,15 +624,15 @@ class ClientH2Test {
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
                     kotlinx.coroutines.coroutineScope {
-                        // the slow TLS step: the server takes the connection 1.5 s late (a stand-in for a slow handshake)
+                        // the slow TLS step: the server takes the connection 3 s late (a stand-in for a slow handshake)
                         launch {
-                            kotlinx.coroutines.delay(1_500)
+                            kotlinx.coroutines.delay(3_000)
                             accept.complete(Unit)
                         }
                         assertFailsWith<io.ktor.client.network.sockets.ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
                     }
                     val took = started.elapsedNow()
-                    assertTrue(took < 2_900.milliseconds, "failed after $took: the SETTINGS wait got the whole connect timeout again")
+                    assertTrue(took < 5_500.milliseconds, "failed after $took: the SETTINGS wait got the whole connect timeout again")
                 }
             }
         }

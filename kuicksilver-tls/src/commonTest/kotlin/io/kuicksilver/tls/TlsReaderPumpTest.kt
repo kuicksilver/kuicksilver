@@ -7,6 +7,7 @@ package io.kuicksilver.tls
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
@@ -45,6 +46,9 @@ class TlsReaderPumpTest {
     private inner class RelayPair : ChannelPair() {
         private val fromServer = ByteChannel(autoFlush = true)
         private val toClient = ByteChannel(autoFlush = true)
+
+        /** The client's transport input: [toClient], failing on demand ([CuttableInput.cutAfterNextRead]). */
+        val cuttable = CuttableInput(toClient)
         private val fromClient = ByteChannel(autoFlush = true)
         private val toServer = ByteChannel(autoFlush = true)
 
@@ -53,7 +57,7 @@ class TlsReaderPumpTest {
 
         @kotlin.concurrent.Volatile var manual = false
 
-        override val clientIn: ByteReadChannel get() = toClient
+        override val clientIn: ByteReadChannel get() = cuttable
         override val clientOut: ByteWriteChannel get() = fromClient
         override val serverIn: ByteReadChannel get() = toServer
         override val serverOut: ByteWriteChannel get() = fromServer
@@ -108,6 +112,50 @@ class TlsReaderPumpTest {
             }
             return true
         }
+    }
+
+/**
+     * [inner], but once [cutAfterNextRead] was called the first access after a read took bytes fails with an IOException,
+     * bytes still buffered or not, as ktor's ByteChannel does once closed with a cause.
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    class CuttableInput(
+        private val inner: ByteChannel,
+    ) : ByteReadChannel {
+        @kotlin.concurrent.Volatile private var armed = false
+        private var lastHeld = 0L
+        private var failure: Throwable? = null
+
+        /** Arms the cut: call it while the reader waits with nothing buffered. */
+        fun cutAfterNextRead() {
+            lastHeld = inner.availableForRead.toLong()
+            armed = true
+        }
+
+        private fun check() {
+            failure?.let { throw it }
+            if (!armed) return
+            val held = inner.availableForRead.toLong()
+            if (held < lastHeld) {
+                failure = kotlinx.io.IOException("the transport was cut").also { throw it }
+            }
+            lastHeld = held
+        }
+
+        override val closedCause: Throwable? get() = failure ?: inner.closedCause
+        override val isClosedForRead: Boolean get() = inner.isClosedForRead
+
+        override val readBuffer: kotlinx.io.Source get() {
+            check()
+            return inner.readBuffer
+        }
+
+        override suspend fun awaitContent(min: Int): Boolean {
+            failure?.let { throw it }
+            return inner.awaitContent(min)
+        }
+
+        override fun cancel(cause: Throwable?) = inner.cancel(cause)
     }
 
     private fun both(pair: ChannelPair): Pair<TlsConnection, TlsConnection> =
@@ -361,6 +409,42 @@ class TlsReaderPumpTest {
                 val e = kotlin.test.assertFails { withTimeout(10.seconds) { c.input.readExactly(1) } }
                 val tls = generateSequence(e) { it.cause }.filterIsInstance<TlsException>().firstOrNull()
                 assertTrue(tls?.message?.contains("refused ciphertext") == true, "got $e")
+            } finally {
+                c.close()
+                s.close()
+                relays.cancel()
+            }
+        }
+
+    /**
+     * The transport fails after a read that took one buffer segment of a longer flight: the records wholly inside what was
+     * read reach the application before the failure (ktor's channel throws its cause on the next access even with bytes
+     * buffered, so the bytes already read must be fed, not dropped).
+     */
+    @Test fun negative_bytesReadBeforeATransportFailureAreFed(): Unit =
+        runBlocking {
+            val pair = RelayPair()
+            val (c, s) = both(pair)
+            try {
+                val ping = "ready".encodeToByteArray()
+                s.output.writeFully(ping, 0, ping.size)
+                s.output.flush()
+                withTimeout(10.seconds) { c.input.readExactly(ping.size) }
+                pair.manual = true
+                // small records, more than one 8 KiB segment's worth of them, delivered in one write
+                val chunk = 500
+                val count = 24
+                val data = ByteArray(chunk * count) { (it * 11).toByte() }
+                for (i in 0 until count) {
+                    s.output.writeFully(data, i * chunk, (i + 1) * chunk)
+                    s.output.flush()
+                }
+                pair.cuttable.cutAfterNextRead()
+                pair.deliverAtLeast(chunk * count) // every record (each a little over 500 bytes)
+                val first = withTimeout(10.seconds) { c.input.readExactly(chunk) }
+                assertContentEquals(data.copyOf(chunk), first)
+                val e = kotlin.test.assertFails { withTimeout(10.seconds) { c.input.readExactly(data.size - chunk) } }
+                assertTrue(generateSequence(e) { it.cause }.any { "cut" in (it.message ?: "") }, "got $e")
             } finally {
                 c.close()
                 s.close()

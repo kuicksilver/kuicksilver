@@ -510,11 +510,19 @@ public class TlsConnection private constructor(
                 deliver()
                 var n = transportIn.readAvailable(cipher, 0, cipher.size)
                 if (n < 0) throw TlsException.Protocol(null, "transport closed without close_notify (truncation)", null)
-                // one read gives at most one buffer segment (8 KiB): what else is there already joins this pass
-                while (n < cipher.size && transportIn.availableForRead > 0) {
-                    val more = transportIn.readAvailable(cipher, n, cipher.size - n)
-                    if (more <= 0) break
-                    n += more
+                // one read gives at most one buffer segment (8 KiB): what else is there already joins this pass. A transport
+                // that failed meanwhile throws its cause here even with bytes buffered (ktor's readBuffer): the bytes read so
+                // far are fed first, and the next pass's read reports the failure
+                try {
+                    while (n < cipher.size && transportIn.availableForRead > 0) {
+                        val more = transportIn.readAvailable(cipher, n, cipher.size - n)
+                        if (more <= 0) break
+                        n += more
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    // reported by the next pass's first read
                 }
                 var off = 0
                 while (off < n) {
