@@ -70,7 +70,15 @@ internal suspend fun ByteWriteChannel.copyContentFrom(
     length: Long?,
 ) {
     val content = readChannel.failureIsNoEnd()
-    val copied = withContext(Dispatchers.Unconfined) { content.copyTo(this@copyContentFrom, length ?: Long.MAX_VALUE) }
+    val copied =
+        try {
+            withContext(Dispatchers.Unconfined) { content.copyTo(this@copyContentFrom, length ?: Long.MAX_VALUE) }
+        } catch (e: IOException) {
+            // a channel cancelled together with this call (a writer {} of the call's scope): the call's cancellation, which a
+            // failed channel's IOException ([failureIsNoEnd]) would otherwise stand in for
+            currentCoroutineContext().ensureActive()
+            throw e
+        }
     if (length == null) return
     if (copied < length) throw BaseApplicationResponse.BodyLengthIsTooSmall(length, copied)
     val more =

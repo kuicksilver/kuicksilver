@@ -743,7 +743,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   The close flushed the channel with a suspending `flushAndClose`, which took the channel's single write slot, and
   ktor-io resumed the waiting write with `ConcurrentIOException` ("Concurrent write attempts") instead.
 - Ktor server: an HTTP/3 request whose call fails after Ktor committed its response but before any answer went out (an
-  upgrade that fails before its `:status 200`) is reset with H3_INTERNAL_ERROR; before, the request stream stayed open
+  upgrade that fails before its `:status 200`) is reset with H3_REQUEST_CANCELLED, a response abandoned after partial
+  processing (RFC 9114 section 4.1.1); before, the request stream stayed open
   and the client waited for an answer that never came.
 - Tooling: `tools/interop/run-local.sh` makes every image a run needs present for a platform the host can run before it
   starts (`tools/interop/peer-images.sh`): a missing image is pulled, `--platform linux/amd64` (emulated) when its manifest
