@@ -96,9 +96,12 @@ class EngineMainTest {
                 block
                     .replace("port = 443", "port = 0\n        host = \"127.0.0.1\"")
                     .replace("com.example.ApplicationKt.module", module)
-                    .replace("/etc/letsencrypt/live/example.com/fullchain.pem", chain.path)
-                    .replace("/etc/letsencrypt/live/example.com/privkey.pem", key.path)
-            assertTrue(conf.contains(chain.path) && conf.contains(key.path) && conf.contains(module), conf)
+                    .replace("/etc/letsencrypt/live/example.com/fullchain.pem", chain.invariantSeparatorsPath)
+                    .replace("/etc/letsencrypt/live/example.com/privkey.pem", key.invariantSeparatorsPath)
+            assertTrue(
+                conf.contains(chain.invariantSeparatorsPath) && conf.contains(key.invariantSeparatorsPath) && conf.contains(module),
+                conf,
+            )
             val file = File(dir, "application.conf").apply { writeText(conf) }
             val server = EngineMain.createServer(arrayOf("-config=${file.path}"))
             server.startSuspend(false)
