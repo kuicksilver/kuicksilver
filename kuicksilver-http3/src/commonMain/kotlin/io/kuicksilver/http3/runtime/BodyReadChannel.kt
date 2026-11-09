@@ -25,7 +25,8 @@ internal class BodyReadChannel(
 ) : ByteReadChannel {
     override val closedCause: Throwable? get() = inner.closedCause
 
-    override val isClosedForRead: Boolean get() = inner.closedCause == null && inner.isClosedForRead
+    // in this order: a failure that lands between the two reads is then seen as a failure, never as a clean end
+    override val isClosedForRead: Boolean get() = inner.isClosedForRead && inner.closedCause == null
 
     override val readBuffer: Source get() {
         inner.closedCause?.let { throw it }
