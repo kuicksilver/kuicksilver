@@ -9,11 +9,13 @@ import io.ktor.network.sockets.SocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedByteChannelException
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.reader
 import io.ktor.utils.io.writer
 import io.kuicksilver.annotations.InternalKuicksilverApi
@@ -22,17 +24,21 @@ import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.isHandshakeTimeout
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -70,6 +76,7 @@ public suspend fun Socket.tlsServer(
  */
 public class TlsSocket private constructor(
     private val raw: Socket,
+    private val rawIn: ByteReadChannel,
     private val rawOut: ByteWriteChannel,
     public val tls: TlsConnection,
     /** The context of the coroutines of this socket. */
@@ -223,8 +230,9 @@ public class TlsSocket private constructor(
     /**
      * Ends the connection after the application's stream failed with [cause]: the session sends internal_error after
      * everything sent before ([TlsConnection.abortOutput]; a TLS 1.3 server, a TLS 1.2 client), the raw socket then
-     * closes with a FIN (the peer fails on the alert, so a FIN cannot pass for a clean end), and is reset when it has not
-     * closed after [ALERT_CLOSE_TIMEOUT] (a peer that stopped reading). Where no alert can be sent, or the transport did
+     * sends a FIN (the peer fails on the alert, so a FIN cannot pass for a clean end), reads and drops what the peer still
+     * sends until it closes ([lingerAfterAlert]: a reset over that input could erase the alert before the peer read it), and
+     * closes; it is reset when it has not closed after [ALERT_CLOSE_TIMEOUT] (a peer that stopped reading). Where no alert can be sent, or the transport did
      * not take it, the connection is reset at once (`abortTls`).
      */
     private suspend fun failTls(cause: Throwable) {
@@ -237,10 +245,13 @@ public class TlsSocket private constructor(
         tls.close()
         @OptIn(DelicateCoroutinesApi::class)
         GlobalScope.launch(Dispatchers.Default) {
-            // outside the socket's scope, whose job ends only after this pump: the alert and a FIN, bounded
+            // outside the socket's scope, whose job ends only after this pump: the alert and a FIN, then what the peer still
+            // sends is read and dropped until it closes (lingerAfterAlert, once the session's pumps no longer read), bounded
             val closed =
                 withTimeoutOrNull(ALERT_CLOSE_TIMEOUT) {
                     runCatching { rawOut.flushAndClose() }
+                    tls.closeAndAwaitPumps()
+                    rawIn.lingerAfterAlert(ALERT_LINGER)
                     raw.close()
                     raw.socketContext.join()
                 }
@@ -255,6 +266,42 @@ public class TlsSocket private constructor(
 
         /** How long a failed stream's internal_error alert and FIN may take to leave before the connection is reset instead. */
         internal val ALERT_CLOSE_TIMEOUT: Duration = 3.seconds
+
+        /**
+         * How long a server's failed handshake, or a failed stream's alert, reads and drops what the peer still sends before
+         * the socket closes ([lingerAfterAlert]).
+         */
+        internal val ALERT_LINGER: Duration = 2.seconds
+
+        /**
+         * [ALERT_LINGER] for a client's failed handshake: shorter, since the error reaches the application only after it. A
+         * server has sent its whole flight before the client's alert, so little is in flight; the server closes on the alert
+         * (RFC 9846 section 6.2), and its FIN usually ends the wait at once.
+         */
+        internal val CLIENT_ALERT_LINGER: Duration = 250.milliseconds
+
+        /** How much a failed handshake reads and drops at most before the socket closes ([lingerAfterAlert]). */
+        internal const val ALERT_LINGER_BYTES: Long = 256L * 1024
+
+        /**
+         * After a fatal alert (a failed handshake, a failed stream), whose FIN is on its way: reads and drops what the peer
+         * still sends until it closes too, for [bound] and [ALERT_LINGER_BYTES] at most, before the socket closes. Nothing
+         * of it reaches TLS: the session has ended, and only the transport is drained. A close over input that
+         * is unread, or that arrives after it, makes the kernel answer with a reset, and a reset can erase the alert from the
+         * peer's receive buffer before the peer read it (Windows discards what it has not delivered): a client that had sent
+         * its request right after its Finished (TLS 1.3, a server that requires a certificate it did not send) saw "connection
+         * aborted" instead of certificate_required. The close is staged as RFC 9112 section 9.6 describes for the last
+         * response: the write side first, then reading until the peer's close, then the full close.
+         */
+        private suspend fun ByteReadChannel.lingerAfterAlert(bound: Duration) {
+            try {
+                withTimeoutOrNull(bound) { discard(ALERT_LINGER_BYTES) }
+            } catch (_: CancellationException) {
+                currentCoroutineContext().ensureActive() // a cancelled caller; a channel cancelled under it is no reason to stop
+            } catch (_: Throwable) {
+                // the peer reset the connection, or the socket failed: nothing left to protect the alert from
+            }
+        }
 
         internal suspend fun start(
             raw: Socket,
@@ -274,11 +321,21 @@ public class TlsSocket private constructor(
                         TlsConnection.server(rawIn, rawOut, config, ctx)
                     }
                 } catch (t: Throwable) {
-                    runCatching { rawOut.flushAndClose() }
-                    raw.close()
+                    try {
+                        runCatching { rawOut.flushAndClose() }
+                        // not after the handshake's own deadline (a silent peer has nothing in flight to protect the alert
+                        // from) nor when the caller was cancelled (a stop, its own deadline)
+                        if (t !is CancellationException && !t.isHandshakeTimeout) {
+                            rawIn.lingerAfterAlert(if (config.role == TlsRole.Client) CLIENT_ALERT_LINGER else ALERT_LINGER)
+                        }
+                    } catch (_: CancellationException) {
+                        // cancelled while lingering (a stop, the caller's deadline): the handshake's failure stays the one thrown
+                    } finally {
+                        raw.close()
+                    }
                     throw t
                 }
-            return TlsSocket(raw, rawOut, tls, ctx).also { if (config.role == TlsRole.Client) it.closeTimeout = CLOSE_TIMEOUT }
+            return TlsSocket(raw, rawIn, rawOut, tls, ctx).also { if (config.role == TlsRole.Client) it.closeTimeout = CLOSE_TIMEOUT }
         }
     }
 }

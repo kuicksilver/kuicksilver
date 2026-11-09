@@ -199,7 +199,7 @@ public class TlsConnection private constructor(
         }
         // withTimeoutOrNull: our own deadline becomes a TlsException, an outer cancellation stays a CancellationException
         withTimeoutOrNull(config.handshakeTimeout) { handshakeLoop() }
-            ?: throw TlsException.Protocol(null, "TLS handshake timed out after ${config.handshakeTimeout}", null)
+            ?: throw TlsException.Protocol(null, "TLS handshake timed out after ${config.handshakeTimeout}", HandshakeTimedOut())
         afterHandshake()
         readerJob = scope.launch { readerPump() }
         writerJob = scope.launch { writerPump() }
@@ -805,6 +805,17 @@ public class TlsConnection private constructor(
         close()
     }
 
+    /**
+     * [close], then waits until the pumps have stopped: from then on nothing of this session reads the transport's input,
+     * and its owner may read and drop what the peer still sends before it closes the transport (after a fatal alert, so
+     * that a reset does not erase the alert before the peer read it). The caller bounds the wait.
+     */
+    @InternalKuicksilverApi
+    public suspend fun closeAndAwaitPumps() {
+        close()
+        scope.coroutineContext[Job]!!.join()
+    }
+
     /** Cancels the pumps and frees the native session once they have stopped and nobody holds the lock (never while any caller is inside ksl). */
     override fun close() {
         if (closed) return
@@ -1330,3 +1341,13 @@ internal class RecordFraming {
         return done
     }
 }
+
+/** The cause of the [TlsException.Protocol] a handshake fails with at its own deadline ([TlsConfig.handshakeTimeout]). */
+private class HandshakeTimedOut : kotlinx.io.IOException("no handshake within its deadline")
+
+/**
+ * Whether this failure is a handshake that ran out its own deadline ([TlsConfig.handshakeTimeout]): the peer has been
+ * silent, so its owner need not wait for anything more from it before closing the transport.
+ */
+@InternalKuicksilverApi
+public val Throwable.isHandshakeTimeout: Boolean get() = this is TlsException.Protocol && cause is HandshakeTimedOut

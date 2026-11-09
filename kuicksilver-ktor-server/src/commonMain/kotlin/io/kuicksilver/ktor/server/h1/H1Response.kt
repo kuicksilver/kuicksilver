@@ -23,6 +23,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.asByteWriteChannel
 import io.ktor.utils.io.cancel
+import io.ktor.utils.io.close
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.server.ServerWebSocketInput
@@ -135,7 +136,12 @@ internal class H1Response(
             upgraded?.complete(false)
         }
 
-        super.respondOutgoingContent(content)
+        try {
+            super.respondOutgoingContent(content)
+        } catch (cause: Throwable) {
+            if (content !is OutgoingContent.ProtocolUpgrade) failResponse(cause)
+            throw cause
+        }
         chunkedChannel?.flushAndClose()
         chunkedJob?.join()
         if (bodyDiscarded) output.flushAndClose()
@@ -225,6 +231,7 @@ internal class H1Response(
             }
             builder.emptyLine()
             output.writePacket(builder.build())
+            headWritten = true
             if (tunnelRefused) output.writeFully(TUNNEL_NOT_SUPPORTED)
 
             if (!contentReady) {
@@ -322,6 +329,27 @@ internal class H1Response(
         val status = statusCode.value
         return tunnelRefused || call.request.local.method == HttpMethod.Head || status in 100..199 || status == 204 || status == 304
     }
+
+    /**
+     * A response whose content failed with [cause] is cut short here, on the connection's channel for this response
+     * ([output]), before the call returns. The chunk encoder fails [output] with the cause too, but only when it runs: it is
+     * resumed through Dispatchers.Unconfined, and a failure that arose inside another unconfined resumption (a content
+     * channel failed from a coroutine that runs on Dispatchers.Unconfined) queues it behind that one, on another thread.
+     * Meanwhile the call ended (the engine's call phase handles the failure, the call returns normally) and the pipeline
+     * closed [output] cleanly; the encoder's failure then came too late, the cut response passed for a whole one without its
+     * last chunk, and the next pipelined response followed it on the same connection. A response without content
+     * ([bodyDiscarded]) is complete on the wire: it ends as it is. Nothing is cut before the head was written ([headWritten]):
+     * the call is then answered as any failed one (Ktor's `handleFailure`, a 500 where nothing was committed), and the
+     * connection goes on.
+     */
+    private fun failResponse(cause: Throwable) {
+        if (bodyDiscarded || !headWritten) return
+        chunkedChannel?.close(cause)
+        output.close(cause)
+    }
+
+    /** Set once the response head is in [output]: from then on a failed response can only be cut short ([failResponse]). */
+    private var headWritten = false
 
     /**
      * The body channel of a response without content (or with the engine's own, [tunnelRefused]) was handed out: its
