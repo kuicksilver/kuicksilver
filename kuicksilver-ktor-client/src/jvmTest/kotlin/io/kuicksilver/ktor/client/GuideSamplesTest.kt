@@ -412,9 +412,11 @@ class GuideSamplesTest {
                     if (mode == Http3DiscoveryMode.H1Only) {
                         assertEquals(emptyList(), h3Failures, "H1Only never tries HTTP/3")
                     } else {
-                        // HTTP/3 was tried first and failed with the alert: CRYPTO_ERROR 0x0100 + 116
+                        // HTTP/3 was tried alongside TCP: the race ended, and if HTTP/3 had failed by then it was with the alert
+                        // (CRYPTO_ERROR 0x0100 + 116); when TCP's alert ends the call first, HTTP/3 is still pending (null)
+                        assertTrue(h3Failures.isNotEmpty(), "Preferred raced HTTP/3")
                         assertTrue(
-                            h3Failures.any { it is QuicException.ConnectionLost.TransportClosed && it.code == 0x0174L },
+                            h3Failures.all { it == null || (it is QuicException.ConnectionLost.TransportClosed && it.code == 0x0174L) },
                             "$h3Failures",
                         )
                     }
