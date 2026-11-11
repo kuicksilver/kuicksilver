@@ -637,6 +637,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a HEADERS frame after the trailers whose declared length was above the field section cap was a stream error
+  (H3_EXCESSIVE_LOAD: a 431 on the server, `FieldSectionTooLarge` on the client) instead of the connection error
+  H3_FRAME_UNEXPECTED that RFC 9114 section 4.1 requires for any frame after the trailers. A smaller one already was.
 - HTTP/2 and HTTP/3 servers: a request whose `:scheme` was no URI scheme (`ht tp`, `1http`, `http:`) was accepted;
   only control characters were refused. `:scheme` is the scheme portion of the target URI (RFC 9113 section 8.3.1,
   RFC 9114 section 4.3.1), so a value outside RFC 3986 section 3.1's syntax now makes the request malformed. The shared

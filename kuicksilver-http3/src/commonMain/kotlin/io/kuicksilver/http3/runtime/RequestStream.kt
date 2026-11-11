@@ -126,6 +126,8 @@ internal suspend fun H3Session.pumpBody(
                             "HEADERS on the established CONNECT stream ${st.id}",
                         )
                     }
+                    // section 4.1: any HEADERS after the trailers is an invalid sequence, whatever its size
+                    if (trailerFields != null) throw H3ProtocolError(Http3ErrorCode.FRAME_UNEXPECTED, "HEADERS after trailers")
                     throw StreamFailure(
                         Http3ErrorCode.EXCESSIVE_LOAD,
                         Http3Exception.FieldSectionTooLarge(st.id, settings.maxFieldSectionSize),
