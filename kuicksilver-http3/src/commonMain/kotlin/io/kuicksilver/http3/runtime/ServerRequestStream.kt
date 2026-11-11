@@ -232,7 +232,10 @@ internal fun H3Session.wtSessionEnded(
     session?.ended() ?: wt.unregister(streamId)
 }
 
-/** 431 and STOP_SENDING H3_EXCESSIVE_LOAD (RFC 9114 section 4.2.2; quic-go CVE-2025-64702). */
+/**
+ * 425 Too Early for a request that came in 0-RTT and the policy does not run early (RFC 8470 section 5.2): the request is
+ * not read (STOP_SENDING H3_NO_ERROR) and the client may send it again after the handshake.
+ */
 private suspend fun H3Session.reject425(st: QuicStream) {
     runCatching {
         st.stopSending(Http3ErrorCode.NO_ERROR)
@@ -242,6 +245,7 @@ private suspend fun H3Session.reject425(st: QuicStream) {
     runCatching { cancelSections(st) }
 }
 
+/** 431 and STOP_SENDING H3_EXCESSIVE_LOAD (RFC 9114 section 4.2.2; quic-go CVE-2025-64702). */
 private suspend fun H3Session.reject431(st: QuicStream) {
     runCatching {
         st.stopSending(Http3ErrorCode.EXCESSIVE_LOAD)
