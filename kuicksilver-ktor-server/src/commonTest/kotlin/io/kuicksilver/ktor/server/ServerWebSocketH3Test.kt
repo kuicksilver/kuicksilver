@@ -247,10 +247,12 @@ class ServerWebSocketH3Test {
                 }
             try {
                 h3(port) { c ->
-                    val stream = c.connect(wsRequest, "websocket")
+                    // the reset can overtake the 200 (a RESET_STREAM lets the client drop what it has not read, RFC 9000
+                    // section 3.2), so the connect itself may fail with it; either way the stream ends in a reset, not a FIN
                     val failure =
                         withTimeout(5.seconds) {
                             assertFailsWith<Http3Exception> {
+                                val stream = c.connect(wsRequest, "websocket")
                                 val b = ByteArray(1024)
                                 while (stream.input.readAvailable(b, 0, b.size) >= 0) { }
                             }
