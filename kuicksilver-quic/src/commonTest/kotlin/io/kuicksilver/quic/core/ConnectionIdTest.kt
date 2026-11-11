@@ -103,8 +103,9 @@ class ConnectionIdTest {
     /**
      * Found by the stateful connection fuzzer (`connectionNull`): every ID the peer retired stayed registered for 3 x PTO and was
      * replaced at once, so a peer retiring each new ID as it arrived grew the retired set (and the endpoint's routing table)
-     * without a fixed bound. At most `retiredCap` retired IDs keep routing; the oldest leaves early (a stateless reset for a
-     * retired ID is ignored by the peer, RFC 9000 section 10.3.1).
+     * without a fixed bound. 0.3.0 cross-review: it also made us draw a new ID, a QUIC-LB nonce of a space the process shares,
+     * for every 2-byte RETIRE_CONNECTION_ID. Up to 2 x the issued count retired within 3 x PTO are replaced at once; past that a
+     * retirement costs a glitch token and its replacement waits until a retired ID leaves (RFC 9000 section 5.1.1 sets no time).
      */
     @Test fun negative_retiredLocalIdsStayBounded() {
         val removed = ArrayList<ConnectionId>()
@@ -123,14 +124,108 @@ class ConnectionIdTest {
         m.setPeerLimit(3)
         val until = TimeMark(1_000_000_000L)
         var seq = 0L
+        val answers = ArrayList<Boolean>()
         repeat(100) {
             while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
-            m.onPeerRetired(seq++, until)
+            if (m.localForTest(seq) == null) return@repeat // nothing left to retire: the peer has to wait as well
+            answers += m.onPeerRetired(seq++, until)
         }
+        assertEquals(List(6) { true } + List(3) { false }, answers, "6 replaced at once, then glitches")
         val sizes = m.sizesForTest()
-        assertTrue(sizes[2] <= 32 && sizes[3] <= 32, "retired IDs still routing: ${sizes[2]} (deadlines ${sizes[3]})")
-        assertEquals(100 - 32, removed.size, "the oldest retired IDs left the registry early")
-        assertEquals(3, m.localCount, "every retired ID was replaced")
+        assertEquals(9, sizes[2], "retired IDs still routing")
+        assertEquals(0, m.localCount, "the replacements wait")
+        assertEquals(9L, seq)
+        m.expireRetired(until)
+        assertEquals(9, removed.size, "the retired IDs left the registry at their deadline")
+        assertEquals(3, m.localCount, "and the replacements were issued then")
+    }
+
+    /**
+     * 0.3.0 cross-review: the periodic rotation retired the old peer ID with no room left in the retirement backlog and threw
+     * CONNECTION_ID_LIMIT_ERROR out of poll(), mid-packet. With the backlog full it now waits.
+     */
+    @Test fun negative_rotationWithAFullRetirementBacklogWaits() {
+        val m = manager(limit = 40)
+        for (seq in 0L..35L) newCid(m, seq)
+        newCid(m, 36, retire = 32) // 32 retirements outstanding, none acknowledged: the backlog (32) is full
+        val before = m.activePeerCid()
+        assertTrue(m.hasSparePeer())
+        assertEquals(false, m.rotatePeerCid(), "no room to retire the ID in use: no rotation")
+        assertEquals(before, m.activePeerCid(), "the ID in use stays")
+        m.takeRetireFrames().forEach(m::onRetireAcked)
+        assertTrue(m.rotatePeerCid(), "it rotates once the peer acknowledged the retirements")
+    }
+
+    /**
+     * 0.3.0 cross-review, RFC 9000 section 5.1.2: "An endpoint SHOULD allow for sending and tracking a number of
+     * RETIRE_CONNECTION_ID frames of at least twice the value of the active_connection_id_limit transport parameter". With a limit
+     * of 20 an honest peer that rotates all 20 IDs twice before our retirements are acknowledged left 40 outstanding against a
+     * fixed backlog of 32: CONNECTION_ID_LIMIT_ERROR.
+     */
+    @Test fun retirementBacklogIsTwiceOurActiveConnectionIdLimit() {
+        val p =
+            CorePair(
+                clientQuic =
+                    io.kuicksilver.quic.QuicConfig
+                        .Builder()
+                        .apply { activeConnectionIdLimit = 20 }
+                        .build(),
+            )
+        try {
+            val m = p.client.cids
+            m.adoptInitialPeerCid(ConnectionId(ByteArray(8) { 0x7f }))
+            for (seq in 1L..19L) newCid(m, seq)
+            newCid(m, 20, retire = 20) // 0..19 retired
+            for (seq in 21L..39L) newCid(m, seq)
+            newCid(m, 40, retire = 40) // 20..39 retired: 40 outstanding, none acknowledged
+            assertEquals(40, m.takeRetireFrames().size)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * 0.3.0 cross-review, RFC 9000 sections 10.3.2 and 19.15: a new ID of ours is never one the endpoint already routes (another
+     * connection's, whose packets and reset token it would take) nor one of this connection's live or retired IDs (the same ID
+     * under a new sequence number).
+     */
+    @Test fun negative_newLocalIdNeverRepeatsOneInUse() {
+        val taken = ConnectionId(ByteArray(8) { 0x11 })
+        val registrar =
+            object : CidRegistrar {
+                override fun add(
+                    cid: ConnectionId,
+                    core: io.kuicksilver.quic.ConnectionCore,
+                ) {}
+
+                override fun remove(cid: ConnectionId) {}
+
+                override fun contains(cid: ConnectionId): Boolean = cid == taken
+            }
+        val m = ConnectionIdManager(localLimit = 4, retiredCap = 32, cidLength = 8, random = Random(1), registrar = registrar)
+        val own = ConnectionId(ByteArray(8) { 0x22 })
+        m.adoptInitialLocalCid(own)
+        val script = ArrayDeque(listOf(taken, own, taken, ConnectionId(ByteArray(8) { 0x33 }), ConnectionId(ByteArray(8) { 0x44 })))
+        m.generator = { script.removeFirst() }
+        m.setPeerLimit(3)
+        assertEquals(
+            listOf(
+                own,
+                ConnectionId(
+                    ByteArray(8) {
+                        0x33
+                    },
+                ),
+                ConnectionId(ByteArray(8) { 0x44 }),
+            ),
+            (0L..2L).map { m.localForTest(it)!!.cid },
+        )
+        assertTrue(script.isEmpty())
+        // every draw collides: nothing is issued now, nothing fails
+        m.generator = { taken }
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.onPeerRetired(1, TimeMark(1_000_000_000L))
+        assertEquals(2, m.localCount)
     }
 
     @Test fun lostNewCidRetiredByPeerIsNotResent() {

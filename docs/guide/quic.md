@@ -788,7 +788,8 @@ Every connection carries a token bucket (1000 tokens, 33 back per second) that p
 without moving anything forward: a
 `STREAMS_BLOCKED` repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
 number we already hold, a `RETIRE_CONNECTION_ID` for an ID that is already retired (one for a sequence number we never issued is a
-`PROTOCOL_VIOLATION`), a third PING-only packet within one
+`PROTOCOL_VIOLATION`) or one that retires more than twice the IDs we keep issued within 3 PTO (its replacement then waits
+until an earlier retired ID stops routing), a third PING-only packet within one
 RTT (the two probes of a PTO may both be PING-only, so a pair is free). A 1-RTT packet that fails to decrypt is discarded silently and spends nothing: anyone who has seen a connection ID
 can forge such packets (RFC 9000 section 12.2). A `MAX_DATA`, `MAX_STREAM_DATA` or `MAX_STREAMS` that raises nothing is
 ignored for free: it is what a retransmitted or reordered update looks like (quic-go repeats `MAX_STREAMS` in every

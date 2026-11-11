@@ -419,7 +419,8 @@ public class ConnectionCore internal constructor(
     internal val cids =
         ConnectionIdManager(
             config.activeConnectionIdLimit,
-            config.limits.retiredConnectionIds,
+            // RFC 9000 section 5.1.2: retirements of up to 2 x active_connection_id_limit outstanding before CONNECTION_ID_LIMIT_ERROR
+            maxOf(config.limits.retiredConnectionIds, 2 * config.activeConnectionIdLimit),
             config.connectionIdLength,
             random,
             resetKey = resetKey,
@@ -431,6 +432,8 @@ public class ConnectionCore internal constructor(
                     ) = registrar.add(cid, core)
 
                     override fun remove(cid: ConnectionId) = registrar.remove(cid)
+
+                    override fun contains(cid: ConnectionId): Boolean = registrar.contains(cid)
                 },
         )
     internal val timers = Timers()

@@ -637,6 +637,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: connection IDs. A peer that retired every connection ID it was given got a replacement for each at once, so
+  each 2-byte RETIRE_CONNECTION_ID made the endpoint draw a new ID (with QUIC-LB, a nonce of a space every endpoint of
+  the process that uses the key shares). A retirement is now replaced at once while at most twice the IDs the connection
+  keeps issued were retired within the last 3 PTO; past that it costs a glitch token and its replacement is issued when
+  an earlier retired ID stops routing (RFC 9000 section 5.1.1 sets no time for it). The periodic rotation of the peer's
+  ID (every 10,000 packets) threw CONNECTION_ID_LIMIT_ERROR out of `poll` when 32 of our retirements were unacknowledged;
+  it now waits. The backlog of unacknowledged retirements is at least twice `activeConnectionIdLimit` (it was fixed at
+  32, so a limit above 16 let an honest peer's rotation close the connection; section 5.1.2). A new connection ID,
+  client or server, is never one the endpoint loop already routes or one of the connection's own live or retired IDs:
+  `ConnectionIdRegistry.add` kept the earlier owner of a colliding ID, so the new connection advertised an ID (and its
+  stateless reset token) that routed to another connection (sections 10.3.2, 19.15). With the default 8-byte IDs the
+  chance was small; with `connectionIdLength = 4` (16 random bits) a collision was likely after a few hundred IDs.
 - QUIC server: removing a connection walked every slot of the endpoint's connection ID table, and the table never shrank.
   An Initial that does not decrypt creates a connection and removes it at once, so each forged 1200-byte Initial from any
   address cost a walk over the IDs of every connection on the loop (and over the slots a past peak left behind). A removal

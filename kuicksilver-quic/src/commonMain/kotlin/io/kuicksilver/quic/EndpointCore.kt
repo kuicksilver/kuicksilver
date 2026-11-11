@@ -317,6 +317,8 @@ public class EndpointCore internal constructor(
                 registry.remove(cid)
                 route.release(cid)
             }
+
+            override fun contains(cid: ConnectionId): Boolean = registry.contains(cid)
         }
 
     /** Connections this endpoint holds, in any state, until they are closed and removed. */
@@ -369,8 +371,16 @@ public class EndpointCore internal constructor(
         val quic = rttMemory[AddressClass.addrKey(remote)]?.let { client.quic.withInitialRtt(it) } ?: client.quic
         // the endpoint's CSPRNG itself: a child Random(seed) would let an observer recover the 64-bit seed from two cleartext CIDs
         // in a group the server's answers may land on another loop's socket: the routing byte in our CIDs brings them back
-        val scid = if (grouped) route.newCid(random, client = true) else null
-        val core = ConnectionCore.client(quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData, scid)
+        // an ID no connection of this loop routes now (RFC 9000 section 10.3.2); a collision, rare, costs a second core
+        var draws = 0
+        var core: ConnectionCore
+        while (true) {
+            val scid = if (grouped) route.newCid(random, client = true) else null
+            core = ConnectionCore.client(quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData, scid)
+            if (!registry.contains(core.localCid)) break
+            core.release()
+            check(++draws < io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS) { "no unused connection ID of length $cidLength" }
+        }
         attach(core)
         connectionsCreated++
         return core

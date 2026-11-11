@@ -149,6 +149,14 @@ internal class ConnectionIdRegistry(
         if (slots != keys.size) resize(slots)
     }
 
+    override fun contains(cid: ConnectionId): Boolean {
+        val at = find(key(cid))
+        if (at < 0) return false
+        val l = lists[at]!!
+        for (i in 0 until l.size) if (l[i].cid == cid) return true
+        return false
+    }
+
     fun lookup(
         buf: PacketBuffer,
         off: Int,

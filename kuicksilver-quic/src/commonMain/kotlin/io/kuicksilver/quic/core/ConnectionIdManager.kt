@@ -21,6 +21,9 @@ internal interface CidRegistrar {
     )
 
     fun remove(cid: ConnectionId)
+
+    /** True when [cid] already routes to a connection of this endpoint loop (this one included): a new ID must differ from it. */
+    fun contains(cid: ConnectionId): Boolean = false
 }
 
 /** Hears the peer's stateless reset tokens come and go (a loop group sharing one socket routes resets by them). */
@@ -246,9 +249,26 @@ internal class ConnectionIdManager(
      */
     var generator: ((Random) -> ConnectionId?)? = null
 
+    /**
+     * A new ID of ours, different from every ID the endpoint loop routes (live or retired and still routing, of any connection,
+     * this one included): the same ID on two connections would route one's packets to the other and share its stateless reset
+     * token (RFC 9000 section 10.3.2), and the same ID under a new sequence number is a PROTOCOL_VIOLATION a peer may raise
+     * (section 19.15). Redrawn at most [UNIQUE_DRAWS] times; null when every draw collided (nothing issued now, [fill] tries
+     * again later).
+     */
     private fun newLocalCid(): ConnectionId? {
-        val g = generator ?: return ConnectionId(ByteArray(cidLength).also { random.nextBytes(it) })
-        return g(random)
+        repeat(UNIQUE_DRAWS) {
+            val g = generator
+            val cid = if (g == null) ConnectionId(ByteArray(cidLength).also { random.nextBytes(it) }) else g(random) ?: return null
+            if (!registrar.contains(cid) && !ownsLocal(cid)) return cid
+        }
+        return null
+    }
+
+    private fun ownsLocal(cid: ConnectionId): Boolean {
+        for (i in local.indices) if (local[i].cid == cid) return true
+        for (i in retiredLocal.indices) if (retiredLocal[i].cid == cid) return true
+        return false
     }
 
     /** min(the peer's `active_connection_id_limit`, 8); 1 until the peer's transport parameters arrive. */
@@ -341,12 +361,21 @@ internal class ConnectionIdManager(
         target = 1
     }
 
-    private fun fill() {
+    /**
+     * Issues IDs up to [target]. A replacement waits while more than 2 x [target] of our IDs retired in the last 3 x PTO still route
+     * ([retiredLocal]): a peer that retires every ID it gets would otherwise make us draw IDs (QUIC-LB nonces, of a space the
+     * process shares) as fast as it sends 2-byte frames. The waiting replacement is issued when one of those leaves
+     * ([expireRetired]): RFC 9000 section 5.1.1 sets no time for it, and the peer keeps the IDs it did not retire. True when
+     * that budget held one back.
+     */
+    private fun fill(): Boolean {
         while (local.size < target) {
+            if (retiredLocal.size > REPLACEMENT_WINDOW * target) return true
             val cid = newLocalCid() ?: break
             local += Local(nextLocalSeq++, cid, tokenFor(cid))
             core?.let { registrar.add(cid, it) }
         }
+        return false
     }
 
     /** True when [buf] holds one of our active IDs at [off]. */
@@ -428,7 +457,11 @@ internal class ConnectionIdManager(
         return false
     }
 
-    /** The peer retired our ID [seq]: it keeps routing until [until] (3 x PTO), then leaves the registry; a replacement is issued at once. */
+    /**
+     * The peer retired our ID [seq]: it keeps routing until [until] (3 x PTO), then leaves the registry; a replacement is issued at
+     * once, or when an earlier retired ID leaves while the peer retires faster than [fill] replaces. False (a glitch) for an ID
+     * already gone and for a retirement whose replacement has to wait.
+     */
     fun onPeerRetired(
         seq: Long,
         until: TimeMark,
@@ -450,8 +483,7 @@ internal class ConnectionIdManager(
         retireLocal(local.removeAt(i), until)
         retiredByPeer++
         if (reissuePending && !retiringOutstanding()) fireReissue()
-        fill()
-        return true
+        return !fill()
     }
 
     /**
@@ -484,8 +516,9 @@ internal class ConnectionIdManager(
         return t
     }
 
-    /** Drops retired IDs whose grace period passed. */
+    /** Drops retired IDs whose grace period passed, and issues the replacements that waited for them ([fill]). */
     fun expireRetired(now: TimeMark) {
+        val before = retiredLocal.size
         var i = 0
         while (i <
             retiredLocal.size
@@ -500,12 +533,22 @@ internal class ConnectionIdManager(
                 i++
             }
         }
+        if (retiredLocal.size < before) fill()
     }
 
-    /** Moves our packets to an unused peer ID (RFC 9000 section 9.5); the one in use is retired, or with [retireOld] false left to the caller (a path that keeps probing with it). False when the peer gave us no spare. */
+    /**
+     * Moves our packets to an unused peer ID (RFC 9000 section 9.5); the one in use is retired, or with [retireOld] false left to the
+     * caller (a path that keeps probing with it). False when the peer gave us no spare, or when the retirement backlog is full (the
+     * peer has not acknowledged our earlier RETIRE_CONNECTION_IDs): the rotation is optional and waits, never fails the connection.
+     */
     fun rotatePeerCid(retireOld: Boolean = true): Boolean {
         val old = current ?: return false
         val next = unusedPeer() ?: return false
+        if (retireOld && !pendingRetire.contains(old.seq) && !unackedRetire.contains(old.seq) &&
+            pendingRetire.size + unackedRetire.size + 1 > retiredCap
+        ) {
+            return false
+        }
         if (retireOld) {
             dropPeer(old)
             queueRetire(old.seq)
@@ -701,5 +744,13 @@ internal class ConnectionIdManager(
         }
         current = best
         return best?.cid ?: ConnectionId.EMPTY
+    }
+
+    internal companion object {
+        /** [fill]: our IDs retired within 3 x PTO that are replaced at once, in multiples of the number we keep issued. */
+        const val REPLACEMENT_WINDOW = 2
+
+        /** Draws of a new local ID before [newLocalCid] gives up for now (each collides with probability ~ IDs in use / 2^(8 x random bytes)). */
+        const val UNIQUE_DRAWS = 16
     }
 }

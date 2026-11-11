@@ -175,7 +175,10 @@ internal fun ConnectionCore.awaitPeerCid(p: Path) {
     p.nextChallengeAt = TimeMark.NEVER
 }
 
-/** RETIRE_CONNECTION_ID: the ID keeps routing for 3 x PTO (RFC 9000 section 5.1.2); one for an ID already gone costs a glitch token. */
+/**
+ * RETIRE_CONNECTION_ID: the ID keeps routing for 3 x PTO (RFC 9000 section 5.1.2); one for an ID already gone, or one whose
+ * replacement waits because the peer retires faster than we replace (ConnectionIdManager.fill), costs a glitch token.
+ */
 internal fun ConnectionCore.onRetireConnectionId(seq: Long) {
     if (!cids.onPeerRetired(seq, now + pto() * 3)) glitch(0x19)
 }
