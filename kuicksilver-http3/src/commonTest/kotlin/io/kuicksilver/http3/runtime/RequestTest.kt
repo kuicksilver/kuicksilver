@@ -780,6 +780,25 @@ class RequestTest {
         }
 
     /**
+     * RFC 9220 section 3 (RFC 8441 section 4): `request()` with a `protocol` (Extended CONNECT) waits for the server's
+     * SETTINGS and fails locally with IllegalArgumentException when they do not enable it; with them it goes out.
+     */
+    @Test fun negative_protocolNeedsTheServersConnectSetting() =
+        h3Test {
+            fun ext() =
+                io.kuicksilver.http3.http3Request("CONNECT", "server.test", "/chat") {
+                    protocol = "websocket"
+                }
+            H3Pair.open().useScoped { p ->
+                assertFailsWith<IllegalArgumentException> { p.client.request(ext()) }
+            }
+            H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                launch { p.server.acceptRequest().acceptConnect() }
+                assertEquals(200, withTimeoutOrNull(3.seconds) { p.client.request(ext()).status })
+            }
+        }
+
+    /**
      * RFC 9114 sections 4.2 and 4.3.1: a request the peer would reject as malformed (te other than trailers, a
      * connection-specific field, a method that is not a token, a path that is not absolute, userinfo in :authority, a
      * host differing from :authority) fails locally with IllegalArgumentException before a stream is opened.

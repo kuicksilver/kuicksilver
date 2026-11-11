@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: `Http3Connection.request()` with a `protocol` (Extended CONNECT) sent `:protocol` without waiting for
+  the server's SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 9220 section 3, RFC 8441 section 4), although its documentation
+  promised that a request the server must refuse fails locally. It now waits for the server's SETTINGS and throws
+  IllegalArgumentException unless they enable Extended CONNECT; `connect()` behaves as before.
 - HTTP/3: a response `content-length` was not checked before it went out (`respond(200, content-length: abc)` or two
   conflicting values passed, and our own client then took the response for malformed), and neither a response nor a
   request body was held to its `content-length`. A malformed value now fails `respond` with IllegalArgumentException,

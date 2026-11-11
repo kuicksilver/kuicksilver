@@ -192,7 +192,9 @@ private suspend fun H3Session.requestOnDispatcher(
         if (goAwaySentId != null) throw Http3Exception.RequestNotProcessed.ownGoAway()
         // before a stream is opened: a refused section costs no stream credit (the id is not known yet: -1)
         val fields = PseudoHeaders.buildRequest(r)
-        PseudoHeaders.requireValidRequest(fields)
+        // RFC 9220 section 3 (RFC 8441 section 4): `:protocol` only once the server enabled Extended CONNECT in its SETTINGS
+        val connectProtocolEnabled = r.protocol != null && awaitPeerSettings().enableConnectProtocol
+        PseudoHeaders.requireValidRequest(fields, connectProtocolEnabled)
         checkPeerFieldLimit(-1, fields)
         val st =
             try {

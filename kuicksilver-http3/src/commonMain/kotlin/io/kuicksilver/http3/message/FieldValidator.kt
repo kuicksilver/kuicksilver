@@ -340,10 +340,14 @@ internal object PseudoHeaders {
     /**
      * Our own request [fields] (from [buildRequest]) must pass the checks the peer applies ([parseRequest]): the caller
      * gets IllegalArgumentException instead of a stream the peer resets with H3_MESSAGE_ERROR (RFC 9114 sections 4.2, 4.3.1).
+     * [connectProtocolEnabled]: the peer's SETTINGS_ENABLE_CONNECT_PROTOCOL = 1, without which `:protocol` is not used.
      */
-    fun requireValidRequest(fields: List<Pair<String, String>>) {
+    fun requireValidRequest(
+        fields: List<Pair<String, String>>,
+        connectProtocolEnabled: Boolean = false,
+    ) {
         try {
-            parseRequest(fields, connectProtocolEnabled = true)
+            parseRequest(fields, connectProtocolEnabled)
         } catch (e: MalformedMessage) {
             throw IllegalArgumentException("invalid request: ${e.reason}")
         }
