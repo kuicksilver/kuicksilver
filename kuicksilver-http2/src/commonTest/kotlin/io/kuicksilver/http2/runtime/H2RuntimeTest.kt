@@ -618,6 +618,31 @@ class H2RuntimeTest {
         }
 
     /**
+     * RFC 9113 section 6.8: "Receivers of a GOAWAY frame MUST NOT open additional streams on the connection". Requests
+     * whose HEADERS were still queued when a graceful GOAWAY (last stream 2^31 - 1) arrived are not written: they fail as
+     * not processed (the engine retries them elsewhere), and the server sees no HEADERS.
+     */
+    @Test fun negative_queuedRequestsAreNotOpenedAfterAGoAway() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            runCurrent()
+            srv.read()
+            val a = client.get("/a")
+            val b = client.get("/b")
+            // the GOAWAY reaches the core before the writer ran
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.goAway(Int.MAX_VALUE, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+            runCurrent()
+            for (s in listOf(a, b)) {
+                val e = assertFailsWith<Http2Exception> { s.response() }
+                assertTrue(e.notProcessed, "a request never opened is not processed: $e")
+                s.release()
+            }
+            assertTrue(srv.read().none { it is Frame.Headers }, "HEADERS went out after the GOAWAY")
+        }
+
+    /**
      * A GOAWAY on a connection without streams closes the core at once, under the lock, while its event may still wait
      * for another thread's dispatch: whoever then finds the connection unusable must also see the GOAWAY's code (the pool
      * reads HTTP_1_1_REQUIRED from it, RFC 9113 section 7; seen too early it was null and the call failed with "the

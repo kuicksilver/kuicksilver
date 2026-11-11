@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 client: requests whose HEADERS were still queued when the server's GOAWAY arrived were written afterwards
+  when their stream ID was not above the GOAWAY's last stream (a graceful GOAWAY names 2^31 - 1), opening streams after
+  the GOAWAY (RFC 9113 section 6.8: MUST NOT). They are now dropped unwritten and fail as not processed, so the engine
+  sends them on another connection.
 - HTTP/2: an invalid connection preface whose first frame the decoder refused (an HTTP/1.1 answer, whose "HTT" reads
   as a frame length above the limit, or a PING of 7 bytes) ended the connection with FRAME_SIZE_ERROR; RFC 9113 section
   3.4 makes any invalid preface a PROTOCOL_ERROR. Only a malformed SETTINGS frame keeps FRAME_SIZE_ERROR (section 6.5).
