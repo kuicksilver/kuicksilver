@@ -9,11 +9,15 @@ import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ClosedByteChannelException
+import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.ReaderJob
+import io.ktor.utils.io.WriterJob
 import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.read
 import io.ktor.utils.io.reader
+import io.ktor.utils.io.writer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +51,10 @@ import kotlin.time.Duration.Companion.seconds
  * by the socket's job) or fails (a reset, or a failed channel) closes the descriptor itself, so a socket never stays open
  * behind a stalled write; a failed one with a reset, so the peer sees the stream cut, not ended.
  * Writing after [close] fails with an IOException, as with ktor's sockets.
+ *
+ * Reading stays ktor's, relayed to the application's channel ([attachForReading]): an end of stream read after a send
+ * failed (on Linux, a receive after a send that took the peer's reset returns the end) fails that channel with the send's
+ * failure ([SendFailures]), so a cut stream never ends as complete.
  */
 internal class KslNioSocket(
     private val delegate: Socket,
@@ -85,6 +93,50 @@ internal class KslNioSocket(
     /** False once the descriptor is closed (tests). */
     internal val isOpen: Boolean get() = nio.isOpen
 
+    /** The writer's send failures, for the read side ([SendFailures]). */
+    private val sendFailures = SendFailures()
+
+    /**
+     * Held, when set, by the read side once the peer's end of stream was read, before it asks [sendFailures] what that end
+     * stands for (tests: a send that fails in between).
+     */
+    @Volatile internal var atReadEndForTest: (suspend () -> Unit)? = null
+
+    /**
+     * Ktor's reader fills a channel of its own, and this relays it to the application's [channel]: an end of stream that a
+     * send failure stands for ([SendFailures]) fails [channel] with that failure instead of ending it. Ktor's reader closes
+     * its channel cleanly as soon as a receive returns the end, which on Linux is also what a receive returns after a send
+     * took the peer's reset. The relay runs unconfined, in the reader's own resumption; a failure of either side ends both.
+     */
+    @OptIn(InternalAPI::class)
+    override fun attachForReading(channel: ByteChannel): WriterJob {
+        val wire = ByteChannel()
+        delegate.attachForReading(wire)
+        return delegate.writer(Dispatchers.Unconfined + CoroutineName("ksl-tcp-read"), channel) {
+            try {
+                while (true) {
+                    if (wire.readBuffer.exhausted() && !wire.awaitContent()) break
+                    wire.readBuffer.transferTo(this.channel.writeBuffer)
+                    this.channel.flush()
+                }
+                wire.closedCause?.let { throw it }
+                atReadEndForTest?.invoke()
+                sendFailures.settled()?.let { throw it }
+            } catch (e: Throwable) {
+                wire.cancel(e)
+                // the reader's own failure, not ktor's wrapper of it: the application's channel wraps it once more
+                throw e.channelOrigin()
+            }
+        }
+    }
+
+    /** The failure under ktor-io's [ClosedByteChannelException] wrappers, which a channel adds each time it hands one on. */
+    private fun Throwable.channelOrigin(): Throwable {
+        var c = this
+        while (c is ClosedByteChannelException) c = c.cause ?: break
+        return c
+    }
+
     override fun attachForWriting(channel: ByteChannel): ReaderJob {
         if (closing.get()) {
             val e = IOException("Socket closed")
@@ -107,9 +159,19 @@ internal class KslNioSocket(
             while (true) {
                 if (channel.availableForRead == 0 && !channel.awaitContent()) break
                 var blocked = false
-                channel.read { buffer ->
-                    val n = nio.write(buffer)
-                    if (n == 0) blocked = true else bytesWritten.addAndGet(n.toLong())
+                var refused: Throwable? = null
+                sendFailures.send({ it === refused }) {
+                    channel.read { buffer ->
+                        val n =
+                            try {
+                                nio.write(buffer)
+                            } catch (e: IOException) {
+                                // the system's verdict on the connection (a reset, a timeout), not this socket's own close
+                                if (e !is ClosedChannelException) refused = e
+                                throw e
+                            }
+                        if (n == 0) blocked = true else bytesWritten.addAndGet(n.toLong())
+                    }
                 }
                 if (blocked) {
                     writeWaits.incrementAndGet()

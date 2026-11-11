@@ -637,6 +637,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TCP (JVM, Android, Kotlin/Native): a connection reset that a write took was read as an orderly end, so a response
+  body delimited by the connection's close (RFC 9112 section 6.3 item 8) could pass cut for complete (section 8) on
+  plain HTTP/1.1. On Linux, Android included, a socket's pending error goes to the first system call that looks at it
+  and is then cleared: a send that ran between the arrival of the peer's reset and the next receive failed with
+  ECONNRESET, and the receive then returned the end of the stream. The read side now fails with the send's failure when
+  it reads an end after a send failed (waiting for a send under way), instead of ending; an orderly close, a local
+  abort and a failed application stream do not count. On Kotlin/Native a failed send also failed the read side with a
+  CancellationException rather than the send's error. TLS already treated such an end as a truncation (no
+  `close_notify`).
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS

@@ -362,6 +362,15 @@ internal class NativeTcpSocket(
     /** The write loop ([readerJob]) has ended (tests: the close order). */
     internal val writeLoopEnded: Boolean get() = readerJob.load()?.isCompleted ?: true
 
+    /** The write loop's send failures, for the read loop ([SendFailures]). */
+    private val sendFailures = SendFailures()
+
+    /**
+     * Held, when set, by the read loop once a receive returned the end of the stream, before it asks [sendFailures] what that
+     * end stands for (tests: a send that fails in between).
+     */
+    @Volatile internal var atReadEndForTest: (suspend () -> Unit)? = null
+
     /** Why the connection is gone, as the read loop's receive failed ([connectionLost]): a wait for room fails with it. */
     private val lost = AtomicReference<Throwable?>(null)
 
@@ -471,6 +480,9 @@ internal class NativeTcpSocket(
                         channel.flush()
                     } else if (n == 0) {
                         atEnd = true
+                        // the end a send that took the peer's reset left behind is no end ([SendFailures])
+                        atReadEndForTest?.invoke()
+                        sendFailures.settled()?.let { throw it }
                         break
                     } else {
                         data.await()
@@ -487,6 +499,9 @@ internal class NativeTcpSocket(
                 // not on Windows before the end of the stream: input arriving after SD_RECEIVE resets the connection there,
                 // so a server that stopped reading a request could lose the response it is about to write
                 if (atEnd || tcpShutdownReadBeforeEnd) tcpShutdown(descriptor, TCP_SHUT_RD)
+                // a send that failed ended the connection ([reset] cancels this loop): the read side fails with that failure,
+                // never ends as if the peer had closed
+                sendFailures.recorded?.let { channel.cancel(it) }
                 channel.flushAndClose()
             }
         }
@@ -501,14 +516,16 @@ internal class NativeTcpSocket(
                     if (n < 0) break
                     var offset = 0
                     while (offset < n) {
-                        val sent = tcpSend(descriptor, buffer, offset, n - offset)
+                        val sent = sendFailures.send { tcpSend(descriptor, buffer, offset, n - offset) }
                         if (sent < 0) {
                             room.await()
                         } else if (sent == 0) {
                             // nothing taken of a non-empty send: the stream is cut like after a send error
-                            throw IOException(
-                                "Failed writing to closed socket. Some bytes remaining: ${n - offset + channel.availableForRead}",
-                            )
+                            val cut =
+                                IOException(
+                                    "Failed writing to closed socket. Some bytes remaining: ${n - offset + channel.availableForRead}",
+                                )
+                            sendFailures.send<Unit> { throw cut }
                         } else {
                             offset += sent
                             bytesWritten.addAndFetch(sent.toLong())
@@ -524,6 +541,9 @@ internal class NativeTcpSocket(
                 // room, which then failed with ktor's ConcurrentIOException instead of this failure
                 if (e !is CancellationException) {
                     channel.cancel(e)
+                    // a send the system refused: the read side fails with that failure ([SendFailures]) before the reset
+                    // cancels the read loop, whose cancellation would otherwise reach the reader as a CancellationException
+                    sendFailures.recorded?.let { failed -> writerJob.load()?.channel?.cancel(failed) }
                     reset(cancelWriteLoop = false)?.let { e.addSuppressed(it) }
                 }
                 throw e
@@ -684,4 +704,8 @@ internal actual fun Socket.abortTcp() {
         close()
         socketContext.cancel()
     }
+}
+
+internal actual fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?) {
+    if (this is NativeTcpSocket) atReadEndForTest = hook
 }

@@ -70,3 +70,7 @@ internal actual fun Socket.abortTcp() {
         socketContext.cancel()
     }
 }
+
+internal actual fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?) {
+    if (this is KslNioSocket) atReadEndForTest = hook
+}

@@ -68,3 +68,9 @@ public val Socket.bytesSent: Long?
     get() = if (this is TlsSocket) rawSocket.rawBytesSent() else rawBytesSent()
 
 internal expect fun Socket.rawBytesSent(): Long?
+
+/**
+ * Holds the read side of this platform TCP socket in [hook] once it has read the peer's end of stream, before it asks what
+ * that end stands for ([SendFailures]); null removes it (tests: a send that fails in between). No-op on other sockets.
+ */
+internal expect fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?)
