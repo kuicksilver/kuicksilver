@@ -250,7 +250,8 @@ public class Cubic(
             nanos
     }
 
-    override val sendQuantum: Int get() = minOf(65_536, 10 * mss)
+    /** The initial window (RFC 9002 section 7.7: "Senders SHOULD limit bursts to the initial congestion window"), at most 64 KiB or one datagram. */
+    override val sendQuantum: Int get() = minOf(initialWindow(mss), maxOf(65_536L, mss.toLong())).toInt()
 
     private companion object {
         const val C = 0.4 // RFC 9438 section 5

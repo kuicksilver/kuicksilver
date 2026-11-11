@@ -37,13 +37,32 @@ class PacerTest {
         assertEquals(TimeMark.NEVER, p.nextSendTime(next, 1200, cc, 100.milliseconds))
     }
 
-    @Test fun noPacingBelow1msSrtt() {
-        val cc = NewReno(1200)
-        val p = Pacer()
-        repeat(50) {
-            assertEquals(TimeMark.NEVER, p.nextSendTime(t0, 1200, cc, 0.5.milliseconds))
-            p.onSent(t0, 1200)
+    /**
+     * RFC 9002 section 7.7: "Senders MUST either use pacing or limit such bursts. Senders SHOULD limit bursts to the initial
+     * congestion window." Below 1 ms of smoothed RTT NewReno and CUBIC used to be neither paced nor burst-limited: a whole window
+     * could leave back to back. They are paced at every RTT now, in bursts of at most the initial window.
+     */
+    @Test fun windowControllersArePacedBelow1msSrtt() {
+        for ((cc, mss) in listOf<Pair<CongestionController, Int>>(NewReno(1200) to 1200, Cubic(1200) to 1200, Cubic(1500) to 1500)) {
+            val p = Pacer()
+            var n = 0
+            while (p.nextSendTime(t0, 1200, cc, 0.5.milliseconds) == TimeMark.NEVER && n < 1000) {
+                p.onSent(t0, 1200)
+                n++
+            }
+            val iw = minOf(10 * mss, maxOf(14_720, 2 * mss))
+            assertTrue(n * 1200 <= iw, "${cc::class.simpleName}: $n datagrams at once at 0.5 ms")
+            val next = p.nextSendTime(t0, 1200, cc, 0.5.milliseconds)
+            assertNotEquals(TimeMark.NEVER, next)
+            assertTrue(next - t0 < 0.5.milliseconds, "the next datagram follows within the RTT: ${next - t0}")
         }
+    }
+
+    @Test fun windowControllersBurstAtMostTheInitialWindow() {
+        // RFC 9002 section 7.2: min(10 x 1500, max(14 720, 3000)) = 14 720 < 10 datagrams of 1500 bytes
+        assertEquals(14_720, NewReno(1500).sendQuantum)
+        assertEquals(14_720, Cubic(1500).sendQuantum)
+        assertEquals(12_000, Cubic(1200).sendQuantum)
     }
 
     /**

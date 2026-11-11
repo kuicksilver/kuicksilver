@@ -112,5 +112,6 @@ public class NewReno(
             nanos
     }
 
-    override val sendQuantum: Int get() = minOf(65_536, 10 * maxDatagramSize)
+    /** The initial window (RFC 9002 section 7.7: "Senders SHOULD limit bursts to the initial congestion window"), at most 64 KiB or one datagram. */
+    override val sendQuantum: Int get() = minOf(initialWindow(maxDatagramSize), maxOf(65_536L, maxDatagramSize.toLong())).toInt()
 }
