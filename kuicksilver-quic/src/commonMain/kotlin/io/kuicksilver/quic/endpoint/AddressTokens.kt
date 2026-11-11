@@ -26,7 +26,14 @@ internal sealed interface TokenCheck {
     /** Neither a Retry nor a NEW_TOKEN token of ours (another type byte): ignored, the address stays unvalidated (RFC 9000 section 8.1.3). */
     object NotRetry : TokenCheck
 
-    /** A Retry-type token that does not open: refused with INVALID_TOKEN. */
+    /**
+     * A Retry-type token that does not open: forged or damaged, of a key two rotations gone, or another server's whose first byte
+     * matches our Retry type. Nothing tells it from another server's token, so it is treated as absent (RFC 9000 section 8.1.3:
+     * "SHOULD proceed as if the client did not have a validated address").
+     */
+    object Unauthenticated : TokenCheck
+
+    /** A Retry token of ours (it opened) that does not parse, or presented from another address or for another version: refused with INVALID_TOKEN (section 8.1.2). */
     object Invalid : TokenCheck
 
     /** A Retry token older than its lifetime: refused with INVALID_TOKEN. */
@@ -236,13 +243,14 @@ internal class AddressTokens(
         return if (generations[slot] == generation) keys[kind][slot] else null
     }
 
-    private fun retryAad(
+    /** What a Retry token is bound to (RFC 9000 section 8.1.4): the length, the client's IP, port and the QUIC version. */
+    private fun retryBinding(
         client: InetSocketAddress,
         version: Int,
     ): ByteArray {
         val ip = AddressClass.ipBytes(client)
         val out = ByteArray(1 + ip.size + 2 + 4)
-        out[0] = RETRY
+        out[0] = (ip.size + 6).toByte()
         ip.copyInto(out, 1)
         out[1 + ip.size] = (client.port ushr 8).toByte()
         out[2 + ip.size] = client.port.toByte()
@@ -289,13 +297,18 @@ internal class AddressTokens(
         rotate(now)
         return locked {
             val nonce = nextNonce(RETRY_KIND) ?: return@locked null
-            val plain = ByteArray(8 + 1 + odcid.length + 1 + retryScid.length)
+            // the client's address and the version go inside, not into the AAD: a token of ours presented from another address
+            // still opens, so it is known for ours and refused with INVALID_TOKEN (RFC 9000 section 8.1.2), while one that does not
+            // open is someone else's (section 8.1.3)
+            val binding = retryBinding(client, version)
+            val plain = ByteArray(8 + 1 + odcid.length + 1 + retryScid.length + binding.size)
             issuedAt(now).copyInto(plain, 0)
             plain[8] = odcid.length.toByte()
             odcid.copyToArray(plain, 9)
             plain[9 + odcid.length] = retryScid.length.toByte()
             retryScid.copyToArray(plain, 10 + odcid.length)
-            token(RETRY, nonce, key(RETRY_KIND, current)!!.seal(nonce, retryAad(client, version), plain))
+            binding.copyInto(plain, 10 + odcid.length + retryScid.length)
+            token(RETRY, nonce, key(RETRY_KIND, current)!!.seal(nonce, RETRY_AAD, plain))
         }
     }
 
@@ -345,24 +358,27 @@ internal class AddressTokens(
         version: Int,
         now: TimeMark,
     ): TokenCheck {
-        if (len < 1 + 8 + 16 + 10) return TokenCheck.Invalid
+        if (len < 1 + 8 + 16 + 10) return TokenCheck.Unauthenticated
         val nonce = nonceOf(token, off)
         val sealed = ByteArray(len - 9)
         token.copyTo(sealed, off + 9, 0, sealed.size)
-        val a = retryAad(client, version)
         rotate(now)
         val plain =
             locked {
                 // only the two newest generations: a Retry token lives seconds
                 val generation = generationOf(nonce)
-                if (generation < current - 1) null else key(RETRY_KIND, generation)?.open(nonce, a, sealed)
-            } ?: return TokenCheck.Invalid
+                if (generation < current - 1) null else key(RETRY_KIND, generation)?.open(nonce, RETRY_AAD, sealed)
+            } ?: return TokenCheck.Unauthenticated
         if (plain.size < 10) return TokenCheck.Invalid
         val issued = readLong(plain)
         val odcidLen = plain[8].toInt() and 0xff
         if (odcidLen > 20 || plain.size < 10 + odcidLen) return TokenCheck.Invalid
         val scidLen = plain[9 + odcidLen].toInt() and 0xff
-        if (scidLen > 20 || plain.size != 10 + odcidLen + scidLen) return TokenCheck.Invalid
+        if (scidLen > 20 || plain.size < 10 + odcidLen + scidLen) return TokenCheck.Invalid
+        // ours, presented from another address or for another version (a client whose port changed after the Retry): INVALID_TOKEN
+        val binding = retryBinding(client, version)
+        val at = 10 + odcidLen + scidLen
+        if (plain.size != at + binding.size || !binding.contentEquals(plain.copyOfRange(at, plain.size))) return TokenCheck.Invalid
         if (now.nanos - issued > retryLifetime.inWholeNanoseconds || now.nanos < issued - CLOCK_SLACK_NANOS) return TokenCheck.Expired
         val scidOff = 10 + odcidLen
         return TokenCheck.Valid(
@@ -462,6 +478,9 @@ internal class AddressTokens(
 
         private const val RETRY: Byte = 0x01
         private const val NEW_TOKEN: Byte = 0x02
+
+        /** The AAD of a Retry token: its type (the address and version it is bound to are inside, [retryBinding]). */
+        private val RETRY_AAD = byteArrayOf(RETRY)
 
         /** `0x02 | nonce(8) | issuedAt(8) | tag(16)`. */
         const val NEW_TOKEN_SIZE = 1 + 8 + 8 + 16

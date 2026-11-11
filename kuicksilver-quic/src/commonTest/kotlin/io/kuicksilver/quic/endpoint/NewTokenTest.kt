@@ -196,7 +196,6 @@ class NewTokenTest {
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
         try {
             val c = p.connect()
-            assertTrue(c.odcid.toByteArray()[0].toInt() != 0x01, "the client's first DCID is not in our format")
             c.initialToken = ByteArray(60) { (it * 7 + 3).toByte() }.also { it[0] = 0x01 }
             assertTrue(p.confirmed(c), "the client connects: ${p.closed(c)}")
             assertEquals(0L, p.server.stats.invalidTokens, "no INVALID_TOKEN")
@@ -327,7 +326,7 @@ class NewTokenTest {
             assertIs<TokenCheck.Valid>(check(retry))
             assertIs<TokenCheck.NewTokenValid>(check(newToken))
             assertEquals(TokenCheck.NewTokenRejected, check(retry.copyOf().also { it[0] = 0x02 }), "a Retry token retagged as NEW_TOKEN")
-            assertEquals(TokenCheck.Invalid, check(newToken.copyOf().also { it[0] = 0x01 }), "a NEW_TOKEN token retagged as Retry")
+            assertEquals(TokenCheck.Unauthenticated, check(newToken.copyOf().also { it[0] = 0x01 }), "a NEW_TOKEN token retagged as Retry")
             assertEquals(TokenCheck.NewTokenRejected, check(newToken.copyOf(newToken.size - 1)), "truncated")
             assertEquals(TokenCheck.NewTokenRejected, check(newToken + 0), "extended")
         } finally {

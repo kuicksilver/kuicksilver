@@ -386,7 +386,7 @@ class RetryTest {
         }
     }
 
-    @Test fun negative_invalidRetryTokenInvalidTokenClose() {
+    @Test fun negative_retryTokenThatDoesNotOpenIsTreatedAsAbsent() {
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = ConnectionAdmission.AlwaysRetry }
         var tampered = 0
         p.filterToServer =
@@ -408,13 +408,17 @@ class RetryTest {
                 ; true
             }
         try {
+            // 0.3.0 cross-review: a Retry-type token that does not open cannot be told from another server's token (RFC 9000 section
+            // 8.1.3: "SHOULD proceed as if the client did not have a validated address"), so it gets no INVALID_TOKEN: the policy's
+            // answer to an unvalidated client, here another Retry, which the client ignores (section 17.2.5.2)
             val c = p.connect()
-            assertTrue(p.runUntil { p.closed(c) != null }, "the client is told")
-            val r = p.closed(c)
-            assertIs<QuicException.ConnectionLost.TransportClosed>(r)
-            assertEquals(0x0bL, r.code, "INVALID_TOKEN")
-            assertEquals(0, p.server.connectionCount, "no connection for a forged token")
+            val retries = p.server.stats.retriesSent
+            p.runUntil(limit = 3.seconds) { false }
             assertTrue(tampered >= 1)
+            assertEquals(0L, p.server.stats.invalidTokens, "no INVALID_TOKEN for a token that does not open")
+            assertTrue(p.server.stats.retriesSent > retries || p.server.stats.retriesSent >= 2, "treated as no token: ${p.server.stats}")
+            assertEquals(0, p.server.connectionCount, "and no connection for it")
+            assertTrue(c.state != io.kuicksilver.quic.ConnectionState.Confirmed)
         } finally {
             p.close()
         }
@@ -522,7 +526,7 @@ class RetryTest {
             }
             assertIs<TokenCheck.Valid>(check(t0 + 61.seconds * 60))
             assertIs<TokenCheck.Valid>(check(t0 + 90.seconds * 60), "one rotation later the previous key still checks")
-            assertIs<TokenCheck.Invalid>(check(t0 + 150.seconds * 60), "two rotations later the key is gone")
+            assertIs<TokenCheck.Unauthenticated>(check(t0 + 150.seconds * 60), "two rotations later the key is gone")
         } finally {
             tokens.close()
         }
