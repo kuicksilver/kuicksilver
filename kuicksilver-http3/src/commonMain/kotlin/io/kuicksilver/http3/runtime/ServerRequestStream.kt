@@ -495,7 +495,7 @@ internal class ServerRequestImpl(
         check(!finished) { "request is finished" }
         // a rejected field or a failed write never leaves the stream half-open: it is reset with H3_INTERNAL_ERROR and the exchange ends
         try {
-            validateFields(headers)
+            validateFields(status, headers)
         } catch (e: IllegalArgumentException) {
             withContext(session.dispatcher) { abortInternal() }
             throw e
@@ -553,13 +553,22 @@ internal class ServerRequestImpl(
         done()
     }
 
-    /** Response fields: no pseudo-headers, no connection-specific fields, and no `te` (a request-only field, RFC 9110 section 10.1.4). */
-    private fun validateFields(headers: Http3Headers) {
+    /**
+     * Response fields: no pseudo-headers, no connection-specific fields, and no `te` (a request-only field, RFC 9110 section
+     * 10.1.4); no `content-length` in a 1xx or 204 (RFC 9110 section 8.6) nor in a 2xx to CONNECT (section 9.3.6).
+     */
+    private fun validateFields(
+        status: Int,
+        headers: Http3Headers,
+    ) {
         for ((n, v) in headers.fields) {
             require(
                 !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null &&
                     n !in FieldValidator.CONNECTION_SPECIFIC && n != "te",
             ) { "invalid response field '$n'" }
+        }
+        if (status in 100..199 || status == 204 || (method == "CONNECT" && status in 200..299)) {
+            require(headers["content-length"] == null) { "content-length in a $status response${if (method == "CONNECT") " to CONNECT" else ""}" }
         }
     }
 
@@ -567,7 +576,7 @@ internal class ServerRequestImpl(
         status: Int,
         headers: Http3Headers,
     ) {
-        validateFields(headers)
+        validateFields(status, headers)
         val fields = PseudoHeaders.buildResponse(status, headers)
         session.checkPeerFieldLimit(st.id, fields)
         try {

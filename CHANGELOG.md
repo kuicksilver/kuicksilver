@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a 204 from the Ktor server engine went out with the content's Content-Length, and Ktor's `Content-Length: 0`
+  went out on a 304 (RFC 9110 section 8.6); the engine now drops both, as over HTTP/1.1 and HTTP/2, and drops it from the
+  2xx of a WebSocket CONNECT. `Http3ServerRequest.sendInformational`, `respond` and `acceptConnect` refuse
+  `content-length` on a 1xx, a 204 and a 2xx to CONNECT (section 9.3.6) with IllegalArgumentException.
 - Ktor server over HTTP/3: a request with `Expect: 100-continue` never got its interim 100 (RFC 9110 section 10.1.1:
   MUST), so a client that held its content until then waited for its own timeout (curl: 1 s), or for good. As over
   HTTP/1.1 and HTTP/2, the 100 now goes out when the application first reads the body, and another expectation is

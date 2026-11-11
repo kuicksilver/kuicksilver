@@ -43,8 +43,12 @@ internal object WebSocketOverH3 {
         return b.build()
     }
 
-    /** Headers of the 101 that Ktor produced, minus what RFC 9220 section 3 leaves out of the `:status 200` answer. */
-    val DROPPED: Set<String> = setOf("connection", "upgrade", "sec-websocket-accept", "transfer-encoding", "keep-alive", "proxy-connection")
+    /**
+     * Headers of the 101 that Ktor produced, minus what RFC 9220 section 3 leaves out of the `:status 200` answer, and
+     * `content-length`, which a 2xx to CONNECT never carries (RFC 9110 section 9.3.6).
+     */
+    val DROPPED: Set<String> =
+        setOf("connection", "upgrade", "sec-websocket-accept", "transfer-encoding", "keep-alive", "proxy-connection", "content-length")
 }
 
 /** The response of a WebSocket-over-HTTP/3 call: the upgrade becomes `acceptConnect()` and the stream carries the frames. */

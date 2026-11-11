@@ -251,11 +251,23 @@ internal open class H3Response(
             // an alternative is authoritative for its origin and may clear it (RFC 7838 section 2.2): the engine's `clear`
             // on every response that does not carry its own Alt-Svc, a 421 excepted, as on HTTP/1.1
             if (headersBuilder["Alt-Svc"] == null && statusCode.value != 421) altSvc()?.let { headersBuilder.append("Alt-Svc", it) }
+            dropFramingFieldsOfAResponseWithoutContent()
             h3.respond(statusCode.value, h3Headers())
         }.also {
             writer = it
             answered = true
         }
+
+    /**
+     * A 204 has no Content-Length (RFC 9110 section 8.6); a 304 keeps one only when it is the length a 200 would have had,
+     * which Ktor's `Content-Length: 0` for empty content does not say. As on HTTP/1.1 and HTTP/2.
+     */
+    private fun dropFramingFieldsOfAResponseWithoutContent() {
+        when (statusCode.value) {
+            204 -> headersBuilder.remove(HttpHeaders.ContentLength)
+            304 -> if (headersBuilder.getAll(HttpHeaders.ContentLength) == listOf("0")) headersBuilder.remove(HttpHeaders.ContentLength)
+        }
+    }
 
     override suspend fun responseChannel(): ByteWriteChannel = start().output
 

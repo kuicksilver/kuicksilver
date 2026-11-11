@@ -12,6 +12,7 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.http3Request
@@ -695,6 +696,30 @@ class RequestTest {
                         }
                     assertIs<Http3Exception>(e, "the client sees the reset instead of hanging: $e")
                 }
+            }
+        }
+
+    /**
+     * RFC 9110 section 8.6: "A server MUST NOT send a Content-Length header field in any response with a status code of
+     * 1xx (Informational) or 204 (No Content)", and section 9.3.6: none in a 2xx to CONNECT. Such a head is refused
+     * locally with IllegalArgumentException (a final one also resets the stream).
+     */
+    @Test fun negative_contentLengthWhereNoneIsAllowedIsRefused() =
+        h3Test {
+            val cl = Http3Headers.of("content-length" to "0")
+            H3Pair.open().useScoped { p ->
+                launch {
+                    val r = p.server.acceptRequest()
+                    assertFailsWith<IllegalArgumentException> { r.sendInformational(103, cl) }
+                    assertFailsWith<IllegalArgumentException> { r.respond(204, cl) }
+                }
+                val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.request(get("/")).body.readAllBytes() }.exceptionOrNull() }
+                assertIs<Http3Exception>(e, "the client sees the reset: $e")
+            }
+            H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                launch { assertFailsWith<IllegalArgumentException> { p.server.acceptRequest().acceptConnect(cl) } }
+                val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.connect(get("/"), "test-tunnel") }.exceptionOrNull() }
+                assertIs<Http3Exception>(e, "the client sees the reset: $e")
             }
         }
 

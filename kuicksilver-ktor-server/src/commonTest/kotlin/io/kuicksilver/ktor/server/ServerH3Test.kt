@@ -242,6 +242,8 @@ class ServerH3Test {
                         val r = c.request(get("/$status"))
                         assertEquals(status, r.status)
                         assertEquals(0, r.body.readFullBody().size)
+                        // RFC 9110 section 8.6: never on a 204; on a 304 only the length a 200 would have (here the body's)
+                        assertEquals(if (status == 204) null else "4", r.headers["content-length"], "$status")
                     }
                     // the raw stream: HEADERS, then FIN, no DATA frame
                     for ((method, path) in listOf("HEAD" to "/h", "GET" to "/204", "GET" to "/304")) {
