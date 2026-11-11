@@ -171,6 +171,15 @@ public suspend fun QuicStream.awaitSendStopped(): Long =
     (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendStopped?.await() ?: kotlinx.coroutines.awaitCancellation()
 
 /**
+ * Bytes [this] stream could still send now without waiting for the peer's MAX_STREAM_DATA or MAX_DATA (RFC 9000 section
+ * 4.1): its own and the connection's credit, less what it already holds unsent (bytes still buffered in
+ * [QuicStream.output] are not counted). HTTP/3 sizes its QPACK encoder instructions by it (RFC 9204 section 2.1.3).
+ * [Long.MAX_VALUE] for streams of other implementations.
+ */
+@InternalKuicksilverApi
+public suspend fun QuicStream.sendCredit(): Long = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendCredit() ?: Long.MAX_VALUE
+
+/**
  * True once the peer's FIN and every byte before it have arrived on [this] stream (RFC 9000 section 3.2, the receiving
  * part's "Data Recvd" state, or "Data Read" once the application read them): reading [QuicStream.input] needs nothing more
  * from the network, so it ends whole even after the connection is lost. It turns true once the endpoint's loop processed

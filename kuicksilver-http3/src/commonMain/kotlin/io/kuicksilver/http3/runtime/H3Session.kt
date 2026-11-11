@@ -27,6 +27,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
 import io.kuicksilver.quic.receivedAll
+import io.kuicksilver.quic.sendCredit
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -256,6 +257,8 @@ internal class H3Session(
             settings,
             { b -> writeCritical(encoderLock, { it.encoder }, b) },
             { b -> queueDecoderBytes(b) },
+            // no encoder stream yet: no credit known, so no insert
+            { critical?.encoder?.sendCredit() ?: 0L },
         )
 
     /**

@@ -26,6 +26,8 @@ internal class QpackRuntime(
     settings: Http3Settings,
     private val encoderOut: suspend (ByteArray) -> Unit,
     private val decoderOut: (ByteArray) -> Unit,
+    /** The encoder stream's send credit now (RFC 9204 section 2.1.3): inserts that would not fit are not made. */
+    private val encoderCredit: suspend () -> Long = { Long.MAX_VALUE },
 ) {
     private val encoder = QpackEncoder(settings.encoderMaxTableCapacity)
     private val decoder = QpackDecoder(settings.qpackMaxTableCapacity, settings.qpackBlockedStreams.toInt(), settings.maxFieldSectionSize)
@@ -58,7 +60,7 @@ internal class QpackRuntime(
         fields: List<Pair<String, String>>,
     ): ByteArray =
         encLock.withLock {
-            val block = encoder.encode(streamId, fields)
+            val block = encoder.encode(streamId, fields, encoderCredit())
             val ins = encoder.drainEncoderStream()
             if (ins.isNotEmpty()) encoderOut(ins)
             lastEncodedSize = block.size + ins.size

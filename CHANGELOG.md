@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 with the QPACK dynamic table (`enableQpackDynamicTable()`): the encoder wrote insert instructions whatever the
+  encoder stream's flow-control credit, under its lock (RFC 9204 section 2.1.3: SHOULD NOT), so a peer that granted
+  the stream no credit could leave every field section waiting behind instructions it would not take. An insert is now
+  made only when the encoder stream has the credit for the whole instruction; the field goes as a literal otherwise.
 - HTTP/3 client: `Http3Connection.request()` with a `protocol` (Extended CONNECT) sent `:protocol` without waiting for
   the server's SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 9220 section 3, RFC 8441 section 4), although its documentation
   promised that a request the server must refuse fails locally. It now waits for the server's SETTINGS and throws

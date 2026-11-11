@@ -61,6 +61,33 @@ class QpackEncoderTest {
         assertEquals(req, assertIs<DecodeResult.Decoded>(d.decode(4, second)).fields)
     }
 
+    /**
+     * RFC 9204 section 2.1.3: no instruction without credit for all of it. With none, the section goes without inserts
+     * (literals, decodable as they are); with credit for some, only inserts that fit whole are made.
+     */
+    @Test fun insertsStayWithinTheEncoderStreamCredit() {
+        val none = QpackEncoder().also { it.onPeerSettings(4096, 16) }
+        none.drainEncoderStream() // Set Dynamic Table Capacity
+        val block = none.encode(0, req, instructionBudget = 0)
+        assertContentEquals(ByteArray(0), none.drainEncoderStream())
+        assertEquals(req, assertIs<DecodeResult.Decoded>(QpackDecoder(4096, 16, 65_536).decode(0, block)).fields)
+        val full = QpackEncoder().also { it.onPeerSettings(4096, 16) }
+        full.drainEncoderStream()
+        full.encode(0, req)
+        val all = full.drainEncoderStream().size
+        assertTrue(all > 20, "the unbounded encoder inserts")
+        for (budget in listOf(1L, all / 2L, all - 1L)) {
+            val some = QpackEncoder().also { it.onPeerSettings(4096, 16) }
+            val d = QpackDecoder(4096, 16, 65_536)
+            d.feed(some.drainEncoderStream()) // Set Dynamic Table Capacity, sent with the SETTINGS
+            val b = some.encode(0, req, instructionBudget = budget)
+            val ins = some.drainEncoderStream()
+            assertTrue(ins.size <= budget, "$budget: ${ins.size} bytes of instructions")
+            d.feed(ins)
+            assertEquals(req, assertIs<DecodeResult.Decoded>(d.decode(0, b)).fields)
+        }
+    }
+
     @Test fun neverIndexSensitive() {
         val e = QpackEncoder()
         e.onPeerSettings(4096, 16)
