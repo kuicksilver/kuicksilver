@@ -125,6 +125,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9204 | §2.1.2, §4.2, §4.4 (in the connection) — streams in the connection | ✅ | 0.2.0 | Encoder instructions precede the blocks that use them, and blocked sections wait for their inserts. | [details](rfc/9204.md#s2-1-2-streams-in-the-connection) |
 | RFC 9204 | §2.1, §4.3, §4.5, §7.1 — encoder | ✅ | 0.2.0 | The encoder uses the dynamic table only within the peer's limits and its own bounds. | [details](rfc/9204.md#s2-1-encoder) |
 | RFC 9204 | §2.1.3 — encoder instructions within flow-control credit | ✅ | 0.3.0 | The encoder makes an insert only when the encoder stream has the credit for the whole instruction. | [details](rfc/9204.md#s2-1-3-encoder-flow-control) |
+| RFC 9204 | §2.2.1 — blocked sections stay in the flow-control window | ✅ | 0.3.0 | A field section that waits for inserts is left unread in the stream's flow-control window. | [details](rfc/9204.md#s2-2-1-blocked-sections-in-the-window) |
 | RFC 9218 | priorities (HTTP part) | ✅ | 0.3.0 | HTTP/3 streams are scheduled by RFC 9218 urgency and incremental parameters. | [details](rfc/9218.md#priorities-http-part) |
 | RFC 9218 | §7–8 — PRIORITY_UPDATE | ✅ | 0.2.0 | The server applies the client's PRIORITY_UPDATE, and a server-set priority wins. | [details](rfc/9218.md#s7-priority-update) |
 | RFC 9218 | §4–5 — the `Priority` field | ✅ | 0.2.0 | The `Priority` field is parsed strictly as a Structured Fields dictionary. | [details](rfc/9218.md#s4-the-priority-field) |

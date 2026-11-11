@@ -28,6 +28,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.receivedAll
+import io.kuicksilver.quic.sendCredit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
@@ -414,6 +415,39 @@ class QpackDynamicTest {
         }
         return got
     }
+
+    /**
+     * RFC 9204 section 2.2.1: "While blocked, encoded field section data SHOULD remain in the blocked stream's flow-control
+     * window". A request field section of about 10 KB that waits for an insert is not read off a 16 KiB stream window: the client
+     * gets no credit back for it while another request on the connection is answered.
+     */
+    @Test fun blockedSectionStaysInTheStreamWindow() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { initialStreamWindow = 16_384 }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, dyn)
+                val raw = RawPeer(c)
+                raw.openControl()
+                // a static-only section with its prefix replaced: Required Insert Count 1 (encoded 2), Base 1
+                val fields = GET + ("x-pad" to "v".repeat(12_000))
+                val st = c.openBidi()
+                val static = QpackEncoder().encode(st.id, fields)
+                val block = byteArrayOf(0x02, 0x00) + static.copyOfRange(2, static.size)
+                val frame = FrameHeaders.frame(FrameType.HEADERS, block)
+                assertTrue(frame.size > 9_000, "${frame.size} bytes")
+                st.output.writeFully(frame)
+                st.output.flush()
+                val left = 16_384L - frame.size
+                // another request, answered: the server ran meanwhile, and a read of the blocked bytes would have sent credit
+                launch { server.acceptRequest().respond(204).finish() }
+                val other = c.openBidi()
+                other.output.writeFully(raw.headers(other.id, GET))
+                other.output.flushAndClose()
+                other.input.readAllBytes()
+                assertEquals(left, st.sendCredit(), "credit came back for a blocked section")
+                st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+            }
+        }
 
     @Test fun blockedHeaderDecodedAfterLateInsert() =
         h3Test {

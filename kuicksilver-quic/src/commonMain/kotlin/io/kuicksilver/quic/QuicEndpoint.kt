@@ -171,6 +171,20 @@ public suspend fun QuicStream.awaitSendStopped(): Long =
     (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendStopped?.await() ?: kotlinx.coroutines.awaitCancellation()
 
 /**
+ * At most how many bytes [QuicStream.input] takes from the transport ahead of what its reader asks for (64 KiB by default,
+ * at least 1). Bytes taken leave the stream's flow-control window; a reader that must leave data in the window until it
+ * can use it (RFC 9204 section 2.2.1: a blocked QPACK field section) lowers it. Ignored for streams of other
+ * implementations.
+ */
+@InternalKuicksilverApi
+public var QuicStream.readAhead: Long
+    get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.readAhead ?: Long.MAX_VALUE
+    set(v) {
+        require(v >= 1) { "readAhead must be at least 1, got $v" }
+        (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.readAhead = v
+    }
+
+/**
  * Bytes [this] stream could still send now without waiting for the peer's MAX_STREAM_DATA or MAX_DATA (RFC 9000 section
  * 4.1): its own and the connection's credit, less what it already holds unsent (bytes still buffered in
  * [QuicStream.output] are not counted). HTTP/3 sizes its QPACK encoder instructions by it (RFC 9204 section 2.1.3).

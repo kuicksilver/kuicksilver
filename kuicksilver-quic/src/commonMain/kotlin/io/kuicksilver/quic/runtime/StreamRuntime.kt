@@ -60,6 +60,10 @@ internal class StreamRuntime(
     internal var receivedAll: Boolean = false
         private set
 
+    /** At most how many bytes [input] takes from the core ahead of the reader ([io.kuicksilver.quic.readAhead]). */
+    @Volatile
+    internal var readAhead: Long = StreamInput.PULL_TARGET
+
     /** The core's [io.kuicksilver.quic.stream.StreamManager.sendCredit] for this stream, read on the loop; 0 once it is gone. */
     internal suspend fun sendCredit(): Long = kotlinx.coroutines.withContext(loop.dispatcher) { if (live()) conn.core.streamSendCredit(id) else 0L }
 

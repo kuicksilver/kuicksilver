@@ -35,6 +35,7 @@ import io.kuicksilver.http3.webtransport.WtTokens
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import kotlinx.coroutines.CancellationException
@@ -58,6 +59,8 @@ internal suspend fun handleRequestStream(
 ) = with(session) {
     // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
+    // RFC 9204 section 2.2.1: with blocked sections possible, nothing of the first field section is taken ahead of it
+    if (settings.qpackBlockedStreams > 0) st.readAhead = 1
     val firstType =
         if (settings.webTransport) {
             try {
@@ -101,6 +104,9 @@ internal suspend fun handleRequestStream(
                 onBuffered = { bufferedHeaderBytes += it },
                 firstType = firstType,
                 webTransport = settings.webTransport,
+                // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
+                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { st.input.closedCause != null || noMoreInserts() } },
+                limitReadAhead = if (settings.qpackBlockedStreams > 0) ({ st.readAhead = it }) else null,
             )
         beforeRequestHeadersForTest?.invoke(st)
         val first =
@@ -116,6 +122,8 @@ internal suspend fun handleRequestStream(
                 // or dropped with the reset (RFC 9204 section 4.4.2)
                 runCatching { cancelSections(st) }
                 return@with
+            } catch (e: StreamAbandoned) {
+                return@with // reset while its HEADERS waited for inserts: the Stream Cancellation went out
             }
         val block =
             when (first) {

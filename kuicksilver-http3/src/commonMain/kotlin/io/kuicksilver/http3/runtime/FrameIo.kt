@@ -143,7 +143,22 @@ internal class RequestFrames(
     firstType: Long? = null,
     /** WebTransport is on: its `WT_STREAM` signal is a frame error here (see [FrameRules.checkRequest]). */
     private val webTransport: Boolean = false,
+    /**
+     * Runs with a HEADERS payload's encoded Required Insert Count (its QPACK prefix, RFC 9204 section 4.5.1) before the
+     * rest of the payload is read: a section that waits for inserts waits there, its bytes left in the stream's window.
+     */
+    private val beforeFieldSection: (suspend (encodedRic: Long) -> Unit)? = null,
+    /**
+     * Sets how far the transport may read ahead of this reader (`QuicStream.readAhead`). With [beforeFieldSection], a frame
+     * header and a field section's prefix are read with none, and a frame's payload with that payload only: bytes of a
+     * section that waits for inserts are never taken from the stream's flow-control window early.
+     */
+    private val limitReadAhead: ((Long) -> Unit)? = null,
 ) {
+    private fun ahead(bytes: Long) {
+        limitReadAhead?.invoke(bytes.coerceAtLeast(1))
+    }
+
     private var pendingType = firstType
 
     /**
@@ -154,6 +169,7 @@ internal class RequestFrames(
 
     suspend fun next(): RequestFrame {
         while (true) {
+            ahead(1)
             val type = pendingType?.also { pendingType = null } ?: input.readVarIntOrNull() ?: return RequestFrame.End
             // checked before the length is read: after the WT_STREAM signal comes a Session ID, not a length
             val action = FrameRules.checkRequest(type, isServerSide, webTransport)
@@ -161,18 +177,50 @@ internal class RequestFrames(
             when (action) {
                 FrameAction.Skip -> {
                     if (!FrameType.isGrease(type)) onSkipped()
+                    ahead(len)
                     input.skipExact(len)
                 }
 
                 FrameAction.Process -> {
+                    if (type != FrameType.HEADERS) ahead(len) // DATA: its payload, which the caller reads next
                     return when {
                         type == FrameType.HEADERS && len > headersLimit -> RequestFrame.HeadersTooLarge(len)
-                        type == FrameType.HEADERS -> RequestFrame.Headers(readGrowing(len.toInt()))
+                        type == FrameType.HEADERS -> RequestFrame.Headers(readSection(len.toInt()))
                         else -> RequestFrame.Data(len)
                     }
                 }
             }
         }
+    }
+
+    /**
+     * A HEADERS payload: its Required Insert Count prefix (an 8-bit prefixed integer, RFC 9204 section 4.1.1) first, then
+     * [beforeFieldSection], then the rest. A prefix longer than any valid one is left to the decoder to refuse.
+     */
+    private suspend fun readSection(len: Int): ByteArray {
+        val hook = beforeFieldSection ?: return readGrowing(len)
+        val prefix = ByteArray(minOf(len, MAX_RIC_PREFIX))
+        var n = 0
+        var value = 0L
+        var shift = 0
+        val one = ByteArray(1)
+        while (n < prefix.size) {
+            if (input.readAvailable(one, 0, 1) < 0) input.eof()
+            val b = one[0].toInt() and 0xff
+            prefix[n++] = one[0]
+            if (n == 1) {
+                value = b.toLong()
+                if (b < 0xff) break
+            } else {
+                value += (b and 0x7f).toLong() shl shift
+                shift += 7
+                if (b and 0x80 == 0) break
+            }
+        }
+        val complete = n == 1 && value < 0xff || n > 1 && prefix[n - 1].toInt() and 0x80 == 0
+        if (complete && value >= 0) hook(value)
+        ahead((len - n).toLong())
+        return prefix.copyOf(n) + readGrowing(len - n)
     }
 
     /** A HEADERS payload held only as far as it arrived, never allocated from the declared length. */
@@ -202,5 +250,8 @@ internal class RequestFrames(
 
     private companion object {
         const val CHUNK = 4096
+
+        /** The longest Required Insert Count prefix read ahead: 1 byte and 9 continuation bytes hold any 62-bit value. */
+        const val MAX_RIC_PREFIX = 10
     }
 }

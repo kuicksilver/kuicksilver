@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 with the QPACK dynamic table: a field section that waited for inserts had been read off its stream whole first,
+  so its bytes left the flow-control window and the peer got the credit back (RFC 9204 section 2.2.1: SHOULD remain in
+  the window). With blocked streams allowed, request streams are now read without read-ahead and a section's prefix
+  first; a section that needs inserts waits there, its other bytes left in the transport.
 - HTTP/3 with the QPACK dynamic table (`enableQpackDynamicTable()`): the encoder wrote insert instructions whatever the
   encoder stream's flow-control credit, under its lock (RFC 9204 section 2.1.3: SHOULD NOT), so a peer that granted
   the stream no credit could leave every field section waiting behind instructions it would not take. An insert is now

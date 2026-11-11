@@ -28,6 +28,7 @@ import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -281,6 +282,9 @@ private suspend fun H3Session.exchange(
                 onSkipped = { glitch("unknown frame on a request stream") },
                 onBuffered = { bufferedHeaderBytes += it },
                 webTransport = settings.webTransport,
+                // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
+                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { st.input.closedCause != null || noMoreInserts() } },
+                limitReadAhead = if (settings.qpackBlockedStreams > 0) ({ st.readAhead = it }) else null,
             )
         var interimBytes = 0L
         while (true) {

@@ -97,6 +97,28 @@ internal class QpackRuntime(
         }
     }
 
+    /**
+     * Before a field section's bytes are read: RFC 9204 section 2.2.1, "While blocked, encoded field section data SHOULD
+     * remain in the blocked stream's flow-control window". A section whose prefix (the [encodedRic] its first bytes give)
+     * references inserts not yet received counts as blocked and waits for them here, so the rest of it stays unread in the
+     * transport and the peer gets no credit back for it; [abandoned] is polled as in [decode].
+     */
+    suspend fun awaitInserts(
+        streamId: Long,
+        encodedRic: Long,
+        abandoned: () -> Boolean = { false },
+    ) {
+        val ric = decoder.requiredInsertCount(encodedRic)
+        if (ric <= decoder.insertCount) return
+        decoder.markBlocked(streamId)
+        while (withTimeoutOrNull(BLOCKED_POLL) { inserts.first { it >= ric } } == null) {
+            if (abandoned()) {
+                cancelStream(streamId)
+                throw StreamAbandoned()
+            }
+        }
+    }
+
     suspend fun onPeerEncoderStream(
         bytes: ByteArray,
         len: Int,

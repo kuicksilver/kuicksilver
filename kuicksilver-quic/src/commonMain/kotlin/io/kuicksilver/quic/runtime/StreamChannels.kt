@@ -80,12 +80,15 @@ internal class StreamInput(
                 pendingCause?.let { if (buffer.size >= min) return@withContext true else throw failNow(it) }
                 var pulled = 0
                 var touched = false
-                while (buffer.size < maxOf(min.toLong(), PULL_TARGET) &&
+                // what is taken from the core leaves its flow-control window: no more than the reader allows ahead
+                val target = maxOf(min.toLong(), minOf(PULL_TARGET, stream.readAhead))
+                while (buffer.size < target &&
                     pulled < PULL_TARGET
                 ) {
                     // the loop's scratch: filled and emptied here, with no suspension in between (EndpointLoop.scratch)
                     val tmp = stream.loop.scratch
-                    val n = stream.conn.core.readStream(stream.id, tmp, 0, EndpointLoop.STREAM_CHUNK)
+                    val want = minOf(EndpointLoop.STREAM_CHUNK.toLong(), target - buffer.size).toInt()
+                    val n = stream.conn.core.readStream(stream.id, tmp, 0, want)
                     if (n >
                         0
                     ) {
@@ -169,7 +172,7 @@ internal class StreamInput(
         stream.readable.close()
     }
 
-    private companion object {
+    internal companion object {
         const val PULL_TARGET = 64 * 1024L
     }
 }
