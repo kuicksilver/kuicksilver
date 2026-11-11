@@ -169,7 +169,7 @@ internal class RequestFrames(
 
     suspend fun next(): RequestFrame {
         while (true) {
-            ahead(1)
+            ahead(FRAME_HEADER_AHEAD)
             val type = pendingType?.also { pendingType = null } ?: input.readVarIntOrNull() ?: return RequestFrame.End
             // checked before the length is read: after the WT_STREAM signal comes a Session ID, not a length
             val action = FrameRules.checkRequest(type, isServerSide, webTransport)
@@ -199,6 +199,7 @@ internal class RequestFrames(
      */
     private suspend fun readSection(len: Int): ByteArray {
         val hook = beforeFieldSection ?: return readGrowing(len)
+        ahead(1) // the prefix byte by byte: nothing of the section after it leaves the window before the hook decided
         val prefix = ByteArray(minOf(len, MAX_RIC_PREFIX))
         var n = 0
         var value = 0L
@@ -248,10 +249,17 @@ internal class RequestFrames(
         }
     }
 
-    private companion object {
+    internal companion object {
         const val CHUNK = 4096
 
         /** The longest Required Insert Count prefix read ahead: 1 byte and 9 continuation bytes hold any 62-bit value. */
         const val MAX_RIC_PREFIX = 10
+
+        /**
+         * How far a frame header is read ahead: a type and a length of up to 16383 in one pull. What it may take beyond a
+         * HEADERS frame's header is the start of its Required Insert Count prefix, which is read before anything else of
+         * the section anyway.
+         */
+        const val FRAME_HEADER_AHEAD = 3L
     }
 }

@@ -60,7 +60,7 @@ internal suspend fun handleRequestStream(
     // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
     // RFC 9204 section 2.2.1: with blocked sections possible, nothing of the first field section is taken ahead of it
-    if (settings.qpackBlockedStreams > 0) st.readAhead = 1
+    if (settings.qpackBlockedStreams > 0) st.readAhead = RequestFrames.FRAME_HEADER_AHEAD
     val firstType =
         if (settings.webTransport) {
             try {
@@ -78,6 +78,7 @@ internal suspend fun handleRequestStream(
         }
     if (firstType == FrameType.WT_STREAM) {
         bidiSettled(st.id) // a WebTransport stream, not a request: never a session
+        st.readAhead = Long.MAX_VALUE // its data carries no field section: read ahead as any stream
         wt.onBidi(st)
         return@with
     }
