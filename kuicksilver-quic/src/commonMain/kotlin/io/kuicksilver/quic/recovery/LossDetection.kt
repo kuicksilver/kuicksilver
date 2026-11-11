@@ -120,6 +120,9 @@ internal interface LossListener {
     )
 }
 
+/** The largest PTO backoff exponent (RFC 9002 section 6.2.1: PTO x 2^pto_count) before the doubling stops. */
+private const val MAX_PTO_BACKOFF_SHIFT = 30
+
 /** Loss detection and the PTO timer (RFC 9002 sections 5–6, appendix A), over the three packet number spaces. */
 internal class LossDetection(
     rtt: RttEstimator,
@@ -601,7 +604,9 @@ internal class LossDetection(
         val v4 = rtt.rttVar * 4
         var d = rtt.smoothed + (if (v4 > 1.milliseconds) v4 else 1.milliseconds)
         if (space == SpaceId.Application && handshakeConfirmed) d += peerMaxAckDelay
-        return d * (1 shl ptoCount)
+        // the backoff stops doubling at 2^30 (12 days of PTO at 1 ms): 1 shl 31 is negative and 1 shl 32 is 1 again, so 31
+        // unanswered PTOs (possible with both idle timeouts disabled) used to make the timer fire at once, and 32 reset it
+        return d * (1 shl minOf(ptoCount, MAX_PTO_BACKOFF_SHIFT))
     }
 
     /** The persistent congestion period (RFC 9002 section 7.6.1): (sRTT + max(4 rttvar, granularity) + max_ack_delay) × 3. */

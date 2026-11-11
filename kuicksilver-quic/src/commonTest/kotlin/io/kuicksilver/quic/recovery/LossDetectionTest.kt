@@ -290,6 +290,23 @@ class LossDetectionTest {
         assertEquals(t2 + 3996.milliseconds, ld.timeout())
     }
 
+    @Test fun ptoBackoffSaturatesInsteadOfWrapping() {
+        // 1 shl 31 is negative and 1 shl 32 is 1: the 31st unanswered PTO fired at once, the 32nd restarted the backoff (with both
+        // idle timeouts disabled nothing else ends such a connection)
+        val (ld, _) = ld()
+        var at = t0
+        var gap = Duration.ZERO
+        for (pn in 0L..33L) {
+            send(ld, SpaceId.Initial, pn, at)
+            val next = ld.timeout()
+            assertTrue(next - at >= gap, "PTO ${ld.ptoCount}: ${next - at} after the previous $gap")
+            gap = next - at
+            assertNotNull(ld.onTimeout(next))
+            at = next
+        }
+        assertEquals(34, ld.ptoCount)
+    }
+
     @Test fun ptoCountResetOnAck() {
         val (ld, _) = ld()
         ld.peerAddressValidated = true
