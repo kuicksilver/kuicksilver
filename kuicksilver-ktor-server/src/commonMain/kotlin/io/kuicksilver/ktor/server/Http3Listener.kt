@@ -269,6 +269,12 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 h3AltSvc,
             )
         events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
+        // RFC 9110 section 10.1.1: `Expect: 100-continue` with content to follow gets an immediate 100 (Continue) as the call
+        // starts, as on HTTP/1.1 and HTTP/2 (the head-determined final statuses, 425 and 501, went out above). Before, it
+        // was never sent over HTTP/3, and the client held its content back until its own wait ended
+        if (req.headers["expect"]?.lowercase() == "100-continue" && req.headers["content-length"] != "0" && !req.body.isClosedForRead) {
+            runCatching { req.sendInformational(100) } // a stream that failed meanwhile fails the read that follows
+        }
         var failure: Throwable? = null
         try {
             pipeline.execute(call)

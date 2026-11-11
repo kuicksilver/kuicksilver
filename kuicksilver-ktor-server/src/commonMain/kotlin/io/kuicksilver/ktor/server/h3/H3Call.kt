@@ -98,23 +98,19 @@ internal class H3Call(
     }
 
     /**
-     * RFC 9110 section 10.1.1: a client that sent `Expect: 100-continue` waits for an interim 100 before the content; it
-     * goes out when the application first reads the body (as on HTTP/1.1 and HTTP/2), never twice. Another expectation is
-     * answered 417.
+     * RFC 9110 section 10.1.1: `Expect: 100-continue` gets its interim 100 as the call starts (Http3Listener sends it, as on
+     * HTTP/1.1 and HTTP/2), never twice. Another expectation is answered 417 when the application reads.
      */
     private fun answerExpectation() {
         val expect = request.headers[HttpHeaders.Expect]?.lowercase() ?: return
+        if (expect == "100-continue") return
         val phase = PipelinePhase("H3ExpectedHeaderPhase")
         request.pipeline.insertPhaseBefore(ApplicationReceivePipeline.Before, phase)
         var sent = false
         request.pipeline.intercept(phase) {
             if (sent || response.isCommitted) return@intercept
             sent = true
-            if (expect != "100-continue") {
-                this@H3Call.respond(HttpStatusCode.ExpectationFailed)
-            } else {
-                runCatching { h3.sendInformational(100) } // a stream that failed meanwhile fails the read that follows
-            }
+            this@H3Call.respond(HttpStatusCode.ExpectationFailed)
         }
     }
 

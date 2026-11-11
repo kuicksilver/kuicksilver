@@ -26,6 +26,7 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
@@ -125,6 +126,56 @@ class ServerH3Test {
                     assertContentEquals(payload, r.body.readFullBody())
                 }
             } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9110 section 10.1.1 over HTTP/3: `Expect: 100-continue` with content gets an immediate interim 100 as the handler
+     * starts, before it reads or answers. Before, HTTP/3 never sent it: the client held its content back until its own wait
+     * ended.
+     */
+    @Test fun expectContinueGets100BeforeTheHandlerReads() =
+        h3ServerTest {
+            val answer = CompletableDeferred<Unit>()
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        post("/deny") {
+                            answer.await()
+                            call.respondText("no", status = io.ktor.http.HttpStatusCode.Forbidden)
+                        }
+                    }
+                }
+            try {
+                h3(port) { c ->
+                    coroutineScope {
+                        val interim = CompletableDeferred<Int>()
+                        val content =
+                            io.ktor.utils.io
+                                .ByteChannel(autoFlush = true)
+                        val response =
+                            async {
+                                c.request(
+                                    http3Request("POST", "server.test", "/deny") {
+                                        headers =
+                                            io.kuicksilver.http3.Http3Headers
+                                                .of("expect" to "100-continue", "content-length" to "2")
+                                        body = content
+                                        onInformational = { status, _ -> interim.complete(status) }
+                                    },
+                                )
+                            }
+                        assertEquals(100, kotlinx.coroutines.withTimeout(10.seconds) { interim.await() })
+                        assertTrue(!answer.isCompleted, "the interim 100 before the handler answered")
+                        content.writeFully("hi".encodeToByteArray())
+                        content.flushAndClose()
+                        answer.complete(Unit)
+                        assertEquals(403, kotlinx.coroutines.withTimeout(10.seconds) { response.await() }.status)
+                    }
+                }
+            } finally {
+                answer.complete(Unit)
                 server.stop(100, 500)
             }
         }

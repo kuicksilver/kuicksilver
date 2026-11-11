@@ -228,8 +228,8 @@ server.start(wait = true)
   alone decides the final status (400, 413, 425, 431 go out without it); another expectation is answered 417 when the
   handler reads the body. A body the handler leaves unread is dropped up to 256 KiB; a larger rest, a chunked one still
   incomplete when the response starts, or a request answered without the `100 Continue` it asked for, ends the
-  connection after a response that says `Connection: close`. One whose client stopped reading its response (the socket took nothing) is closed after the
-  longer of that and 5 minutes: the engine sees progress about 1 MiB at a time, and 5 minutes serve
+  connection after a response that says `Connection: close`. One whose client stopped reading its response (the socket
+  took nothing) is closed after the longer of that and 5 minutes: the engine sees progress about 1 MiB at a time, and 5 minutes serve
   clients down to about 3.4 KiB/s. A closing connection sends what is left for as long as the client takes it, and is
   aborted after the same deadline without progress, so a slow reader's last response is not cut short.
   Empty lines before a request line are skipped and do not count as a started request. A request head (request line

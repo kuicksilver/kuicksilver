@@ -679,8 +679,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `content-length` on a 1xx, a 204 and a 2xx to CONNECT (section 9.3.6) with IllegalArgumentException.
 - Ktor server over HTTP/3: a request with `Expect: 100-continue` never got its interim 100 (RFC 9110 section 10.1.1:
   MUST), so a client that held its content until then waited for its own timeout (curl: 1 s), or for good. As over
-  HTTP/1.1 and HTTP/2, the 100 now goes out when the application first reads the body, and another expectation is
-  answered 417.
+  HTTP/1.1 and HTTP/2, the 100 now goes out as the call is dispatched, and another expectation is answered 417.
 - HTTP/3: a HEADERS frame after the trailers whose declared length was above the field section cap was a stream error
   (H3_EXCESSIVE_LOAD: a 431 on the server, `FieldSectionTooLarge` on the client) instead of the connection error
   H3_FRAME_UNEXPECTED that RFC 9114 section 4.1 requires for any frame after the trailers. A smaller one already was.
@@ -1124,12 +1123,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `socket` or `accept`, so a fork and exec in another thread of the process in between inherited the descriptor (a
   connection or listening port kept open in the child). They are now created with `SOCK_NONBLOCK | SOCK_CLOEXEC`
   (`socket`, `accept4`). Apple has neither and keeps the `fcntl` right after the call.
-- Ktor server, HTTP/1.1 and HTTP/2: a request with content and `Expect: 100-continue` got its `100 Continue` only when
-  the application first read the content, so a handler that waited before reading (an authentication round trip, a slow
-  upstream) held the client's content back until the client's own wait ended. RFC 9110 §10.1.1 asks for "an immediate
-  100 (Continue) response" unless the head alone determines a final status: the 100 now goes out as the call is
-  dispatched, and the statuses the engine decides from the head (400, 413, 425, 431, 501) still go out without it.
-  Content the handler then leaves unread is drained like any other unread body.
+- Ktor server: a request with content and `Expect: 100-continue` got its `100 Continue` only when the application first
+  read the content (HTTP/1.1, HTTP/2), or never (HTTP/3), so a handler that waited before reading (an authentication
+  round trip, a slow upstream) held the client's content back until the client's own wait ended. RFC 9110 §10.1.1 asks
+  for "an immediate 100 (Continue) response" unless the head alone determines a final status: the 100 now goes out as
+  the call is dispatched, on all three versions, and the statuses the engine decides from the head (400, 413, 425, 431,
+  501) still go out without it. Content the handler then leaves unread is drained like any other unread body.
 - Ktor server and client, HTTP/1.1: a field value with obs-text that is not valid UTF-8 (`filename="caf<E9>"` in
   Latin-1) reached the application with U+FFFD in place of those bytes, since Ktor's parser decodes field values as
   UTF-8; RFC 9110 §5.5 has a recipient treat obs-text as opaque data. Such a value now arrives byte for byte, each byte
