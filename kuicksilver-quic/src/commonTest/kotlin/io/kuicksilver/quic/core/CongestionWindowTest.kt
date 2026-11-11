@@ -16,6 +16,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * RFC 9002 section 7: "An endpoint MUST NOT send a packet if it would cause bytes_in_flight ... to be larger than the congestion
@@ -57,7 +58,11 @@ class CongestionWindowTest {
             persistentCongestion: Boolean,
         ) {
             bytesInFlight -= lostBytes
+            losses++
         }
+
+        /** Congestion events (losses) reported. */
+        var losses = 0
 
         override fun onEcnCe(
             now: TimeMark,
@@ -158,6 +163,59 @@ class CongestionWindowTest {
             assertEquals(0, c.probePending[SpaceId.Application.ordinal])
         } finally {
             batch.close()
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 14.4: "PMTU probes consume congestion window"; RFC 9002 section 2 counts every ack-eliciting packet in
+     * flight. A DPLPMTUD probe used to bypass the window and never count in flight (a comment even cited section 14.4 for it).
+     * It now waits for room, counts in flight, and its loss takes it out of flight without a congestion event.
+     */
+    @Test fun aPmtuProbeCountsInFlightAndWaitsForTheWindow() {
+        val cc = FixedWindow(12_000)
+        val p = confirmedPair { cc }
+        val batch = PacketBatch(64)
+        try {
+            val c = p.client
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(12_000), 0, 12_000, false)
+            batch.clear()
+            c.poll(batch, p.now)
+            assertEquals(12_000L, c.cc.bytesInFlight, "the window is full")
+            c.path.pmtud = Pmtud(upperBound = 1500) // a probe (1340 bytes) is due at once
+            batch.clear()
+            c.poll(batch, p.now)
+            assertEquals(0, c.pmtudProbesSentForTest, "no room in the window: the probe waits")
+            assertEquals(0, c.path.pmtud!!.probeInFlightForTest)
+            // everything is acknowledged: the probe goes and counts in flight
+            assertTrue(p.runUntil(2.seconds) { c.pmtudProbesSentForTest > 0 })
+            val probe = c.path.pmtud!!.probeInFlightForTest
+            assertEquals(1340, probe)
+            assertTrue(c.cc.bytesInFlight >= probe, "the probe is in flight: ${c.cc.bytesInFlight}")
+            assertTrue(c.loss.bytesInFlight >= probe)
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
+
+    @Test fun aLostPmtuProbeLeavesFlightWithoutACongestionEvent() {
+        val cc = FixedWindow(100_000)
+        val p = confirmedPair { cc }
+        try {
+            val c = p.client
+            p.filterToServer = { _, b -> b.size <= 1200 } // the path carries 1200 bytes at most
+            c.path.pmtud = Pmtud(upperBound = 1500)
+            assertTrue(p.runUntil(1.seconds) { c.pmtudProbesSentForTest > 0 })
+            assertTrue(c.cc.bytesInFlight >= 1340)
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(5_000), 0, 5_000, true) // later packets get through, so the probe is declared lost
+            assertTrue(p.runUntil(3.seconds) { c.path.pmtud!!.probeInFlightForTest == 0 && c.stats.bytesInFlight == 0L })
+            assertEquals(0L, c.cc.bytesInFlight, "the probe left flight")
+            assertEquals(0, cc.losses, "a lost probe is no congestion signal")
+            assertTrue(c.stats.lostPackets > 0, "the probe was declared lost")
+        } finally {
             p.close()
         }
     }

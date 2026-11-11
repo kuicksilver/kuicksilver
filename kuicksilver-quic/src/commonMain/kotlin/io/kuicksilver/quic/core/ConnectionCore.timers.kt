@@ -270,7 +270,7 @@ internal class ConnectionLossListener(
         p: SentPacket,
     ) {
         core.lostPackets++
-        if (p.inFlight) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketLost(p, core.now)
+        if (p.inFlight && !p.pmtuProbe) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketLost(p, core.now)
         core.qlog?.packetLost(space, p.pn, "time_or_packet_threshold", core.now)
         if (p.ecnMarked) {
             core.paths.byId(PathId(p.pathId))?.let { path ->

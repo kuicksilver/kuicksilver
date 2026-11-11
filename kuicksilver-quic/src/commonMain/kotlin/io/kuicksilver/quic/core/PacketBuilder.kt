@@ -50,7 +50,11 @@ internal class PacketBuilder(
      */
     private var initialAckOnly = false
 
-    /** Set while a DPLPMTUD probe is built: a 1-RTT packet of PING and padding, outside congestion control (RFC 9000 section 14.4). */
+    /**
+     * Set while a DPLPMTUD probe is built: a 1-RTT packet of PING and padding. It counts in flight and waits for room in the
+     * window and for the pacer ("PMTU probes consume congestion window", RFC 9000 section 14.4; RFC 9002 section 7); only its
+     * loss is no congestion signal.
+     */
     private var pmtuProbe = false
 
     fun poll(
@@ -120,7 +124,18 @@ internal class PacketBuilder(
             c.path.pmtud?.let { m ->
                 // no PMTU probes to an address under validation
                 val size = m.nextProbeSize(now)
-                if (size > 0 &&
+                val held =
+                    if (size <= 0 || size > out.segmentSize) {
+                        false
+                    } else if (c.cc.bytesInFlight + size > c.cc.cwnd) {
+                        true // the next send opportunity asks again
+                    } else {
+                        val t = c.pacer.nextSendTime(now, size, c.cc, c.rtt.smoothed)
+                        if (t != TimeMark.NEVER) pacerWakeup = t
+                        t != TimeMark.NEVER
+                    }
+                if (held) m.deferProbe()
+                if (!held && size > 0 &&
                     size <= out.segmentSize
                 ) {
                     pmtuProbe = true
@@ -877,11 +892,10 @@ internal class PacketBuilder(
         p.timeSent = now
         p.size = end - start
         p.ackEliciting = ackEliciting
-        p.inFlight =
-            (ackEliciting || padded) && !pmtuProbe
+        p.inFlight = ackEliciting || padded // a PMTU probe too: "PMTU probes consume congestion window" (RFC 9000 section 14.4)
         p.pathId = target.id.value
         p.addressEpoch = target.addressEpoch
-        p.cc = target.cc // a PMTU probe is tracked for loss but never counts toward the window (RFC 9000 section 14.4)
+        p.cc = target.cc
         p.ecnMarked = currentMark != io.kuicksilver.quic.Ecn.NotEct
         // a test packet must be one loss detection can declare lost (appendix A.4: "if marked packets are all declared lost"):
         // ACK-only packets are never stored, so they would keep a black-holed path in the Unknown state forever

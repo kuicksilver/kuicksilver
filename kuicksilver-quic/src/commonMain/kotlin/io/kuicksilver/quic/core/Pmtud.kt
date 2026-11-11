@@ -15,8 +15,8 @@ import kotlin.time.Duration.Companion.seconds
  * loss detection reports the losses of an ACK before its newly acknowledged packets, and a congestion burst is exactly
  * full-size packets lost while later full-size ones arrive. A verdict is undone when a full-size packet sent after the
  * packets it rested on is acknowledged later on (the path carried it: a peer that stalled for a few PTOs, delayed ACKs),
- * see [onPacketAcked]. Probes are ack-eliciting but outside congestion control, and their loss is
- * not a congestion signal (section 14.4).
+ * see [onPacketAcked]. Probes are ack-eliciting and count in flight inside the congestion window ("PMTU probes consume
+ * congestion window"), but their loss is not a congestion signal (section 14.4).
  *
  * ICMP Packet Too Big and a local EMSGSIZE are hints, never facts (RFC 8899 section 4.6, RFC 9000 section 14.2.1; threat-model
  * 3.16): the caller validates the message first ([onPtb]). A size reported above [current] only ends the probes above it at once;
@@ -123,6 +123,14 @@ internal class Pmtud(
             upperBound = peerMax
             if (high > upperBound) high = upperBound
         }
+    }
+
+    /**
+     * The probe [nextProbeSize] just gave could not go yet (the congestion window or the pacer held it, RFC 9000 section 14.4):
+     * it is asked for again at the next send opportunity, with the same size.
+     */
+    fun deferProbe() {
+        probeInFlight = false
     }
 
     /** The size of the probe to send now, 0 when none is due (one in flight, search done, or paused). */

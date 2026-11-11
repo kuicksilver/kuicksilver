@@ -479,9 +479,13 @@ internal class LossDetection(
         for (k in lost.indices) {
             val p = lost[k]
             if (p.inFlight) {
-                rememberLost(sp, p, now)
-                lostBytes += p.size
                 bytesInFlight -= p.size
+                if (p.pmtuProbe) {
+                    listener.onDiscarded(p.cc, p.size) // RFC 9000 section 14.4: out of flight, no congestion signal
+                } else {
+                    rememberLost(sp, p, now)
+                    lostBytes += p.size
+                }
             }
             if (p.ackEliciting) sp.ackElicitingInFlight--
             listener.onLost(sp.id, p)
@@ -498,7 +502,7 @@ internal class LossDetection(
                 var found = false
                 for (k in lost.indices) {
                     val p = lost[k]
-                    if (!p.inFlight) continue
+                    if (!p.inFlight || p.pmtuProbe) continue
                     var seen = false
                     for (d in 0 until done) {
                         if (donePaths[d] ==
@@ -521,6 +525,7 @@ internal class LossDetection(
                 for (k in lost.indices) {
                     val p = lost[k]
                     if (p.inFlight &&
+                        !p.pmtuProbe &&
                         p.pathId == pid &&
                         p.cc === pcc
                     ) {
@@ -575,7 +580,7 @@ internal class LossDetection(
         var prevPn = -1L
         for (k in lost.indices) {
             val p = lost[k]
-            if (!p.ackEliciting || !p.inFlight || p.pathId != pid || p.cc !== pcc) continue
+            if (!p.ackEliciting || !p.inFlight || p.pmtuProbe || p.pathId != pid || p.cc !== pcc) continue
             if (p.timeSent < firstRttSampleTime) continue
             if (runStart == TimeMark.NEVER || sp.anyAckedBetween(prevPn, p.pn)) runStart = p.timeSent
             prevPn = p.pn
