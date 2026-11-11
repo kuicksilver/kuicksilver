@@ -196,12 +196,16 @@ class ServerFailedChannelResponseTest {
 
     /**
      * Sends [request] over plain TCP and reads to the end: what arrived, and whether the connection failed (a reset)
-     * rather than ended. Once "hello" arrived it opens [gate] ([openGate]) and sends [next], if any, on the same connection.
+     * rather than ended. Once "hello" arrived it opens [gate] ([openGate]).
+     *
+     * Nothing is written after [request]: requests that follow it go in it, pipelined. On Linux (Android included) the
+     * first system call on a socket after the peer's reset reports it and clears it, so a write that ran between the reset's
+     * arrival and the next read took the error, and the read then returned a plain end (0): the reset passed for a clean
+     * close (Android 15 on CI).
      */
     private suspend fun h1(
         port: Int,
         request: String,
-        next: String? = null,
         openGate: () -> Unit = { gate.complete(Unit) },
     ): Pair<String, Boolean> {
         val selector = SelectorManager(Dispatchers.IO)
@@ -221,10 +225,7 @@ class ServerFailedChannelResponseTest {
                                 val n = r.readAvailable(b, 0, b.size)
                                 if (n < 0) break
                                 out.append(b.decodeToString(0, n))
-                                if (!gate.isCompleted && "hello" in out) {
-                                    openGate()
-                                    if (next != null) runCatching { w.writeStringUtf8(next) }
-                                }
+                                if (!gate.isCompleted && "hello" in out) openGate()
                             }
                         }
                         r.closedCause != null
@@ -313,11 +314,14 @@ class ServerFailedChannelResponseTest {
             }
         }
 
-    /** The same on a kept-alive connection: the next request gets no response after the cut one, the connection fails. */
+    /**
+     * The same on a kept-alive connection: the request pipelined behind the cut one gets no response after it (RFC 9112
+     * section 9.3.2), the connection fails.
+     */
     @Test fun negative_aFailedContentChannelEndsAKeptAliveConnection() =
         serverTest {
             withServer { plain, _ ->
-                val (resp, failed) = h1(plain, "GET /io HTTP/1.1\r\nHost: s\r\n\r\n", next = "GET /length HTTP/1.1\r\nHost: s\r\n\r\n")
+                val (resp, failed) = h1(plain, "GET /io HTTP/1.1\r\nHost: s\r\n\r\nGET /length HTTP/1.1\r\nHost: s\r\n\r\n")
                 assertCutChunked(resp, failed)
                 assertEquals(1, Regex("HTTP/1\\.1 ").findAll(resp).count(), "a response followed the cut one: $resp")
             }

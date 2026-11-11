@@ -50,6 +50,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.concurrent.Volatile
@@ -362,6 +363,18 @@ internal class NativeTcpSocket(
     /** The write loop ([readerJob]) has ended (tests: the close order). */
     internal val writeLoopEnded: Boolean get() = readerJob.load()?.isCompleted ?: true
 
+    /** How the read loop fails its channel ([openDeliveringReadChannel]). */
+    internal val readDelivery: ReadDelivery = ReadDelivery()
+
+    /** The write loop's send failures, for the read loop ([SendFailures]). */
+    internal val sendFailures = SendFailures()
+
+    /**
+     * Held, when set, by the read loop once a receive returned the end of the stream, before it asks [sendFailures] what that
+     * end stands for (tests: a send that fails in between).
+     */
+    @Volatile internal var atReadEndForTest: (suspend () -> Unit)? = null
+
     /** Why the connection is gone, as the read loop's receive failed ([connectionLost]): a wait for room fails with it. */
     private val lost = AtomicReference<Throwable?>(null)
 
@@ -404,8 +417,12 @@ internal class NativeTcpSocket(
 
     /** [abort]: the connection ends with a reset ([reset]), dropping what is unsent. */
     fun abort() {
+        aborted = true
         reset(cancelWriteLoop = true)?.let { resetFailure = it }
     }
+
+    /** Set by [abort]: the read side then fails with "The connection was aborted". */
+    @Volatile private var aborted = false
 
     /** Why the last [abort] could not set `SO_LINGER` 0 (the close then sends a FIN); null when it could (tests). */
     @Volatile internal var resetFailure: Throwable? = null
@@ -428,7 +445,11 @@ internal class NativeTcpSocket(
         return failure
     }
 
-    override fun attachForReading(channel: ByteChannel): WriterJob = attachFor("reading", channel, writerJob) { readLoop(it) }
+    // the read channel is failed by the read loop alone, on its own coroutine ([ReadDelivery]): ktor's attachJob would
+    // cancel it with the loop's cancellation, from the thread that cancels the loop (dropping a delivering channel's bytes,
+    // and handing the reader a CancellationException)
+    override fun attachForReading(channel: ByteChannel): WriterJob =
+        attachFor("reading", channel, writerJob, attachJob = false) { readLoop(it) }
 
     override fun attachForWriting(channel: ByteChannel): ReaderJob =
         attachFor("writing", channel, readerJob) { writeLoop(it) }.also { writeChannel.store(channel) }
@@ -437,6 +458,7 @@ internal class NativeTcpSocket(
         name: String,
         channel: ByteChannel,
         ref: AtomicReference<J?>,
+        attachJob: Boolean = true,
         producer: (ByteChannel) -> J,
     ): J {
         if (closeFlag.load()) {
@@ -455,42 +477,64 @@ internal class NativeTcpSocket(
             channel.cancel(e)
             throw e
         }
-        channel.attachJob(j)
+        if (attachJob) channel.attachJob(j)
         j.invokeOnCompletion { checkChannels() }
         return j
     }
 
+    // started unconfined, so the loop's own failure handling is in place before a close can cancel it; it reads on IO
     private fun readLoop(user: ByteChannel): WriterJob =
-        writer(Dispatchers.IO, user) {
+        writer(Dispatchers.Unconfined, user) {
             val buffer = ByteArray(IO_BUFFER)
             var atEnd = false
             val data = ReadWait(this)
             try {
-                while (!channel.isClosedForWrite) {
-                    val n =
-                        try {
-                            tcpRecv(descriptor, buffer)
-                        } catch (e: PosixException) {
-                            connectionLost(e)
-                            throw e
+                withContext(Dispatchers.IO) {
+                    while (!channel.isClosedForWrite) {
+                        val n =
+                            try {
+                                tcpRecv(descriptor, buffer)
+                            } catch (e: PosixException) {
+                                connectionLost(e)
+                                throw e
+                            }
+                        if (n > 0) {
+                            data.dataRead()
+                            channel.writeFully(buffer, 0, n)
+                            channel.flush()
+                        } else if (n == 0) {
+                            atEnd = true
+                            // the end a send that took the peer's reset left behind is no end ([SendFailures])
+                            atReadEndForTest?.invoke()
+                            sendFailures.settled()?.let { throw it }
+                            break
+                        } else {
+                            data.await()
                         }
-                    if (n > 0) {
-                        data.dataRead()
-                        channel.writeFully(buffer, 0, n)
-                        channel.flush()
-                    } else if (n == 0) {
-                        atEnd = true
-                        break
-                    } else {
-                        data.await()
                     }
                 }
-            } catch (e: Throwable) {
-                // a receive error (a reset) or a select that fails is not the peer's end: the channel fails with it. The
-                // close below ran first and closed it cleanly (a select failure even broke out of the loop as if at the
-                // end), so a reader took a cut stream for a complete one
-                if (e !is CancellationException) channel.cancel(e)
+            } catch (e: CancellationException) {
+                // after a send that failed, the read side fails with that failure; after an abort, a reset (a failed
+                // application stream) or a local close, with an IOException that says so: never a CancellationException,
+                // which a reading coroutine would take for its own, nor an end, which the peer did not send (as on the
+                // JVM). A delivering channel keeps what was received before it. Only the socket's job cancelled under the
+                // loop leaves its cancellation
+                val cause =
+                    sendFailures.recorded ?: when {
+                        aborted -> IOException("The connection was aborted")
+                        resetFlag.load() -> IOException("The connection was reset")
+                        closeFlag.load() -> IOException("Socket closed")
+                        else -> null
+                    }
+                readDelivery.fail(channel, cause ?: e)
                 throw e
+            } catch (e: Throwable) {
+                // a receive error (a reset) or a select that fails is not the peer's end: the channel fails with it (a send's
+                // failure that came first is the cause). The close below ran first and closed it cleanly (a select failure
+                // even broke out of the loop as if at the end), so a reader took a cut stream for a complete one
+                val cause = sendFailures.recorded ?: if (aborted) IOException("The connection was aborted", e) else e
+                readDelivery.fail(channel, cause)
+                throw cause
             } finally {
                 data.cancel()
                 // not on Windows before the end of the stream: input arriving after SD_RECEIVE resets the connection there,
@@ -510,14 +554,16 @@ internal class NativeTcpSocket(
                     if (n < 0) break
                     var offset = 0
                     while (offset < n) {
-                        val sent = tcpSend(descriptor, buffer, offset, n - offset)
+                        val sent = sendFailures.send { tcpSend(descriptor, buffer, offset, n - offset) }
                         if (sent < 0) {
                             room.await()
                         } else if (sent == 0) {
                             // nothing taken of a non-empty send: the stream is cut like after a send error
-                            throw IOException(
-                                "Failed writing to closed socket. Some bytes remaining: ${n - offset + channel.availableForRead}",
-                            )
+                            val cut =
+                                IOException(
+                                    "Failed writing to closed socket. Some bytes remaining: ${n - offset + channel.availableForRead}",
+                                )
+                            sendFailures.send<Unit> { throw cut }
                         } else {
                             offset += sent
                             bytesWritten.addAndFetch(sent.toLong())
@@ -533,6 +579,16 @@ internal class NativeTcpSocket(
                 // room, which then failed with ktor's ConcurrentIOException instead of this failure
                 if (e !is CancellationException) {
                     channel.cancel(e)
+                    // a send the system refused: the read side fails with that failure ([SendFailures]) before the reset
+                    // cancels the read loop, whose cancellation would otherwise reach the reader as a CancellationException
+                    // (a delivering channel is failed by the read loop itself, after its bytes)
+                    sendFailures.recorded?.let { failed ->
+                        writerJob
+                            .load()
+                            ?.channel
+                            ?.takeIf { !readDelivery.delivers(it) }
+                            ?.cancel(failed)
+                    }
                     reset(cancelWriteLoop = false)?.let { e.addSuppressed(it) }
                 }
                 throw e
@@ -694,3 +750,11 @@ internal actual fun Socket.abortTcp() {
         socketContext.cancel()
     }
 }
+
+internal actual fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?) {
+    if (this is NativeTcpSocket) atReadEndForTest = hook
+}
+
+internal actual fun Socket.tcpReadDelivery(): ReadDelivery? = (this as? NativeTcpSocket)?.readDelivery
+
+internal actual fun Socket.sendFailuresForTest(): SendFailures? = (this as? NativeTcpSocket)?.sendFailures

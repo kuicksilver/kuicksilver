@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlinx.io.IOException
 import java.net.StandardSocketOptions
 import java.nio.channels.SocketChannel
@@ -452,6 +453,38 @@ class TcpWriterTest {
                 }
             } finally {
                 selector.close()
+            }
+        }
+
+    /**
+     * The application stops reading, the read loop backs up (its channel full, the loop waiting for room), and the application
+     * then cancels its channel: the loop ends, and the socket closes. The loop is Kuicksilver's own on the JVM since ktor's
+     * reader was replaced: a loop that kept waiting would hold the descriptor and the socket's job.
+     */
+    @Test fun negative_aCancelledReadChannelEndsABackedUpReadLoop(): Unit =
+        runBlocking {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val peer = neverReadingPeer(scope)
+            try {
+                val c = connectTcp(peer.selector, InetSocketAddress("127.0.0.1", peer.port))
+                val reading = peer.accepted.await() as KslNioSocket
+                val input = reading.openReadChannel() // never read
+                val written = AtomicLong()
+                scope.flood(c.openWriteChannel(autoFlush = true), written)
+                awaitStall(written)
+                assertTrue(!reading.readLoopEnded, "the read loop ended before its channel was cancelled")
+                input.cancel(IOException("the application stopped"))
+                assertNotNull(
+                    withTimeoutOrNull(10.seconds) { while (!reading.readLoopEnded) yield() },
+                    "the read loop still waits for room in a cancelled channel",
+                )
+                reading.close()
+                assertNotNull(withTimeoutOrNull(10.seconds) { reading.socketContext.join() }, "close() did not complete the socket")
+                assertTrue(!reading.isOpen, "and its descriptor is closed")
+                c.abort()
+            } finally {
+                scope.cancel()
+                peer.selector.close()
             }
         }
 }

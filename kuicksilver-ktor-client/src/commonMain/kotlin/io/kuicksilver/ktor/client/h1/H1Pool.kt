@@ -16,7 +16,6 @@ import io.ktor.http.content.OutgoingContent
 import io.ktor.http.isSecure
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.Socket
-import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteReadChannel
@@ -46,6 +45,7 @@ import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.network.connectTcpRacing
+import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
@@ -982,7 +982,7 @@ internal class H1Pool(
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns::lookup)
             try {
-                val rawIn = tcp.openReadChannel()
+                val rawIn = tcp.openDeliveringReadChannel()
                 val rawOut = tcp.openWriteChannel(autoFlush = true)
                 when {
                     proxy == null -> {}

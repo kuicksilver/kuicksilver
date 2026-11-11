@@ -70,3 +70,11 @@ internal actual fun Socket.abortTcp() {
         socketContext.cancel()
     }
 }
+
+internal actual fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?) {
+    if (this is KslNioSocket) atReadEndForTest = hook
+}
+
+internal actual fun Socket.tcpReadDelivery(): ReadDelivery? = (this as? KslNioSocket)?.readDelivery
+
+internal actual fun Socket.sendFailuresForTest(): SendFailures? = (this as? KslNioSocket)?.sendFailures

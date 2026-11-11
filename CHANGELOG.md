@@ -872,7 +872,32 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - Bytes of a discarded space or of rejected 0-RTT were taken from the active path's congestion controller, whichever
   controller had counted them. The PTO backoff wrapped after 31 unanswered PTOs (possible only with both idle timeouts
   disabled): the timer fired at once, then restarted; it now stops doubling at 2^30.
-
+- TCP (JVM, Android, Kotlin/Native): a connection reset that a write took was read as an orderly end, so a response
+  body delimited by the connection's close (RFC 9112 section 6.3 item 8) could pass cut for complete (section 8) on
+  plain HTTP/1.1. On Linux, Android included, a socket's pending error goes to the first system call that looks at it
+  and is then cleared: a send that ran between the arrival of the peer's reset and the next receive failed with
+  ECONNRESET, and the receive then returned the end of the stream. The read side now fails with the send's failure when
+  it reads an end after a send failed (waiting for a send under way), instead of ending; an orderly close and a failed
+  application stream are not recorded as the send's failure. On Kotlin/Native a failed send failed the read side with a
+  CancellationException rather than the send's error. TLS already treated such an end as a truncation (no
+  `close_notify`).
+- Ktor client and server, HTTP/1.1 and HTTP/2 over TCP and TLS: bytes received before the connection failed were lost
+  when the application had not read them yet: ktor-io's channel drops what it holds once it fails. A response the server
+  sent completely before resetting the connection (a 413 or 401 to an upload it stopped reading, whose close over unread
+  data the kernel answers with a reset, RFC 9112 section 9.6) failed the call instead of reaching it. The engines now
+  read their connections through a channel that hands out everything received, then fails (a reset, a receive error, a
+  failed send, an abort, a failed TLS session); TLS's raw input reads the same way, so an alert received before a reset
+  is not lost either. A socket's read channel opened with ktor's `openReadChannel` fails at once, as before.
+- TCP (JVM, Android, Kotlin/Native): a socket's own `close()` or `abort()` ended its read side differently by platform:
+  the JVM and Android cancelled the read channel (a reader got a CancellationException, which a coroutine takes for its
+  own cancellation), Kotlin/Native ended it as if the peer had closed. Both now fail it with an IOException, "Socket
+  closed" after a close and "The connection was aborted" after an abort ("The connection was reset" after a reset that
+  a failed application stream caused on Kotlin/Native). When the socket's job is cancelled under the read loop, the
+  read side fails with that cancellation instead: the JVM and Android cancel the channel with it, Kotlin/Native fails a
+  channel opened by the engines with a failure that wraps it. A cause the reader set by cancelling its channel itself
+  (a socket timeout) stays the one the channel reports after the socket closes.
+- JVM and Android TCP: the read loop is now Kuicksilver's own, as the write loop already was (ktor's reader is no longer
+  used); it reads into the application's channel directly, as ktor's did.
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS

@@ -9,15 +9,20 @@ import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ReaderJob
+import io.ktor.utils.io.WriterJob
 import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.read
 import io.ktor.utils.io.reader
+import io.ktor.utils.io.write
+import io.ktor.utils.io.writer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import java.net.StandardSocketOptions
@@ -25,12 +30,13 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * A ktor-network JVM TCP socket whose write side is Kuicksilver's own writer; reading stays ktor's (CIOReader selects when a
- * read answers 0).
+ * A ktor-network JVM TCP socket whose read and write loops are Kuicksilver's own; ktor's socket connects, binds, holds the
+ * descriptor and closes it.
  *
  * ktor-network 3.6.0's writer (`attachForWritingDirectImpl`, CIOWriter.kt) loops `while (buffer.hasRemaining()) { do { rc =
  * write(buffer) } while (buffer.hasRemaining() && rc > 0) }` inside `channel.read {}`: when the kernel's send buffer is full
@@ -47,6 +53,11 @@ import kotlin.time.Duration.Companion.seconds
  * by the socket's job) or fails (a reset, or a failed channel) closes the descriptor itself, so a socket never stays open
  * behind a stalled write; a failed one with a reset, so the peer sees the stream cut, not ended.
  * Writing after [close] fails with an IOException, as with ktor's sockets.
+ *
+ * Reading ([attachForReading]) reads as ktor's reader did; an end of stream read after a send failed (on Linux, a receive
+ * after a send that took the peer's reset returns the end) fails the channel with the send's failure ([SendFailures]), so a
+ * cut stream never ends as complete, and a failure reaches a channel opened with [openDeliveringReadChannel] after the
+ * bytes received before it.
  */
 internal class KslNioSocket(
     private val delegate: Socket,
@@ -85,6 +96,106 @@ internal class KslNioSocket(
     /** False once the descriptor is closed (tests). */
     internal val isOpen: Boolean get() = nio.isOpen
 
+    /** The writer's send failures, for the read side ([SendFailures]). */
+    internal val sendFailures = SendFailures()
+
+    /**
+     * Held, when set, by the read side once the peer's end of stream was read, before it asks [sendFailures] what that end
+     * stands for (tests: a send that fails in between).
+     */
+    @Volatile internal var atReadEndForTest: (suspend () -> Unit)? = null
+
+    /** How the read loop fails its channel ([openDeliveringReadChannel]). */
+    internal val readDelivery: ReadDelivery = ReadDelivery()
+
+    private val readerRef = AtomicReference<WriterJob?>(null)
+
+    /** The read loop, once attached. */
+    private val reader: WriterJob? get() = readerRef.get()
+
+    /** The read loop has ended, or was never attached (tests). */
+    internal val readLoopEnded: Boolean get() = reader?.job?.isCompleted ?: true
+
+    /**
+     * Kuicksilver's own read loop, as ktor's (`attachForReadingDirectImpl`, CIOReader.kt) reads: into the channel's write
+     * buffer, a select for READ when a read answers 0, `shutdownInput` at the end. What it adds is what an end and a failure
+     * stand for. An end of stream read after a send failed is no end ([SendFailures]): on Linux a receive after a send that
+     * took the peer's reset returns the end. A failure reaches a channel opened with [openDeliveringReadChannel] after the
+     * bytes received before it ([ReadDelivery]). Ended by [close] or [abort], the channel fails with an IOException ("Socket
+     * closed", "The connection was aborted"), or with a send's failure that came first; as on Kotlin/Native. Only the
+     * socket's job cancelled under it cancels it with that cancellation.
+     */
+    override fun attachForReading(channel: ByteChannel): WriterJob {
+        if (closing.get()) {
+            val e = IOException("Socket closed")
+            channel.cancel(e)
+            throw e
+        }
+        // started unconfined, so the loop's own failure handling is in place before a close can cancel it; it reads on IO
+        val job = delegate.writer(Dispatchers.Unconfined + CoroutineName("ksl-tcp-reader"), channel) { readLoop(this.channel) }
+        if (!readerRef.compareAndSet(null, job)) {
+            job.job.cancel()
+            throw IllegalStateException("reading channel has already been set")
+        }
+        // a close() between the check above and the assignment found no read loop to end: this one ends it
+        if (closing.get()) {
+            val e = IOException("Socket closed")
+            job.job.cancel()
+            channel.cancel(e)
+            throw e
+        }
+        return job
+    }
+
+    private suspend fun readLoop(channel: ByteWriteChannel) {
+        selectable.interestOp(SelectInterest.READ, false)
+        try {
+            withContext(Dispatchers.IO) {
+                while (!channel.isClosedForWrite) {
+                    var rc = 0
+                    channel.write { buffer -> rc = nio.read(buffer) }
+                    if (rc < 0) {
+                        atReadEndForTest?.invoke()
+                        sendFailures.settled()?.let { throw it }
+                        return@withContext // the writer scope closes the channel: the peer's end
+                    }
+                    if (rc == 0) {
+                        channel.flush()
+                        selectable.interestOp(SelectInterest.READ, true)
+                        try {
+                            selector.select(selectable, SelectInterest.READ)
+                        } finally {
+                            selectable.interestOp(SelectInterest.READ, false)
+                        }
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            // after a send that failed, the read side fails with that failure; after an abort or a local close, with an
+            // IOException that says so: never a CancellationException, which a reading coroutine would take for its own,
+            // nor an end, which the peer did not send. A delivering channel keeps what was received before it
+            val cause =
+                sendFailures.recorded ?: when {
+                    aborted -> IOException("The connection was aborted")
+                    closing.get() -> IOException("Socket closed")
+                    else -> null
+                }
+            if (cause != null) readDelivery.fail(channel, cause)
+            throw e
+        } catch (e: Throwable) {
+            // a reset, a closed descriptor (the writer failed): the send's failure when one came first, it is the cause
+            val cause = sendFailures.recorded ?: if (aborted) IOException("The connection was aborted", e) else e
+            readDelivery.fail(channel, cause)
+            throw cause
+        } finally {
+            try {
+                nio.shutdownInput()
+            } catch (_: ClosedChannelException) {
+            } catch (_: IOException) {
+            }
+        }
+    }
+
     override fun attachForWriting(channel: ByteChannel): ReaderJob {
         if (closing.get()) {
             val e = IOException("Socket closed")
@@ -107,9 +218,19 @@ internal class KslNioSocket(
             while (true) {
                 if (channel.availableForRead == 0 && !channel.awaitContent()) break
                 var blocked = false
-                channel.read { buffer ->
-                    val n = nio.write(buffer)
-                    if (n == 0) blocked = true else bytesWritten.addAndGet(n.toLong())
+                var refused: Throwable? = null
+                sendFailures.send({ it === refused }) {
+                    channel.read { buffer ->
+                        val n =
+                            try {
+                                nio.write(buffer)
+                            } catch (e: IOException) {
+                                // the system's verdict on the connection (a reset, a timeout), not this socket's own close
+                                if (e !is ClosedChannelException) refused = e
+                                throw e
+                            }
+                        if (n == 0) blocked = true else bytesWritten.addAndGet(n.toLong())
+                    }
                 }
                 if (blocked) {
                     writeWaits.incrementAndGet()
@@ -145,7 +266,7 @@ internal class KslNioSocket(
     }
 
     /**
-     * Closes the descriptor from the writer's side and tells the selector, which resumes ktor's reader if it waits there for
+     * Closes the descriptor from the writer's side and tells the selector, which resumes the read loop if it waits there for
      * the socket to become readable (it fails with ClosedChannelException). Closing a registered channel only cancels its
      * key, and a cancelled key is never selected again, so without this the reader waited for good: a TLS client whose
      * server reset the connection before its ClientHello went out (a refusal at accept), and whose write then failed on the
@@ -160,11 +281,11 @@ internal class KslNioSocket(
         if (!closing.compareAndSet(false, true)) return
         val w = writer
         if (w == null) {
-            delegate.close()
+            closeAfterReader()
             return
         }
         // the ktor socket closes once the writer has ended, at once when it already has (a drained, failed or cancelled writer)
-        w.job.invokeOnCompletion { delegate.close() }
+        w.job.invokeOnCompletion { closeAfterReader() }
         delegate.launch(CoroutineName("ksl-tcp-close")) {
             // bounded, the flush too: a peer that stops reading would hold the drain, and with it the socket, as long as it likes
             val drain: suspend () -> Unit = {
@@ -185,6 +306,20 @@ internal class KslNioSocket(
                 w.job.cancel()
             }
         }
+    }
+
+    /**
+     * The read loop is cancelled, as ktor's socket cancels its reader at its close, and the ktor socket closes once it has
+     * ended: its descriptor is not closed under a read (ktor's socket knows only the loops attached through it).
+     */
+    private fun closeAfterReader() {
+        val r = reader
+        if (r == null) {
+            delegate.close()
+            return
+        }
+        r.job.cancel()
+        r.job.invokeOnCompletion { delegate.close() }
     }
 
     override fun dispose(): Unit = close()
