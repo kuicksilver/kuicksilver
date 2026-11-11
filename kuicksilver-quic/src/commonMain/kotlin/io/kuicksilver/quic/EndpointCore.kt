@@ -357,7 +357,11 @@ public class EndpointCore internal constructor(
             loadBalancerNoncesWasted = (route as? QuicLbRoute)?.wasted ?: 0L,
         )
 
-    /** A new client connection to [remote]; its first [ConnectionCore.poll] produces the Initial datagrams. */
+    /**
+     * A new client connection to [remote]; its first [ConnectionCore.poll] produces the Initial datagrams. Throws
+     * [QuicException.ConnectionLost.Internal] when 16 draws of its connection ID all hit one this endpoint already routes (RFC 9000
+     * section 10.3.2; only likely with a short `connectionIdLength` and many connections).
+     */
     public fun connect(
         client: QuicClientConfig,
         remote: InetSocketAddress,
@@ -379,7 +383,9 @@ public class EndpointCore internal constructor(
             core = ConnectionCore.client(quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData, scid)
             if (!registry.contains(core.localCid)) break
             core.release()
-            check(++draws < io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS) { "no unused connection ID of length $cidLength" }
+            if (++draws == io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS) {
+                throw QuicException.ConnectionLost.Internal("no connection ID of length $cidLength left unused on this endpoint loop")
+            }
         }
         attach(core)
         connectionsCreated++

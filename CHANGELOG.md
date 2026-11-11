@@ -703,7 +703,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   client or server, is never one the endpoint loop already routes or one of the connection's own live or retired IDs:
   `ConnectionIdRegistry.add` kept the earlier owner of a colliding ID, so the new connection advertised an ID (and its
   stateless reset token) that routed to another connection (sections 10.3.2, 19.15). With the default 8-byte IDs the
-  chance was small; with `connectionIdLength = 4` (16 random bits) a collision was likely after a few hundred IDs.
+  chance was small; with `connectionIdLength = 4` (16 random bits) a collision was likely after a few hundred IDs. When
+  16 draws all collide, a server drops the Initial, a NEW_CONNECTION_ID waits, and `connect` fails with
+  `QuicException.ConnectionLost.Internal`.
 - QUIC server: removing a connection walked every slot of the endpoint's connection ID table, and the table never shrank.
   An Initial that does not decrypt creates a connection and removes it at once, so each forged 1200-byte Initial from any
   address cost a walk over the IDs of every connection on the loop (and over the slots a past peak left behind). A removal

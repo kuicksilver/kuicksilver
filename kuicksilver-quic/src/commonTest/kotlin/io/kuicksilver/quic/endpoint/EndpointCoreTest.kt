@@ -244,6 +244,25 @@ class EndpointCoreTest {
         }
     }
 
+    /** A client connection ID that collides 16 times is a documented ConnectionLost.Internal, not an undocumented exception. */
+    @Test fun negative_clientIdThatKeepsCollidingFailsTheConnect() {
+        val cr = ScriptedRandom(Random(6))
+        val ep = EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), cr)
+        try {
+            val cfg = QuicClientConfig.Builder(CoreFixtures.client()).build()
+            val first = ep.connect(cfg, a2, now)
+            val taken = first.localCid.toByteArray()
+            repeat(io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS * 2) {
+                cr.next += ByteArray(8) { 9 } // the client's original DCID draw
+                cr.next += taken
+            }
+            assertFailsWith<io.kuicksilver.quic.QuicException.ConnectionLost.Internal> { ep.connect(cfg, a2, now) }
+            assertEquals(1, ep.connectionCount)
+        } finally {
+            ep.close()
+        }
+    }
+
     @Test fun routesByDcid() {
         val srv = server()
         val cep = clientEndpoint()
