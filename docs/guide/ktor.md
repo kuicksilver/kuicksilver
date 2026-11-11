@@ -1575,9 +1575,16 @@ section 6.8: first with the largest stream identifier and a PING, then with the 
 back) and closes when those requests are done; streams the client opens after that are not processed. The stop returns
 as soon as they have: each HTTP/3
 connection closes with H3_NO_ERROR once its last response is acknowledged and read — the client closes it (a
-Kuicksilver client does), or the server three seconds later. At the end of the grace period the calls still
-running are cancelled and the connections left are closed with H3_NO_ERROR; the stop then waits for those calls to end,
-until `timeoutMillis` after it began at most.
+Kuicksilver client does), or the server a quarter of the grace period later (three seconds at most; at least four
+smoothed round trips). A browser or curl keeps an idle connection open, so that wait is what a stop takes with one
+connected; with the quarter, Ktor's default `stop(500, 500)` ends gracefully on a low-latency path (a few milliseconds of
+RTT). Where the round trip is longer, the GOAWAY round (two RTTs, at least 50 ms), that wait and the QUIC closing period
+(three PTOs, RFC 9000 section 10.2) can exceed a short grace period: give it a second or more. At the end of the grace
+period the calls still running are cancelled and the connections left are closed with H3_NO_ERROR (TCP connections still
+writing a response are aborted instead of drained); the stop then waits for those calls to end, until `timeoutMillis`
+after it began at most. As in Ktor's CIO engine, `stop(500, 500)` leaves no time for that last step: the stop may return
+while the sockets cut at the grace deadline are still closing, so pass a `timeoutMillis` above the grace period where a
+restart binds the same port at once.
 
 ## 0-RTT (opt-in, experimental)
 

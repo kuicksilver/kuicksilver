@@ -966,6 +966,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   whose coroutine was launched on the already cancelled connection scope never ran: neither its handshake nor its close,
   so the socket stayed open and kept its `maxTcpConnections` and `maxTcpConnectionsPerIp` slot. Such a connection is now
   aborted, which releases the slot.
+- Ktor server: a graceful stop with a grace period under about three seconds (Ktor's default `stop(500, 500)`,
+  `stop(1000, 2000)`) never ended gracefully while a browser or curl kept an idle HTTP/3 connection open: after the stop's
+  final GOAWAY the server waited three seconds for the client to close such a connection, so the stop always ran out its
+  grace period and then cut what was left, aborting TCP connections that were still writing a response instead of
+  draining them. During a stop the server now waits a quarter of the grace period (at most the three seconds, at least
+  four smoothed RTTs); `stop(500, 500)` then ends gracefully on a low-latency path. The guide's
+  [Graceful stop](docs/guide/ktor.md#graceful-stop) gives the timing and why `stop(500, 500)` may return before the
+  sockets cut at the grace deadline are closed.
 
 ## [0.2.1] - 2026-11-04
 

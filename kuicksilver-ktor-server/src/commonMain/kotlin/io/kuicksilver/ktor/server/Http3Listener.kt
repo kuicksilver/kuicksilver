@@ -162,7 +162,12 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                     listener.add(conn)
                     // after add(): a stop or a switch to Drain that began meanwhile either saw this connection in live() or is seen
                     // here (RFC 9114 5.2)
-                    if (listener.stopping || advertising == Http3Advertising.Drain) launch { runCatching { conn.goAway() } }
+                    if (listener.stopping) {
+                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                        launch { runCatching { conn.goAway(stopCloseFallback) } }
+                    } else if (advertising == Http3Advertising.Drain) {
+                        launch { runCatching { conn.goAway() } }
+                    }
                     // the peer's address now (a NAT rebinding right after the handshake moves it to another path)
                     val remote = (conn.quic.activePath ?: conn.quic.paths.firstOrNull())?.remoteAddress
                     events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_3_0, remote) }

@@ -6,6 +6,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
@@ -16,6 +17,7 @@ import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 
 /** Which side of an HTTP/3 connection we are. */
@@ -95,6 +97,20 @@ public class Http3Connection private constructor(
      * retry-safe, as one above a received GOAWAY); a client that receives GOAWAY closes with H3_NO_ERROR once it is idle.
      */
     public suspend fun goAway() {
+        session.goAway()
+    }
+
+    /**
+     * Server: [goAway] after which an idle connection the client does not close is closed by the server [closeFallback]
+     * after the final GOAWAY (or 4 smoothed RTTs, the longer) instead of three seconds; a longer value changes nothing. A stop
+     * whose grace period is shorter than those three seconds can then end gracefully. A round whose final GOAWAY went out
+     * already keeps its wait.
+     */
+    @InternalKuicksilverApi
+    public suspend fun goAway(closeFallback: Duration) {
+        withContext(session.dispatcher) {
+            if (closeFallback < session.goAwayCloseFallback) session.goAwayCloseFallback = closeFallback
+        }
         session.goAway()
     }
 
