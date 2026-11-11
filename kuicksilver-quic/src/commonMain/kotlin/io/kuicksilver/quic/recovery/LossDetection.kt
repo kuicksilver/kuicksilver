@@ -104,6 +104,12 @@ internal interface LossListener {
 
     fun onCongestion(event: CongestionEvent)
 
+    /**
+     * The RTT estimator of path [pathId], null for a path that is gone: persistent congestion of a path's packets is judged by its
+     * own RTT (RFC 9002 sections 7.6.1, 7.6.2), not by the active path's.
+     */
+    fun rttOf(pathId: Int): RttEstimator? = null
+
     /** An ACK frame is about to be processed: what the controllers have in flight now is their state "before the ACK". */
     fun onAckFrameStart() {}
 
@@ -142,6 +148,9 @@ internal class LossDetection(
     private val event = CongestionEvent()
     private val lost = ArrayList<SentPacket>()
     private val donePaths = IntArray(8)
+
+    /** Estimators of the paths that established persistent congestion in the detection being processed (reset after it). */
+    private val persistentRtts = arrayOfNulls<RttEstimator>(8)
     private val doneCcs = arrayOfNulls<io.kuicksilver.quic.CongestionController>(8)
     private val acked = ArrayList<SentPacket>()
 
@@ -526,8 +535,7 @@ internal class LossDetection(
             if (p.ackEliciting) sp.ackElicitingInFlight--
             listener.onLost(sp.id, p)
         }
-        val pcDuration = persistentCongestionDuration()
-        var activePathPersistent = false
+        var persistentPaths = 0
         // one loss event per path the lost packets travelled on: a migration must not charge the new path for the old one's losses (RFC 9000 section 9.4)
         if (lostBytes > 0) {
             var done = 0
@@ -569,8 +577,9 @@ internal class LossDetection(
                         if (p.timeSent > largest) largest = p.timeSent
                     }
                 }
-                val persistent = persistentCongestion(sp, pid, pcc, pcDuration)
-                if (persistent && pid == activePath) activePathPersistent = true
+                val est = if (pid == activePath) rtt else listener.rttOf(pid)
+                val persistent = est != null && persistentCongestion(sp, pid, pcc, est)
+                if (persistent && persistentPaths < persistentRtts.size) persistentRtts[persistentPaths++] = est
                 event.kind = CongestionKind.Lost
                 event.bytes = bytes
                 event.sentTime = largest
@@ -591,11 +600,13 @@ internal class LossDetection(
         }
         for (k in lost.indices) sp.release(lost[k])
         lost.clear()
-        if (activePathPersistent) {
+        for (i in 0 until persistentPaths) {
             // RFC 9002 section 5.2: min_rtt restarts from the newest sample, and (as ngtcp2) a new persistent congestion period
             // needs packets sent after it, so a lasting RTT increase is not declared persistent congestion again and again
-            rtt.onPersistentCongestion()
-            rtt.persistentCongestionFrom = now
+            val est = persistentRtts[i]!!
+            persistentRtts[i] = null
+            est.onPersistentCongestion()
+            est.persistentCongestionFrom = now
         }
     }
 
@@ -603,17 +614,19 @@ internal class LossDetection(
      * RFC 9002 section 7.6.2 for the lost packets of one path ([pid], counted by [pcc]): two ack-eliciting packets declared lost, no
      * packet sent between them acknowledged in any space (packet numbers never stored, such as ACK-only packets, or skipped do not
      * count; other spaces by the send times [keepAckedTimes] keeps, as A.9 judges the lost packets of one detection), more
-     * than [duration] apart, and both sent after the first RTT sample ("The persistent congestion period SHOULD NOT start until
-     * there is at least one RTT sample"; ngtcp2 filters by first_rtt_sample_ts the same way).
+     * than the persistent congestion duration of that path's RTT estimate [est] apart, and both sent after its first RTT sample
+     * ("The persistent congestion period SHOULD NOT start until there is at least one RTT sample"; ngtcp2 filters by
+     * first_rtt_sample_ts the same way).
      */
     private fun persistentCongestion(
         sp: PacketNumberSpace,
         pid: Int,
         pcc: io.kuicksilver.quic.CongestionController?,
-        duration: Duration,
+        est: RttEstimator,
     ): Boolean {
-        val from = rtt.persistentCongestionFrom
-        if (!rtt.hasSample || from == TimeMark.NEVER) return false
+        val from = est.persistentCongestionFrom
+        if (!est.hasSample || from == TimeMark.NEVER) return false
+        val duration = persistentCongestionDuration(est)
         var runStart = TimeMark.NEVER
         var prevPn = -1L
         var prevSent = TimeMark.NEVER
@@ -650,11 +663,11 @@ internal class LossDetection(
         return d * (1 shl minOf(ptoCount, MAX_PTO_BACKOFF_SHIFT))
     }
 
-    /** The persistent congestion period (RFC 9002 section 7.6.1): (sRTT + max(4 rttvar, granularity) + max_ack_delay) × 3. */
-    fun persistentCongestionDuration(): Duration {
+    /** The persistent congestion period (RFC 9002 section 7.6.1) of [est] (the active path's by default): (sRTT + max(4 rttvar, granularity) + max_ack_delay) × 3. */
+    fun persistentCongestionDuration(est: RttEstimator = rtt): Duration {
         val v4 =
-            rtt.rttVar * 4
-        return (rtt.smoothed + (if (v4 > 1.milliseconds) v4 else 1.milliseconds) + peerMaxAckDelay) * 3
+            est.rttVar * 4
+        return (est.smoothed + (if (v4 > 1.milliseconds) v4 else 1.milliseconds) + peerMaxAckDelay) * 3
     }
 
     /** The space the last [earliestLossTime] / [ptoTimeAndSpace] result refers to (fields instead of a Pair: no allocation per timer query). */

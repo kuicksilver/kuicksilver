@@ -254,6 +254,8 @@ internal class ConnectionLossListener(
         if (f.dgCount > 0) core.datagramSender?.let { s -> for (i in 0 until f.dgCount) if (f.dgId[i] >= 0) s.onAcked(f.dgId[i]) }
     }
 
+    override fun rttOf(pathId: Int): io.kuicksilver.quic.recovery.RttEstimator? = core.paths.byId(PathId(pathId))?.rtt
+
     override fun onDelivered(
         p: SentPacket,
         now: TimeMark,

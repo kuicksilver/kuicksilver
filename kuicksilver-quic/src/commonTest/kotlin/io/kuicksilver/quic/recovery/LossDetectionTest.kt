@@ -109,6 +109,9 @@ class LossDetectionTest {
         }
 
         val discarded = ArrayList<Pair<io.kuicksilver.quic.CongestionController?, Int>>()
+        val rtts = HashMap<Int, RttEstimator>()
+
+        override fun rttOf(pathId: Int): RttEstimator? = rtts[pathId]
 
         override fun onDiscarded(
             cc: io.kuicksilver.quic.CongestionController?,
@@ -672,6 +675,34 @@ class LossDetectionTest {
         for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, pathId = 1)
         ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds)
         assertEquals(listOf("1:false"), l.lossByPath, "no sample of the new path existed when its lost packets were sent")
+    }
+
+    @Test fun persistentCongestionOfAnotherPathIsJudgedByThatPathsRtt() {
+        // RFC 9002 section 7.6.1: the duration comes from the RTT estimate; each path has its own (RFC 9000 section 9.4). Path A
+        // (100 ms) loses 1.4 s of packets while the connection has moved to path B (400 ms, a 3.7 s period): A's losses are A's
+        // persistent congestion, judged by A's estimate, and the restart of the period is A's, not B's. Back on A, its estimate
+        // carries it
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        val a = ld.rtt
+        l.rtts[0] = a
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        val b = RttEstimator(333.milliseconds)
+        l.rtts[1] = b
+        ld.rtt = b
+        ld.activePath = 1
+        for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, pathId = if (pn == 2L) 1 else 0)
+        ld.onAck(SpaceId.Application, ack(2L to 2L), t0 + 600.milliseconds) // B's first sample, 400 ms
+        val bFrom = b.persistentCongestionFrom
+        assertEquals(t0 + 600.milliseconds, bFrom)
+        ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds) // A's packets 3..17 lost
+        assertEquals(listOf("0:false", "0:true"), l.lossByPath)
+        assertEquals(t0 + 2100.milliseconds, a.persistentCongestionFrom, "A's period restarts")
+        assertEquals(bFrom, b.persistentCongestionFrom, "B's does not")
+        ld.rtt = a
+        ld.activePath = 0
+        assertEquals(t0 + 2100.milliseconds, ld.rtt.persistentCongestionFrom)
     }
 
     @Test fun persistentCongestionResetsMinRttToTheNewestSample() {
