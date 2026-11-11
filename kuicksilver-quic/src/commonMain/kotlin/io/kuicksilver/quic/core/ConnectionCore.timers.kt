@@ -274,8 +274,12 @@ internal class ConnectionLossListener(
         core.qlog?.packetLost(space, p.pn, "time_or_packet_threshold", core.now)
         if (p.ecnMarked) {
             core.paths.byId(PathId(p.pathId))?.let { path ->
-                path.ecn.onLost(true)
-                core.ecnPathFailed(path)
+                // a packet sent to the address before the path's last IP change says nothing about the new one (RFC 9000 section 13.4.2)
+                val since = path.ecnSince
+                if (since == null || p.timeSent >= since) {
+                    path.ecn.onLost(true)
+                    core.ecnPathFailed(path)
+                }
             }
         }
         core.paths.byId(PathId(p.pathId))?.let { path ->
@@ -392,6 +396,9 @@ internal class ConnectionLossListener(
         pathId: Int,
     ) {
         val p = core.paths.byId(PathId(pathId)) ?: return // the path is gone: its ECN state too
+        // an ACK whose newest packet went to the path's address before its last IP change validates nothing on the new one, and its
+        // CE marks concern the old address, not the controller that started over (RFC 9000 sections 9.4 and 13.4.2)
+        p.ecnSince?.let { if (largestSentTime < it) return }
         p.ecn.onAck(countsPresent, countsValid, newlyAckedMarked)
         core.ecnPathFailed(p)
         // counts that fail validation (RFC 9000 section 13.4.2.1) are no CE report to act on: the path stops marking instead

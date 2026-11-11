@@ -16,6 +16,7 @@ import kotlin.random.Random
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -293,6 +294,8 @@ class EcnTest {
     @Test fun handshakeTimeMoveToAnotherIpRestartsValidation() {
         val p = EndpointPair()
         try {
+            p.serverEcnReceive = true
+            p.clientEcnReceive = true
             p.onServerCreated = { it.setPathCapabilities(PathId.Initial, ecnCaps) }
             val c = p.connect()
             c.setPathCapabilities(PathId.Initial, ecnCaps)
@@ -310,6 +313,28 @@ class EcnTest {
             assertTrue(p.confirmed(c), "client ${c.state}, server ${s.state}")
             assertEquals(moved, s.remoteAddressForTest)
             assertTrue(s.paths.active.ecn.state != EcnState.Failed, "validated afresh on the new address: ${s.paths.active.ecn.state}")
+            // past the loss of the marked packets that went to the old address: they neither fail nor validate the new one, and the
+            // new address's own test packets do
+            val since = assertNotNull(s.paths.active.ecnSince)
+            val listener = ConnectionLossListener(s)
+            val app = io.kuicksilver.quic.recovery.SpaceId.Application
+            val before = s.paths.active.ecn.state
+            repeat(10) {
+                val old = s.loss.space(app).newSentPacket()
+                old.ecnMarked = true
+                old.timeSent = since - 1.milliseconds
+                old.pathId = s.paths.active.id.value
+                listener.onLost(app, old) // a marked packet to the old address declared lost
+            }
+            listener.onEcnAck(app, false, false, 1, false, p.now, since - 1.milliseconds, s.paths.active.id.value)
+            assertEquals(before, s.paths.active.ecn.state, "feedback about packets to the old address leaves the new validation alone")
+            val id = c.openStream(true)
+            c.writeStream(id, byteArrayOf(1), 0, 1, true)
+            assertTrue(p.runUntil(5.seconds) { s.isStreamOpenForTest(id) })
+            s.writeStream(id, ByteArray(60_000), 0, 60_000, true)
+            assertTrue(p.runUntil(10.seconds) { s.stats.bytesInFlight == 0L && s.paths.active.ecn.state == EcnState.Capable })
+            assertTrue(s.lostPackets > 0 || s.stats.lostPackets > 0, "the packets to the old address were declared lost")
+            assertTrue(p.now > since)
         } finally {
             p.close()
         }
