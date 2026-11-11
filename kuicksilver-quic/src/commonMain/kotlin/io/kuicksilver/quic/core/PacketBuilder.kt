@@ -81,11 +81,14 @@ internal class PacketBuilder(
                     }
                     limit = minOf(limit.toLong(), budget).toInt()
                 }
-                val dcid = c.dcidFor(target)
-                if (dcid == null) {
+                // section 9.5: "MUST NOT reuse a connection ID when sending from more than one local address": a peer ID no path
+                // used, retired after this datagram; with none to spare the responses are dropped
+                val peer = c.cids.takePathPeer()
+                if (peer == null) {
                     c.paths.dropResponsesFrom(target, from)
                     continue
                 }
+                val dcid = peer.cid
                 probeTarget = target
                 strayFrom = from
                 currentMark = target.ecn.markFor()
@@ -95,6 +98,7 @@ internal class PacketBuilder(
                     } finally {
                         probeTarget = null
                         strayFrom = null
+                        c.cids.releasePathPeer(peer)
                     }
                 if (pnExhausted) return exhausted(count)
                 if (n == 0) {

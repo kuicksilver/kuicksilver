@@ -223,6 +223,11 @@ class PathTest {
             assertEquals(responsesBefore + 1, s.pathResponsesSentForTest)
             assertTrue(b in p.serverSentLocal.drop(sentBefore), "the response left from $b: ${p.serverSentLocal.drop(sentBefore).toSet()}")
             assertEquals(a, s.paths.active.local, "the path keeps its address")
+            // section 9.5: from a second local address it carries a connection ID of its own, not the active path's
+            val k = sentBefore + p.serverSentLocal.drop(sentBefore).indexOf(b)
+            val datagram = p.serverSent[k].second
+            val dcid = datagram.copyOfRange(1, 1 + c.localCid.length)
+            assertTrue(!dcid.contentEquals(s.remoteCid.toByteArray()), "the active path's ID is not reused from $b")
         } finally {
             p.close()
         }

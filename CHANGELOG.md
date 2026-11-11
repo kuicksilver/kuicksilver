@@ -655,7 +655,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   protection off) the connection closes with PROTOCOL_VIOLATION. A server on a wildcard socket with several addresses
   answered a challenge that reached another of its addresses from the path's own address; the PATH_RESPONSE now leaves
   from the address the challenge reached ("on the network path where the PATH_CHALLENGE was received"), in a datagram
-  of its own.
+  of its own carrying a connection ID of the client's that no path used (section 9.5), or is dropped when the client
+  gave none to spare.
 - QUIC: path validation gave up after max(3 PTO, 6 times the initial RTT), 2 s with the default 333 ms, where RFC 9000
   section 8.2.4 recommends three times the larger of the current PTO and the new path's PTO computed from the initial
   RTT (3 times the initial RTT plus the peer's `max_ack_delay` once confirmed), 3.07 s. A client moving to a path with a
