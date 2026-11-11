@@ -205,6 +205,11 @@ public var QuicStream.readAhead: Long
         (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.readAhead = v
     }
 
+/** Test hook: the bytes [QuicStream.input] took from the transport so far (the stream offset its buffer ends at); 0 for other implementations. */
+@InternalKuicksilverApi
+public val QuicStream.inputTakenForTest: Long
+    get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.inputTakenForTest ?: 0
+
 /**
  * Bytes [this] stream could still send now without waiting for the peer's MAX_STREAM_DATA or MAX_DATA (RFC 9000 section
  * 4.1): its own and the connection's credit, less what it already holds unsent (bytes still buffered in

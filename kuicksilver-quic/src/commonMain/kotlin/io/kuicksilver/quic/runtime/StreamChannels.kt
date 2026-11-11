@@ -53,7 +53,9 @@ internal class StreamInput(
     var readAhead: Long
         get() = if (readLimit == Long.MAX_VALUE) Long.MAX_VALUE else readLimit - (takenTotal - buffer.size)
         set(v) {
-            readLimit = if (v == Long.MAX_VALUE) Long.MAX_VALUE else (takenTotal - buffer.size) + v
+            val position = takenTotal - buffer.size
+            // saturating: a value that reaches past the largest offset means no limit
+            readLimit = if (v >= Long.MAX_VALUE - position) Long.MAX_VALUE else position + v
         }
 
     /** The FIN was taken from the core: all the peer's data is in [buffer] or was read; a later cause changes nothing. */

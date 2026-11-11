@@ -27,6 +27,7 @@ import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.inputTakenForTest
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.receivedAll
@@ -471,7 +472,8 @@ class QpackDynamicTest {
                 val static = QpackEncoder()
                 val body = ByteArray(20_000) { it.toByte() }
                 val data = FrameHeaders.frame(FrameType.DATA, body)
-                st.output.writeFully(FrameHeaders.frame(FrameType.HEADERS, static.encode(st.id, POST)) + data.copyOf(8_000))
+                val head = FrameHeaders.frame(FrameType.HEADERS, static.encode(st.id, POST))
+                st.output.writeFully(head + data.copyOf(8_000))
                 st.output.flush()
                 val req = withTimeout(5.seconds) { server.acceptRequest() } as ServerRequestImpl
                 // the body ends only with the trailers (they come before the FIN): its 20 000 bytes, not its end
@@ -480,13 +482,18 @@ class QpackDynamicTest {
                 withTimeout(5.seconds) { while (req.stream.readAhead == Long.MAX_VALUE) delay(5) }
                 val trailers = dc.enc.encode(st.id, listOf("x-trailer" to "after-the-insert"))
                 val ins = dc.enc.drainEncoderStream()
-                st.output.writeFully(data.copyOfRange(8_000, data.size) + FrameHeaders.frame(FrameType.HEADERS, trailers))
+                val trailersFrame = FrameHeaders.frame(FrameType.HEADERS, trailers)
+                st.output.writeFully(data.copyOfRange(8_000, data.size) + trailersFrame)
                 st.output.flushAndClose()
                 assertContentEquals(body, withTimeout(5.seconds) { read.await() })
                 // blocked on its prefix: nothing of the section beyond it was taken from the stream's window
                 delay(100)
                 assertTrue(!req.trailers.isCompleted, "the trailers wait for the insert")
                 assertEquals(0L, req.stream.readAhead, "read ahead past the section's prefix")
+                // what the transport gave up: the request's HEADERS, the DATA, the trailers' frame header and their one-byte
+                // Required Insert Count prefix, and not a byte more
+                val prefixEnd = head.size + data.size + (trailersFrame.size - trailers.size) + 1L
+                assertEquals(prefixEnd, req.stream.inputTakenForTest, "taken past the trailers' prefix")
                 dc.sendEncoder(ins)
                 assertEquals("after-the-insert", withTimeout(5.seconds) { req.trailers.await() }?.get("x-trailer"))
             }

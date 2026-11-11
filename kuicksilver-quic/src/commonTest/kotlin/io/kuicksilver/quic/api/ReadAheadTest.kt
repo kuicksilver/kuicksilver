@@ -48,6 +48,9 @@ class ReadAheadTest {
                         n += r
                     }
                     assertContentEquals(sent, got)
+                    // a value that reaches past the largest offset means no limit (saturating, never a wrapped offset)
+                    st.readAhead = Long.MAX_VALUE - 1
+                    assertEquals(Long.MAX_VALUE, st.readAhead)
                     c.close()
                     s.close()
                 }
