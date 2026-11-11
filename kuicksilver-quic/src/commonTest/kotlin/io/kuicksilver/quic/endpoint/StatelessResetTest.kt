@@ -213,6 +213,36 @@ class StatelessResetTest {
                 routing.toByte()
         }
 
+    /**
+     * 0.3.0 cross-review, RFC 9000 section 10.3: "the endpoint SHOULD ensure that all packets it sends are at least 22 bytes longer
+     * than the minimum connection ID length that it requests the peer to include in its packets, adding PADDING frames as
+     * necessary". With 20-byte IDs of its own, a client's ACK-only and PING-only packets to a server with 8-byte IDs were about
+     * 30 bytes; the server's Stateless Reset in reply (one byte shorter) could then not look like a packet with the client's ID.
+     */
+    @Test fun shortHeaderPacketsAreAtLeastOurIdLengthPlus22() {
+        val p =
+            io.kuicksilver.quic.CorePair(
+                clientQuic =
+                    io.kuicksilver.quic.quicConfig {
+                        connectionIdLength = 20
+                        keepAlive = 100.milliseconds
+                    },
+            )
+        try {
+            val sizes = ArrayList<Int>()
+            p.filterToServer = { _, bytes ->
+                if (bytes[0].toInt() and 0x80 == 0) sizes += bytes.size // short header only (nothing coalesced behind it)
+                true
+            }
+            assertTrue(p.handshake())
+            p.runUntil(limit = 2_000.milliseconds) { false } // ACKs, PING-only keep-alives, NEW_CONNECTION_IDs
+            assertTrue(sizes.size >= 3, "short-header datagrams sent: $sizes")
+            assertTrue(sizes.all { it >= 20 + 22 }, "every short-header packet is at least 42 bytes: $sizes")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun serverTransportParametersCarryResetToken() {
         val p = Pair()
         try {

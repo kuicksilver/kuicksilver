@@ -38,6 +38,7 @@ import kotlin.random.Random
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -286,6 +287,53 @@ class ZeroRttTest {
      * of it is sent again), its ID and its flow-control credit are free again (as ngtcp2's `conn_discard_early_data_state`
      * and quic-go's `streamsMap.ResetFor0RTT`), and the application sends what it still wants on a new stream.
      */
+
+    /**
+     * 0.3.0 cross-review, RFC 9001 section 4.6.2: "When 0-RTT is rejected, ... a client SHOULD treat receipt of an acknowledgment for
+     * a 0-RTT packet as a connection error of type PROTOCOL_VIOLATION, if it is able to detect the condition." The client knows
+     * which packet numbers its 0-RTT packets took; an acknowledgment of one after the rejection closes the connection.
+     */
+    @Test fun negative_ackOfARejectedZeroRttPacketIsProtocolViolation() {
+        val (p, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        try {
+            assertTrue(p.handshake())
+            val c = p.client
+            assertEquals(false, c.earlyDataAccepted)
+            assertTrue(
+                c.zeroRttFirstPn >= 0 && c.zeroRttLastPn >= c.zeroRttFirstPn,
+                "0-RTT went out: ${c.zeroRttFirstPn}..${c.zeroRttLastPn}",
+            )
+            val ack =
+                io.kuicksilver.quic.wire
+                    .AckFrameView()
+            ack.reset()
+            ack.addRange(c.zeroRttLastPn + 1, c.zeroRttLastPn + 5)
+            c.checkAckAfterRejection(ack) // 1-RTT packets only: fine
+            ack.reset()
+            ack.addRange(c.zeroRttLastPn + 3, c.zeroRttLastPn + 5)
+            ack.addRange(c.zeroRttLastPn, c.zeroRttLastPn + 1)
+            val e = assertFailsWith<io.kuicksilver.quic.wire.QuicWireException> { c.checkAckAfterRejection(ack) }
+            assertEquals(io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION, e.code)
+            p.runUntil(limit = 1.seconds) { false }
+            assertNull(p.closedReason(p.clientEvents), "an honest server never acknowledges them")
+        } finally {
+            p.close()
+        }
+        val (q, _) = resumed(ticket())
+        try {
+            assertTrue(q.handshake())
+            assertEquals(true, q.client.earlyDataAccepted)
+            val ack =
+                io.kuicksilver.quic.wire
+                    .AckFrameView()
+            ack.reset()
+            ack.addRange(q.client.zeroRttFirstPn, q.client.zeroRttLastPn)
+            q.client.checkAckAfterRejection(ack) // accepted: 0-RTT packets are acknowledged as any other
+        } finally {
+            q.close()
+        }
+    }
+
     @Test fun zeroRttRejectedResetsStreams() {
         // the server's application context changed: TLS refuses the early data (RFC 9001 section 4.6.3)
         val (p, id) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))

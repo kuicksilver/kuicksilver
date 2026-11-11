@@ -188,6 +188,10 @@ public class ConnectionCore internal constructor(
     /** Packets sealed with the 0-RTT key (RFC 9001 section 6.6 counts them toward its confidentiality limit). */
     internal var zeroRttPacketsSealed = 0L
 
+    /** Client: the packet numbers of the first and last 0-RTT packet sent (-1 before one); every 1-RTT packet numbers above them. */
+    internal var zeroRttFirstPn = -1L
+    internal var zeroRttLastPn = -1L
+
     /** A lower AEAD confidentiality limit for the 0-RTT key only, for tests; null uses `QuicLimits.confidentialityLimitAesGcm`. */
     internal var testZeroRttConfidentialityLimit: Long? = null
     internal var testInjectPathResponse: Long? = null

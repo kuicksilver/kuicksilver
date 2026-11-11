@@ -847,13 +847,28 @@ internal class PacketBuilder(
             w.zero(4 - pnLen - (w.pos - payloadStart))
             padded = true
         }
+        // RFC 9000 section 10.3: "SHOULD ensure that all packets it sends are at least 22 bytes longer than the minimum connection
+        // ID length that it requests the peer to include in its packets, adding PADDING frames as necessary", so that the peer's
+        // Stateless Reset (one byte shorter) looks like a packet to us. A long header always is: it carries our ID as its SCID
+        // beside 28 bytes or more. PADDING makes an ACK-only packet count as in flight (RFC 9002 section 2)
+        if (type == PacketType.OneRtt) {
+            val short = c.localCid.length + 22 - (w.pos + 16 - start)
+            if (short > 0) {
+                w.zero(minOf(short, w.remaining))
+                padded = true
+            }
+        }
         val payloadEnd = w.pos
         if (lengthOff >= 0) VarInt.writeFixed(buf, lengthOff, (pnLen + (payloadEnd - payloadStart) + 16).toLong(), 2)
         val end = PacketProtection.protect(buf, start, pnOff, pnLen, payloadEnd, pn, key, mask)
         // RFC 9000 section 8.2.1: a challenge the amplification limit kept below 1200 bytes does not validate the path MTU
         if (frames.flags and SentFrames.PATH_CHALLENGE != 0 && end < 1200) target.markLastChallengeUndersized()
         if (type == PacketType.OneRtt) c.onOneRttPacketSealed(pn)
-        if (type == PacketType.ZeroRtt) c.zeroRttPacketsSealed++ // its confidentiality limit (zeroRttWritable)
+        if (type == PacketType.ZeroRtt) {
+            c.zeroRttPacketsSealed++ // its confidentiality limit (zeroRttWritable)
+            if (c.zeroRttFirstPn < 0) c.zeroRttFirstPn = pn
+            c.zeroRttLastPn = pn // what an acknowledgment after a rejection must not cover (ZeroRtt.checkAckAfterRejection)
+        }
         p.zeroRtt = type == PacketType.ZeroRtt
         sp.commitPn(pn)
         p.pn = pn

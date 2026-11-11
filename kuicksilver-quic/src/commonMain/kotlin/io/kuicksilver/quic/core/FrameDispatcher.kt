@@ -6,6 +6,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.AckFrameView
 import io.kuicksilver.quic.wire.FrameHandler
 import io.kuicksilver.quic.wire.QuicWireException
@@ -30,6 +31,7 @@ internal class FrameDispatcher(
     override fun ping() {}
 
     override fun ack(ack: AckFrameView) {
+        if (r.space == SpaceId.Application && c.role == TlsRole.Client) c.checkAckAfterRejection(ack)
         c.loss.onAck(r.space, ack, r.now)
         c.checkPmtuBlackHoles()
     }

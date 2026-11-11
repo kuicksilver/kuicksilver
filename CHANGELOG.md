@@ -637,6 +637,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: short-header packets are now padded to at least 22 bytes more than the connection's own connection ID length
+  (RFC 9000 section 10.3 SHOULD), so the peer's Stateless Reset sent in reply, one byte shorter, still looks like a
+  packet to us. PING-only packets were 29 bytes with 8-byte IDs, and ACK-only packets about 30 with 20-byte IDs or a
+  peer using short ones. A padded ACK-only packet counts as in flight (RFC 9002 section 2). A client whose 0-RTT was
+  rejected now closes the connection with PROTOCOL_VIOLATION when the server acknowledges one of its 0-RTT packets
+  (RFC 9001 section 4.6.2 SHOULD); such acknowledgments used to be processed.
 - QUIC client, 0-RTT with `resetStreamAt`: the server's new `reset_stream_at` transport parameter took effect when its
   EncryptedExtensions arrived, while 0-RTT could still be sent (the server's Finished not yet received), so a
   `resetAt` on an early stream could put RESET_STREAM_AT in a 0-RTT packet although the ticket's parameters did not offer
