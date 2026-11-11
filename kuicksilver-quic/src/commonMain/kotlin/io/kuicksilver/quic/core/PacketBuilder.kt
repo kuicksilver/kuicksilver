@@ -362,7 +362,11 @@ internal class PacketBuilder(
         if (c.closeFrame != null) return spaceLevel(space) != 1 && !c.closeSentIn[space.ordinal] // no CONNECTION_CLOSE (0x1c) in 0-RTT
         if (space == SpaceId.Initial && initialAckOnly) return hasAckToSend(space, now)
         if (spaceLevel(space) == 1) {
-            return !congested && (c.streams.hasControlFrames() || c.streams.hasStreamData() || c.testInjectFrames.firstOrNull()?.first == 1)
+            return !congested &&
+                (
+                    c.streams.hasControlFrames() || c.streams.hasStreamData() || c.testInjectFrames.firstOrNull()?.first == 1 ||
+                        c.probePending[SpaceId.Application.ordinal] > 0
+                ) // a probe of 0-RTT data in flight goes as a 0-RTT PING when nothing is left to resend
         }
         if (hasAckToSend(space, now)) return true
         // path validation is not congestion controlled (RFC 9000 section 9.1): a rebind while the window is full must still be challenged

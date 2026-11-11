@@ -150,17 +150,27 @@ internal fun ConnectionCore.keepAliveDeadline(): TimeMark {
 }
 
 /**
- * A PTO in one long-header space also probes the other one when it holds unacknowledged data: the probe datagram is
- * padded to 1200 bytes anyway, and a server whose Initial probes keep winning the timer would otherwise never resend
- * its Handshake flight to a client that cannot acknowledge Initial packets it did not fully receive (RFC 9002
- * section 6.2.4 lets an endpoint send more than the one probe; seen as `handshakeloss` stalls against quic-go).
+ * A PTO in one long-header space also probes the other spaces that hold unacknowledged data (RFC 9002 section 6.2.4: "the
+ * sender SHOULD send ack-eliciting packets from other packet number spaces with in-flight data ... particularly ... when the
+ * client has both Handshake and Application Data in flight because the peer might only have receive keys for one of the
+ * two"). The probe datagram is padded to 1200 bytes anyway, and a server whose Initial probes keep winning the timer would
+ * otherwise never resend its Handshake flight to a client that cannot acknowledge Initial packets it did not fully receive
+ * (seen as `handshakeloss` stalls against quic-go). The Application space, which arms no PTO of its own before the handshake
+ * is confirmed, is probed too when it has 0-RTT or 1-RTT keys to send with.
  */
 internal fun ConnectionCore.probeOtherHandshakeSpace(space: SpaceId) {
     if (space == SpaceId.Application) return
     val other = if (space == SpaceId.Initial) SpaceId.Handshake else SpaceId.Initial
-    if (spaceDiscarded[other.ordinal] || loss.space(other).ackElicitingInFlight <= 0 || probePending[other.ordinal] > 0) return
-    probePending[other.ordinal] = 1
-    requeueForProbe(other, 1)
+    if (!spaceDiscarded[other.ordinal] && loss.space(other).ackElicitingInFlight > 0 && probePending[other.ordinal] == 0) {
+        probePending[other.ordinal] = 1
+        requeueForProbe(other, 1)
+    }
+    val app = SpaceId.Application.ordinal
+    val appKeys = writeKeys[3] != null || zeroRttWritable
+    if (appKeys && loss.space(SpaceId.Application).ackElicitingInFlight > 0 && probePending[app] == 0) {
+        probePending[app] = 1
+        requeueForProbe(SpaceId.Application, 1)
+    }
 }
 
 /**
