@@ -326,7 +326,10 @@ internal class LossDetection(
         for (k in acked.indices) sp.recordAckedTime(acked[k].timeSent)
     }
 
-    /** A packet of a space other than [sp] sent strictly between [a] and [b] was acknowledged (RFC 9002 section 7.6.2). */
+    /**
+     * A packet of a space other than [sp] sent strictly between [a] and [b] was acknowledged (RFC 9002 section 7.6.2), by an ACK
+     * frame processed before this one: an ACK in a later packet of the same datagram is not known yet (appendix A.7 order).
+     */
     private fun crossSpaceAckBetween(
         sp: PacketNumberSpace,
         a: TimeMark,
