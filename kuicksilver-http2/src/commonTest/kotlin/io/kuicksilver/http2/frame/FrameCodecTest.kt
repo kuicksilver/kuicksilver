@@ -152,6 +152,25 @@ class FrameCodecTest {
     }
 
     @Test
+    fun negative_largeDeclaredFrameIsBufferedAsItArrives() {
+        // SETTINGS_MAX_FRAME_SIZE raised to its maximum: a 16 MiB DATA frame declared, then 100 bytes and a stall
+        val d = FrameDecoder(H2.MAX_MAX_FRAME_SIZE)
+        val body = ByteArray(H2.MAX_MAX_FRAME_SIZE) { it.toByte() }
+        val frame = FrameEncoder.data(1, body, 0, body.size, endStream = false)
+        assertEquals(109, d.feed(frame, 0, 109))
+        assertTrue(d.allocatedBytes <= 16_384, "allocated ${d.allocatedBytes} for 100 payload bytes")
+        // the rest in pieces: the buffer grows with them (never above twice what arrived) and the frame is whole
+        var off = 109
+        while (off < frame.size) {
+            val n = minOf(100_000, frame.size - off)
+            assertEquals(n, d.feed(frame, off, n))
+            off += n
+            assertTrue(d.allocatedBytes <= 4L * (off - 9) + 16_384, "allocated ${d.allocatedBytes} for ${off - 9} payload bytes")
+        }
+        assertContentEquals(body, assertIs<Frame.Data>(d.next()).data)
+    }
+
+    @Test
     fun negative_settingsLengthNotMultipleOfSixIsFrameSizeError() {
         connError(Http2ErrorCode.FRAME_SIZE_ERROR, FrameEncoder.raw(FrameType.SETTINGS, 0, 0, ByteArray(7)))
         // an ACK with a payload (section 6.5)

@@ -8,7 +8,8 @@ import io.kuicksilver.http2.Http2ErrorCode
  * Incremental HTTP/2 frame decoder (RFC 9113 sections 4 and 6). [feed] takes bytes until one frame is complete and
  * returns how many it consumed; [next] hands that frame out. The 9-byte header is checked before the payload is
  * buffered: a declared length above [maxFrameSize] is a FRAME_SIZE_ERROR (section 4.2) before any allocation, and so is
- * a length a fixed-size frame cannot have. A frame of an unknown type (section 5.5) is skipped as it streams by, never
+ * a length a fixed-size frame cannot have. The payload buffer starts at 16 KiB at most and grows with the bytes that
+ * arrive, so a peer that declares a large frame (with [maxFrameSize] raised) and stalls holds no more than it sent. A frame of an unknown type (section 5.5) is skipped as it streams by, never
  * buffered, and reported as [Frame.Unknown] once its payload has passed.
  *
  * Errors: [feed] throws [H2ConnectionError] for a connection error (the connection is over, nothing more is read);
@@ -62,7 +63,7 @@ internal class FrameDecoder(
                 }
             } else {
                 val n = minOf(length - have, end - p)
-                if (!skipping) buf.copyInto(payload!!, have, p, p + n)
+                if (!skipping) buf.copyInto(room(have + n), have, p, p + n)
                 have += n
                 p += n
                 if (have == length) finishFrame()
@@ -96,12 +97,22 @@ internal class FrameDecoder(
         have = 0
         skipping = type > FrameType.CONTINUATION
         if (!skipping && length > 0) {
-            payload = ByteArray(length)
-            allocatedBytes += length
+            val first = minOf(length, H2.MIN_MAX_FRAME_SIZE)
+            payload = ByteArray(first)
+            allocatedBytes += first
         } else {
             payload = EMPTY
         }
         if (length == 0) finishFrame()
+    }
+
+    /** The payload buffer, grown (doubling, never beyond the frame's length) to hold [needed] bytes. */
+    private fun room(needed: Int): ByteArray {
+        val p = payload!!
+        if (needed <= p.size) return p
+        val size = minOf(length, maxOf(needed, 2 * p.size))
+        allocatedBytes += size
+        return p.copyOf(size).also { payload = it }
     }
 
     /** Checks that need only the header: stream identifier rules and fixed lengths (sections 6.1-6.10). */

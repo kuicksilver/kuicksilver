@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2: with `Http2Settings.maxFrameSize` raised above its 16 KiB default, the frame decoder allocated a frame's whole
+  declared payload as soon as its 9-byte header arrived, so a peer could hold up to 16 MiB per connection by declaring a
+  large frame and sending nothing more. The payload buffer now starts at 16 KiB at most and grows with the bytes that
+  arrive.
 - HTTP/2 client: a connection whose protocol was over (after GOAWAY its last stream ended, or a connection error) kept
   its socket and its place under `maxConnectionsPerRoute` until the engine closed when the server had stopped reading
   while our writer waited on the socket: nothing bounded the writing of what was left (with the default `pingInterval`,
