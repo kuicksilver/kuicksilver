@@ -11,6 +11,8 @@ import io.ktor.utils.io.ClosedByteChannelException
 import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * Opens this socket's read channel so that a failure of the connection reaches the reader only after every byte received
@@ -27,8 +29,15 @@ public fun Socket.openDeliveringReadChannel(): ByteReadChannel {
     val delivery = readDelivery() ?: return openReadChannel()
     val inner = ByteChannel(false)
     val view = DeliveringReadChannel(inner)
-    delivery.register(view)
-    attachForReading(inner)
+    // registered before the attach, so the read loop never fails the channel past it; one view a socket, and none left
+    // behind by an attach that failed (a second read channel, a closed socket)
+    check(delivery.register(view)) { "reading channel has already been set" }
+    try {
+        attachForReading(inner)
+    } catch (e: Throwable) {
+        delivery.unregister(view)
+        throw e
+    }
     return view
 }
 
@@ -43,11 +52,18 @@ internal expect fun Socket.tcpReadDelivery(): ReadDelivery?
  * put in front of it, after its buffered bytes; any other channel is cancelled, as ktor's sockets do. Called by the loop
  * that writes into the channel, on its own coroutine (the channel's writer is single).
  */
+@OptIn(ExperimentalAtomicApi::class)
 internal class ReadDelivery {
-    @Volatile private var view: DeliveringReadChannel? = null
+    private val registered = AtomicReference<DeliveringReadChannel?>(null)
 
-    fun register(view: DeliveringReadChannel) {
-        this.view = view
+    private val view: DeliveringReadChannel? get() = registered.load()
+
+    /** Registers [view]; false when one is registered already (a socket has one read channel). */
+    fun register(view: DeliveringReadChannel): Boolean = registered.compareAndSet(null, view)
+
+    /** Takes back [view], whose channel was not attached. */
+    fun unregister(view: DeliveringReadChannel) {
+        registered.compareAndSet(view, null)
     }
 
     /** Whether [channel] is the inner channel of a [DeliveringReadChannel]: its failure goes through [fail] alone. */

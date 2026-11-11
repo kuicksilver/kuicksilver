@@ -643,8 +643,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and is then cleared: a send that ran between the arrival of the peer's reset and the next receive failed with
   ECONNRESET, and the receive then returned the end of the stream. The read side now fails with the send's failure when
   it reads an end after a send failed (waiting for a send under way), instead of ending; an orderly close and a failed
-  application stream do not count. On Kotlin/Native a failed send, and an abort, failed the read side with a
-  CancellationException rather than the send's error or the reset. TLS already treated such an end as a truncation (no
+  application stream are not recorded as the send's failure. On Kotlin/Native a failed send failed the read side with a
+  CancellationException rather than the send's error. TLS already treated such an end as a truncation (no
   `close_notify`).
 - Ktor client and server, HTTP/1.1 and HTTP/2 over TCP and TLS: bytes received before the connection failed were lost
   when the application had not read them yet: ktor-io's channel drops what it holds once it fails. A response the server
@@ -653,6 +653,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   read their connections through a channel that hands out everything received, then fails (a reset, a receive error, a
   failed send, an abort, a failed TLS session); TLS's raw input reads the same way, so an alert received before a reset
   is not lost either. A socket's read channel opened with ktor's `openReadChannel` fails at once, as before.
+- TCP (JVM, Android, Kotlin/Native): a socket's own `close()` or `abort()` ended its read side differently by platform:
+  the JVM and Android cancelled the read channel (a reader got a CancellationException, which a coroutine takes for its
+  own cancellation), Kotlin/Native ended it as if the peer had closed. Both now fail it with an IOException, "Socket
+  closed" after a close and "The connection was aborted" after an abort ("The connection was reset" after a reset that
+  a failed application stream caused on Kotlin/Native). Only the socket's job cancelled under the read loop cancels the
+  channel.
 - JVM and Android TCP: the read loop is now Kuicksilver's own, as the write loop already was (ktor's reader is no longer
   used); it reads into the application's channel directly, as ktor's did.
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with

@@ -29,6 +29,7 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -106,16 +107,22 @@ internal class KslNioSocket(
     /** How the read loop fails its channel ([openDeliveringReadChannel]). */
     internal val readDelivery: ReadDelivery = ReadDelivery()
 
-    @Volatile private var reader: WriterJob? = null
+    private val readerRef = AtomicReference<WriterJob?>(null)
+
+    /** The read loop, once attached. */
+    private val reader: WriterJob? get() = readerRef.get()
+
+    /** The read loop has ended, or was never attached (tests). */
+    internal val readLoopEnded: Boolean get() = reader?.job?.isCompleted ?: true
 
     /**
      * Kuicksilver's own read loop, as ktor's (`attachForReadingDirectImpl`, CIOReader.kt) reads: into the channel's write
      * buffer, a select for READ when a read answers 0, `shutdownInput` at the end. What it adds is what an end and a failure
      * stand for. An end of stream read after a send failed is no end ([SendFailures]): on Linux a receive after a send that
      * took the peer's reset returns the end. A failure reaches a channel opened with [openDeliveringReadChannel] after the
-     * bytes received before it ([ReadDelivery]). Cancelled (by [close] or the socket's job), the channel is cancelled as
-     * ktor's reader left it, unless a send failed first (it fails with that send's failure) or the socket was aborted (with
-     * the reset).
+     * bytes received before it ([ReadDelivery]). Ended by [close] or [abort], the channel fails with an IOException ("Socket
+     * closed", "The connection was aborted"), or with a send's failure that came first; as on Kotlin/Native. Only the
+     * socket's job cancelled under it cancels it with that cancellation.
      */
     override fun attachForReading(channel: ByteChannel): WriterJob {
         if (closing.get()) {
@@ -123,9 +130,18 @@ internal class KslNioSocket(
             channel.cancel(e)
             throw e
         }
-        check(reader == null) { "reading channel has already been set" }
         val job = delegate.writer(Dispatchers.IO + CoroutineName("ksl-tcp-reader"), channel) { readLoop(this.channel) }
-        reader = job
+        if (!readerRef.compareAndSet(null, job)) {
+            job.job.cancel()
+            throw IllegalStateException("reading channel has already been set")
+        }
+        // a close() between the check above and the assignment found no read loop to end: this one ends it
+        if (closing.get()) {
+            val e = IOException("Socket closed")
+            job.job.cancel()
+            channel.cancel(e)
+            throw e
+        }
         return job
     }
 
@@ -151,14 +167,20 @@ internal class KslNioSocket(
                 }
             }
         } catch (e: CancellationException) {
-            // after a send that failed, the read side fails with that failure; after an abort, with the reset. A delivering
-            // channel keeps what was received before it
-            val cause = sendFailures.recorded ?: if (aborted) IOException("The connection was reset") else null
+            // after a send that failed, the read side fails with that failure; after an abort or a local close, with an
+            // IOException that says so: never a CancellationException, which a reading coroutine would take for its own,
+            // nor an end, which the peer did not send. A delivering channel keeps what was received before it
+            val cause =
+                sendFailures.recorded ?: when {
+                    aborted -> IOException("The connection was aborted")
+                    closing.get() -> IOException("Socket closed")
+                    else -> null
+                }
             if (cause != null) readDelivery.fail(channel, cause)
             throw e
         } catch (e: Throwable) {
             // a reset, a closed descriptor (the writer failed): the send's failure when one came first, it is the cause
-            val cause = sendFailures.recorded ?: e
+            val cause = sendFailures.recorded ?: if (aborted) IOException("The connection was aborted", e) else e
             readDelivery.fail(channel, cause)
             throw cause
         } finally {
