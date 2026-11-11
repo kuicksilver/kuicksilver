@@ -33,6 +33,7 @@ import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -47,6 +48,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -81,6 +83,12 @@ internal class WtSessionImpl(
     private val closedInfo = CompletableDeferred<WebTransportCloseInfo>()
     private val watchers = ArrayList<Job>()
 
+    /**
+     * The handler on the connection's end ([start]), disposed when the session ends first: kept, it would hold every session
+     * the connection ever carried (with its CONNECT stream and request) until the connection closes.
+     */
+    @Volatile private var connectionEnd: DisposableHandle? = null
+
     /** The peer's FIN was read (session dispatcher only). */
     private var peerFinished = false
     override val drainRequested: StateFlow<Boolean> get() = drainFlow
@@ -102,16 +110,17 @@ internal class WtSessionImpl(
         // the connection's end: the session is over with the connection's reason, unless the capsule reader, which reads on to
         // what the peer sent before (H3Session.drains), ends it with a WT_CLOSE_SESSION first
         val reader = watchers.first()
-        h3.closed.invokeOnCompletion {
-            val cause = if (h3.closed.isCompleted && !h3.closed.isCancelled) h3.closed.getCompleted() else it
-            reader.invokeOnCompletion {
-                if (closedInfo.complete(WebTransportCloseInfo(0, "", cause ?: sessionClosed()))) {
-                    bidiIn.close()
-                    uniIn.close()
-                    datagramsIn.close()
+        connectionEnd =
+            h3.closed.invokeOnCompletion {
+                val cause = if (h3.closed.isCompleted && !h3.closed.isCancelled) h3.closed.getCompleted() else it
+                reader.invokeOnCompletion {
+                    if (closedInfo.complete(WebTransportCloseInfo(0, "", cause ?: sessionClosed()))) {
+                        bidiIn.close()
+                        uniIn.close()
+                        datagramsIn.close()
+                    }
                 }
             }
-        }
         // an HTTP/3 GOAWAY asks every session to wind down (section 4.7)
         watchers += h3.scope.launch { h3.goAwayReceived.first { it != null }.let { drainFlow.value = true } }
     }
@@ -169,6 +178,7 @@ internal class WtSessionImpl(
         end: End,
     ): Boolean {
         if (!closedInfo.complete(info)) return false
+        connectionEnd?.dispose()
         val caller = currentCoroutineContext()[Job] // the capsule reader when the peer ended the session: it reads on to the FIN
         // not cancellable: [closed] is already complete, so a caller cancelled from here on must not leave the rest
         // undone (withContext also throws a caller's cancellation when it returns, so everything is started inside)

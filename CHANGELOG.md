@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 WebTransport: every session stayed reachable until its QUIC connection closed (a handler on the connection's
+  end held it, with its CONNECT stream and request). A client that opens and closes sessions one after another on one
+  connection to a server with `webTransport` grew the server's memory by about 10 KB per session for as long as it kept
+  the connection open. The handler is now removed when the session ends.
 - HTTP/2: with `Http2Settings.maxFrameSize` raised above its 16 KiB default, the frame decoder allocated a frame's whole
   declared payload as soon as its 9-byte header arrived, so a peer could hold up to 16 MiB per connection by declaring a
   large frame and sending nothing more. The payload buffer now starts at 16 KiB at most and grows with the bytes that
