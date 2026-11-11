@@ -657,8 +657,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the JVM and Android cancelled the read channel (a reader got a CancellationException, which a coroutine takes for its
   own cancellation), Kotlin/Native ended it as if the peer had closed. Both now fail it with an IOException, "Socket
   closed" after a close and "The connection was aborted" after an abort ("The connection was reset" after a reset that
-  a failed application stream caused on Kotlin/Native). Only the socket's job cancelled under the read loop cancels the
-  channel.
+  a failed application stream caused on Kotlin/Native). When the socket's job is cancelled under the read loop, the
+  read side fails with that cancellation instead: the JVM and Android cancel the channel with it, Kotlin/Native fails a
+  channel opened by the engines with a failure that wraps it. A cause the reader set by cancelling its channel itself
+  (a socket timeout) stays the one the channel reports after the socket closes.
 - JVM and Android TCP: the read loop is now Kuicksilver's own, as the write loop already was (ktor's reader is no longer
   used); it reads into the application's channel directly, as ktor's did.
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with

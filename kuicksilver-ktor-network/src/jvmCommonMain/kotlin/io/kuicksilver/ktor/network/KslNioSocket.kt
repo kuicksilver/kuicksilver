@@ -22,6 +22,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import java.net.StandardSocketOptions
@@ -130,7 +131,8 @@ internal class KslNioSocket(
             channel.cancel(e)
             throw e
         }
-        val job = delegate.writer(Dispatchers.IO + CoroutineName("ksl-tcp-reader"), channel) { readLoop(this.channel) }
+        // started unconfined, so the loop's own failure handling is in place before a close can cancel it; it reads on IO
+        val job = delegate.writer(Dispatchers.Unconfined + CoroutineName("ksl-tcp-reader"), channel) { readLoop(this.channel) }
         if (!readerRef.compareAndSet(null, job)) {
             job.job.cancel()
             throw IllegalStateException("reading channel has already been set")
@@ -148,21 +150,23 @@ internal class KslNioSocket(
     private suspend fun readLoop(channel: ByteWriteChannel) {
         selectable.interestOp(SelectInterest.READ, false)
         try {
-            while (!channel.isClosedForWrite) {
-                var rc = 0
-                channel.write { buffer -> rc = nio.read(buffer) }
-                if (rc < 0) {
-                    atReadEndForTest?.invoke()
-                    sendFailures.settled()?.let { throw it }
-                    return // the writer scope closes the channel: the peer's end
-                }
-                if (rc == 0) {
-                    channel.flush()
-                    selectable.interestOp(SelectInterest.READ, true)
-                    try {
-                        selector.select(selectable, SelectInterest.READ)
-                    } finally {
-                        selectable.interestOp(SelectInterest.READ, false)
+            withContext(Dispatchers.IO) {
+                while (!channel.isClosedForWrite) {
+                    var rc = 0
+                    channel.write { buffer -> rc = nio.read(buffer) }
+                    if (rc < 0) {
+                        atReadEndForTest?.invoke()
+                        sendFailures.settled()?.let { throw it }
+                        return@withContext // the writer scope closes the channel: the peer's end
+                    }
+                    if (rc == 0) {
+                        channel.flush()
+                        selectable.interestOp(SelectInterest.READ, true)
+                        try {
+                            selector.select(selectable, SelectInterest.READ)
+                        } finally {
+                            selectable.interestOp(SelectInterest.READ, false)
+                        }
                     }
                 }
             }

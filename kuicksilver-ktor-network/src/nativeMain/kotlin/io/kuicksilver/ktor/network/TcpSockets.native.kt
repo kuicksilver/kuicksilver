@@ -50,6 +50,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.concurrent.Volatile
@@ -472,32 +473,35 @@ internal class NativeTcpSocket(
         return j
     }
 
+    // started unconfined, so the loop's own failure handling is in place before a close can cancel it; it reads on IO
     private fun readLoop(user: ByteChannel): WriterJob =
-        writer(Dispatchers.IO, user) {
+        writer(Dispatchers.Unconfined, user) {
             val buffer = ByteArray(IO_BUFFER)
             var atEnd = false
             val data = ReadWait(this)
             try {
-                while (!channel.isClosedForWrite) {
-                    val n =
-                        try {
-                            tcpRecv(descriptor, buffer)
-                        } catch (e: PosixException) {
-                            connectionLost(e)
-                            throw e
+                withContext(Dispatchers.IO) {
+                    while (!channel.isClosedForWrite) {
+                        val n =
+                            try {
+                                tcpRecv(descriptor, buffer)
+                            } catch (e: PosixException) {
+                                connectionLost(e)
+                                throw e
+                            }
+                        if (n > 0) {
+                            data.dataRead()
+                            channel.writeFully(buffer, 0, n)
+                            channel.flush()
+                        } else if (n == 0) {
+                            atEnd = true
+                            // the end a send that took the peer's reset left behind is no end ([SendFailures])
+                            atReadEndForTest?.invoke()
+                            sendFailures.settled()?.let { throw it }
+                            break
+                        } else {
+                            data.await()
                         }
-                    if (n > 0) {
-                        data.dataRead()
-                        channel.writeFully(buffer, 0, n)
-                        channel.flush()
-                    } else if (n == 0) {
-                        atEnd = true
-                        // the end a send that took the peer's reset left behind is no end ([SendFailures])
-                        atReadEndForTest?.invoke()
-                        sendFailures.settled()?.let { throw it }
-                        break
-                    } else {
-                        data.await()
                     }
                 }
             } catch (e: CancellationException) {

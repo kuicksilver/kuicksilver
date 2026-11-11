@@ -96,18 +96,20 @@ internal class DeliveringReadChannel(
      * readable, then reads fail with [cause]. An [inner] the reader cancelled already keeps its own cause.
      */
     fun failAfterBuffered(cause: Throwable) {
+        if (inner.closedCause != null) return // cancelled by the reader: its cause stays the one reported
         if (failure == null) failure = cause as? ClosedByteChannelException ?: ClosedByteChannelException(cause)
         inner.close()
     }
 
-    override val closedCause: Throwable? get() = failure ?: inner.closedCause
+    // an inner the reader cancelled keeps the reader's own cause, whatever failure came after
+    override val closedCause: Throwable? get() = inner.closedCause ?: failure
 
     // in this order: the failure is recorded before inner closes, so a failure between the two reads is never a clean end
-    override val isClosedForRead: Boolean get() = inner.isClosedForRead && failure == null
+    override val isClosedForRead: Boolean get() = inner.isClosedForRead && (failure == null || inner.closedCause != null)
 
     override val readBuffer: kotlinx.io.Source get() {
         val f = failure
-        if (f != null && inner.isClosedForRead) throw f
+        if (f != null && inner.isClosedForRead && inner.closedCause == null) throw f
         return inner.readBuffer
     }
 
