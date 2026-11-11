@@ -191,8 +191,10 @@ public class Bbr(
         if (bytesInFlight == 0L && sampler.appLimited != 0L) handleRestartFromIdle(now)
         val before = bytesInFlight
         bytesInFlight += bytes
-        // C.is_cwnd_limited: this packet filled the window; a PTO probe sent past a full window is not the window's doing
-        if (before < cwnd && bytesInFlight >= cwnd) cwndLimitedThisRound = true
+        // C.is_cwnd_limited: this packet filled the window, which then has no room for another datagram (the sender never takes
+        // bytes in flight above it, RFC 9002 section 7); a PTO probe sent past a full window is not the window's doing
+        val datagram = minOf(mss, 1200) // the smallest datagram the sender cuts to the room left (PacketBuilder)
+        if (before + datagram <= cwnd && bytesInFlight + datagram > cwnd) cwndLimitedThisRound = true
     }
 
     /** Stamps [p] (already counted by [onPacketSent]) with the delivery state for its later rate sample. */
@@ -294,11 +296,13 @@ public class Bbr(
     ) {
         bytesInFlight -= lostBytes
         if (persistentCongestion) {
-            // OnEnterRTO (section 5.6.4.4): "BBR conservatively reduces C.cwnd to a value that will allow 1 C.SMSS to be
-            // transmitted", C.cwnd = C.inflight + 1, floored at BBR.MinPipeCwnd as SetCwnd does (section 5.6.4.6). RFC 9002's
-            // kMinimumWindow (section 7.6.2) is its NewReno controller's response. The loss state was saved when the episode began
+            // RFC 9002 section 7.6.2: "When persistent congestion is declared, the sender's congestion window MUST be reduced to
+            // the minimum congestion window", for BBR BBR.MinPipeCwnd (4 datagrams: SetCwnd never goes below it, section 5.6.4.6).
+            // OnEnterRTO (section 5.6.4.4, C.cwnd = C.inflight + 1 SMSS) would keep more when more is in flight. From there SetCwnd
+            // adds what each ACK delivers, and RestoreCwnd brings the saved window back when the RTO recovery ends. The loss state
+            // was saved when the episode began
             saveCwnd()
-            cwnd = maxOf(sat(bytesInFlight, mss.toLong()), minPipeCwnd)
+            cwnd = minPipeCwnd
             // an RTO recovery, which ends "by repairing all losses" (section 5.6.4.4): once a packet sent from now on is
             // acknowledged (the path carries data again) and every loss declared up to now is settled (acknowledged late, or
             // past the persistent congestion period while its data went again in packets sent since); losses declared later do
@@ -432,7 +436,12 @@ public class Bbr(
         return (STARTUP_PACING_GAIN * initialCwnd * 1e9 / nanos).toLong() // InitPacingRate (section 5.6.2)
     }
 
-    override val sendQuantum: Int get() = quantum
+    /**
+     * The largest burst handed to the pacer: C.send_quantum, but at most the initial window of RFC 9002 section 7.2 ("Senders
+     * SHOULD limit bursts to the initial congestion window", section 7.7). The model's quantization budget keeps the draft's
+     * C.send_quantum (section 5.6.4.2).
+     */
+    override val sendQuantum: Int get() = minOf(quantum.toLong(), burstLimit(mss)).toInt()
 
     private fun updateModelAndState(now: TimeMark) {
         updateLatestDeliverySignals()
@@ -920,6 +929,9 @@ public class Bbr(
     }
 
     private companion object {
+        /** RFC 9002 section 7.2's initial window, min(10 datagrams, max(14 720 bytes, 2 datagrams)): the burst limit of section 7.7. */
+        fun burstLimit(mss: Int): Long = minOf(10L * mss, maxOf(14720L, 2L * mss))
+
         /** RFC 9002 section 7.2, min(10 datagrams, max(14 720 bytes, 2 datagrams)), raised to BBR.MinPipeCwnd. */
         fun initialWindow(mss: Int): Long = maxOf(minOf(10L * mss, maxOf(14720L, 2L * mss)), 4L * mss)
 

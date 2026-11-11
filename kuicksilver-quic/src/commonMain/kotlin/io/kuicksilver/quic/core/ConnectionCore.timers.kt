@@ -68,9 +68,6 @@ private fun ConnectionCore.blockedRepeatGap(done: Int): Duration =
  */
 internal const val BLOCKED_FAST_REPEATS = 32
 
-/** Unused window, in datagrams, that still counts as a window in use (quic-go's maxBurstPackets, RFC 9002 section 7.8). */
-private const val BURST_DATAGRAMS = 3
-
 /** The datagram size assumed for a path that is gone. */
 private const val MIN_DATAGRAM = 1200
 
@@ -153,17 +150,37 @@ internal fun ConnectionCore.keepAliveDeadline(): TimeMark {
 }
 
 /**
- * A PTO in one long-header space also probes the other one when it holds unacknowledged data: the probe datagram is
- * padded to 1200 bytes anyway, and a server whose Initial probes keep winning the timer would otherwise never resend
- * its Handshake flight to a client that cannot acknowledge Initial packets it did not fully receive (RFC 9002
- * section 6.2.4 lets an endpoint send more than the one probe; seen as `handshakeloss` stalls against quic-go).
+ * A PTO in one long-header space also probes the other spaces that hold unacknowledged data (RFC 9002 section 6.2.4: "the
+ * sender SHOULD send ack-eliciting packets from other packet number spaces with in-flight data ... particularly ... when the
+ * client has both Handshake and Application Data in flight because the peer might only have receive keys for one of the
+ * two"). The probe datagram is padded to 1200 bytes anyway, and a server whose Initial probes keep winning the timer would
+ * otherwise never resend its Handshake flight to a client that cannot acknowledge Initial packets it did not fully receive
+ * (seen as `handshakeloss` stalls against quic-go). The Application space, which arms no PTO of its own before the handshake
+ * is confirmed, is probed too when it has 0-RTT or 1-RTT keys to send with.
  */
 internal fun ConnectionCore.probeOtherHandshakeSpace(space: SpaceId) {
     if (space == SpaceId.Application) return
     val other = if (space == SpaceId.Initial) SpaceId.Handshake else SpaceId.Initial
-    if (spaceDiscarded[other.ordinal] || loss.space(other).ackElicitingInFlight <= 0 || probePending[other.ordinal] > 0) return
-    probePending[other.ordinal] = 1
-    requeueForProbe(other, 1)
+    if (!spaceDiscarded[other.ordinal] && loss.space(other).ackElicitingInFlight > 0 && probePending[other.ordinal] == 0) {
+        probePending[other.ordinal] = 1
+        requeueForProbe(other, 1)
+    }
+    val app = SpaceId.Application.ordinal
+    val appKeys = writeKeys[3] != null || zeroRttWritable
+    if (appKeys && loss.space(SpaceId.Application).ackElicitingInFlight > 0 && probePending[app] == 0) {
+        probePending[app] = 1
+        requeueForProbe(SpaceId.Application, 1)
+    }
+}
+
+/**
+ * The 0-RTT packets in flight leave loss detection without a congestion signal (a rejection, a Retry or a Version Negotiation
+ * restart; RFC 9002 section 6.4), [each] seeing them first, and a probe owed in the Application space goes with them: it was
+ * owed for that flight, and left pending it would exempt a datagram from the window and the pacer (RFC 9002 section 7).
+ */
+internal fun ConnectionCore.discardZeroRttPackets(each: (SentPacket) -> Unit) {
+    loss.discardZeroRtt(each)
+    probePending[SpaceId.Application.ordinal] = 0
 }
 
 /**
@@ -237,6 +254,8 @@ internal class ConnectionLossListener(
         if (f.dgCount > 0) core.datagramSender?.let { s -> for (i in 0 until f.dgCount) if (f.dgId[i] >= 0) s.onAcked(f.dgId[i]) }
     }
 
+    override fun rttOf(pathId: Int): io.kuicksilver.quic.recovery.RttEstimator? = core.paths.byId(PathId(pathId))?.rtt
+
     override fun onDelivered(
         p: SentPacket,
         now: TimeMark,
@@ -270,7 +289,7 @@ internal class ConnectionLossListener(
         p: SentPacket,
     ) {
         core.lostPackets++
-        if (p.inFlight) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketLost(p, core.now)
+        if (p.inFlight && !p.pmtuProbe) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketLost(p, core.now)
         core.qlog?.packetLost(space, p.pn, "time_or_packet_threshold", core.now)
         if (p.ecnMarked) {
             core.paths.byId(PathId(p.pathId))?.let { path ->
@@ -313,7 +332,7 @@ internal class ConnectionLossListener(
         // the controller that counted the packets: after a NAT rebinding it lives on the new path (`inheritFrom`); without one, the
         // path's controller, or nothing for a path that is gone
         val target = event.cc ?: core.paths.byId(PathId(event.pathId))?.cc ?: return
-        val prior = priorInFlight(target)
+        val prior = priorIndex(target)
         if (event.kind ==
             CongestionKind.Acked
         ) {
@@ -330,42 +349,46 @@ internal class ConnectionLossListener(
         core.qlog?.metricsUpdated(core.stats, event.now)
     }
 
-    /** Controllers seen in the ACK frame being processed and their bytes in flight before it (the frame's losses included). */
+    /** Controllers seen in the ACK frame being processed, their bytes in flight and window before it (the frame's losses included). */
     private val priorCcs = ArrayList<io.kuicksilver.quic.CongestionController>(4)
     private var priorBytes = LongArray(4)
+    private var priorCwnd = LongArray(4)
 
     override fun onAckFrameStart() {
         priorCcs.clear()
     }
 
-    private fun priorInFlight(cc: io.kuicksilver.quic.CongestionController): Long {
-        for (i in priorCcs.indices) if (priorCcs[i] === cc) return priorBytes[i]
-        if (priorCcs.size == priorBytes.size) priorBytes = priorBytes.copyOf(priorBytes.size * 2)
+    /** [cc]'s slot in [priorBytes] / [priorCwnd], taken at its first event of the frame. */
+    private fun priorIndex(cc: io.kuicksilver.quic.CongestionController): Int {
+        for (i in priorCcs.indices) if (priorCcs[i] === cc) return i
+        if (priorCcs.size == priorBytes.size) {
+            priorBytes = priorBytes.copyOf(priorBytes.size * 2)
+            priorCwnd = priorCwnd.copyOf(priorCwnd.size * 2)
+        }
         priorBytes[priorCcs.size] = cc.bytesInFlight
+        priorCwnd[priorCcs.size] = cc.cwnd
         priorCcs += cc
-        return cc.bytesInFlight
+        return priorCcs.size - 1
     }
 
     /**
-     * RFC 9002 section 7.8: the window grows only while the sender uses it. Judged on the bytes in flight before the ACK frame (an
-     * ACK of a whole window otherwise looks application-limited halfway through), with quic-go's isCwndLimited margins: at most
-     * three datagrams unused, or more than half the window in flight during slow start (where the window doubles each RTT). A
-     * pacer that keeps a burst back stays within that margin, so pacing delay is not taken for application limitation.
+     * RFC 9002 section 7.8: "When bytes in flight is smaller than the congestion window and sending is not pacing limited, the
+     * congestion window is underutilized ... the congestion window SHOULD NOT be increased in either slow start or congestion
+     * avoidance." The window was in use when the bytes in flight before the ACK frame left less room than a datagram (at most 1200
+     * bytes, the smallest the sender cuts one to, [MIN_WINDOW_DATAGRAM]) in the
+     * window before the frame (an ACK of a whole window otherwise looks under-used halfway through, as the window grows with
+     * it; section 7 lets a window be used to within one datagram), or
+     * when the active path's sender still had data at the end of its last poll: it stopped for the window, the pacer or a burst
+     * limit ("A sender SHOULD NOT consider itself application limited if it would have fully utilized the congestion window
+     * without pacing delay"). Only the active path sends data, so another path's controller is judged by its bytes alone.
      */
     private fun cwndLimited(
         cc: io.kuicksilver.quic.CongestionController,
-        prior: Long,
+        prior: Int,
         mss: Int,
     ): Boolean {
-        val cwnd = cc.cwnd
-        if (prior >= cwnd) return true
-        val slowStart =
-            when (cc) {
-                is io.kuicksilver.quic.Cubic -> cwnd < cc.ssthresh
-                is io.kuicksilver.quic.NewReno -> cwnd < cc.ssthresh
-                else -> false
-            }
-        return (slowStart && prior > cwnd / 2) || cwnd - prior <= BURST_DATAGRAMS * mss
+        if (priorBytes[prior] + minOf(mss, MIN_WINDOW_DATAGRAM) > priorCwnd[prior]) return true
+        return cc === core.cc && !core.builder.appLimited
     }
 
     override fun onAckProcessed(now: TimeMark) {
@@ -373,8 +396,11 @@ internal class ConnectionLossListener(
         for (i in all.indices) (all[i].cc as? io.kuicksilver.quic.Bbr)?.onAckProcessed(now)
     }
 
-    override fun onDiscarded(bytes: Int) {
-        core.cc.onDiscarded(bytes)
+    override fun onDiscarded(
+        cc: io.kuicksilver.quic.CongestionController?,
+        bytes: Int,
+    ) {
+        (cc ?: core.cc).onDiscarded(bytes)
     }
 
     override fun onRttSample(

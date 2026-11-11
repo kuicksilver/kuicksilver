@@ -110,7 +110,17 @@ class LossDetectionTest {
             if (event.kind == CongestionKind.Lost) lossByPath += "${event.pathId}:${event.persistentCongestion}"
         }
 
-        override fun onDiscarded(bytes: Int) {}
+        val discarded = ArrayList<Pair<io.kuicksilver.quic.CongestionController?, Int>>()
+        val rtts = HashMap<Int, RttEstimator>()
+
+        override fun rttOf(pathId: Int): RttEstimator? = rtts[pathId]
+
+        override fun onDiscarded(
+            cc: io.kuicksilver.quic.CongestionController?,
+            bytes: Int,
+        ) {
+            discarded += cc to bytes
+        }
     }
 
     private fun ld(
@@ -132,6 +142,7 @@ class LossDetectionTest {
         marked: Boolean = false,
         inFlight: Boolean = ackEliciting,
         pathId: Int = 0,
+        cc: io.kuicksilver.quic.CongestionController? = null,
     ) {
         val p = ld.space(space).newSentPacket()
         p.pn = pn
@@ -141,6 +152,7 @@ class LossDetectionTest {
         p.ecnMarked = marked
         p.inFlight = inFlight
         p.pathId = pathId
+        p.cc = cc
         ld.onPacketSent(space, p, at)
     }
 
@@ -306,6 +318,23 @@ class LossDetectionTest {
         assertEquals(t2 + 3996.milliseconds, ld.timeout())
     }
 
+    @Test fun ptoBackoffSaturatesInsteadOfWrapping() {
+        // 1 shl 31 is negative and 1 shl 32 is 1: the 31st unanswered PTO fired at once, the 32nd restarted the backoff (with both
+        // idle timeouts disabled nothing else ends such a connection)
+        val (ld, _) = ld()
+        var at = t0
+        var gap = Duration.ZERO
+        for (pn in 0L..33L) {
+            send(ld, SpaceId.Initial, pn, at)
+            val next = ld.timeout()
+            assertTrue(next - at >= gap, "PTO ${ld.ptoCount}: ${next - at} after the previous $gap")
+            gap = next - at
+            assertNotNull(ld.onTimeout(next))
+            at = next
+        }
+        assertEquals(34, ld.ptoCount)
+    }
+
     @Test fun ptoCountResetOnAck() {
         val (ld, _) = ld()
         ld.peerAddressValidated = true
@@ -340,6 +369,25 @@ class LossDetectionTest {
         assertEquals(TimeMark.NEVER, srv.timeout(), "server never arms a timer without packets in flight")
     }
 
+    @Test fun clientAntiDeadlockPtoWithOnlyZeroRttInFlight() {
+        // RFC 9002 section 6.2.2.1: "the client MUST set the PTO timer if the client has not received an acknowledgment for any of
+        // its Handshake packets and the handshake is not confirmed ..., even if there are no packets in flight". The server
+        // acknowledged the ClientHello, its Handshake flight was lost; the client's 0-RTT packets are in flight, but their
+        // acknowledgements come in 1-RTT packets it cannot read yet, and the Application space arms no PTO before confirmation
+        val (ld, _) = ld(TlsRole.Client)
+        send(ld, SpaceId.Initial, 0, t0)
+        for (pn in 0L..2L) send(ld, SpaceId.Application, pn, t0)
+        ld.onAck(SpaceId.Initial, ack(0L to 0L), t0 + 50.milliseconds)
+        assertNotEquals(TimeMark.NEVER, ld.timeout(), "the anti-deadlock PTO is armed")
+        val probe = ld.onTimeout(ld.timeout())
+        assertNotNull(probe)
+        assertEquals(SpaceId.Initial, probe.space, "no Handshake keys yet: an Initial probe")
+        ld.handshakeKeysAvailable = true
+        assertEquals(SpaceId.Handshake, assertNotNull(ld.onTimeout(ld.timeout())).space)
+        ld.peerAddressValidated = true
+        assertEquals(TimeMark.NEVER, ld.timeout(), "once the server validated the address, 0-RTT alone arms nothing before confirmation")
+    }
+
     @Test fun persistentCongestionDuration975ms() {
         val (ld, _) = ld()
         sample(ld, 100.milliseconds)
@@ -353,6 +401,24 @@ class LossDetectionTest {
         assertEquals(2400L, ld.bytesInFlight)
         ld.discard(SpaceId.Initial)
         assertEquals(1200L, ld.bytesInFlight)
+    }
+
+    @Test fun discardedBytesLeaveTheControllerThatCountedThem() {
+        // RFC 9002 section 6.4 with RFC 9000 section 9.4: bytes of a discarded space leave flight in the controller that counted
+        // them; after a migration or a rebinding that need not be the active path's
+        val (ld, l) = ld()
+        val a = io.kuicksilver.quic.NewReno()
+        val b = io.kuicksilver.quic.NewReno()
+        send(ld, SpaceId.Handshake, 0, t0, cc = a)
+        send(ld, SpaceId.Handshake, 1, t0, size = 900, cc = b)
+        send(ld, SpaceId.Handshake, 2, t0, ackEliciting = false, inFlight = false, cc = b)
+        ld.discard(SpaceId.Handshake)
+        assertEquals(listOf<Pair<Any?, Int>>(a to 1200, b to 900), l.discarded)
+        send(ld, SpaceId.Application, 0, t0, cc = b)
+        val app = ld.space(SpaceId.Application).sent
+        app.at(app.start)!!.zeroRtt = true
+        ld.discardZeroRtt {}
+        assertEquals(b to 1200, l.discarded.last(), "rejected 0-RTT too")
     }
 
     @Test fun negative_ackForUnsentPacket() {
@@ -591,6 +657,24 @@ class LossDetectionTest {
         assertEquals(listOf("0:false"), l.lossByPath, "ack-eliciting losses span 400 ms only")
     }
 
+    @Test fun aPacketAcknowledgedInAnotherSpaceBreaksPersistentCongestion() {
+        // RFC 9002 section 7.6.2: "across all packet number spaces, none of the packets sent between the send times of these two
+        // packets are acknowledged". During the handshake a 1-RTT packet sent between two lost Handshake packets and acknowledged
+        // shows the path delivered in between; only the Handshake space's own acknowledgements used to count
+        fun lossesWith(appAcked: Boolean): Listener {
+            val (ld, l) = ld()
+            sampleByAck(ld, 0, t0 - 200.milliseconds)
+            for (pn in 0L..15L) send(ld, SpaceId.Handshake, pn, t0 + (pn.toInt() * 100).milliseconds)
+            send(ld, SpaceId.Application, 1, t0 + 750.milliseconds)
+            if (appAcked) ld.onAck(SpaceId.Application, ack(1L to 1L), t0 + 800.milliseconds)
+            ld.onAck(SpaceId.Handshake, ack(15L to 15L), t0 + 1600.milliseconds)
+            assertEquals((0L..14L).toList(), l.lost)
+            return l
+        }
+        assertEquals(listOf("0:false"), lossesWith(appAcked = true).lossByPath, "the 1-RTT packet sent at 750 ms was acknowledged")
+        assertEquals(listOf("0:true"), lossesWith(appAcked = false).lossByPath, "1.4 s of losses, more than the period")
+    }
+
     @Test fun persistentCongestionIsJudgedPerPath() {
         // RFC 9000 section 9.4: each path has its own congestion controller; a long loss period on one path does not collapse the
         // window of another whose single packet was lost
@@ -601,6 +685,49 @@ class LossDetectionTest {
         for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, pathId = if (pn == 5L) 1 else 0)
         ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds)
         assertEquals(listOf("0:true", "1:false"), l.lossByPath)
+    }
+
+    @Test fun persistentCongestionWaitsForTheNewPathsFirstRttSample() {
+        // RFC 9002 section 7.6.2: "a prior RTT sample existed when these two packets were sent". After a migration to a new address
+        // the new path has its own estimator without a sample: its packets lost before that path's first sample do not establish
+        // persistent congestion just because the old path had one (the first-sample time was per connection)
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        ld.rtt = RttEstimator(333.milliseconds)
+        ld.activePath = 1
+        for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, pathId = 1)
+        ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds)
+        assertEquals(listOf("1:false"), l.lossByPath, "no sample of the new path existed when its lost packets were sent")
+    }
+
+    @Test fun persistentCongestionOfAnotherPathIsJudgedByThatPathsRtt() {
+        // RFC 9002 section 7.6.1: the duration comes from the RTT estimate; each path has its own (RFC 9000 section 9.4). Path A
+        // (100 ms) loses 1.4 s of packets while the connection has moved to path B (400 ms, a 3.7 s period): A's losses are A's
+        // persistent congestion, judged by A's estimate, and the restart of the period is A's, not B's. Back on A, its estimate
+        // carries it
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        val a = ld.rtt
+        l.rtts[0] = a
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        val b = RttEstimator(333.milliseconds)
+        l.rtts[1] = b
+        ld.rtt = b
+        ld.activePath = 1
+        for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, pathId = if (pn == 2L) 1 else 0)
+        ld.onAck(SpaceId.Application, ack(2L to 2L), t0 + 600.milliseconds) // B's first sample, 400 ms
+        val bFrom = b.persistentCongestionFrom
+        assertEquals(t0 + 600.milliseconds, bFrom)
+        ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds) // A's packets 3..17 lost
+        assertEquals(listOf("0:false", "0:true"), l.lossByPath)
+        assertEquals(t0 + 2100.milliseconds, a.persistentCongestionFrom, "A's period restarts")
+        assertEquals(bFrom, b.persistentCongestionFrom, "B's does not")
+        ld.rtt = a
+        ld.activePath = 0
+        assertEquals(t0 + 2100.milliseconds, ld.rtt.persistentCongestionFrom)
     }
 
     @Test fun persistentCongestionResetsMinRttToTheNewestSample() {

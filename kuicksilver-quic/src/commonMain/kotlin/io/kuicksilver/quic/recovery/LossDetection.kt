@@ -104,15 +104,33 @@ internal interface LossListener {
 
     fun onCongestion(event: CongestionEvent)
 
+    /**
+     * The RTT estimator of path [pathId], null for a path that is gone: persistent congestion of a path's packets is judged by its
+     * own RTT (RFC 9002 sections 7.6.1, 7.6.2), not by the active path's.
+     */
+    fun rttOf(pathId: Int): RttEstimator? = null
+
     /** An ACK frame is about to be processed: what the controllers have in flight now is their state "before the ACK". */
     fun onAckFrameStart() {}
 
     /** One ACK frame newly acknowledged packets and every one of them was reported: per-ACK controllers (BBR) update their model now. */
     fun onAckProcessed(now: TimeMark) {}
 
-    /** Bytes removed from flight because their space was discarded. */
-    fun onDiscarded(bytes: Int)
+    /**
+     * [bytes] of one packet left flight without a congestion signal (its space or its 0-RTT keys were discarded): taken from [cc],
+     * the controller that counted them, which after a migration or rebinding need not be the active path's.
+     */
+    fun onDiscarded(
+        cc: io.kuicksilver.quic.CongestionController?,
+        bytes: Int,
+    )
 }
+
+/** The Initial and Handshake bits of [LossDetection]'s discarded spaces. */
+private const val LONG_HEADER_SPACES = 3
+
+/** The largest PTO backoff exponent (RFC 9002 section 6.2.1: PTO x 2^pto_count) before the doubling stops. */
+private const val MAX_PTO_BACKOFF_SHIFT = 30
 
 /** Loss detection and the PTO timer (RFC 9002 sections 5–6, appendix A), over the three packet number spaces. */
 internal class LossDetection(
@@ -130,13 +148,16 @@ internal class LossDetection(
     private val event = CongestionEvent()
     private val lost = ArrayList<SentPacket>()
     private val donePaths = IntArray(8)
+
+    /** Estimators of the paths that established persistent congestion in the detection being processed (reset after it). */
+    private val persistentRtts = arrayOfNulls<RttEstimator>(8)
     private val doneCcs = arrayOfNulls<io.kuicksilver.quic.CongestionController>(8)
     private val acked = ArrayList<SentPacket>()
 
     var handshakeConfirmed: Boolean = false
 
-    /** When the connection took its first RTT sample (or the newest one after persistent congestion), [TimeMark.NEVER] before. */
-    private var firstRttSampleTime: TimeMark = TimeMark.NEVER
+    /** Bit per [SpaceId] ordinal: the space was discarded ([discard]). */
+    private var discardedSpaces = 0
 
     /** Client: the server has received a Handshake packet from us (our address is validated); server: always relevant through [handshakeConfirmed]. */
     var peerAddressValidated: Boolean = false
@@ -179,6 +200,8 @@ internal class LossDetection(
         space: SpaceId,
         ack: AckFrameView,
         now: TimeMark,
+        /** When the packet carrying the ACK arrived: earlier than [now] for one that waited for its keys (RFC 9002 section 5.3). */
+        arrivedAt: TimeMark = now,
     ) {
         val sp = this.space(space)
         if (ack.largest >
@@ -258,13 +281,17 @@ internal class LossDetection(
                         (micros * 1000).nanoseconds
                     }
                 } // saturate: a peer-chosen value must not wrap
-            rtt.onSample(now - largestNewlyAcked.timeSent, ackDelay, handshakeConfirmed, peerMaxAckDelay)
-            if (firstRttSampleTime == TimeMark.NEVER) firstRttSampleTime = now
+            // "an endpoint SHOULD subtract such local delays from its RTT sample" (section 5.3): a packet held for its keys is
+            // sampled at its arrival, unless it claims a packet sent after that (only a guessing peer can): then at [now] as before
+            val sampleAt = if (arrivedAt >= largestNewlyAcked.timeSent) arrivedAt else now
+            rtt.onSample(sampleAt - largestNewlyAcked.timeSent, ackDelay, handshakeConfirmed, peerMaxAckDelay)
+            if (rtt.persistentCongestionFrom == TimeMark.NEVER) rtt.persistentCongestionFrom = now
             listener.onRttSample(now, rtt.latest, rtt.min)
         }
         // RFC 9000 section 13.4.2.1: only an ACK that raises the largest acknowledged packet carries counts newer than the last ones
         if (ack.largest > prevLargestAcked) processEcn(sp, space, ack, now, largestNewlyAcked)
         detectLost(sp, now)
+        keepAckedTimes(sp) // after this space's losses: the times serve the other spaces' checks
         for (k in acked.indices) {
             val p = acked[k]
             if (p.inFlight) bytesInFlight -= p.size
@@ -286,6 +313,33 @@ internal class LossDetection(
         listener.onAckProcessed(now)
         if (peerCompletedAddressValidation()) ptoCount = 0
         timerBase = now
+    }
+
+    /**
+     * Before the handshake is confirmed several spaces carry packets: the send times of [sp]'s newly acknowledged ones are kept
+     * for persistent congestion across spaces ([crossSpaceAckBetween]). A space's times go with the space ([discard]: RFC 9002
+     * section 7.6.2 lets a sender without state for a space judge the others without it), the Application space's once the
+     * Initial and Handshake spaces are both gone, as they are once the handshake is confirmed.
+     */
+    private fun keepAckedTimes(sp: PacketNumberSpace) {
+        if (handshakeConfirmed || discardedSpaces and LONG_HEADER_SPACES == LONG_HEADER_SPACES) return
+        for (k in acked.indices) sp.recordAckedTime(acked[k].timeSent)
+    }
+
+    /**
+     * A packet of a space other than [sp] sent strictly between [a] and [b] was acknowledged (RFC 9002 section 7.6.2), by an ACK
+     * frame processed before this one: an ACK in a later packet of the same datagram is not known yet (appendix A.7 order).
+     */
+    private fun crossSpaceAckBetween(
+        sp: PacketNumberSpace,
+        a: TimeMark,
+        b: TimeMark,
+    ): Boolean {
+        for (i in spaces.indices) {
+            val other = spaces[i]
+            if (other !== sp && other.anyAckedSentBetween(a, b)) return true
+        }
+        return false
     }
 
     /** Lost packets of [sp] remembered longer than the persistent congestion period are settled: their loss stands. */
@@ -473,15 +527,18 @@ internal class LossDetection(
         for (k in lost.indices) {
             val p = lost[k]
             if (p.inFlight) {
-                rememberLost(sp, p, now)
-                lostBytes += p.size
                 bytesInFlight -= p.size
+                if (p.pmtuProbe) {
+                    listener.onDiscarded(p.cc, p.size) // RFC 9000 section 14.4: out of flight, no congestion signal
+                } else {
+                    rememberLost(sp, p, now)
+                    lostBytes += p.size
+                }
             }
             if (p.ackEliciting) sp.ackElicitingInFlight--
             listener.onLost(sp.id, p)
         }
-        val pcDuration = persistentCongestionDuration()
-        var activePathPersistent = false
+        var persistentPaths = 0
         // one loss event per path the lost packets travelled on: a migration must not charge the new path for the old one's losses (RFC 9000 section 9.4)
         if (lostBytes > 0) {
             var done = 0
@@ -492,7 +549,7 @@ internal class LossDetection(
                 var found = false
                 for (k in lost.indices) {
                     val p = lost[k]
-                    if (!p.inFlight) continue
+                    if (!p.inFlight || p.pmtuProbe) continue
                     var seen = false
                     for (d in 0 until done) {
                         if (donePaths[d] ==
@@ -515,6 +572,7 @@ internal class LossDetection(
                 for (k in lost.indices) {
                     val p = lost[k]
                     if (p.inFlight &&
+                        !p.pmtuProbe &&
                         p.pathId == pid &&
                         p.cc === pcc
                     ) {
@@ -522,8 +580,9 @@ internal class LossDetection(
                         if (p.timeSent > largest) largest = p.timeSent
                     }
                 }
-                val persistent = persistentCongestion(sp, pid, pcc, pcDuration)
-                if (persistent && pid == activePath) activePathPersistent = true
+                val est = if (pid == activePath) rtt else listener.rttOf(pid)
+                val persistent = est != null && persistentCongestion(sp, pid, pcc, est)
+                if (persistent && persistentPaths < persistentRtts.size) persistentRtts[persistentPaths++] = est
                 event.kind = CongestionKind.Lost
                 event.bytes = bytes
                 event.sentTime = largest
@@ -544,35 +603,47 @@ internal class LossDetection(
         }
         for (k in lost.indices) sp.release(lost[k])
         lost.clear()
-        if (activePathPersistent) {
+        for (i in 0 until persistentPaths) {
             // RFC 9002 section 5.2: min_rtt restarts from the newest sample, and (as ngtcp2) a new persistent congestion period
             // needs packets sent after it, so a lasting RTT increase is not declared persistent congestion again and again
-            rtt.onPersistentCongestion()
-            firstRttSampleTime = now
+            val est = persistentRtts[i]!!
+            persistentRtts[i] = null
+            est.onPersistentCongestion()
+            est.persistentCongestionFrom = now
         }
     }
 
     /**
      * RFC 9002 section 7.6.2 for the lost packets of one path ([pid], counted by [pcc]): two ack-eliciting packets declared lost, no
-     * packet sent between them acknowledged (packet numbers never stored, such as ACK-only packets, or skipped do not count), more
-     * than [duration] apart, and both sent after the first RTT sample ("The persistent congestion period SHOULD NOT start until
-     * there is at least one RTT sample"; ngtcp2 filters by first_rtt_sample_ts the same way).
+     * packet sent between them acknowledged in any space (packet numbers never stored, such as ACK-only packets, or skipped do not
+     * count; other spaces by the send times [keepAckedTimes] keeps, as A.9 judges the lost packets of one detection), more
+     * than the persistent congestion duration of that path's RTT estimate [est] apart, and both sent after its first RTT sample
+     * ("The persistent congestion period SHOULD NOT start until there is at least one RTT sample"; ngtcp2 filters by
+     * first_rtt_sample_ts the same way).
      */
     private fun persistentCongestion(
         sp: PacketNumberSpace,
         pid: Int,
         pcc: io.kuicksilver.quic.CongestionController?,
-        duration: Duration,
+        est: RttEstimator,
     ): Boolean {
-        if (!rtt.hasSample || firstRttSampleTime == TimeMark.NEVER) return false
+        val from = est.persistentCongestionFrom
+        if (!est.hasSample || from == TimeMark.NEVER) return false
+        val duration = persistentCongestionDuration(est)
         var runStart = TimeMark.NEVER
         var prevPn = -1L
+        var prevSent = TimeMark.NEVER
         for (k in lost.indices) {
             val p = lost[k]
-            if (!p.ackEliciting || !p.inFlight || p.pathId != pid || p.cc !== pcc) continue
-            if (p.timeSent < firstRttSampleTime) continue
-            if (runStart == TimeMark.NEVER || sp.anyAckedBetween(prevPn, p.pn)) runStart = p.timeSent
+            if (!p.ackEliciting || !p.inFlight || p.pmtuProbe || p.pathId != pid || p.cc !== pcc) continue
+            if (p.timeSent < from) continue
+            // "across all packet number spaces, none of the packets sent between the send times of these two packets are
+            // acknowledged": this space by packet number, the others by send time
+            if (runStart == TimeMark.NEVER || sp.anyAckedBetween(prevPn, p.pn) || crossSpaceAckBetween(sp, prevSent, p.timeSent)) {
+                runStart = p.timeSent
+            }
             prevPn = p.pn
+            prevSent = p.timeSent
             if (p.timeSent - runStart > duration) return true
         }
         return false
@@ -590,14 +661,16 @@ internal class LossDetection(
         val v4 = rtt.rttVar * 4
         var d = rtt.smoothed + (if (v4 > 1.milliseconds) v4 else 1.milliseconds)
         if (space == SpaceId.Application && handshakeConfirmed) d += peerMaxAckDelay
-        return d * (1 shl ptoCount)
+        // the backoff stops doubling at 2^30 (12 days of PTO at 1 ms): 1 shl 31 is negative and 1 shl 32 is 1 again, so 31
+        // unanswered PTOs (possible with both idle timeouts disabled) used to make the timer fire at once, and 32 reset it
+        return d * (1 shl minOf(ptoCount, MAX_PTO_BACKOFF_SHIFT))
     }
 
-    /** The persistent congestion period (RFC 9002 section 7.6.1): (sRTT + max(4 rttvar, granularity) + max_ack_delay) × 3. */
-    fun persistentCongestionDuration(): Duration {
+    /** The persistent congestion period (RFC 9002 section 7.6.1) of [est] (the active path's by default): (sRTT + max(4 rttvar, granularity) + max_ack_delay) × 3. */
+    fun persistentCongestionDuration(est: RttEstimator = rtt): Duration {
         val v4 =
-            rtt.rttVar * 4
-        return (rtt.smoothed + (if (v4 > 1.milliseconds) v4 else 1.milliseconds) + peerMaxAckDelay) * 3
+            est.rttVar * 4
+        return (est.smoothed + (if (v4 > 1.milliseconds) v4 else 1.milliseconds) + peerMaxAckDelay) * 3
     }
 
     /** The space the last [earliestLossTime] / [ptoTimeAndSpace] result refers to (fields instead of a Pair: no allocation per timer query). */
@@ -622,8 +695,14 @@ internal class LossDetection(
 
     private fun ptoTimeAndSpace(): TimeMark {
         if (amplificationBlocked?.invoke() == true) return TimeMark.NEVER
+        // Application packets arm no PTO before the handshake is confirmed (section 6.2.1), so 0-RTT or 1-RTT packets in flight
+        // must not stand in for the Initial and Handshake ones: a client whose only ack-eliciting packets are 0-RTT, whose 1-RTT
+        // acknowledgements it cannot read yet, would arm no timer at all (appendix A.8 counts every space; section 6.2.2.1 rules)
         var anyElicitingInFlight = false
-        for (i in spaces.indices) if (spaces[i].ackElicitingInFlight > 0) anyElicitingInFlight = true
+        for (i in spaces.indices) {
+            val sp = spaces[i]
+            if (sp.ackElicitingInFlight > 0 && (sp.id != SpaceId.Application || handshakeConfirmed)) anyElicitingInFlight = true
+        }
         if (!anyElicitingInFlight) { // padding-only packets count as in flight but elicit nothing
             if (peerCompletedAddressValidation()) return TimeMark.NEVER
             // client before the server validated its address: arm a PTO anyway so a lost flight is repaired (anti-deadlock, section 6.2.2.1)
@@ -702,21 +781,19 @@ internal class LossDetection(
      */
     fun discardZeroRtt(each: (SentPacket) -> Unit) {
         val sp = space(SpaceId.Application)
-        var removed = 0
         for (i in sp.sent.start until sp.sent.end) {
             val p = sp.sent.at(i) ?: continue
             if (!p.zeroRtt) continue
             each(p)
             if (p.inFlight) {
                 bytesInFlight -= p.size
-                removed += p.size
+                listener.onDiscarded(p.cc, p.size)
             }
             if (p.ackEliciting) sp.ackElicitingInFlight--
             sp.sent.removeAt(i)
             sp.release(p)
         }
         sp.sent.trim()
-        if (removed > 0) listener.onDiscarded(removed)
     }
 
     fun discard(
@@ -725,20 +802,21 @@ internal class LossDetection(
     ) {
         val sp = this.space(space)
         while (sp.lostCount > 0) dropOldestLost(sp, now)
-        var removed = 0
         for (p in sp.sent) {
             if (p.inFlight) {
                 bytesInFlight -= p.size
-                removed += p.size
+                listener.onDiscarded(p.cc, p.size)
             }
             sp.release(p)
         }
-        if (removed > 0) listener.onDiscarded(removed)
         sp.sent.clear()
         sp.clearAcked()
         sp.lossTime = TimeMark.NEVER
         sp.lastAckElicitingTime = TimeMark.NEVER
         sp.ackElicitingInFlight = 0
         ptoCount = 0
+        discardedSpaces = discardedSpaces or (1 shl space.ordinal)
+        sp.forgetAckedTimes()
+        if (discardedSpaces and LONG_HEADER_SPACES == LONG_HEADER_SPACES) spaces[SpaceId.Application.ordinal].forgetAckedTimes()
     }
 }

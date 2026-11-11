@@ -189,6 +189,9 @@ internal class SentPacket {
 
     val frames: SentFrames = SentFrames()
 
+    /** A DPLPMTUD probe: in flight like any packet, but its loss is no congestion signal (RFC 9000 section 14.4). */
+    val pmtuProbe: Boolean get() = frames.flags and SentFrames.PMTU_PROBE != 0
+
     /** Delivery-rate snapshot at send (draft-ietf-ccwg-bbr section 4.1.2.1.2), written only for a sampling controller ([DeliveryRateSampler]); -1: none. */
     var rsId: Long = -1
 

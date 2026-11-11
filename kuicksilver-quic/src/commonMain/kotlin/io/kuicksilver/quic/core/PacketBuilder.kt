@@ -31,6 +31,13 @@ internal class PacketBuilder(
     private val c: ConnectionCore,
 ) {
     var pacerWakeup: TimeMark = TimeMark.NEVER
+
+    /**
+     * The last poll left nothing to send on the active path (no data, flow control holds it, or no keys to send it with yet):
+     * with room in the window, the window is under-used (RFC 9002 section 7.8). False when a poll stopped with data left, for the window, the pacer, the send
+     * quantum or a full batch: the sender "would have fully utilized the congestion window without pacing delay".
+     */
+    var appLimited: Boolean = true
     private var writer: WireWriter? = null
     private val mask = ByteArray(5)
     private val range = SendRange()
@@ -53,7 +60,11 @@ internal class PacketBuilder(
      */
     private var initialAckOnly = false
 
-    /** Set while a DPLPMTUD probe is built: a 1-RTT packet of PING and padding, outside congestion control (RFC 9000 section 14.4). */
+    /**
+     * Set while a DPLPMTUD probe is built: a 1-RTT packet of PING and padding. It counts in flight and waits for room in the
+     * window and for the pacer ("PMTU probes consume congestion window", RFC 9000 section 14.4; RFC 9002 section 7); only its
+     * loss is no congestion signal.
+     */
     private var pmtuProbe = false
 
     fun poll(
@@ -173,7 +184,18 @@ internal class PacketBuilder(
             c.path.pmtud?.let { m ->
                 // no PMTU probes to an address under validation
                 val size = m.nextProbeSize(now)
-                if (size > 0 &&
+                val held =
+                    if (size <= 0 || size > out.segmentSize) {
+                        false
+                    } else if (c.cc.bytesInFlight + size > c.cc.cwnd) {
+                        true // the next send opportunity asks again
+                    } else {
+                        val t = c.pacer.nextSendTime(now, size, c.cc, c.rtt.smoothed)
+                        if (t != TimeMark.NEVER) pacerWakeup = t
+                        t != TimeMark.NEVER
+                    }
+                if (held) m.deferProbe()
+                if (!held && size > 0 &&
                     size <= out.segmentSize
                 ) {
                     pmtuProbe = true
@@ -234,14 +256,17 @@ internal class PacketBuilder(
         if (pnExhausted) return exhausted(count)
         // one send quantum went out with window and data left: ask for the next poll when the pacer allows the next datagram (at
         // once without pacing), or the rest would wait for the peer's next packet and the sender would look application-limited
-        if (!congested && bytes >= c.cc.sendQuantum && c.closeFrame == null && c.cc.bytesInFlight < c.cc.cwnd &&
+        if (!congested && bytes >= c.cc.sendQuantum && c.closeFrame == null &&
+            c.cc.cwnd - c.cc.bytesInFlight >= MIN_WINDOW_DATAGRAM &&
             hasData(SpaceId.Application) && pacerWakeup == TimeMark.NEVER
         ) {
             pacer(now)
             if (pacerWakeup == TimeMark.NEVER) pacerWakeup = now
         }
+        // data that waits for 1-RTT keys (or 0-RTT ones) cannot use the window: it does not count as data left
+        if (c.closeFrame == null) appLimited = (c.writeKeys[3] == null && !zeroRtt) || !hasData(SpaceId.Application)
         // the sender ran out of data with room in the window and no pacing delay: the next rate samples show the application's pace
-        if (!congested && count < out.capacity && bytes < c.cc.sendQuantum && c.closeFrame == null && !hasData(SpaceId.Application)) {
+        if (!congested && count < out.capacity && bytes < c.cc.sendQuantum && c.closeFrame == null && appLimited) {
             (c.cc as? io.kuicksilver.quic.Bbr)?.onAppLimited()
         }
         return count
@@ -392,7 +417,11 @@ internal class PacketBuilder(
         if (c.closeFrame != null) return spaceLevel(space) != 1 && !c.closeSentIn[space.ordinal] // no CONNECTION_CLOSE (0x1c) in 0-RTT
         if (space == SpaceId.Initial && initialAckOnly) return hasAckToSend(space, now)
         if (spaceLevel(space) == 1) {
-            return !congested && (c.streams.hasControlFrames() || c.streams.hasStreamData() || c.testInjectFrames.firstOrNull()?.first == 1)
+            return !congested &&
+                (
+                    c.streams.hasControlFrames() || c.streams.hasStreamData() || c.testInjectFrames.firstOrNull()?.first == 1 ||
+                        c.probePending[SpaceId.Application.ordinal] > 0
+                ) // a probe of 0-RTT data in flight goes as a 0-RTT PING when nothing is left to resend
         }
         if (hasAckToSend(space, now)) return true
         // path validation is not congestion controlled (RFC 9000 section 9.1): a rebind while the window is full must still be challenged
@@ -402,12 +431,20 @@ internal class PacketBuilder(
 
     private fun buildDatagram(
         buf: PacketBuffer,
-        maxLen: Int,
+        limit: Int,
         now: TimeMark,
     ): Int {
-        congested = c.cc.bytesInFlight >= c.cc.cwnd && c.probePending.all { it == 0 }
+        // RFC 9002 section 7: no packet may take bytes_in_flight above the window. The datagram goes only while it fits; with less
+        // room than [limit] but at least [MIN_WINDOW_DATAGRAM] it is cut to the room, so a window that a jumbo MTU outgrew (RFC 8899
+        // section 3 item 7 keeps the window from growing with the MTU) still carries data. Below that the window is full
+        val probing = probeDue()
+        val room = c.cc.cwnd - c.cc.bytesInFlight
+        val maxLen = if (probing || room >= limit || room < MIN_WINDOW_DATAGRAM) limit else room.toInt()
+        congested = !probing && room < maxLen
         initialAckOnly = c.role == TlsRole.Server && maxLen < 1200
-        if (!congested) pacer(now)
+        // "Probe packets MUST NOT be blocked by the congestion controller" (RFC 9002 section 7.5): the pacer neither; they still
+        // spend its credit when sent
+        if (!congested && !probing) pacer(now)
         var pos = 0
         var needPad = false
         var lastBuilt: SpaceId? = null
@@ -439,6 +476,18 @@ internal class PacketBuilder(
             pos += buildPacket(buf, pos, maxLen, lastBuilt, now, padToEnd = true)
         }
         return pos
+    }
+
+    /**
+     * A PTO probe is owed in a space that can still send it (RFC 9002 sections 6.2.4, 7.5): only then is the datagram exempt from
+     * the congestion window. A count left in a discarded space, or one without write keys, exempts nothing.
+     */
+    private fun probeDue(): Boolean {
+        val pending = c.probePending
+        for (i in pending.indices) {
+            if (pending[i] > 0 && !c.spaceDiscarded[i] && c.writeKeys[spaceLevel(SpaceId.entries[i])] != null) return true
+        }
+        return false
     }
 
     private fun pacer(now: TimeMark) {
@@ -987,11 +1036,10 @@ internal class PacketBuilder(
         p.timeSent = now
         p.size = end - start
         p.ackEliciting = ackEliciting
-        p.inFlight =
-            (ackEliciting || padded) && !pmtuProbe
+        p.inFlight = ackEliciting || padded // a PMTU probe too: "PMTU probes consume congestion window" (RFC 9000 section 14.4)
         p.pathId = target.id.value
         p.addressEpoch = target.addressEpoch
-        p.cc = target.cc // a PMTU probe is tracked for loss but never counts toward the window (RFC 9000 section 14.4)
+        p.cc = target.cc
         p.ecnMarked = currentMark != io.kuicksilver.quic.Ecn.NotEct
         // a test packet must be one loss detection can declare lost (appendix A.4: "if marked packets are all declared lost"):
         // ACK-only packets are never stored, so they would keep a black-holed path in the Unknown state forever
@@ -1117,6 +1165,13 @@ internal class PacketBuilder(
  * packet (RFC 9001 section 5.4.2) and the 16-byte AEAD tag.
  */
 private const val MIN_COALESCED_PACKET = 73
+
+/**
+ * The smallest datagram the window is cut to when less than a full one fits (RFC 9002 section 7): what any packet may need
+ * (RFC 9000 section 14.1: a datagram with an Initial packet, a PATH_CHALLENGE), and the smallest maximum datagram size. A
+ * window with less room than this (or than one datagram, when that is smaller) is full.
+ */
+internal const val MIN_WINDOW_DATAGRAM = 1200
 
 /** The packet number at which a sender must stop (RFC 9000 section 12.3: 2^62-1). */
 private const val MAX_PACKET_NUMBER = (1L shl 62) - 1

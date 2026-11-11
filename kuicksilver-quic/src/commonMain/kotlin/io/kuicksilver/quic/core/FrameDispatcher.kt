@@ -32,7 +32,7 @@ internal class FrameDispatcher(
 
     override fun ack(ack: AckFrameView) {
         if (r.space == SpaceId.Application && c.role == TlsRole.Client) c.checkAckAfterRejection(ack)
-        c.loss.onAck(r.space, ack, r.now)
+        c.loss.onAck(r.space, ack, r.now, r.arrivedAt)
         c.checkPmtuBlackHoles()
     }
 

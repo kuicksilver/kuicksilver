@@ -276,7 +276,7 @@ internal fun ConnectionCore.settleZeroRtt() {
     }
     val goOn = earlyMode != EarlyDataState.Required && (rememberedAlpn ?: "") == (negotiatedAlpn ?: "")
     // connection-level frames (MAX_DATA, MAX_STREAMS) go again with their current values; stream data never
-    loss.discardZeroRtt { p -> if (goOn) streams.onConnectionFramesLost(p.frames) }
+    discardZeroRttPackets { p -> if (goOn) streams.onConnectionFramesLost(p.frames) }
     if (!goOn) {
         closeZeroRttRejected()
         return

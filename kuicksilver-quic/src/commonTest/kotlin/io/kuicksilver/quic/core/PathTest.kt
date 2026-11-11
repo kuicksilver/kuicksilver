@@ -49,16 +49,17 @@ class PathTest {
     }
 
     /**
-     * Starts a [bytes] download from [s] and loses one of its first datagrams, so the server's controller leaves slow start with a
-     * window that one pacing burst fills: this harness acknowledges within a step, so without a loss the burst (ten datagrams),
-     * not the window, limits the sender. (The server's 0.5-RTT flight used to be lost the same way before the client replayed it.)
+     * Starts a [bytes] download from [s] and loses one datagram in ten of it, so the server's controller keeps a window that one
+     * pacing burst fills: this harness acknowledges within a step and polls only once per step, so without losses the burst (ten
+     * datagrams), not the window, limits the sender, and a sender held back by its pacer grows its window (RFC 9002 section 7.8).
+     * (The server's 0.5-RTT flight used to be lost the same way before the client replayed it.)
      */
     private fun EndpointPair.windowLimitedDownload(
         s: ConnectionCore,
         bytes: Int,
     ) {
-        val lost = sentToClient + 1
-        filterToClient = { i, _ -> i != lost }
+        val first = sentToClient
+        filterToClient = { i, _ -> i < first || (i - first) % 10 != 1 }
         send(s, bytes)
         settle(20)
         filterToClient = { _, _ -> true }

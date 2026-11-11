@@ -132,6 +132,46 @@ internal class PacketNumberSpace(
     }
 
     /**
+     * Send times (nanoseconds) of this space's packets acknowledged while several spaces carry packets (before the handshake is
+     * confirmed): RFC 9002 section 7.6.2 breaks a persistent congestion period on a packet acknowledged between the two lost ones
+     * "across all packet number spaces", and send times are what spaces share. A ring of the newest [ACKED_TIMES_KEEP];
+     * [ackedTimesForgotten] is the latest of those it dropped, which keeps the check conservative. Null when nothing is kept.
+     */
+    private var ackedTimes: LongArray? = null
+    private var ackedTimesCount = 0
+    private var ackedTimesNext = 0
+    private var ackedTimesForgotten = Long.MIN_VALUE
+
+    internal fun recordAckedTime(sent: TimeMark) {
+        val a = ackedTimes ?: LongArray(ACKED_TIMES_KEEP).also { ackedTimes = it }
+        if (ackedTimesCount == a.size) {
+            if (a[ackedTimesNext] > ackedTimesForgotten) ackedTimesForgotten = a[ackedTimesNext]
+        } else {
+            ackedTimesCount++
+        }
+        a[ackedTimesNext] = sent.nanos
+        ackedTimesNext = (ackedTimesNext + 1) % a.size
+    }
+
+    /** Whether a packet of this space sent strictly between [a] and [b] may have been acknowledged (as far as [recordAckedTime] saw). */
+    internal fun anyAckedSentBetween(
+        a: TimeMark,
+        b: TimeMark,
+    ): Boolean {
+        val times = ackedTimes ?: return false
+        if (a.nanos < ackedTimesForgotten) return true
+        for (i in 0 until ackedTimesCount) if (times[i] > a.nanos && times[i] < b.nanos) return true
+        return false
+    }
+
+    internal fun forgetAckedTimes() {
+        ackedTimes = null
+        ackedTimesCount = 0
+        ackedTimesNext = 0
+        ackedTimesForgotten = Long.MIN_VALUE
+    }
+
+    /**
      * The number the next packet gets, not yet taken ([commitPn] takes it once the packet is built, so a packet that is not
      * built costs none); now and then one is skipped so an optimistic ACK is detectable (RFC 9000 section 21.4; one in every
      * [128, 1024) packets). Asking again before the commit gives the same number.
@@ -170,3 +210,6 @@ internal const val LOST_KEEP = 64
 
 /** Acknowledged ranges each space remembers for the persistent congestion check. */
 internal const val ACKED_KEEP = 32
+
+/** Send times of acknowledged packets each space remembers for persistent congestion across spaces during the handshake. */
+internal const val ACKED_TIMES_KEEP = 16

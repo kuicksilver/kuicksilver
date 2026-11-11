@@ -99,9 +99,16 @@ public class NewReno(
         bytesInFlight -= bytes
     }
 
+    /**
+     * RFC 9002 section 7.2: the initial window is recalculated with the new size, and a window still at the initial one (slow
+     * start, never grown or reduced) shrinks with a smaller size. A larger size never raises the window in bytes (RFC 8899
+     * section 3 item 7: "An update to the PLPMTU (or MPS) MUST NOT increase the congestion window measured in bytes").
+     */
     override fun onMtuUpdate(maxDatagramSize: Int) {
+        val initial = cwnd == initialWindow(this.maxDatagramSize) && ssthresh == Long.MAX_VALUE
         this.maxDatagramSize = maxDatagramSize
         minWindow = 2L * maxDatagramSize
+        if (initial) cwnd = minOf(cwnd, initialWindow(maxDatagramSize))
     }
 
     /** 1.25 × cwnd per smoothed RTT (RFC 9002 section 7.7). */
@@ -112,5 +119,6 @@ public class NewReno(
             nanos
     }
 
-    override val sendQuantum: Int get() = minOf(65_536, 10 * maxDatagramSize)
+    /** The initial window (RFC 9002 section 7.7: "Senders SHOULD limit bursts to the initial congestion window"), at most 64 KiB or one datagram. */
+    override val sendQuantum: Int get() = minOf(initialWindow(maxDatagramSize), maxOf(65_536L, maxDatagramSize.toLong())).toInt()
 }
