@@ -171,6 +171,25 @@ public suspend fun QuicStream.awaitSendStopped(): Long =
     (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendStopped?.await() ?: kotlinx.coroutines.awaitCancellation()
 
 /**
+ * Client: what the application kept with the session ticket this connection resumed for 0-RTT
+ * ([rememberWithTickets] on the connection that received it), or null: no 0-RTT attempted, no ticket, nothing kept, or
+ * a connection of another implementation. HTTP/3 keeps the server's SETTINGS there (RFC 9114 section 7.2.4.2).
+ */
+@InternalKuicksilverApi
+public val QuicConnection.rememberedApplicationData: ByteArray?
+    get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.core?.rememberedApplication
+
+/**
+ * Client: keeps [data] with every session ticket this connection received or receives (its latest few), for a later
+ * 0-RTT connection to read as [rememberedApplicationData]. Ignored for connections of other implementations.
+ */
+@InternalKuicksilverApi
+public suspend fun QuicConnection.rememberWithTickets(data: ByteArray) {
+    val c = this as? io.kuicksilver.quic.runtime.ConnectionRuntime ?: return
+    kotlinx.coroutines.withContext(c.loopDispatcher) { c.core.setApplicationRemembered(data.copyOf()) }
+}
+
+/**
  * At most how many bytes [QuicStream.input] takes from the transport ahead of what its reader asks for (64 KiB by default,
  * at least 1). Bytes taken leave the stream's flow-control window; a reader that must leave data in the window until it
  * can use it (RFC 9204 section 2.2.1: a blocked QPACK field section) lowers it. Ignored for streams of other

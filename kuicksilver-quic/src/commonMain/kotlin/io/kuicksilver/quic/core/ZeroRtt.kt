@@ -93,16 +93,21 @@ internal class ServerEarlyData(
 
 /**
  * What a ticket remembers: the QUIC version of the connection that received it (RFC 9369 section 5: the negotiated one),
- * the negotiated ALPN and the server's encoded transport parameters, as `[version u32][alpn length][alpn][parameters]`.
+ * the negotiated ALPN, the server's encoded transport parameters and what the application keeps with them (HTTP/3: the
+ * server's SETTINGS, RFC 9114 section 7.2.4.2), as `[version u32][alpn length u8][alpn][parameters length u32][parameters]
+ * [application]`.
  */
 internal fun rememberedBlob(
     version: Int,
     alpn: String?,
     tp: ByteArray,
+    application: ByteArray? = null,
 ): ByteArray {
     val a = (alpn ?: "").encodeToByteArray()
     val v = byteArrayOf((version ushr 24).toByte(), (version ushr 16).toByte(), (version ushr 8).toByte(), version.toByte())
-    return v + byteArrayOf(a.size.toByte()) + a + tp
+    val n = tp.size
+    val len = byteArrayOf((n ushr 24).toByte(), (n ushr 16).toByte(), (n ushr 8).toByte(), n.toByte())
+    return v + byteArrayOf(a.size.toByte()) + a + len + tp + (application ?: ByteArray(0))
 }
 
 internal fun rememberedVersion(blob: ByteArray): Int =
@@ -111,14 +116,33 @@ internal fun rememberedVersion(blob: ByteArray): Int =
 
 internal fun rememberedAlpn(blob: ByteArray): String = blob.decodeToString(5, 5 + (blob[4].toInt() and 0xff))
 
-internal fun rememberedTp(blob: ByteArray): ByteArray = blob.copyOfRange(5 + (blob[4].toInt() and 0xff), blob.size)
+/** Where the parameters' length sits, and the length, or null when [blob] is too short for them. */
+private fun tpBounds(blob: ByteArray): IntRange? {
+    if (blob.size < 5) return null
+    val at = 5 + (blob[4].toInt() and 0xff)
+    if (at + 4 > blob.size) return null
+    val n =
+        ((blob[at].toInt() and 0xff) shl 24) or ((blob[at + 1].toInt() and 0xff) shl 16) or
+            ((blob[at + 2].toInt() and 0xff) shl 8) or (blob[at + 3].toInt() and 0xff)
+    if (n < 0 || at + 4 + n > blob.size) return null
+    return (at + 4) until (at + 4 + n)
+}
+
+internal fun rememberedTp(blob: ByteArray): ByteArray = blob.copyOfRange(tpBounds(blob)!!.first, tpBounds(blob)!!.last + 1)
+
+/** What the application keeps with the ticket ([rememberedBlob]); null when nothing (or no well-formed blob). */
+internal fun rememberedApplication(blob: ByteArray): ByteArray? {
+    val r = tpBounds(blob) ?: return null
+    val from = r.last + 1
+    return if (from >= blob.size) null else blob.copyOfRange(from, blob.size)
+}
 
 /**
  * The version, ALPN and server transport parameters a ticket remembers ([rememberedBlob]), or null when [blob] does not
  * hold them.
  */
 internal fun rememberedParameters(blob: ByteArray): Triple<Int, String, TransportParameters>? {
-    if (blob.size < 5 || 5 + (blob[4].toInt() and 0xff) > blob.size) return null // the application can set the blob
+    tpBounds(blob) ?: return null // the application can set the blob
     val tp =
         try {
             TransportParametersCodec.decode(rememberedTp(blob), TlsRole.Server)
@@ -131,7 +155,12 @@ internal fun rememberedParameters(blob: ByteArray): Triple<Int, String, Transpor
 internal fun withTp(
     blob: ByteArray,
     tp: ByteArray,
-): ByteArray = rememberedBlob(rememberedVersion(blob), rememberedAlpn(blob), tp)
+): ByteArray = rememberedBlob(rememberedVersion(blob), rememberedAlpn(blob), tp, rememberedApplication(blob))
+
+internal fun withApplication(
+    blob: ByteArray,
+    application: ByteArray?,
+): ByteArray = rememberedBlob(rememberedVersion(blob), rememberedAlpn(blob), rememberedTp(blob), application)
 
 /** Server: hands the TLS session the context and an admission backed by the replay register at its clock. */
 internal fun ConnectionCore.enableServerEarlyData(early: ServerEarlyData) {
@@ -169,6 +198,7 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
     if (!handshake.session.enableEarlyData(null, null)) return false
     remembered = tp
     rememberedAlpn = alpn
+    rememberedApplication = blob.let(::rememberedApplication)
     // section 7.4.1: never the remembered ack_delay_exponent, max_ack_delay, connection IDs, preferred_address or reset token
     streams.applyPeerParameters(
         tp.initialMaxStreamDataBidiLocal,

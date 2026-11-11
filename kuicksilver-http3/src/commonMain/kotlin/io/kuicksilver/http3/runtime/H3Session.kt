@@ -12,6 +12,7 @@ import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
+import io.kuicksilver.http3.frame.SettingsCodec
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.message.GlitchLimiter
 import io.kuicksilver.http3.qpack.QpackError
@@ -27,6 +28,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
 import io.kuicksilver.quic.receivedAll
+import io.kuicksilver.quic.rememberedApplicationData
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import io.kuicksilver.quic.sendCredit
 import kotlinx.coroutines.CancellationException
@@ -100,6 +102,20 @@ internal class H3Session(
     fun noMoreInserts(): Boolean = closed.isCompleted && !peerEncoderReading
 
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
+
+    /**
+     * Client: the server SETTINGS kept with the ticket this connection resumed for 0-RTT (RFC 9114 section 7.2.4.2), or
+     * null: no 0-RTT, or nothing stored. Complied with until the server's own SETTINGS arrive, and checked against them.
+     */
+    internal val storedPeerSettings: Map<Long, Long>? =
+        if (isServer) {
+            null
+        } else {
+            quic.rememberedApplicationData?.let { runCatching { SettingsCodec.decode(it) }.getOrNull() }
+        }
+
+    /** Test hook: what a server sends as its SETTINGS instead of [ourSettings] (a server that breaks section 7.2.4.2). */
+    internal var ourSettingsForTest: ((List<Pair<Long, Long>>) -> List<Pair<Long, Long>>)? = null
     internal val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
     val datagrams = DatagramDemux(this)
 
@@ -452,7 +468,9 @@ internal class H3Session(
 
     internal var peerWtVersion: WtVersion? = null
 
-    internal fun ourSettings(): List<Pair<Long, Long>> =
+    internal fun ourSettings(): List<Pair<Long, Long>> = ourSettingsBuilt().let { ourSettingsForTest?.invoke(it) ?: it }
+
+    private fun ourSettingsBuilt(): List<Pair<Long, Long>> =
         buildList {
             if (settings.qpackMaxTableCapacity > 0) add(SettingsId.QPACK_MAX_TABLE_CAPACITY to settings.qpackMaxTableCapacity)
             if (settings.qpackBlockedStreams > 0) add(SettingsId.QPACK_BLOCKED_STREAMS to settings.qpackBlockedStreams)

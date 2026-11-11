@@ -104,6 +104,9 @@ internal class ConnectionRuntime(
 
     /** The loop's dispatcher (tests that order work against the loop). */
     internal val loopDispatcherForTest: CoroutineDispatcher get() = loop.dispatcher
+
+    /** The loop's dispatcher, where the core is touched. */
+    internal val loopDispatcher: CoroutineDispatcher get() = loop.dispatcher
     internal val tickerCountForTest: Int get() = tickers.size
     internal val pathCountForTest: Int get() = pathList.size
     internal val streamIdsForTest: List<Long> get() = streams.keys.toList()

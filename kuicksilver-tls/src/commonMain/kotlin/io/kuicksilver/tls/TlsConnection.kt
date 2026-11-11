@@ -1032,7 +1032,11 @@ public class SessionCache(
         var session: Long = session
             private set
 
-        /** What a QUIC transport stores with the ticket (the server's transport parameters, RFC 9000 section 7.4.1). */
+        /**
+         * What a QUIC transport stores with the ticket (the server's transport parameters, RFC 9000 section 7.4.1, and
+         * what the application keeps with them); written on the receiving connection's loop, read on the resuming one's.
+         */
+        @kotlin.concurrent.Volatile
         var remembered: ByteArray? = null
 
         /** True once [close] ran: the native reference is released (tests observe eviction through it). */
