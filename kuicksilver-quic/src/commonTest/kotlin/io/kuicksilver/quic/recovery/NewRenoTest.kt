@@ -131,4 +131,25 @@ class NewRenoTest {
             t += srtt * 2
         }
     }
+
+    /**
+     * RFC 9002 section 7.2: "If the maximum datagram size changes during the connection, the initial congestion window SHOULD be
+     * recalculated with the new size. If the maximum datagram size is decreased ..., the congestion window SHOULD be set to the
+     * new initial congestion window." Only the minimum window used to follow the size. A larger size never raises the window
+     * (RFC 8899 section 3 item 7), and a window that has moved keeps its bytes.
+     */
+    @Test fun theInitialWindowFollowsTheDatagramSize() {
+        for (cc in listOf<io.kuicksilver.quic.CongestionController>(NewReno(1500), io.kuicksilver.quic.Cubic(1500))) {
+            assertEquals(14_720L, cc.cwnd)
+            cc.onMtuUpdate(1200)
+            assertEquals(12_000L, cc.cwnd, "${cc::class.simpleName}: the initial window of 1200-byte datagrams")
+            cc.onMtuUpdate(1452)
+            assertEquals(12_000L, cc.cwnd, "${cc::class.simpleName}: a larger size does not raise it")
+        }
+        val grown = NewReno(1500)
+        grown.onPacketSent(t0, 1500)
+        grown.onAck(t0 + 10.milliseconds, t0, 1500, 10.milliseconds, false)
+        grown.onMtuUpdate(1200)
+        assertEquals(14_720L + 1500, grown.cwnd, "a window that grew keeps its bytes")
+    }
 }
