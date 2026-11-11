@@ -84,10 +84,18 @@ internal class H2ConnectionCore(
     internal val control = ArrayDeque<ByteArray>()
 
     /**
-     * Our SETTINGS acknowledgements held back, oldest first, each behind the streams whose DATA was taken from a larger
-     * window and is not written yet (section 6.9.2): see [queueSettingsAck].
+     * Our SETTINGS acknowledgements held back, oldest first (see [queueSettingsAck]): each entry waits for the DATA of its
+     * streams to be written and carries the later acknowledgements that wait only for it. [heldAcks] counts them all.
      */
-    private val heldSettingsAcks = ArrayDeque<MutableSet<H2Stream>>()
+    private val heldSettingsAcks = ArrayDeque<HeldAck>()
+    private var heldAcks = 0
+
+    private class HeldAck(
+        val behind: MutableSet<H2Stream>,
+    ) {
+        var followers = 0
+    }
+
     internal var wroteSincePing = true
     internal val creditReady = ArrayDeque<H2Stream>()
     internal val headerReady = ArrayDeque<H2Stream>()
@@ -605,8 +613,8 @@ internal class H2ConnectionCore(
     /** Send-window conservation (a fuzz invariant): credit granted = window left + DATA queued + DATA written. */
     internal val sendWindowConserved: Boolean get() = sendCredited == connSendWindow + queuedDataBytes + dataWritten
 
-    /** Control frames waiting for [poll] (a test hook for the queue limit). */
-    internal val controlQueued: Int get() = control.size + pingAnswers.size
+    /** Control frames waiting for [poll], held SETTINGS acknowledgements included (bounded by `maxControlFramesQueued`). */
+    internal val controlQueued: Int get() = control.size + pingAnswers.size + heldAcks
 
     // ---------------------------------------------------------------------------------------------------------------
     // internals
@@ -712,41 +720,51 @@ internal class H2ConnectionCore(
         if (closed) return
         // CVE-2019-9512/9515: a peer that makes us answer without reading our answers must not grow this queue; called from the
         // driver's actions too, so this ends the connection instead of throwing
-        if (control.size + pingAnswers.size >= settings.maxControlFramesQueued) {
+        if (controlQueued >= settings.maxControlFramesQueued) {
             return connectionError(Http2ErrorCode.ENHANCE_YOUR_CALM, "more than ${settings.maxControlFramesQueued} control frames queued")
         }
         control.addLast(frame)
     }
 
     /**
-     * Acknowledges the peer's SETTINGS (section 6.5.3). When they shrank SETTINGS_INITIAL_WINDOW_SIZE ([windowShrank]), the
-     * acknowledgement waits until the DATA frames already taken from the larger window are written: the peer counts what
-     * arrives after the acknowledgement against the smaller window (sections 6.5.3, 6.9.2), and a frame [sendData] took
-     * before the change but [poll] writes after it would overrun that window (FLOW_CONTROL_ERROR). At most one DATA frame
-     * per stream waits, and it needs no window to be written, so the acknowledgement is only held behind frames already
-     * due. A later acknowledgement never overtakes a held one.
+     * Acknowledges the peer's SETTINGS (section 6.5.3): the acknowledgement is queued at once, in order with the earlier
+     * ones. When the SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE ([windowShrank]), it is queued after the DATA frames
+     * [sendData] already took from the larger window (each at most 16 KiB, at most one per stream, needing no window to be
+     * written): the peer counts what arrives after the acknowledgement against the smaller window (sections 6.5.3, 6.9.2),
+     * and such a frame written after it would overrun that window (FLOW_CONTROL_ERROR). Nothing waits for the peer. Held
+     * acknowledgements count toward `maxControlFramesQueued` (CVE-2019-9515), so a peer that stops reading cannot pile
+     * them up.
      */
     internal fun queueSettingsAck(windowShrank: Boolean) {
+        if (closed) return
         val behind = LinkedHashSet<H2Stream>()
         if (windowShrank) {
             for (s in streams.values) if (s.out.any { it is OutItem.Data && it.length > 0 }) behind += s
         }
         if (behind.isEmpty() && heldSettingsAcks.isEmpty()) return queueControl(FrameEncoder.settingsAck())
-        heldSettingsAcks.addLast(behind)
-        releaseSettingsAcks()
+        if (controlQueued >= settings.maxControlFramesQueued) {
+            return connectionError(Http2ErrorCode.ENHANCE_YOUR_CALM, "more than ${settings.maxControlFramesQueued} control frames queued")
+        }
+        heldAcks++
+        if (behind.isEmpty()) heldSettingsAcks.last().followers++ else heldSettingsAcks.addLast(HeldAck(behind))
+    }
+
+    /** The connection ended with an error: only its GOAWAY goes out, no acknowledgement. */
+    internal fun dropHeldSettingsAcks() {
+        heldSettingsAcks.clear()
+        heldAcks = 0
     }
 
     /** The queued DATA of [s] was written or dropped: acknowledgements held behind it may go. */
     private fun dataLeft(s: H2Stream) {
         if (heldSettingsAcks.isEmpty()) return
-        for (behind in heldSettingsAcks) behind.remove(s)
-        releaseSettingsAcks()
-    }
-
-    private fun releaseSettingsAcks() {
-        while (heldSettingsAcks.firstOrNull()?.isEmpty() == true) {
-            heldSettingsAcks.removeFirst()
-            queueControl(FrameEncoder.settingsAck())
+        for (h in heldSettingsAcks) h.behind.remove(s)
+        while (heldSettingsAcks.firstOrNull()?.behind?.isEmpty() == true) {
+            val h = heldSettingsAcks.removeFirst()
+            repeat(1 + h.followers) {
+                heldAcks-- // first, so moving it into the control queue keeps the count within the bound
+                queueControl(FrameEncoder.settingsAck())
+            }
         }
     }
 

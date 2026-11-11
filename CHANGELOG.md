@@ -641,8 +641,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS
   acknowledgement, and the peer counts what follows the acknowledgement against the smaller window (RFC 9113 sections
-  6.5.3, 6.9.2). The acknowledgement of such SETTINGS now follows the DATA frames already taken (at most one per stream);
-  later acknowledgements keep their order.
+  6.5.3, 6.9.2). The acknowledgement of such SETTINGS is now queued on receipt after the DATA frames already taken
+  from the larger window (each at most 16 KiB, at most one per stream, needing no window), and acknowledgements keep
+  the order of their SETTINGS. Held acknowledgements count toward `Http2Settings.maxControlFramesQueued`, so a peer
+  that stops reading cannot pile them up.
 - Ktor server: a response whose content is a channel that failed (`call.respond(channel)`, `ReadChannelContent`; a proxy
   relaying an upstream body that was cut) went out as complete over HTTP/1.1 and HTTP/3 when the failure was recorded
   before the engine read the channel, or while it waited for the client: ktor-io's `copyTo`, under Ktor's

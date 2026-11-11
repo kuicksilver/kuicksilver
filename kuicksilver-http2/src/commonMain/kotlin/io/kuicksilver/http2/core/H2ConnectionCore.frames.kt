@@ -384,7 +384,7 @@ internal fun H2ConnectionCore.onPing(
         if (!wroteSincePing) glitch(now, "PING")
         wroteSincePing = false
         // section 6.7: the same payload back, ahead of any other frame, the answers in the order of their PINGs
-        if (control.size + pingAnswers.size >= settings.maxControlFramesQueued) {
+        if (controlQueued >= settings.maxControlFramesQueued) {
             calm("more than ${settings.maxControlFramesQueued} control frames queued")
         }
         pingAnswers.addLast(FrameEncoder.ping(true, f.payload))

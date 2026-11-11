@@ -119,6 +119,7 @@ internal fun H2ConnectionCore.connectionError(
     // a frame already partly written is finished first (the peer must still parse the stream), then only the GOAWAY
     control.clear()
     pingAnswers.clear()
+    dropHeldSettingsAcks()
     creditReady.clear()
     headerReady.clear()
     dataReady.clear()

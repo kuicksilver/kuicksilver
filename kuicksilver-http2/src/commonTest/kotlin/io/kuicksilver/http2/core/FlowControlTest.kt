@@ -9,6 +9,7 @@ import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.SettingId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class FlowControlTest {
@@ -262,10 +263,48 @@ class FlowControlTest {
         assertEquals(0, c.core.sendData(id, ByteArray(10), 0, 10, endStream = false)) // 1 000 - 16 384 - 500 < 0
         c.send(FrameEncoder.windowUpdate(id, 20_000))
         c.events()
-        assertTrue(c.core.sendData(id, ByteArray(10), 0, 10, endStream = false) == 10)
+        assertEquals(10, c.core.sendData(id, ByteArray(10), 0, 10, endStream = false))
         c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 600))
         val grown = c.read()
         assertTrue(grown.first() is Frame.Settings && (grown.first() as Frame.Settings).ack, "wrote ${grown.map { it::class.simpleName }}")
+    }
+
+    /** A body's last DATA frame (END_STREAM: the stream is half-closed (local)) still holds the ACK behind it. */
+    @Test
+    fun lastDataOfAHalfClosedStreamHoldsTheAck() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = false)
+        c.read() // HEADERS
+        assertEquals(100, c.core.sendData(id, ByteArray(100), 0, 100, endStream = true))
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 10))
+        val out = c.read().filter { it is Frame.Data || it is Frame.Settings }
+        assertEquals(2, out.size, "wrote ${out.map { it::class.simpleName }}")
+        assertTrue(out[0] is Frame.Data && (out[0] as Frame.Data).endStream)
+        assertTrue(out[1] is Frame.Settings && (out[1] as Frame.Settings).ack)
+    }
+
+    /** Two shrinking SETTINGS in a row, with DATA of other streams taken in between: the ACKs keep their order. */
+    @Test
+    fun twoShrinkingSettingsKeepTheirAckOrder() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val a = c.core.openStream(GET, endStream = false)
+        val b = c.core.openStream(GET, endStream = false)
+        c.read() // both HEADERS
+        assertEquals(1_000, c.core.sendData(a, ByteArray(1_000), 0, 1_000, endStream = false))
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 30_000)) // first ACK behind a's DATA
+        assertEquals(1_000, c.core.sendData(b, ByteArray(1_000), 0, 1_000, endStream = false))
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 20_000)) // second ACK behind the first, and b's DATA
+        assertEquals(2, c.core.controlQueued) // both held, and counted toward the control-frame bound
+        val out = c.read().filter { it is Frame.Data || it is Frame.Settings }
+        assertEquals(4, out.size, "wrote ${out.map { it::class.simpleName }}")
+        // each ACK goes as soon as the DATA it waits for is written, the first one before b's DATA
+        assertEquals(a, assertIs<Frame.Data>(out[0]).streamId)
+        assertTrue(assertIs<Frame.Settings>(out[1]).ack)
+        assertEquals(b, assertIs<Frame.Data>(out[2]).streamId)
+        assertTrue(assertIs<Frame.Settings>(out[3]).ack)
+        assertEquals(0, c.core.controlQueued)
     }
 
     /** A queued DATA frame that is dropped (the peer reset its stream) releases the ACK held behind it. */
