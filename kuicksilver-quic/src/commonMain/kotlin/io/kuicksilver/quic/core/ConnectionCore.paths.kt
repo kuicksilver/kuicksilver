@@ -224,8 +224,8 @@ private fun ConnectionCore.sameIp(
  * RFC 9000 section 9.4: "On confirming a peer's ownership of its new address, an endpoint MUST immediately reset the congestion
  * controller and round-trip time estimator for the new path to initial values ... unless the only change in the peer's address is
  * its port number". A handshake-time change of the active path's address from [old] to another IP (a move, a return, the
- * candidate's adoption) starts [p] over: a fresh congestion controller and pacer, the initial RTT of a new path, and 1200 bytes with
- * DPLPMTUD started again ([initServerPath] does the same for a path the client opens; a port-only change keeps everything, as
+ * candidate's adoption) starts [p] over: a fresh congestion controller and pacer, the initial RTT of a new path, ECN validated afresh,
+ * and 1200 bytes with DPLPMTUD started again ([initServerPath] does the same for a path the client opens; a port-only change keeps everything, as
  * [Path.inheritFrom]). What is in flight stays with the controller that counted it.
  */
 private fun ConnectionCore.resetForNewIp(
@@ -241,8 +241,12 @@ private fun ConnectionCore.resetForNewIp(
         io.kuicksilver.quic.recovery
             .RttEstimator(config.newPathInitialRtt)
     if (p === paths.active) loss.rtt = p.rtt
+    p.ceRecoveryStart = TimeMark.NEVER
     setMtu(p, 1200)
     if (p.pmtud != null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = 1200)
+    // RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path"; what the old address showed says nothing
+    // about the new one (a bleaching middlebox there, or none)
+    p.ecn = EcnValidator().also { if (p.caps.ecnSend) it.enable() }
 }
 
 /** A 1-RTT packet authenticated from [from] on [socket]: a new address becomes a path under validation; its highest-numbered non-probing packet moves the connection there (RFC 9000 section 9.3). */

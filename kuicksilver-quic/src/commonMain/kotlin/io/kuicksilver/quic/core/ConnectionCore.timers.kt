@@ -394,16 +394,18 @@ internal class ConnectionLossListener(
         val p = core.paths.byId(PathId(pathId)) ?: return // the path is gone: its ECN state too
         p.ecn.onAck(countsPresent, countsValid, newlyAckedMarked)
         core.ecnPathFailed(p)
-        if (ceGrew && p.cc is io.kuicksilver.quic.Bbr) {
+        // counts that fail validation (RFC 9000 section 13.4.2.1) are no CE report to act on: the path stops marking instead
+        val ce = ceGrew && countsValid
+        if (ce && p.cc is io.kuicksilver.quic.Bbr) {
             core.ecnCeEvents++
             p.cc.onEcnCe(now, largestSentTime)
         } // BBR treats CE like loss, once per round of its own path: every report counts
-        else if (ceGrew &&
-            (core.ceRecoveryStart == TimeMark.NEVER || largestSentTime > core.ceRecoveryStart)
+        else if (ce &&
+            (p.ceRecoveryStart == TimeMark.NEVER || largestSentTime > p.ceRecoveryStart)
         ) {
-            core.ceRecoveryStart = now
+            p.ceRecoveryStart = now
             core.ecnCeEvents++
             p.cc.onEcnCe(now, largestSentTime)
-        } // one congestion event per recovery period (RFC 9002 section 7.1)
+        } // one congestion event per recovery period of the path's own controller (RFC 9002 section 7.1; RFC 9000 section 9.4)
     }
 }

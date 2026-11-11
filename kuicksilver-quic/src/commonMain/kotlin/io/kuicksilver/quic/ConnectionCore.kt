@@ -215,7 +215,6 @@ public class ConnectionCore internal constructor(
 
     // ---- ECN (RFC 9000 section 13.4; ADR-0006) ----
     internal var ecnCeEvents = 0L
-    internal var ceRecoveryStart: TimeMark = TimeMark.NEVER
 
     /** The runtime's hook: ECN validation failed on [PathId]; a per-socket marker clears its IP_TOS. */
     internal var onEcnFailed: ((PathId) -> Unit)? = null

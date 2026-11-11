@@ -190,17 +190,22 @@ class PmtudTest {
     }
 
     @Test fun probeLossNotCongestion() {
-        // RFC 9000 section 14.4: a lost probe is not a congestion signal
+        // RFC 9000 section 14.4 and RFC 8899 section 3 item 7: a lost probe is not a congestion signal. The probes go out during a
+        // transfer on a link that drops everything above 1200 bytes and nothing else, so every loss is a probe's: the controller
+        // never left slow start. 0.3.0 cross-review: this test compared lostPackets with itself and ran with no traffic at all
         val (p, c) = pair(linkMtu = 1200)
         try {
-            val cwnd = c.stats.cwnd
+            transfer(p, c)
             assertTrue(p.runUntil(60.seconds) { c.pmtudSearchDoneForTest })
             assertTrue(probesTo(p).size >= 3, "probes were lost: ${probesTo(p)}")
-            assertEquals(cwnd, c.stats.cwnd, "the window did not move for lost probes")
-            assertEquals(
-                0L,
-                c.stats.lostPackets - c.stats.lostPackets,
-            )
+            val ssthresh =
+                when (val cc = c.path.cc) {
+                    is io.kuicksilver.quic.Cubic -> cc.ssthresh
+                    is io.kuicksilver.quic.NewReno -> cc.ssthresh
+                    else -> error("unexpected controller $cc")
+                }
+            assertEquals(Long.MAX_VALUE, ssthresh, "no congestion event for the lost probes")
+            assertTrue(c.stats.cwnd > 12_000L, "the window grew with the transfer: ${c.stats.cwnd}")
         } finally {
             p.close()
         }

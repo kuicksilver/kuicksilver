@@ -156,7 +156,12 @@ internal class Path(
     var caps: io.kuicksilver.quic.IoCapabilities = io.kuicksilver.quic.IoCapabilities.Portable
 
     /** ECN validation of this path (RFC 9000 section 13.4.2); every new path validates afresh. */
-    val ecn = EcnValidator()
+
+    /** ECN validation of this path's address (RFC 9000 section 13.4.2: per network path); started over when its IP changes. */
+    var ecn = EcnValidator()
+
+    /** When our last congestion event for an ECN-CE report on this path started (RFC 9002 section 7.1: one per recovery period). */
+    var ceRecoveryStart: TimeMark = TimeMark.NEVER
 
     /** DPLPMTUD of this path; null without `df` on the socket or with `QuicConfig.pmtud = false` (then the MTU stays 1200). */
     var pmtud: Pmtud? = null
