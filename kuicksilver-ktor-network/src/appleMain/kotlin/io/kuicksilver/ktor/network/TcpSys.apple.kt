@@ -5,6 +5,7 @@
 package io.kuicksilver.ktor.network
 
 import io.ktor.utils.io.errors.PosixException
+import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.alloc
@@ -15,8 +16,11 @@ import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.value
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_NOSIGPIPE
+import platform.posix.accept
 import platform.posix.errno
 import platform.posix.setsockopt
+import platform.posix.sockaddr
+import platform.posix.socklen_tVar
 
 internal actual val bsdSockaddr: Boolean = true
 
@@ -31,3 +35,11 @@ internal actual fun tcpNoSigpipe(fd: Int) {
         }
     }
 }
+
+internal actual val tcpAtomicFlags: Int = 0 // no SOCK_CLOEXEC nor accept4 on Darwin: fcntl right after the call
+
+internal actual fun tcpAcceptFd(
+    fd: Int,
+    addr: CPointer<sockaddr>?,
+    len: CPointer<socklen_tVar>?,
+): Int = accept(fd, addr, len)

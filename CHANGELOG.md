@@ -1000,6 +1000,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   every accepted socket's; the close that followed launched its work inside that cancelled job, where nothing starts, so
   the descriptor of every connection open at the stop stayed open for the rest of the process (in-process restarts,
   tests, embedded servers). The close now runs in a cancelled job too and releases the descriptor.
+- Kotlin/Native on Linux: TCP sockets (listening, connected, accepted) were made close-on-exec with an `fcntl` after
+  `socket` or `accept`, so a fork and exec in another thread of the process in between inherited the descriptor (a
+  connection or listening port kept open in the child). They are now created with `SOCK_NONBLOCK | SOCK_CLOEXEC`
+  (`socket`, `accept4`). Apple has neither and keeps the `fcntl` right after the call.
 
 ## [0.2.1] - 2026-11-04
 
