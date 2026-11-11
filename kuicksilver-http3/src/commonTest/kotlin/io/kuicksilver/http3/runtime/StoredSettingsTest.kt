@@ -42,6 +42,26 @@ class StoredSettingsTest {
         }
     }
 
+    /**
+     * A setting stored with its default (or not stored) binds as well: a stored SETTINGS without
+     * SETTINGS_MAX_FIELD_SECTION_SIZE said "unlimited", so a limit now is lower; a zero QPACK capacity may become non-zero
+     * (RFC 9204 section 3.2.3), and a feature that was off may be turned on.
+     */
+    @Test fun negative_aDefaultTheServerNowRestrictsIsIncompatible() {
+        val withoutLimit = stored - SettingsId.MAX_FIELD_SECTION_SIZE
+        assertNotNull(StoredSettings.incompatibility(withoutLimit, withoutLimit + (SettingsId.MAX_FIELD_SECTION_SIZE to 65_536L)))
+        assertNotNull(StoredSettings.incompatibility(emptyMap(), mapOf(SettingsId.MAX_FIELD_SECTION_SIZE to 1L)))
+        assertNull(
+            StoredSettings.incompatibility(
+                emptyMap(),
+                mapOf(
+                    SettingsId.QPACK_MAX_TABLE_CAPACITY to 4096L,
+                    SettingsId.H3_DATAGRAM to 1L,
+                ),
+            ),
+        )
+    }
+
     @Test fun reservedIdentifiersAreNotStored() {
         val grease = FrameType.grease(3)
         assertEquals(listOf(SettingsId.H3_DATAGRAM to 1L), StoredSettings.kept(mapOf(grease to 9L, SettingsId.H3_DATAGRAM to 1L)))

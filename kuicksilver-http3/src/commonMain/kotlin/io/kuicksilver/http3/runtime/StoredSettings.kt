@@ -37,18 +37,21 @@ internal object StoredSettings {
         stored: Map<Long, Long>,
         now: Map<Long, Long>,
     ): String? {
-        for ((id, was) in stored) {
-            if (id !in DEFAULTS) continue
+        // every setting we understand, stored or not: one stored with its default (or not stored at all) binds too, so a
+        // server that now sends a lower value than the default it had (an unlimited SETTINGS_MAX_FIELD_SECTION_SIZE
+        // now limited) is incompatible as well
+        for (id in DEFAULTS.keys) {
             val name = "0x${id.toString(16)}"
+            val was = if (id in stored) stored[id] else DEFAULTS[id] // null: unlimited (MAX_FIELD_SECTION_SIZE)
             val v = now[id]
             if (v == null) {
-                if (DEFAULTS[id] != was) return "setting $name ($was in 0-RTT) omitted"
+                if (id in stored && DEFAULTS[id] != was) return "setting $name ($was in 0-RTT) omitted"
                 continue
             }
             if (id == SettingsId.QPACK_MAX_TABLE_CAPACITY) {
                 if (was != 0L && v != was) return "QPACK table capacity $v instead of $was used in 0-RTT"
-            } else if (v < was) {
-                return "setting $name lowered from $was to $v after 0-RTT"
+            } else if (was == null || v < was) {
+                return "setting $name lowered from ${was ?: "unlimited"} to $v after 0-RTT"
             }
         }
         return null
