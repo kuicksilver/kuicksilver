@@ -82,8 +82,8 @@ internal class PacketBuilder(
                     limit = minOf(limit.toLong(), budget).toInt()
                 }
                 // section 9.5: "MUST NOT reuse a connection ID when sending from more than one local address": a peer ID no path
-                // used, retired after this datagram; with none to spare the responses are dropped
-                val peer = c.cids.takePathPeer()
+                // used, retired after this datagram; with none to spare, or no room to retire it, the responses are dropped
+                val peer = if (c.cids.canRetireOneMore()) c.cids.takePathPeer() else null
                 if (peer == null) {
                     c.paths.dropResponsesFrom(target, from)
                     continue

@@ -610,6 +610,15 @@ internal class ConnectionIdManager(
         rememberRetired(p.seq)
     }
 
+    /**
+     * One more RETIRE_CONNECTION_ID fits the backlog of unacknowledged retirements: a peer ID taken for one datagram only can be
+     * given back ([releasePathPeer] would otherwise leave it used and never retired, a spare lost for good).
+     */
+    fun canRetireOneMore(): Boolean = !testRetireBacklogFull && pendingRetire.size + unackedRetire.size + 1 <= retiredCap
+
+    /** Test hook: the retirement backlog counts as full (a peer that leaves our RETIRE_CONNECTION_ID frames unacknowledged). */
+    var testRetireBacklogFull = false
+
     /** True when the frame was a repeat of a known sequence number (a glitch when it is not a retransmission). */
     fun onNewConnectionId(
         seq: Long,

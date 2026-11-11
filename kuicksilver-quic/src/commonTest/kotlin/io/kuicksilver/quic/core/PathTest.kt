@@ -135,6 +135,38 @@ class PathTest {
         }
     }
 
+    /**
+     * A stray PATH_RESPONSE takes a peer ID for one datagram and retires it after. With the retirement backlog full (a peer that leaves
+     * our RETIRE_CONNECTION_ID frames unacknowledged) the ID could not be retired and would stay used for good, a spare lost per
+     * response: the response is dropped instead and the spare stays.
+     */
+    @Test fun negative_strayPathResponseTakesNoIdWithAFullRetirementBacklog() {
+        val a = InetSocketAddress("192.0.2.10", 443)
+        val b = InetSocketAddress("192.0.2.11", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = a
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.settle()
+            val s = p.server()
+            assertTrue(s.cids.hasSparePeer())
+            val spares = s.cids.peerSeqsForTest()
+            s.cids.testRetireBacklogFull = true
+            val sentBefore = p.serverSentLocal.size
+            val responsesBefore = s.pathResponsesSentForTest
+            p.serverLocal = b
+            c.testInjectPathChallenges = 1
+            p.settle(3)
+            assertTrue(b !in p.serverSentLocal.drop(sentBefore), "no response from $b")
+            assertEquals(responsesBefore, s.pathResponsesSentForTest)
+            assertEquals(spares, s.cids.peerSeqsForTest(), "no peer ID taken")
+            assertTrue(s.cids.hasSparePeer(), "the spare is still unused")
+        } finally {
+            p.close()
+        }
+    }
+
     /** The first frame type of the 1-RTT packet in a Null-protected datagram, or -1. */
     private fun firstOneRttFrame(
         d: ByteArray,
