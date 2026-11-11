@@ -20,6 +20,7 @@ import io.kuicksilver.quic.endpoint.DispatchRoute
 import io.kuicksilver.quic.endpoint.ResetTokenIndex
 import io.kuicksilver.quic.endpoint.SipKey
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
@@ -46,7 +48,10 @@ import kotlin.concurrent.atomics.incrementAndFetch
  * its connection ID names ([DispatchRoute]) and every loop sends through its own sender (`ksl_udp_sender`, or the shared
  * socket under a lock). Each loop sees the socket as its [LoopInbox], so [EndpointLoop] runs unchanged.
  *
- * The receiver runs on its own thread (`Dispatchers.IO`, one at a time) and blocks in the socket's receive in 100 ms slices. It
+ * The receiver blocks in the socket's receive in 100 ms slices on [blocking] (`Dispatchers.IO`) and hands that thread back after
+ * a slice that brought nothing and after every [BUSY_ROUNDS] rounds, like the slices of `KslDatagramIo.receive`: holding it for the
+ * socket's lifetime pinned one of the 64 `Dispatchers.IO` threads per shared socket, which a process with many such groups
+ * could exhaust for every other user of `Dispatchers.IO` (blocking file I/O, DNS). It
  * copies each datagram into its loop's ring ([RING] slots of one datagram each, written by the receiver and read by the loop
  * with no lock and no allocation per datagram) and wakes the loop once per receive round. When a loop's ring is full the
  * datagram is dropped and counted ([dropped], `EndpointStats.datagramsDispatchDropped`): the receiver never waits for a loop,
@@ -66,6 +71,7 @@ internal class SocketDispatcher(
     private val key: SipKey,
     private val resets: ResetTokenIndex? = null,
     private val allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
+    private val blocking: CoroutineDispatcher = Dispatchers.IO,
 ) {
     val loops: Int = senders.size
 
@@ -89,7 +95,7 @@ internal class SocketDispatcher(
 
     private val closed = AtomicInt(0)
     private val openInboxes = AtomicInt(loops)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** The receiver (tests: it ends once the socket closed). */
     @Volatile internal var receiverForTest: Job? = null
@@ -104,21 +110,37 @@ internal class SocketDispatcher(
         val batch = PacketBatch(SLOTS, EndpointLoop.SLOT_SIZE, allocate)
         val direct = io as? DirectReceive
         val icmp = io as? PacketTooBigSource
+        /** One receive round: the datagrams to their loops, then the ICMP messages; answers how many datagrams came. */
+        fun handOut(): Int {
+            for (i in 0 until batch.count) {
+                val len = batch.length(i)
+                val buf = batch.buffer(i)
+                val loop = DispatchRoute.loopOf(buf, len, cidLength, loops, route, key, resets)
+                if (!inboxes[loop].put(buf, len, batch.address(i)!!, batch.localAddress(i), batch.ecn(i))) {
+                    droppedCount.incrementAndFetch()
+                }
+            }
+            icmp?.drainPacketTooBig { quote, len, dst, mtu -> for (b in inboxes) b.offerPacketTooBig(quote, len, dst, mtu) }
+            for (b in inboxes) b.wake()
+            return batch.count
+        }
         try {
             while (closed.load() == 0) {
-                batch.clear()
-                // the accelerated socket blocks this thread in the native receive (a shutdown wakes it); another io suspends
-                if (direct != null) direct.receiveNow(batch, SLICE_MS) else io.receive(batch)
-                for (i in 0 until batch.count) {
-                    val len = batch.length(i)
-                    val buf = batch.buffer(i)
-                    val loop = DispatchRoute.loopOf(buf, len, cidLength, loops, route, key, resets)
-                    if (!inboxes[loop].put(buf, len, batch.address(i)!!, batch.localAddress(i), batch.ecn(i))) {
-                        droppedCount.incrementAndFetch()
+                if (direct != null) {
+                    // the accelerated socket blocks a thread of [blocking] in the native receive (a shutdown wakes it), as long as
+                    // datagrams keep coming and BUSY_ROUNDS at most; an idle slice gives the thread back
+                    withContext(blocking) {
+                        var rounds = 0
+                        do {
+                            batch.clear()
+                            direct.receiveNow(batch, SLICE_MS)
+                        } while (handOut() > 0 && ++rounds < BUSY_ROUNDS && closed.load() == 0)
                     }
+                } else {
+                    batch.clear()
+                    io.receive(batch) // another io suspends
+                    handOut()
                 }
-                icmp?.drainPacketTooBig { quote, len, dst, mtu -> for (b in inboxes) b.offerPacketTooBig(quote, len, dst, mtu) }
-                for (b in inboxes) b.wake()
                 currentCoroutineContext().ensureActive()
             }
         } catch (e: Throwable) {
@@ -152,6 +174,9 @@ internal class SocketDispatcher(
 
         /** How long one native receive blocks before the receiver checks for a close. */
         const val SLICE_MS: Int = 100
+
+        /** Receive rounds with datagrams after which the receiver hands its blocking thread back once, all the same. */
+        const val BUSY_ROUNDS: Int = 64
     }
 }
 

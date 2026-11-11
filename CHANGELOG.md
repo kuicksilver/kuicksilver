@@ -992,6 +992,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC over `ksl_udp`: closing a socket while another thread was still inside a native call on it (a sender in a
   large batch, a descheduled receiver) spun the closing thread, usually an endpoint's loop thread, at full speed until
   the call returned. After a short spin it now sleeps a millisecond between looks.
+- QUIC, `loops > 1` on macOS, iOS and Windows: the receiver of the socket a loop group shares held one `Dispatchers.IO`
+  thread for the socket's whole life, so a process with many such endpoints could leave `Dispatchers.IO` (blocking file
+  I/O, DNS) without a free thread. It now gives the thread back after a receive slice that brought nothing and after
+  every 64 busy rounds, like the receive of a socket of its own.
 
 ## [0.2.1] - 2026-11-04
 
