@@ -750,14 +750,14 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             val preferredMove = role == TlsRole.Server && p.preferredMovePending && p !== paths.active
             val toPreferred = role == TlsRole.Client && p.preferred && p !== paths.active
             if (p !== paths.active && !preferredMove && !toPreferred && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
+            val carrier = p.carrier
+            if (toPreferred && carrier != null && carrier.state != PathState.Closed && paths.all.contains(carrier)) {
+                adoptPreferred(carrier, p) // the application's path reports the validation; this one it never knew of
+                return
+            }
             events += ConnectionEvent.PathValidated(p.id)
             if (preferredMove) {
                 moveToPreferredSocket(p)
-                return
-            }
-            val carrier = p.carrier
-            if (toPreferred && carrier != null && carrier.state != PathState.Closed && paths.all.contains(carrier)) {
-                adoptPreferred(carrier, p)
                 return
             }
             if (toPreferred) {

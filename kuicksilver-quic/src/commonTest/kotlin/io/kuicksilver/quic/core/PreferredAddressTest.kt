@@ -271,6 +271,10 @@ class PreferredAddressTest {
             )
             val mine = c.paths.byId(id)!!
             assertTrue(mine.isRemote(v4), "the application's path took the preferred address: ${mine.remote}")
+            assertTrue(
+                p.events[c]!!.none { it is ConnectionEvent.PathValidated && it.path == fromNew.id },
+                "no event names the probe the application never created: ${p.events[c]}",
+            )
             assertNull(c.paths.all.firstOrNull { it !== mine && it.socket == newSocket }, "no other path on the new socket")
             c.switchPath(id, p.now)
             assertTrue(c.path.isRemote(v4) && c.path.socket == newSocket)
