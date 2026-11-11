@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC server: removing a connection walked every slot of the endpoint's connection ID table, and the table never shrank.
+  An Initial that does not decrypt creates a connection and removes it at once, so each forged 1200-byte Initial from any
+  address cost a walk over the IDs of every connection on the loop (and over the slots a past peak left behind). A removal
+  now visits only the connection's own IDs, and the table halves once at most an eighth of it is in use.
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS

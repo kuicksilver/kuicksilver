@@ -111,12 +111,9 @@ internal class ConnectionIdRegistry(
         core: ConnectionCore,
     ) {
         val l = bucket(key(cid))
-        if (l.none {
-                it.cid ==
-                    cid
-            }
-        ) {
+        if (l.none { it.cid == cid }) {
             l += Entry(cid, core)
+            core.registeredCids += cid
             size++
         }
     }
@@ -124,9 +121,32 @@ internal class ConnectionIdRegistry(
     override fun remove(cid: ConnectionId) {
         val at = find(key(cid))
         if (at < 0) return
+        removeAt(at, cid)
+        shrinkIfSparse()
+    }
+
+    /** Drops [cid] from the bucket at slot [at] (and from its connection's list); empties the slot when it was the last. */
+    private fun removeAt(
+        at: Int,
+        cid: ConnectionId,
+    ) {
         val l = lists[at]!!
-        if (l.removeAll { it.cid == cid }) size--
+        for (i in 0 until l.size) {
+            val e = l[i]
+            if (e.cid != cid) continue
+            l.removeAt(i)
+            e.core.registeredCids.remove(cid)
+            size--
+            break
+        }
         if (l.isEmpty()) removeSlot(at)
+    }
+
+    /** Halves the table once at most an eighth of it is taken, so a peak of connections does not cost every later lookup and close. */
+    private fun shrinkIfSparse() {
+        var slots = keys.size
+        while (slots > MIN_SLOTS && used * 8 < slots) slots /= 2
+        if (slots != keys.size) resize(slots)
     }
 
     fun lookup(
@@ -145,43 +165,31 @@ internal class ConnectionIdRegistry(
     }
 
     fun clear() {
+        for (l in lists) l?.forEach { it.core.registeredCids.clear() }
         keys = LongArray(MIN_SLOTS)
         lists = arrayOfNulls(MIN_SLOTS)
         used = 0
         size = 0
     }
 
-    /** Keys whose bucket [removeAll] emptied; kept between calls, so a close allocates nothing once it is large enough. */
-    private var emptiedKeys = LongArray(8)
+    /** Slots in the table (tests). */
+    internal val slotsForTest: Int get() = keys.size
 
     /**
-     * Drops every ID of [core] (a closed connection: its IDs are still registered). One walk over the slots, entries removed
-     * by index; the buckets it emptied are then removed by key, each with its probe run shifted back. No rebuild: a rebuild
-     * per close was the whole table again (hundreds of KB per close with many connections), and closes are peer-driven.
+     * Drops every ID of [core] (a closed connection: its IDs are still registered), by key: the walk is over the connection's own
+     * IDs, not the table. A walk over every slot made each forged Initial (a connection created and removed at once) cost the
+     * whole table, and the table only grew.
      */
     fun removeAll(core: ConnectionCore) {
-        var emptied = 0
-        val ls = lists
-        for (j in ls.indices) {
-            val l = ls[j] ?: continue
-            var w = 0
-            for (i in 0 until l.size) {
-                val e = l[i]
-                if (e.core !== core) l[w++] = e
-            }
-            if (w == l.size) continue
-            size -= l.size - w
-            while (l.size > w) l.removeAt(l.size - 1)
-            if (w == 0) {
-                if (emptied == emptiedKeys.size) emptiedKeys = emptiedKeys.copyOf(emptied * 2)
-                emptiedKeys[emptied++] = keys[j]
-            }
+        val own = core.registeredCids
+        while (own.isNotEmpty()) {
+            val n = own.size
+            val cid = own[n - 1]
+            val at = find(key(cid))
+            if (at >= 0) removeAt(at, cid)
+            if (own.size == n) own.removeAt(n - 1) // not in the table (cannot happen: every removal updates the list)
         }
-        // after the walk: removing a slot moves later entries of its run back, which the walk could have passed over or met twice
-        for (i in 0 until emptied) {
-            val at = find(emptiedKeys[i])
-            if (at >= 0 && lists[at]!!.isEmpty()) removeSlot(at)
-        }
+        shrinkIfSparse()
     }
 
     private companion object {

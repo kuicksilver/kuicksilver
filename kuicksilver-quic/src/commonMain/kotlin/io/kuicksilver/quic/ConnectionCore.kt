@@ -551,6 +551,9 @@ public class ConnectionCore internal constructor(
     /** Whether this connection holds a slot of its endpoint's connection limits (EndpointCore.slots), from creation to removal. */
     internal var holdsSlot: Boolean = false
 
+    /** The IDs the endpoint's registry routes to this connection, kept by the registry so a removal visits only these (ConnectionIdRegistry.removeAll). */
+    internal val registeredCids = ArrayList<io.kuicksilver.quic.wire.ConnectionId>(2)
+
     /** Bytes this unfinished handshake holds: undecryptable packets waiting for keys, out-of-order CRYPTO data and CRYPTO data TLS has not read (`ConnectionAttempt.handshakeBufferBytes` for admission). */
     internal val handshakeBufferBytes: Long get() = receiver.bufferedBytes + cryptoStreams.bufferedBytes + tlsPendingBytes
 
