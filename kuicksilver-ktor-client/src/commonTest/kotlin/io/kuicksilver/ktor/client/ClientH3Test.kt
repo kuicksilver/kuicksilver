@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.engine.ClientEngineClosedException
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -75,6 +76,28 @@ class ClientH3Test {
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("v=HTTP/3", r.bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A call that passed the engine's closed check just before close() and attached to the requests' job after the cleanup
+     * had already run went on against the closed pools and failed with IllegalStateException("the client is closed") from
+     * the HTTP/3 pool, not with the documented ClientEngineClosedException.
+     */
+    @Test fun aCallRacingCloseFailsAsClosed() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.beforeCallAttachForTest = {
+                        c.close() // the client's job ends, then the engine's close(): no call is attached yet
+                        withTimeout(5.seconds) { engine.cleanup.join() } // the pools are closed before the call goes on
+                    }
+                    assertFailsWith<ClientEngineClosedException> { c.get("https://127.0.0.1:$port/") }
                 }
             } finally {
                 server.stop(100, 500)

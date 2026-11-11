@@ -974,6 +974,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   four smoothed RTTs); `stop(500, 500)` then ends gracefully on a low-latency path. The guide's
   [Graceful stop](docs/guide/ktor.md#graceful-stop) gives the timing and why `stop(500, 500)` may return before the
   sockets cut at the grace deadline are closed.
+- Ktor client: a call made as the engine closed, which passed the engine's closed check just before `close()` and
+  attached to the engine after its cleanup had started, went on against the closed pools and failed with
+  `IllegalStateException` ("the client is closed") on HTTP/3, or an `IOException` from the closed selector on a TCP
+  connect, instead of `ClientEngineClosedException`. The engine now checks again once the call is attached and fails it
+  with `ClientEngineClosedException`.
 
 ## [0.2.1] - 2026-11-04
 
