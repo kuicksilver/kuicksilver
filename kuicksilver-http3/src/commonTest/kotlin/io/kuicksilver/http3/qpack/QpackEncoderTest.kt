@@ -225,7 +225,7 @@ class QpackRoundTripTest {
                                     blockedNow += s
                                 }
 
-                                DecodeResult.TooLarge -> {
+                                is DecodeResult.TooLarge -> {
                                     error("too large")
                                 }
                             }

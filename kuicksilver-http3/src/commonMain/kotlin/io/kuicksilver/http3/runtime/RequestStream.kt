@@ -42,8 +42,10 @@ internal suspend fun H3Session.decodeSection(
     ) {
         is DecodeResult.Decoded -> r.fields
 
-        DecodeResult.TooLarge -> throw StreamFailure(
-            Http3ErrorCode.EXCESSIVE_LOAD,
+        // a value longer than we decode is the stream error QPACK_DECOMPRESSION_FAILED (RFC 9204 section 7.4), fields that
+        // only add up past the limit EXCESSIVE_LOAD; a server answers 431 for either (RFC 9114 section 4.2.2)
+        is DecodeResult.TooLarge -> throw StreamFailure(
+            if (r.valueTooLong) Http3ErrorCode.QPACK_DECOMPRESSION_FAILED else Http3ErrorCode.EXCESSIVE_LOAD,
             Http3Exception.FieldSectionTooLarge(st.id, settings.maxFieldSectionSize),
         )
 

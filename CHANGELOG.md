@@ -637,6 +637,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: a response with a field value longer than the decoder takes was reset with H3_EXCESSIVE_LOAD, and one
+  whose string length did not fit a 62-bit integer ended the whole connection; RFC 9204 section 7.4 makes "a value
+  larger than it is able to decode" a stream error of type QPACK_DECOMPRESSION_FAILED. Both are now that stream error.
+  A server still answers such a request with 431 (RFC 9114 section 4.2.2), and now stops it with
+  QPACK_DECOMPRESSION_FAILED instead of H3_EXCESSIVE_LOAD.
 - HTTP/3 with the QPACK dynamic table: a field section that waited for inserts had been read off its stream whole first,
   so its bytes left the flow-control window and the peer got the credit back (RFC 9204 section 2.2.1: SHOULD remain in
   the window). With blocked streams allowed, request streams are now read without read-ahead and a section's prefix

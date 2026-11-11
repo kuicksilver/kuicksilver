@@ -8,6 +8,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -106,7 +107,7 @@ class QpackDecoderTest {
             w.writeString(0x20, 3, "x-big", huffman = false)
             w.writeString(0, 7, "v".repeat(30_000), huffman = false)
         } // literal name, literal value
-        assertIs<DecodeResult.TooLarge>(d.decode(0, w.toByteArray()))
+        assertFalse(assertIs<DecodeResult.TooLarge>(d.decode(0, w.toByteArray())).valueTooLong, "the sum, not one value")
         // two of them fit: 2 * (5 + 30000 + 32) = 60074
         val w2 = QpackWriter()
         w2.writeByte(0)
@@ -135,8 +136,12 @@ class QpackDecoderTest {
             return w.toByteArray()
         }
         val d = dec(cap = 0, max = 65_536)
-        assertIs<DecodeResult.TooLarge>(d.decode(0, section("v".repeat(65_600), huffman = false)))
-        assertIs<DecodeResult.TooLarge>(d.decode(4, section("a".repeat(65_600), huffman = true)))
+        assertTrue(assertIs<DecodeResult.TooLarge>(d.decode(0, section("v".repeat(65_600), huffman = false))).valueTooLong)
+        assertTrue(assertIs<DecodeResult.TooLarge>(d.decode(4, section("a".repeat(65_600), huffman = true))).valueTooLong)
+        // a length past the 62-bit integer range is such a value too, not a connection error: literal name "x", then a
+        // value length of 127 + 2^63 in continuation bytes (RFC 7541 section 5.1)
+        val huge = byteArrayOf(0, 0, 0x21, 'x'.code.toByte(), 0x7f) + ByteArray(9) { 0xff.toByte() } + byteArrayOf(0x01)
+        assertTrue(assertIs<DecodeResult.TooLarge>(d.decode(8, huge)).valueTooLong)
         // a raised limit: one 100 KB value fits a 1 MiB field section
         val raised = dec(cap = 0, max = 1L shl 20)
         val f = assertIs<DecodeResult.Decoded>(raised.decode(0, section("v".repeat(100_000), huffman = false))).fields

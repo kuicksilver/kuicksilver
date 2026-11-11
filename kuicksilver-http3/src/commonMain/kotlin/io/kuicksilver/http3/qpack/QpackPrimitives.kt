@@ -109,7 +109,15 @@ internal class QpackReader(
         limits: QpackLimits,
     ): String {
         val huffman = (peek() shr prefixBits) and 1 == 1
-        val len = readInt(prefixBits, limits)
+        // a length past the integer range is a string longer than we decode too (RFC 9204 section 7.4), not a broken stream
+        val len =
+            try {
+                readInt(prefixBits, limits)
+            } catch (e: QpackTruncated) {
+                throw e
+            } catch (_: QpackError) {
+                tooLong(limits.maxInteger, limits)
+            }
         // ceilings first (a Huffman literal decodes to at least 8/30 of its length), then "not all here yet"
         if (len > limits.maxStringLength.toLong() * (if (huffman) 4 else 1)) tooLong(len, limits)
         if (len > remaining) {

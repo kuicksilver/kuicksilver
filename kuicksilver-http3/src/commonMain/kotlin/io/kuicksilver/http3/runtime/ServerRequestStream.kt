@@ -151,7 +151,7 @@ internal suspend fun handleRequestStream(
             } catch (
                 e: StreamFailure,
             ) {
-                reject431(st)
+                reject431(st, e.code)
                 return@with
             } catch (e: StreamAbandoned) {
                 return@with
@@ -218,7 +218,7 @@ internal suspend fun handleRequestStream(
         val bodyLimit = if (parsed.method == "CONNECT") null else contentLength(parsed.regular)
         pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, bodyLimit, tunnel = { req.tunnel }) { f ->
             // the 431 claims the response on this dispatcher first: an application's respond() meanwhile finds it taken
-            if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && req.claimResponseFor431()) reject431(st) else abort(st, f.code)
+            if (f.error is Http3Exception.FieldSectionTooLarge && req.claimResponseFor431()) reject431(st, f.code) else abort(st, f.code)
             req.done()
         }
         req.receiveEnded()
@@ -253,10 +253,16 @@ private suspend fun H3Session.reject425(st: QuicStream) {
     runCatching { cancelSections(st) }
 }
 
-/** 431 and STOP_SENDING H3_EXCESSIVE_LOAD (RFC 9114 section 4.2.2; quic-go CVE-2025-64702). */
-private suspend fun H3Session.reject431(st: QuicStream) {
+/**
+ * 431 and STOP_SENDING (RFC 9114 section 4.2.2; quic-go CVE-2025-64702): H3_EXCESSIVE_LOAD, or [stopCode]
+ * QPACK_DECOMPRESSION_FAILED for a value longer than we decode, the stream error RFC 9204 section 7.4 requires.
+ */
+private suspend fun H3Session.reject431(
+    st: QuicStream,
+    stopCode: Long = Http3ErrorCode.EXCESSIVE_LOAD,
+) {
     runCatching {
-        st.stopSending(Http3ErrorCode.EXCESSIVE_LOAD)
+        st.stopSending(stopCode)
         st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildResponse(431, Http3Headers.Empty)))
         afterReject431HeadersForTest?.invoke(st)
         st.output.flushAndClose()

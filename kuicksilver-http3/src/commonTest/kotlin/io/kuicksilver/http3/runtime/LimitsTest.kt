@@ -18,6 +18,7 @@ import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -400,6 +401,9 @@ class LimitsTest {
                 st.output.writeFully(raw.headers(st.id, GET + ("x-big" to "v".repeat(65_600))))
                 peerMayHaveClosed { st.output.flush() }
                 assertEquals("431", statusOf(st.id, st.input.readAllBytes()))
+                // the 431 goes with the stream error RFC 9204 section 7.4 requires for a value too long to decode
+                @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, withTimeout(5.seconds) { st.awaitSendStopped() })
                 assertTrue(!server.closed.isCompleted)
                 // another request on the same connection is served
                 val served =
@@ -426,19 +430,24 @@ class LimitsTest {
                 val client = Http3Connection.client(c)
                 val raw = RawPeer(s)
                 raw.openControl()
+                val stopped = CompletableDeferred<Long>()
                 launch {
                     val st = s.acceptBidi()
                     st.input.readAllBytes()
                     peerMayHaveClosed {
                         st.output.writeFully(raw.headers(st.id, listOf(":status" to "200", "set-cookie" to "c".repeat(70_000))))
-                        st.output.flushAndClose()
+                        st.output.flush() // no FIN: the client's STOP_SENDING carries its code
                     }
+                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                    stopped.complete(withTimeout(5.seconds) { st.awaitSendStopped() })
                     val st2 = s.acceptBidi()
                     st2.input.readAllBytes()
                     st2.output.writeFully(raw.headers(st2.id, listOf(":status" to "204")))
                     st2.output.flushAndClose()
                 }
                 assertFailsWith<Http3Exception.FieldSectionTooLarge> { client.request(get()) }
+                // RFC 9204 section 7.4: a value longer than we decode is QPACK_DECOMPRESSION_FAILED on the stream
+                assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, stopped.await())
                 assertEquals(204, client.request(get()).status)
                 assertTrue(!client.closed.isCompleted)
             }
