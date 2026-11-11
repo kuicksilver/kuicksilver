@@ -217,7 +217,7 @@ internal class RequestFrames(
                 if (b and 0x80 == 0) break
             }
         }
-        val complete = n == 1 && value < 0xff || n > 1 && prefix[n - 1].toInt() and 0x80 == 0
+        val complete = (n == 1 && value < 0xff) || (n > 1 && prefix[n - 1].toInt() and 0x80 == 0)
         if (complete && value >= 0) hook(value)
         ahead((len - n).toLong())
         return prefix.copyOf(n) + readGrowing(len - n)

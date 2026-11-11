@@ -162,7 +162,6 @@ internal class StreamManager(
 
     fun receivedEarly(id: Long): Boolean = id in early
 
-    /** The receiving part of [id] holds or held every byte up to the FIN ("Data Recvd" or "Data Read", RFC 9000 section 3.2). */
     /**
      * Bytes [id] could still send now without waiting for a MAX_STREAM_DATA or MAX_DATA: the smaller of its own and the
      * connection's credit, less what it already holds unsent. 0 for a stream that cannot send.
@@ -173,6 +172,7 @@ internal class StreamManager(
         return (minOf(limit.available, connSend.available) - (s.written - s.sentEnd)).coerceAtLeast(0)
     }
 
+    /** The receiving part of [id] holds or held every byte up to the FIN ("Data Recvd" or "Data Read", RFC 9000 section 3.2). */
     fun receivedAll(id: Long): Boolean = streams[id]?.recv?.state.let { it == RecvState.DataRecvd || it == RecvState.DataRead }
 
     /** After an accepted 0-RTT: streams we opened take the server's new initial limits (they only grow). */

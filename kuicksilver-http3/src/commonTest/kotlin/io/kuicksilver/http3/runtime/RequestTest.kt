@@ -12,10 +12,10 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Settings
-import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
@@ -715,7 +715,15 @@ class RequestTest {
                     assertFailsWith<IllegalArgumentException> { r.sendInformational(103, cl) }
                     assertFailsWith<IllegalArgumentException> { r.respond(204, cl) }
                 }
-                val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.request(get("/")).body.readAllBytes() }.exceptionOrNull() }
+                val e =
+                    withTimeoutOrNull(3.seconds) {
+                        runCatching {
+                            p.client
+                                .request(get("/"))
+                                .body
+                                .readAllBytes()
+                        }.exceptionOrNull()
+                    }
                 assertIs<Http3Exception>(e, "the client sees the reset: $e")
             }
             H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
@@ -736,7 +744,15 @@ class RequestTest {
             for (cl in listOf(listOf("content-length" to "abc"), listOf("content-length" to "3", "content-length" to "4"))) {
                 H3Pair.open().useScoped { p ->
                     launch { assertFailsWith<IllegalArgumentException> { p.server.acceptRequest().respond(200, Http3Headers(cl)) } }
-                    val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.request(get("/")).body.readAllBytes() }.exceptionOrNull() }
+                    val e =
+                        withTimeoutOrNull(3.seconds) {
+                            runCatching {
+                                p.client
+                                    .request(get("/"))
+                                    .body
+                                    .readAllBytes()
+                            }.exceptionOrNull()
+                        }
                     assertIs<Http3Exception>(e, "the client sees the reset: $e")
                 }
             }
@@ -757,7 +773,15 @@ class RequestTest {
                         assertIs<ContentLengthMismatch>(failure, "$content: $failure")
                     }
                     // the reset may overtake the response head (RFC 9000 section 3.2: a reset stream's data may be discarded)
-                    val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.request(get("/")).body.readAllBytes() }.exceptionOrNull() }
+                    val e =
+                        withTimeoutOrNull(3.seconds) {
+                            runCatching {
+                                p.client
+                                    .request(get("/"))
+                                    .body
+                                    .readAllBytes()
+                            }.exceptionOrNull()
+                        }
                     val reset = assertIs<Http3Exception.Protocol>(e, "$content: $e")
                     assertEquals(Http3ErrorCode.REQUEST_CANCELLED, reset.h3Code)
                 }
@@ -769,13 +793,30 @@ class RequestTest {
         h3Test {
             for (content in listOf("abc", "abcdefg")) {
                 H3Pair.open().useScoped { p ->
-                    launch { runCatching { p.server.acceptRequest().body.readAllBytes() } }
+                    launch {
+                        runCatching {
+                            p.server
+                                .acceptRequest()
+                                .body
+                                .readAllBytes()
+                        }
+                    }
                     val post =
                         io.kuicksilver.http3.http3Request("POST", "server.test", "/") {
                             headers = Http3Headers.of("content-length" to "5")
-                            body = io.ktor.utils.io.ByteReadChannel(content)
+                            body =
+                                io.ktor.utils.io
+                                    .ByteReadChannel(content)
                         }
-                    val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.request(post).body.readAllBytes() }.exceptionOrNull() }
+                    val e =
+                        withTimeoutOrNull(3.seconds) {
+                            runCatching {
+                                p.client
+                                    .request(post)
+                                    .body
+                                    .readAllBytes()
+                            }.exceptionOrNull()
+                        }
                     assertIs<ContentLengthMismatch>(e, "$content: $e")
                 }
             }

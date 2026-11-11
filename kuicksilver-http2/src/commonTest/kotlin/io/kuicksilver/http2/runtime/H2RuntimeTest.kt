@@ -143,11 +143,12 @@ class H2RuntimeTest {
                 )
             for ((status, fields) in heads) {
                 val failure = CompletableDeferred<Throwable?>()
-                val job = backgroundScope.launch {
-                    val r = server.requests.receive()
-                    failure.complete(runCatching { r.respond(status, fields, endStream = true) }.exceptionOrNull())
-                    r.release()
-                }
+                val job =
+                    backgroundScope.launch {
+                        val r = server.requests.receive()
+                        failure.complete(runCatching { r.respond(status, fields, endStream = true) }.exceptionOrNull())
+                        r.release()
+                    }
                 val s = client.get()
                 val e = assertFailsWith<Http2Exception> { s.response() }
                 assertIs<Http2Exception.StreamReset>(e, "$status $fields: $e")

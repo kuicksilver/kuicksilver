@@ -35,9 +35,9 @@ import io.kuicksilver.http3.webtransport.WtTokens
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
-import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -594,7 +594,9 @@ internal class ServerRequestImpl(
             throw IllegalArgumentException("invalid response: ${m.reason}")
         }
         if (status in 100..199 || status == 204 || (method == "CONNECT" && status in 200..299)) {
-            require(headers["content-length"] == null) { "content-length in a $status response${if (method == "CONNECT") " to CONNECT" else ""}" }
+            require(
+                headers["content-length"] == null,
+            ) { "content-length in a $status response${if (method == "CONNECT") " to CONNECT" else ""}" }
         }
     }
 
@@ -652,7 +654,11 @@ internal class ResponseWriterImpl(
                     if (n > 0 && !discardBody) {
                         // RFC 9114 section 4.1.2: content beyond its content-length makes the response malformed; the piece
                         // that would cross it is not sent, and the response is abandoned (below)
-                        if (declaredLength != null && sent + n > declaredLength) throw ContentLengthMismatch(declaredLength, sent + n, more = true)
+                        if (declaredLength != null &&
+                            sent + n > declaredLength
+                        ) {
+                            throw ContentLengthMismatch(declaredLength, sent + n, more = true)
+                        }
                         st.output.writeFrame(FrameType.DATA, buf, 0, n)
                         st.output.flush()
                         sent += n

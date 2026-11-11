@@ -183,7 +183,9 @@ class ServerH3Test {
             val (server, port) = tlsServer { routing { post("/") { call.respondText(call.receive<String>()) } } }
             try {
                 h3(port) { c ->
-                    val body = io.ktor.utils.io.ByteChannel()
+                    val body =
+                        io.ktor.utils.io
+                            .ByteChannel()
                     val interim = ArrayList<Int>()
                     val r =
                         kotlinx.coroutines.withTimeout(10.seconds) {

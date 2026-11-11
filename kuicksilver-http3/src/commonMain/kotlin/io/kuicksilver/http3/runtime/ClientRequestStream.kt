@@ -28,8 +28,8 @@ import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
-import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred

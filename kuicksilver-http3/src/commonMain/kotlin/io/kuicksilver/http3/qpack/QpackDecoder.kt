@@ -261,10 +261,10 @@ internal class QpackDecoder(
             }
         }
 
-    /** RFC 9204 section 4.5.1.1. */
     /** The Required Insert Count of a field section whose prefix encodes [encoded] (section 4.5.1.1); QpackError when invalid. */
     fun requiredInsertCount(encoded: Long): Long = requiredInsertCount(QpackReader(ByteArray(0), 0, 0), encoded)
 
+    /** RFC 9204 section 4.5.1.1. */
     private fun requiredInsertCount(
         r: QpackReader,
         encoded: Long,
