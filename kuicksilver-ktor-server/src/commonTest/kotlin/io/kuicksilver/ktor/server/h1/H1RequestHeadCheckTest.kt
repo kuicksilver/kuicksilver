@@ -219,6 +219,21 @@ class H1RequestHeadCheckTest {
      * application as `a`; the server now hands on the value as sent (only SP and HTAB are OWS, section 5.6.3), the second
      * of two lines too. Before the fix that preceded this, a 400; before that, the stripped value.
      */
+
+    /**
+     * obs-text that is not UTF-8 reaches the application byte for byte (RFC 9110 section 5.5: opaque data), each byte as
+     * the char of the same code (ISO-8859-1): `caf<E9>` is `café`. Ktor's parser decodes field values as UTF-8 and made the
+     * byte U+FFFD, which lost it. UTF-8 obs-text stays UTF-8 (`tabsSpacesAndObsTextInAFieldValueAreAccepted`).
+     */
+    @Test fun obsTextThatIsNotUtf8IsPassedOnByteForByte() =
+        runTest {
+            val head =
+                "GET / HTTP/1.1\r\nHost: s\r\nX-A: caf".encodeToByteArray() + byteArrayOf(0xE9.toByte()) +
+                    " \r\nX-A: \u00e9t\u00e9\r\nConnection: close\r\n\r\n".encodeToByteArray()
+            val response = exchange(head)
+            assertTrue(response.endsWith("GET / HTTP/1.1 [caf\u00e9|\u00e9t\u00e9]"), response)
+        }
+
     @Test fun unicodeSpaceBeforeAFieldValueIsKept() =
         runTest {
             for ((field, value) in listOf(

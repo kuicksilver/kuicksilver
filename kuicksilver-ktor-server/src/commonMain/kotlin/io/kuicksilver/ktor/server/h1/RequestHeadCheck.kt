@@ -127,7 +127,7 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
 internal class FieldSectionCheck(
     /** Offsets of the colons that end a Host value (an empty port), which the caller turns into SP. */
     val emptyPortColons: List<Int>,
-    /** Values that start with obs-text Ktor's parser takes for whitespace, as sent. */
+    /** Values that start with obs-text Ktor's parser takes for whitespace, as sent, and values that are not UTF-8, as ISO-8859-1. */
     val keptValues: List<KeptFieldValue>,
     /** The values of the Host, Transfer-Encoding and Content-Length lines, as sent (without OWS), by lower-case name. */
     private val framingValues: Map<String, List<String>>,
@@ -179,7 +179,11 @@ internal fun checkFieldSection(fields: ByteArray): FieldSectionCheck {
         }
         var last = end - 1
         while (last >= value && (fields[last] == SP_BYTE || fields[last] == HTAB_BYTE)) last--
-        if (value < end && unicodeSpaceLength(fields, value) > 0) {
+        val opaque = if (value <= last) latin1IfNotUtf8(fields, value, last + 1) else null
+        if (opaque != null) {
+            // obs-text that is not UTF-8 (RFC 9110 section 5.5: opaque data): byte for byte, never U+FFFD
+            kept += KeptFieldValue(name, occurrence, opaque)
+        } else if (value < end && unicodeSpaceLength(fields, value) > 0) {
             kept += KeptFieldValue(name, occurrence, fields.decodeToString(value, last + 1))
         }
         if (name == "host" && last >= value && fields[last] == ':'.code.toByte()) emptyPortColons += last
@@ -577,3 +581,25 @@ private const val VT_BYTE: Byte = 0x0B
 private const val FF_BYTE: Byte = 0x0C
 private const val CR_BYTE: Byte = 0x0D
 private const val LF_BYTE: Byte = 0x0A
+
+/**
+ * The bytes `[from, to)` of a field value as ISO-8859-1 (one char per byte, U+0000 to U+00FF) when they are not valid
+ * UTF-8, else null. Ktor's parser decodes field values as UTF-8 and turns such bytes into U+FFFD, which loses them; RFC
+ * 9110 section 5.5 has a recipient treat obs-text as opaque data, so the value reaches the application byte for byte
+ * (each char's code is the byte sent). Valid UTF-8, the common case (`é` sent as `C3 A9`), stays UTF-8.
+ */
+internal fun latin1IfNotUtf8(
+    bytes: ByteArray,
+    from: Int,
+    to: Int,
+): String? {
+    var ascii = true
+    for (i in from until to) if (bytes[i] < 0) ascii = false
+    if (ascii) return null
+    try {
+        bytes.decodeToString(from, to, throwOnInvalidSequence = true)
+        return null
+    } catch (_: CharacterCodingException) {
+        return CharArray(to - from) { (bytes[from + it].toInt() and 0xFF).toChar() }.concatToString()
+    }
+}

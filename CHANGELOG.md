@@ -1015,6 +1015,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   for "an immediate 100 (Continue) response" unless the head alone determines a final status: the 100 now goes out as
   the call is dispatched, on all three versions, and the statuses the engine decides from the head (400, 413, 425, 431,
   501) still go out without it. Content the handler then leaves unread is drained like any other unread body.
+- Ktor server and client, HTTP/1.1: a field value with obs-text that is not valid UTF-8 (`filename="caf<E9>"` in
+  Latin-1) reached the application with U+FFFD in place of those bytes, since Ktor's parser decodes field values as
+  UTF-8; RFC 9110 §5.5 has a recipient treat obs-text as opaque data. Such a value now arrives byte for byte, each byte
+  as the char of the same code (ISO-8859-1); a value that is valid UTF-8 is decoded as UTF-8 as before.
 
 ## [0.2.1] - 2026-11-04
 

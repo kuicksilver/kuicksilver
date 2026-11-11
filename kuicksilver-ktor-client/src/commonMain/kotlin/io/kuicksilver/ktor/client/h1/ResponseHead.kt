@@ -157,7 +157,8 @@ internal class KeptFieldValue(
 
 /**
  * The value of the field line [f] (name, colon, value; unfolded, without its line end) when it starts, after OWS, with a
- * Unicode space Ktor's parser would skip, without its trailing OWS; null otherwise. Counts the line's name in
+ * Unicode space Ktor's parser would skip, without its trailing OWS, or, as ISO-8859-1, when it is not UTF-8 (Ktor's parser
+ * puts U+FFFD there); null otherwise. Counts the line's name in
  * [occurrences] either way.
  */
 private fun keptValueOf(
@@ -171,10 +172,34 @@ private fun keptValueOf(
     occurrences[name] = occurrence + 1
     var start = colon + 1
     while (start < f.size && isOws(f[start])) start++
-    if (start == f.size || unicodeSpaceLength(f, start) == 0) return null
+    if (start == f.size) return null
     var end = f.size
     while (end > start && isOws(f[end - 1])) end--
+    // obs-text that is not UTF-8 (RFC 9110 section 5.5: opaque data): byte for byte, never U+FFFD (Ktor decodes UTF-8)
+    latin1IfNotUtf8(f, start, end)?.let { return KeptFieldValue(name, occurrence, it) }
+    if (unicodeSpaceLength(f, start) == 0) return null
     return KeptFieldValue(name, occurrence, f.decodeToString(start, end))
+}
+
+/**
+ * The bytes `[from, to)` of a field value as ISO-8859-1 (one char per byte) when they are not valid UTF-8, else null: the
+ * value then reaches the application byte for byte instead of with U+FFFD from Ktor's UTF-8 decode. The same as the
+ * server engine's.
+ */
+private fun latin1IfNotUtf8(
+    bytes: ByteArray,
+    from: Int,
+    to: Int,
+): String? {
+    var ascii = true
+    for (i in from until to) if (bytes[i] < 0) ascii = false
+    if (ascii) return null
+    try {
+        bytes.decodeToString(from, to, throwOnInvalidSequence = true)
+        return null
+    } catch (_: CharacterCodingException) {
+        return CharArray(to - from) { (bytes[from + it].toInt() and 0xFF).toChar() }.concatToString()
+    }
 }
 
 /**

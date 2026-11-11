@@ -12,6 +12,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLineStrict
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -241,6 +242,27 @@ class H1ResponseHeadTest {
         }
 
     /** Any other value that starts with a Unicode space reaches the application as sent. */
+
+    /**
+     * obs-text that is not UTF-8 reaches the application byte for byte (RFC 9110 section 5.5: opaque data), each byte as
+     * the char of the same code (ISO-8859-1), instead of U+FFFD from Ktor's UTF-8 decode; UTF-8 obs-text stays UTF-8.
+     */
+    @Test fun obsTextThatIsNotUtf8IsPassedOnByteForByte() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            backgroundScope.launch {
+                while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+                wire.fromServer.writeFully(
+                    "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"caf".encodeToByteArray() + byteArrayOf(0xE9.toByte()) +
+                        "\"\r\nX-B: \u00e9t\u00e9\r\nContent-Length: 0\r\n\r\n".encodeToByteArray(),
+                )
+                wire.fromServer.flush()
+            }
+            val response = exchange(wire, get)
+            assertEquals("attachment; filename=\"caf\u00e9\"", response.headers["Content-Disposition"])
+            assertEquals("\u00e9t\u00e9", response.headers["X-B"])
+        }
+
     @Test fun unicodeSpaceBeforeAFieldValueIsKept() =
         runTest(timeout = 20.seconds) {
             val wire = Wire()
