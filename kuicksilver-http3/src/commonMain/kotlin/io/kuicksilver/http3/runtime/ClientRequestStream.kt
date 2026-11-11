@@ -196,6 +196,11 @@ private suspend fun H3Session.requestOnDispatcher(
         // RFC 9220 section 3 (RFC 8441 section 4): `:protocol` only once the server enabled Extended CONNECT in its SETTINGS
         val connectProtocolEnabled = r.protocol != null && awaitPeerSettings().enableConnectProtocol
         PseudoHeaders.requireValidRequest(fields, connectProtocolEnabled)
+        // RFC 9114 section 4.1.2: a request without content cannot match a non-zero content-length (sendBody holds a body to it)
+        if (r.body == null && r.method != "CONNECT") {
+            val declared = r.headers["content-length"]?.toLongOrNull()
+            require(declared == null || declared == 0L) { "invalid request: content-length $declared without a body" }
+        }
         checkPeerFieldLimit(-1, fields)
         val st =
             try {

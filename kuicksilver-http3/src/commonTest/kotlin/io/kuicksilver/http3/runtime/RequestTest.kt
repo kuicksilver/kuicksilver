@@ -789,19 +789,48 @@ class RequestTest {
             }
         }
 
+    /**
+     * RFC 9114 section 4.1.2: a request without a body (trailers only, or nothing) cannot carry a non-zero
+     * content-length: it fails locally with IllegalArgumentException before a stream is opened.
+     */
+    @Test fun negative_requestWithoutBodyButContentLengthFailsLocally() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                for (withTrailers in listOf(false, true)) {
+                    val post =
+                        http3Request("POST", "server.test", "/") {
+                            headers = Http3Headers.of("content-length" to "5")
+                            if (withTrailers) trailers = { Http3Headers.of("x-t" to "1") }
+                        }
+                    assertFailsWith<IllegalArgumentException> { p.client.request(post) }
+                }
+                // a zero length without a body is fine
+                launch {
+                    p.server
+                        .acceptRequest()
+                        .respond(204)
+                        .finish()
+                }
+                val zero = http3Request("POST", "server.test", "/") { headers = Http3Headers.of("content-length" to "0") }
+                assertEquals(204, p.client.request(zero).status)
+            }
+        }
+
     /** [negative_sentContentLengthMustBeValid] for a request's content. */
     @Test fun negative_requestContentMustMatchItsContentLength() =
         h3Test {
             for (content in listOf("abc", "abcdefg")) {
                 H3Pair.open().useScoped { p ->
-                    launch {
-                        runCatching {
-                            p.server
-                                .acceptRequest()
-                                .body
-                                .readAllBytes()
+                    // a request reset before its HEADERS were read never surfaces: the reader is not waited for
+                    val reader =
+                        launch {
+                            runCatching {
+                                p.server
+                                    .acceptRequest()
+                                    .body
+                                    .readAllBytes()
+                            }
                         }
-                    }
                     val post =
                         io.kuicksilver.http3.http3Request("POST", "server.test", "/") {
                             headers = Http3Headers.of("content-length" to "5")
@@ -819,6 +848,7 @@ class RequestTest {
                             }.exceptionOrNull()
                         }
                     assertIs<ContentLengthMismatch>(e, "$content: $e")
+                    reader.cancel()
                 }
             }
         }
