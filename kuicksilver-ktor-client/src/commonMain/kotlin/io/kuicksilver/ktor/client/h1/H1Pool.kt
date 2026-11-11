@@ -519,7 +519,9 @@ internal class H1Pool(
         val webSocket = data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY)
         // a WebSocket is CONNECTING from its connection until the server answers its handshake (RFC 6455 section 4.1)
         if (!webSocket) return exchange(data, callContext, preopened, dns, proxy, null, onSelected)
-        val resolving = kotlin.time.TimeSource.Monotonic.markNow()
+        val resolving =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
         val keys = remoteHosts(data, dns, proxy)
         return exchange(data, callContext, preopened, dns, proxy, keys, onSelected, resolving.elapsedNow().inWholeMilliseconds)
     }

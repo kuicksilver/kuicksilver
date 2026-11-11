@@ -557,8 +557,10 @@ class TlsConnectionTest {
             val serverJob = kotlinx.coroutines.Job()
             val (c, s) =
                 withTimeout(20.seconds) {
-                    val c = async(Dispatchers.Default) { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
-                    val s = async(Dispatchers.Default) { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server(), serverJob) }
+                    val c =
+                        async(Dispatchers.Default) { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
+                    val s =
+                        async(Dispatchers.Default) { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server(), serverJob) }
                     c.await() to s.await()
                 }
             assertTrue(!c.nativeFreedForTest && !s.nativeFreedForTest)

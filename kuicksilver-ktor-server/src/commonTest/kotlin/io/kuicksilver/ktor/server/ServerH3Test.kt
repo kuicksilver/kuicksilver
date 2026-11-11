@@ -702,7 +702,10 @@ class ServerH3Test {
             val idle = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
             try {
                 // a QUIC connection with ALPN h3 that sends nothing and never closes: the idle browser connection
-                idle.connect(InetSocketAddress("127.0.0.1", port), QuicClientConfig.Builder(ServerFixtures.clientTls(alpn = listOf("h3"))).build())
+                idle.connect(
+                    InetSocketAddress("127.0.0.1", port),
+                    QuicClientConfig.Builder(ServerFixtures.clientTls(alpn = listOf("h3"))).build(),
+                )
                 kotlinx.coroutines.withTimeout(5.seconds) {
                     while (server.engine.h3ListenersForProbe.sumOf { it.size() } == 0) delay(10)
                 }

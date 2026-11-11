@@ -110,6 +110,7 @@ internal class SocketDispatcher(
         val batch = PacketBatch(SLOTS, EndpointLoop.SLOT_SIZE, allocate)
         val direct = io as? DirectReceive
         val icmp = io as? PacketTooBigSource
+
         /** One receive round: the datagrams to their loops, then the ICMP messages; answers how many datagrams came. */
         fun handOut(): Int {
             for (i in 0 until batch.count) {
