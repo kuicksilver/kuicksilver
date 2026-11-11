@@ -588,13 +588,22 @@ internal class ResponseImpl(
     }
 
     override fun cancel(code: Long) {
+        val sent = clientStreamCode(code)
         pump.cancel()
         sender?.cancel()
-        runCatching { st.stopSending(code) }
-        runCatching { st.reset(code) }
+        runCatching { st.stopSending(sent) }
+        runCatching { st.reset(sent) }
         cancelSectionsAfterPump()
-        val e = CancellationException("response cancelled with ${Http3ErrorCode.name(code)}")
+        val e = CancellationException("response cancelled with ${Http3ErrorCode.name(sent)}")
         bodyChannel.cancel(e)
         trailersDeferred.cancel(e)
     }
 }
+
+/**
+ * The code a client resets or stops a request stream with: RFC 9114 section 4.1.1, "Clients MUST NOT use the
+ * H3_REQUEST_REJECTED error code, except when a server has requested closure of the request stream with this error
+ * code" (it says the server did not process the request), so an application's H3_REQUEST_REJECTED becomes
+ * H3_REQUEST_CANCELLED.
+ */
+internal fun clientStreamCode(code: Long): Long = if (code == Http3ErrorCode.REQUEST_REJECTED) Http3ErrorCode.REQUEST_CANCELLED else code

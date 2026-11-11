@@ -358,7 +358,7 @@ internal class Http3StreamImpl(
 
     override fun reset(code: Long) {
         resetSent = true
-        st.reset(code)
+        st.reset(if (isClient) clientStreamCode(code) else code)
         onReset()
     }
 
@@ -367,6 +367,6 @@ internal class Http3StreamImpl(
 
     override fun stopSending(code: Long) {
         onStopSending?.invoke() // first: the input's end that follows must not read as the peer's clean FIN
-        st.stopSending(code)
+        st.stopSending(if (isClient) clientStreamCode(code) else code)
     }
 }

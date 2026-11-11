@@ -637,6 +637,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: `Http3Response.cancel(code)` and a client `Http3Stream`'s `reset`/`stopSending` sent H3_REQUEST_REJECTED
+  when the application passed it, a code clients MUST NOT use (RFC 9114 section 4.1.1: it tells that the server did not
+  process the request). It now goes out as H3_REQUEST_CANCELLED.
 - HTTP/3 client over 0-RTT (RFC 9114 section 7.2.4.2): the client now stores the server's SETTINGS with its session
   tickets ("Clients SHOULD store the settings") and complies with them in 0-RTT until the new connection's SETTINGS
   arrive (a stored SETTINGS_MAX_FIELD_SECTION_SIZE bounds the early requests). When the server accepted 0-RTT and then

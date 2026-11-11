@@ -161,6 +161,9 @@ public interface Http3Response {
     /** Sends a new priority signal for this request (PRIORITY_UPDATE, RFC 9218 section 7) and applies it to our own sending. */
     public suspend fun updatePriority(priority: StreamPriority)
 
-    /** Abandons the response: STOP_SENDING (and RESET_STREAM if the request body is still being sent) with [code]. */
+    /**
+     * Abandons the response: STOP_SENDING (and RESET_STREAM if the request body is still being sent) with [code].
+     * H3_REQUEST_REJECTED, which clients MUST NOT use (RFC 9114 section 4.1.1), goes out as H3_REQUEST_CANCELLED.
+     */
     public fun cancel(code: Long = Http3ErrorCode.REQUEST_CANCELLED)
 }

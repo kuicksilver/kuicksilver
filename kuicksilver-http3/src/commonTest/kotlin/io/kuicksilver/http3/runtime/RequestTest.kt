@@ -21,6 +21,7 @@ import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -819,6 +820,50 @@ class RequestTest {
                         }
                     assertIs<ContentLengthMismatch>(e, "$content: $e")
                 }
+            }
+        }
+
+    /**
+     * RFC 9114 section 4.1.1: "Clients MUST NOT use the H3_REQUEST_REJECTED error code". An application that cancels a
+     * response, or resets or stops an Extended CONNECT stream, with it sends H3_REQUEST_CANCELLED instead.
+     */
+    @Test fun negative_clientNeverSendsRequestRejected() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(io.kuicksilver.http3.frame.SettingsId.ENABLE_CONNECT_PROTOCOL to 1L))
+                val stops = kotlinx.coroutines.channels.Channel<Long>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                val resets = kotlinx.coroutines.channels.Channel<Long>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                launch {
+                    repeat(2) {
+                        val st = s.acceptBidi()
+                        // the request's HEADERS (and nothing more yet), then a 200 that leaves the stream open
+                        peerMayHaveClosed {
+                            st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                            st.output.flush()
+                        }
+                        launch {
+                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                            stops.send(st.awaitSendStopped())
+                        }
+                        launch {
+                            val e = runCatching { st.input.readAllBytes() }.exceptionOrNull()
+                            val reset = generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Reset>().firstOrNull()
+                            if (reset != null) resets.send(reset.code)
+                        }
+                    }
+                }
+                val r = client.request(get())
+                r.cancel(Http3ErrorCode.REQUEST_REJECTED)
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { stops.receive() })
+                val tunnel = client.connect(get("/chat"), "websocket")
+                tunnel.stopSending(Http3ErrorCode.REQUEST_REJECTED)
+                tunnel.reset(Http3ErrorCode.REQUEST_REJECTED)
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { stops.receive() })
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { resets.receive() })
+                c.close()
             }
         }
 
