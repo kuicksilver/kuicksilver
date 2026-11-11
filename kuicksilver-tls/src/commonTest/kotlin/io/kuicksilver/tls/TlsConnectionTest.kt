@@ -43,6 +43,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -570,6 +571,61 @@ class TlsConnectionTest {
                 while (!c.nativeFreedForTest || !s.nativeFreedForTest) delay(10)
             }
             assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
+        }
+
+    /**
+     * The handshake reads the peer's chain and the negotiated parameters from ksl outside the session lock: a job cancelled
+     * as the handshake completes (an HTTP client call cancelled, a hard stop) must not free the native session under it.
+     * Freed at once from the job's end, it was gone while the handshake still used it (a use after free, and a cached
+     * session or SNI context assigned after the free was never released). It is freed once the handshake is over, and the
+     * handshake fails as a closed connection, not with ksl's "connection closed" state error.
+     */
+    @Test fun aJobCancelledAsTheHandshakeCompletesDoesNotFreeTheSessionUnderIt(): Unit =
+        runBlocking {
+            val pair = ChannelPair()
+            val clientJob = kotlinx.coroutines.Job()
+            var client: TlsConnection? = null
+            var freedUnderTheHandshake: Boolean? = null
+            TlsConnection.handshakeCompletedForTest = { c ->
+                if (c.contextForTest.config.role == TlsRole.Client) {
+                    client = c
+                    clientJob.cancel()
+                    delay(300) // the free, had it been launched, has run by now
+                    freedUnderTheHandshake = c.nativeFreedForTest
+                }
+            }
+            try {
+                val s = testScope.async { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server()) }
+                val e =
+                    assertFailsWith<TlsException.Protocol> {
+                        withTimeout(20.seconds) { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
+                    }
+                assertTrue(e.message!!.contains("connection closed"), e.message)
+                assertEquals(false, freedUnderTheHandshake, "the native session was freed while the handshake used it")
+                val c = assertNotNull(client)
+                withTimeout(5.seconds) { while (!c.nativeFreedForTest) delay(10) } // and freed once the handshake was over
+                runCatching { withTimeout(5.seconds) { s.await() } }.getOrNull()?.close()
+            } finally {
+                TlsConnection.handshakeCompletedForTest = null
+            }
+        }
+
+    /** Contexts cancelled at any moment of the handshake: never ksl's state error, never a crash (Native would abort). */
+    @Test fun contextsCancelledDuringTheHandshakeEndItCleanly(): Unit =
+        runBlocking {
+            repeat(40) { i ->
+                val pair = ChannelPair()
+                val clientJob = kotlinx.coroutines.Job()
+                val s = testScope.async { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server()) }
+                val c = testScope.async { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
+                delay((i % 10).toLong())
+                clientJob.cancel()
+                val outcome = runCatching { withTimeout(20.seconds) { c.await() } }
+                outcome.exceptionOrNull()?.let { assertIs<TlsException>(it, "attempt $i: $it") }
+                outcome.getOrNull()?.close()
+                pair.killServerToClient()
+                runCatching { withTimeout(5.seconds) { s.await() } }.getOrNull()?.close()
+            }
         }
 
     /** A transport that failed (a reset) during the handshake is the cause of the handshake's failure, not dropped. */

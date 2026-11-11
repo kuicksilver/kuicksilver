@@ -23,12 +23,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -82,6 +85,14 @@ public class TlsConnection private constructor(
     /** Set once by [close] or when the pumps' job ends; read by every thread (the pumps, the owner's close, a timeout). */
     private val closedFlag = AtomicBoolean(false)
     private val closed: Boolean get() = closedFlag.load()
+
+    /**
+     * [HANDSHAKING] until [start] is done with the handshake, then [ESTABLISHED]; [ENDED_IN_HANDSHAKE] when the pumps' job
+     * ended before that. The handshake calls into ksl outside the lock (the peer's chain, the negotiated parameters, the SNI
+     * ClientHello) and assigns [cached] and [overrideCtx]: the native session is never freed under it, so a job that ends
+     * meanwhile only marks it here and [start] frees it once the handshake has returned or failed.
+     */
+    private val phase = AtomicInt(HANDSHAKING)
     private var readerJob: Job? = null
     private var writerJob: Job? = null
 
@@ -208,6 +219,7 @@ public class TlsConnection private constructor(
         // withTimeoutOrNull: our own deadline becomes a TlsException, an outer cancellation stays a CancellationException
         withTimeoutOrNull(config.handshakeTimeout) { handshakeLoop() }
             ?: throw TlsException.Protocol(null, "TLS handshake timed out after ${config.handshakeTimeout}", HandshakeTimedOut())
+        handshakeCompletedForTest?.invoke(this)
         afterHandshake()
         readerJob = scope.launch { readerPump() }
         writerJob = scope.launch { writerPump() }
@@ -845,8 +857,23 @@ public class TlsConnection private constructor(
             inputChannel.cancel(TlsException.Protocol(null, "connection closed", null))
             outputChannel.cancel(TlsException.Protocol(null, "connection closed", null))
         }
+        if (phase.compareAndSet(HANDSHAKING, ENDED_IN_HANDSHAKE)) return // [handshakeOver] frees it
+        launchFree()
+    }
+
+    private fun launchFree() {
         @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
         kotlinx.coroutines.GlobalScope.launch(Dispatchers.Default) { lock.withLock { freeNative() } }
+    }
+
+    /**
+     * [start]'s handshake has returned or failed: from now on the end of the pumps' job frees the native session. False when
+     * it ended during the handshake (a close, the caller's job cancelled); the native session is then freed now.
+     */
+    private fun handshakeOver(): Boolean {
+        if (phase.compareAndSet(HANDSHAKING, ESTABLISHED)) return true
+        launchFree()
+        return false
     }
 
     /** Whether the native session was freed (tests). */
@@ -887,6 +914,13 @@ public class TlsConnection private constructor(
          * keeps as many as it uses at once. A server cannot see the client's parallelism before the connections arrive.
          */
         internal const val TCP_TICKETS: Int = 6
+
+        private const val HANDSHAKING = 0
+        private const val ESTABLISHED = 1
+        private const val ENDED_IN_HANDSHAKE = 2
+
+        /** Tests: runs on the handshake's coroutine after the last flight, before the negotiated parameters are read. */
+        @Volatile internal var handshakeCompletedForTest: (suspend (TlsConnection) -> Unit)? = null
 
         /** Ciphertext the reader pump takes from the transport, and plaintext it gathers, per pass. */
         internal const val READ_CHUNK: Int = 64 * 1024
@@ -982,14 +1016,24 @@ public class TlsConnection private constructor(
                     ctx.close() // a connection that could not be built never owned it
                     throw t
                 }
-            try {
-                c.handshake()
-            } catch (t: Throwable) {
-                c.close()
-                runCatching { transportOut.flushAndClose() }
-                throw t
-            } // clean close: the alert already written stays readable for the peer
-            return c
+            val failure =
+                try {
+                    c.handshake()
+                    null
+                } catch (t: Throwable) {
+                    t
+                }
+            if (failure == null && c.handshakeOver()) return c
+            c.close()
+            if (failure != null) c.handshakeOver() // the close during the handshake marked it: freed now
+            runCatching { transportOut.flushAndClose() } // clean close: the alert already written stays readable for the peer
+            // the connection's job ended under the handshake (the caller's context cancelled, a close): the caller's own
+            // cancellation if it is cancelled, else the connection closed, never ksl's "connection closed" state error
+            if (failure == null || (failure is IllegalStateException && c.closed)) {
+                currentCoroutineContext().ensureActive()
+                throw TlsException.Protocol(null, "connection closed during the TLS handshake (its context was cancelled)", failure)
+            }
+            throw failure
         }
 
         internal fun parseAlpn(wire: ByteArray): List<String> {

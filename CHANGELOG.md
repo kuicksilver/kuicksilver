@@ -952,8 +952,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   session it took) only from `close()`. A connection ended by cancelling the job of the `context` it was started in,
   which the API documents as ending it, kept that native state for the rest of the process, as did one whose owner never
   got it (see the Ktor server's TLS handshake deadline below). The native session is now freed whenever the
-  connection's job ends, and `input` and `output` fail as after `close()`. Two concurrent `close()` calls no longer both
-  run the tear-down (the closed flag was a plain field read and written from several threads).
+  connection's job ends, and `input` and `output` fail as after `close()`; when the job ends during the handshake (the
+  caller's context cancelled as the handshake completes), only once the handshake is over, since the handshake reads the
+  peer's chain and the negotiated parameters from the native session outside its lock (freed under it, that was a use
+  after free, and a cached session or SNI context taken meanwhile was never released). Such a handshake fails with
+  `TlsException.Protocol` "connection closed during the TLS handshake", or the caller's own `CancellationException`,
+  instead of an `IllegalStateException`. Two concurrent `close()` calls no longer both run the tear-down (the closed flag
+  was a plain field read and written from several threads).
 - TLS over TCP: a transport that failed (a reset, a socket error) during the handshake or under an established
   connection ended it with `TlsException.Protocol` "transport closed during the TLS handshake" or "transport closed
   without close_notify (truncation)" without a cause: ktor-io reads a channel failed with a cause as one that ended, and
