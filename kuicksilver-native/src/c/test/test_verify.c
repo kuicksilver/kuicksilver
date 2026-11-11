@@ -2,7 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0 */
 /* Verification contract (ADR-0011, ADR-0012): OpenSSL verifier, client pause, matcher on every path, EKU, chains. */
 #define _POSIX_C_SOURCE 200809L /* setenv, unsetenv, strdup under -std=c11 with glibc */
+#define _DARWIN_C_SOURCE        /* O_NOFOLLOW (test_files.h), which _POSIX_C_SOURCE hides on macOS */
 #include "test_common.h"
+#include "test_files.h"
 #include "ksl_internal.h" /* ksl_chain_security, for the bounds on chains built here */
 #include <openssl/x509_vfy.h>
 #include <openssl/pem.h>
@@ -417,7 +419,7 @@ static void test_system_store_missing(void) {
         uint8_t *d = read_file(TESTDATA "test-ca.der", &l);
         const unsigned char *p = d;
         X509 *x = d ? d2i_X509(NULL, &p, (long)l) : NULL;
-        FILE *f = x ? fopen("ksl_test_ca_bundle.pem", "w") : NULL;
+        FILE *f = x ? fopen_private("ksl_test_ca_bundle.pem") : NULL;
         int w = f && PEM_write_X509(f, x) == 1;
         if (f)
             fclose(f);
@@ -439,11 +441,11 @@ static void test_system_store_missing(void) {
         snprintf(hashed, sizeof hashed, "ksl_test_hashed/%08lx.0", x ? X509_subject_name_hash(x) : 0UL);
         mk_dir("ksl_test_plain");
         mk_dir("ksl_test_hashed");
-        FILE *f = x ? fopen("ksl_test_plain/test-ca.pem", "w") : NULL;
+        FILE *f = x ? fopen_private("ksl_test_plain/test-ca.pem") : NULL;
         int w = f && PEM_write_X509(f, x) == 1;
         if (f)
             fclose(f);
-        f = x ? fopen(hashed, "w") : NULL;
+        f = x ? fopen_private(hashed) : NULL;
         w = w && f && PEM_write_X509(f, x) == 1;
         if (f)
             fclose(f);
