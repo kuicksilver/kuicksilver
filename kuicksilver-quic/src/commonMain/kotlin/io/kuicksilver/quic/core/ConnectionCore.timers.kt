@@ -174,6 +174,16 @@ internal fun ConnectionCore.probeOtherHandshakeSpace(space: SpaceId) {
 }
 
 /**
+ * The 0-RTT packets in flight leave loss detection without a congestion signal (a rejection, a Retry or a Version Negotiation
+ * restart; RFC 9002 section 6.4), [each] seeing them first, and a probe owed in the Application space goes with them: it was
+ * owed for that flight, and left pending it would exempt a datagram from the window and the pacer (RFC 9002 section 7).
+ */
+internal fun ConnectionCore.discardZeroRttPackets(each: (SentPacket) -> Unit) {
+    loss.discardZeroRtt(each)
+    probePending[SpaceId.Application.ordinal] = 0
+}
+
+/**
  * A PTO probe carries the frames of the oldest unacknowledged packets that hold something to resend and that no earlier probe
  * took, rather than a bare PING (RFC 9002 section 6.2.4; [io.kuicksilver.quic.recovery.LossDetection.takeForProbe]).
  */

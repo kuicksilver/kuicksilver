@@ -149,6 +149,57 @@ class PtoProbeSpacesTest {
         }
     }
 
+    /**
+     * A probe owed in the Application space when the server rejects 0-RTT belonged to the rejected flight: it goes with the 0-RTT
+     * packets, or the next datagram would pass the window and the pacer as a probe (RFC 9002 section 7).
+     */
+    @Test fun aRejectionDropsTheProbeOwedForTheZeroRttFlight() {
+        KslLoader.ensureLoaded()
+        val ticket = ticket()
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(ticket))
+                    val id = c.openStream(bidi = true)
+                    c.writeStream(id, ByteArray(500), 0, 500, fin = true)
+                },
+            ) // no ServerEarlyData: the server rejects 0-RTT
+        try {
+            p.step()
+            val c = p.client
+            assertTrue(c.loss.space(SpaceId.Application).ackElicitingInFlight > 0, "0-RTT data in flight")
+            val s = assertNotNull(p.server)
+            val rejected = { p.clientEvents.any { it === ConnectionEvent.EarlyDataRejected } }
+            for (i in 0 until 10) {
+                p.deliver(s, p.toServer)
+                p.drainEvents(s, p.serverEvents)
+                p.deliver(c, p.toClient)
+                p.drainEvents(c, p.clientEvents)
+                if (c.tlsDirty) {
+                    // TLS runs on the client's next poll and completes the handshake there, with 0-RTT settled: run it here,
+                    // with a probe owed in the Application space
+                    c.tlsDirty = false
+                    c.probePending[SpaceId.Application.ordinal] = 1
+                    c.driveTls(p.now)
+                    p.drainEvents(c, p.clientEvents)
+                    if (rejected()) break
+                    c.probePending[SpaceId.Application.ordinal] = 0
+                }
+                p.poll(c, p.toServer, CoreFixtures.clientAddr, toServer = true)
+                p.poll(s, p.toClient, CoreFixtures.serverAddr, toServer = false)
+            }
+            assertTrue(rejected(), "0-RTT was rejected: ${p.clientEvents}")
+            val app = c.loss.space(SpaceId.Application).sent
+            assertTrue(app.none { it.zeroRtt }, "the rejected 0-RTT packets left flight")
+            assertEquals(0, c.probePending[SpaceId.Application.ordinal], "and the probe owed for them")
+        } finally {
+            p.close()
+            ticket.close()
+        }
+    }
+
     /** The long-header packet types (0 Initial, 1 0-RTT, 2 Handshake) of the datagram, in order. */
     private fun packetTypes(d: ByteArray): List<Int> {
         val out = ArrayList<Int>()
