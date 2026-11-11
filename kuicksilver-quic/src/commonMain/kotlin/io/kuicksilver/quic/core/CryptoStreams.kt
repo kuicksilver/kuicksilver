@@ -68,17 +68,12 @@ internal class CryptoStreams(
             )
         }
         val r = recv[level]
+        // after the handshake the smaller of the two caps (both on bytes TLS has not read: section 7.5)
+        val cap = if (handshakeDone && level == 3) minOf(outOfOrderCap, postHandshakeCap) else outOfOrderCap
         if (end >
-            r.readOffset + outOfOrderCap
+            r.readOffset + cap
         ) {
-            throw QuicWireException(TransportError.CRYPTO_BUFFER_EXCEEDED, 0x06, "CRYPTO data beyond the $outOfOrderCap-byte buffer")
-        }
-        if (handshakeDone && level == 3 && end > r.readOffset + postHandshakeCap) {
-            throw QuicWireException(
-                TransportError.CRYPTO_BUFFER_EXCEEDED,
-                0x06,
-                "more than $postHandshakeCap bytes of post-handshake CRYPTO buffered",
-            )
+            throw QuicWireException(TransportError.CRYPTO_BUFFER_EXCEEDED, 0x06, "CRYPTO data beyond the $cap-byte buffer")
         }
         r.insert(offset, data, off, len) // may refuse the frame (ReassemblyFull): nothing below is counted for a dropped packet
         if (end > received[level]) received[level] = end

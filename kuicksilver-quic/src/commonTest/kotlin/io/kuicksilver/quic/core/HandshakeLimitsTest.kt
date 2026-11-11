@@ -226,7 +226,8 @@ class HandshakeLimitsTest {
      * retransmissions over its life. Only bytes TLS has not read count; past the cap it is still CRYPTO_BUFFER_EXCEEDED.
      */
     @Test fun postHandshakeCryptoCapCountsOnlyUnreadBytes() {
-        val c = CryptoStreams(io.kuicksilver.quic.QuicLimits())
+        // a post-handshake cap below the out-of-order one, so the test sees the post-handshake rule itself
+        val c = CryptoStreams(io.kuicksilver.quic.QuicLimits(cryptoPostHandshake = 8192))
         val frame = PacketBuffer.of(ByteArray(1000))
         try {
             var read = 0L
@@ -235,9 +236,10 @@ class HandshakeLimitsTest {
                 c.deliver(3) { _, n -> read += n }
             }
             assertEquals(100_000L, read, "100 KB of tickets and their retransmissions, each read by TLS")
-            for (i in 0 until 65) c.onData(3, 100_000L + i * 1000L, frame, 0, 1000, handshakeDone = true) // 65,000 bytes unread
-            val e = assertFailsWith<QuicWireException> { c.onData(3, 165_000L, frame, 0, 1000, handshakeDone = true) }
-            assertEquals(0x0dL, e.code, "past 64 KiB unread: CRYPTO_BUFFER_EXCEEDED")
+            for (i in 0 until 8) c.onData(3, 100_000L + i * 1000L, frame, 0, 1000, handshakeDone = true) // 8,000 bytes unread
+            val e = assertFailsWith<QuicWireException> { c.onData(3, 108_000L, frame, 0, 1000, handshakeDone = true) }
+            assertEquals(0x0dL, e.code, "past 8 KiB unread: CRYPTO_BUFFER_EXCEEDED")
+            c.onData(2, 0L, frame, 0, 1000, handshakeDone = true) // the Handshake level keeps the out-of-order cap
         } finally {
             frame.close()
         }
