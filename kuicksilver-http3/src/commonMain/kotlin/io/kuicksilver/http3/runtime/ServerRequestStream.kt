@@ -181,6 +181,8 @@ internal suspend fun handleRequestStream(
                 req.receivedEarly = true
             } else if (policy is Http3EarlyDataPolicy.Reject425) {
                 reject425(st)
+                handedOff = true
+                req.done() // the request registered itself (its datagrams too): never handed over, it ends here
                 return@with
             } else {
                 earlyHeldForHandshake.incrementAndFetch()
@@ -189,7 +191,10 @@ internal suspend fun handleRequestStream(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Throwable) {
-                    return@with // the handshake failed: a replayed request never runs
+                    // the handshake failed: a replayed request never runs
+                    handedOff = true
+                    req.done()
+                    return@with
                 }
             }
         }

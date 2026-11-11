@@ -637,6 +637,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: a request that came in 0-RTT and was answered 425 under `Http3EarlyDataPolicy.Reject425`, or was held
+  for a handshake that then failed, stayed registered until the connection ended: its stream, its PRIORITY_UPDATE
+  routing and, for an Extended CONNECT, its datagram channel. It is now forgotten when it is answered or dropped.
 - HTTP/3 WebTransport: every session stayed reachable until its QUIC connection closed (a handler on the connection's
   end held it, with its CONNECT stream and request). A client that opens and closes sessions one after another on one
   connection to a server with `webTransport` grew the server's memory by about 10 KB per session for as long as it kept

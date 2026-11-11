@@ -734,6 +734,13 @@ class EarlyDataTest {
                     assertEquals("POST ok", r.body.readAllBytes().decodeToString())
                     assertEquals(1, c.session.early425Retries, "425 Too Early, then one retry after the handshake")
                     assertEquals(1, f.executions.load())
+                    // the rejected request is forgotten too, not only the one that ran (its stream, PRIORITY_UPDATE routing)
+                    val s = f.accepted.last().session
+                    val left =
+                        withTimeoutOrNull(5.seconds) {
+                            while (withContext(s.dispatcher) { s.activeServerRequests.isNotEmpty() }) kotlinx.coroutines.yield()
+                        }
+                    assertTrue(left != null, "a request the server answered with 425 is still registered")
                 }
             }
         }
