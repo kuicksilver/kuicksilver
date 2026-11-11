@@ -635,7 +635,7 @@ path under validation: the server sends a `PATH_CHALLENGE` there (and to the pre
 attacker replaying the client's packets), limits what it sends to the unvalidated address to three times what it
 received from it, and moves the connection only on a non-probing packet with the highest packet number seen. A NAT
 rebinding (same IP, new port) keeps the congestion window and RTT; a new IP starts from the initial window. When the
-new path never answers within max(3 × PTO, 6 × initial RTT) the server returns to the last validated path. A rebinding
+new path never answers within three times the larger of the PTO and a new path's PTO (about 3 s) the server returns to the last validated path. A rebinding
 that happens before the handshake is complete (the client's retransmitted Initials arrive from a new port) cannot be
 answered yet: the server follows the latest decrypted Initial or Handshake packet, with a fresh three-times budget for
 the new address, sends a `PATH_CHALLENGE` there first and repeats it every PTO (the client answers once it holds
@@ -667,7 +667,7 @@ Migration timing: a probe on a new path must carry a connection ID of the server
 observer cannot link the two networks (RFC 9000 section 9.5). The server issues its spare IDs, up to the client's
 `active_connection_id_limit` (default 4), in its first 1-RTT flight (section 5.1.1), so they normally arrive with the
 handshake. If the network changes before they did (a lost datagram, a peer that issues late), `probe()` does not
-reuse the active path's ID: it waits up to max(3 × PTO, 6 × initial RTT) for a `NEW_CONNECTION_ID`, probes as soon as
+reuse the active path's ID: it waits up to three times the larger of the PTO and a new path's PTO (about 3 s) for a `NEW_CONNECTION_ID`, probes as soon as
 one arrives, and otherwise fails with `PathFailureReason.NoSpareConnectionId` (`PathEvent.Failed.reason`,
 `PathValidationException.reason`) rather than as a silent path. Migrating right after `connect()` therefore needs no
 wait of its own. `paths` lists the live paths (the first is the one the connection started on), `activePath` is the one it sends on now,

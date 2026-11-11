@@ -170,8 +170,8 @@ class EndpointCoreTest {
         cep.remove(first)
         val second = cep.connect(clientConfig(), a2, now)
         assertEquals(4.milliseconds, startRtt(second).smoothed, "the first path still starts from the remembered RTT")
-        // the current PTO is about 3 x 4 ms here: the new path's 6 x kInitialRtt decides
-        assertEquals(333.milliseconds * 6, second.validationTimeout())
+        // the current PTO is about 3 x 4 ms here: the new path's PTO (kInitialRtt + 4 x kInitialRtt / 2, before confirmation) decides
+        assertEquals(333.milliseconds * 9, second.validationTimeout())
     }
 
     /** The memory is bounded (256 server addresses, the least recently stored dropped first) and a server endpoint stores nothing. */

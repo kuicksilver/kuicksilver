@@ -477,8 +477,10 @@ class PathTest {
         }
     }
 
-    @Test fun validationTimeoutUsesRfcFloor() {
-        // RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT) — with a 20 ms RTT the floor of 2 s applies
+    @Test fun validationTimeoutUsesTheNewPathPto() {
+        // RFC 9000 section 8.2.4: "three times the larger of the current PTO or the PTO for the new path (using kInitialRtt)" — with a
+        // 20 ms RTT the new path's 333 + 4 x 333 / 2 + 25 ms (max_ack_delay, confirmed) decides: 3 x 1024 ms. 0.3.0 cross-review: it
+        // was max(3 x PTO, 6 x kInitialRtt), 2 s, about a third short
         val (p, c) = connected()
         try {
             p.clientListensOnSource = false
@@ -489,27 +491,27 @@ class PathTest {
             val t0 = p.now
             assertTrue(p.runUntil(5.seconds) { p.events[s]!!.any { it is ConnectionEvent.PathFailed } })
             val took = p.now - t0
-            assertTrue(took >= 1990.milliseconds && took <= 2500.milliseconds, "validation failed after $took")
+            assertTrue(took >= 3060.milliseconds && took <= 3600.milliseconds, "validation failed after $took")
         } finally {
             p.close()
         }
     }
 
     @Test fun validationTimeoutFollowsInitialRtt() {
-        // RFC 9000 section 8.2.4 with initialRtt = 100 ms: max(3 x PTO, 6 x 100 ms) — the 20 ms pair's 3 x PTO is below 600 ms
+        // RFC 9000 section 8.2.4 with initialRtt = 100 ms: 3 x max(PTO, 100 + 4 x 50 + 25 ms) — the 20 ms pair's PTO is below 325 ms
         val (p, c) = connected(serverQuic = quicConfig { initialRtt = 100.milliseconds })
         try {
             p.clientListensOnSource = false
             val s = p.server()
-            assertEquals(maxOf(s.pto() * 3, 600.milliseconds), s.validationTimeout())
-            assertEquals(600.milliseconds, s.validationTimeout())
+            assertEquals(maxOf(s.pto(), 325.milliseconds) * 3, s.validationTimeout())
+            assertEquals(975.milliseconds, s.validationTimeout())
             p.clientSource = other
             send(c)
             p.step()
             val t0 = p.now
             assertTrue(p.runUntil(5.seconds) { p.events[s]!!.any { it is ConnectionEvent.PathFailed } })
             val took = p.now - t0
-            assertTrue(took >= 590.milliseconds && took <= 900.milliseconds, "validation failed after $took")
+            assertTrue(took >= 965.milliseconds && took <= 1300.milliseconds, "validation failed after $took")
         } finally {
             p.close()
         }
@@ -631,10 +633,10 @@ class PathTest {
 
     @Test fun newPathGetsThreeChallengesBeforeDeadline() {
         // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
-        // a 1 ms initialRtt keeps the 6 x initialRtt floor out of the way: the deadline is 3 x PTO
+        // a 1 ms initialRtt keeps the new path's PTO small: the deadline is 3 x the larger PTO, at least 3 x the current one
         val (p, c) = connected(clientQuic = quicConfig { initialRtt = 1.milliseconds })
         try {
-            assertEquals(c.pto() * 3, c.validationTimeout())
+            assertEquals(maxOf(c.pto(), 1.milliseconds + 2.milliseconds + c.loss.peerMaxAckDelay) * 3, c.validationTimeout())
             val id = c.addPath(p.serverAddr, p.now)
             c.probePath(id, p.now)
             val path = c.paths.byId(id)!!

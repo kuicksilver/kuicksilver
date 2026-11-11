@@ -637,6 +637,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: path validation gave up after max(3 PTO, 6 times the initial RTT), 2 s with the default 333 ms, where RFC 9000
+  section 8.2.4 recommends three times the larger of the current PTO and the new path's PTO computed from the initial
+  RTT (3 times the initial RTT plus the peer's `max_ack_delay` once confirmed), 3.07 s. A client moving to a path with a
+  long first round trip (a cellular link) was abandoned early. The same timeout bounds the wait for a spare connection
+  ID before a probe and the undoing of a move during the handshake.
 - QUIC server: a client's first Initial carrying another server's address validation token (one behind the same name)
   whose first byte happens to be the Retry token type was refused with a stateless INVALID_TOKEN close. Such a token
   under a Destination Connection ID that is not one of ours cannot answer our Retry, and is now treated as absent

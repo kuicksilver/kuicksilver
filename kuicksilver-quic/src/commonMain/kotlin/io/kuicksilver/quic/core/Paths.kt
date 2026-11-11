@@ -128,7 +128,7 @@ internal class Path(
     /** A PATH_CHALLENGE must go out on this path at the next poll. */
     var challengePending: Boolean = false
 
-    /** Validation gives up at this time (RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT)). */
+    /** Validation gives up at this time (RFC 9000 section 8.2.4: 3 x the larger of the PTO and a new path's PTO). */
     var challengeDeadline: TimeMark = TimeMark.NEVER
 
     /** The next PATH_CHALLENGE repeat while validating: one PTO after the first, then doubling (RFC 9002 section 6.2.1 applied to probes). */

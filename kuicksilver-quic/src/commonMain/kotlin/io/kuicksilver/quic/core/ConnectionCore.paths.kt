@@ -24,6 +24,7 @@ import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.tls.TlsRole
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 // Paths of a [ConnectionCore]: PMTUD and ECN per path, peer connection IDs, path validation, migration and NAT rebinding (RFC 9000
@@ -184,13 +185,19 @@ internal fun ConnectionCore.onRetireConnectionId(seq: Long) {
 }
 
 /**
- * The validation timeout of RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT), as ngtcp2. The new-path term uses the configured
- * initial RTT (kInitialRtt), never an RTT remembered for the first path: "the new path could have a longer round-trip time".
+ * The validation timeout RFC 9000 section 8.2.4 recommends: "three times the larger of the current PTO or the PTO for the new path
+ * (using kInitialRtt, as defined in [QUIC-RECOVERY])". The new path's PTO is RFC 9002's before any sample (section 6.2.2: smoothed_rtt
+ * = kInitialRtt, rttvar = kInitialRtt / 2), so 3 x kInitialRtt plus the peer's max_ack_delay once the handshake is confirmed: 3.07 s
+ * with the default 333 ms. The configured initial RTT, never an RTT remembered for the first path: "the new path could have a longer
+ * round-trip time".
  */
 internal fun ConnectionCore.validationTimeout(): Duration {
-    val p3 = pto() * 3
-    val r6 = config.newPathInitialRtt * 6
-    return if (p3 > r6) p3 else r6
+    val current = pto()
+    val k = config.newPathInitialRtt
+    val v4 = k * 2
+    val fresh =
+        k + (if (v4 > 1.milliseconds) v4 else 1.milliseconds) + (if (loss.handshakeConfirmed) loss.peerMaxAckDelay else Duration.ZERO)
+    return (if (current > fresh) current else fresh) * 3
 }
 
 /** False for a 1-RTT datagram from a new address the server must not follow: migration disabled, or a loopback/link-local address when the connection is not on one. */
@@ -988,7 +995,7 @@ internal class HandshakeFallback(
 /**
  * [fallback]'s deadline passed and nothing validated the address a handshake-time move took the path to: the move is undone (RFC 9000
  * section 9.3.2: "revert to using the last validated peer address when validation of a new peer address fails", with the section
- * 8.2.4 period, max(3 x PTO, 6 x initial RTT), as for any path validation). This can happen after the handshake completed too: a
+ * 8.2.4 period, 3 x the larger of both PTOs, as for any path validation). This can happen after the handshake completed too: a
  * raced copy of the client's Handshake packet may carry its Finished.
  *
  * The new address may keep sending: an off-path attacker that sees the client's datagrams races a copy of each from a spoofed source
