@@ -118,7 +118,7 @@ public class TlsSocket private constructor(
      * for whole. The channel fails with the session's [TlsException] itself: ktor's channels wrap a failure in
      * `ClosedByteChannelException` where they hand it on, and a second wrapping (ktor's `copyTo` closed the channel with
      * the wrapped failure it caught) hid the [TlsException] two causes deep. A channel opened with
-     * [openDeliveringReadChannel] keeps the plaintext relayed before the failure readable ([ReadDelivery]).
+     * [openDeliveringReadChannel] keeps the plaintext relayed before the failure readable (`ReadDelivery`).
      */
     @OptIn(InternalAPI::class)
     override fun attachForReading(channel: ByteChannel): WriterJob =

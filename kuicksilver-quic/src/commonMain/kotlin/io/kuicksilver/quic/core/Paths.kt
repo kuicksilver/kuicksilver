@@ -62,7 +62,7 @@ internal class Path(
     var preferred: Boolean = false
 
     /**
-     * Client, a [preferred] path probed from the socket of an application's migration ([ConnectionCore.addPath]): that application
+     * Client, a [preferred] path probed from the socket of an application's migration (`ConnectionCore.addPath`): that application
      * path, which owns the socket. Once this one validates, the application path takes its address (RFC 9000 section 9.6.3).
      */
     var carrier: Path? = null

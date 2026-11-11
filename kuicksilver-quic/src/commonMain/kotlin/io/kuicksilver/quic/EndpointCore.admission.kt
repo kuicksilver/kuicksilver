@@ -365,7 +365,7 @@ internal fun EndpointCore.queueVersionNegotiation(
 
 /**
  * A new server connection ID that no connection of this loop routes now (RFC 9000 section 10.3.2: an ID, and the reset token
- * derived from it, belongs to one connection); null after [ConnectionIdManager.UNIQUE_DRAWS] draws that all collided. A colliding
+ * derived from it, belongs to one connection); null after `ConnectionIdManager.UNIQUE_DRAWS` draws that all collided. A colliding
  * draw is dropped, not released: the ID is another connection's.
  */
 internal fun EndpointCore.issueUnique(): IssuedCid? {
