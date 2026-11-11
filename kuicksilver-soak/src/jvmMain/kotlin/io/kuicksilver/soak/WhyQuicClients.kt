@@ -133,7 +133,7 @@ internal fun whyQuicClient(args: List<String>) {
         o["after-warmup"]?.let { cmd ->
             val p =
                 ProcessBuilder(
-                    "sh",
+                    "/bin/sh",
                     "-c",
                     cmd,
                 ).inheritIO().redirectOutput(ProcessBuilder.Redirect.to(java.io.File("/dev/stderr"))).start()

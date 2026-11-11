@@ -14,12 +14,12 @@ internal actual object MemoryProbe {
         return ManagementFactory.getMemoryMXBean().heapMemoryUsage.used
     }
 
-    /** `ps` (macOS has no /proc and the JDK exposes no resident size); VmRSS on Linux. */
+    /** `/bin/ps`, by absolute path, not looked up in PATH (macOS has no /proc and the JDK exposes no resident size); VmRSS on Linux. */
     actual fun rssBytes(): Long {
         val status = java.io.File("/proc/self/status")
         if (status.exists()) return status.readLines().firstOrNull { it.startsWith("VmRSS:") }?.split(Regex("\\s+"))?.getOrNull(1)?.toLongOrNull()?.times(1024) ?: -1
         return try {
-            val p = ProcessBuilder("ps", "-o", "rss=", "-p", ProcessHandle.current().pid().toString()).redirectErrorStream(true).start()
+            val p = ProcessBuilder("/bin/ps", "-o", "rss=", "-p", ProcessHandle.current().pid().toString()).redirectErrorStream(true).start()
             val text = p.inputStream.bufferedReader().readText().trim()
             p.waitFor()
             text.toLongOrNull()?.times(1024) ?: -1
