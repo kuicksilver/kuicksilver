@@ -136,7 +136,8 @@ private suspend fun H3Session.readControl(st: QuicStream) {
         val len = st.input.readVarInt()
         when (FrameRules.checkControl(type, first, isServer, settings.webTransport)) {
             FrameAction.Skip -> {
-                glitch("unknown frame on the control stream")
+                // reserved (GREASE) types are there to be ignored (sections 7.2.8, 9) and cost nothing, as on request streams
+                if (!FrameType.isGrease(type)) glitch("unknown frame on the control stream")
                 st.input.skipExact(len)
             }
 

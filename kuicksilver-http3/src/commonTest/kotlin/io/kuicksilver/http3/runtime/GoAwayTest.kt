@@ -392,8 +392,9 @@ class GlitchLimiterTest {
                     ByteArray(0).let {
                         var b = it
                         repeat(100) {
+                            // unknown types that are not reserved (0x22..0x3f): GREASE costs nothing (ConnectionTest.greaseFramesOnTheControlStreamAreFree)
                             b +=
-                                raw.frame(FrameType.grease(it.toLong()), ByteArray(0))
+                                raw.frame(0x22L + (it % 0x1e), ByteArray(0))
                         }
                         b
                     },
@@ -404,7 +405,7 @@ class GlitchLimiterTest {
                 raw.control.output.writeFully(
                     ByteArray(0).let {
                         var b = it
-                        repeat(1000) { b += raw.frame(0x21, ByteArray(0)) }
+                        repeat(1000) { b += raw.frame(0x22, ByteArray(0)) }
                         b
                     },
                 )

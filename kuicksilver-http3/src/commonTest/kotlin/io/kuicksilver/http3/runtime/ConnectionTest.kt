@@ -293,6 +293,45 @@ class ConnectionTest {
             assertFalse(maxPushIdsLeaveTheConnectionOpen(1002), "1 free + 1001 tokens")
         }
 
+    /**
+     * [count] empty frames of [type] on the control stream, then a MAX_PUSH_ID as a marker, against a glitch bucket that is
+     * not refilled: true when the connection is still open once the marker was read (other unknown types spend a token
+     * each: `GlitchLimiterTest.unknownControlFramesFloodClosesExcessiveLoad`).
+     */
+    private suspend fun controlFramesLeaveTheConnectionOpen(
+        type: (Int) -> Long,
+        count: Int,
+    ): Boolean =
+        QuicPair.open().use { q ->
+            val (c, s) = q.connect()
+            val server = Http3Connection.server(s)
+            server.session.glitchClock = { 0L } // no refill: exactly 1000 tokens
+            val raw = RawPeer(c)
+            raw.openControl()
+            val frames = (0 until count).map { raw.frame(type(it), ByteArray(0)) }.reduce { a, b -> a + b }
+            peerMayHaveClosed {
+                raw.control.output.writeFully(frames + raw.frame(FrameType.MAX_PUSH_ID, VarInt.encode(7)))
+                raw.control.output.flush()
+            }
+            withTimeout(5.seconds) {
+                while (!server.closed.isCompleted && withContext(server.session.dispatcher) { server.session.peerMaxPushId } < 7L) {
+                    delay(5)
+                }
+            }
+            if (!server.closed.isCompleted) return@use true
+            assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+            false
+        }
+
+    /**
+     * RFC 9114 sections 7.2.8 and 9: reserved (GREASE) frame types on the control stream are ignored and cost nothing, as on
+     * request streams; twice the bucket of them leaves the connection open.
+     */
+    @Test fun greaseFramesOnTheControlStreamAreFree() =
+        h3Test {
+            assertTrue(controlFramesLeaveTheConnectionOpen({ FrameType.grease(it.toLong()) }, 2002))
+        }
+
     @Test fun serverInitiatedBidiIsCreationError() =
         h3Test {
             QuicPair.open().use { q ->

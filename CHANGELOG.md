@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a reserved (GREASE) frame type on the peer's control stream spent a glitch token, while on a request stream it
+  costs nothing. RFC 9114 sections 7.2.8 and 9 have reserved types ignored, and peers are meant to send them; a peer
+  that greased its control stream often could have its connection closed with H3_EXCESSIVE_LOAD. They are now free on
+  the control stream too; other unknown frame types still spend a token each.
 - HTTP/3 client (`Http3Connection.request`): when the request's trailers were refused (above the server's
   SETTINGS_MAX_FIELD_SECTION_SIZE) after the response had begun, the response was abandoned without a QPACK Stream
   Cancellation (RFC 9204 section 4.4.2). Response trailers blocked on the dynamic table at that moment kept their
