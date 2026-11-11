@@ -28,4 +28,8 @@ kuicksilver-native/src/androidMain/jniLibs/
 
 # Xcode per-user state
 xcuserdata/
+
+# SwiftPM (Package.swift at the root)
+.build/
+.swiftpm/
 *.xcuserstate

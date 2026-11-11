@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- SwiftPM: the repository is a Swift package. Its root `Package.swift` declares the binary target
+  `Kuicksilver.xcframework.zip`, attached to every GitHub release from 0.3.0 and signed with the release key, so a
+  Swift-only app adds `.package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "0.3.0"))`
+  instead of building the xcframework from a checkout (docs/guide/ios.md, "Swift only"). `tools/release/xcframework.sh`
+  builds the zip reproducibly (dSYM source paths relative to the checkout, slices in a fixed order) and writes its
+  checksum into `Package.swift` before the release commit; `local-release.sh` builds it again, refuses the release when
+  the checksums differ, signs it and lists it in the provenance; `verify-release.sh` checks that the tag's
+  `Package.swift` names the attached zip. `KuicksilverInfo.VERSION` in the xcframework is now the version it was built
+  as, not the `-SNAPSHOT` fallback.
+
 - Documentation site: the API reference of the published modules (Dokka HTML, with module and package descriptions,
   source links to the release tag and links into the kotlinx-coroutines, kotlinx-io and Ktor references) and the guide
   as HTML, per version, at <https://kuicksilver.github.io/kuicksilver/> (`/<version>/api/`, `/<version>/guide/`,
@@ -424,6 +434,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   version it releases the release in preparation.
 
 ### Changed
+
+- Release provenance: from 0.3.0 the GitHub release carries `kuicksilver-<version>.intoto.jsonl`, an in-toto
+  attestation bundle (JSON Lines) whose one DSSE envelope holds the SLSA provenance statement and is signed by the release
+  key, instead of the bare statement `kuicksilver-<version>.intoto.json` of 0.2.1. `tools/verify/verify-release.sh`
+  checks the envelope's signature as well and still reads the 0.2.1 form (docs/release.md, "Build provenance").
 
 - HTTP/2 client: the first request on a new connection no longer waits for the server's SETTINGS (RFC 9113 §3.4), which
   saves one round trip per new connection. Only that request goes out before them: the other requests for the route wait

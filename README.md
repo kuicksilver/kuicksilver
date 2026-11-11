@@ -148,6 +148,13 @@ kotlin {
 }
 ```
 
+Swift only (no Kotlin in the app): the repository is a Swift package whose binary target is `Kuicksilver.xcframework`
+of the GitHub release, from 0.3.0 ([iOS guide, Swift only](docs/guide/ios.md#swift-only-kuicksilverxcframework-and-swiftpm)):
+
+```swift
+.package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "0.3.0")),
+```
+
 A Kotlin/Native program (`linuxX64`, `linuxArm64`, `macosArm64`, `mingwX64`; Kotlin 2.4.x), here with raw QUIC
 ([QUIC: A complete example](docs/guide/quic.md#a-complete-example-custom-alpn-streams-and-datagrams)):
 
@@ -278,7 +285,7 @@ vulnerabilities are reported privately as described in [SECURITY.md](SECURITY.md
 
 Supply chain: every artifact on Maven Central is signed with the release key (`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`),
 and `tools/verify/verify-release.sh <version>` checks those signatures, the SBOM and provenance of the GitHub release
-(from 0.2.1), and rebuilds from the signed tag the native libraries that are reproducible on your host, comparing them
+(from 0.2.1) and the Swift package's xcframework (from 0.3.0), and rebuilds from the signed tag the native libraries that are reproducible on your host, comparing them
 byte for byte with the published ones. What is and is not reproducible yet: [docs/verifying.md](docs/verifying.md).
 
 ## Interoperability

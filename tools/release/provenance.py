@@ -6,11 +6,12 @@
 An in-toto Statement v1 with a SLSA provenance v1 predicate: the source commit, the toolchain pins of gradle/toolchains.toml
 and what the host actually had, the OpenSSL tarball (version, SHA-256, signing key, configure flags), the Gradle distribution,
 and as subjects the SHA-256 of every file of the local publication that goes to Maven Central (no .asc, .md5 or .sha1) plus
-the SBOM archive. Byproducts: the JNI libraries and the OpenSSL archives of every target. local-release.sh signs the file
-with the release key (a detached .asc, as the Maven artifacts). Stdlib only, Python 3.9 or newer (no tomllib);
+the SBOM archive and Kuicksilver.xcframework.zip (--extra-subject). Byproducts: the JNI libraries and the OpenSSL archives of every target. local-release.sh wraps the Statement in a signed
+DSSE envelope, the one line of kuicksilver-<version>.intoto.jsonl (tools/release/dsse.py), and signs that file with the
+release key as well (a detached .asc, as the Maven artifacts). Stdlib only, Python 3.9 or newer (no tomllib);
 --options is the argument list local-release.sh was given. Deterministic for the same inputs and times.
 
-Usage: provenance.py --version V --m2 DIR --out FILE --started EPOCH [--sbom-zip FILE] [--dry-run] [--signed]
+Usage: provenance.py --version V --m2 DIR --out FILE --started EPOCH [--sbom-zip FILE] [--extra-subject FILE]... [--dry-run] [--signed]
                      [--options "..."] [--gate FILE]
 """
 import argparse
@@ -91,6 +92,8 @@ def main():
     a.add_argument("--out", required=True)
     a.add_argument("--started", required=True, type=int)
     a.add_argument("--sbom-zip")
+    a.add_argument("--extra-subject", action="append", default=[],
+                   help="another file of the GitHub release (Kuicksilver.xcframework.zip), a subject under its file name")
     a.add_argument("--dry-run", action="store_true")
     a.add_argument("--signed", action="store_true")
     a.add_argument("--options", default="")
@@ -104,6 +107,8 @@ def main():
         sys.exit(f"no io.kuicksilver publication of {o.version} in {o.m2}")
     if o.sbom_zip:
         subj.append({"name": os.path.basename(o.sbom_zip), "digest": {"sha256": sha256(o.sbom_zip)}})
+    for extra in o.extra_subject:
+        subj.append({"name": os.path.basename(extra), "digest": {"sha256": sha256(extra)}})
 
     commit = run("git", "rev-parse", "HEAD")
     tree_clean = run("git", "status", "--porcelain") == ""

@@ -41,12 +41,17 @@ tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README and t
   printf 'version="${1:-%s}"\n' "$s" > tools/check/consumer-smoke.sh
   mkdir -p docs/guide
   printf '> The API can change between any two 0.x releases, and %s is on Maven Central.\n\n    implementation("io.kuicksilver:kuicksilver-ktor-client:%s")\n' "$p" "$p" > README.md
-  printf '        implementation("io.kuicksilver:kuicksilver-http3:%s")   // or -quic\n            url: "https://example.com/releases/%s/Kuicksilver.xcframework.zip",\n' "$p" "$p" > docs/guide/ios.md
+  printf '        implementation("io.kuicksilver:kuicksilver-http3:%s")   // or -quic\n    .package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "%s")),\n            url: "https://github.com/kuicksilver/kuicksilver/releases/download/v%s/Kuicksilver.xcframework.zip",\n' "$p" "$p" "$p" > docs/guide/ios.md
+  package_swift "$1"
+}
+package_swift() { # <version> [<checksum>] [<url version>]: Package.swift as xcframework.sh --write leaves it
+  printf '// swift-tools-version:5.9\nlet package = Package(\n    targets: [\n        .binaryTarget(\n            name: "Kuicksilver",\n            url: "https://github.com/kuicksilver/kuicksilver/releases/download/v%s/Kuicksilver.xcframework.zip",\n            checksum: "%s"\n        ),\n    ]\n)\n' \
+    "${3:-$1}" "${2:-$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)}" > Package.swift
 }
 commit() { git add -A; git commit -qm "$1"; }
 
 # base: the 0.2.1 line prepared (the fork point of release/0.2.x); main then moves to 0.3.0
-printf '# Changelog\n\n## [0.10.0] - 2027-08-01\n\n## [0.9.0] - 2027-07-01\n\n## [0.8.0] - 2027-06-01\n\n## [0.7.0] - 2027-05-01\n\n## [0.6.0] - 2027-04-01\n\n## [0.5.0] - 2027-03-01\n\n## [0.4.0-rc1] - 2027-02-01\n\n## [0.3.1] - 2027-01-15\n\n## [0.3.0] - 2026-12-01\n\n## [0.2.2] - 2026-11-25\n\n## [0.2.2-rc1] - 2026-11-20\n\n## [0.2.1] - 2026-11-03\n\n## [1.2.1] - 2027-01-01\n\n## [0.2.9] - unreleased\n\n## [0.2.8]\n' > CHANGELOG.md
+printf '# Changelog\n\n## [0.16.0] - 2028-02-01\n\n## [0.16.0-rc1] - 2028-01-15\n\n## [0.15.0] - 2028-01-01\n\n## [0.14.0] - 2027-12-01\n\n## [0.13.0] - 2027-11-01\n\n## [0.12.0] - 2027-10-01\n\n## [0.11.0] - 2027-09-01\n\n## [0.10.0] - 2027-08-01\n\n## [0.9.0] - 2027-07-01\n\n## [0.8.0] - 2027-06-01\n\n## [0.7.0] - 2027-05-01\n\n## [0.6.0] - 2027-04-01\n\n## [0.5.0] - 2027-03-01\n\n## [0.4.0-rc1] - 2027-02-01\n\n## [0.3.1] - 2027-01-15\n\n## [0.3.0] - 2026-12-01\n\n## [0.2.2] - 2026-11-25\n\n## [0.2.2-rc1] - 2026-11-20\n\n## [0.2.1] - 2026-11-03\n\n## [1.2.1] - 2027-01-01\n\n## [0.2.9] - unreleased\n\n## [0.2.8]\n' > CHANGELOG.md
 tree_version 0.2.1 0.2.1; commit base
 git remote add origin "$tmp/origin.git"; git push -q origin main
 git branch release/0.2.x
@@ -54,13 +59,19 @@ tree_version 0.3.0 0.3.0; commit "main: prepare 0.3.0"
 git checkout -q release/0.2.x; echo c > h; commit branch-only; git checkout -q main
 git branch release/0.1.x main
 git checkout -q -b feature main; echo z > z; commit feature-only
-git checkout -q -b release/0.4.x main; tree_version 0.4.0 0.3.0; commit "0.4 line"   # a prerelease leaves the coordinates alone
+git checkout -q -b release/0.4.x main; tree_version 0.4.0 0.3.0; package_swift 0.4.0-rc1; commit "0.4 line"   # a prerelease leaves the coordinates alone
 git checkout -q -b release/0.5.x main; tree_version 0.5.0 0.3.0; commit "0.5 line, README not moved"
 git checkout -q -b release/0.6.x main; tree_version 0.6.0 0.6.0; printf '        implementation("io.kuicksilver:kuicksilver-http3:0.3.0")\n' > docs/guide/ios.md; commit "0.6 line, iOS guide not moved"
 git checkout -q -b release/0.7.x main; tree_version 0.7.0 0.7.0; printf 'version = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")\n' > kuicksilver-bom/build.gradle.kts; commit "0.7 line, BOM not moved"
 git checkout -q -b release/0.8.x main; tree_version 0.8.0 0.8.0 kuicksilver-bom/build.gradle.kts; git rm -q kuicksilver-bom/build.gradle.kts; commit "0.8 line, no BOM fallback"
 git checkout -q -b release/0.9.x main; tree_version 0.9.0 0.9.0; printf '> This README describes 0.9.0, the release in preparation.\n' >> README.md; commit "0.9 line, README still says in preparation"
 git checkout -q -b release/0.10.x main; tree_version 0.10.0 0.10.0; printf 'Until 0.10.0 is on Maven Central, build it from a checkout.\n' >> README.md; commit "0.10 line, README still has the build-it-yourself note"
+git checkout -q -b release/0.11.x main; tree_version 0.11.0 0.11.0; package_swift 0.11.0 "" 0.10.0; commit "0.11 line, Package.swift names 0.10.0"
+git checkout -q -b release/0.12.x main; tree_version 0.12.0 0.12.0; package_swift 0.12.0 0000000000000000000000000000000000000000000000000000000000000000; commit "0.12 line, placeholder checksum"
+git checkout -q -b release/0.13.x main; tree_version 0.13.0 0.13.0; package_swift 0.13.0 c9e7447; commit "0.13 line, short checksum"
+git checkout -q -b release/0.14.x main; tree_version 0.14.0 0.14.0; rm Package.swift; commit "0.14 line, no Package.swift"
+git checkout -q -b release/0.15.x main; tree_version 0.15.0 0.15.0; printf '    .package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "0.3.0")),\n' >> docs/guide/ios.md; commit "0.15 line, SwiftPM line in the iOS guide not moved"
+git checkout -q -b release/0.16.x main; tree_version 0.16.0 0.3.0; package_swift 0.16.0-rc1; commit "0.16 line, rc1 Package.swift"
 git checkout -q main
 
 pass=0; fail=0
@@ -106,6 +117,15 @@ t "release/0.7.x, 0.7.0, BOM fallback 0.3.0-SNAPSHOT"    "refuse:kuicksilver-bom
 t "release/0.8.x, 0.8.0, BOM fallback missing"           "refuse:kuicksilver-bom"       release/0.8.x 0.8.0
 t "release/0.9.x, 0.9.0, README 'in preparation'"        "refuse:in preparation"        release/0.9.x 0.9.0
 t "release/0.10.x, 0.10.0, README 'Until ... on Central'" "refuse:Until 0.10.0 is on Maven Central" release/0.10.x 0.10.0
+# Package.swift (SwiftPM resolves it at the tag; tools/release/xcframework.sh --write sets it before the release commit)
+t "release/0.11.x, 0.11.0, Package.swift names v0.10.0"  "refuse:Package.swift names https://github.com/kuicksilver/kuicksilver/releases/download/v0.10.0/" release/0.11.x 0.11.0
+t "release/0.12.x, 0.12.0, placeholder checksum"         "refuse:Package.swift has no checksum" release/0.12.x 0.12.0
+t "release/0.13.x, 0.13.0, short checksum"               "refuse:Package.swift has no checksum" release/0.13.x 0.13.0
+t "release/0.14.x, 0.14.0, no Package.swift"             "refuse:no Package.swift"     release/0.14.x 0.14.0
+t "release/0.15.x, 0.15.0, iOS guide SwiftPM line 0.3.0" "refuse:docs/guide/ios.md names 0.15.0 0.3.0" release/0.15.x 0.15.0
+t "release/0.16.x, 0.16.0-rc1, Package.swift of the rc" ok:push_branch=release/0.16.x   release/0.16.x 0.16.0-rc1
+t "dry run: 0.16.0, Package.swift names the rc"         "ok:WARN.*Package.swift names .*v0.16.0-rc1/" release/0.16.x 0.16.0 --dry-run
+t "dry run: placeholder checksum (warning only)"         "ok:WARN.*Package.swift has no checksum" release/0.12.x 0.12.0 --dry-run
 # dry runs: refusals are warnings
 t "dry run: release/0.2.x, 0.3.0"                        "ok:WARN.*maintenance branch"  release/0.2.x 0.3.0 --dry-run
 t "dry run: feature, 0.2.1"                              ok:WARN                        feature 0.2.1 --dry-run
@@ -149,7 +169,7 @@ new_repo "$tmp/real"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
     samples/ios/kuicksilver-swift/build.gradle.kts \
-    tools/check/consumer-smoke.sh README.md docs/guide/ios.md; do
+    tools/check/consumer-smoke.sh README.md docs/guide/ios.md Package.swift; do
   mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
 done
 line=$(sed -n 's/.*getOrElse("\([0-9]*\.[0-9]*\.[0-9]*\)-SNAPSHOT").*/\1/p' build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts)
@@ -157,9 +177,12 @@ published=$(sed -n 's/.* \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\) is on Maven C
 printf '# Changelog\n\n## [%s] - 2026-01-01\n' "$line" > CHANGELOG.md; git add -A; git commit -qm real
 # before the release the README names both versions and calls the line's version the release in preparation
 want=""; [ "$published" = "$line" ] || want=$(printf 'README.md names %s instead of %s\nREADME.md still calls %s the release in preparation' \
-  "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line" "$line" | sort)
+  "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line" "$line")
+# and Package.swift names the line's xcframework, with a checksum only from its release commit on (all zeros before)
+grep -qE '^ *checksum: "0{64}"$' Package.swift && want=$(printf '%s\nPackage.swift has no checksum of the %s xcframework' "$want" "$line")
+want=$(grep . <<< "$want" | sort)
 out=$(bash tools/release/local-release.sh "$line" --dry-run 2>&1)
-have=$(grep 'WARN' <<< "$out" | sed -e 's/^ *WARN (a release would refuse): //' -e 's/ (the commit that prepares.*//' -e 's/ ("release in preparation".*//' | sort)
+have=$(grep 'WARN' <<< "$out" | sed -e 's/^ *WARN (a release would refuse): //' -e 's/ (the commit that prepares.*//' -e 's/ ("release in preparation".*//' -e 's/ xcframework (.*/ xcframework/' | sort)
 if [ -n "$line" ] && [ -n "$published" ] && [ "$have" = "$want" ]; then verdict=ok; pass=$((pass+1)); else verdict=FAIL; fail=$((fail+1)); fi
 printf '%-4s %-58s line=%s published=%s | %s\n' "$verdict" "the repository's own version files" "$line" "$published" "$(tr '\n' ' ' <<< "${have:-no warning}")"
 echo "passed $pass, failed $fail"

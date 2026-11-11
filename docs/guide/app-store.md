@@ -12,7 +12,7 @@ templates to copy.
 **Before you start**
 
 - Your app links Kuicksilver: the klibs `io.kuicksilver:kuicksilver-http3`, `-quic` or `-ktor-client` (version `0.3.0` or
-  newer), or `Kuicksilver.xcframework`, which you build yourself from `samples/ios/kuicksilver-swift` (not published yet;
+  newer), or `Kuicksilver.xcframework` through the Swift package (from 0.3.0;
   [iOS: Choosing how to consume it](ios.md#choosing-how-to-consume-it)).
 - Minimum OS versions: iOS 15; macOS 12 (Kotlin/Native) or macOS 11 (JVM) ([Platforms](../stability.md#platforms)).
 - You can open your app in App Store Connect and edit its `Info.plist`.

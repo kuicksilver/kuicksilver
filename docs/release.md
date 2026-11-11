@@ -77,10 +77,16 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `## [<version>] - <date>`; `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
    do. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
    (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the three sample builds,
-   `KuicksilverInfo.VERSION` in `samples/ios/kuicksilver-swift`, `tools/check/consumer-smoke.sh`), normally set when the
+   `tools/check/consumer-smoke.sh`), normally set when the
    line was started, and for a final version the README ("X.Y.Z is on Maven Central", the BOM version of its Install
-   blocks) and `docs/guide/ios.md` (the dependency line, the xcframework URL) name the version itself (a prerelease such as
-   0.3.0-rc1 leaves the status line at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks). While a
+   blocks, the Swift package line) and `docs/guide/ios.md` (the dependency line, the Swift package line, the xcframework
+   URL) name the version itself (a prerelease such as
+   0.3.0-rc1 leaves the status line at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks).
+   **`Package.swift`** at the root names the xcframework of the tag and its checksum, for every version, prereleases
+   included: run `tools/release/xcframework.sh <version> --write` on the tree that becomes the release commit (any time
+   after the last change to code, build scripts or `gradle/`; the documentation, the CHANGELOG and the reliability page do
+   not enter the zip) and commit the rewritten `Package.swift` with the rest
+   ([SwiftPM: why the checksum is in the release commit](#swiftpm-why-the-checksum-is-in-the-release-commit)). While a
    minor version is in preparation on `main`, the README's Install blocks already name it and its status line and
    "Versions" paragraph say it is not published yet; the release commit of that version turns them into "X.Y.Z is on
    Maven Central" and drops the build-it-yourself note, and `docs/guide/ios.md` is bumped in the same commit as the
@@ -108,10 +114,12 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    its `origin` counterpart (pull first; a `--release-commit` may be older on purpose), a version already on Maven
    Central (a release asks `repo1.maven.org` for the BOM's POM and refuses on 200, or when it gets no 200 or 404; a dry
    run does not ask), a tree whose version fallbacks or (final versions) README and iOS
-   guide coordinates do not name the version (step 2), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
+   guide coordinates do not name the version (step 2), a `Package.swift` that does not name
+   `releases/download/v<version>/Kuicksilver.xcframework.zip` with a 64-digit checksum (the all-zero placeholder of `main`
+   included), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
    `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version and its date (`## [0.2.0] - 2026-10-18`), an NDK or Xcode other
    than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key
-   (`tools/release/local-release-test.sh` runs the branch, origin, Central, CHANGELOG and version refusals in a
+   (`tools/release/local-release-test.sh` runs the branch, origin, Central, CHANGELOG, version and `Package.swift` refusals in a
    throwaway repository with a stubbed Central, and the version checks on the repository's own files; the local gate
    runs it). Then:
    - OpenSSL: the pinned tarball fetched and verified; **all twelve targets rebuilt from it** (`KSL_OPENSSL_FRESH=1`:
@@ -123,6 +131,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      `provenance.txt` (the tarball's SHA-256, the configure line, the archives' SHA-256), which
      `-Pkuicksilver.openssl.prebuilt=true` checks before Gradle reuses the build (`tools/openssl/prebuilt-test.sh` runs
      its negative controls). `mingw-x64` is the `openssl-mingw-x64` the workflow downloads.
+   - `Kuicksilver.xcframework.zip` for SwiftPM from those builds (`tools/release/xcframework.sh <version>`: the
+     `samples/ios/kuicksilver-swift` umbrella, its layout, `CFBundleShortVersionString`, the checksum, which `swift
+     package compute-checksum` must agree with) into `build/release/`. Its checksum must be the one `Package.swift` of the
+     release commit names; otherwise the release refuses here, before the JNI builds (a dry run warns), because SwiftPM
+     would reject the asset of the tag.
    - The five JVM libraries, as `build.yml`'s jobs build them, each into `build/release/jni-artifacts/jni-<classifier>`:
      `osx-aarch_64` and `osx-x86_64` (`.dylib`, the second cross-built with `clang -arch x86_64`), `linux-x86_64` and
      `linux-aarch_64` (manylinux2014 `.so`), `windows-x86_64` (mingw-w64 `.dll`, `tools/ci/jni-windows.sh`). Each is
@@ -138,8 +151,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      debug sections, the export whitelist for the `.so`, the `ksl_` prefix for the archives).
    - The supply-chain files of [Supply chain](#supply-chain-sbom-and-provenance), for the GitHub release and not for
      Central: `build/release/kuicksilver-<version>-sbom.zip` (the CycloneDX SBOM of every publication, checked against
-     the CycloneDX 1.6 schema) and `build/release/kuicksilver-<version>.intoto.json` (the build provenance), each signed
-     with the release key (`.asc`) and the signature checked. A dry run without a key leaves them unsigned.
+     the CycloneDX 1.6 schema) and `build/release/kuicksilver-<version>.intoto.jsonl` (the build provenance, an in-toto
+     bundle whose one DSSE envelope is signed by the release key), each signed with the release key (`.asc`) like
+     `Kuicksilver.xcframework.zip`, and the signatures checked. A dry run without a key leaves them unsigned.
    - `publishToMavenCentral`: **one Gradle invocation, one deployment** (several would produce several deployments and
      inconsistent root metadata), signed, `automaticRelease = false`:
      ```
@@ -157,8 +171,12 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `io.kuicksilver:kuicksilver-quic:<version>` and its transitive modules from Maven Central, without `includeBuild` or
    mavenLocal. Its tests are not run there: they need `kuicksilver-testing`, which is not published.
 6. Only after the deployment is published: `git tag -s v<version> -m "Kuicksilver <version>"` on the release commit, push the
-   branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the four supply-chain files of
-   step 3: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.json` and their `.asc`. The version is passed to
+   branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the six files of
+   step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
+   `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL (`Package.swift` of the tag), and
+   OpenSSF Scorecard's Signed-Releases check recognises the provenance by the `.intoto.jsonl` suffix. From then on
+   `.package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "<version>"))` resolves; check it
+   once from an empty Swift package (`swift package resolve`). The version is passed to
    Gradle (`-Pkuicksilver.version`); the tree's `-SNAPSHOT` fallbacks only name the line, and the script checks that they
    do.
 7. Context7 (the documentation index coding agents read, configured by `context7.json` at the root): add the new tag to
@@ -202,7 +220,9 @@ guide to 0.2.2, `## [0.2.2] - unreleased` in the CHANGELOG; the script refuses t
 ## Supply chain: SBOM and provenance
 
 From 0.2.1 every release has a CycloneDX SBOM and a build provenance statement, both made by `local-release.sh` (dry run
-included) and attached to the GitHub release. Neither goes to Maven Central.
+included) and attached to the GitHub release. Neither goes to Maven Central. From 0.3.0 the GitHub release also carries
+`Kuicksilver.xcframework.zip` for SwiftPM ([below](#swiftpm-why-the-checksum-is-in-the-release-commit)), a subject of
+the provenance.
 
 ### SBOM
 
@@ -254,13 +274,19 @@ aggregate document, 32 files), which tools that read SBOMs from Maven coordinate
 
 ### Build provenance
 
-`tools/release/provenance.py` writes `kuicksilver-<version>.intoto.json`: an [in-toto Statement
+`tools/release/provenance.py` writes an [in-toto Statement
 v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) with a [SLSA provenance
-v1](https://slsa.dev/spec/v1.0/provenance) predicate.
+v1](https://slsa.dev/spec/v1.0/provenance) predicate, and `tools/release/dsse.py` puts it into
+`kuicksilver-<version>.intoto.jsonl`, an [in-toto attestation
+bundle](https://github.com/in-toto/attestation/blob/main/spec/v1/bundle.md): JSON Lines with the `.intoto.jsonl` suffix
+the bundle spec recommends, holding one line, a [DSSE envelope](https://github.com/secure-systems-lab/dsse/blob/master/envelope.md)
+(payload type `application/vnd.in-toto+json`, the Statement as compact JSON) whose signature is an OpenPGP signature by
+the release key over the envelope's pre-authentication encoding (`DSSEv1 <len> <type> <len> <payload>`). 0.2.1 attached
+the bare Statement as `kuicksilver-0.2.1.intoto.json` instead; `verify-release.sh` reads both forms, by version.
 
 - `subject`: the SHA-256 of every file of the local publication that the deployment uploads (jars, AARs, klibs, POMs,
   Gradle module files, sources and javadoc jars; not the `.asc`, `.md5`, `.sha1`), under its repository path
-  (`io/kuicksilver/<artifactId>/<version>/<file>`), plus the SBOM archive.
+  (`io/kuicksilver/<artifactId>/<version>/<file>`), plus the SBOM archive and (from 0.3.0) `Kuicksilver.xcframework.zip`.
 - `buildDefinition`: the source (repository and commit), the version and the command line; the toolchain pins of
   `gradle/toolchains.toml`, the OpenSSL pin of `gradle/openssl.toml`, the Kotlin version, and what the Mac actually
   had (macOS, Xcode, NDK, Docker); the local gate record; as `resolvedDependencies` the commit, the OpenSSL tarball
@@ -271,16 +297,22 @@ v1](https://slsa.dev/spec/v1.0/provenance) predicate.
   libraries and the `libcrypto.a`/`libssl.a` of all twelve OpenSSL targets.
 
 It is signed like the Maven artifacts: Gradle's signing plugin with the same key properties (`signReleaseFiles`),
-a detached armored `.asc`. `tools/release/verify-signature.sh <file>...` checks a signature against the release key
+twice: first the envelope's pre-authentication encoding (the armor removed, the signature goes into the envelope), then
+the finished bundle file, a detached armored `.asc` like those of the SBOM archive and the xcframework zip. `tools/release/verify-signature.sh <file>...` checks a signature against the release key
 (`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`, in `tools/release/kuicksilver-release-key.asc`, the key
 `gradle/verification-metadata.xml` trusts for `io.kuicksilver`); `local-release.sh` runs it after
 signing. A user checks a release the same way, then compares the subjects with the files from Central:
 
 ```
-tools/release/verify-signature.sh kuicksilver-0.2.1.intoto.json kuicksilver-0.2.1-sbom.zip
-python3 -c 'import json,sys; [print(s["digest"]["sha256"]+"  "+s["name"]) for s in json.load(open(sys.argv[1]))["subject"]]' \
-  kuicksilver-0.2.1.intoto.json > sums.txt     # then, in a mirror of the io/kuicksilver paths: shasum -a 256 -c sums.txt
+tools/release/verify-signature.sh kuicksilver-0.3.0.intoto.jsonl kuicksilver-0.3.0-sbom.zip Kuicksilver.xcframework.zip
+python3 -c 'import base64,json,sys
+for l in open(sys.argv[1]):
+    e = json.loads(l)
+    for s in json.loads(base64.b64decode(e["payload"]))["subject"]: print(s["digest"]["sha256"] + "  " + s["name"])' \
+  kuicksilver-0.3.0.intoto.jsonl > sums.txt     # then, in a mirror of the io/kuicksilver paths: shasum -a 256 -c sums.txt
 ```
+
+`verify-release.sh` also checks the envelope's own signature (the PAE written out, `gpg --verify` against it).
 
 How a user checks all of this, and rebuilds the reproducible native libraries to compare them with the published
 ones: [verifying.md](verifying.md) (`tools/verify/verify-release.sh <version>`).
@@ -289,11 +321,35 @@ ones: [verifying.md](verifying.md) (`tools/verify/verify-release.sh <version>`).
 which source, with which inputs. It is not Level 2, which needs a hosted build platform that generates and signs the
 provenance itself; here the same Mac and the same person build the artifacts, write the statement and hold the key, so
 the signature shows who released it, not that the build followed the statement. It is not Level 3 (isolated,
-ephemeral builds; signing material out of reach of the build) either. The statement is a plain signed JSON file, not a
-DSSE envelope, so `slsa-verifier` does not read it. Two further limits: the subjects are the files of the local
+ephemeral builds; signing material out of reach of the build) either. The envelope is signed with an OpenPGP key rather than through
+Sigstore, so `slsa-verifier` (which expects GitHub's or Sigstore's builders) does not verify it; GnuPG with the release key
+does. Two further limits: the subjects are the files of the local
 publication, and the upload is a second Gradle invocation on the same commit and outputs (up to date, so identical
 files; the `.asc` signatures are not covered); and nothing third-party witnesses the build, which is what the
 `release` workflow below could add once it is used (GitHub's artifact attestations, SLSA Build L2).
+
+### SwiftPM: why the checksum is in the release commit
+
+SwiftPM resolves `.package(url:…, from:)` by tag: it checks out `v<version>`, reads the root `Package.swift`, downloads
+the `binaryTarget` URL and accepts the zip only if its SHA-256 is the `checksum` in that file. The checksum must
+therefore be in the tagged commit, and the tag goes on the release commit, which the gate and the provenance name, before
+`local-release.sh` builds anything. Alternatives considered:
+
+- **A separate package repository** (`kuicksilver-swift`, a `Package.swift` committed and tagged after each release):
+  no ordering problem, and SwiftPM clones a tiny repository instead of this one. But it is a second repository to keep,
+  its tags are not this repository's signed release tags, and nothing ties its checksum to the provenance of the
+  release. Worth revisiting if the clone size becomes a complaint.
+- **A commit after the release commit** carrying the checksum, tagged instead: the tag would no longer name the commit
+  the gate ran on and the provenance names, and `verify-release.sh` compares exactly those.
+- **The checksum in the release commit, from a reproducible build** (chosen). The zip depends only on the Kotlin and C
+  sources, the build scripts, `gradle/` and the pinned OpenSSL and Xcode: no commit hash, no timestamp (fixed zip
+  timestamps and order, the slices sorted in the xcframework's `Info.plist`, the dSYMs naming sources relative to the
+  checkout with `-Xdebug-prefix-map`). The release commit changes none of them, so `xcframework.sh --write` on the tree
+  just before the commit gives the zip the release builds again from the freshly built OpenSSL, and `local-release.sh`
+  refuses the release if the two checksums differ: a published `Package.swift` never names a zip that is not attached.
+
+Between releases `main`'s `Package.swift` names the version in preparation with an all-zero checksum; SwiftPM refuses
+it (a branch dependency on `main` does not resolve), which is the intended state until the release commit.
 
 ## Alternative: the `release` workflow (not used)
 
