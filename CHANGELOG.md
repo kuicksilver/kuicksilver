@@ -637,6 +637,46 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+QUIC loss recovery and congestion control (RFC 9002 review):
+
+- A PTO probe owed in a packet number space that was then discarded (a server's Initial probe held back by its
+  anti-amplification budget, then the client's Handshake packet) stayed owed for ever, and every later datagram was sent
+  as a probe, outside the congestion window, for the rest of the connection (RFC 9002 section 7). Discarding a space or
+  accepting a Retry now drops its probe, and only a probe owed in a live space with keys exempts a datagram.
+- A client whose only ack-eliciting packets in flight were 0-RTT, after the server acknowledged its Initial, armed no PTO
+  (the Application space arms none before confirmation), so a lost server Handshake flight stalled the handshake until
+  its timeout. The anti-deadlock PTO of RFC 9002 section 6.2.2.1 now counts Application packets only once the handshake
+  is confirmed.
+- With one byte of room in the congestion window a full datagram still went out, taking bytes in flight up to one MTU
+  above the window (RFC 9002 section 7). A datagram now goes only while its largest possible size fits.
+- DPLPMTUD probes bypassed the congestion window and the pacer and never counted in bytes in flight. They now count in
+  flight and wait for room ("PMTU probes consume congestion window", RFC 9000 section 14.4); a lost probe leaves flight
+  without a congestion event, as before.
+- NewReno and CUBIC were neither paced nor burst-limited below 1 ms of smoothed RTT, so a whole window could leave back
+  to back, and their 10-datagram send quantum exceeded the initial window above 1472-byte datagrams (RFC 9002 section
+  7.7). They are now paced at every RTT, in bursts of at most the initial window.
+- The pacer could hold back a PTO probe when its bucket was empty (RFC 9002 section 7.5: probes are not blocked by the
+  congestion controller).
+- An ACK in a packet held for its keys was sampled when the packet was finally processed, so the RTT included the wait
+  (RFC 9002 section 5.3). It is now sampled from the packet's arrival.
+- Persistent congestion was broken only by an acknowledged packet of the same packet number space, and the time of the
+  first RTT sample was per connection, so after a migration the old path's sample counted for the new path's packets
+  (RFC 9002 section 7.6.2). Acknowledgements in every space now count during the handshake, and each path waits for its
+  own first sample.
+- BBR kept the bytes in flight plus one datagram on persistent congestion; it now collapses to its minimum window of 4
+  datagrams, as RFC 9002 section 7.6.2 requires of every controller.
+- A PTO in the Initial or Handshake space did not probe Application data in flight (a client's first 1-RTT data behind
+  its Finished, or 0-RTT data); it now does (RFC 9002 section 6.2.4).
+- The window grew with up to three datagrams of it unused, or with just over half of it in flight in slow start
+  (quic-go's margins). It now grows only when the window had no room for another datagram before the ACK frame, or when
+  the sender still had data at the end of its last send, held back by the pacer, the window or a burst limit (RFC 9002
+  section 7.8). A sender that runs out of data or flow-control credit with room in the window no longer grows it.
+- NewReno and CUBIC recompute the initial window when the datagram size changes: a window still at its initial value
+  shrinks with a smaller size; a larger size never raises it (RFC 9002 section 7.2, RFC 8899 section 3).
+- Bytes of a discarded space or of rejected 0-RTT were taken from the active path's congestion controller, whichever
+  controller had counted them. The PTO backoff wrapped after 31 unanswered PTOs (possible only with both idle timeouts
+  disabled): the timer fired at once, then restarted; it now stops doubling at 2^30.
+
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS
