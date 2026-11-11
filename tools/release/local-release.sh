@@ -154,7 +154,7 @@ fi
 base="${version%%-*}"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
-    samples/ios/kuicksilver-swift/build.gradle.kts samples/ios/kuicksilver-swift/src/commonMain/kotlin/io/kuicksilver/swift/Kuicksilver.kt \
+    samples/ios/kuicksilver-swift/build.gradle.kts \
     tools/check/consumer-smoke.sh; do
   have=$(grep -ohE '[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT' "$f" 2>/dev/null | sort -u | tr '\n' ' ' || true)
   [ "$have" = "$base-SNAPSHOT " ] || refuse "$f names ${have:-no X.Y.Z-SNAPSHOT version }instead of $base-SNAPSHOT: this tree is not the $base line (the commit that prepares $version sets every fallback)"

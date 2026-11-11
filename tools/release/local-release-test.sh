@@ -38,8 +38,6 @@ tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README and t
     [ "$f" = "${3:-}" ] && continue
     mkdir -p "$(dirname "$f")"; printf 'version = providers.gradleProperty("kuicksilver.version").getOrElse("%s")\n' "$s" > "$f"
   done
-  f=samples/ios/kuicksilver-swift/src/commonMain/kotlin/io/kuicksilver/swift/Kuicksilver.kt
-  mkdir -p "$(dirname "$f")"; printf '    public const val VERSION: String = "%s"\n' "$s" > "$f"
   printf 'version="${1:-%s}"\n' "$s" > tools/check/consumer-smoke.sh
   mkdir -p docs/guide
   printf '> The API can change between any two 0.x releases, and %s is on Maven Central.\n\n    implementation("io.kuicksilver:kuicksilver-ktor-client:%s")\n' "$p" "$p" > README.md
@@ -150,7 +148,7 @@ git checkout -q main
 new_repo "$tmp/real"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
-    samples/ios/kuicksilver-swift/build.gradle.kts samples/ios/kuicksilver-swift/src/commonMain/kotlin/io/kuicksilver/swift/Kuicksilver.kt \
+    samples/ios/kuicksilver-swift/build.gradle.kts \
     tools/check/consumer-smoke.sh README.md docs/guide/ios.md; do
   mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
 done
