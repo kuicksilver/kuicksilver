@@ -82,6 +82,12 @@ internal class H2ConnectionCore(
     private var ourSettingsFrame: ByteArray? = null
     internal val pingAnswers = ArrayDeque<ByteArray>() // section 6.7: ahead of every other control frame
     internal val control = ArrayDeque<ByteArray>()
+
+    /**
+     * Our SETTINGS acknowledgements held back, oldest first, each behind the streams whose DATA was taken from a larger
+     * window and is not written yet (section 6.9.2): see [queueSettingsAck].
+     */
+    private val heldSettingsAcks = ArrayDeque<MutableSet<H2Stream>>()
     internal var wroteSincePing = true
     internal val creditReady = ArrayDeque<H2Stream>()
     internal val headerReady = ArrayDeque<H2Stream>()
@@ -672,6 +678,7 @@ internal class H2ConnectionCore(
         if (frame[3].toInt() <= 0x1) wroteSincePing = true // DATA or HEADERS
         if (frame[3].toInt() == 0x0) {
             s.dataQueued = false
+            dataLeft(s)
             tryWake(s)
         }
         schedule(s)
@@ -711,6 +718,38 @@ internal class H2ConnectionCore(
         control.addLast(frame)
     }
 
+    /**
+     * Acknowledges the peer's SETTINGS (section 6.5.3). When they shrank SETTINGS_INITIAL_WINDOW_SIZE ([windowShrank]), the
+     * acknowledgement waits until the DATA frames already taken from the larger window are written: the peer counts what
+     * arrives after the acknowledgement against the smaller window (sections 6.5.3, 6.9.2), and a frame [sendData] took
+     * before the change but [poll] writes after it would overrun that window (FLOW_CONTROL_ERROR). At most one DATA frame
+     * per stream waits, and it needs no window to be written, so the acknowledgement is only held behind frames already
+     * due. A later acknowledgement never overtakes a held one.
+     */
+    internal fun queueSettingsAck(windowShrank: Boolean) {
+        val behind = LinkedHashSet<H2Stream>()
+        if (windowShrank) {
+            for (s in streams.values) if (s.out.any { it is OutItem.Data && it.length > 0 }) behind += s
+        }
+        if (behind.isEmpty() && heldSettingsAcks.isEmpty()) return queueControl(FrameEncoder.settingsAck())
+        heldSettingsAcks.addLast(behind)
+        releaseSettingsAcks()
+    }
+
+    /** The queued DATA of [s] was written or dropped: acknowledgements held behind it may go. */
+    private fun dataLeft(s: H2Stream) {
+        if (heldSettingsAcks.isEmpty()) return
+        for (behind in heldSettingsAcks) behind.remove(s)
+        releaseSettingsAcks()
+    }
+
+    private fun releaseSettingsAcks() {
+        while (heldSettingsAcks.firstOrNull()?.isEmpty() == true) {
+            heldSettingsAcks.removeFirst()
+            queueControl(FrameEncoder.settingsAck())
+        }
+    }
+
     /** Credit [n] bytes of [s] back to the peer: the connection at once when due, the stream as one coalesced WINDOW_UPDATE. */
     internal fun credit(
         s: H2Stream,
@@ -746,6 +785,7 @@ internal class H2ConnectionCore(
         for (item in s.out) if (item is OutItem.Data) refund += item.length
         s.out.clear()
         s.dataQueued = false
+        dataLeft(s)
         if (refund == 0L) return
         queuedDataBytes -= refund
         connSendWindow += refund

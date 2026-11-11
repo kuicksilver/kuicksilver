@@ -184,6 +184,104 @@ class FlowControlTest {
         assertEquals(50, c.core.sendData(id, ByteArray(50), 0, 50, endStream = false))
     }
 
+    /**
+     * A client starts its request body under the protocol's initial 65 535 before the server's SETTINGS with a smaller
+     * SETTINGS_INITIAL_WINDOW_SIZE arrive (section 3.4). A DATA frame [H2ConnectionCore.sendData] took from the old window but
+     * [H2ConnectionCore.poll] had not written yet must reach the server before the SETTINGS acknowledgement: the server
+     * counts what follows the acknowledgement against the smaller window (sections 6.5.3, 6.9.2). Written after it, the
+     * frame overran that window and the server reset the stream with FLOW_CONTROL_ERROR.
+     */
+    @Test
+    fun dataTakenBeforeASmallerInitialWindowIsWrittenBeforeTheAck() {
+        val server = H2ConnectionCore(Role.SERVER, Http2Settings(initialStreamWindow = 16_384, maxStreamWindow = 16_384), 0)
+        val client = H2ConnectionCore(Role.CLIENT, Http2Settings(), 0)
+        val buf = ByteArray(1 shl 20)
+        val serverEvents = mutableListOf<H2Event>()
+
+        fun drain(
+            from: H2ConnectionCore,
+            to: H2ConnectionCore,
+        ) {
+            while (true) {
+                val n = from.poll(buf, 0, 0)
+                if (n == 0) break
+                to.receive(buf, 0, n, 0)
+            }
+            generateSequence { server.nextEvent() }.forEach { serverEvents += it }
+            generateSequence { client.nextEvent() }.forEach { }
+        }
+        val post = GET.map { if (it.first == ":method") ":method" to "POST" else it }
+        val id = client.openStream(post, endStream = false)
+        val chunk = ByteArray(16_384)
+        assertEquals(16_384, client.sendData(id, chunk, 0, chunk.size, endStream = false))
+        drain(client, server) // preface, SETTINGS, HEADERS and the first 16 KiB, all under the initial 65 535
+        // the server's SETTINGS (initial window 16 384) are on their way; meanwhile the client takes 16 KiB more of the
+        // old window, and the read side applies the SETTINGS before the write side wrote that frame
+        val serverHello = ByteArray(1 shl 16)
+        var helloLen = 0
+        while (true) {
+            val n = server.poll(serverHello, helloLen, 0)
+            if (n == 0) break
+            helloLen += n
+        }
+        assertEquals(16_384, client.sendData(id, chunk, 0, chunk.size, endStream = false))
+        client.receive(serverHello, 0, helloLen, 0) // window: 65 535 - 32 768 - 49 151 = -16 384
+        drain(client, server)
+        assertEquals(emptyList(), serverEvents.filterIsInstance<H2Event.StreamReset>(), "no FLOW_CONTROL_ERROR")
+        assertEquals(32_768, serverEvents.filterIsInstance<H2Event.Data>().sumOf { it.data.size })
+        // the rest of a 256 KiB body flows within the smaller window as the server reads
+        var sent = 32_768
+        var rounds = 0
+        while (sent < 262_144) {
+            assertTrue(++rounds < 1_000, "stalled at $sent")
+            server.consumed(id, serverEvents.filterIsInstance<H2Event.Data>().sumOf { it.data.size.toLong() }, 0)
+            serverEvents.clear()
+            drain(server, client)
+            sent += client.sendData(id, chunk, 0, minOf(chunk.size, 262_144 - sent), endStream = sent + chunk.size >= 262_144)
+            drain(client, server)
+            assertEquals(emptyList(), serverEvents.filterIsInstance<H2Event.StreamReset>(), "no FLOW_CONTROL_ERROR at $sent")
+        }
+    }
+
+    /** The frame order of [dataTakenBeforeASmallerInitialWindowIsWrittenBeforeTheAck]; a later ACK waits behind a held one. */
+    @Test
+    fun settingsAckFollowsDataTakenFromTheLargerWindow() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = false)
+        assertEquals(16_384, c.core.sendData(id, ByteArray(16_384), 0, 16_384, endStream = false))
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000)) // shrinks: its ACK waits for the queued DATA
+        c.send(settings(SettingId.MAX_CONCURRENT_STREAMS to 10)) // its ACK must not overtake the first
+        val out = c.read().filter { it is Frame.Data || it is Frame.Settings }
+        assertEquals(3, out.size, "wrote ${out.map { it::class.simpleName }}")
+        assertTrue(out[0] is Frame.Data)
+        assertTrue(out.drop(1).all { it is Frame.Settings && it.ack })
+        // without DATA queued, or when the window grows, the ACK goes at once
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 500))
+        assertTrue(c.read().any { it is Frame.Settings && it.ack })
+        assertEquals(0, c.core.sendData(id, ByteArray(10), 0, 10, endStream = false)) // 1 000 - 16 384 - 500 < 0
+        c.send(FrameEncoder.windowUpdate(id, 20_000))
+        c.events()
+        assertTrue(c.core.sendData(id, ByteArray(10), 0, 10, endStream = false) == 10)
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 600))
+        val grown = c.read()
+        assertTrue(grown.first() is Frame.Settings && (grown.first() as Frame.Settings).ack, "wrote ${grown.map { it::class.simpleName }}")
+    }
+
+    /** A queued DATA frame that is dropped (the peer reset its stream) releases the ACK held behind it. */
+    @Test
+    fun droppedDataReleasesTheHeldSettingsAck() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = false)
+        c.read() // HEADERS
+        assertEquals(16_384, c.core.sendData(id, ByteArray(16_384), 0, 16_384, endStream = false))
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000), FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code))
+        val out = c.read()
+        assertEquals(emptyList(), out.filterIsInstance<Frame.Data>())
+        assertTrue(out.any { it is Frame.Settings && it.ack })
+    }
+
     @Test
     fun initialWindowChangeLeavesStreamsWeCannotSendOn() {
         // section 6.9.2: only streams with an active send window (open, half-closed (remote)) move
