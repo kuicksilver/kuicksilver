@@ -38,6 +38,9 @@ class IdleFootprintTest {
         // arrived while the loop waited (docs/benchmarks.md, "Memory"); this ceiling catches that mode coming back. 88-104 K
         // with 4 KiB reassembly windows, 292 K with per-stream staging arrays
         const val HTTP3_CEILING = 85_000L
-        const val CORE_CEILING = 35_500L // 35 104 measured (2026-11-06, JVM 21); 36 160 with the DATAGRAM ring made up front
+        // 35 552 measured (2026-11-11, JVM 21): the 0.3.0 RFC 9000/9002 state a connection keeps from the start (its own IDs
+        // for removal by key, per-path ECN and persistent-congestion marks, the 0-RTT packet range); 35 104 before
+        // (2026-11-06), 36 160 with the DATAGRAM ring made up front
+        const val CORE_CEILING = 36_000L
     }
 }
