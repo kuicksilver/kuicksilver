@@ -629,6 +629,24 @@ class LossDetectionTest {
         assertEquals(listOf("0:false"), l.lossByPath, "ack-eliciting losses span 400 ms only")
     }
 
+    @Test fun aPacketAcknowledgedInAnotherSpaceBreaksPersistentCongestion() {
+        // RFC 9002 section 7.6.2: "across all packet number spaces, none of the packets sent between the send times of these two
+        // packets are acknowledged". During the handshake a 1-RTT packet sent between two lost Handshake packets and acknowledged
+        // shows the path delivered in between; only the Handshake space's own acknowledgements used to count
+        fun lossesWith(appAcked: Boolean): Listener {
+            val (ld, l) = ld()
+            sampleByAck(ld, 0, t0 - 200.milliseconds)
+            for (pn in 0L..15L) send(ld, SpaceId.Handshake, pn, t0 + (pn.toInt() * 100).milliseconds)
+            send(ld, SpaceId.Application, 1, t0 + 750.milliseconds)
+            if (appAcked) ld.onAck(SpaceId.Application, ack(1L to 1L), t0 + 800.milliseconds)
+            ld.onAck(SpaceId.Handshake, ack(15L to 15L), t0 + 1600.milliseconds)
+            assertEquals((0L..14L).toList(), l.lost)
+            return l
+        }
+        assertEquals(listOf("0:false"), lossesWith(appAcked = true).lossByPath, "the 1-RTT packet sent at 750 ms was acknowledged")
+        assertEquals(listOf("0:true"), lossesWith(appAcked = false).lossByPath, "1.4 s of losses, more than the period")
+    }
+
     @Test fun persistentCongestionIsJudgedPerPath() {
         // RFC 9000 section 9.4: each path has its own congestion controller; a long loss period on one path does not collapse the
         // window of another whose single packet was lost

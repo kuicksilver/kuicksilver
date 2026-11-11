@@ -120,6 +120,9 @@ internal interface LossListener {
     )
 }
 
+/** The Initial and Handshake bits of [LossDetection]'s discarded spaces. */
+private const val LONG_HEADER_SPACES = 3
+
 /** The largest PTO backoff exponent (RFC 9002 section 6.2.1: PTO x 2^pto_count) before the doubling stops. */
 private const val MAX_PTO_BACKOFF_SHIFT = 30
 
@@ -143,6 +146,9 @@ internal class LossDetection(
     private val acked = ArrayList<SentPacket>()
 
     var handshakeConfirmed: Boolean = false
+
+    /** Bit per [SpaceId] ordinal: the space was discarded ([discard]). */
+    private var discardedSpaces = 0
 
     /** Client: the server has received a Handshake packet from us (our address is validated); server: always relevant through [handshakeConfirmed]. */
     var peerAddressValidated: Boolean = false
@@ -276,6 +282,7 @@ internal class LossDetection(
         // RFC 9000 section 13.4.2.1: only an ACK that raises the largest acknowledged packet carries counts newer than the last ones
         if (ack.largest > prevLargestAcked) processEcn(sp, space, ack, now, largestNewlyAcked)
         detectLost(sp, now)
+        keepAckedTimes(sp) // after this space's losses: the times serve the other spaces' checks
         for (k in acked.indices) {
             val p = acked[k]
             if (p.inFlight) bytesInFlight -= p.size
@@ -297,6 +304,30 @@ internal class LossDetection(
         listener.onAckProcessed(now)
         if (peerCompletedAddressValidation()) ptoCount = 0
         timerBase = now
+    }
+
+    /**
+     * Before the handshake is confirmed several spaces carry packets: the send times of [sp]'s newly acknowledged ones are kept
+     * for persistent congestion across spaces ([crossSpaceAckBetween]). A space's times go with the space ([discard]: RFC 9002
+     * section 7.6.2 lets a sender without state for a space judge the others without it), the Application space's once the
+     * Initial and Handshake spaces are both gone, as they are once the handshake is confirmed.
+     */
+    private fun keepAckedTimes(sp: PacketNumberSpace) {
+        if (handshakeConfirmed || discardedSpaces and LONG_HEADER_SPACES == LONG_HEADER_SPACES) return
+        for (k in acked.indices) sp.recordAckedTime(acked[k].timeSent)
+    }
+
+    /** A packet of a space other than [sp] sent strictly between [a] and [b] was acknowledged (RFC 9002 section 7.6.2). */
+    private fun crossSpaceAckBetween(
+        sp: PacketNumberSpace,
+        a: TimeMark,
+        b: TimeMark,
+    ): Boolean {
+        for (i in spaces.indices) {
+            val other = spaces[i]
+            if (other !== sp && other.anyAckedSentBetween(a, b)) return true
+        }
+        return false
     }
 
     /** Lost packets of [sp] remembered longer than the persistent congestion period are settled: their loss stands. */
@@ -570,7 +601,8 @@ internal class LossDetection(
 
     /**
      * RFC 9002 section 7.6.2 for the lost packets of one path ([pid], counted by [pcc]): two ack-eliciting packets declared lost, no
-     * packet sent between them acknowledged (packet numbers never stored, such as ACK-only packets, or skipped do not count), more
+     * packet sent between them acknowledged in any space (packet numbers never stored, such as ACK-only packets, or skipped do not
+     * count; other spaces by the send times [keepAckedTimes] keeps, as A.9 judges the lost packets of one detection), more
      * than [duration] apart, and both sent after the first RTT sample ("The persistent congestion period SHOULD NOT start until
      * there is at least one RTT sample"; ngtcp2 filters by first_rtt_sample_ts the same way).
      */
@@ -584,12 +616,18 @@ internal class LossDetection(
         if (!rtt.hasSample || from == TimeMark.NEVER) return false
         var runStart = TimeMark.NEVER
         var prevPn = -1L
+        var prevSent = TimeMark.NEVER
         for (k in lost.indices) {
             val p = lost[k]
             if (!p.ackEliciting || !p.inFlight || p.pmtuProbe || p.pathId != pid || p.cc !== pcc) continue
             if (p.timeSent < from) continue
-            if (runStart == TimeMark.NEVER || sp.anyAckedBetween(prevPn, p.pn)) runStart = p.timeSent
+            // "across all packet number spaces, none of the packets sent between the send times of these two packets are
+            // acknowledged": this space by packet number, the others by send time
+            if (runStart == TimeMark.NEVER || sp.anyAckedBetween(prevPn, p.pn) || crossSpaceAckBetween(sp, prevSent, p.timeSent)) {
+                runStart = p.timeSent
+            }
             prevPn = p.pn
+            prevSent = p.timeSent
             if (p.timeSent - runStart > duration) return true
         }
         return false
@@ -761,5 +799,8 @@ internal class LossDetection(
         sp.lastAckElicitingTime = TimeMark.NEVER
         sp.ackElicitingInFlight = 0
         ptoCount = 0
+        discardedSpaces = discardedSpaces or (1 shl space.ordinal)
+        sp.forgetAckedTimes()
+        if (discardedSpaces and LONG_HEADER_SPACES == LONG_HEADER_SPACES) spaces[SpaceId.Application.ordinal].forgetAckedTimes()
     }
 }
