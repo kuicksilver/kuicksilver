@@ -11,6 +11,7 @@ package io.kuicksilver.tls
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.cancel
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
@@ -567,6 +568,44 @@ class TlsConnectionTest {
                 while (!c.nativeFreedForTest || !s.nativeFreedForTest) delay(10)
             }
             assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
+        }
+
+    /** A transport that failed (a reset) during the handshake is the cause of the handshake's failure, not dropped. */
+    @Test fun aFailedTransportIsTheCauseOfAHandshakeFailure(): Unit =
+        runBlocking {
+            val clientIn = ByteChannel(autoFlush = true)
+            val marker = IOException("connection reset (marker)")
+            clientIn.cancel(marker)
+            val e =
+                assertFailsWith<TlsException.Protocol> {
+                    withTimeout(10.seconds) { TlsConnection.client(clientIn, ByteChannel(autoFlush = true), TcpFixtures.client()) }
+                }
+            assertTrue(e.message!!.contains("transport closed"), e.message)
+            assertTrue(generateSequence(e.cause) { it.cause }.any { it === marker }, "cause chain of $e: ${e.cause}")
+        }
+
+    /** A transport that fails on an established connection is the cause of the input's truncation failure. */
+    @Test fun aFailedTransportIsTheCauseOfATruncation(): Unit =
+        runBlocking {
+            val c2s = ByteChannel(autoFlush = true)
+            val s2c = ByteChannel(autoFlush = true)
+            val (c, s) =
+                withTimeout(20.seconds) {
+                    val c = async(Dispatchers.Default) { TlsConnection.client(s2c, c2s, TcpFixtures.client()) }
+                    val s = async(Dispatchers.Default) { TlsConnection.server(c2s, s2c, TcpFixtures.server()) }
+                    c.await() to s.await()
+                }
+            try {
+                val marker = IOException("connection reset (marker)")
+                s2c.cancel(marker)
+                val e = assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
+                val tls = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<TlsException.Protocol>().first()
+                assertTrue(tls.message!!.contains("truncation"), tls.message)
+                assertTrue(generateSequence(tls.cause) { it.cause }.any { it === marker }, "cause chain of $tls: ${tls.cause}")
+            } finally {
+                c.close()
+                s.close()
+            }
         }
 
     @Test fun cancellationNotWrapped() {

@@ -237,7 +237,8 @@ public class TlsConnection private constructor(
                     if (n <
                         0
                     ) {
-                        throw TlsException.Protocol(null, "transport closed during the TLS handshake", null)
+                        // a failed transport (a reset) answers -1 too: its failure stays the cause
+                        throw TlsException.Protocol(null, "transport closed during the TLS handshake", transportIn.closedCause)
                     }
                     feed(buf, n)
                 }
@@ -517,7 +518,10 @@ public class TlsConnection private constructor(
                 dataReadsInPass = 0
                 deliver()
                 var n = transportIn.readAvailable(cipher, 0, cipher.size)
-                if (n < 0) throw TlsException.Protocol(null, "transport closed without close_notify (truncation)", null)
+                if (n < 0) {
+                    // a failed transport (a reset) answers -1 too: its failure stays the cause
+                    throw TlsException.Protocol(null, "transport closed without close_notify (truncation)", transportIn.closedCause)
+                }
                 // one read gives at most one buffer segment (8 KiB): what else is there already joins this pass. A transport
                 // that failed meanwhile throws its cause here even with bytes buffered (ktor's readBuffer): the bytes read so
                 // far are fed first, and the next pass's read reports the failure

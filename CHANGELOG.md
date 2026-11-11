@@ -954,6 +954,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   got it (see the Ktor server's TLS handshake deadline below). The native session is now freed whenever the
   connection's job ends, and `input` and `output` fail as after `close()`. Two concurrent `close()` calls no longer both
   run the tear-down (the closed flag was a plain field read and written from several threads).
+- TLS over TCP: a transport that failed (a reset, a socket error) during the handshake or under an established
+  connection ended it with `TlsException.Protocol` "transport closed during the TLS handshake" or "transport closed
+  without close_notify (truncation)" without a cause: ktor-io reads a channel failed with a cause as one that ended, and
+  the failure was dropped. It is now the exception's cause, so the application and the Ktor server's
+  `tlsHandshakeFailed` event see it.
 
 ## [0.2.1] - 2026-11-04
 
