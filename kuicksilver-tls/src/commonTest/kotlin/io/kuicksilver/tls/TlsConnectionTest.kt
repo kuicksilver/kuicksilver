@@ -598,8 +598,21 @@ class TlsConnectionTest {
                     c.await() to s.await()
                 }
             try {
+                // the transport fails while the client's reader pump is busy with a record, not waiting on it: its next read
+                // then answers -1 (ktor-io reads a channel failed with a cause as one that ended); a reader already waiting
+                // gets the failure thrown instead
                 val marker = IOException("connection reset (marker)")
-                s2c.cancel(marker)
+                var armed = true
+                c.refuseFeedForTest = {
+                    if (armed) {
+                        armed = false
+                        s2c.cancel(marker)
+                    }
+                    false
+                }
+                s.output.writeFully(byteArrayOf(1))
+                s.output.flush()
+                assertEquals(1, withTimeout(5.seconds) { c.input.readExactly(1) }.size)
                 val e = assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
                 val tls = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<TlsException.Protocol>().first()
                 assertTrue(tls.message!!.contains("truncation"), tls.message)
