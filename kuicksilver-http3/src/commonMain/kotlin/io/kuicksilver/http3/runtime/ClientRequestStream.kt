@@ -534,9 +534,22 @@ internal class ResponseImpl(
         sendFailure?.invokeOnCompletion { cause ->
             if (cause != null) {
                 pump.cancel()
+                cancelSectionsAfterPump()
                 bodyChannel.cancel(cause)
                 trailersDeferred.completeExceptionally(cause)
             }
+        }
+    }
+
+    /**
+     * Reading is abandoned with the cancelled [pump]: response trailers it left blocked on the dynamic table would hold a
+     * blocked-stream slot for good, and the peer's encoder would wait for them (RFC 9204 section 4.4.2): QPACK forgets the
+     * stream once the pump is over, so a pump still running to its next suspension cannot block the stream again after it.
+     */
+    private fun cancelSectionsAfterPump() {
+        session.scope.launch {
+            pump.join()
+            runCatching { session.cancelSections(st) }
         }
     }
 
@@ -564,7 +577,7 @@ internal class ResponseImpl(
         sender?.cancel()
         runCatching { st.stopSending(code) }
         runCatching { st.reset(code) }
-        session.scope.launch { runCatching { session.cancelSections(st) } }
+        cancelSectionsAfterPump()
         val e = CancellationException("response cancelled with ${Http3ErrorCode.name(code)}")
         bodyChannel.cancel(e)
         trailersDeferred.cancel(e)

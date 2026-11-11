@@ -637,6 +637,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client (`Http3Connection.request`): when the request's trailers were refused (above the server's
+  SETTINGS_MAX_FIELD_SECTION_SIZE) after the response had begun, the response was abandoned without a QPACK Stream
+  Cancellation (RFC 9204 section 4.4.2). Response trailers blocked on the dynamic table at that moment kept their
+  blocked-stream slot for the connection's life; with `enableQpackDynamicTable()`, 16 such requests made the next
+  legitimately blocked section end the connection with QPACK_DECOMPRESSION_FAILED. The stream is now cancelled once the
+  response's reader stopped, as it is for `cancel()`. The Ktor engine was not affected.
 - HTTP/3 server: when request trailers above `maxFieldSectionSize` arrived while the application called `respond()`,
   both could answer: the runtime's 431 and the application's response went out as two final responses on one stream (a
   malformed response, to the client that sent the oversized trailers). The response is now taken on the connection's
