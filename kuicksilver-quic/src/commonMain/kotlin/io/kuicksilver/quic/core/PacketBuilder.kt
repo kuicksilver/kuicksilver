@@ -31,6 +31,13 @@ internal class PacketBuilder(
     private val c: ConnectionCore,
 ) {
     var pacerWakeup: TimeMark = TimeMark.NEVER
+
+    /**
+     * The last poll left nothing to send on the active path (no data, or flow control holds it): with room in the window, the
+     * window is under-used (RFC 9002 section 7.8). False when a poll stopped with data left, for the window, the pacer, the send
+     * quantum or a full batch: the sender "would have fully utilized the congestion window without pacing delay".
+     */
+    var appLimited: Boolean = true
     private var writer: WireWriter? = null
     private val mask = ByteArray(5)
     private val range = SendRange()
@@ -202,8 +209,9 @@ internal class PacketBuilder(
             pacer(now)
             if (pacerWakeup == TimeMark.NEVER) pacerWakeup = now
         }
+        if (c.closeFrame == null) appLimited = !hasData(SpaceId.Application)
         // the sender ran out of data with room in the window and no pacing delay: the next rate samples show the application's pace
-        if (!congested && count < out.capacity && bytes < c.cc.sendQuantum && c.closeFrame == null && !hasData(SpaceId.Application)) {
+        if (!congested && count < out.capacity && bytes < c.cc.sendQuantum && c.closeFrame == null && appLimited) {
             (c.cc as? io.kuicksilver.quic.Bbr)?.onAppLimited()
         }
         return count

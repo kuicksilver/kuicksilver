@@ -68,9 +68,6 @@ private fun ConnectionCore.blockedRepeatGap(done: Int): Duration =
  */
 internal const val BLOCKED_FAST_REPEATS = 32
 
-/** Unused window, in datagrams, that still counts as a window in use (quic-go's maxBurstPackets, RFC 9002 section 7.8). */
-private const val BURST_DATAGRAMS = 3
-
 /** The datagram size assumed for a path that is gone. */
 private const val MIN_DATAGRAM = 1200
 
@@ -309,7 +306,7 @@ internal class ConnectionLossListener(
         // the controller that counted the packets: after a NAT rebinding it lives on the new path (`inheritFrom`); without one, the
         // path's controller, or nothing for a path that is gone
         val target = event.cc ?: core.paths.byId(PathId(event.pathId))?.cc ?: return
-        val prior = priorInFlight(target)
+        val prior = priorIndex(target)
         if (event.kind ==
             CongestionKind.Acked
         ) {
@@ -326,42 +323,45 @@ internal class ConnectionLossListener(
         core.qlog?.metricsUpdated(core.stats, event.now)
     }
 
-    /** Controllers seen in the ACK frame being processed and their bytes in flight before it (the frame's losses included). */
+    /** Controllers seen in the ACK frame being processed, their bytes in flight and window before it (the frame's losses included). */
     private val priorCcs = ArrayList<io.kuicksilver.quic.CongestionController>(4)
     private var priorBytes = LongArray(4)
+    private var priorCwnd = LongArray(4)
 
     override fun onAckFrameStart() {
         priorCcs.clear()
     }
 
-    private fun priorInFlight(cc: io.kuicksilver.quic.CongestionController): Long {
-        for (i in priorCcs.indices) if (priorCcs[i] === cc) return priorBytes[i]
-        if (priorCcs.size == priorBytes.size) priorBytes = priorBytes.copyOf(priorBytes.size * 2)
+    /** [cc]'s slot in [priorBytes] / [priorCwnd], taken at its first event of the frame. */
+    private fun priorIndex(cc: io.kuicksilver.quic.CongestionController): Int {
+        for (i in priorCcs.indices) if (priorCcs[i] === cc) return i
+        if (priorCcs.size == priorBytes.size) {
+            priorBytes = priorBytes.copyOf(priorBytes.size * 2)
+            priorCwnd = priorCwnd.copyOf(priorCwnd.size * 2)
+        }
         priorBytes[priorCcs.size] = cc.bytesInFlight
+        priorCwnd[priorCcs.size] = cc.cwnd
         priorCcs += cc
-        return cc.bytesInFlight
+        return priorCcs.size - 1
     }
 
     /**
-     * RFC 9002 section 7.8: the window grows only while the sender uses it. Judged on the bytes in flight before the ACK frame (an
-     * ACK of a whole window otherwise looks application-limited halfway through), with quic-go's isCwndLimited margins: at most
-     * three datagrams unused, or more than half the window in flight during slow start (where the window doubles each RTT). A
-     * pacer that keeps a burst back stays within that margin, so pacing delay is not taken for application limitation.
+     * RFC 9002 section 7.8: "When bytes in flight is smaller than the congestion window and sending is not pacing limited, the
+     * congestion window is underutilized ... the congestion window SHOULD NOT be increased in either slow start or congestion
+     * avoidance." The window was in use when the bytes in flight before the ACK frame left no room for another datagram in the
+     * window before the frame (an ACK of a whole window otherwise looks under-used halfway through, as the window grows with
+     * it; section 7 lets a window be used to within one datagram), or
+     * when the active path's sender still had data at the end of its last poll: it stopped for the window, the pacer or a burst
+     * limit ("A sender SHOULD NOT consider itself application limited if it would have fully utilized the congestion window
+     * without pacing delay"). Only the active path sends data, so another path's controller is judged by its bytes alone.
      */
     private fun cwndLimited(
         cc: io.kuicksilver.quic.CongestionController,
-        prior: Long,
+        prior: Int,
         mss: Int,
     ): Boolean {
-        val cwnd = cc.cwnd
-        if (prior >= cwnd) return true
-        val slowStart =
-            when (cc) {
-                is io.kuicksilver.quic.Cubic -> cwnd < cc.ssthresh
-                is io.kuicksilver.quic.NewReno -> cwnd < cc.ssthresh
-                else -> false
-            }
-        return (slowStart && prior > cwnd / 2) || cwnd - prior <= BURST_DATAGRAMS * mss
+        if (priorBytes[prior] + mss > priorCwnd[prior]) return true
+        return cc === core.cc && !core.builder.appLimited
     }
 
     override fun onAckProcessed(now: TimeMark) {

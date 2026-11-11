@@ -26,12 +26,14 @@ class AppLimitedTest {
 
     private val t0 = TimeMark(50_000_000_000L)
 
-    private fun withListener(block: (ConnectionLossListener) -> Unit) {
+    private fun withListener(block: (ConnectionLossListener) -> Unit) = withCore { _, l -> block(l) }
+
+    private fun withCore(block: (ConnectionCore, ConnectionLossListener) -> Unit) {
         val p = EndpointPair()
         try {
             val c: ConnectionCore = p.connect()
             assertTrue(p.confirmed(c))
-            block(ConnectionLossListener(c))
+            block(c, ConnectionLossListener(c))
         } finally {
             p.close()
         }
@@ -40,7 +42,7 @@ class AppLimitedTest {
     /** One ACK frame acknowledging [packets] packets of 1200 bytes sent at [sent], as loss detection reports it. */
     private fun ackFrame(
         l: ConnectionLossListener,
-        cc: NewReno,
+        cc: io.kuicksilver.quic.CongestionController,
         packets: Int,
         sent: TimeMark,
         now: TimeMark,
@@ -88,6 +90,61 @@ class AppLimitedTest {
             repeat(40) { cc.onPacketSent(t, 1200) }
             ackFrame(l, cc, 40, t, t + 50.milliseconds)
             assertEquals(cwnd, cc.cwnd, "48 000 of 60 000 in flight")
+        }
+    }
+
+    /** NewReno in congestion avoidance at 60 000 bytes. */
+    private fun inCongestionAvoidance(): Pair<NewReno, TimeMark> {
+        val cc = NewReno(1200)
+        var t = t0
+        while (cc.cwnd < 120_000L) {
+            cc.onPacketSent(t, 1200)
+            cc.onAck(t + 50.milliseconds, t, 1200, 50.milliseconds, false)
+            t += 1.milliseconds
+        }
+        cc.onPacketSent(t, 1200)
+        cc.onLoss(t + 50.milliseconds, 1200, t, false)
+        return cc to t + 100.milliseconds
+    }
+
+    @Test fun twoDatagramsOfTheWindowUnusedDoNotGrowIt() {
+        // RFC 9002 section 7.8: "When bytes in flight is smaller than the congestion window and sending is not pacing limited, the
+        // congestion window is underutilized ... SHOULD NOT be increased". quic-go's margin of three unused datagrams grew it here
+        withListener { l ->
+            val (cc, t) = inCongestionAvoidance()
+            val cwnd = cc.cwnd
+            val sent = (cwnd / 1200 - 2).toInt()
+            repeat(sent) { cc.onPacketSent(t, 1200) }
+            ackFrame(l, cc, sent, t, t + 50.milliseconds)
+            assertEquals(cwnd, cc.cwnd, "two datagrams of room were left unused")
+        }
+    }
+
+    @Test fun slowStartWithAThirdOfTheWindowUnusedDoesNotGrow() {
+        // quic-go's slow-start rule (more than half the window in flight) grew it here too
+        withListener { l ->
+            val cc = NewReno(1200)
+            repeat(7) { cc.onPacketSent(t0, 1200) } // 8 400 of 12 000
+            ackFrame(l, cc, 7, t0, t0 + 50.milliseconds)
+            assertEquals(12_000L, cc.cwnd)
+        }
+    }
+
+    @Test fun aSenderHeldBackByThePacerIsNotApplicationLimited() {
+        // section 7.8: "A sender SHOULD NOT consider itself application limited if it would have fully utilized the congestion
+        // window without pacing delay": the active path's sender ended its last poll with data left
+        withCore { c, l ->
+            val cc = c.cc
+            val before = cc.cwnd
+            repeat(3) { cc.onPacketSent(t0, 1200) }
+            c.builder.appLimited = false
+            ackFrame(l, cc, 3, t0, t0 + 50.milliseconds)
+            assertTrue(cc.cwnd > before, "pacing-limited: the window grows (${cc.cwnd})")
+            val grown = cc.cwnd
+            repeat(3) { cc.onPacketSent(t0, 1200) }
+            c.builder.appLimited = true
+            ackFrame(l, cc, 3, t0, t0 + 60.milliseconds)
+            assertEquals(grown, cc.cwnd, "application-limited: it does not")
         }
     }
 }
