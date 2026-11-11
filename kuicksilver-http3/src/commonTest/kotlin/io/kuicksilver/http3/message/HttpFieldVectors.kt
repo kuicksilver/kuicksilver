@@ -124,6 +124,42 @@ internal object HttpFieldVectors {
             Section(
                 listOf(
                     ":method" to "GET",
+                    ":scheme" to "coap+tcp.v-1",
+                    ":authority" to "example.com",
+                    ":path" to "/",
+                ),
+                true,
+            ),
+            Section(
+                listOf(
+                    ":method" to "GET",
+                    ":scheme" to "ht tp",
+                    ":authority" to "example.com",
+                    ":path" to "/",
+                ),
+                false,
+            ),
+            Section(
+                listOf(
+                    ":method" to "GET",
+                    ":scheme" to "1http",
+                    ":authority" to "example.com",
+                    ":path" to "/",
+                ),
+                false,
+            ),
+            Section(
+                listOf(
+                    ":method" to "GET",
+                    ":scheme" to "http:",
+                    ":authority" to "example.com",
+                    ":path" to "/",
+                ),
+                false,
+            ),
+            Section(
+                listOf(
+                    ":method" to "GET",
                     ":scheme" to "https",
                     ":authority" to "example.com",
                     ":path" to "/",

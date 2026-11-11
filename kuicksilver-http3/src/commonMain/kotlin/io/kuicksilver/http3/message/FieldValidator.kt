@@ -20,6 +20,12 @@ internal object FieldValidator {
     val CONNECTION_SPECIFIC: Set<String> = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade")
     private const val TCHAR_SYMBOLS = "!#$%&'*+-.^_`|~"
 
+    /** RFC 3986 section 3.1: `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`. */
+    fun isScheme(s: String): Boolean =
+        s.isNotEmpty() && s[0].isAsciiLetter() && s.all { it.isAsciiLetter() || it in '0'..'9' || it == '+' || it == '-' || it == '.' }
+
+    private fun Char.isAsciiLetter() = this in 'a'..'z' || this in 'A'..'Z'
+
     /** A token (RFC 9110 section 5.6.2), any case: an HTTP method (section 9.1). */
     fun isToken(t: String): Boolean = t.isNotEmpty() && t.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in TCHAR_SYMBOLS }
 
@@ -240,6 +246,8 @@ internal object PseudoHeaders {
         if (!FieldValidator.isToken(method)) throw MalformedMessage(":method is not a token")
         val protocol = pseudo[":protocol"]
         val scheme = pseudo[":scheme"]
+        // RFC 9114 section 4.3.1: the scheme portion of the target URI, so RFC 3986 section 3.1's syntax
+        if (!scheme.isNullOrEmpty() && !FieldValidator.isScheme(scheme)) throw MalformedMessage(":scheme is not a URI scheme")
         val path = pseudo[":path"]
         // one host at most, equal to :authority when both are present (RFC 9114 section 4.3.1; quic-go rejects a second one)
         var host: String? = null

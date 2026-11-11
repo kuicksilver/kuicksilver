@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 and HTTP/3 servers: a request whose `:scheme` was no URI scheme (`ht tp`, `1http`, `http:`) was accepted;
+  only control characters were refused. `:scheme` is the scheme portion of the target URI (RFC 9113 section 8.3.1,
+  RFC 9114 section 4.3.1), so a value outside RFC 3986 section 3.1's syntax now makes the request malformed. The shared
+  field vectors carry the cases.
 - HTTP/2 client (internal `H2ClientConnection.open`): a request with `:protocol` (Extended CONNECT) went out whether or
   not the server had sent SETTINGS_ENABLE_CONNECT_PROTOCOL = 1 (RFC 8441 section 4). It now fails locally with
   IllegalArgumentException until the server enabled it. The Ktor engine never sends `:protocol` over HTTP/2.
