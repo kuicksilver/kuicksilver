@@ -642,10 +642,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   plain HTTP/1.1. On Linux, Android included, a socket's pending error goes to the first system call that looks at it
   and is then cleared: a send that ran between the arrival of the peer's reset and the next receive failed with
   ECONNRESET, and the receive then returned the end of the stream. The read side now fails with the send's failure when
-  it reads an end after a send failed (waiting for a send under way), instead of ending; an orderly close, a local
-  abort and a failed application stream do not count. On Kotlin/Native a failed send also failed the read side with a
-  CancellationException rather than the send's error. TLS already treated such an end as a truncation (no
+  it reads an end after a send failed (waiting for a send under way), instead of ending; an orderly close and a failed
+  application stream do not count. On Kotlin/Native a failed send, and an abort, failed the read side with a
+  CancellationException rather than the send's error or the reset. TLS already treated such an end as a truncation (no
   `close_notify`).
+- Ktor client and server, HTTP/1.1 and HTTP/2 over TCP and TLS: bytes received before the connection failed were lost
+  when the application had not read them yet: ktor-io's channel drops what it holds once it fails. A response the server
+  sent completely before resetting the connection (a 413 or 401 to an upload it stopped reading, whose close over unread
+  data the kernel answers with a reset, RFC 9112 section 9.6) failed the call instead of reaching it. The engines now
+  read their connections through a channel that hands out everything received, then fails (a reset, a receive error, a
+  failed send, an abort, a failed TLS session); TLS's raw input reads the same way, so an alert received before a reset
+  is not lost either. A socket's read channel opened with ktor's `openReadChannel` fails at once, as before.
+- JVM and Android TCP: the read loop is now Kuicksilver's own, as the write loop already was (ktor's reader is no longer
+  used); it reads into the application's channel directly, as ktor's did.
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS

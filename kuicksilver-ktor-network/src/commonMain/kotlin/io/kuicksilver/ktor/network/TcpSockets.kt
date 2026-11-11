@@ -74,3 +74,6 @@ internal expect fun Socket.rawBytesSent(): Long?
  * that end stands for ([SendFailures]); null removes it (tests: a send that fails in between). No-op on other sockets.
  */
 internal expect fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?)
+
+/** The [SendFailures] of this platform TCP socket, or null for any other socket (tests). */
+internal expect fun Socket.sendFailuresForTest(): SendFailures?

@@ -6,7 +6,6 @@ package io.kuicksilver.ktor.network
 
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.SocketAddress
-import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -118,7 +117,8 @@ public class TlsSocket private constructor(
      * the last bytes, reached the application as a clean end, and a body delimited by the connection's close passed cut
      * for whole. The channel fails with the session's [TlsException] itself: ktor's channels wrap a failure in
      * `ClosedByteChannelException` where they hand it on, and a second wrapping (ktor's `copyTo` closed the channel with
-     * the wrapped failure it caught) hid the [TlsException] two causes deep.
+     * the wrapped failure it caught) hid the [TlsException] two causes deep. A channel opened with
+     * [openDeliveringReadChannel] keeps the plaintext relayed before the failure readable ([ReadDelivery]).
      */
     @OptIn(InternalAPI::class)
     override fun attachForReading(channel: ByteChannel): WriterJob =
@@ -131,10 +131,18 @@ public class TlsSocket private constructor(
                     channel.flush()
                 }
                 source.closedCause?.let { throw it }
-            } catch (e: ClosedByteChannelException) {
-                throw e.sessionFailure()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                val failure = if (e is ClosedByteChannelException) e.sessionFailure() else e
+                // before the writer's own cancel, which then finds the channel closed: what was relayed stays readable
+                readDelivery.fail(channel, failure)
+                throw failure
             }
         }
+
+    /** How the relay above fails the application's channel ([openDeliveringReadChannel]). */
+    internal val readDelivery: ReadDelivery = ReadDelivery()
 
     /** The [TlsException] under ktor's wrappers (and, on the JVM in debug mode, their stack-trace-recovery copies), else this. */
     private fun ClosedByteChannelException.sessionFailure(): Throwable {
@@ -309,7 +317,7 @@ public class TlsSocket private constructor(
             context: CoroutineContext,
         ): TlsSocket {
             val ctx = raw.coroutineContext + context
-            val rawIn = raw.openReadChannel()
+            val rawIn = raw.openDeliveringReadChannel()
             val rawOut = raw.openWriteChannel(autoFlush = true)
             val tls =
                 try {

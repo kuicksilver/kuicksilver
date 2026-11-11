@@ -7,7 +7,6 @@ package io.kuicksilver.ktor.server
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
-import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.engine.handleFailure
 import io.ktor.util.pipeline.execute
@@ -17,6 +16,7 @@ import io.kuicksilver.http2.runtime.H2ServerConnection
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.bytesSent
+import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h2.H2Call
 import io.kuicksilver.tls.Certificate
@@ -118,7 +118,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
         coroutineScope {
             val c =
                 H2ServerConnection.start(
-                    sock.openReadChannel(),
+                    sock.openDeliveringReadChannel(),
                     sock.openWriteChannel(),
                     h2SettingsWithin(configuration.http2Settings, headerTimeout),
                     this,

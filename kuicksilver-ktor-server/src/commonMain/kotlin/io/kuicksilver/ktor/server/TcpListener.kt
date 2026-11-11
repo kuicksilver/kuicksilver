@@ -14,7 +14,6 @@ import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.SocketAddress
 import io.ktor.network.sockets.isClosed
-import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.engine.handleFailure
 import io.ktor.server.request.ApplicationReceivePipeline
@@ -30,6 +29,7 @@ import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.ktor.network.bytesSent
 import io.kuicksilver.ktor.network.engineSelector
+import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.network.setCloseTimeout
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
@@ -349,7 +349,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     // inside the try: a socket whose channels cannot be opened is still closed below
                                     connection =
                                         H1Connection(
-                                            sock.openReadChannel(),
+                                            sock.openDeliveringReadChannel(),
                                             sock.openWriteChannel(),
                                             sock.remoteAddress.toNetworkAddress(),
                                             sock.localAddress.toNetworkAddress(),

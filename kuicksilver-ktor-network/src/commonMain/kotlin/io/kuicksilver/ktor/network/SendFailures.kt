@@ -26,6 +26,12 @@ internal class SendFailures {
 
     @Volatile private var failure: Throwable? = null
 
+    /** Run, when set, inside [send] once a failure was recorded, before the send lets others look (tests). */
+    @Volatile internal var heldAfterFailureForTest: (suspend () -> Unit)? = null
+
+    /** Set once a [settled] began to wait for the sends (tests). */
+    @Volatile internal var settlingForTest: Boolean = false
+
     /** The first send failure recorded, without waiting for a send under way. */
     val recorded: Throwable? get() = failure
 
@@ -41,13 +47,17 @@ internal class SendFailures {
             try {
                 block()
             } catch (e: Throwable) {
-                if (e !is CancellationException && isSystemFailure(e) && failure == null) failure = e
+                if (e !is CancellationException && isSystemFailure(e) && failure == null) {
+                    failure = e
+                    heldAfterFailureForTest?.invoke()
+                }
                 throw e
             }
         }
 
     /** The send failure recorded once no send is under way, or null: what an end of stream read now stands for. */
     suspend fun settled(): Throwable? {
+        settlingForTest = true
         sending.withLock {}
         return failure
     }
