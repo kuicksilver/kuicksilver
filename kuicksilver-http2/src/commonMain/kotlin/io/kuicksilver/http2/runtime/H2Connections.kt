@@ -106,7 +106,7 @@ public class H2ClientConnection private constructor(
     ): H2ClientStream {
         val all = H2Messages.buildRequest(method, scheme, authority, path, fields)
         try {
-            H2Messages.requireValidRequest(all)
+            H2Messages.requireValidRequest(all, connectProtocolEnabled = rt.lock.withLock { rt.core.peerEnableConnectProtocol })
             return H2ClientStream(rt, rt.open(all, endStream, headRequest = method == "HEAD"))
         } catch (e: Throwable) {
             rt.unreserve()

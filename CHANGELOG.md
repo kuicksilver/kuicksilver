@@ -637,6 +637,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 client (internal `H2ClientConnection.open`): a request with `:protocol` (Extended CONNECT) went out whether or
+  not the server had sent SETTINGS_ENABLE_CONNECT_PROTOCOL = 1 (RFC 8441 section 4). It now fails locally with
+  IllegalArgumentException until the server enabled it. The Ktor engine never sends `:protocol` over HTTP/2.
 - HTTP/2 client: requests whose HEADERS were still queued when the server's GOAWAY arrived were written afterwards
   when their stream ID was not above the GOAWAY's last stream (a graceful GOAWAY names 2^31 - 1), opening streams after
   the GOAWAY (RFC 9113 section 6.8: MUST NOT). They are now dropped unwritten and fail as not processed, so the engine

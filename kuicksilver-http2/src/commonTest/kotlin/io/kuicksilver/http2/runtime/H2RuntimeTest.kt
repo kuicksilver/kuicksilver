@@ -17,6 +17,7 @@ import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameDecoder
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
+import io.kuicksilver.http2.frame.SettingId
 import io.kuicksilver.http2.hpack.HpackEncoder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -615,6 +616,28 @@ class H2RuntimeTest {
             assertEquals(200, a.response().status)
             a.release()
             b.release()
+        }
+
+    /**
+     * RFC 8441 section 4: `:protocol` only once the server sent SETTINGS_ENABLE_CONNECT_PROTOCOL = 1; before (or without)
+     * it the request fails locally with IllegalArgumentException instead of going out malformed.
+     */
+    @Test fun negative_extendedConnectNeedsTheServersSetting() =
+        runTest {
+            for (enabled in listOf(false, true)) {
+                val (srv, deferred) = raw()
+                if (enabled) srv.settings(SettingId.ENABLE_CONNECT_PROTOCOL to 1L) else srv.settings()
+                val client = deferred.await()
+                assertTrue(client.tryReserve())
+                val open = {
+                    client.open("CONNECT", "https", "example.com", "/chat", listOf(":protocol" to "websocket"), endStream = false)
+                }
+                if (enabled) {
+                    open().release()
+                } else {
+                    assertFailsWith<IllegalArgumentException> { open() }
+                }
+            }
         }
 
     /**
