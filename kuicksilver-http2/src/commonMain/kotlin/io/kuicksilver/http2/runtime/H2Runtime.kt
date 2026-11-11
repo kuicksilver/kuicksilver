@@ -381,7 +381,9 @@ internal class H2Runtime(
     private fun onHeaders(e: H2Event.HeadersReceived) {
         val s = lock.withLock { streams[e.streamId] }
         if (s == null) {
-            if (!client) newRequest(e)
+            // only the section that opened the stream is a request: trailers on a stream the handler already released (its
+            // response still being written) are dropped, never processed as a new one (RFC 9113 sections 8.1, 5.1.2)
+            if (!client && e.opening) newRequest(e)
             return
         }
         if (e.tooLarge) {

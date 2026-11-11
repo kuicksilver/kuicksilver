@@ -34,6 +34,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -634,6 +635,50 @@ class H2RuntimeTest {
                 byteArrayOf(0x00) + hpackString("x-big") + hpackString("b".repeat(1_500))
         return FrameEncoder.headers(id, block, true, true, -1)
     }
+
+    /** A field section on stream [id] of literals without indexing (the server's HPACK table stays as the client left it). */
+    private fun literalHeaders(
+        id: Int,
+        fields: List<Pair<String, String>>,
+        endStream: Boolean,
+    ): ByteArray {
+        var block = ByteArray(0)
+        for ((n, v) in fields) block += byteArrayOf(0x00) + hpackString(n) + hpackString(v)
+        return FrameEncoder.headers(id, block, endStream, true, -1)
+    }
+
+    /**
+     * Trailers that carry request pseudo-header fields, on a stream whose handler answered and released it while its
+     * response was still queued: RFC 9113 section 8.1 makes them malformed, and they are no new request (which would run
+     * a handler outside SETTINGS_MAX_CONCURRENT_STREAMS, section 5.1.2). Above our header list limit they do not end the
+     * connection either.
+     */
+    @Test fun negative_trailersOnAReleasedStreamStartNoRequest() =
+        runTest {
+            val (_, server, _) = pair(serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+            runCurrent()
+            val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "example.com", ":path" to "/")
+            val trailers =
+                listOf(
+                    listOf(":method" to "DELETE") + post.drop(1),
+                    post + ("x-big" to "b".repeat(1_500)), // above the limit: no 431 on a stream that cannot take one
+                )
+            for ((i, t) in trailers.withIndex()) {
+                val id = 1 + 2 * i
+                server.rt.holdDispatchForTest()
+                server.rt.receiveWithoutDispatchForTest(literalHeaders(id, post, endStream = false))
+                server.rt.releaseDispatchForTest()
+                val r = assertNotNull(server.requests.tryReceive().getOrNull())
+                // answered and released before the writer ran: the response is still queued, the stream half-closed (local)
+                r.respond(200, endStream = true)
+                r.release()
+                server.rt.holdDispatchForTest()
+                server.rt.receiveWithoutDispatchForTest(literalHeaders(id, t, endStream = true))
+                server.rt.releaseDispatchForTest()
+                assertTrue(server.requests.tryReceive().isFailure, "trailers became a request")
+            }
+            server.rt.lock.withLock { assertFalse(server.rt.core.isClosed) }
+        }
 
     /**
      * An oversized request (RFC 9113 section 8.2: answered 431) reset by the client in the same read: the stream is closed

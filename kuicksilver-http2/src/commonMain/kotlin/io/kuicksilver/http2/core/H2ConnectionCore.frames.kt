@@ -165,7 +165,7 @@ internal fun H2ConnectionCore.onHeaders(
         ns.finalHeadersReceived = true
         streams[id] = ns
         peerStreams++
-        emit(H2Event.HeadersReceived(id, fields, endStream, !fits))
+        emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true))
         return
     }
     if (s.state == StreamState.CLOSED) {

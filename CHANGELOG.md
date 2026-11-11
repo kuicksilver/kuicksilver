@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 server: trailers that arrived on a stream whose handler had already answered and released it (its response
+  still being written to a client that does not read) were taken for a new request: a field section with request
+  pseudo-header fields started a handler, outside `maxConcurrentStreams` (RFC 9113 sections 8.1, 5.1.2). Only the field
+  section that opens a stream is a request now; such trailers are dropped.
 - Ktor server, WebSockets over HTTP/3 (RFC 9220): a call cancelled while its upgrade ran skipped the end of the CONNECT
   stream: the flush of our side threw the cancellation before the client's direction was stopped, so that direction
   stayed open and the exchange counted as running until the connection ended. The client's direction is now stopped
