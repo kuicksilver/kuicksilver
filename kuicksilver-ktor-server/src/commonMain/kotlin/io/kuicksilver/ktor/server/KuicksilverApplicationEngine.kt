@@ -449,6 +449,19 @@ public class KuicksilverApplicationEngine(
     @Volatile
     private var stopGraceMillis = 0L
 
+    /**
+     * How long an HTTP/3 connection that is idle after the stop's final GOAWAY waits for its client to close it before the
+     * server closes it: a quarter of the grace period, at most the three seconds of `Http3Connection.goAway`. A browser or
+     * curl keeps its idle connection open, and with the full three seconds a stop whose grace period was shorter (Ktor's
+     * `stop(500, 500)`) could never end gracefully: it always ran out its grace and cut what was left. The other three
+     * quarters leave room for the GOAWAY round before it (2 RTT, at least 50 ms) and the QUIC closing period after it.
+     */
+    internal val stopCloseFallback: Duration get() = (stopGraceMillis / 4).coerceAtLeast(0).milliseconds
+
+    /** Whether the last stop ran out its grace period and cancelled what was left (tests). */
+    @Volatile
+    internal var stopWasForcedForTest = false
+
     internal val engineDispatcher = Dispatchers.IO
     internal val userDispatcher = Dispatchers.IO
     private val startupJob: CompletableDeferred<Unit> = CompletableDeferred()
@@ -494,6 +507,7 @@ public class KuicksilverApplicationEngine(
                 serverJob.join()
                 true
             }
+        stopWasForcedForTest = result == null
         if (result == null) {
             serverJob.cancel()
             withTimeoutOrNull(timeoutMillis - gracePeriodMillis) { serverJob.join() }
@@ -612,7 +626,8 @@ public class KuicksilverApplicationEngine(
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         runCatching { l.endpoint.shutdown(stopGraceMillis.milliseconds) }
                     }
-                    for (c in l.live()) launch { runCatching { c.goAway() } }
+                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                    for (c in l.live()) launch { runCatching { c.goAway(stopCloseFallback) } }
                 }
                 withContext(userDispatcher) { monitor.raise(ApplicationStopPreparing, environment) }
                 servers.map { it.rootJob }.joinAll()

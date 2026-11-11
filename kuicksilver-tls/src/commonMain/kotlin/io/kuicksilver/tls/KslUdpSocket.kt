@@ -204,6 +204,7 @@ public class KslUdpSocket private constructor(
     /** [shutdown], then frees the native object once the receiver (if any) has left it. Idempotent. */
     override fun close() {
         shutdown()
+        var looks = 0
         while (true) {
             val s = state.load()
             if (s and CLOSED !=
@@ -211,11 +212,27 @@ public class KslUdpSocket private constructor(
             ) {
                 return
             }
-            if (s and COUNT != 0) continue
+            if (s and COUNT != 0) {
+                // a caller still inside: the shutdown woke a receiver, which leaves within microseconds, but a sender in a large
+                // batch or a descheduled thread can take longer, so after a short spin the closing thread sleeps between looks
+                // instead of burning its core (a loop thread) meanwhile
+                if (++looks > CLOSE_SPINS) sleepMillis(1)
+                closeLooksForTest = looks
+                continue
+            }
             if (state.compareAndSet(s, s or CLOSED)) break
         }
         Ksl.udpClose(handle)
     }
+
+    /** How often the last [close] looked at a caller still inside (tests). */
+    internal var closeLooksForTest = 0
+
+    /** Counts a caller in as a native call does (tests); false after [shutdown]. */
+    internal fun enterForTest(): Boolean = enter()
+
+    /** Counts the caller of [enterForTest] out (tests). */
+    internal fun leaveForTest(): Unit = leave()
 
     private fun enter(): Boolean {
         while (true) {
@@ -248,6 +265,9 @@ public class KslUdpSocket private constructor(
         private const val SHUT = 1 shl 30
         private const val CLOSED = 1 shl 29
         private const val COUNT = CLOSED - 1
+
+        /** Looks at a caller still inside before [close] sleeps between them. */
+        private const val CLOSE_SPINS = 100
 
         /** True where `ksl_udp` works (Linux, Android, Apple, Windows): learned once by opening a loopback socket. */
         public val supported: Boolean get() = unsupportedReason == null

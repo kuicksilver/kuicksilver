@@ -279,6 +279,32 @@ class ClientWebSocketConnectingTest {
         }
 
     /**
+     * The name resolution a WebSocket runs before it takes the address counts against the connect timeout, as a request's
+     * resolution inside connecting does: resolving, then a TLS handshake the server never answers, fail together within one
+     * connect timeout. Before, the resolution had a connect timeout of its own and the connection a fresh one after it.
+     */
+    @Test fun negative_aWebSocketsResolutionSharesTheConnectTimeout() =
+        clientTest {
+            rawServer({ _, input, _ -> input.discard() }) { port ->
+                testClient(
+                    engine = {
+                        connectTimeout = 2.seconds
+                        resolverForTest = { _, p ->
+                            kotlinx.coroutines.delay(1500)
+                            listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p))
+                        }
+                    },
+                    block = { install(WebSockets) },
+                ).use { c ->
+                    val started = TimeSource.Monotonic.markNow()
+                    assertFailsWith<ConnectTimeoutException> { c.webSocket("wss://ws.test:$port/") {} }
+                    // one connect timeout (2 s) and some slack; two in series took 3.5 s
+                    assertTrue(started.elapsedNow() < 2900.milliseconds, "resolving and connecting took ${started.elapsedNow()}")
+                }
+            }
+        }
+
+    /**
      * A WebSocket takes the address first and then waits for the pool (review S2: a pool permit is never held while
      * waiting for the address). With one connection per route and a session holding it, the second WebSocket holds the
      * address while it waits for the slot, the third waits for the address; cancelling the second lets the third through

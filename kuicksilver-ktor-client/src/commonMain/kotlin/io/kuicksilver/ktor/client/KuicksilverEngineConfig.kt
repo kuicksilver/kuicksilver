@@ -312,10 +312,11 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var maxConnectionLifetime: Duration = Duration.INFINITE
 
     /**
-     * Connect timeout when `HttpTimeout` sets none (TCP + TLS, or the QUIC handshake). A WebSocket over HTTP/1.1 is
-     * connecting until the server answers its opening handshake (RFC 6455 section 4.1): that answer must arrive within
-     * the same timeout, counted from the moment the WebSocket has its connection, else the WebSocket fails with
-     * `ConnectTimeoutException`.
+     * Connect timeout when `HttpTimeout` sets none (TCP + TLS, or the QUIC handshake; the name resolution and the wait for
+     * a pool slot share it). A WebSocket over HTTP/1.1 is connecting until the server answers its opening handshake (RFC
+     * 6455 section 4.1): that answer must arrive within the same timeout, counted from the moment the WebSocket has its
+     * connection, else the WebSocket fails with `ConnectTimeoutException`. Its wait for another WebSocket to the same
+     * address to finish connecting counts against neither.
      */
     public var connectTimeout: Duration = 10.seconds
 

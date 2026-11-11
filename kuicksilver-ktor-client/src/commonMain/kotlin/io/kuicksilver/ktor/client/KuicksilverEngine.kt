@@ -181,15 +181,26 @@ internal class KuicksilverEngine(
         super.close()
     }
 
+    /** Tests: runs between [execute]'s first closed check and the attach of the call to the requests' job. */
+    internal var beforeCallAttachForTest: (suspend () -> Unit)? = null
+
     override suspend fun execute(data: HttpRequestData): HttpResponseData {
         // the requests' job stays active while calls finish after close(), so Ktor's own closed check lets new calls in
         if (closed) throw ClientEngineClosedException()
-        events.emit("callStart") { callStart(data) }
+        beforeCallAttachForTest?.invoke()
         val callContext = callContext()
         // Ktor's call job is not a child of the requests' job: a child of that job lives as long as the call (its response
         // body included), so the cleanup after close() waits for the call (as CIO's) instead of closing its socket under it
         val inFlight = Job(this.coroutineContext[Job])
         callContext[Job]!!.invokeOnCompletion { inFlight.complete() }
+        // a close() since the check above may have completed the requests' job before the attach: the cleanup then does not
+        // wait for this call and closes the pools under it (the HTTP/3 pool failed it with IllegalStateException, a TCP
+        // connect on the closed selector with an IOException). close() sets the flag first, so it is seen here
+        if (closed) {
+            inFlight.complete()
+            throw ClientEngineClosedException()
+        }
+        events.emit("callStart") { callStart(data) }
         // a new one per call, also when the request's attributes came with one (a redirect or a retry copies them): the
         // pools count their retries in it, and the response hands it out
         val diagnostics = ProtocolDiagnostics()

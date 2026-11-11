@@ -424,7 +424,8 @@ void ksl_udp_shutdown(
         *); /* wakes a blocked ksl_udp_recv and closes the socket; later send/recv answer KSL_ERROR at once; the object stays until ksl_udp_close */
 void ksl_udp_close(
     ksl_udp
-        *); /* shutdown (when not done yet), waits for a receiver still inside, frees; never while another thread may still call in */
+        *); /* shutdown (when not done yet), waits for a receiver still inside however long it takes to leave (the shutdown wakes
+               it), frees; never while another thread may still call in */
 #ifdef _WIN32
 int ksl_win_sockets_start(
     int who); /* WSAStartup 2.2 once per process (also run by ksl_init and ksl_udp_open); 1 when Winsock is ready. who: 1 the Kotlin/Native runtime start, 2 ksl_init, 3 ksl_udp_open */

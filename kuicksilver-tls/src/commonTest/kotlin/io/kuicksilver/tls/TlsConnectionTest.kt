@@ -11,6 +11,7 @@ package io.kuicksilver.tls
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.cancel
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
@@ -42,6 +43,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -543,6 +545,139 @@ class TlsConnectionTest {
             assertTrue(after[KslConst.LIVE_CTX] <= before[KslConst.LIVE_CTX], "contexts ${before.toList()} -> ${after.toList()}")
         }
     }
+
+    /**
+     * Cancelling the job the connection was started in ends it as a close does (the documented contract): the channels fail
+     * and the native session is freed, although nobody called close(). It was freed only by close(), so an owner that ended
+     * the connection through its job (or never got it: a handshake result dropped by a timeout) leaked the SSL object.
+     */
+    @Test fun cancellingTheCallersJobFreesTheNativeSession(): Unit =
+        runBlocking {
+            val pair = ChannelPair()
+            val clientJob = kotlinx.coroutines.Job()
+            val serverJob = kotlinx.coroutines.Job()
+            val (c, s) =
+                withTimeout(20.seconds) {
+                    val c =
+                        async(Dispatchers.Default) { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
+                    val s =
+                        async(Dispatchers.Default) { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server(), serverJob) }
+                    c.await() to s.await()
+                }
+            assertTrue(!c.nativeFreedForTest && !s.nativeFreedForTest)
+            clientJob.cancel()
+            serverJob.cancel()
+            withTimeout(5.seconds) {
+                while (!c.nativeFreedForTest || !s.nativeFreedForTest) delay(10)
+            }
+            assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
+        }
+
+    /**
+     * The handshake reads the peer's chain and the negotiated parameters from ksl outside the session lock: a job cancelled
+     * as the handshake completes (an HTTP client call cancelled, a hard stop) must not free the native session under it.
+     * Freed at once from the job's end, it was gone while the handshake still used it (a use after free, and a cached
+     * session or SNI context assigned after the free was never released). It is freed once the handshake is over, and the
+     * handshake fails as a closed connection, not with ksl's "connection closed" state error.
+     */
+    @Test fun aJobCancelledAsTheHandshakeCompletesDoesNotFreeTheSessionUnderIt(): Unit =
+        runBlocking {
+            val pair = ChannelPair()
+            val clientJob = kotlinx.coroutines.Job()
+            var client: TlsConnection? = null
+            var freedUnderTheHandshake: Boolean? = null
+            TlsConnection.handshakeCompletedForTest = { c ->
+                if (c.contextForTest.config.role == TlsRole.Client) {
+                    client = c
+                    clientJob.cancel()
+                    delay(300) // the free, had it been launched, has run by now
+                    freedUnderTheHandshake = c.nativeFreedForTest
+                }
+            }
+            try {
+                val s = testScope.async { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server()) }
+                val e =
+                    assertFailsWith<TlsException.Protocol> {
+                        withTimeout(20.seconds) { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
+                    }
+                assertTrue(e.message!!.contains("connection closed"), e.message)
+                assertEquals(false, freedUnderTheHandshake, "the native session was freed while the handshake used it")
+                val c = assertNotNull(client)
+                withTimeout(5.seconds) { while (!c.nativeFreedForTest) delay(10) } // and freed once the handshake was over
+                runCatching { withTimeout(5.seconds) { s.await() } }.getOrNull()?.close()
+            } finally {
+                TlsConnection.handshakeCompletedForTest = null
+            }
+        }
+
+    /** Contexts cancelled at any moment of the handshake: never ksl's state error, never a crash (Native would abort). */
+    @Test fun contextsCancelledDuringTheHandshakeEndItCleanly(): Unit =
+        runBlocking {
+            repeat(40) { i ->
+                val pair = ChannelPair()
+                val clientJob = kotlinx.coroutines.Job()
+                val s = testScope.async { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server()) }
+                val c = testScope.async { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
+                delay((i % 10).toLong())
+                clientJob.cancel()
+                val outcome = runCatching { withTimeout(20.seconds) { c.await() } }
+                outcome.exceptionOrNull()?.let { assertIs<TlsException>(it, "attempt $i: $it") }
+                outcome.getOrNull()?.close()
+                pair.killServerToClient()
+                runCatching { withTimeout(5.seconds) { s.await() } }.getOrNull()?.close()
+            }
+        }
+
+    /** A transport that failed (a reset) during the handshake is the cause of the handshake's failure, not dropped. */
+    @Test fun aFailedTransportIsTheCauseOfAHandshakeFailure(): Unit =
+        runBlocking {
+            val clientIn = ByteChannel(autoFlush = true)
+            val marker = IOException("connection reset (marker)")
+            clientIn.cancel(marker)
+            val e =
+                assertFailsWith<TlsException.Protocol> {
+                    withTimeout(10.seconds) { TlsConnection.client(clientIn, ByteChannel(autoFlush = true), TcpFixtures.client()) }
+                }
+            assertTrue(e.message!!.contains("transport closed"), e.message)
+            assertTrue(generateSequence(e.cause) { it.cause }.any { it === marker }, "cause chain of $e: ${e.cause}")
+        }
+
+    /** A transport that fails on an established connection is the cause of the input's truncation failure. */
+    @Test fun aFailedTransportIsTheCauseOfATruncation(): Unit =
+        runBlocking {
+            val c2s = ByteChannel(autoFlush = true)
+            val s2c = ByteChannel(autoFlush = true)
+            val (c, s) =
+                withTimeout(20.seconds) {
+                    val c = async(Dispatchers.Default) { TlsConnection.client(s2c, c2s, TcpFixtures.client()) }
+                    val s = async(Dispatchers.Default) { TlsConnection.server(c2s, s2c, TcpFixtures.server()) }
+                    c.await() to s.await()
+                }
+            try {
+                // the transport fails while the client's reader pump is busy with a record, not waiting on it: its next read
+                // then answers -1 (ktor-io reads a channel failed with a cause as one that ended); a reader already waiting
+                // gets the failure thrown instead
+                val marker = IOException("connection reset (marker)")
+                var armed = true
+                c.refuseFeedForTest = {
+                    if (armed) {
+                        armed = false
+                        s2c.cancel(marker)
+                    }
+                    false
+                }
+                s.output.writeFully(byteArrayOf(1))
+                s.output.flush()
+                assertEquals(1, withTimeout(5.seconds) { c.input.readExactly(1) }.size)
+                val e = assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
+                val tls = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<TlsException.Protocol>().first()
+                assertTrue(tls.message!!.contains("truncation"), tls.message)
+                assertTrue(generateSequence(tls.cause) { it.cause }.any { it === marker }, "cause chain of $tls: ${tls.cause}")
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
 
     @Test fun cancellationNotWrapped() {
         val pair = ChannelPair()

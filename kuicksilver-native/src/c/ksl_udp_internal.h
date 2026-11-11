@@ -120,6 +120,11 @@ static inline int ksl_udp_down(const ksl_udp *u) {
     return KSL_ALOAD(u->closed) || (u->base && KSL_ALOAD(u->base->closed));
 }
 
+#ifdef KSL_TEST
+/* called by ksl_udp_recv once the receiver is counted in in_recv (tests: a receiver that takes long to leave) */
+extern void (*ksl_test_udp_recv_entered)(void);
+#endif
+
 void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                       uint32_t mtu); /* ksl_udp.c */
 

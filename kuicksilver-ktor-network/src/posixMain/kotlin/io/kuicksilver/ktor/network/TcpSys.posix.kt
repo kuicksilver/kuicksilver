@@ -6,6 +6,7 @@ package io.kuicksilver.ktor.network
 
 import io.ktor.utils.io.errors.PosixException
 import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
@@ -46,7 +47,6 @@ import platform.posix.SO_ERROR
 import platform.posix.SO_LINGER
 import platform.posix.SO_RCVBUF
 import platform.posix.TCP_NODELAY
-import platform.posix.accept
 import platform.posix.addrinfo
 import platform.posix.bind
 import platform.posix.close
@@ -65,6 +65,7 @@ import platform.posix.recv
 import platform.posix.send
 import platform.posix.setsockopt
 import platform.posix.shutdown
+import platform.posix.sockaddr
 import platform.posix.socket
 import platform.posix.socklen_tVar
 import kotlin.time.Duration
@@ -109,9 +110,9 @@ internal actual fun tcpResolve(
     }
 
 internal actual fun tcpOpen(family: Int): Int {
-    val fd = socket(family, SOCK_STREAM, 0)
+    val fd = socket(family, SOCK_STREAM or tcpAtomicFlags, 0)
     if (fd < 0) throw PosixException.forErrno(errno, "socket")
-    if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) or O_NONBLOCK) < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
+    if (tcpAtomicFlags == 0 && (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) or O_NONBLOCK) < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)) {
         val e = errno
         close(fd)
         throw PosixException.forErrno(e, "fcntl")
@@ -181,7 +182,7 @@ internal actual fun tcpAccept(
             val size = alloc<socklen_tVar>()
             size.value = peer.size.convert()
             peer.usePinned {
-                val c = accept(fd, it.addressOf(0).reinterpret(), size.ptr)
+                val c = tcpAcceptFd(fd, it.addressOf(0).reinterpret(), size.ptr)
                 c to errnoIf(c < 0)
             }
         }
@@ -190,7 +191,9 @@ internal actual fun tcpAccept(
         if (tcpWouldBlock(e) || e == EINTR || e == ECONNABORTED) return null
         throw PosixException.forErrno(e, "accept")
     }
-    if (fcntl(client, F_SETFL, fcntl(client, F_GETFL) or O_NONBLOCK) < 0 || fcntl(client, F_SETFD, FD_CLOEXEC) < 0) {
+    if (tcpAtomicFlags == 0 &&
+        (fcntl(client, F_SETFL, fcntl(client, F_GETFL) or O_NONBLOCK) < 0 || fcntl(client, F_SETFD, FD_CLOEXEC) < 0)
+    ) {
         val e = errno
         close(client)
         throw PosixException.forErrno(e, "fcntl")
@@ -305,6 +308,20 @@ internal actual fun tcpClose(fd: Int) {
 
 /** Keeps a write to a closed connection from raising SIGPIPE (SO_NOSIGPIPE on Apple; Linux passes MSG_NOSIGNAL to every send). */
 internal expect fun tcpNoSigpipe(fd: Int)
+
+/**
+ * `SOCK_NONBLOCK | SOCK_CLOEXEC` where `socket` and `accept4` take them (Linux): a descriptor is then never open without
+ * close-on-exec, not even between the call and an `fcntl`, where a fork and exec in another thread of the process inherited
+ * it (a kept-open connection or listening port in the child). 0 where they do not exist (Apple): `fcntl` right after.
+ */
+internal expect val tcpAtomicFlags: Int
+
+/** `accept4` with [tcpAtomicFlags] (Linux), else `accept`. */
+internal expect fun tcpAcceptFd(
+    fd: Int,
+    addr: CPointer<sockaddr>?,
+    len: CPointer<socklen_tVar>?,
+): Int
 
 /** The flags of every `send`: MSG_NOSIGNAL on Linux, 0 on Apple. */
 internal expect val tcpSendFlags: Int

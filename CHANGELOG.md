@@ -948,6 +948,77 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   reads on to what the peer sent, and the connection's reason is the session's only when no capsule came. A
   WebTransport stream whose pump the lost connection cancelled before it ran now ends instead of leaving the
   application waiting.
+- TLS over TCP: a `TlsConnection` freed its native session (the OpenSSL object, its context reference and a cached
+  session it took) only from `close()`. A connection ended by cancelling the job of the `context` it was started in,
+  which the API documents as ending it, kept that native state for the rest of the process, as did one whose owner never
+  got it (see the Ktor server's TLS handshake deadline below). The native session is now freed whenever the
+  connection's job ends, and `input` and `output` fail as after `close()`; when the job ends during the handshake (the
+  caller's context cancelled as the handshake completes), only once the handshake is over, since the handshake reads the
+  peer's chain and the negotiated parameters from the native session outside its lock (freed under it, that was a use
+  after free, and a cached session or SNI context taken meanwhile was never released). Such a handshake fails with
+  `TlsException.Protocol` "connection closed during the TLS handshake", or the caller's own `CancellationException`,
+  instead of an `IllegalStateException`. Two concurrent `close()` calls no longer both run the tear-down (the closed flag
+  was a plain field read and written from several threads).
+- TLS over TCP: a transport that failed (a reset, a socket error) during the handshake or under an established
+  connection ended it with `TlsException.Protocol` "transport closed during the TLS handshake" or "transport closed
+  without close_notify (truncation)" without a cause: ktor-io reads a channel failed with a cause as one that ended, and
+  the failure was dropped. It is now the exception's cause, so the application and the Ktor server's
+  `tlsHandshakeFailed` event see it.
+- Ktor server: a TLS handshake that completed just as the request-head deadline (`requestHeaderTimeoutSeconds`) fired,
+  or as the engine stopped, was dropped by the deadline (kotlinx's `withTimeoutOrNull` discards a result that arrives
+  with its timeout) and its TLS session was never closed: one native TLS session per occurrence for the rest of the
+  process. That session is now aborted. And a connection accepted just before a hard stop (the grace period ran out)
+  whose coroutine was launched on the already cancelled connection scope never ran: neither its handshake nor its close,
+  so the socket stayed open and kept its `maxTcpConnections` and `maxTcpConnectionsPerIp` slot. Such a connection is now
+  aborted, which releases the slot.
+- Ktor server: a graceful stop with a grace period under about three seconds (Ktor's default `stop(500, 500)`,
+  `stop(1000, 2000)`) never ended gracefully while a browser or curl kept an idle HTTP/3 connection open: after the stop's
+  final GOAWAY the server waited three seconds for the client to close such a connection, so the stop always ran out its
+  grace period and then cut what was left, aborting TCP connections that were still writing a response instead of
+  draining them. During a stop the server now waits a quarter of the grace period (at most the three seconds, at least
+  four smoothed RTTs); `stop(500, 500)` then ends gracefully on a low-latency path. The guide's
+  [Graceful stop](docs/guide/ktor.md#graceful-stop) gives the timing and why `stop(500, 500)` may return before the
+  sockets cut at the grace deadline are closed.
+- Ktor client: a call made as the engine closed, which passed the engine's closed check just before `close()` and
+  attached to the engine after its cleanup had started, went on against the closed pools and failed with
+  `IllegalStateException` ("the client is closed") on HTTP/3, or an `IOException` from the closed selector on a TCP
+  connect, instead of `ClientEngineClosedException`. The engine now checks again once the call is attached and fails it
+  with `ClientEngineClosedException`.
+- Ktor client: a WebSocket over HTTP/1.1 resolved its host under a connect timeout of its own and then started a fresh
+  one for the wait for a pool slot and the TCP and TLS connect, so with a slow resolver it could take up to twice the
+  connect timeout before the answer to its handshake was even awaited. Resolving and connecting now share one connect
+  timeout, as for any other request; the answer to the handshake keeps its own, counted from the connection
+  (documented in `connectTimeout` and the guide's WebSocket section).
+- `ksl` C API: `ksl_udp_close` waited at most one second for a receiver still inside `ksl_udp_recv` and then freed the
+  socket under it, and a receiver that had passed `ksl_udp_recv`'s closed check but was not yet counted was not waited
+  for at all: a use after free for a direct C user (Kuicksilver's own Kotlin and Native layers never close while a
+  receiver is inside). A receiver is now counted before it checks the closed flag again, and the close waits until every
+  receiver inside has left, which the shutdown wakes at once.
+- QUIC over `ksl_udp`: closing a socket while another thread was still inside a native call on it (a sender in a
+  large batch, a descheduled receiver) spun the closing thread, usually an endpoint's loop thread, at full speed until
+  the call returned. After a short spin it now sleeps a millisecond between looks.
+- QUIC, `loops > 1` on macOS, iOS and Windows: the receiver of the socket a loop group shares held one `Dispatchers.IO`
+  thread for the socket's whole life, so a process with many such endpoints could leave `Dispatchers.IO` (blocking file
+  I/O, DNS) without a free thread. It now gives the thread back after a receive slice that brought nothing and after
+  every 64 busy rounds, like the receive of a socket of its own.
+- Ktor server on Kotlin/Native: a hard stop (the grace period ran out) cancels the listening socket's job and with it
+  every accepted socket's; the close that followed launched its work inside that cancelled job, where nothing starts, so
+  the descriptor of every connection open at the stop stayed open for the rest of the process (in-process restarts,
+  tests, embedded servers). The close now runs in a cancelled job too and releases the descriptor.
+- Kotlin/Native on Linux: TCP sockets (listening, connected, accepted) were made close-on-exec with an `fcntl` after
+  `socket` or `accept`, so a fork and exec in another thread of the process in between inherited the descriptor (a
+  connection or listening port kept open in the child). They are now created with `SOCK_NONBLOCK | SOCK_CLOEXEC`
+  (`socket`, `accept4`). Apple has neither and keeps the `fcntl` right after the call.
+- Ktor server, HTTP/1.1 and HTTP/2: a request with content and `Expect: 100-continue` got its `100 Continue` only when
+  the application first read the content, so a handler that waited before reading (an authentication round trip, a slow
+  upstream) held the client's content back until the client's own wait ended. RFC 9110 §10.1.1 asks for "an immediate
+  100 (Continue) response" unless the head alone determines a final status: the 100 now goes out as the call is
+  dispatched, and the statuses the engine decides from the head (400, 413, 425, 431, 501) still go out without it.
+  Content the handler then leaves unread is drained like any other unread body.
+- Ktor server and client, HTTP/1.1: a field value with obs-text that is not valid UTF-8 (`filename="caf<E9>"` in
+  Latin-1) reached the application with U+FFFD in place of those bytes, since Ktor's parser decodes field values as
+  UTF-8; RFC 9110 §5.5 has a recipient treat obs-text as opaque data. Such a value now arrives byte for byte, each byte
+  as the char of the same code (ISO-8859-1); a value that is valid UTF-8 is decoded as UTF-8 as before.
 
 ## [0.2.1] - 2026-11-04
 

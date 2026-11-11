@@ -38,6 +38,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -685,6 +686,33 @@ class ServerH3Test {
             } finally {
                 conns.forEach { it.close() }
                 ep.close()
+                runCatching { server.stop(100, 500) }
+            }
+        }
+
+    /**
+     * A client that keeps its idle HTTP/3 connection open after the stop's GOAWAY (a browser, curl; a Kuicksilver client
+     * closes it) was closed by the server only three seconds after the final GOAWAY, so a stop with a shorter grace period
+     * (Ktor's `stop(500, 500)`, `stop(1000, 2000)`) always ran out its grace and cut every connection left instead of
+     * draining it. The wait is now a quarter of the grace period.
+     */
+    @Test fun aStopShorterThanThreeSecondsEndsGracefullyWithAnIdleClient() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
+            val idle = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                // a QUIC connection with ALPN h3 that sends nothing and never closes: the idle browser connection
+                idle.connect(
+                    InetSocketAddress("127.0.0.1", port),
+                    QuicClientConfig.Builder(ServerFixtures.clientTls(alpn = listOf("h3"))).build(),
+                )
+                kotlinx.coroutines.withTimeout(5.seconds) {
+                    while (server.engine.h3ListenersForProbe.sumOf { it.size() } == 0) delay(10)
+                }
+                server.engine.stopSuspend(1000, 3000)
+                assertFalse(server.engine.stopWasForcedForTest, "the stop ran out its grace period")
+            } finally {
+                idle.close()
                 runCatching { server.stop(100, 500) }
             }
         }

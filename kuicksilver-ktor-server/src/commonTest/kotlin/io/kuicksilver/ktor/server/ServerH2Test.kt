@@ -12,6 +12,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.http.HttpStatusCode
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.engine.connector
@@ -292,7 +293,7 @@ class ServerH2Test {
         }
 
     /**
-     * RFC 9110 section 10.1.1 over HTTP/2: the interim 100 goes out when the handler reads the body, before the client
+     * RFC 9110 section 10.1.1 over HTTP/2: the interim 100 goes out as the handler starts, before the client
      * sends it; then the final response.
      */
     @Test fun expectContinueGetsAnInterim100() =
@@ -311,6 +312,41 @@ class ServerH2Test {
                     assertEquals(0x88.toByte(), final.payload[0], ":status 200 (static index 8)")
                 }
             } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9110 section 10.1.1: "an immediate 100 (Continue) response" when the head determines no final status: it goes out
+     * as the handler starts, while the handler still waits before it reads or answers. Before, it went out only when the
+     * handler first read the body.
+     */
+    @Test fun expectContinueGets100BeforeTheHandlerReads() =
+        serverTest {
+            val answer = CompletableDeferred<Unit>()
+            val (server, port) =
+                h2Server {
+                    routing {
+                        post("/") {
+                            answer.await()
+                            call.respondText("no", status = HttpStatusCode.Forbidden)
+                        }
+                    }
+                }
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+                    raw.headers(1, post + ("expect" to "100-continue") + ("content-length" to "2"), endStream = false)
+                    val interim = assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.HEADERS })
+                    assertTrue(!interim.endStream && !answer.isCompleted, "the interim 100 before the handler answered")
+                    raw.data(1, "hi".encodeToByteArray(), endStream = true)
+                    answer.complete(Unit)
+                    val final = assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.HEADERS })
+                    assertTrue(final.payload.isNotEmpty())
+                }
+            } finally {
+                answer.complete(Unit)
                 server.stop(100, 500)
             }
         }

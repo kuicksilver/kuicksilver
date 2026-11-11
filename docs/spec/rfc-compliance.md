@@ -206,6 +206,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9931 | §8 (updates RFC 9112; server CONNECT) — server CONNECT | ✅ | 0.2.1 | Every CONNECT is refused and is the last request on its connection; tunnels are planned. | [details](rfc/9931.md#s8-server-connect) |
 | RFC 9112 | §9.6 — server staged close | ✅ | 0.2.1 | A response that ends the connection while the client may still send closes in stages. | [details](rfc/9112.md#s9-6-server-staged-close) |
 | RFC 9110 | §15.5.9; RFC 9112 §9.5 — server timeouts | ✅ | 0.2.1 | Incomplete request heads and stalled bodies time out. | [details](rfc/9110.md#s15-5-9-server-timeouts) |
+| RFC 9110 | §10.1.1 — `Expect: 100-continue` | ✅ | 0.3.0 | The server sends `100 Continue` at once unless the head alone determines the final status. | [details](rfc/9110.md#s10-1-1-expect-100-continue) |
 | RFC 8941 | §4.2 — Dictionary parsing of the Priority field | ✅ | 0.2.0 | The `Priority` field and PRIORITY_UPDATE values are parsed as RFC 8941 Dictionaries, and a failed parse means the defaults. | [details](rfc/8941.md#s4-2-dictionary-parsing) |
 | RFC 9111 | §1.2.2 — delta-seconds in Alt-Svc `ma` | ✅ | 0.2.1 | An Alt-Svc `ma` too large to represent counts as 2147483648 seconds. | [details](rfc/9111.md#s1-2-2-delta-seconds) |
 

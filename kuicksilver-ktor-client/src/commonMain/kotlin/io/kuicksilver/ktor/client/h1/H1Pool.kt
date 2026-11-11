@@ -312,6 +312,8 @@ internal class H1Pool(
      * it, and every holder lets go within its own connect timeout (review 2026-10-28 R1: forty WebSockets started at once to
      * one address failed from about the 33rd on). A WebSocket waiting for keys holds no pool permit and no idle connection
      * (review S2: one held them, so queued WebSockets starved the pool and kept idle connections until they were stale).
+     * [resolvedMillis] is what the WebSocket's name resolution before the keys ([remoteHosts]) took of the connect timeout:
+     * resolving, waiting for room and connecting share one timeout, as for any other request, which resolves inside it.
      */
     private suspend fun obtain(
         data: HttpRequestData,
@@ -319,6 +321,7 @@ internal class H1Pool(
         dns: RequestDns,
         proxy: ResolvedProxy?,
         webSocketKeys: List<String>?,
+        resolvedMillis: Long = 0,
     ): Obtained {
         val held = webSocketKeys?.let { webSocketConnecting.acquire(it) }
         val h2Ok = webSocketKeys == null && h2Allowed(data, key)
@@ -330,7 +333,7 @@ internal class H1Pool(
             kotlin.time.TimeSource.Monotonic
                 .markNow()
         try {
-            withTimeout(data.connectTimeoutMillis(config)) {
+            withTimeout((data.connectTimeoutMillis(config) - resolvedMillis).coerceAtLeast(1)) {
                 // a request that may use HTTP/2 also watches its route: a stream that frees up, or a connection that
                 // another request just set up, serves it instead of a new TCP connection (OkHttp RealRoutePlanner)
                 val signal = if (h2Ok) h2.watch(key) else null
@@ -515,7 +518,12 @@ internal class H1Pool(
         @OptIn(io.ktor.utils.io.InternalAPI::class)
         val webSocket = data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY)
         // a WebSocket is CONNECTING from its connection until the server answers its handshake (RFC 6455 section 4.1)
-        return exchange(data, callContext, preopened, dns, proxy, if (webSocket) remoteHosts(data, dns, proxy) else null, onSelected)
+        if (!webSocket) return exchange(data, callContext, preopened, dns, proxy, null, onSelected)
+        val resolving =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
+        val keys = remoteHosts(data, dns, proxy)
+        return exchange(data, callContext, preopened, dns, proxy, keys, onSelected, resolving.elapsedNow().inWholeMilliseconds)
     }
 
     /** Race-opened connections a WebSocket gave back because its keys were taken (tests). */
@@ -565,6 +573,7 @@ internal class H1Pool(
         proxy: ResolvedProxy?,
         webSocketKeys: List<String>?,
         onSelected: ((HttpProtocolVersion) -> Unit)?,
+        resolvedMillis: Long = 0,
     ): HttpResponseData {
         // a request sent again over HTTP/1.1 (after a 421 or a failure over HTTP/3) leaves its HTTP/3 exchange behind:
         // HttpResponse.updatePriority must not reach that stream
@@ -606,7 +615,8 @@ internal class H1Pool(
                 if (pre != null && (webSocketKeys == null || preHeld != null)) {
                     Obtained(pre.connection, pre.reused, preHeld, pre.h2)
                 } else {
-                    obtain(data, key, dns, proxy, webSocketKeys)
+                    // the resolution counts once, against the first connection (a repeat gets a connect timeout of its own)
+                    obtain(data, key, dns, proxy, webSocketKeys, if (attempt == 1) resolvedMillis else 0)
                 }
             val h2c = obtained.h2
             val protocol = if (h2c != null) HttpProtocolVersion.HTTP_2_0 else HttpProtocolVersion.HTTP_1_1

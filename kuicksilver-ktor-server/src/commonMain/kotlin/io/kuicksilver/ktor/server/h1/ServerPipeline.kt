@@ -266,7 +266,8 @@ internal class RequestFraming private constructor(
 
 /**
  * The header fields of [request] as the client sent them: Ktor's parsed map, except for the values in [kept] (from
- * [checkRequestHead]: values that start with obs-text Ktor's parser takes for whitespace and strips), and without
+ * [checkRequestHead]: values that start with obs-text Ktor's parser takes for whitespace and strips, and values that are
+ * not UTF-8, byte for byte as ISO-8859-1 where Ktor's parser put U+FFFD), and without
  * Upgrade in an HTTP/1.0 request: a server MUST ignore it there (RFC 9110 section 7.8), and MUST NOT send the 101 an
  * upgrade would bring to an HTTP/1.0 client (section 15.2). Every reader of a request field in the engine and the
  * application reads this.

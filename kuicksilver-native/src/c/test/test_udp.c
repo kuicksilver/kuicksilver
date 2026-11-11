@@ -897,6 +897,56 @@ static void udp_sender_cases(void) {
     }
 }
 #endif
+#if defined(__linux__) || defined(__APPLE__)
+/* udp_close_waits_for_a_slow_receiver: ksl_udp_close waits for a receiver inside the socket however long it takes to leave; it
+   waited 1 s at most and then freed the socket under it (a use after free, which ASan reports) */
+extern void (*ksl_test_udp_recv_entered)(void); /* ksl_udp_recv.c, test builds */
+static int slow_receiver_inside;
+static void slow_receiver_entered(void) {
+    __atomic_store_n(&slow_receiver_inside, 1, __ATOMIC_SEQ_CST);
+    struct timespec ts = {1, 500000000}; /* past the old 1 s bound of the close */
+    nanosleep(&ts, NULL);
+}
+struct slow_receiver {
+    ksl_udp *u;
+    int rc;
+};
+static void *slow_receiver_thread(void *arg) {
+    struct slow_receiver *r = arg;
+    uint8_t buf[64], addr[KSL_UDP_ADDR_LEN], ecn = 0;
+    uint8_t *bufs[1] = {buf};
+    uint32_t cap = sizeof buf, len = 0, got = 0;
+    r->rc = ksl_udp_recv(r->u, bufs, &cap, &len, addr, &ecn, 1, &got, -1);
+    return NULL;
+}
+static void udp_close_waits_for_a_slow_receiver(void) {
+    uint8_t l[KSL_UDP_ADDR_LEN];
+    ksl_udp *u = open_lo(0, l);
+    CHECK(u != NULL, "a socket for the slow receiver");
+    if (!u)
+        return;
+    __atomic_store_n(&slow_receiver_inside, 0, __ATOMIC_SEQ_CST);
+    ksl_test_udp_recv_entered = slow_receiver_entered;
+    struct slow_receiver r = {u, 0};
+    pthread_t t;
+    if (pthread_create(&t, NULL, slow_receiver_thread, &r) != 0) {
+        CHECK(0, "receiver thread");
+        ksl_test_udp_recv_entered = NULL;
+        ksl_udp_close(u);
+        return;
+    }
+    while (!__atomic_load_n(&slow_receiver_inside, __ATOMIC_SEQ_CST)) {
+        struct timespec ts = {0, 1000000};
+        nanosleep(&ts, NULL);
+    }
+    ksl_test_udp_recv_entered = NULL; /* read by the receiver before it said it was inside */
+    ksl_udp_close(u);                 /* returns only once the receiver has left */
+    pthread_join(t, NULL);
+    CHECK(r.rc == KSL_ERROR,
+          "udp_close_waits_for_a_slow_receiver: the receiver leaves on the shutdown, then the socket is freed");
+}
+#endif
+
 void run_udp(void) {
     SECTION("udp");
 #if defined(__linux__) || defined(__APPLE__)
@@ -1959,6 +2009,7 @@ void run_udp(void) {
 #endif
         udp_pktinfo_cases();
         udp_sender_cases();
+        udp_close_waits_for_a_slow_receiver();
         ksl_udp_close(a);
         ksl_udp_close(b);
     }

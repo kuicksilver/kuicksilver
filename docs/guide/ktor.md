@@ -223,10 +223,12 @@ server.start(wait = true)
   finished the TLS handshake) is closed without a response. `connectionIdleTimeoutSeconds` (45 s) closes a connection
   without requests in both directions, and a request body that sends no byte for that long gets `408 Request Timeout`
   and ends the connection, unless the application or StatusPages answers the failed read itself (a slow but moving
-  upload is read in full; after `Expect: 100-continue` the wait starts once `100 Continue` is sent). A body the handler
-  leaves unread is dropped up to 256 KiB; a larger rest, a chunked one still incomplete when the response starts, or a
-  request answered without the `100 Continue` it asked for, ends the connection after a response that says
-  `Connection: close`. One whose client stopped reading its response (the socket took nothing) is closed after the
+  upload is read in full; after `Expect: 100-continue` the wait starts once `100 Continue` is sent). `Expect:
+  100-continue` with content gets `100 Continue` at once, as the handler starts (RFC 9110 §10.1.1), unless the head
+  alone decides the final status (400, 413, 425, 431 go out without it); another expectation is answered 417 when the
+  handler reads the body. A body the handler leaves unread is dropped up to 256 KiB; a larger rest, a chunked one still
+  incomplete when the response starts, or a request answered without the `100 Continue` it asked for, ends the
+  connection after a response that says `Connection: close`. One whose client stopped reading its response (the socket took nothing) is closed after the
   longer of that and 5 minutes: the engine sees progress about 1 MiB at a time, and 5 minutes serve
   clients down to about 3.4 KiB/s. A closing connection sends what is left for as long as the client takes it, and is
   aborted after the same deadline without progress, so a slow reader's last response is not cut short.
@@ -337,7 +339,8 @@ repeated or unknown pseudo-header field, `host` that differs from `:authority`, 
 `content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
 answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441) are not offered:
 the engine never sends SETTINGS_ENABLE_CONNECT_PROTOCOL, so a request with `:protocol` is malformed. A request with
-`Expect: 100-continue` gets an interim 100 when the handler first reads the body. Content that does not match the
+`Expect: 100-continue` gets an interim 100 as the handler starts (RFC 9110 §10.1.1: immediate), unless the request has no
+content; another expectation is answered 417 when the handler reads the body. Content that does not match the
 response's `Content-Length` is never sent as a complete response (the stream is reset); a 1xx as the final status goes
 out as a 500. A call that ends without a response resets its stream; one stream's failure (a client's reset, a handler's
 exception) never affects the others on the connection.
@@ -876,7 +879,10 @@ WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin alre
 mode is `H3Only`); over HTTP/3 the handshake is RFC 9220 and the plugin sees the usual 101. Over HTTP/1.1 at most one
 WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
 any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
-the name counts as the host.
+the name counts as the host. The connect timeout applies twice to such a WebSocket, in two phases: resolving the name,
+waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
+arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
+to the address is in neither: only the call (its request timeout or cancellation) bounds it.
 
 ### Discovery and Alt-Svc
 
@@ -1575,9 +1581,16 @@ section 6.8: first with the largest stream identifier and a PING, then with the 
 back) and closes when those requests are done; streams the client opens after that are not processed. The stop returns
 as soon as they have: each HTTP/3
 connection closes with H3_NO_ERROR once its last response is acknowledged and read — the client closes it (a
-Kuicksilver client does), or the server three seconds later. At the end of the grace period the calls still
-running are cancelled and the connections left are closed with H3_NO_ERROR; the stop then waits for those calls to end,
-until `timeoutMillis` after it began at most.
+Kuicksilver client does), or the server a quarter of the grace period later (three seconds at most; at least four
+smoothed round trips). A browser or curl keeps an idle connection open, so that wait is what a stop takes with one
+connected; with the quarter, Ktor's default `stop(500, 500)` ends gracefully on a low-latency path (a few milliseconds of
+RTT). Where the round trip is longer, the GOAWAY round (two RTTs, at least 50 ms), that wait and the QUIC closing period
+(three PTOs, RFC 9000 section 10.2) can exceed a short grace period: give it a second or more. At the end of the grace
+period the calls still running are cancelled and the connections left are closed with H3_NO_ERROR (TCP connections still
+writing a response are aborted instead of drained); the stop then waits for those calls to end, until `timeoutMillis`
+after it began at most. As in Ktor's CIO engine, `stop(500, 500)` leaves no time for that last step: the stop may return
+while the sockets cut at the grace deadline are still closing, so pass a `timeoutMillis` above the grace period where a
+restart binds the same port at once.
 
 ## 0-RTT (opt-in, experimental)
 
