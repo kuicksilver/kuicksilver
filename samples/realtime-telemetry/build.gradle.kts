@@ -24,3 +24,10 @@ kotlin {
         }
     }
 }
+
+// Swift export, which this sample does not use, asks for opentelemetry-api 1.41.0 (GHSA-ccrj-gw8r-854m,
+// GHSA-rcgg-9c38-7xpx). The repository's dependency verification covers this build, so it takes the first fixed release.
+// The Kotlin plugin creates the configuration late, hence matching().
+configurations.matching { it.name == "swiftExportClasspath" }.configureEach {
+    dependencyConstraints.add(project.dependencies.constraints.create("io.opentelemetry:opentelemetry-api:1.67.0"))
+}
