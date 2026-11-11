@@ -59,23 +59,27 @@ internal class H2Call(
     }
 
     /**
-     * RFC 9110 section 10.1.1: a client that sent `Expect: 100-continue` waits for an interim 100 before the content; it
-     * goes out when the application first reads the body (as on HTTP/1.1), never twice. Another expectation is answered
-     * 417.
+     * RFC 9110 section 10.1.1: a client that sent `Expect: 100-continue` waits for an interim 100 before the content, which
+     * "MUST" be "an immediate 100 (Continue) response" when the head alone does not determine a final status (those, 425
+     * and 501, went out before the call was made): it goes out as the call starts (as on HTTP/1.1), never twice, and not
+     * when the request has no content (its END_STREAM came with the head, or `content-length: 0`). Before, it went out only
+     * when the application first read the body. Another expectation is answered 417 when the application reads.
      */
     private fun answerExpectation() {
         val expect = request.headers[HttpHeaders.Expect]?.lowercase() ?: return
+        if (expect == "100-continue") {
+            if (h2.contentLength != 0L && !h2.body.isClosedForRead) {
+                runCatching { h2.respond(100) } // a stream that failed meanwhile fails the read that follows
+            }
+            return
+        }
         val phase = PipelinePhase("H2ExpectedHeaderPhase")
         request.pipeline.insertPhaseBefore(ApplicationReceivePipeline.Before, phase)
         var sent = false
         request.pipeline.intercept(phase) {
             if (sent || response.isCommitted) return@intercept
             sent = true
-            if (expect != "100-continue") {
-                this@H2Call.respond(HttpStatusCode.ExpectationFailed)
-            } else {
-                runCatching { h2.respond(100) } // a stream that failed meanwhile fails the read that follows
-            }
+            this@H2Call.respond(HttpStatusCode.ExpectationFailed)
         }
     }
 

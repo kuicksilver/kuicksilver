@@ -461,13 +461,22 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_1_1, call) }
             var failure: Throwable? = null
             try {
-                addHandlerForExpectedHeader(output, call, continueSent)
+                addHandlerForExpectedHeader(call)
                 // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
                 if (request.headers[EARLY_DATA_FIELD] != null &&
                     request.method.value !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
                 ) {
-                    call.respond(HttpStatusCode.TooEarly)
+                    call.respond(HttpStatusCode.TooEarly) // a final status the head determines: no 100 before it
                 } else {
+                    // RFC 9110 section 10.1.1: an HTTP/1.1 request with content and `Expect: 100-continue` gets "an immediate
+                    // 100 (Continue) response" unless its head alone determines a final status (those went out before the
+                    // application was asked: 400, 413, 431, 425 above). Before, it went out only when the application first
+                    // read the content, so a handler that waited before it decided held the client's content back
+                    if (continueSent != null) {
+                        output.writeStringUtf8("HTTP/1.1 100 Continue\r\n\r\n")
+                        output.flush()
+                        continueSent.complete() // the body deadline starts now: the client sends the content after this
+                    }
                     pipeline.execute(call)
                 }
             } catch (error: Throwable) {
@@ -481,12 +490,9 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
     }
 }
 
-// From Ktor CIO: 100-continue for requests that ask for it.
-private fun addHandlerForExpectedHeader(
-    output: ByteWriteChannel,
-    call: H1Call,
-    continueSent: CompletableJob?,
-) {
+// From Ktor CIO: an expectation other than 100-continue is answered 417 when the application reads the content (RFC 9110
+// section 10.1.1, a MAY); `100 Continue` itself goes out at dispatch (handleRequest)
+private fun addHandlerForExpectedHeader(call: H1Call) {
     val expectedHeaderPhase = PipelinePhase("ExpectedHeaderPhase")
     call.request.pipeline.insertPhaseBefore(ApplicationReceivePipeline.Before, expectedHeaderPhase)
     call.request.pipeline.intercept(expectedHeaderPhase) {
@@ -496,13 +502,7 @@ private fun addHandlerForExpectedHeader(
         val contentLength = request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
         val hasBody = request.headers[HttpHeaders.TransferEncoding] != null || (contentLength != null && contentLength > 0)
         if (expectHeader == null || version == HttpProtocolVersion.HTTP_1_0 || !hasBody) return@intercept
-        if (expectHeader != "100-continue") {
-            call.respond(message = HttpStatusCode.ExpectationFailed)
-        } else {
-            output.writeStringUtf8("HTTP/1.1 100 Continue\r\n\r\n")
-            output.flush()
-            continueSent?.complete() // the body deadline starts now: the client sends the body after this
-        }
+        if (expectHeader != "100-continue") call.respond(message = HttpStatusCode.ExpectationFailed)
     }
 }
 

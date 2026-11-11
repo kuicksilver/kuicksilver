@@ -1009,6 +1009,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `socket` or `accept`, so a fork and exec in another thread of the process in between inherited the descriptor (a
   connection or listening port kept open in the child). They are now created with `SOCK_NONBLOCK | SOCK_CLOEXEC`
   (`socket`, `accept4`). Apple has neither and keeps the `fcntl` right after the call.
+- Ktor server: a request with content and `Expect: 100-continue` got its `100 Continue` only when the application first
+  read the content (HTTP/1.1, HTTP/2), or never (HTTP/3), so a handler that waited before reading (an authentication
+  round trip, a slow upstream) held the client's content back until the client's own wait ended. RFC 9110 §10.1.1 asks
+  for "an immediate 100 (Continue) response" unless the head alone determines a final status: the 100 now goes out as
+  the call is dispatched, on all three versions, and the statuses the engine decides from the head (400, 413, 425, 431,
+  501) still go out without it. Content the handler then leaves unread is drained like any other unread body.
 
 ## [0.2.1] - 2026-11-04
 

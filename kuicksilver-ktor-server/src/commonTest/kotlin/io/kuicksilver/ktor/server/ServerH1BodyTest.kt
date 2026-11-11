@@ -282,22 +282,89 @@ class ServerH1BodyTest {
         }
 
     /**
-     * `Expect: 100-continue` answered without `100 Continue` (the handler did not ask for the body): the response says
-     * `Connection: close` and the connection ends after it, without waiting for a body the client may never send (RFC
-     * 9110 section 10.1.1; Go's net/http does the same).
+     * RFC 9110 section 10.1.1: a request with content and `Expect: 100-continue` whose head alone determines no final
+     * status gets "an immediate 100 (Continue) response". It goes out as the handler starts, before the handler reads or
+     * answers (here it waits first, as an authentication round trip would); the client then sends its content, which the
+     * server reads past the handler's answer, and the connection stays usable. Before, the 100 went out only when the
+     * handler first read the content, so a handler that waited first held the client's content back for that long.
      */
-    @Test fun negative_expectContinueAnsweredWithoutContinueCloses() =
+    @Test fun expectContinueGets100BeforeTheHandlerReads() =
+        serverTest {
+            val handlerStarted = CompletableDeferred<Unit>()
+            val answer = CompletableDeferred<Unit>()
+            plainServer(idleSeconds = 30, module = {
+                routing {
+                    post("/deny") {
+                        handlerStarted.complete(Unit)
+                        answer.await()
+                        call.respondText("no", status = HttpStatusCode.Forbidden)
+                    }
+                }
+            }) { port ->
+                val selector = SelectorManager(Dispatchers.IO)
+                try {
+                    val socket = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    val w = socket.openWriteChannel(autoFlush = true)
+                    val r = socket.openReadChannel()
+                    w.writeStringUtf8("POST /deny HTTP/1.1\r\nHost: s\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n")
+                    w.flush()
+                    val continueLine = "HTTP/1.1 100 Continue\r\n\r\n"
+                    val first = ByteArray(continueLine.length)
+                    withTimeout(10.seconds) {
+                        handlerStarted.await()
+                        var got = 0
+                        while (got < first.size) {
+                            val n = r.readAvailable(first, got, first.size - got)
+                            check(n > 0) { "the connection ended before 100 Continue" }
+                            got += n
+                        }
+                    }
+                    assertEquals(continueLine, first.decodeToString(), "100 Continue before the handler answered or read")
+                    assertFalse(answer.isCompleted)
+                    w.writeStringUtf8("abcdGET /next HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n")
+                    w.flush()
+                    answer.complete(Unit)
+                    val out = StringBuilder()
+                    val b = ByteArray(8192)
+                    withTimeout(10.seconds) {
+                        while (true) {
+                            val n = r.readAvailable(b, 0, b.size)
+                            if (n < 0) break
+                            out.append(b.decodeToString(0, n))
+                        }
+                    }
+                    val text = out.toString()
+                    assertTrue(text.startsWith("HTTP/1.1 403 "), text.take(200))
+                    assertTrue(text.contains("HTTP/1.1 404 "), "the request after the content was served: ${text.take(400)}")
+                    socket.close()
+                } finally {
+                    selector.close()
+                }
+            }
+        }
+
+    /**
+     * A final status the head alone determines goes out instead of `100 Continue` (RFC 9110 section 10.1.1, "an immediate
+     * response with a final status code"): a Content-Length too large to process (413), a request a gateway forwarded from
+     * early data that is not replayable (425). No 100 precedes it, and the connection ends without waiting for content the
+     * client never sends.
+     */
+    @Test fun negative_aHeadDeterminedFinalStatusSendsNo100() =
         serverTest {
             plainServer(idleSeconds = 30, module = {
-                routing { post("/deny") { call.respondText("no", status = HttpStatusCode.Forbidden) } }
+                routing { post("/upload") { call.respondText("body=" + call.receiveText()) } }
             }) { port ->
-                val r =
-                    withTimeout(10.seconds) {
-                        rawHttp(port, "POST /deny HTTP/1.1\r\nHost: s\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n", tls = null)
-                    }
-                assertTrue(r.startsWith("HTTP/1.1 403 "), r)
-                assertFalse(r.contains("100 Continue"), r)
-                assertTrue(r.contains("\r\nConnection: close\r\n"), r)
+                for ((field, status) in listOf(
+                    "Content-Length: 1000000000000000000" to " 413 ",
+                    "Content-Length: 4\r\nEarly-Data: 1" to " 425 ",
+                )) {
+                    val r =
+                        withTimeout(10.seconds) {
+                            rawHttp(port, "POST /upload HTTP/1.1\r\nHost: s\r\nExpect: 100-continue\r\n$field\r\n\r\n", tls = null)
+                        }
+                    assertTrue(r.startsWith("HTTP/1.1$status"), "$field: $r")
+                    assertFalse(r.contains("100 Continue"), "$field: $r")
+                }
             }
         }
 
