@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC server: a client's first Initial carrying another server's address validation token (one behind the same name)
+  whose first byte happens to be the Retry token type was refused with a stateless INVALID_TOKEN close. Such a token
+  under a Destination Connection ID that is not one of ours cannot answer our Retry, and is now treated as absent
+  (RFC 9000 section 8.1.3); a forged, expired or misdirected Retry token still gets INVALID_TOKEN (section 8.1.2).
 - QUIC: short-header packets are now padded to at least 22 bytes more than the connection's own connection ID length
   (RFC 9000 section 10.3 SHOULD), so the peer's Stateless Reset sent in reply, one byte shorter, still looks like a
   packet to us. PING-only packets were 29 bytes with 8-byte IDs, and ACK-only packets about 30 with 20-byte IDs or a
