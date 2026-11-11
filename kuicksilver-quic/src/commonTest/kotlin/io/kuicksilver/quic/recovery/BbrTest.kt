@@ -299,6 +299,21 @@ class BbrTest {
         }
 
     /**
+     * C.is_cwnd_limited is set by the packet that fills the window. The sender stops once less than a datagram of room is left
+     * (RFC 9002 section 7 forbids taking bytes in flight above the window), so the window is full then, not only when bytes in
+     * flight reach it exactly: with 1100-byte packets in a 12 000-byte window the eleventh never goes.
+     */
+    @Test fun aWindowWithLessThanADatagramLeftIsCwndLimited() {
+        val t = TimeMark(1_000_000_000L)
+        val cc = bbr()
+        assertEquals(12_000L, cc.cwnd)
+        repeat(9) { cc.onPacketSent(t, 1100) }
+        assertTrue(!cc.isCwndLimited, "1 200 bytes of room are left")
+        cc.onPacketSent(t, 1100)
+        assertTrue(cc.isCwndLimited, "1 000 bytes left, less than a datagram: the window is full")
+    }
+
+    /**
      * Persistent congestion is BBR's retransmission timeout (RFC 9002 section 7.6.2: "similar to a TCP sender's response on
      * an RTO"), and "When persistent congestion is declared, the sender's congestion window MUST be reduced to the minimum
      * congestion window": for BBR BBR.MinPipeCwnd, the floor of SetCwnd (draft-ietf-ccwg-bbr-06 section 5.6.4.6, 4 packets).

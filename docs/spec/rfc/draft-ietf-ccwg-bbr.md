@@ -34,7 +34,7 @@ Quoted: "MUST treat any CE marks as congestion"; "MUST conform to the congestion
 - §5.4 restart from idle paces at BBR.bw (the pacer bucket caps the first burst at the 1 ms quantum; BBR is paced below 1 ms srtt) and ends a finished ProbeRTT
 - send quantum max(min(1 ms, 64 KiB), 2 datagrams) (§5.6.3): larger than RFC 9002 §7.7's initial-window burst limit (a SHOULD) once the pacing rate passes about 15 MB/s; BBR's pacing rate is its primary control and it is always paced, so the quantum bounds the timer rate, not the sending rate (a recorded deviation of the experimental controller, [RFC 9002 §7.7](9002.md#s7-7-pacing))
 - persistent congestion (RFC 9002 §7.6.2 MUST, 0.3.0) collapses the window to BBR.MinPipeCwnd, 4 datagrams, BBR's minimum window (SetCwnd never goes below it; RFC 9002's RECOMMENDED 2 datagrams is its own controller's), instead of `OnEnterRTO`'s inflight + 1 datagram
-- a PTO probe past a full window is not cwnd-limited
+- C.is_cwnd_limited is set by the packet that leaves less than a datagram of room in the window (the sender never takes bytes in flight above it, RFC 9002 §7, so a window is full before bytes in flight reach it; 0.3.0); a PTO probe past a full window is not cwnd-limited
 - RFC 9000 §9.4: a new peer address gets a fresh controller, a NAT rebinding keeps it
 - the model moves once per ACK frame (`LossListener.onAckProcessed`)
 - limitations: above ~2 % random loss the flow runs near its floor (by design), at RTT > ~1.5 s ProbeRTT interrupts Startup's plateau test
@@ -43,7 +43,7 @@ Quoted: "MUST treat any CE marks as congestion"; "MUST conform to the congestion
 **Tests that pin it.**
 
 - nothing allocates per ACK (`CoreAllocationTest.steadyStateBbrAllocatesZero`)
-- `recovery.BbrTest.*` (24, among them `startupEndsOnSustainedCeMarks`, `aLargerDatagramSizeNeverRaisesTheWindow`), `recovery.BbrPropertyTest.*` (3: random streams keep the invariants, 10-100 Gbit/s × 100 µs-2 s without overflow), `fuzz.BbrInvariantFuzzTest.bbrInvariants` (Jazzer), `recovery.LossDetectionTest.*Spurious*`/`*Settle*`/`anAckReportsItsPacketsDeliveredBeforeItsLosses`, `recovery.PacerTest.aLongIdleGapAtTenGbitPerSecondRefillsTheBucket`, `recovery.PacerTest.bbrIsPacedEvenBelow1msSrtt`, `core.PathTest.bbrStartsAFreshModelOnANewAddress`, `core.PathTest.bbrKeepsItsModelAcrossANatRebinding`, `recovery.DeliveryRateSamplerTest.*`, `recovery.WindowedMaxFilterTest.*`, `testing.BbrSimulationTest.*`, `testing.BbrHarshScenarioTest.*`, `testing.BbrHighRateScenarioTest.*`
+- `recovery.BbrTest.*` (28, among them `startupEndsOnSustainedCeMarks`, `aLargerDatagramSizeNeverRaisesTheWindow`, `aWindowWithLessThanADatagramLeftIsCwndLimited`), `recovery.BbrPropertyTest.*` (3: random streams keep the invariants, 10-100 Gbit/s × 100 µs-2 s without overflow), `fuzz.BbrInvariantFuzzTest.bbrInvariants` (Jazzer), `recovery.LossDetectionTest.*Spurious*`/`*Settle*`/`anAckReportsItsPacketsDeliveredBeforeItsLosses`, `recovery.PacerTest.aLongIdleGapAtTenGbitPerSecondRefillsTheBucket`, `recovery.PacerTest.bbrIsPacedEvenBelow1msSrtt`, `core.PathTest.bbrStartsAFreshModelOnANewAddress`, `core.PathTest.bbrKeepsItsModelAcrossANatRebinding`, `recovery.DeliveryRateSamplerTest.*`, `recovery.WindowedMaxFilterTest.*`, `testing.BbrSimulationTest.*`, `testing.BbrHarshScenarioTest.*`, `testing.BbrHighRateScenarioTest.*`
 - numbers in [the QUIC guide](../../guide/quic.md#choosing-a-congestion-controller)
 
 **Peer interop notes.**
