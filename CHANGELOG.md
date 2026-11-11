@@ -2175,6 +2175,20 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- JVM: the native library extraction (`KslLoader`) no longer creates anything under the umask or an inherited ACL.
+  The library was written through `File.createTempFile` (mode `0644` under the usual umask) and missing parents of
+  `-Dkuicksilver.native.workdir` were created the same way; every file and directory is now owner-only in the creating
+  call (`rw-------` for the library, `rwx------` for directories), and the library goes through a new `O_CREAT | O_EXCL`
+  temp file and an atomic rename. On Windows the work directory had no checks beyond being a directory: in a temp
+  directory where other users may create files and folders (a service's `C:\Windows\Temp`) another user could plant
+  the library file there and change it between the hash check and `System.load`. The work directory now gets an ACL
+  with one entry for its owner, must be owned by the user of the process (`IntegrityMismatch` otherwise), and a junction
+  is refused like a symbolic link. Everywhere a library is reused only when that user owns it and nobody else may write
+  it. The default directory `<java.io.tmpdir>/kuicksilver-native-<user>` is refused when a directory above it belongs to
+  another user or is writable by group or others without the sticky bit (`/tmp` has it), since such a user could swap
+  the whole directory ([troubleshooting](docs/guide/troubleshooting.md), `IntegrityMismatch`). The user of the process
+  is now the owner of a file it creates, so a uid without a passwd entry (a container's `runAsUser`) no longer fails
+  with "the user of this process cannot be determined" when `java.io.tmpdir` is read-only.
 - Ktor server, HTTP/1.1: the `301 Moved Permanently` for a GET or HEAD target with characters to encode was an open
   redirect. `GET //evil.example/^` got `Location: //evil.example/%5E`, a network-path reference (RFC 3986 section
   4.2) that a browser resolves to `http://evil.example/`, so a link to `http://victim.example//evil.example/^` left

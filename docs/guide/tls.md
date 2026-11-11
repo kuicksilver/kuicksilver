@@ -77,9 +77,14 @@ if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is 
 
 On the JVM the library is extracted once into `<java.io.tmpdir>/kuicksilver-native-<user>` (or
 `-Dkuicksilver.native.workdir=<dir>`, for a `noexec` temp directory) and verified against the jar's SHA-256 manifest on
-every start. The directory must be a real directory that you own and that nobody else can write (the loader applies
-`rwx------`); a symbolic link, another owner or permissions that cannot be removed give `IntegrityMismatch`. The file is
-kept between runs and shared between JVMs of the same user: its name carries the `ksl` ABI version.
+every start. The directory must be a real directory that you own and that nobody else can write (the loader creates it,
+and any missing parent, owner-only and applies `rwx------`, or on Windows an ACL with one entry for you); a symbolic link,
+another owner or permissions that cannot be removed give `IntegrityMismatch`. Under `java.io.tmpdir` the directories
+above it must belong to you or root and be writable by nobody else unless they have the sticky bit (as `/tmp` has),
+since anyone who may write there could rename the directory and put another in its place; for
+`-Dkuicksilver.native.workdir` that choice is yours. The library is written owner-only (`rw-------`) through a new file
+and an atomic rename, and a copy that another user owns or may write is replaced, not reused. The file is kept between
+runs and shared between JVMs of the same user: its name carries the `ksl` ABI version.
 
 ## Configuration
 
