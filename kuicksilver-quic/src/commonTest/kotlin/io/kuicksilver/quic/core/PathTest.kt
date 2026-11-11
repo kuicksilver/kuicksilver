@@ -116,15 +116,150 @@ class PathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 8.2.2: "On receiving a PATH_CHALLENGE frame, an endpoint MUST respond by echoing the data contained in the
+     * PATH_CHALLENGE frame in a PATH_RESPONSE frame." Until 0.3.0 (cross-review) a fourth waiting challenge was dropped. Every one is
+     * answered now; past three waiting each costs a glitch token, so a flood still closes the connection.
+     */
     @Test fun negative_pathChallengeQueueCap() {
         val (p, c) = connected()
         try {
             c.testInjectPathChallenges = 10
             p.settle(5)
             val s = p.server()
-            assertEquals(3, s.pathResponsesSentForTest, "at most 3 PATH_RESPONSE queued (spec 4.7)")
-            assertEquals(7L, s.stats.glitchTokensSpent)
+            assertEquals(10, s.pathResponsesSentForTest, "every PATH_CHALLENGE answered")
+            assertEquals(7L, s.stats.glitchTokensSpent, "the 4th to 10th waiting at once cost a token each")
             assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * A stray PATH_RESPONSE takes a peer ID for one datagram and retires it after. With the retirement backlog full (a peer that leaves
+     * our RETIRE_CONNECTION_ID frames unacknowledged) the ID could not be retired and would stay used for good, a spare lost per
+     * response: the response is dropped instead and the spare stays.
+     */
+    @Test fun negative_strayPathResponseTakesNoIdWithAFullRetirementBacklog() {
+        val a = InetSocketAddress("192.0.2.10", 443)
+        val b = InetSocketAddress("192.0.2.11", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = a
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.settle()
+            val s = p.server()
+            assertTrue(s.cids.hasSparePeer())
+            val spares = s.cids.peerSeqsForTest()
+            s.cids.testRetireBacklogFull = true
+            val sentBefore = p.serverSentLocal.size
+            val responsesBefore = s.pathResponsesSentForTest
+            p.serverLocal = b
+            c.testInjectPathChallenges = 1
+            p.settle(3)
+            assertTrue(b !in p.serverSentLocal.drop(sentBefore), "no response from $b")
+            assertEquals(responsesBefore, s.pathResponsesSentForTest)
+            assertEquals(spares, s.cids.peerSeqsForTest(), "no peer ID taken")
+            assertTrue(s.cids.hasSparePeer(), "the spare is still unused")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The first frame type of the 1-RTT packet in a Null-protected datagram, or -1. */
+    private fun firstOneRttFrame(
+        d: ByteArray,
+        dcidLen: Int,
+    ): Int {
+        if (d[0].toInt() and 0x80 != 0) return -1
+        val pnLen = (d[0].toInt() and 0x03) + 1
+        return d[1 + dcidLen + pnLen].toInt() and 0xff
+    }
+
+    /**
+     * RFC 9000 section 9.3.3: "An endpoint that receives a PATH_CHALLENGE on an active path SHOULD send a non-probing packet in
+     * response." It held only by chance: the PATH_RESPONSE rode with an ACK in a normal packet, but with a PATH_CHALLENGE of our own
+     * pending on that path both left in a probing-only packet and the ACK waited for max_ack_delay (0.3.0 cross-review). The packet
+     * that carried the challenge is now acknowledged at once.
+     */
+    @Test fun pathChallengeOnTheActivePathGetsANonProbingAnswer() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            p.settle()
+            s.paths.active.challengePending = true // our own validation of the active path is under way (section 9.3.2)
+            c.testInjectPathChallenges = 1
+            val batch = io.kuicksilver.quic.PacketBatch(4)
+            val n = c.poll(batch, p.now)
+            assertEquals(1, n, "the client's probe")
+            val probe = batch.buffer(0).toByteArray(batch.length(0))
+            batch.close()
+            assertEquals(0x1a, firstOneRttFrame(probe, s.localCid.length), "a PATH_CHALLENGE alone")
+            assertTrue(
+                !s.loss
+                    .space(io.kuicksilver.quic.recovery.SpaceId.Application)
+                    .ack.ackRequired,
+            )
+            p.feed(p.server, probe, p.clientAddr)
+            assertTrue(
+                s.loss
+                    .space(io.kuicksilver.quic.recovery.SpaceId.Application)
+                    .ack.ackRequired,
+                "the packet with the challenge is acknowledged at once, not after max_ack_delay",
+            )
+            val out = io.kuicksilver.quic.PacketBatch(8)
+            val m = s.poll(out, p.now)
+            val sent = (0 until m).map { firstOneRttFrame(out.buffer(it).toByteArray(out.length(it)), c.localCid.length) }
+            out.close()
+            assertTrue(sent.contains(0x1a), "the probe with the PATH_RESPONSE: $sent")
+            assertTrue(sent.any { it == 0x02 || it == 0x03 }, "and a non-probing packet (an ACK) in the same flight: $sent")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** With glitch protection off the queue of owed responses is still bounded: the challenge past it closes the connection. */
+    @Test fun negative_pathResponseQueueHasAHardBound() {
+        val (p, _) = connected()
+        try {
+            val s = p.server()
+            repeat(Paths.MAX_RESPONSES) { assertTrue(s.paths.queueResponse(it.toLong(), s.paths.active)) }
+            assertFalse(s.paths.queueResponse(-1L, s.paths.active))
+            assertEquals(Paths.MAX_RESPONSES, s.paths.responses)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 8.2.2: a PATH_RESPONSE "MUST be sent on the network path where the PATH_CHALLENGE was received". A challenge from
+     * the client's address that reached another address of a wildcard server was answered from the path's own address (0.3.0
+     * cross-review); the answer now leaves from the address the challenge reached, in a datagram of its own, and the path stays.
+     */
+    @Test fun pathResponseLeavesFromTheLocalAddressTheChallengeReached() {
+        val a = InetSocketAddress("192.0.2.10", 443)
+        val b = InetSocketAddress("192.0.2.11", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = a
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.settle()
+            val s = p.server()
+            val sentBefore = p.serverSentLocal.size
+            val responsesBefore = s.pathResponsesSentForTest
+            p.serverLocal = b
+            c.testInjectPathChallenges = 1
+            p.settle(3)
+            assertEquals(responsesBefore + 1, s.pathResponsesSentForTest)
+            assertTrue(b in p.serverSentLocal.drop(sentBefore), "the response left from $b: ${p.serverSentLocal.drop(sentBefore).toSet()}")
+            assertEquals(a, s.paths.active.local, "the path keeps its address")
+            // section 9.5: from a second local address it carries a connection ID of its own, not the active path's
+            val k = sentBefore + p.serverSentLocal.drop(sentBefore).indexOf(b)
+            val datagram = p.serverSent[k].second
+            val dcid = datagram.copyOfRange(1, 1 + c.localCid.length)
+            assertTrue(!dcid.contentEquals(s.remoteCid.toByteArray()), "the active path's ID is not reused from $b")
         } finally {
             p.close()
         }
@@ -477,8 +612,10 @@ class PathTest {
         }
     }
 
-    @Test fun validationTimeoutUsesRfcFloor() {
-        // RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT) — with a 20 ms RTT the floor of 2 s applies
+    @Test fun validationTimeoutUsesTheNewPathPto() {
+        // RFC 9000 section 8.2.4: "three times the larger of the current PTO or the PTO for the new path (using kInitialRtt)" — with a
+        // 20 ms RTT the new path's 333 + 4 x 333 / 2 + 25 ms (max_ack_delay, confirmed) decides: 3 x 1024 ms. 0.3.0 cross-review: it
+        // was max(3 x PTO, 6 x kInitialRtt), 2 s, about a third short
         val (p, c) = connected()
         try {
             p.clientListensOnSource = false
@@ -489,27 +626,27 @@ class PathTest {
             val t0 = p.now
             assertTrue(p.runUntil(5.seconds) { p.events[s]!!.any { it is ConnectionEvent.PathFailed } })
             val took = p.now - t0
-            assertTrue(took >= 1990.milliseconds && took <= 2500.milliseconds, "validation failed after $took")
+            assertTrue(took >= 3060.milliseconds && took <= 3600.milliseconds, "validation failed after $took")
         } finally {
             p.close()
         }
     }
 
     @Test fun validationTimeoutFollowsInitialRtt() {
-        // RFC 9000 section 8.2.4 with initialRtt = 100 ms: max(3 x PTO, 6 x 100 ms) — the 20 ms pair's 3 x PTO is below 600 ms
+        // RFC 9000 section 8.2.4 with initialRtt = 100 ms: 3 x max(PTO, 100 + 4 x 50 + 25 ms) — the 20 ms pair's PTO is below 325 ms
         val (p, c) = connected(serverQuic = quicConfig { initialRtt = 100.milliseconds })
         try {
             p.clientListensOnSource = false
             val s = p.server()
-            assertEquals(maxOf(s.pto() * 3, 600.milliseconds), s.validationTimeout())
-            assertEquals(600.milliseconds, s.validationTimeout())
+            assertEquals(maxOf(s.pto(), 325.milliseconds) * 3, s.validationTimeout())
+            assertEquals(975.milliseconds, s.validationTimeout())
             p.clientSource = other
             send(c)
             p.step()
             val t0 = p.now
             assertTrue(p.runUntil(5.seconds) { p.events[s]!!.any { it is ConnectionEvent.PathFailed } })
             val took = p.now - t0
-            assertTrue(took >= 590.milliseconds && took <= 900.milliseconds, "validation failed after $took")
+            assertTrue(took >= 965.milliseconds && took <= 1300.milliseconds, "validation failed after $took")
         } finally {
             p.close()
         }
@@ -631,10 +768,10 @@ class PathTest {
 
     @Test fun newPathGetsThreeChallengesBeforeDeadline() {
         // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
-        // a 1 ms initialRtt keeps the 6 x initialRtt floor out of the way: the deadline is 3 x PTO
+        // a 1 ms initialRtt keeps the new path's PTO small: the deadline is 3 x the larger PTO, at least 3 x the current one
         val (p, c) = connected(clientQuic = quicConfig { initialRtt = 1.milliseconds })
         try {
-            assertEquals(c.pto() * 3, c.validationTimeout())
+            assertEquals(maxOf(c.pto(), 1.milliseconds + 2.milliseconds + c.loss.peerMaxAckDelay) * 3, c.validationTimeout())
             val id = c.addPath(p.serverAddr, p.now)
             c.probePath(id, p.now)
             val path = c.paths.byId(id)!!

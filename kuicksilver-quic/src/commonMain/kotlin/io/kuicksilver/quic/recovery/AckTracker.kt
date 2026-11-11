@@ -24,6 +24,9 @@ internal class AckTracker(
     private var firstPendingTime = TimeMark(0)
     private var required = false
 
+    /** [acknowledgeAtOnce] was called for the packet being processed. */
+    private var atOnce = false
+
     /** Packets at or below this are no longer reported (the peer acknowledged our ACK for them). */
     private var floor = -1L
 
@@ -69,6 +72,9 @@ internal class AckTracker(
     }
 
     val ackRequired: Boolean get() = required
+
+    /** An ack-eliciting packet arrived since the last ACK frame. */
+    val ackElicitingPending: Boolean get() = pending > 0
     val largestReceived: Long get() = largest
     val rangeCount: Int get() = count
 
@@ -84,6 +90,7 @@ internal class AckTracker(
 
     /** Packet [pn] was processed in part and dropped unacknowledged: a copy of it is a duplicate from now on, and it is never acknowledged. */
     fun onPacketRefused(pn: Long) {
+        atOnce = false // the refused packet is never acknowledged: nothing to hurry
         if (isDuplicate(pn)) return // seen already (below a floor, or kept): it must not push a kept refusal out
         if (refusedCount == REFUSED_KEPT) {
             var lowest = 0
@@ -111,8 +118,18 @@ internal class AckTracker(
         if (ackEliciting) {
             pending++
             if (pending == 1) firstPendingTime = now
-            if (immediate || pending >= 2 || reordered || ce) required = true
+            if (immediate || pending >= 2 || reordered || ce || atOnce) required = true
         }
+        atOnce = false
+    }
+
+    /**
+     * The packet whose frames are being processed is acknowledged at once, not after max_ack_delay: it carried a PATH_CHALLENGE on the
+     * active path, which "SHOULD send a non-probing packet in response" (RFC 9000 section 9.3.3), and the ACK makes the packet that
+     * follows the probe a non-probing one.
+     */
+    fun acknowledgeAtOnce() {
+        atOnce = true
     }
 
     private fun insert(pn: Long) {

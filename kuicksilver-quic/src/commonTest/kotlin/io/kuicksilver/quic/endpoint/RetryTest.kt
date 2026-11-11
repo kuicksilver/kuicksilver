@@ -386,9 +386,10 @@ class RetryTest {
         }
     }
 
-    @Test fun negative_invalidRetryTokenInvalidTokenClose() {
+    @Test fun negative_retryTokenThatDoesNotOpenUnderOurDcidGetsInvalidToken() {
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = ConnectionAdmission.AlwaysRetry }
         var tampered = 0
+        var retriesAtFirstToken = -1L
         p.filterToServer =
             { _, b ->
                 if (isInitial(b)) {
@@ -398,7 +399,7 @@ class RetryTest {
                         if (PacketHeaderCodec.parse(buf, 0, b.size, 8, v) &&
                             v.tokenLen > 0
                         ) {
-                            tampered++
+                            if (tampered++ == 0) retriesAtFirstToken = p.server.stats.retriesSent
                             b[v.tokenOff + 12] = (b[v.tokenOff + 12].toInt() xor 1).toByte()
                         }
                     } finally {
@@ -408,13 +409,17 @@ class RetryTest {
                 ; true
             }
         try {
+            // RFC 9000 section 8.1.2: the Initial answers our Retry (its DCID is our Retry SCID, an ID in our format) but its token
+            // does not open (damaged here; a restart between the Retry and the Initial does the same): the client "will not accept
+            // another Retry token", so the server closes with INVALID_TOKEN at once rather than sending a second Retry
             val c = p.connect()
             assertTrue(p.runUntil { p.closed(c) != null }, "the client is told")
-            val r = p.closed(c)
-            assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+            val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closed(c))
             assertEquals(0x0bL, r.code, "INVALID_TOKEN")
-            assertEquals(0, p.server.connectionCount, "no connection for a forged token")
             assertTrue(tampered >= 1)
+            assertEquals(retriesAtFirstToken, p.server.stats.retriesSent, "no Retry after the Initial with the token")
+            assertTrue(p.server.stats.invalidTokens >= 1)
+            assertEquals(0, p.server.connectionCount, "no connection for it")
         } finally {
             p.close()
         }
@@ -522,7 +527,7 @@ class RetryTest {
             }
             assertIs<TokenCheck.Valid>(check(t0 + 61.seconds * 60))
             assertIs<TokenCheck.Valid>(check(t0 + 90.seconds * 60), "one rotation later the previous key still checks")
-            assertIs<TokenCheck.Invalid>(check(t0 + 150.seconds * 60), "two rotations later the key is gone")
+            assertIs<TokenCheck.Unauthenticated>(check(t0 + 150.seconds * 60), "two rotations later the key is gone")
         } finally {
             tokens.close()
         }

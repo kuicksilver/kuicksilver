@@ -46,6 +46,7 @@ class LossDetectionTest {
         var settled = 0
         val delivered = ArrayList<String>()
         var ecnCalls = 0
+        val ecnValid = ArrayList<Boolean>()
 
         override fun onDelivered(
             p: SentPacket,
@@ -85,6 +86,7 @@ class LossDetectionTest {
             pathId: Int,
         ) {
             ecnCalls++
+            ecnValid += countsValid
         }
 
         override fun onAcked(
@@ -154,6 +156,29 @@ class LossDetectionTest {
             for ((s, l) in ranges) v.addRange(s, l)
             if (ecn != null) v.setEcn(ecn[0], ecn[1], ecn[2])
         }
+
+    /**
+     * RFC 9000 section 13.4.2.1, the three ways ECN counts fail validation, each reported to the path's validator as invalid
+     * (0.3.0 cross-review: they were implemented, the section 13.4 row cited `EcnTest.*`, and none was tested): a count that went
+     * down, an ECT(1) count when we never send ECT(1), and ECT(0) + CE growing by less than the newly acknowledged ECT(0) packets.
+     */
+    @Test fun negative_ecnCountsFailValidationInEachOfTheThreeWays() {
+        fun validity(
+            first: LongArray,
+            second: LongArray,
+        ): List<Boolean> {
+            val (ld, l) = ld()
+            ld.handshakeConfirmed = true
+            for (pn in 0L..3L) send(ld, SpaceId.Application, pn, t0, marked = true)
+            ld.onAck(SpaceId.Application, ack(0L to 1L, ecn = first), t0 + 50.milliseconds)
+            ld.onAck(SpaceId.Application, ack(0L to 3L, ecn = second), t0 + 60.milliseconds)
+            return l.ecnValid
+        }
+        assertEquals(listOf(true, true), validity(longArrayOf(2, 0, 0), longArrayOf(4, 0, 0)), "consistent counts")
+        assertEquals(listOf(true, false), validity(longArrayOf(2, 0, 0), longArrayOf(1, 0, 3)), "ECT(0) decreased")
+        assertEquals(listOf(true, false), validity(longArrayOf(2, 0, 0), longArrayOf(3, 1, 0)), "ECT(1) though we send ECT(0) only")
+        assertEquals(listOf(true, false), validity(longArrayOf(2, 0, 0), longArrayOf(3, 0, 0)), "2 newly acknowledged ECT(0), 1 counted")
+    }
 
     @Test fun ackOfOldestPacketIsSublinear() {
         // RFC 9002 appendix A.7 and RFC 9000 section 21.6: the peer chooses what it acknowledges and how much is outstanding; an ACK of the

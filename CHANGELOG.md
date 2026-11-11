@@ -751,6 +751,80 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and inside a stream's `release` that stream and the 431 stream both kept their slot under `maxConcurrentStreams`
   until the connection ended. Nothing is answered on a stream that ended, a 431 head the client cannot take resets the
   stream with CANCEL, and the stream is always released.
+- QUIC: a packet carrying a PATH_CHALLENGE on the active path is acknowledged at once, so a non-probing packet
+  answers it (RFC 9000 section 9.3.3 SHOULD) also when our own PATH_CHALLENGE on that path sends the PATH_RESPONSE in a
+  probing-only packet; the ACK used to wait for `max_ack_delay` then.
+- QUIC, ECN: a move of a path's peer address to another IP during the handshake started congestion control, RTT and
+  DPLPMTUD over but kept the old address's ECN validation; it now starts over too (RFC 9000 section 13.4.2: per network
+  path), and losses and acknowledgments of packets sent to the old address no longer count toward it. The one-congestion-event-per-recovery-period rule for CE reports was kept for the whole connection, so a CE
+  report on a second path in the first path's recovery period was ignored; it is now per path, as each path has its
+  own controller. A CE increase in ECN counts that fail validation is no longer acted on.
+- QUIC client: a migration (`migrate`, `addPath`) from a new socket while the server's preferred address was still
+  being validated closed that validation for good. The preferred address is now validated again from the new socket,
+  concurrently with the original address (RFC 9000 section 9.6.3 SHOULD); when it succeeds the application's new path
+  takes it and the validation of the original address ends ("MUST abandon validation of the original address and
+  migrate to using the server's preferred address"). A migration on the same socket still replaces the probe.
+- QUIC: every PATH_CHALLENGE is now answered (RFC 9000 section 8.2.2 MUST). A fourth challenge waiting at once was
+  dropped; it is now queued, past three waiting each costs a glitch token as before, and past 1024 waiting (glitch
+  protection off) the connection closes with PROTOCOL_VIOLATION. A server on a wildcard socket with several addresses
+  answered a challenge that reached another of its addresses from the path's own address; the PATH_RESPONSE now leaves
+  from the address the challenge reached ("on the network path where the PATH_CHALLENGE was received"), in a datagram
+  of its own carrying a connection ID of the client's that no path used (section 9.5), or is dropped when the client
+  gave none to spare or the retirement backlog has no room to retire it afterwards.
+- QUIC: path validation gave up after max(3 PTO, 6 times the initial RTT), 2 s with the default 333 ms, where RFC 9000
+  section 8.2.4 recommends three times the larger of the current PTO and the new path's PTO computed from the initial
+  RTT (3 times the initial RTT plus the peer's `max_ack_delay` once confirmed), 3.07 s. A client moving to a path with a
+  long first round trip (a cellular link) was abandoned early. The same timeout bounds the wait for a spare connection
+  ID before a probe and the undoing of a move during the handshake.
+- QUIC server: a client's first Initial carrying another server's address validation token (one behind the same name)
+  whose first byte happens to be the Retry token type was refused with a stateless INVALID_TOKEN close. A Retry-type
+  token that does not open under our keys is now treated as absent (RFC 9000 section 8.1.3) unless the Initial's
+  Destination Connection ID is in our format, which marks an answer to our Retry (a token whose key is gone after a
+  restart, or damaged): that one still gets INVALID_TOKEN (section 8.1.2), never a second Retry. Retry tokens now carry the client address and version they are bound to inside the encrypted
+  part instead of the associated data, so a token of ours presented from another address or for another version still
+  opens and gets INVALID_TOKEN (section 8.1.2), as does an expired one or one under another Destination Connection ID.
+- QUIC: short-header packets are now padded to at least 22 bytes more than the connection's own connection ID length
+  (RFC 9000 section 10.3 SHOULD), so the peer's Stateless Reset sent in reply, one byte shorter, still looks like a
+  packet to us. PING-only packets were 29 bytes with 8-byte IDs, and ACK-only packets about 30 with 20-byte IDs or a
+  peer using short ones. An ACK-only packet grows by longer variable-length integers in its ACK frame instead (section
+  16), so it stays out of flight (RFC 9002 section 2 counts a packet with PADDING as in flight). A client whose 0-RTT was
+  rejected now closes the connection with PROTOCOL_VIOLATION when the server acknowledges one of its 0-RTT packets
+  (RFC 9001 section 4.6.2 SHOULD); such acknowledgments used to be processed.
+- QUIC client, 0-RTT with `resetStreamAt`: the server's new `reset_stream_at` transport parameter took effect when its
+  EncryptedExtensions arrived, while 0-RTT could still be sent (the server's Finished not yet received), so a
+  `resetAt` on an early stream could put RESET_STREAM_AT in a 0-RTT packet although the ticket's parameters did not offer
+  it. 0-RTT now uses only the remembered offer, and the new one applies from 1-RTT on (RFC 9000 section 7.4.1).
+- QUIC: a connection in the closing state (after our CONNECTION_CLOSE) still processed every frame the peer sent:
+  STREAM data was buffered and charged to flow control, NEW_CONNECTION_ID and RETIRE_CONNECTION_ID changed the
+  connection IDs, PATH_CHALLENGEs were answered and events followed the `Closed` one. RFC 9000 section 10.2.1 keeps
+  only what is needed to answer with CONNECTION_CLOSE: a packet is now authenticated and searched for the peer's
+  CONNECTION_CLOSE (section 10.2.2, draining); nothing else in it is acted on but, on a client, a NEW_TOKEN for the
+  token store. The peer's CONNECTION_CLOSE in the
+  closing state no longer replaces our reason in `ConnectionCore.closedReason` nor raises a second `Closed` event.
+- QUIC: after the handshake, every CRYPTO byte received counted toward a 64 KiB budget that never refilled,
+  retransmissions included, so a long-lived client connection to a server that resends or reissues NewSessionTickets
+  was closed with CRYPTO_BUFFER_EXCEEDED. The limit is now on bytes buffered that TLS has not read (RFC 9000 section
+  7.5: the error is for an endpoint "unable to buffer all data in a CRYPTO frame"). Every RESET_STREAM raised a
+  `ConnectionEvent.StreamReset`, copies and resets after all the data was read too; the event now comes once, when the
+  receive half moves to Reset Recvd.
+- QUIC: connection IDs. A peer that retired every connection ID it was given got a replacement for each at once, so
+  each 2-byte RETIRE_CONNECTION_ID made the endpoint draw a new ID (with QUIC-LB, a nonce of a space every endpoint of
+  the process that uses the key shares). A retirement is now replaced at once while at most twice the IDs the connection
+  keeps issued were retired within the last 3 PTO; past that it costs a glitch token and its replacement is issued when
+  an earlier retired ID stops routing (RFC 9000 section 5.1.1 sets no time for it). The periodic rotation of the peer's
+  ID (every 10,000 packets) threw CONNECTION_ID_LIMIT_ERROR out of `poll` when 32 of our retirements were unacknowledged;
+  it now waits. The backlog of unacknowledged retirements is at least twice `activeConnectionIdLimit` (it was fixed at
+  32, so a limit above 16 let an honest peer's rotation close the connection; section 5.1.2). A new connection ID,
+  client or server, is never one the endpoint loop already routes or one of the connection's own live or retired IDs:
+  `ConnectionIdRegistry.add` kept the earlier owner of a colliding ID, so the new connection advertised an ID (and its
+  stateless reset token) that routed to another connection (sections 10.3.2, 19.15). With the default 8-byte IDs the
+  chance was small; with `connectionIdLength = 4` (16 random bits) a collision was likely after a few hundred IDs. When
+  16 draws all collide, a server drops the Initial, a NEW_CONNECTION_ID waits, and `connect` fails with
+  `QuicException.ConnectionLost.Internal`.
+- QUIC server: removing a connection walked every slot of the endpoint's connection ID table, and the table never shrank.
+  An Initial that does not decrypt creates a connection and removes it at once, so each forged 1200-byte Initial from any
+  address cost a walk over the IDs of every connection on the loop (and over the slots a past peak left behind). A removal
+  now visits only the connection's own IDs, and the table halves once at most an eighth of it is in use.
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS

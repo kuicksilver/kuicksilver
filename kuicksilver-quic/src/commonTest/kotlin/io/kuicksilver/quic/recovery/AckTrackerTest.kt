@@ -268,4 +268,19 @@ class AckTrackerTest {
         assertFalse(a.isDuplicate(9))
         assertTrue(a.isDuplicate(8))
     }
+
+    /** A PATH_CHALLENGE's acknowledge-at-once mark ends with its packet: a refused one (never acknowledged) leaves nothing behind. */
+    @Test fun acknowledgeAtOnceDoesNotOutliveARefusedPacket() {
+        val a = AckTracker(64)
+        a.onPacketReceived(1, ackEliciting = false, now = t0)
+        a.acknowledgeAtOnce()
+        a.onPacketRefused(9) // the packet that carried the challenge ran into a full reassembly buffer
+        a.onPacketReceived(2, ackEliciting = true, now = t0)
+        assertFalse(a.ackRequired, "the next ack-eliciting packet waits for max_ack_delay as usual")
+        a.acknowledgeAtOnce()
+        a.onPacketReceived(3, ackEliciting = false, now = t0)
+        a.acknowledgeAtOnce()
+        a.onPacketReceived(4, ackEliciting = true, now = t0)
+        assertTrue(a.ackRequired)
+    }
 }

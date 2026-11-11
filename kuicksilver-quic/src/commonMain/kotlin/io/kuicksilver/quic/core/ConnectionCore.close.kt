@@ -111,8 +111,12 @@ internal fun ConnectionCore.peerClosed(
     reasonBytes: ByteArray,
 ) {
     if (state == ConnectionState.Draining || state == ConnectionState.Closed) return
+    val closing = state == ConnectionState.Closing
     state = ConnectionState.Draining
     timers.closeDeadline = now + pto() * 3
+    // RFC 9000 section 10.2.2: a closing endpoint that receives CONNECTION_CLOSE may drain; the connection already ended with our
+    // own reason, reported once
+    if (closing) return
     var reason = reasonBytes.decodeToString() // lossy UTF-8; keep its encoding within 1 KiB
     while (reason.encodeToByteArray().size > 1024) reason = reason.dropLast(1)
     val cause: Throwable? =

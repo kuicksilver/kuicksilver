@@ -213,6 +213,96 @@ class StatelessResetTest {
                 routing.toByte()
         }
 
+    /**
+     * 0.3.0 cross-review, RFC 9000 section 10.3: "the endpoint SHOULD ensure that all packets it sends are at least 22 bytes longer
+     * than the minimum connection ID length that it requests the peer to include in its packets, adding PADDING frames as
+     * necessary". With 20-byte IDs of its own, a client's ACK-only and PING-only packets to a server with 8-byte IDs were about
+     * 30 bytes; the server's Stateless Reset in reply (one byte shorter) could then not look like a packet with the client's ID.
+     */
+    @Test fun shortHeaderPacketsAreAtLeastOurIdLengthPlus22() {
+        val p =
+            io.kuicksilver.quic.CorePair(
+                clientQuic =
+                    io.kuicksilver.quic.quicConfig {
+                        connectionIdLength = 20
+                        keepAlive = 100.milliseconds
+                    },
+            )
+        try {
+            val sizes = ArrayList<Int>()
+            p.filterToServer = { _, bytes ->
+                if (bytes[0].toInt() and 0x80 == 0) sizes += bytes.size // short header only (nothing coalesced behind it)
+                true
+            }
+            assertTrue(p.handshake())
+            p.runUntil(limit = 2_000.milliseconds) { false } // ACKs, PING-only keep-alives, NEW_CONNECTION_IDs
+            assertTrue(sizes.size >= 3, "short-header datagrams sent: $sizes")
+            assertTrue(sizes.all { it >= 20 + 22 }, "every short-header packet is at least 42 bytes: $sizes")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The short ACK-only packets of a pure download reach that length with longer varints in their ACK frame, not with PADDING, which
+     * would put them in flight (RFC 9002 section 2) past the window: against a server that acknowledges only ack-eliciting packets
+     * (as quic-go, RFC 9000 section 13.2.1) they left flight only when an ack-eliciting packet of ours drew an ACK: a long run of them
+     * fills the window and holds back the very MAX_STREAM_DATA or MAX_DATA that would draw one.
+     */
+    @Test fun ackOnlyPacketsGrowWithoutGoingInFlight() {
+        // large windows: the client's first MAX_STREAM_DATA (ack-eliciting) is due only after megabytes of ACK-only packets
+        val p =
+            io.kuicksilver.quic.CorePair(
+                clientQuic =
+                    io.kuicksilver.quic.quicConfig {
+                        connectionIdLength = 20
+                        initialStreamWindow = 8_000_000
+                        maxStreamWindow = 8_000_000
+                        initialConnectionWindow = 12_000_000
+                        maxConnectionWindow = 12_000_000
+                    },
+            )
+        try {
+            val sizes = ArrayList<Int>()
+            p.filterToServer = { _, bytes ->
+                if (bytes[0].toInt() and 0x80 == 0) sizes += bytes.size
+                true
+            }
+            assertTrue(p.handshake())
+            val s = p.server!!
+            s.testAckOnlyAfterAckEliciting = true
+            val c = p.client
+            val id = c.openStream(true)
+            c.writeStream(id, byteArrayOf(1), 0, 1, true)
+            assertTrue(p.runUntil { p.serverEvents.any { it is ConnectionEvent.StreamOpened && it.id == id } })
+            val total = 12_000_000
+            var sent = 0
+            var got = 0
+            val chunk = ByteArray(16384)
+            assertTrue(
+                p.runUntil(limit = 60_000.milliseconds) {
+                    while (sent < total) {
+                        val n = s.writeStream(id, chunk, 0, minOf(chunk.size, total - sent), sent + chunk.size >= total)
+                        if (n <= 0) break
+                        sent += n
+                    }
+                    while (true) {
+                        val n = c.readStream(id, chunk, 0, chunk.size)
+                        if (n <= 0) break
+                        got += n
+                    }
+                    got == total
+                },
+                "the download completes: $got of $total bytes, client in flight ${c.stats.bytesInFlight}",
+            )
+            assertTrue(sizes.all { it >= 20 + 22 }, "every short-header packet is at least 42 bytes: ${sizes.filter { it < 42 }}")
+            p.runUntil(limit = 2_000.milliseconds) { false } // the last ACK-only packets went out; nothing ack-eliciting follows
+            assertEquals(0L, c.stats.bytesInFlight, "no ACK-only packet stays in flight with a peer that never acknowledges it")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun serverTransportParametersCarryResetToken() {
         val p = Pair()
         try {

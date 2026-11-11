@@ -25,9 +25,9 @@ public interface QuicPath {
     public val state: StateFlow<PathState>
 
     /**
-     * Sends a PATH_CHALLENGE and suspends until the path is validated (true) or gives up after max(3 x PTO, 6 x initial RTT) (false).
+     * Sends a PATH_CHALLENGE and suspends until the path is validated (true) or gives up after the validation timeout (false).
      * A probe needs a connection ID from the peer that no other path used (RFC 9000 section 9.5): right after the handshake the peer's
-     * NEW_CONNECTION_ID frames may still be on their way, so the probe first waits up to max(3 x PTO, 6 x initial RTT) for one, and
+     * NEW_CONNECTION_ID frames may still be on their way, so the probe first waits up to the validation timeout for one, and
      * fails with [PathFailureReason.NoSpareConnectionId] ([PathEvent.Failed.reason]) if none comes.
      */
     public suspend fun probe(): Boolean
@@ -48,7 +48,7 @@ public sealed interface PathEvent {
     ) : PathEvent
 
     /**
-     * [path][PathEvent.Failed.path] never answered within the validation timeout, max(3 x PTO, 6 x initial RTT) (RFC 9000 section 8.2.4), or [reason][PathEvent.Failed.reason] says
+     * [path][PathEvent.Failed.path] never answered within the validation timeout, 3 x the larger of both PTOs (RFC 9000 section 8.2.4), or [reason][PathEvent.Failed.reason] says
      * why it could not be probed.
      */
     public class Failed

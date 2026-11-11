@@ -55,6 +55,7 @@ internal class PacketReceiver(
     private val mask = ByteArray(5)
     private val ackView = AckFrameView()
     private val frames = FrameDispatcher(c, this)
+    private val closingFrames = ClosingFrames(c)
     internal val reader = WireReader(NO_PACKET, 0, 0)
     internal var now = TimeMark(0)
     internal var space = SpaceId.Initial
@@ -410,9 +411,13 @@ internal class PacketReceiver(
         // which of our IDs the peer used: a server answers a new address with its current ID only if that did not change (RFC 9000
         // section 9.5)
         if (type == PacketType.OneRtt && c.role == TlsRole.Server) c.rxDcidSeq = c.cids.localSeqOf(data, hv.dcidOff, hv.dcidLen)
+        // RFC 9000 section 10.2.1: a closing endpoint "retains only enough information to generate a packet containing a
+        // CONNECTION_CLOSE frame and to identify packets as belonging to the connection": the packet is authenticated (above) and
+        // scanned for the peer's CONNECTION_CLOSE (section 10.2.2: draining); nothing else in it is acted on
+        val closing = c.state == ConnectionState.Closing
         val ackEliciting =
             try {
-                FrameDecoder.decode(reader, type, frames, ackView)
+                FrameDecoder.decode(reader, type, if (closing) closingFrames else frames, ackView)
             } catch (_: ReassemblyFull) {
                 // not acknowledged, so the peer resends its frames in a new packet (RFC 9000 section 13.1: all frames must be
                 // processed before a packet is acknowledged). The frames ahead of the refused one were applied (a DATAGRAM delivered, a
@@ -436,7 +441,7 @@ internal class PacketReceiver(
             }
         c.packetsReceived++
         c.qlog?.packetReceived(space, pn, hv.packetEnd - headerStart(), now)
-        if (provisional) return true
+        if (provisional || closing) return true
         sp.ack.onEcn(datagramEcn) // RFC 9000 section 13.4.1 / 21.10: only processed packets move the ECN counts
         // PING-only packets beyond a PTO pair (RFC 9002 section 6.2.4: two probes, both PING when nothing is left to resend) within one RTT
         // are a glitch

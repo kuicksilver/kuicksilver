@@ -12,6 +12,10 @@ import kotlin.time.Duration.Companion.seconds
 /** Per-connection ceilings (threat-model 3.2); refusal happens before memory is allocated. Overridden only by tests. */
 internal class QuicLimits(
     val cryptoOutOfOrderPerLevel: Int = 65_536,
+    /**
+     * Post-handshake CRYPTO bytes TLS has not read yet (RFC 9000 section 7.5), within [cryptoOutOfOrderPerLevel] (the default is the
+     * same, so only a smaller value narrows it); what TLS read and retransmissions of it cost nothing.
+     */
     val cryptoPostHandshake: Int = 65_536,
     /** Where the Initial and Handshake CRYPTO streams end (ngtcp2: 64 KiB each; Handshake here leaves room for large chains). */
     val cryptoInitialMax: Long = 65_536,

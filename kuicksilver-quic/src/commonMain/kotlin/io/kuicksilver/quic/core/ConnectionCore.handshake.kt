@@ -345,6 +345,9 @@ internal fun ConnectionCore.applyPeerLimits(tp: TransportParameters) {
         tp.initialMaxStreamsUni,
     )
     connSend.onMaxUpdate(tp.initialMaxData)
+    // RESET_STREAM_AT is a frame the peer must have offered (draft-ietf-quic-reliable-stream-reset section 3): in 0-RTT only the
+    // remembered offer counts (RFC 9000 section 7.4.1), so it follows the limits
+    streams.peerResetStreamAt = tp.resetStreamAt && config.resetStreamAt
 }
 
 internal class ConnectionHandshakeSink(
@@ -495,12 +498,12 @@ internal class ConnectionHandshakeSink(
         core.peerTpEncoded = encoded
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }
         tp.preferredAddressCid?.let { core.cids.adoptPreferredAddressCid(it, tp.preferredAddressToken!!) }
-        // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits apply; settleZeroRtt applies these with 1-RTT
+        // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits (and reset_stream_at) apply; settleZeroRtt
+        // applies these with 1-RTT
         if (core.remembered == null) core.applyPeerLimits(tp)
         core.loss.peerAckDelayExponent = tp.ackDelayExponent
         core.loss.peerMaxAckDelay = tp.maxAckDelayMs.milliseconds
         core.peerGreaseQuicBit = tp.greaseQuicBit
-        core.streams.peerResetStreamAt = tp.resetStreamAt && core.config.resetStreamAt
         core.peerIdleMs = tp.maxIdleTimeoutMs
         core.cids.setPeerLimit(tp.activeConnectionIdLimit)
         // RFC 9000 section 14.3: never probe above the peer's max_udp_payload_size

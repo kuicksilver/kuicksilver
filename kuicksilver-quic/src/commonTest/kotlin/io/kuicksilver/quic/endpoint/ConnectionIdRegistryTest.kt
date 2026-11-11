@@ -86,4 +86,36 @@ class ConnectionIdRegistryTest {
             q.close()
         }
     }
+
+    @Test fun negative_removingAConnectionLeavesOthersAndTheTableShrinksAfterAPeak() {
+        // a forged Initial creates a connection and removes it at once: the removal goes by the connection's own IDs, and a peak
+        // of connections leaves no table that every later removal and lookup pays for
+        val p = CorePair()
+        val q = CorePair()
+        val packet = PacketBuffer.allocate(32)
+        try {
+            val r = ConnectionIdRegistry(0x1234L, 0x5678L)
+            val ids = List(20_000) { i -> ConnectionId(ByteArray(8) { b -> (i shr (8 * (b % 4))).toByte() }.also { it[7] = 1 }) }
+            for (id in ids) r.add(id, p.client)
+            val peak = r.slotsForTest
+            kotlin.test.assertTrue(peak >= 40_000, "table at the peak: $peak")
+            val forged = ConnectionId(ByteArray(8) { 0x55 })
+            r.add(forged, q.client)
+            r.removeAll(q.client)
+            kotlin.test.assertEquals(ids.size, r.size)
+            kotlin.test.assertTrue(q.client.registeredCids.isEmpty())
+            packet.copyFrom(ids[123].toByteArray(), 0, 1, 8)
+            assertSame(p.client, r.lookup(packet, 1, 8))
+            for (id in ids.subList(0, 19_990)) r.remove(id)
+            kotlin.test.assertTrue(r.slotsForTest <= 64, "table after the peak: ${r.slotsForTest}")
+            r.removeAll(p.client)
+            kotlin.test.assertEquals(0, r.size)
+            kotlin.test.assertEquals(16, r.slotsForTest)
+            kotlin.test.assertTrue(p.client.registeredCids.isEmpty())
+        } finally {
+            packet.close()
+            p.close()
+            q.close()
+        }
+    }
 }

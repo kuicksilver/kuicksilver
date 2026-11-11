@@ -22,8 +22,10 @@ import io.kuicksilver.quic.recordForTest
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.ConnectionId
+import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.tls.TlsRole
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 // Paths of a [ConnectionCore]: PMTUD and ECN per path, peer connection IDs, path validation, migration and NAT rebinding (RFC 9000
@@ -175,19 +177,28 @@ internal fun ConnectionCore.awaitPeerCid(p: Path) {
     p.nextChallengeAt = TimeMark.NEVER
 }
 
-/** RETIRE_CONNECTION_ID: the ID keeps routing for 3 x PTO (RFC 9000 section 5.1.2); one for an ID already gone costs a glitch token. */
+/**
+ * RETIRE_CONNECTION_ID: the ID keeps routing for 3 x PTO (RFC 9000 section 5.1.2); one for an ID already gone, or one whose
+ * replacement waits because the peer retires faster than we replace (ConnectionIdManager.fill), costs a glitch token.
+ */
 internal fun ConnectionCore.onRetireConnectionId(seq: Long) {
     if (!cids.onPeerRetired(seq, now + pto() * 3)) glitch(0x19)
 }
 
 /**
- * The validation timeout of RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT), as ngtcp2. The new-path term uses the configured
- * initial RTT (kInitialRtt), never an RTT remembered for the first path: "the new path could have a longer round-trip time".
+ * The validation timeout RFC 9000 section 8.2.4 recommends: "three times the larger of the current PTO or the PTO for the new path
+ * (using kInitialRtt, as defined in [QUIC-RECOVERY])". The new path's PTO is RFC 9002's before any sample (section 6.2.2: smoothed_rtt
+ * = kInitialRtt, rttvar = kInitialRtt / 2), so 3 x kInitialRtt plus the peer's max_ack_delay once the handshake is confirmed: 3.07 s
+ * with the default 333 ms. The configured initial RTT, never an RTT remembered for the first path: "the new path could have a longer
+ * round-trip time".
  */
 internal fun ConnectionCore.validationTimeout(): Duration {
-    val p3 = pto() * 3
-    val r6 = config.newPathInitialRtt * 6
-    return if (p3 > r6) p3 else r6
+    val current = pto()
+    val k = config.newPathInitialRtt
+    val v4 = k * 2
+    val fresh =
+        k + (if (v4 > 1.milliseconds) v4 else 1.milliseconds) + (if (loss.handshakeConfirmed) loss.peerMaxAckDelay else Duration.ZERO)
+    return (if (current > fresh) current else fresh) * 3
 }
 
 /** False for a 1-RTT datagram from a new address the server must not follow: migration disabled, or a loopback/link-local address when the connection is not on one. */
@@ -213,8 +224,8 @@ private fun ConnectionCore.sameIp(
  * RFC 9000 section 9.4: "On confirming a peer's ownership of its new address, an endpoint MUST immediately reset the congestion
  * controller and round-trip time estimator for the new path to initial values ... unless the only change in the peer's address is
  * its port number". A handshake-time change of the active path's address from [old] to another IP (a move, a return, the
- * candidate's adoption) starts [p] over: a fresh congestion controller and pacer, the initial RTT of a new path, and 1200 bytes with
- * DPLPMTUD started again ([initServerPath] does the same for a path the client opens; a port-only change keeps everything, as
+ * candidate's adoption) starts [p] over: a fresh congestion controller and pacer, the initial RTT of a new path, ECN validated afresh,
+ * and 1200 bytes with DPLPMTUD started again ([initServerPath] does the same for a path the client opens; a port-only change keeps everything, as
  * [Path.inheritFrom]). What is in flight stays with the controller that counted it.
  */
 private fun ConnectionCore.resetForNewIp(
@@ -230,8 +241,13 @@ private fun ConnectionCore.resetForNewIp(
         io.kuicksilver.quic.recovery
             .RttEstimator(config.newPathInitialRtt)
     if (p === paths.active) loss.rtt = p.rtt
+    p.ceRecoveryStart = TimeMark.NEVER
     setMtu(p, 1200)
     if (p.pmtud != null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = 1200)
+    // RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path"; what the old address showed says nothing
+    // about the new one (a bleaching middlebox there, or none)
+    p.ecn = EcnValidator().also { if (p.caps.ecnSend) it.enable() }
+    p.ecnSince = now
 }
 
 /** A 1-RTT packet authenticated from [from] on [socket]: a new address becomes a path under validation; its highest-numbered non-probing packet moves the connection there (RFC 9000 section 9.3). */
@@ -372,11 +388,73 @@ internal fun ConnectionCore.startPreferredProbe() {
     startValidation(p)
 }
 
-/** Client: a preferred-address path still under validation is closed (an application's own migration replaces it; never retried). */
-internal fun ConnectionCore.abandonPreferredProbe() {
-    val p = paths.all.firstOrNull { it.preferred && it !== paths.active } ?: return
+/**
+ * Client: a preferred-address path still under validation is closed and its address returned; null when there is none. An
+ * application's migration from another socket probes the preferred address again from there ([probePreferredFrom]).
+ */
+internal fun ConnectionCore.abandonPreferredProbe(): InetSocketAddress? {
+    val p = paths.all.firstOrNull { it.preferred && it !== paths.active && it.state != PathState.Validated } ?: return null
     paths.remove(p)
     releasePathCid(p)
+    return p.remote
+}
+
+/**
+ * Client, RFC 9000 section 9.6.3: "A client might need to perform a connection migration before it has migrated to the server's
+ * preferred address. In this case, the client SHOULD perform path validation to both the original and preferred server address from
+ * the client's new address concurrently." The application's path [app] (on its new socket) validates the original address; a second
+ * path from the same socket validates the preferred address [target] with its own unused connection ID (section 9.5). Not when the
+ * four paths are taken.
+ */
+internal fun ConnectionCore.probePreferredFrom(
+    app: Path,
+    target: InetSocketAddress,
+) {
+    val p = paths.add(app.socket, target, config.congestionController(), config.newPathInitialRtt, evict = false) ?: return
+    p.amplification.validated = true // our own probe toward the server
+    p.preferred = true
+    p.carrier = app
+    startValidation(p)
+}
+
+/**
+ * Client, RFC 9000 section 9.6.3: the preferred address validated from the socket of the application's path [app] ([probePreferredFrom]).
+ * "If path validation of the server's preferred address succeeds, the client MUST abandon validation of the original address and
+ * migrate to using the server's preferred address": [app], which owns the socket, takes the preferred address with its validation and
+ * the connection ID it was probed with ([Path.swapAddressWith]); its validation of the original address ends, and [p] goes with the
+ * original address and the ID used toward it. The active [app] moves at once (a change of the active path's address,
+ * [PathChangeReason.PreferredAddress]); one under validation reports [ConnectionEvent.PathValidated], and the application's switch to it
+ * is the move to the preferred address.
+ */
+private fun ConnectionCore.adoptPreferred(
+    app: Path,
+    p: Path,
+) {
+    val old = app.remote
+    app.swapAddressWith(p)
+    app.preferred = true
+    p.carrier = null
+    val probedWith = p.peerCid?.takeIf { cids.isActive(it) }
+    p.peerCid = null
+    if (app === paths.active) {
+        val previous = cids.currentPeer
+        if (probedWith != null) cids.makeCurrent(probedWith) else cids.rotatePeerCid(retireOld = false)
+        if (previous != null && previous !== cids.currentPeer) cids.releasePathPeer(previous)
+        remoteCid = cids.activePeerCid()
+    } else {
+        p.peerCid = app.peerCid
+        app.peerCid = probedWith
+    }
+    paths.remove(p)
+    releasePathCid(p)
+    resetForNewIp(app, old)
+    if (app === paths.active) {
+        movedToPreferred = true
+        onRemoteChanged?.invoke(old, app.remote)
+        events += ConnectionEvent.PathChanged(app.id, app.id, PathChangeReason.PreferredAddress)
+    } else {
+        events += ConnectionEvent.PathValidated(app.id)
+    }
 }
 
 /** Server: records whether the 1-RTT packet just received on [p] carries another of our IDs than the active path's packets. */
@@ -587,7 +665,11 @@ internal fun ConnectionCore.onPathFailed(
     }
 }
 
-/** PATH_CHALLENGE from [from]: the response goes back there (RFC 9000 section 8.2.2); at most three wait, more cost a glitch token (threat-model 3.2). */
+/**
+ * PATH_CHALLENGE from [from]: answered once, back on the network path it came by (RFC 9000 section 8.2.2), from the local address it
+ * reached. Every one is answered; past three waiting each costs a glitch token, and past [Paths.MAX_RESPONSES] the connection closes
+ * (threat-model 3.2): a flood ends the connection, never a challenge left unanswered on an open one.
+ */
 internal fun ConnectionCore.onPathChallenge(
     data: Long,
     socket: PathId,
@@ -613,7 +695,15 @@ internal fun ConnectionCore.onPathChallenge(
         notePeerDcid(p)
         p.peerProbed = true
     }
-    if (!paths.queueResponse(data, p)) glitch(0x1a)
+    // RFC 9000 section 9.3.3: "An endpoint that receives a PATH_CHALLENGE on an active path SHOULD send a non-probing packet in
+    // response": the ACK of this packet leaves at once, beside the PATH_RESPONSE or right behind it when that goes in a probe of its own
+    if (p === paths.active) loss.space(SpaceId.Application).ack.acknowledgeAtOnce()
+    if (paths.responses >= Paths.FREE_RESPONSES) glitch(0x1a)
+    val at = serverLocal(receiver.local)
+    val own = p.local
+    if (!paths.queueResponse(data, p, if (at != null && own != null && at != own) at else null)) {
+        throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x1a, "more than ${Paths.MAX_RESPONSES} PATH_RESPONSEs owed")
+    }
 }
 
 /** PATH_RESPONSE: validates the path whose challenge it answers, wherever it arrived (RFC 9000 section 8.2.3); unknown data is ignored. */
@@ -660,6 +750,11 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             val preferredMove = role == TlsRole.Server && p.preferredMovePending && p !== paths.active
             val toPreferred = role == TlsRole.Client && p.preferred && p !== paths.active
             if (p !== paths.active && !preferredMove && !toPreferred && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
+            val carrier = p.carrier
+            if (toPreferred && carrier != null && carrier.state != PathState.Closed && paths.all.contains(carrier)) {
+                adoptPreferred(carrier, p) // the application's path reports the validation; this one it never knew of
+                return
+            }
             events += ConnectionEvent.PathValidated(p.id)
             if (preferredMove) {
                 moveToPreferredSocket(p)
@@ -985,7 +1080,7 @@ internal class HandshakeFallback(
 /**
  * [fallback]'s deadline passed and nothing validated the address a handshake-time move took the path to: the move is undone (RFC 9000
  * section 9.3.2: "revert to using the last validated peer address when validation of a new peer address fails", with the section
- * 8.2.4 period, max(3 x PTO, 6 x initial RTT), as for any path validation). This can happen after the handshake completed too: a
+ * 8.2.4 period, 3 x the larger of both PTOs, as for any path validation). This can happen after the handshake completed too: a
  * raced copy of the client's Handshake packet may carry its Finished.
  *
  * The new address may keep sending: an off-path attacker that sees the client's datagrams races a copy of each from a spoofed source

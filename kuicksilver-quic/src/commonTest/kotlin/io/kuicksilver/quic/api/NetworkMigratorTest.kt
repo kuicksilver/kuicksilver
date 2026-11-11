@@ -497,7 +497,7 @@ class NetworkMigratorTest {
             ApiPair.open().use { p ->
                 withTimeout(60.seconds) {
                     (p.server as EndpointLoop).core.testHoldNewConnectionIds = true
-                    // a short initial RTT keeps the validation timeout, max(3 x PTO, 6 x initial RTT), short in real time
+                    // a short initial RTT keeps the validation timeout, 3 x the larger of the PTO and a new path's PTO, short in real time
                     val (c, s) = p.connect(quicConfig { initialRtt = 10.milliseconds })
                     val nets = MutableStateFlow<Int?>(1)
                     val o = Opener(p)

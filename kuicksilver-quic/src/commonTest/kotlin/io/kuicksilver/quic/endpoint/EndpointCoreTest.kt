@@ -25,6 +25,7 @@ import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.validationTimeout
+import io.kuicksilver.quic.issueUnique
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.QuicCrypto
 import kotlin.random.Random
@@ -36,6 +37,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -168,8 +170,8 @@ class EndpointCoreTest {
         cep.remove(first)
         val second = cep.connect(clientConfig(), a2, now)
         assertEquals(4.milliseconds, startRtt(second).smoothed, "the first path still starts from the remembered RTT")
-        // the current PTO is about 3 x 4 ms here: the new path's 6 x kInitialRtt decides
-        assertEquals(333.milliseconds * 6, second.validationTimeout())
+        // the current PTO is about 3 x 4 ms here: the new path's PTO (kInitialRtt + 4 x kInitialRtt / 2, before confirmation) decides
+        assertEquals(333.milliseconds * 9, second.validationTimeout())
     }
 
     /** The memory is bounded (256 server addresses, the least recently stored dropped first) and a server endpoint stores nothing. */
@@ -193,6 +195,73 @@ class EndpointCoreTest {
     }
 
     private fun startRtt(c: ConnectionCore) = c.paths.active.rtt
+
+    /** Hands out the byte arrays queued in [next] for [nextBytes] of their size, then [base]'s. */
+    private class ScriptedRandom(
+        private val base: Random,
+    ) : Random() {
+        val next = ArrayDeque<ByteArray>()
+
+        override fun nextBits(bitCount: Int): Int = base.nextBits(bitCount)
+
+        override fun nextBytes(array: ByteArray): ByteArray {
+            val n = next.firstOrNull()
+            if (n == null || n.size != array.size) return base.nextBytes(array)
+            next.removeFirst().copyInto(array)
+            return array
+        }
+    }
+
+    /**
+     * 0.3.0 cross-review, RFC 9000 section 10.3.2: a server connection ID (and the reset token derived from it) belongs to one
+     * connection. A new connection's ID that another connection of the loop already routes is redrawn (registry.add kept the old
+     * owner and the new connection advertised an ID that routed elsewhere); so is a Retry's SCID.
+     */
+    @Test fun negative_newServerIdNeverOneAnotherConnectionRoutes() {
+        val sr = ScriptedRandom(Random(5))
+        val p = EndpointPair(serverRandom = sr)
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            val s = p.server.connections().single()
+            val taken = s.localCid.toByteArray()
+            val fresh =
+                ByteArray(taken.size) { 0x5a }.also {
+                    it[0] = taken[0]
+                    it[1] = taken[1]
+                }
+            sr.next += taken
+            sr.next += taken
+            sr.next += fresh
+            val i = assertNotNull(p.server.issueUnique())
+            assertTrue(i.cid.toByteArray().contentEquals(fresh), "the colliding draws were dropped")
+            assertTrue(sr.next.isEmpty())
+            repeat(io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS) { sr.next += taken }
+            assertNull(p.server.issueUnique(), "every draw collided: no ID (the Initial is dropped)")
+            assertSame(s, p.server.connections().single(), "the connection that owns the ID keeps it")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A client connection ID that collides 16 times is a documented ConnectionLost.Internal, not an undocumented exception. */
+    @Test fun negative_clientIdThatKeepsCollidingFailsTheConnect() {
+        val cr = ScriptedRandom(Random(6))
+        val ep = EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), cr)
+        try {
+            val cfg = QuicClientConfig.Builder(CoreFixtures.client()).build()
+            val first = ep.connect(cfg, a2, now)
+            val taken = first.localCid.toByteArray()
+            repeat(io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS * 2) {
+                cr.next += ByteArray(8) { 9 } // the client's original DCID draw
+                cr.next += taken
+            }
+            assertFailsWith<io.kuicksilver.quic.QuicException.ConnectionLost.Internal> { ep.connect(cfg, a2, now) }
+            assertEquals(1, ep.connectionCount)
+        } finally {
+            ep.close()
+        }
+    }
 
     @Test fun routesByDcid() {
         val srv = server()

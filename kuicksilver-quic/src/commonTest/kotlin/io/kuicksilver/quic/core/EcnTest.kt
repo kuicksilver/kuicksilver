@@ -16,7 +16,9 @@ import kotlin.random.Random
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** RFC 9000 sections 13.4 and 21.10: ECT(0) marking, ECN counting in ACK frames, path validation, CE as a congestion signal. */
@@ -279,6 +281,85 @@ class EcnTest {
             )
             transfer(p, c, 100_000)
             assertEquals(EcnState.Capable, s.stats.ecnState)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path". A handshake-time move of the server's
+     * active path to another client IP started congestion control, RTT and DPLPMTUD over but kept the ECN state of the old address
+     * (0.3.0 cross-review); it starts over too.
+     */
+    @Test fun handshakeTimeMoveToAnotherIpRestartsValidation() {
+        val p = EndpointPair()
+        try {
+            p.serverEcnReceive = true
+            p.clientEcnReceive = true
+            p.onServerCreated = { it.setPathCapabilities(PathId.Initial, ecnCaps) }
+            val c = p.connect()
+            c.setPathCapabilities(PathId.Initial, ecnCaps)
+            p.clientListens.clear()
+            p.clientListensOnSource = false // the first answer goes to a mapping that no longer exists
+            p.step()
+            val s = p.server.connections().single()
+            s.paths.active.ecn
+                .onAck(countsPresent = false, countsValid = false, newlyAckedMarked = 1)
+            assertEquals(EcnState.Failed, s.paths.active.ecn.state, "the first address failed validation")
+            val moved = InetSocketAddress("10.0.0.9", 40002)
+            p.clientSource = moved
+            p.clientListens += moved
+            p.clientListensOnSource = true
+            assertTrue(p.confirmed(c), "client ${c.state}, server ${s.state}")
+            assertEquals(moved, s.remoteAddressForTest)
+            assertTrue(s.paths.active.ecn.state != EcnState.Failed, "validated afresh on the new address: ${s.paths.active.ecn.state}")
+            // past the loss of the marked packets that went to the old address: they neither fail nor validate the new one, and the
+            // new address's own test packets do
+            val since = assertNotNull(s.paths.active.ecnSince)
+            val listener = ConnectionLossListener(s)
+            val app = io.kuicksilver.quic.recovery.SpaceId.Application
+            val before = s.paths.active.ecn.state
+            repeat(10) {
+                val old = s.loss.space(app).newSentPacket()
+                old.ecnMarked = true
+                old.timeSent = since - 1.milliseconds
+                old.pathId = s.paths.active.id.value
+                listener.onLost(app, old) // a marked packet to the old address declared lost
+            }
+            listener.onEcnAck(app, false, false, 1, false, p.now, since - 1.milliseconds, s.paths.active.id.value)
+            assertEquals(before, s.paths.active.ecn.state, "feedback about packets to the old address leaves the new validation alone")
+            val id = c.openStream(true)
+            c.writeStream(id, byteArrayOf(1), 0, 1, true)
+            assertTrue(p.runUntil(5.seconds) { s.isStreamOpenForTest(id) })
+            s.writeStream(id, ByteArray(60_000), 0, 60_000, true)
+            assertTrue(p.runUntil(10.seconds) { s.stats.bytesInFlight == 0L && s.paths.active.ecn.state == EcnState.Capable })
+            assertTrue(s.lostPackets > 0 || s.stats.lostPackets > 0, "the packets to the old address were declared lost")
+            assertTrue(p.now > since)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9002 section 7.1 per path (RFC 9000 section 9.4: each path its own congestion controller): a CE report on one path started
+     * a recovery period for the whole connection, so a CE report on another path in it was ignored; and a CE increase in counts that
+     * failed validation (RFC 9000 section 13.4.2.1) was acted on (0.3.0 cross-review).
+     */
+    @Test fun ceReportsAreGatedPerPathAndOnlyWithValidCounts() {
+        val (p, c) = pair()
+        try {
+            val other = c.addPath(InetSocketAddress("10.0.0.2", 443), p.now, PathId(7))
+            val listener = ConnectionLossListener(c)
+            val sentEarlier = p.now - 50.milliseconds
+            val before = c.stats.ecnCeEvents
+            listener.onEcnAck(io.kuicksilver.quic.recovery.SpaceId.Application, true, false, 1, true, p.now, sentEarlier, c.path.id.value)
+            assertEquals(before, c.stats.ecnCeEvents, "counts that fail validation are no CE report")
+            listener.onEcnAck(io.kuicksilver.quic.recovery.SpaceId.Application, true, true, 1, true, p.now, sentEarlier, c.path.id.value)
+            assertEquals(before + 1, c.stats.ecnCeEvents)
+            listener.onEcnAck(io.kuicksilver.quic.recovery.SpaceId.Application, true, true, 1, true, p.now, sentEarlier, other.value)
+            assertEquals(before + 2, c.stats.ecnCeEvents, "the other path's controller reacts to its own report")
+            listener.onEcnAck(io.kuicksilver.quic.recovery.SpaceId.Application, true, true, 1, true, p.now, sentEarlier, c.path.id.value)
+            assertEquals(before + 2, c.stats.ecnCeEvents, "one per recovery period of the path")
         } finally {
             p.close()
         }

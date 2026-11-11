@@ -13,7 +13,9 @@ import io.kuicksilver.quic.wire.QuicWireException
 
 /**
  * CRYPTO data per encryption level (RFC 9000 section 7.5): a send queue with retransmission and an ordered receive
- * buffer capped at [outOfOrderCap] bytes per level and [postHandshakeCap] bytes in total after the handshake. The stream of
+ * buffer capped at [outOfOrderCap] bytes per level and, after the handshake, at [postHandshakeCap] bytes TLS has not read
+ * (section 7.5: CRYPTO_BUFFER_EXCEEDED when the endpoint "is unable to buffer all data in a CRYPTO frame"; data TLS read and
+ * retransmissions of it cost nothing, so a long-lived connection may receive any number of NewSessionTickets). The stream of
  * a level ends at [levelCap] bytes (Initial and Handshake: as ngtcp2's absolute CRYPTO offset limits) and is sealed once TLS
  * reads a higher level (RFC 9001 section 4.1.3).
  */
@@ -33,7 +35,6 @@ internal class CryptoStreams(
     private val recv = Array(4) { Reassembler(1024, budget) }
     private val received = LongArray(4)
     private val sealed = BooleanArray(4)
-    private var postHandshakeBytes = 0L
 
     // grown to what a level delivers at once, at most MAX_SCRATCH (a ClientHello or a server flight is 1-3 KiB; 16 KiB up front
     // per connection was a seventh of what a handshake allocated, P.3)
@@ -67,25 +68,14 @@ internal class CryptoStreams(
             )
         }
         val r = recv[level]
+        // after the handshake the smaller of the two caps (both on bytes TLS has not read: section 7.5)
+        val cap = if (handshakeDone && level == 3) minOf(outOfOrderCap, postHandshakeCap) else outOfOrderCap
         if (end >
-            r.readOffset + outOfOrderCap
+            r.readOffset + cap
         ) {
-            throw QuicWireException(TransportError.CRYPTO_BUFFER_EXCEEDED, 0x06, "CRYPTO data beyond the $outOfOrderCap-byte buffer")
-        }
-        val postHandshake = handshakeDone && level == 3
-        if (postHandshake) {
-            if (postHandshakeBytes + len >
-                postHandshakeCap
-            ) {
-                throw QuicWireException(
-                    TransportError.CRYPTO_BUFFER_EXCEEDED,
-                    0x06,
-                    "more than $postHandshakeCap bytes of post-handshake CRYPTO",
-                )
-            }
+            throw QuicWireException(TransportError.CRYPTO_BUFFER_EXCEEDED, 0x06, "CRYPTO data beyond the $cap-byte buffer")
         }
         r.insert(offset, data, off, len) // may refuse the frame (ReassemblyFull): nothing below is counted for a dropped packet
-        if (postHandshake) postHandshakeBytes += len
         if (end > received[level]) received[level] = end
     }
 

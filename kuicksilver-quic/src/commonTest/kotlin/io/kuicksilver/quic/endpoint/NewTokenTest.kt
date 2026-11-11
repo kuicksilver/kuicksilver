@@ -186,6 +186,27 @@ class NewTokenTest {
         }
     }
 
+    /**
+     * 0.3.0 cross-review, RFC 9000 section 8.1.3: a token another server issued (behind the same name) whose first byte happens
+     * to be our Retry type got a stateless INVALID_TOKEN close; it is no answer to a Retry of ours (that Initial's DCID is our Retry
+     * SCID), so it is treated as absent and the client connects.
+     */
+    @Test fun foreignTokenThatReadsAsARetryTokenIsTreatedAsAbsent() {
+        val rec = Recording(ConnectionAdmission.default())
+        val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
+        try {
+            val c = p.connect()
+            // a DCID not in our format (no 0x01 format byte): this Initial answers no Retry of ours, so the token is someone else's
+            assertTrue(c.odcid.toByteArray()[0].toInt() != 0x01, "the client's first DCID is not in our format")
+            c.initialToken = ByteArray(60) { (it * 7 + 3).toByte() }.also { it[0] = 0x01 }
+            assertTrue(p.confirmed(c), "the client connects: ${p.closed(c)}")
+            assertEquals(0L, p.server.stats.invalidTokens, "no INVALID_TOKEN")
+            assertFalse(rec.attempts.first().addressValidated)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_invalidNewTokenIsTreatedAsAbsent() {
         // RFC 9000 section 8.1.3: "If the server cannot validate the token, the server ... MUST NOT" close with INVALID_TOKEN for a
         // NEW_TOKEN token: it treats the Initial as one without a token (a Retry here, the policy's answer to an unvalidated client)
@@ -307,7 +328,7 @@ class NewTokenTest {
             assertIs<TokenCheck.Valid>(check(retry))
             assertIs<TokenCheck.NewTokenValid>(check(newToken))
             assertEquals(TokenCheck.NewTokenRejected, check(retry.copyOf().also { it[0] = 0x02 }), "a Retry token retagged as NEW_TOKEN")
-            assertEquals(TokenCheck.Invalid, check(newToken.copyOf().also { it[0] = 0x01 }), "a NEW_TOKEN token retagged as Retry")
+            assertEquals(TokenCheck.Unauthenticated, check(newToken.copyOf().also { it[0] = 0x01 }), "a NEW_TOKEN token retagged as Retry")
             assertEquals(TokenCheck.NewTokenRejected, check(newToken.copyOf(newToken.size - 1)), "truncated")
             assertEquals(TokenCheck.NewTokenRejected, check(newToken + 0), "extended")
         } finally {

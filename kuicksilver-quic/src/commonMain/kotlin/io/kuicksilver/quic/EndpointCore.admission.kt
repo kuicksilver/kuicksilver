@@ -49,7 +49,14 @@ internal fun EndpointCore.admitOne(
         newTokensRejected++
         check = TokenCheck.Absent
     }
-    if (check == TokenCheck.Invalid || check == TokenCheck.Expired) { // RFC 9000 section 8.1.3: refuse with INVALID_TOKEN, statelessly
+    // a Retry-type token that does not open: under a DCID in our format the Initial plausibly answers a Retry of ours whose key is
+    // gone (a restart between the Retry and the Initial, another instance of the farm) or whose token was damaged, and a second Retry
+    // would be ignored by the client (section 17.2.5.2): INVALID_TOKEN (section 8.1.2); under any other DCID it is another server's
+    // token, treated as absent (section 8.1.3)
+    if (check == TokenCheck.Unauthenticated) {
+        check = if (route.ownerLoop(data, hv.dcidOff, hv.dcidLen) >= 0) TokenCheck.Invalid else TokenCheck.NotRetry
+    }
+    if (check == TokenCheck.Invalid || check == TokenCheck.Expired) { // RFC 9000 section 8.1.2: refuse with INVALID_TOKEN, statelessly
         invalidTokens++
         statelessInitialClose(data, profile, from, TransportError.INVALID_TOKEN, now)
         return false
@@ -171,7 +178,16 @@ private fun EndpointCore.admitValidated(
             val clientScid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
             // the ID this connection will use if the client comes back: a stateless one, which takes no owner exception (nothing
             // would release it if the client never returns)
-            val ourScid = route.issueStateless(random)
+            // and none a connection of this loop routes now: the client's next Initials carry it (RFC 9000 section 10.3.2)
+            var ourScid = route.issueStateless(random)
+            var draws = 1
+            while (registry.contains(ourScid)) {
+                if (draws++ == io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS) {
+                    initialsDropped++
+                    return false
+                }
+                ourScid = route.issueStateless(random)
+            }
             val token =
                 tokens.mint(clientDcid, ourScid, from, hv.version, now) ?: run {
                     initialsDropped++ // this key's nonces are spent (2^55 tokens or more): no Retry rather than a repeated nonce
@@ -201,7 +217,11 @@ private fun EndpointCore.admitValidated(
                 IssuedCid(rs, known)
             } else {
                 testBetweenRetryChecks?.invoke()
-                val fresh = route.issue(random, client = false)
+                val fresh =
+                    issueUnique() ?: run {
+                        initialsDropped++
+                        return false
+                    }
                 // the nonces ran out again in between: a second unroutable ID would be a second server ID for the client
                 // (section 3.2: exactly one); keep the Retry SCID, which the change below moves to a routable one later
                 if (known == CidIssuance.SingleNoMigration && fresh.issuance == CidIssuance.SingleNoMigration) {
@@ -212,7 +232,10 @@ private fun EndpointCore.admitValidated(
             }
         } // our Retry SCID is this connection's ID
         else {
-            route.issue(random, client = false)
+            issueUnique() ?: run {
+                initialsDropped++
+                return false
+            }
         }
     val cid = issued.cid
     val core =
@@ -338,4 +361,17 @@ internal fun EndpointCore.queueVersionNegotiation(
     vnBuffer.copyTo(bytes, 0, 0, n)
     stateless += Stateless(bytes, from, rxLocal)
     versionNegotiations++
+}
+
+/**
+ * A new server connection ID that no connection of this loop routes now (RFC 9000 section 10.3.2: an ID, and the reset token
+ * derived from it, belongs to one connection); null after [ConnectionIdManager.UNIQUE_DRAWS] draws that all collided. A colliding
+ * draw is dropped, not released: the ID is another connection's.
+ */
+internal fun EndpointCore.issueUnique(): IssuedCid? {
+    repeat(io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS) {
+        val i = route.issue(random, client = false)
+        if (!registry.contains(i.cid)) return i
+    }
+    return null
 }

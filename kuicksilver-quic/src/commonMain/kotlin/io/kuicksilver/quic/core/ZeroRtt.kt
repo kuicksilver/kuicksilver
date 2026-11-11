@@ -13,6 +13,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.endpoint.SipHash
 import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
+import io.kuicksilver.quic.wire.AckFrameView
 import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
@@ -215,6 +216,7 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
         tp.initialMaxStreamsUni,
     )
     connSend.onMaxUpdate(tp.initialMaxData)
+    streams.peerResetStreamAt = tp.resetStreamAt && config.resetStreamAt // the remembered offer; the new one from 1-RTT on
     return true
 }
 
@@ -282,6 +284,21 @@ internal fun ConnectionCore.settleZeroRtt() {
     applyPeerLimits(tp)
     streams.resetForRejectedZeroRtt(tp.initialMaxData, tp.initialMaxStreamsBidi, tp.initialMaxStreamsUni)
     events += ConnectionEvent.EarlyDataRejected
+}
+
+/**
+ * Client, an ACK frame of the Application space: after the server rejected our 0-RTT, an acknowledgment of a 0-RTT packet is a
+ * PROTOCOL_VIOLATION (RFC 9001 section 4.6.2: "a client SHOULD treat receipt of an acknowledgment for a 0-RTT packet as a connection
+ * error of type PROTOCOL_VIOLATION, if it is able to detect the condition"). Every 0-RTT packet numbers below every 1-RTT one (0-RTT
+ * stops once the 1-RTT key exists, [zeroRttWritable]), so the range from the first to the last 0-RTT packet holds no other.
+ */
+internal fun ConnectionCore.checkAckAfterRejection(ack: AckFrameView) {
+    if (earlyAccepted != false || zeroRttLastPn < 0) return
+    for (i in 0 until ack.rangeCount) {
+        if (ack.smallest(i) <= zeroRttLastPn && ack.largest(i) >= zeroRttFirstPn) {
+            throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x02, "acknowledgment of a 0-RTT packet after 0-RTT was rejected")
+        }
+    }
 }
 
 /** Closes with NO_ERROR locally reported as [QuicException.ConnectionLost.ZeroRttRejected]. */

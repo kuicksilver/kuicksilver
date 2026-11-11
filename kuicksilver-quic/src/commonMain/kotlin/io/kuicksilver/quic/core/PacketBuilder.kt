@@ -40,6 +40,9 @@ internal class PacketBuilder(
     /** Set while a probe datagram for a path other than the active one is built: only PATH_CHALLENGE/PATH_RESPONSE and padding go in (RFC 9000 section 9.1). */
     private var probeTarget: Path? = null
 
+    /** With [probeTarget]: the packet carries only the responses owed from this other local address (Paths.responseFrom). */
+    private var strayFrom: io.ktor.network.sockets.InetSocketAddress? = null
+
     /** The ECN codepoint of the datagram being built (per path validation state). */
     private var currentMark: io.kuicksilver.quic.Ecn = io.kuicksilver.quic.Ecn.NotEct
 
@@ -62,6 +65,56 @@ internal class PacketBuilder(
         pacerWakeup = TimeMark.NEVER
         // probes of other paths first: a PATH_CHALLENGE or PATH_RESPONSE must go to its own address (RFC 9000 section 8.2)
         if (c.writeKeys[3] != null && c.closeFrame == null) {
+            // a PATH_RESPONSE "MUST be sent on the network path where the PATH_CHALLENGE was received" (section 8.2.2): one that reached
+            // another of our addresses than its path's leaves from that address, in a datagram of its own
+            while (count < out.capacity) {
+                val i = c.paths.nextStrayResponse()
+                if (i < 0) break
+                val target = c.paths.responsePath[i]!!
+                val from = c.paths.responseFrom[i]!!
+                var limit = minOf(out.segmentSize, target.mtu)
+                if (!target.amplification.validated) {
+                    val budget = target.amplification.budget()
+                    if (budget < 64) {
+                        c.paths.dropResponsesFrom(target, from)
+                        continue
+                    }
+                    limit = minOf(limit.toLong(), budget).toInt()
+                }
+                // section 9.5: "MUST NOT reuse a connection ID when sending from more than one local address": a peer ID no path
+                // used, retired after this datagram; with none to spare, or no room to retire it, the responses are dropped
+                val peer = if (c.cids.canRetireOneMore()) c.cids.takePathPeer() else null
+                if (peer == null) {
+                    c.paths.dropResponsesFrom(target, from)
+                    continue
+                }
+                val dcid = peer.cid
+                probeTarget = target
+                strayFrom = from
+                currentMark = target.ecn.markFor()
+                val n =
+                    try {
+                        buildPacket(out.buffer(count), 0, limit, SpaceId.Application, now, padToEnd = true, target = target, dcid = dcid)
+                    } finally {
+                        probeTarget = null
+                        strayFrom = null
+                        c.cids.releasePathPeer(peer)
+                    }
+                if (pnExhausted) return exhausted(count)
+                if (n == 0) {
+                    c.paths.dropResponsesFrom(target, from)
+                    continue
+                }
+                out.setLength(count, n)
+                out.setAddress(count, target.remote)
+                out.setPath(count, target.socket)
+                out.setLocalAddress(count, from)
+                out.setEcn(count, currentMark)
+                count++
+                bytes += n
+                c.bytesSent += n
+                target.amplification.onSent(n)
+            }
             while (count < out.capacity) {
                 val target = c.paths.nextProbe() ?: break
                 var limit = minOf(out.segmentSize, target.mtu)
@@ -418,6 +471,52 @@ internal class PacketBuilder(
         return bit
     }
 
+    /**
+     * Re-encodes the ACK frame at `[from, to)` of [buf] with longer variable-length integers (RFC 9000 section 16: values "do not need
+     * to be encoded on the minimum number of bytes necessary, with the sole exception of the Frame Type field") until it grew by at
+     * least [grow] bytes, by no more than [room], or every field is 8 bytes long; returns where it now ends.
+     */
+    private fun stretchAck(
+        buf: PacketBuffer,
+        from: Int,
+        to: Int,
+        grow: Int,
+        room: Int,
+    ): Int {
+        val values = LongArray(to - from)
+        val sizes = IntArray(to - from)
+        var n = 0
+        var at = from + 1 // the frame type stays one byte
+        while (at < to) {
+            val len = 1 shl ((buf[at].toInt() and 0xff) ushr 6)
+            var v = (buf[at].toLong() and 0x3f)
+            for (i in 1 until len) v = (v shl 8) or (buf[at + i].toLong() and 0xff)
+            values[n] = v
+            sizes[n++] = len
+            at += len
+        }
+        var need = minOf(grow, room)
+        var left = room
+        for (i in 0 until n) {
+            if (need <= 0) break
+            val s = sizes[i]
+            var target = 8
+            for (t in intArrayOf(2, 4, 8)) {
+                if (t > s && t - s >= need) {
+                    target = t
+                    break
+                }
+            }
+            if (target <= s || target - s > left) continue
+            left -= target - s
+            need -= target - s
+            sizes[i] = target
+        }
+        at = from + 1
+        for (i in 0 until n) at = VarInt.writeFixed(buf, at, values[i], sizes[i])
+        return at
+    }
+
     private fun buildPacket(
         buf: PacketBuffer,
         start: Int,
@@ -430,6 +529,8 @@ internal class PacketBuilder(
         padIfNoRoomAfter: Boolean = false,
     ): Int {
         var padToEnd = padToEnd
+        var ackFrom = -1 // where this packet's ACK frame starts and ends ([stretchAck])
+        var ackTo = -1
         val level = spaceLevel(space)
         val key = c.writeKeys[level] ?: return 0
         val sp = c.loss.space(space)
@@ -535,7 +636,9 @@ internal class PacketBuilder(
                 true // RFC 8899: PING and padding only
             // a probe of another path: only PATH_CHALLENGE / PATH_RESPONSE, expanded to 1200 bytes (RFC 9000 sections 8.2.1, 9.1)
         } else if (probeTarget != null) {
-            if (target.challengePending &&
+            val stray = strayFrom
+            if (stray == null &&
+                target.challengePending &&
                 w.remaining >= 9
             ) {
                 FrameEncoder.pathChallenge(w, c.newChallengeData(target))
@@ -553,7 +656,7 @@ internal class PacketBuilder(
                 9
             ) {
                 val r =
-                    c.paths.takeResponseFor(target) ?: break
+                    (if (stray == null) c.paths.takeResponseFor(target) else c.paths.takeResponseFrom(target, stray)) ?: break
                 FrameEncoder.pathResponse(w, r)
                 frames.flags =
                     frames.flags or SentFrames.PATH_RESPONSE
@@ -564,13 +667,16 @@ internal class PacketBuilder(
             val a = sp.ack
             // a test probe (testInjectPathChallenges) carries no ACK: a probing-only packet, RFC 9000 section 9.1
             if (a.hasRanges && (hasAckToSend(space, now) || hasData(space)) && !mirroring &&
-                c.testInjectPathChallenges == 0 && type != PacketType.ZeroRtt
+                c.testInjectPathChallenges == 0 && type != PacketType.ZeroRtt &&
+                (!c.testAckOnlyAfterAckEliciting || a.ackElicitingPending)
             ) {
                 val o = a.ackOverhead(now, c.config.ackDelayExponent)
                 if (o <=
                     w.remaining
                 ) {
+                    ackFrom = w.pos
                     a.writeAck(w, now, c.config.ackDelayExponent)
+                    ackTo = w.pos
                     frames.ackLargest = a.largestReceived
                     if (space ==
                         SpaceId.Application
@@ -847,13 +953,34 @@ internal class PacketBuilder(
             w.zero(4 - pnLen - (w.pos - payloadStart))
             padded = true
         }
+        // RFC 9000 section 10.3: "SHOULD ensure that all packets it sends are at least 22 bytes longer than the minimum connection
+        // ID length that it requests the peer to include in its packets, adding PADDING frames as necessary", so that the peer's
+        // Stateless Reset (one byte shorter) looks like a packet to us. A long header always is: it carries our ID as its SCID
+        // beside 28 bytes or more. An ACK-only packet grows by longer varints in its ACK frame instead (section 16): PADDING would
+        // put it in flight (RFC 9002 section 2), outside the window it is sent past, and a peer that acknowledges only
+        // ack-eliciting packets (section 13.2.1) would never take it out again
+        if (type == PacketType.OneRtt) {
+            val short = c.localCid.length + 22 - (w.pos + 16 - start)
+            if (short > 0) {
+                if (!ackEliciting && !padded && close == null && ackFrom >= 0 && ackTo == w.pos) {
+                    w.pos = stretchAck(buf, ackFrom, ackTo, short, w.remaining)
+                } else {
+                    w.zero(minOf(short, w.remaining))
+                    padded = true
+                }
+            }
+        }
         val payloadEnd = w.pos
         if (lengthOff >= 0) VarInt.writeFixed(buf, lengthOff, (pnLen + (payloadEnd - payloadStart) + 16).toLong(), 2)
         val end = PacketProtection.protect(buf, start, pnOff, pnLen, payloadEnd, pn, key, mask)
         // RFC 9000 section 8.2.1: a challenge the amplification limit kept below 1200 bytes does not validate the path MTU
         if (frames.flags and SentFrames.PATH_CHALLENGE != 0 && end < 1200) target.markLastChallengeUndersized()
         if (type == PacketType.OneRtt) c.onOneRttPacketSealed(pn)
-        if (type == PacketType.ZeroRtt) c.zeroRttPacketsSealed++ // its confidentiality limit (zeroRttWritable)
+        if (type == PacketType.ZeroRtt) {
+            c.zeroRttPacketsSealed++ // its confidentiality limit (zeroRttWritable)
+            if (c.zeroRttFirstPn < 0) c.zeroRttFirstPn = pn
+            c.zeroRttLastPn = pn // what an acknowledgment after a rejection must not cover (ZeroRtt.checkAckAfterRejection)
+        }
         p.zeroRtt = type == PacketType.ZeroRtt
         sp.commitPn(pn)
         p.pn = pn

@@ -62,6 +62,12 @@ internal class Path(
     var preferred: Boolean = false
 
     /**
+     * Client, a [preferred] path probed from the socket of an application's migration ([ConnectionCore.addPath]): that application
+     * path, which owns the socket. Once this one validates, the application path takes its address (RFC 9000 section 9.6.3).
+     */
+    var carrier: Path? = null
+
+    /**
      * Server: this path is the handshake-time candidate (see `ConnectionCore.onHandshakeAddressChange`): the client address of a
      * handshake-time rebind that the active path does not have at the moment, validated on its own (RFC 9000 sections 8.2 and 9.3.3).
      * It sends nothing but PATH_CHALLENGE (and PATH_RESPONSE) to that address, with the active path's connection ID, and is never
@@ -128,7 +134,7 @@ internal class Path(
     /** A PATH_CHALLENGE must go out on this path at the next poll. */
     var challengePending: Boolean = false
 
-    /** Validation gives up at this time (RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT)). */
+    /** Validation gives up at this time (RFC 9000 section 8.2.4: 3 x the larger of the PTO and a new path's PTO). */
     var challengeDeadline: TimeMark = TimeMark.NEVER
 
     /** The next PATH_CHALLENGE repeat while validating: one PTO after the first, then doubling (RFC 9002 section 6.2.1 applied to probes). */
@@ -150,7 +156,15 @@ internal class Path(
     var caps: io.kuicksilver.quic.IoCapabilities = io.kuicksilver.quic.IoCapabilities.Portable
 
     /** ECN validation of this path (RFC 9000 section 13.4.2); every new path validates afresh. */
-    val ecn = EcnValidator()
+
+    /** ECN validation of this path's address (RFC 9000 section 13.4.2: per network path); started over when its IP changes. */
+    var ecn = EcnValidator()
+
+    /** When [ecn] started over for a new address (null: with the path): packets sent before went to the old one and feed it nothing. */
+    var ecnSince: TimeMark? = null
+
+    /** When our last congestion event for an ECN-CE report on this path started (RFC 9002 section 7.1: one per recovery period). */
+    var ceRecoveryStart: TimeMark = TimeMark.NEVER
 
     /** DPLPMTUD of this path; null without `df` on the socket or with `QuicConfig.pmtud = false` (then the MTU stays 1200). */
     var pmtud: Pmtud? = null
@@ -272,8 +286,18 @@ internal class Paths(
 
     /** Path ids below this were issued (and those not in [all] since closed or evicted); ids are never reused. */
     val issuedIds: Int get() = nextId
-    val responseData = LongArray(3)
-    val responsePath = arrayOfNulls<Path>(3)
+
+    /**
+     * PATH_RESPONSEs owed, in arrival order (RFC 9000 section 8.2.2: "MUST respond by echoing the data contained in the PATH_CHALLENGE
+     * frame in a PATH_RESPONSE frame"): every challenge is queued and answered once. [responseFrom] is the local address the challenge
+     * reached when that is not its path's own (a server on a wildcard socket with several addresses), null for the path's: the response
+     * "MUST be sent on the network path where the PATH_CHALLENGE was received", so such a one leaves from that address. The queue is
+     * drained by every poll; past [FREE_RESPONSES] waiting each challenge costs a glitch token, and at [MAX_RESPONSES] the connection
+     * closes (ConnectionCore.onPathChallenge), so a flood ends the connection rather than going unanswered or growing memory.
+     */
+    var responseData = LongArray(4)
+    var responsePath = arrayOfNulls<Path>(4)
+    var responseFrom = arrayOfNulls<InetSocketAddress>(4)
     var responses = 0
 
     /** Told about a path dropped to make room for a new one (the core retires its peer connection ID). */
@@ -363,65 +387,97 @@ internal class Paths(
     fun remove(p: Path) {
         all.remove(p)
         p.state = PathState.Closed
-        var i = 0
-        while (i <
-            responses
-        ) {
-            if (responsePath[i] ===
-                p
-            ) {
-                for (k in i until responses - 1) {
-                    responseData[k] = responseData[k + 1]
-                    responsePath[k] = responsePath[k + 1]
-                }
-                responses--
-                responsePath[responses] =
-                    null
-            } else {
-                i++
-            }
-        }
+        dropResponses { it === p }
     }
 
-    /** Queues a PATH_RESPONSE for [path]; false when three are already waiting (the caller spends a glitch token). */
+    /** Removes the queued responses whose path [drop] selects. */
+    private inline fun dropResponses(drop: (Path) -> Boolean) {
+        var w = 0
+        for (i in 0 until responses) {
+            if (drop(responsePath[i]!!)) continue
+            responseData[w] = responseData[i]
+            responsePath[w] = responsePath[i]
+            responseFrom[w] = responseFrom[i]
+            w++
+        }
+        for (i in w until responses) {
+            responsePath[i] = null
+            responseFrom[i] = null
+        }
+        responses = w
+    }
+
+    /**
+     * Queues a PATH_RESPONSE for [path], to leave from [from] (null: the path's own local address); false when [MAX_RESPONSES]
+     * are already waiting (the caller closes the connection).
+     */
     fun queueResponse(
         data: Long,
         path: Path,
+        from: InetSocketAddress? = null,
     ): Boolean {
-        if (responses >=
-            responseData.size
-        ) {
-            return false
+        if (responses >= MAX_RESPONSES) return false
+        if (responses == responseData.size) {
+            val n = minOf(responses * 2, MAX_RESPONSES)
+            responseData = responseData.copyOf(n)
+            responsePath = responsePath.copyOf(n)
+            responseFrom = responseFrom.copyOf(n)
         }
         responseData[responses] = data
         responsePath[responses] = path
+        responseFrom[responses] = from
         responses++
         return true
     }
 
+    /** A response waits for [path] from its own local address. */
     fun hasResponseFor(path: Path): Boolean {
-        for (i in 0 until responses) if (responsePath[i] === path) return true
+        for (i in 0 until responses) if (responsePath[i] === path && responseFrom[i] == null) return true
         return false
     }
 
-    /** Removes and returns the first queued response for [path], or null. */
-    fun takeResponseFor(path: Path): Long? {
+    /** Removes and returns the first queued response for [path] from its own local address, or null. */
+    fun takeResponseFor(path: Path): Long? = take(path, null)
+
+    /** Removes and returns the first queued response for [path] owed from the local address [from], or null. */
+    fun takeResponseFrom(
+        path: Path,
+        from: InetSocketAddress,
+    ): Long? = take(path, from)
+
+    private fun take(
+        path: Path,
+        from: InetSocketAddress?,
+    ): Long? {
         for (i in 0 until responses) {
-            if (responsePath[i] ===
-                path
-            ) {
+            if (responsePath[i] === path && responseFrom[i] == from) {
                 val d = responseData[i]
                 for (k in i until responses - 1) {
                     responseData[k] = responseData[k + 1]
-                    responsePath[k] =
-                        responsePath[k + 1]
+                    responsePath[k] = responsePath[k + 1]
+                    responseFrom[k] = responseFrom[k + 1]
                 }
                 responses--
                 responsePath[responses] = null
+                responseFrom[responses] = null
                 return d
             }
         }
         return null
+    }
+
+    /** The index of the first response owed from another local address than its path's ([responseFrom] set), or -1. */
+    fun nextStrayResponse(): Int {
+        for (i in 0 until responses) if (responseFrom[i] != null) return i
+        return -1
+    }
+
+    /** Drops the responses owed to [path] from [from] (none can be sent: no budget, no connection ID, no room). */
+    fun dropResponsesFrom(
+        path: Path,
+        from: InetSocketAddress,
+    ) {
+        while (take(path, from) != null) {}
     }
 
     /** The next path owed a probe datagram of its own; the active path comes first when its PATH_CHALLENGE is pending, so the first datagram on a rebound path is the probe and not a coalesced flight or a PMTU probe (RFC 9000 section 9.1). */
@@ -436,5 +492,13 @@ internal class Paths(
             }
         }
         return null
+    }
+
+    internal companion object {
+        /** Responses that may wait at once before each further PATH_CHALLENGE costs a glitch token. */
+        const val FREE_RESPONSES = 3
+
+        /** Responses that may wait at once at all (with glitch protection off as well): the next challenge closes the connection. */
+        const val MAX_RESPONSES = 1024
     }
 }

@@ -616,6 +616,64 @@ class LifecycleTest {
         }
     }
 
+    /**
+     * 0.3.0 cross-review (RFC 9000 section 10.2.1): a closing endpoint "retains only enough information to generate a packet containing
+     * a CONNECTION_CLOSE frame and to identify packets as belonging to the connection". Every frame used to run as before the close:
+     * STREAM data was buffered and charged, NEW_CONNECTION_ID grew the peer's IDs, events followed the Closed one. Only the peer's
+     * CONNECTION_CLOSE is acted on now (section 10.2.2: draining), and our own reason stays the connection's.
+     */
+    @Test fun negative_closingConnectionProcessesOnlyConnectionClose() {
+        val p = CorePair()
+        try {
+            assertTrue(p.handshake())
+            p.runUntil { p.client.state == ConnectionState.Confirmed && p.server?.state == ConnectionState.Confirmed }
+            val s = p.server!!
+            val c = p.client
+            p.runUntil(limit = 300.milliseconds) { c.peerCidCount >= 4 }
+
+            fun serverSends() {
+                p.batch.clear()
+                val n = s.poll(p.batch, p.now)
+                assertTrue(n > 0)
+                val ds = (0 until n).map { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                for (d in ds) {
+                    val b = PacketBuffer.of(d)
+                    try {
+                        c.handleDatagram(b, d.size, io.kuicksilver.quic.CoreFixtures.serverAddr, io.kuicksilver.quic.Ecn.NotEct, p.now)
+                    } finally {
+                        b.close()
+                    }
+                }
+            }
+            val sid = s.openStream(false)
+            c.close(5, "bye", p.now)
+            val peerIds = c.cids.peerSeqsForTest()
+            val packets = c.packetsReceived
+            c.events.clear()
+            s.writeStream(sid, ByteArray(500), 0, 500, false)
+            s.cids.issueRetiringOlder() // a NEW_CONNECTION_ID that retires every earlier ID
+            s.testInjectPathChallenges = 1
+            s.newToken = ByteArray(24) { 7 }
+            s.sendNewToken = true
+            serverSends()
+            assertEquals(packets + 1, c.packetsReceived, "the packet was authenticated")
+            assertEquals(1, c.receivedTokens?.size, "a client still keeps a NEW_TOKEN for its next connection")
+            assertEquals(ConnectionState.Closing, c.state)
+            assertEquals(0L, c.streams.connReceivedForTest, "no STREAM data taken while closing")
+            assertEquals(peerIds, c.cids.peerSeqsForTest(), "no NEW_CONNECTION_ID taken while closing")
+            assertTrue(c.events.isEmpty(), "no events after Closed: ${c.events}")
+            assertTrue(!c.paths.hasResponseFor(c.path), "no PATH_CHALLENGE answered while closing")
+            s.close(7, "peer bye", p.now)
+            serverSends()
+            assertEquals(ConnectionState.Draining, c.state, "the peer's CONNECTION_CLOSE still moves us to draining")
+            val r = assertIs<QuicException.ConnectionLost.ApplicationClosed>(c.closedReason)
+            assertEquals(5L, r.code, "our reason stays")
+            assertTrue(c.events.isEmpty(), "reported once: ${c.events}")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun errorCodeAbove2Pow62Rejected() {
         val p = CorePair()
         try {

@@ -224,20 +224,95 @@ class PreferredAddressTest {
     }
 
     @Test fun userMigrationAbandonsPendingPreferredProbe() {
-        // an application that migrates while the preferred address is still being validated wins: that probe is closed and not
-        // tried again (ngtcp2 refuses the application instead)
+        // an application that migrates on the same socket while the preferred address is still being validated wins: that probe is
+        // closed and not tried again (ngtcp2 refuses the application instead)
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
         p.dropToPreferred = true
         try {
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
             val mine = InetSocketAddress("10.0.0.2", 443)
-            val id = c.addPath(mine, p.now, PathId(9))
+            val id = c.addPath(mine, p.now, PathId.Initial).also { assertTrue(it != PathId.Initial) }
             assertNull(pathTo(c, v4), "the preferred path is gone")
             p.runUntil(10.seconds) { false }
             assertNull(pathTo(c, v4), "and not tried again")
             assertTrue(p.changes(c).none { it.reason == PathChangeReason.PreferredAddress })
             c.closePath(id)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 9.6.3: "the client SHOULD perform path validation to both the original and preferred server address from the
+     * client's new address concurrently", and "If path validation of the server's preferred address succeeds, the client MUST abandon
+     * validation of the original address and migrate to using the server's preferred address". An application migration from a new
+     * socket used to close the pending preferred probe for good (0.3.0 cross-review); the preferred address is now probed from the new
+     * socket too, and when it validates the application's path takes it.
+     */
+    @Test fun migrationDuringPreferredValidationValidatesBothFromTheNewSocket() {
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        val newSocket = PathId(9)
+        val newSource = InetSocketAddress("10.0.0.7", 50000)
+        p.clientSocketSources[newSocket] = newSource
+        p.clientListens += newSource
+        p.dropToPreferred = true // the first probe, from the old socket, gets no answer
+        try {
+            val c = p.connect()
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
+            val id = c.addPath(p.serverAddr, p.now, newSocket)
+            val fromNew = c.paths.all.firstOrNull { it.preferred && it.socket == newSocket }
+            assertTrue(fromNew != null && fromNew.state == PathState.Validating, "the preferred address is probed from the new socket")
+            c.probePath(id, p.now)
+            p.dropToPreferred = false
+            assertTrue(
+                p.runUntil(10.seconds) { p.events[c]!!.any { it is ConnectionEvent.PathValidated && it.path == id } },
+                "the application's path validated: ${p.events[c]}",
+            )
+            val mine = c.paths.byId(id)!!
+            assertTrue(mine.isRemote(v4), "the application's path took the preferred address: ${mine.remote}")
+            assertTrue(
+                p.events[c]!!.none { it is ConnectionEvent.PathValidated && it.path == fromNew.id },
+                "no event names the probe the application never created: ${p.events[c]}",
+            )
+            assertNull(c.paths.all.firstOrNull { it !== mine && it.socket == newSocket }, "no other path on the new socket")
+            c.switchPath(id, p.now)
+            assertTrue(c.path.isRemote(v4) && c.path.socket == newSocket)
+            val sid = c.openStream(true)
+            c.writeStream(sid, ByteArray(5000), 0, 5000, true)
+            assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "data flows there")
+            assertNull(p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The original address validated first and the application moved there: the preferred address validating later still wins. */
+    @Test fun preferredAddressValidatedAfterTheMigrationMovesTheActivePath() {
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        val newSocket = PathId(9)
+        val newSource = InetSocketAddress("10.0.0.7", 50000)
+        p.clientSocketSources[newSocket] = newSource
+        p.clientListens += newSource
+        p.dropToPreferred = true
+        try {
+            val c = p.connect()
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
+            val id = c.addPath(p.serverAddr, p.now, newSocket)
+            c.probePath(id, p.now)
+            assertTrue(p.runUntil(10.seconds) { p.events[c]!!.any { it is ConnectionEvent.PathValidated && it.path == id } })
+            assertTrue(c.paths.byId(id)!!.isRemote(p.serverAddr), "the original address validated first")
+            c.switchPath(id, p.now)
+            p.dropToPreferred = false
+            assertTrue(
+                p.runUntil(15.seconds) { p.changes(c).any { it.reason == PathChangeReason.PreferredAddress } },
+                "the move to the preferred address: ${p.events[c]}",
+            )
+            assertTrue(c.path.id == id && c.path.isRemote(v4) && c.path.socket == newSocket, "${c.path}")
+            val sid = c.openStream(true)
+            c.writeStream(sid, ByteArray(5000), 0, 5000, true)
+            assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "data flows there")
+            assertNull(p.closed(c))
         } finally {
             p.close()
         }

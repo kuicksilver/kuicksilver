@@ -45,6 +45,7 @@ import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.largestDatagramPayload
 import io.kuicksilver.quic.core.memoryCeiling
 import io.kuicksilver.quic.core.pmtudUpperBound
+import io.kuicksilver.quic.core.probePreferredFrom
 import io.kuicksilver.quic.core.pto
 import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
@@ -185,8 +186,15 @@ public class ConnectionCore internal constructor(
     internal var oneRttSinceRotation = 0
     internal var testInjectPathChallenges = 0
 
+    /** Test hook: ACK frames go out only while an ack-eliciting packet waits for one (a peer such as quic-go, RFC 9000 section 13.2.1). */
+    internal var testAckOnlyAfterAckEliciting = false
+
     /** Packets sealed with the 0-RTT key (RFC 9001 section 6.6 counts them toward its confidentiality limit). */
     internal var zeroRttPacketsSealed = 0L
+
+    /** Client: the packet numbers of the first and last 0-RTT packet sent (-1 before one); every 1-RTT packet numbers above them. */
+    internal var zeroRttFirstPn = -1L
+    internal var zeroRttLastPn = -1L
 
     /** A lower AEAD confidentiality limit for the 0-RTT key only, for tests; null uses `QuicLimits.confidentialityLimitAesGcm`. */
     internal var testZeroRttConfidentialityLimit: Long? = null
@@ -210,7 +218,6 @@ public class ConnectionCore internal constructor(
 
     // ---- ECN (RFC 9000 section 13.4; ADR-0006) ----
     internal var ecnCeEvents = 0L
-    internal var ceRecoveryStart: TimeMark = TimeMark.NEVER
 
     /** The runtime's hook: ECN validation failed on [PathId]; a per-socket marker clears its IP_TOS. */
     internal var onEcnFailed: ((PathId) -> Unit)? = null
@@ -464,7 +471,8 @@ public class ConnectionCore internal constructor(
     internal val cids =
         ConnectionIdManager(
             config.activeConnectionIdLimit,
-            config.limits.retiredConnectionIds,
+            // RFC 9000 section 5.1.2: retirements of up to 2 x active_connection_id_limit outstanding before CONNECTION_ID_LIMIT_ERROR
+            maxOf(config.limits.retiredConnectionIds, 2 * config.activeConnectionIdLimit),
             config.connectionIdLength,
             random,
             resetKey = resetKey,
@@ -476,6 +484,8 @@ public class ConnectionCore internal constructor(
                     ) = registrar.add(cid, core)
 
                     override fun remove(cid: ConnectionId) = registrar.remove(cid)
+
+                    override fun contains(cid: ConnectionId): Boolean = registrar.contains(cid)
                 },
         )
     internal val timers = Timers()
@@ -596,6 +606,9 @@ public class ConnectionCore internal constructor(
     /** Whether this connection holds a slot of its endpoint's connection limits (EndpointCore.slots), from creation to removal. */
     internal var holdsSlot: Boolean = false
 
+    /** The IDs the endpoint's registry routes to this connection, kept by the registry so a removal visits only these (ConnectionIdRegistry.removeAll). */
+    internal val registeredCids = ArrayList<io.kuicksilver.quic.wire.ConnectionId>(2)
+
     /** Bytes this unfinished handshake holds: undecryptable packets waiting for keys, out-of-order CRYPTO data and CRYPTO data TLS has not read (`ConnectionAttempt.handshakeBufferBytes` for admission). */
     internal val handshakeBufferBytes: Long get() = receiver.bufferedBytes + cryptoStreams.bufferedBytes + tlsPendingBytes
 
@@ -603,7 +616,6 @@ public class ConnectionCore internal constructor(
     internal var tlsPendingBytes = 0L
     internal val createdAtForTest: TimeMark get() = createdAt
     internal val remoteAddressForTest: InetSocketAddress get() = path.remote
-    internal var lastActivity: TimeMark = now
 
     // ---- stats ----
     internal var lostPackets = 0L
@@ -828,7 +840,6 @@ public class ConnectionCore internal constructor(
             throw it
         }
         this.now = now
-        lastActivity = now
         if (state == ConnectionState.Draining) return
         // RFC 9001 section 6.6: past the integrity limit "not process any more packets"; the bytes still count (amplification), and
         // the close is repeated as in any closing state
@@ -1069,11 +1080,18 @@ public class ConnectionCore internal constructor(
         // RFC 9000 section 9.5: traffic on a new path to a peer without connection IDs is trivially linkable to the old one
         if (remoteCid.length == 0) throw MigrationRefusedException(MigrationRefusal.ZeroLengthConnectionId)
         this.now = now
-        abandonPreferredProbe() // the application's own move wins over a preferred address still under validation
+        // a preferred address still under validation is probed again from the new path's socket, concurrently with the application's
+        // validation of the original address there (RFC 9000 section 9.6.3); from the same socket the application's path replaces it
+        val preferredTarget = abandonPreferredProbe()
         val p =
             paths.add(socket, remote, config.congestionController(), config.newPathInitialRtt, evict = false)
                 ?: throw IllegalStateException("at most 4 paths")
         p.amplification.validated = true // our own address: nothing to amplify against
+        if (preferredTarget != null && p.socket != paths.active.socket &&
+            !p.isRemote(preferredTarget)
+        ) {
+            probePreferredFrom(p, preferredTarget)
+        }
         return p.id
     }
 
@@ -1099,14 +1117,19 @@ public class ConnectionCore internal constructor(
         check(p.state == PathState.Validated) { "path $id is ${p.state}, not Validated" }
         this.now = now
         switchPath(p, PathChangeReason.ActiveMigration, challengeOld = false)
+        if (p.preferred) movedToPreferred = true // it took the server's preferred address (RFC 9000 section 9.6.3)
     }
 
-    /** Forgets path [id] (never the active one). */
+    /** Forgets path [id] (never the active one), and a preferred-address probe sent from its socket. */
     public fun closePath(id: PathId) {
         val p = paths.byId(id) ?: return
         check(p !== paths.active) { "path $id is active" }
         paths.remove(p)
         releasePathCid(p)
+        paths.all.firstOrNull { it.carrier === p }?.let {
+            paths.remove(it)
+            releasePathCid(it)
+        }
     }
 
     /** Glitch tokens spent per frame type (index 31 for anything above; 0 for an undecryptable packet, 1 for a PING flood), for diagnostics. */

@@ -35,7 +35,7 @@ public enum class PathState {
     /** The peer answered the challenge, or the handshake proved the address (RFC 9000 sections 8.1 and 8.2.3). */
     Validated,
 
-    /** No answer within max(3 x PTO, 6 x initial RTT) (RFC 9000 section 8.2.4); a later probe may validate it again. */
+    /** No answer within 3 x the larger of the PTO and a new path's PTO (RFC 9000 section 8.2.4); a later probe may validate it again. */
     Failed,
 
     /** The path was closed and forgotten; nothing is sent on it any more. */
@@ -71,11 +71,11 @@ internal val PREFERRED_SOCKET: PathId = PathId(-1)
 /** Why a path failed validation ([ConnectionEvent.PathFailed], [PathEvent.Failed], [PathValidationException]). */
 @ExperimentalKuicksilverApi
 public enum class PathFailureReason {
-    /** No PATH_RESPONSE within max(3 x PTO, 6 x initial RTT) of the last PATH_CHALLENGE period (RFC 9000 section 8.2.4). */
+    /** No PATH_RESPONSE within the validation timeout of the last PATH_CHALLENGE period (RFC 9000 section 8.2.4). */
     ValidationTimeout,
 
     /**
-     * The peer had not given us a connection ID we had not used yet, and none came within max(3 x PTO, 6 x initial RTT): a probe on a
+     * The peer had not given us a connection ID we had not used yet, and none came within the validation timeout: a probe on a
      * new path must not reuse the active path's ID, or an observer could link the two (RFC 9000 section 9.5). Usually seen right
      * after the handshake, before the peer's NEW_CONNECTION_ID frames arrived; retrying once one arrives succeeds.
      */

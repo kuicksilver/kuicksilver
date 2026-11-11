@@ -6,6 +6,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.AckFrameView
 import io.kuicksilver.quic.wire.FrameHandler
 import io.kuicksilver.quic.wire.QuicWireException
@@ -30,6 +31,7 @@ internal class FrameDispatcher(
     override fun ping() {}
 
     override fun ack(ack: AckFrameView) {
+        if (r.space == SpaceId.Application && c.role == TlsRole.Client) c.checkAckAfterRejection(ack)
         c.loss.onAck(r.space, ack, r.now)
         c.checkPmtuBlackHoles()
     }
@@ -231,4 +233,123 @@ internal class FrameDispatcher(
         if (len + 1 + lengthField > max) violation("DATAGRAM frame larger than our max_datagram_frame_size $max")
         c.onDatagramFrame(data, off, len)
     }
+}
+
+/**
+ * The frames of a packet that reaches a closing connection (RFC 9000 section 10.2.1): only the peer's CONNECTION_CLOSE is acted on
+ * (section 10.2.2, the move to draining), and on a client a NEW_TOKEN, kept for the next connection to the server (a client that
+ * closes right after the handshake would otherwise lose the token the server sent with HANDSHAKE_DONE; at most
+ * `ConnectionCore.NEW_TOKENS_KEPT`, as before the close). STREAM data, CID and path frames, ACKs and the rest are parsed (a malformed
+ * frame ends the scan) and dropped, so a peer that keeps sending after our close costs no buffering, no state and no events.
+ */
+internal class ClosingFrames(
+    private val c: ConnectionCore,
+) : FrameHandler {
+    override fun padding(count: Int) {}
+
+    override fun ping() {}
+
+    override fun ack(ack: AckFrameView) {}
+
+    override fun resetStream(
+        id: Long,
+        code: Long,
+        finalSize: Long,
+    ) {}
+
+    override fun stopSending(
+        id: Long,
+        code: Long,
+    ) {}
+
+    override fun resetStreamAt(
+        id: Long,
+        code: Long,
+        finalSize: Long,
+        reliableSize: Long,
+    ) {}
+
+    override fun crypto(
+        offset: Long,
+        data: PacketBuffer,
+        off: Int,
+        len: Int,
+    ) {}
+
+    override fun newToken(
+        token: PacketBuffer,
+        off: Int,
+        len: Int,
+    ) {
+        if (c.role == TlsRole.Client) c.onNewToken(token, off, len)
+    }
+
+    override fun stream(
+        id: Long,
+        offset: Long,
+        data: PacketBuffer,
+        off: Int,
+        len: Int,
+        fin: Boolean,
+    ) {}
+
+    override fun maxData(max: Long) {}
+
+    override fun maxStreamData(
+        id: Long,
+        max: Long,
+    ) {}
+
+    override fun maxStreams(
+        bidi: Boolean,
+        max: Long,
+    ) {}
+
+    override fun dataBlocked(limit: Long) {}
+
+    override fun streamDataBlocked(
+        id: Long,
+        limit: Long,
+    ) {}
+
+    override fun streamsBlocked(
+        bidi: Boolean,
+        limit: Long,
+    ) {}
+
+    override fun newConnectionId(
+        seq: Long,
+        retirePriorTo: Long,
+        cid: PacketBuffer,
+        cidOff: Int,
+        cidLen: Int,
+        resetTokenOff: Int,
+    ) {}
+
+    override fun retireConnectionId(seq: Long) {}
+
+    override fun pathChallenge(data: Long) {}
+
+    override fun pathResponse(data: Long) {}
+
+    override fun connectionClose(
+        application: Boolean,
+        code: Long,
+        frameType: Long,
+        reason: PacketBuffer,
+        off: Int,
+        len: Int,
+    ) {
+        val bytes = ByteArray(minOf(len, 1024))
+        reason.copyTo(bytes, off, 0, bytes.size)
+        c.peerClosed(application, code, frameType, bytes)
+    }
+
+    override fun handshakeDone() {}
+
+    override fun datagram(
+        data: PacketBuffer,
+        off: Int,
+        len: Int,
+    ) {}
 }

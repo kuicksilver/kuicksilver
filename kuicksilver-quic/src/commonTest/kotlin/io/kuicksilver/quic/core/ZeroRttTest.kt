@@ -40,6 +40,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -314,6 +315,68 @@ class ZeroRttTest {
     }
 
     /**
+     * 0.3.0 cross-review, RFC 9001 section 4.6.2: "When 0-RTT is rejected, ... a client SHOULD treat receipt of an acknowledgment for
+     * a 0-RTT packet as a connection error of type PROTOCOL_VIOLATION, if it is able to detect the condition." The client knows
+     * which packet numbers its 0-RTT packets took; an acknowledgment of one after the rejection closes the connection.
+     */
+    @Test fun negative_ackOfARejectedZeroRttPacketIsProtocolViolation() {
+        val (p, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        try {
+            assertTrue(p.handshake())
+            val c = p.client
+            assertEquals(false, c.earlyDataAccepted)
+            assertTrue(
+                c.zeroRttFirstPn >= 0 && c.zeroRttLastPn >= c.zeroRttFirstPn,
+                "0-RTT went out: ${c.zeroRttFirstPn}..${c.zeroRttLastPn}",
+            )
+            val ack =
+                io.kuicksilver.quic.wire
+                    .AckFrameView()
+            ack.reset()
+            ack.addRange(c.zeroRttLastPn + 1, c.zeroRttLastPn + 5)
+            c.checkAckAfterRejection(ack) // 1-RTT packets only: fine
+            ack.reset()
+            ack.addRange(c.zeroRttLastPn + 3, c.zeroRttLastPn + 5)
+            ack.addRange(c.zeroRttLastPn, c.zeroRttLastPn + 1)
+            val e = assertFailsWith<io.kuicksilver.quic.wire.QuicWireException> { c.checkAckAfterRejection(ack) }
+            assertEquals(io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION, e.code)
+            p.runUntil(limit = 1.seconds) { false }
+            assertNull(p.closedReason(p.clientEvents), "an honest server never acknowledges them")
+        } finally {
+            p.close()
+        }
+        // end to end: the server's 1-RTT packet carries an ACK frame of the rejected 0-RTT packet numbers
+        val (e, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        try {
+            assertTrue(e.handshake())
+            val c = e.client
+            assertEquals(false, c.earlyDataAccepted)
+            val first = c.zeroRttFirstPn
+            val last = c.zeroRttLastPn
+            assertTrue(first in 0..63 && last in first..63, "small packet numbers: $first..$last")
+            e.server!!.testInjectFrames += 3 to byteArrayOf(0x02, last.toByte(), 0, 0, (last - first).toByte())
+            assertTrue(e.runUntil(limit = 1.seconds) { e.closedReason(e.clientEvents) != null })
+            val r = assertIs<io.kuicksilver.quic.QuicException.ConnectionLost.TransportClosed>(e.closedReason(e.clientEvents))
+            assertEquals(io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION, r.code)
+        } finally {
+            e.close()
+        }
+        val (q, _) = resumed(ticket())
+        try {
+            assertTrue(q.handshake())
+            assertEquals(true, q.client.earlyDataAccepted)
+            val ack =
+                io.kuicksilver.quic.wire
+                    .AckFrameView()
+            ack.reset()
+            ack.addRange(q.client.zeroRttFirstPn, q.client.zeroRttLastPn)
+            q.client.checkAckAfterRejection(ack) // accepted: 0-RTT packets are acknowledged as any other
+        } finally {
+            q.close()
+        }
+    }
+
+    /**
      * RFC 9001 section 4.6.2: "When 0-RTT is rejected, all connection characteristics that the client assumed might be
      * incorrect ... The client therefore MUST reset the state of all streams". The stream opened in 0-RTT is gone (nothing
      * of it is sent again), its ID and its flow-control credit are free again (as ngtcp2's `conn_discard_early_data_state`
@@ -457,6 +520,47 @@ class ZeroRttTest {
             assertTrue(q.handshake())
             assertEquals(true, q.client.earlyDataAccepted)
             assertEquals(QuicConfig.Default.initialConnectionWindow, q.client.connSend.maxLimit, "1-RTT gets the server's new limit")
+        } finally {
+            q.close()
+        }
+    }
+
+    /**
+     * 0.3.0 cross-review, RFC 9000 section 7.4.1: "a client MUST only use remembered transport parameters" in 0-RTT. The
+     * server's new reset_stream_at was applied as soon as its EncryptedExtensions arrived, so with the Finished still missing
+     * a RESET_STREAM_AT could leave in a 0-RTT packet on an offer the ticket did not carry. The remembered offer counts until
+     * 1-RTT, the new one after.
+     */
+    @Test fun negative_zeroRttUsesTheRememberedResetStreamAt() {
+        val withAt = quicConfig { resetStreamAt = true }
+        val t = ticket(clientQuic = withAt)
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        assertEquals(false, tp.resetStreamAt, "the ticket's server did not offer reset_stream_at")
+        val (p, id) = resumed(t, request = "x", clientQuic = withAt)
+        try {
+            val c = p.client
+            p.filterToServer = { _, _ -> false }
+            p.step()
+            assertEquals(false, c.streams.peerResetStreamAt)
+            tp.resetStreamAt = true // the server's EncryptedExtensions offer it now, its Finished has not arrived
+            tp.originalDestinationConnectionId = c.odcid
+            tp.initialSourceConnectionId = c.remoteCid
+            ConnectionHandshakeSink(c).onPeerTransportParameters(TransportParametersCodec.encode(tp, TlsRole.Server, 27), c.version.version)
+            assertTrue(c.zeroRttWritable, "still sending 0-RTT")
+            assertEquals(false, c.streams.peerResetStreamAt, "0-RTT uses only the remembered (absent) offer")
+            c.streams.resetAt(id, 3, 0)
+            val kinds = generateSequence { c.streams.takeControlFrame() }.map { it.kind }.toList()
+            assertTrue(io.kuicksilver.quic.stream.ControlKind.ResetStream in kinds, "a plain RESET_STREAM: $kinds")
+        } finally {
+            p.close()
+        }
+        val remembered = ticket(serverQuic = withAt, clientQuic = withAt)
+        val (q, _) = resumed(remembered, request = "x", clientQuic = withAt, serverQuic = withAt, serverEarly = early(withAt))
+        try {
+            assertEquals(true, q.client.streams.peerResetStreamAt, "a remembered offer counts in 0-RTT")
+            assertTrue(q.handshake())
+            assertEquals(true, q.client.earlyDataAccepted)
+            assertEquals(true, q.client.streams.peerResetStreamAt)
         } finally {
             q.close()
         }
