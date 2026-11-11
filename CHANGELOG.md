@@ -996,6 +996,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   thread for the socket's whole life, so a process with many such endpoints could leave `Dispatchers.IO` (blocking file
   I/O, DNS) without a free thread. It now gives the thread back after a receive slice that brought nothing and after
   every 64 busy rounds, like the receive of a socket of its own.
+- Ktor server on Kotlin/Native: a hard stop (the grace period ran out) cancels the listening socket's job and with it
+  every accepted socket's; the close that followed launched its work inside that cancelled job, where nothing starts, so
+  the descriptor of every connection open at the stop stayed open for the rest of the process (in-process restarts,
+  tests, embedded servers). The close now runs in a cancelled job too and releases the descriptor.
 
 ## [0.2.1] - 2026-11-04
 

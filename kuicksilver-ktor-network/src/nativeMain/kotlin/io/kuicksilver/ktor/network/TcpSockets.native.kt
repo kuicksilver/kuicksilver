@@ -382,14 +382,23 @@ internal class NativeTcpSocket(
 
     override fun close() {
         if (!closeFlag.compareAndSet(expectedValue = false, newValue = true)) return
-        launch(CoroutineName("socket-close")) {
-            // what was written is still sent: the write loop drains the closed channel, then ends; only then is the read
-            // loop cancelled (its end shuts the read side down): cancelled earlier, a close with unread received data can
-            // make the kernel drop the response's tail (Linux answers it with a reset)
-            writeChannel.load()?.let { runCatching { it.closeFromSocketClose() } }
-            readerJob.load()?.job?.join()
-            writerJob.load()?.cancel()
-            checkChannels()
+        // ATOMIC: a socket whose job was cancelled already (a hard stop cancels the listening socket's job, whose children the
+        // accepted sockets are) still runs this; a plain launch there never started, the loops had ended without the close
+        // flag, and the descriptor stayed open (selector.notifyClosed, which closes it, never ran)
+        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+        launch(CoroutineName("socket-close"), start = CoroutineStart.ATOMIC) {
+            try {
+                // what was written is still sent: the write loop drains the closed channel, then ends; only then is the read
+                // loop cancelled (its end shuts the read side down): cancelled earlier, a close with unread received data can
+                // make the kernel drop the response's tail (Linux answers it with a reset)
+                writeChannel.load()?.let { runCatching { it.closeFromSocketClose() } }
+                readerJob.load()?.job?.join()
+            } finally {
+                // cancelled: nothing is drained any more, both loops end, and the descriptor closes once they have
+                if (!isActive) readerJob.load()?.cancel()
+                writerJob.load()?.cancel()
+                checkChannels()
+            }
         }
     }
 
