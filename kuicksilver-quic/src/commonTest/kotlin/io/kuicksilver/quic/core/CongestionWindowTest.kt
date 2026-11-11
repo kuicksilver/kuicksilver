@@ -219,4 +219,27 @@ class CongestionWindowTest {
             p.close()
         }
     }
+
+    /**
+     * A window of 2 400 bytes on a path whose MTU is 9 000 (the window collapsed before the MTU grew, and RFC 8899 section 3 item 7
+     * keeps it from growing with the MTU): a datagram used to go only when a whole MTU fitted, so nothing was ever sent again.
+     * With at least 1 200 bytes of room the datagram is cut to the room.
+     */
+    @Test fun aWindowSmallerThanTheMtuStillCarriesData() {
+        val p = confirmedPair { FixedWindow(2_400) }
+        val batch = PacketBatch(16, 9_000)
+        try {
+            val c = p.client
+            c.path.mtu = 9_000
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(20_000), 0, 20_000, false)
+            val n = c.poll(batch, p.now)
+            assertTrue(n >= 1, "data goes out")
+            for (i in 0 until n) assertTrue(batch.length(i) <= 2_400, "datagram of ${batch.length(i)} bytes")
+            assertTrue(c.cc.bytesInFlight in 1_200L..2_400L, "in flight ${c.cc.bytesInFlight}")
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
 }

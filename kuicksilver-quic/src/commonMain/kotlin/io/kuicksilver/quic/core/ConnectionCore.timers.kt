@@ -370,7 +370,8 @@ internal class ConnectionLossListener(
     /**
      * RFC 9002 section 7.8: "When bytes in flight is smaller than the congestion window and sending is not pacing limited, the
      * congestion window is underutilized ... the congestion window SHOULD NOT be increased in either slow start or congestion
-     * avoidance." The window was in use when the bytes in flight before the ACK frame left no room for another datagram in the
+     * avoidance." The window was in use when the bytes in flight before the ACK frame left less room than a datagram (at most 1200
+     * bytes, the smallest the sender cuts one to, [MIN_WINDOW_DATAGRAM]) in the
      * window before the frame (an ACK of a whole window otherwise looks under-used halfway through, as the window grows with
      * it; section 7 lets a window be used to within one datagram), or
      * when the active path's sender still had data at the end of its last poll: it stopped for the window, the pacer or a burst
@@ -382,7 +383,7 @@ internal class ConnectionLossListener(
         prior: Int,
         mss: Int,
     ): Boolean {
-        if (priorBytes[prior] + mss > priorCwnd[prior]) return true
+        if (priorBytes[prior] + minOf(mss, MIN_WINDOW_DATAGRAM) > priorCwnd[prior]) return true
         return cc === core.cc && !core.builder.appLimited
     }
 

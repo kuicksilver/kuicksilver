@@ -152,4 +152,26 @@ class NewRenoTest {
         grown.onMtuUpdate(1200)
         assertEquals(14_720L + 1500, grown.cwnd, "a window that grew keeps its bytes")
     }
+
+    /**
+     * After a collapse to 2 x 1200 bytes and a datagram size raised to 9000, the minimum window (2 x 9000) is above the window: a
+     * reduction used to lift the window to it, 2 400 to 18 000 bytes on a loss, which RFC 8899 section 3 item 7 forbids for an MTU
+     * update ("MUST NOT increase the congestion window measured in bytes"). A reduction never raises the window now.
+     */
+    @Test fun aReductionNeverLiftsTheWindowToALargerSizesMinimum() {
+        for (make in listOf<() -> io.kuicksilver.quic.CongestionController>({ NewReno(1200) }, { io.kuicksilver.quic.Cubic(1200) })) {
+            val cc = make()
+            cc.onPacketSent(t0, 1200)
+            cc.onLoss(t0 + 1.milliseconds, 1200, t0, persistentCongestion = true)
+            assertEquals(2400L, cc.cwnd)
+            cc.onMtuUpdate(9000)
+            assertEquals(2400L, cc.cwnd, "${cc::class.simpleName}: the MTU update does not raise it")
+            cc.onPacketSent(t0 + 2.milliseconds, 1200)
+            cc.onLoss(t0 + 3.milliseconds, 1200, t0 + 2.milliseconds, false)
+            assertTrue(cc.cwnd <= 2400L, "${cc::class.simpleName}: a loss does not raise it either (${cc.cwnd})")
+            cc.onPacketSent(t0 + 4.milliseconds, 1200)
+            cc.onLoss(t0 + 5.milliseconds, 1200, t0 + 4.milliseconds, persistentCongestion = true)
+            assertTrue(cc.cwnd <= 2400L, "${cc::class.simpleName}: nor persistent congestion (${cc.cwnd})")
+        }
+    }
 }

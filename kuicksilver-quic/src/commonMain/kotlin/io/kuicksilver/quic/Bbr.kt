@@ -193,7 +193,8 @@ public class Bbr(
         bytesInFlight += bytes
         // C.is_cwnd_limited: this packet filled the window, which then has no room for another datagram (the sender never takes
         // bytes in flight above it, RFC 9002 section 7); a PTO probe sent past a full window is not the window's doing
-        if (before + mss <= cwnd && bytesInFlight + mss > cwnd) cwndLimitedThisRound = true
+        val datagram = minOf(mss, 1200) // the smallest datagram the sender cuts to the room left (PacketBuilder)
+        if (before + datagram <= cwnd && bytesInFlight + datagram > cwnd) cwndLimitedThisRound = true
     }
 
     /** Stamps [p] (already counted by [onPacketSent]) with the delivery state for its later rate sample. */

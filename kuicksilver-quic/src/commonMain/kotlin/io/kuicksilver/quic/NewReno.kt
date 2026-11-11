@@ -30,6 +30,13 @@ public class NewReno(
 
     private fun initialWindow(mtu: Int): Long = minOf(10L * mtu, maxOf(14720L, 2L * mtu))
 
+    /**
+     * The minimum window a reduction goes to (RFC 9002 sections 7.2, 7.6.2), never above the window itself: after the datagram
+     * size grew, a window below the new 2 x max_datagram_size stays where it is (RFC 8899 section 3 item 7: an MTU update "MUST NOT
+     * increase the congestion window measured in bytes").
+     */
+    private fun floor(): Long = minOf(minWindow, cwnd)
+
     override fun onPacketSent(
         now: TimeMark,
         bytes: Int,
@@ -70,7 +77,7 @@ public class NewReno(
         if (rs != null && sentTime <= rs) return
         recoveryStart = now
         caAcked = 0
-        cwnd = maxOf(cwnd / 2, minWindow)
+        cwnd = maxOf(cwnd / 2, floor())
         ssthresh = cwnd
     }
 
@@ -83,7 +90,7 @@ public class NewReno(
         bytesInFlight -= lostBytes
         congestionEvent(now, largestLostSentTime)
         if (persistentCongestion) {
-            cwnd = minWindow
+            cwnd = floor()
             recoveryStart = null
         }
     }
