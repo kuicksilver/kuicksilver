@@ -564,7 +564,6 @@ public class ConnectionCore internal constructor(
     internal var tlsPendingBytes = 0L
     internal val createdAtForTest: TimeMark get() = createdAt
     internal val remoteAddressForTest: InetSocketAddress get() = path.remote
-    internal var lastActivity: TimeMark = now
 
     // ---- stats ----
     internal var lostPackets = 0L
@@ -789,7 +788,6 @@ public class ConnectionCore internal constructor(
             throw it
         }
         this.now = now
-        lastActivity = now
         if (state == ConnectionState.Draining) return
         // RFC 9001 section 6.6: past the integrity limit "not process any more packets"; the bytes still count (amplification), and
         // the close is repeated as in any closing state

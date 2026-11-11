@@ -637,6 +637,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a connection in the closing state (after our CONNECTION_CLOSE) still processed every frame the peer sent:
+  STREAM data was buffered and charged to flow control, NEW_CONNECTION_ID and RETIRE_CONNECTION_ID changed the
+  connection IDs, PATH_CHALLENGEs were answered and events followed the `Closed` one. RFC 9000 section 10.2.1 keeps
+  only what is needed to answer with CONNECTION_CLOSE: a packet is now authenticated and searched for the peer's
+  CONNECTION_CLOSE (section 10.2.2, draining); nothing else in it is acted on but, on a client, a NEW_TOKEN for the
+  token store. The peer's CONNECTION_CLOSE in the
+  closing state no longer replaces our reason in `ConnectionCore.closedReason` nor raises a second `Closed` event.
 - QUIC: after the handshake, every CRYPTO byte received counted toward a 64 KiB budget that never refilled,
   retransmissions included, so a long-lived client connection to a server that resends or reissues NewSessionTickets
   was closed with CRYPTO_BUFFER_EXCEEDED. The limit is now on bytes buffered that TLS has not read (RFC 9000 section

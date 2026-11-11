@@ -129,6 +129,7 @@ internal class StreamManager(
     private var peerBidiRemote = 0L
     private var peerUni = 0L
     private var connReceived = 0L
+    internal val connReceivedForTest: Long get() = connReceived
     private val range = SendRange()
     private val scratch = ByteArray(2048)
     var sendBufferedBytes: Long = 0
