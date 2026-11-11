@@ -39,6 +39,23 @@ internal class StreamInput(
 ) : ByteReadChannel {
     private val buffer = Buffer()
 
+    /** Bytes taken from the core so far: the stream offset [buffer] ends at. */
+    private var takenTotal = 0L
+    internal val takenForTest: Long get() = takenTotal
+
+    /**
+     * The stream offset the input takes nothing beyond unless its reader asks for those bytes (Long.MAX_VALUE: no limit).
+     * Set and used by the reader's own calls, one after another.
+     */
+    private var readLimit = Long.MAX_VALUE
+
+    /** How far beyond what the reader consumed the input may take bytes from the core; Long.MAX_VALUE: no limit. */
+    var readAhead: Long
+        get() = if (readLimit == Long.MAX_VALUE) Long.MAX_VALUE else readLimit - (takenTotal - buffer.size)
+        set(v) {
+            readLimit = if (v == Long.MAX_VALUE) Long.MAX_VALUE else (takenTotal - buffer.size) + v
+        }
+
     /** The FIN was taken from the core: all the peer's data is in [buffer] or was read; a later cause changes nothing. */
     @Volatile private var eof = false
 
@@ -80,19 +97,22 @@ internal class StreamInput(
                 pendingCause?.let { if (buffer.size >= min) return@withContext true else throw failNow(it) }
                 var pulled = 0
                 var touched = false
-                // what is taken from the core leaves its flow-control window: no more than the reader allows ahead
-                val target = maxOf(min.toLong(), minOf(PULL_TARGET, stream.readAhead))
-                while (buffer.size < target &&
-                    pulled < PULL_TARGET
+                // what is taken from the core leaves its flow-control window: never past [readLimit] (a stream offset), unless
+                // the reader asks for those bytes itself
+                val limit = maxOf(readLimit, takenTotal - buffer.size + min)
+                while (buffer.size < maxOf(min.toLong(), PULL_TARGET) &&
+                    pulled < PULL_TARGET &&
+                    takenTotal < limit
                 ) {
                     // the loop's scratch: filled and emptied here, with no suspension in between (EndpointLoop.scratch)
                     val tmp = stream.loop.scratch
-                    val want = minOf(EndpointLoop.STREAM_CHUNK.toLong(), target - buffer.size).toInt()
+                    val want = minOf(EndpointLoop.STREAM_CHUNK.toLong(), limit - takenTotal).toInt()
                     val n = stream.conn.core.readStream(stream.id, tmp, 0, want)
                     if (n >
                         0
                     ) {
                         buffer.write(tmp, 0, n)
+                        takenTotal += n
                         pulled += n
                         touched = true
                     } else {

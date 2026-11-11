@@ -190,9 +190,11 @@ public suspend fun QuicConnection.rememberWithTickets(data: ByteArray) {
 }
 
 /**
- * At most how many bytes [QuicStream.input] takes from the transport ahead of what its reader asks for (64 KiB by default,
- * at least 1). Bytes taken leave the stream's flow-control window; a reader that must leave data in the window until it
- * can use it (RFC 9204 section 2.2.1: a blocked QPACK field section) lowers it. Ignored for streams of other
+ * How far beyond what its reader consumed so far [QuicStream.input] may take bytes from the transport (at least 1;
+ * Long.MAX_VALUE, the default, for no limit beyond the input's 64 KiB buffer). Setting it fixes a stream offset: later
+ * reads never take bytes past it unless they ask for them. Bytes taken leave the stream's flow-control window; a reader
+ * that must leave data in the window until it can use it (RFC 9204 section 2.2.1: a blocked QPACK field section) sets it
+ * to the end of what it is about to read. Set it from the reader, between its reads. Ignored for streams of other
  * implementations.
  */
 @InternalKuicksilverApi

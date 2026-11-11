@@ -5,6 +5,7 @@ package io.kuicksilver.http3.runtime
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
@@ -27,6 +28,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.sendCredit
 import kotlinx.coroutines.CompletableDeferred
@@ -49,6 +51,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -446,6 +449,46 @@ class QpackDynamicTest {
                 other.input.readAllBytes()
                 assertEquals(left, st.sendCredit(), "credit came back for a blocked section")
                 st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+            }
+        }
+
+    /**
+     * RFC 9204 section 2.2.1 behind a DATA frame read in pieces: trailers that wait for an insert follow 20 000 bytes of
+     * DATA that arrive in two parts. The limit on what the transport takes is the end of the DATA frame, not a distance
+     * from each read, so when the trailers block nothing past their prefix has been taken; they decode once the insert
+     * arrives.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun blockedTrailersAfterDataInPiecesStayUnread() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, dyn)
+                val dc = DynClient(c)
+                dc.start()
+                val st = c.openBidi()
+                val static = QpackEncoder()
+                val body = ByteArray(20_000) { it.toByte() }
+                val data = FrameHeaders.frame(FrameType.DATA, body)
+                st.output.writeFully(FrameHeaders.frame(FrameType.HEADERS, static.encode(st.id, POST)) + data.copyOf(8_000))
+                st.output.flush()
+                val req = withTimeout(5.seconds) { server.acceptRequest() } as ServerRequestImpl
+                // the body ends only with the trailers (they come before the FIN): its 20 000 bytes, not its end
+                val read = async { ByteArray(body.size).also { req.body.readFully(it, 0, it.size) } }
+                // the rest of the DATA once the server read part of it, then trailers that need an insert, and FIN
+                withTimeout(5.seconds) { while (req.stream.readAhead == Long.MAX_VALUE) delay(5) }
+                val trailers = dc.enc.encode(st.id, listOf("x-trailer" to "after-the-insert"))
+                val ins = dc.enc.drainEncoderStream()
+                st.output.writeFully(data.copyOfRange(8_000, data.size) + FrameHeaders.frame(FrameType.HEADERS, trailers))
+                st.output.flushAndClose()
+                assertContentEquals(body, withTimeout(5.seconds) { read.await() })
+                // blocked on its prefix: nothing of the section beyond it was taken from the stream's window
+                delay(100)
+                assertTrue(!req.trailers.isCompleted, "the trailers wait for the insert")
+                assertEquals(0L, req.stream.readAhead, "read ahead past the section's prefix")
+                dc.sendEncoder(ins)
+                assertEquals("after-the-insert", withTimeout(5.seconds) { req.trailers.await() }?.get("x-trailer"))
             }
         }
 

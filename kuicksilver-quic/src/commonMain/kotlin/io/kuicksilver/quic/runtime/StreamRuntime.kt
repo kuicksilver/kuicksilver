@@ -60,9 +60,15 @@ internal class StreamRuntime(
     internal var receivedAll: Boolean = false
         private set
 
-    /** At most how many bytes [input] takes from the core ahead of the reader ([io.kuicksilver.quic.readAhead]). */
-    @Volatile
-    internal var readAhead: Long = StreamInput.PULL_TARGET
+    /** Bytes [input] took from the core so far (a test hook). */
+    internal val inputTakenForTest: Long get() = inChannel?.takenForTest ?: 0
+
+    /** How far beyond the reader's position [input] may take bytes from the core ([io.kuicksilver.quic.readAhead]). */
+    internal var readAhead: Long
+        get() = inChannel?.readAhead ?: Long.MAX_VALUE
+        set(v) {
+            inChannel?.readAhead = v
+        }
 
     /** The core's [io.kuicksilver.quic.stream.StreamManager.sendCredit] for this stream, read on the loop; 0 once it is gone. */
     internal suspend fun sendCredit(): Long =
