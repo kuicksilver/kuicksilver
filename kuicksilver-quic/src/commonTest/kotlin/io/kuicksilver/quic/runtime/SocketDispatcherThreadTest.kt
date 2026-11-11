@@ -20,11 +20,11 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import kotlin.concurrent.atomics.AtomicInt
 import kotlin.time.Duration.Companion.seconds
 
 /** Where the receiver of a shared accelerated socket ([SocketDispatcher]) blocks. */
