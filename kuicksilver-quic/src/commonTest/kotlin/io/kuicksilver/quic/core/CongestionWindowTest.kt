@@ -140,4 +140,25 @@ class CongestionWindowTest {
             p.close()
         }
     }
+
+    /** RFC 9002 section 7.5: the pacer held a PTO probe back when its bucket was empty. */
+    @Test fun thePacerDoesNotHoldAProbeBack() {
+        val p = confirmedPair { FixedWindow(1_000_000, rate = 1_000_000, sendQuantum = 12_000) }
+        val batch = PacketBatch(64)
+        try {
+            val c = p.client
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(100_000), 0, 100_000, false)
+            assertTrue(c.poll(batch, p.now) >= 9, "one burst goes")
+            batch.clear()
+            assertEquals(0, c.poll(batch, p.now), "the bucket is empty: the pacer holds the next datagram")
+            batch.clear()
+            c.probePending[SpaceId.Application.ordinal] = 1
+            assertEquals(1, c.poll(batch, p.now), "the probe goes at once")
+            assertEquals(0, c.probePending[SpaceId.Application.ordinal])
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
 }

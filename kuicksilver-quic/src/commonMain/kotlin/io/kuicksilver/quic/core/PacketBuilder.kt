@@ -354,9 +354,12 @@ internal class PacketBuilder(
     ): Int {
         // RFC 9002 section 7: no packet may take bytes_in_flight above the window. The datagram is at most maxLen bytes, so it goes
         // only while that much still fits: a full window is one with less than a datagram left
-        congested = c.cc.bytesInFlight + maxLen > c.cc.cwnd && !probeDue()
+        val probing = probeDue()
+        congested = !probing && c.cc.bytesInFlight + maxLen > c.cc.cwnd
         initialAckOnly = c.role == TlsRole.Server && maxLen < 1200
-        if (!congested) pacer(now)
+        // "Probe packets MUST NOT be blocked by the congestion controller" (RFC 9002 section 7.5): the pacer neither; they still
+        // spend its credit when sent
+        if (!congested && !probing) pacer(now)
         var pos = 0
         var needPad = false
         var lastBuilt: SpaceId? = null
