@@ -154,24 +154,31 @@ class NewRenoTest {
     }
 
     /**
-     * After a collapse to 2 x 1200 bytes and a datagram size raised to 9000, the minimum window (2 x 9000) is above the window: a
-     * reduction used to lift the window to it, 2 400 to 18 000 bytes on a loss, which RFC 8899 section 3 item 7 forbids for an MTU
-     * update ("MUST NOT increase the congestion window measured in bytes"). A reduction never raises the window now.
+     * After a collapse to 2 x 1200 bytes, DPLPMTUD raises the datagram size to 1452: the update itself raises nothing (RFC 8899
+     * section 3 item 7), but the next congestion event is a reduction of RFC 9002 like any other, to the minimum window of the
+     * new size: ssthresh and cwnd become max(cwnd / 2, 2 x 1452) (section 7.3.2, appendix B.6), and persistent congestion collapses
+     * to 2 x 1452 (section 7.6.2). A floor capped at the window used to leave both unchanged and ssthresh at the window.
      */
-    @Test fun aReductionNeverLiftsTheWindowToALargerSizesMinimum() {
-        for (make in listOf<() -> io.kuicksilver.quic.CongestionController>({ NewReno(1200) }, { io.kuicksilver.quic.Cubic(1200) })) {
-            val cc = make()
+    @Test fun aReductionAfterTheDatagramSizeGrewLandsOnTheNewMinimumWindow() {
+        val newReno = NewReno(1200)
+        val cubic = io.kuicksilver.quic.Cubic(1200)
+        for ((cc, ssthresh) in listOf<Pair<io.kuicksilver.quic.CongestionController, () -> Long>>(
+            newReno to { newReno.ssthresh },
+            cubic to { cubic.ssthresh },
+        )) {
+            val name = cc::class.simpleName
             cc.onPacketSent(t0, 1200)
             cc.onLoss(t0 + 1.milliseconds, 1200, t0, persistentCongestion = true)
             assertEquals(2400L, cc.cwnd)
-            cc.onMtuUpdate(9000)
-            assertEquals(2400L, cc.cwnd, "${cc::class.simpleName}: the MTU update does not raise it")
-            cc.onPacketSent(t0 + 2.milliseconds, 1200)
-            cc.onLoss(t0 + 3.milliseconds, 1200, t0 + 2.milliseconds, false)
-            assertTrue(cc.cwnd <= 2400L, "${cc::class.simpleName}: a loss does not raise it either (${cc.cwnd})")
-            cc.onPacketSent(t0 + 4.milliseconds, 1200)
-            cc.onLoss(t0 + 5.milliseconds, 1200, t0 + 4.milliseconds, persistentCongestion = true)
-            assertTrue(cc.cwnd <= 2400L, "${cc::class.simpleName}: nor persistent congestion (${cc.cwnd})")
+            cc.onMtuUpdate(1452)
+            assertEquals(2400L, cc.cwnd, "$name: the MTU update does not raise the window")
+            cc.onPacketSent(t0 + 2.milliseconds, 1452)
+            cc.onLoss(t0 + 3.milliseconds, 1452, t0 + 2.milliseconds, false)
+            assertEquals(2904L, cc.cwnd, "$name: a loss reduces to the new minimum window")
+            assertEquals(2904L, ssthresh(), "$name: ssthresh too")
+            cc.onPacketSent(t0 + 4.milliseconds, 1452)
+            cc.onLoss(t0 + 5.milliseconds, 1452, t0 + 4.milliseconds, persistentCongestion = true)
+            assertEquals(2904L, cc.cwnd, "$name: persistent congestion collapses to 2 x 1452")
         }
     }
 }

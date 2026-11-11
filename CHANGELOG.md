@@ -677,8 +677,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   the burst is now capped at the initial window. Over loopback (`UdpThroughputBenchmark`, JVM) BBR moves 208-214 MiB/s
   instead of 225-231, as CUBIC does.
 - A window smaller than the MTU (a window that collapsed before DPLPMTUD raised the MTU to a jumbo size) sent nothing
-  any more; a datagram is now cut to the room left when that is at least 1200 bytes. A NewReno or CUBIC reduction no
-  longer lifts such a window to the new 2-datagram minimum (RFC 8899 section 3).
+  any more; a datagram is now cut to the room left when that is at least 1200 bytes.
 - Persistent congestion of another path's lost packets was judged with the active path's RTT; it now uses that path's
   own estimate. A probe owed for rejected 0-RTT stayed owed and let one datagram pass the window; Application data
   waiting for its keys during the handshake let the window grow.

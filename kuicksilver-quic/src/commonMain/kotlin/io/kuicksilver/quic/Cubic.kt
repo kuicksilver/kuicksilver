@@ -197,7 +197,7 @@ public class Cubic(
         alpha = ALPHA
         // fast convergence (section 4.6): W_max = cwnd (1 + beta) / 2
         wMax = if (cwnd < wMax) cwnd * (BETA_DEN + BETA_NUM) / (2 * BETA_DEN) else cwnd
-        cwnd = maxOf(cwnd * BETA_NUM / BETA_DEN, minOf(minWindow, cwnd))
+        cwnd = maxOf(cwnd * BETA_NUM / BETA_DEN, minWindow)
         ssthresh = cwnd
         epochStart = now
         pausedSince = TimeMark.NEVER
@@ -215,8 +215,7 @@ public class Cubic(
         bytesInFlight -= lostBytes
         congestionEvent(now, largestLostSentTime)
         if (persistentCongestion) {
-            // the minimum window, never above the window itself after the datagram size grew (RFC 8899 section 3 item 7)
-            cwnd = minOf(minWindow, cwnd)
+            cwnd = minWindow
             recoveryStart = TimeMark.NEVER
             epochStart = TimeMark.NEVER
         }
