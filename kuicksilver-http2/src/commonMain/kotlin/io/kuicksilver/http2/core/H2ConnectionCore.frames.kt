@@ -295,6 +295,7 @@ internal fun H2ConnectionCore.onSettings(
         return
     }
     glitch(now, "SETTINGS")
+    var windowShrank = false
     for (i in f.ids.indices) {
         val v = f.values[i]
         when (f.ids[i]) {
@@ -317,6 +318,7 @@ internal fun H2ConnectionCore.onSettings(
                 if (v > H2.MAX_WINDOW) throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE = $v")
                 val delta = v - peerInitialWindow
                 peerInitialWindow = v
+                if (delta < 0) windowShrank = true
                 // section 6.9.2: the windows of streams we can still send on (open, half-closed (remote)) move by the
                 // difference, possibly below zero
                 for (s in streams.values) {
@@ -356,7 +358,7 @@ internal fun H2ConnectionCore.onSettings(
             else -> {} // section 6.5.2: unknown settings are ignored
         }
     }
-    queueControl(FrameEncoder.settingsAck()) // section 6.5.3: immediately
+    queueSettingsAck(windowShrank) // section 6.5.3: immediately, behind DATA already taken from a larger window
     emit(H2Event.SettingsChanged)
 }
 
@@ -382,7 +384,7 @@ internal fun H2ConnectionCore.onPing(
         if (!wroteSincePing) glitch(now, "PING")
         wroteSincePing = false
         // section 6.7: the same payload back, ahead of any other frame, the answers in the order of their PINGs
-        if (control.size + pingAnswers.size >= settings.maxControlFramesQueued) {
+        if (controlQueued >= settings.maxControlFramesQueued) {
             calm("more than ${settings.maxControlFramesQueued} control frames queued")
         }
         pingAnswers.addLast(FrameEncoder.ping(true, f.payload))
