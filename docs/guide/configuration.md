@@ -337,7 +337,7 @@ Guide: [Ktor: Client](ktor.md#client).
 |---|---|---|---|---|
 | `discovery` | `Http3DiscoveryMode` | `Auto` | 0.2.0 | `Auto` (TCP first, HTTP/3 after `Alt-Svc`), `Preferred` (HTTP/3 first, TCP fallback), `H3Only`, `H1Only` (no HTTP/3; TCP is HTTP/1.1 or HTTP/2) |
 | `quicHints` | `Set<HostPort>` | empty | 0.2.0 | origins treated as `Preferred` in `Auto` mode; `HostPort(host, port)` compares the host exactly as in URLs |
-| `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | 0.2.0 | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
+| `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | 0.2.0 | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts (on the JVM and Android also `FileAltSvcStore(file)` with a `java.io.File`, which works from API 24) |
 | `clearOnNetworkChange` | `Boolean` | `true` | 0.2.0 | drop alternatives without `persist=1` when `networkId` changes (RFC 7838 section 2.2); `false` keeps them |
 | `httpsRecords` (*experimental*) | `HttpsRecordSource` | `HttpsRecordSource.Off` | 0.3.0 | HTTPS resource records (RFC 9460) as a source of HTTP/3 in `Auto`: `System` (the OS resolver) or `Exchange { query -> response }` (your DNS-over-HTTPS client) ([HTTPS records](ktor.md#https-records-experimental)) |
 | `httpsRecordExtraWait` (*experimental*) | `Duration` | 50 ms | 0.3.0 | how long a request waits for the HTTPS records after the origin's addresses resolved; 50 ms (RFC 9460 section 5.1) to 1 s, else the engine's creation fails with `IllegalArgumentException` |

@@ -228,6 +228,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (a buffer of its own, wiped), refuses PEM files above 1 MiB, and closes the identity it made when the server stops. The
   watcher reads the files again a second after a reload and refuses a chain file that also holds a private key (as
   `EngineMain` does at startup when reloading is on). A watcher read that never returns no longer holds up the stop.
+- Ktor client: experimental `FileAltSvcStore(file: java.io.File)` on the JVM and Android, for an Android app's
+  `File(context.filesDir, "altsvc.tsv")` (`docs/guide/ktor.md`, "Discovery and Alt-Svc"). It works on API 24 and 25 too:
+  nothing on its path uses `java.nio.file` or `File.toPath()`, which arrived in API 26. The `kotlinx.io.files.Path`
+  constructor is unchanged.
 - QUIC: experimental `QuicConnection.peerSupportsDatagrams`, true once the peer advertised `max_datagram_frame_size`
   above 0 (RFC 9221 section 3), exactly when `sendDatagram` does not answer `PeerDoesNotSupport`. `maxDatagramSize` is 0
   without support and also with a limit of 2 (room for an empty datagram only) or 1 (room for none: even an empty datagram is `TooLarge(0)`); this

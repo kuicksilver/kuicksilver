@@ -911,6 +911,24 @@ the rewrite when a repeated header only refreshes the expiry, and the engine wri
 without `persist=1` are dropped when `networkId()` reports a new network (RFC 7838 section 2.2); `clearOnNetworkChange =
 false` keeps them.
 
+`FileAltSvcStore(path)` takes a `kotlinx.io.files.Path`; on the JVM and Android `FileAltSvcStore(file)` (experimental,
+0.3.0) takes a `java.io.File`. On Android keep the file in the app's private files directory. Do not write
+`File(...).toPath()`: that is a `java.nio.file.Path`, which this API does not take, and `File.toPath()` and
+`java.nio.file` only exist from API 26, while the library supports API 24. The `File` form uses no `java.nio.file`,
+so it works on API 24 and 25 too (there a write replaces the file with `File.renameTo`, which is atomic on one file
+system):
+
+```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val filesDir = context.filesDir                  // android.content.Context
+// guide:ktor:altsvc-store-android
+HttpClient(Kuicksilver) {
+    engine {
+        http3 { altSvcStore = FileAltSvcStore(File(filesDir, "altsvc.tsv")) }
+    }
+}
+```
+
 ### HTTPS records (experimental)
 
 `http3 { httpsRecords = HttpsRecordSource.System }` (or `HttpsRecordSource.Exchange { query -> ... }` for your own

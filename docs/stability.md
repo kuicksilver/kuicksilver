@@ -271,6 +271,7 @@ the connection core are internal.
 | `maxConnectionsCount`, `maxConnectionsPerRoute`, `idleTimeout`, `maxConnectionLifetime` | connection limits and idle cleanup |
 | `logger`, `eventListener`, `KuicksilverEventListener`, `ProtocolReason`, `http3 { qlog; connectionListener }` | observability |
 | `http2 { enabled; settings; pingInterval }`, `Http2ClientConfig`, `FallbackReason.H2Refused` | HTTP/2 on the TCP path |
+| JVM and Android: `FileAltSvcStore(file)` | the persistent Alt-Svc store from a `java.io.File` (Android API 24 and up) |
 
 ### `kuicksilver-ktor-server`
 
