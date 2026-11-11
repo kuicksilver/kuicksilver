@@ -27,9 +27,9 @@ internal sealed interface TokenCheck {
     object NotRetry : TokenCheck
 
     /**
-     * A Retry-type token that does not open: forged or damaged, of a key two rotations gone, or another server's whose first byte
-     * matches our Retry type. Nothing tells it from another server's token, so it is treated as absent (RFC 9000 section 8.1.3:
-     * "SHOULD proceed as if the client did not have a validated address").
+     * A Retry-type token that does not open: forged or damaged, of a key two rotations gone or of another process, or another server's
+     * whose first byte matches our Retry type. Admission decides by the Initial's DCID: one in our format (an answer to our Retry)
+     * gets INVALID_TOKEN (RFC 9000 section 8.1.2), any other is treated as absent (section 8.1.3).
      */
     object Unauthenticated : TokenCheck
 

@@ -664,8 +664,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   ID before a probe and the undoing of a move during the handshake.
 - QUIC server: a client's first Initial carrying another server's address validation token (one behind the same name)
   whose first byte happens to be the Retry token type was refused with a stateless INVALID_TOKEN close. A Retry-type
-  token that does not open under our keys is now treated as absent (RFC 9000 section 8.1.3), as nothing tells it from
-  another server's. Retry tokens now carry the client address and version they are bound to inside the encrypted
+  token that does not open under our keys is now treated as absent (RFC 9000 section 8.1.3) unless the Initial's
+  Destination Connection ID is in our format, which marks an answer to our Retry (a token whose key is gone after a
+  restart, or damaged): that one still gets INVALID_TOKEN (section 8.1.2), never a second Retry. Retry tokens now carry the client address and version they are bound to inside the encrypted
   part instead of the associated data, so a token of ours presented from another address or for another version still
   opens and gets INVALID_TOKEN (section 8.1.2), as does an expired one or one under another Destination Connection ID.
 - QUIC: short-header packets are now padded to at least 22 bytes more than the connection's own connection ID length

@@ -49,9 +49,13 @@ internal fun EndpointCore.admitOne(
         newTokensRejected++
         check = TokenCheck.Absent
     }
-    // a Retry-type token that does not open is no Retry token of ours as far as anyone can tell (another server's behind the same
-    // name, or one bound to another address): treated as absent (section 8.1.3); INVALID_TOKEN only for one of ours that opened
-    if (check == TokenCheck.Unauthenticated) check = TokenCheck.NotRetry
+    // a Retry-type token that does not open: under a DCID in our format the Initial plausibly answers a Retry of ours whose key is
+    // gone (a restart between the Retry and the Initial, another instance of the farm) or whose token was damaged, and a second Retry
+    // would be ignored by the client (section 17.2.5.2): INVALID_TOKEN (section 8.1.2); under any other DCID it is another server's
+    // token, treated as absent (section 8.1.3)
+    if (check == TokenCheck.Unauthenticated) {
+        check = if (route.ownerLoop(data, hv.dcidOff, hv.dcidLen) >= 0) TokenCheck.Invalid else TokenCheck.NotRetry
+    }
     if (check == TokenCheck.Invalid || check == TokenCheck.Expired) { // RFC 9000 section 8.1.2: refuse with INVALID_TOKEN, statelessly
         invalidTokens++
         statelessInitialClose(data, profile, from, TransportError.INVALID_TOKEN, now)

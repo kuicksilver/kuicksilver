@@ -196,6 +196,8 @@ class NewTokenTest {
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
         try {
             val c = p.connect()
+            // a DCID not in our format (no 0x01 format byte): this Initial answers no Retry of ours, so the token is someone else's
+            assertTrue(c.odcid.toByteArray()[0].toInt() != 0x01, "the client's first DCID is not in our format")
             c.initialToken = ByteArray(60) { (it * 7 + 3).toByte() }.also { it[0] = 0x01 }
             assertTrue(p.confirmed(c), "the client connects: ${p.closed(c)}")
             assertEquals(0L, p.server.stats.invalidTokens, "no INVALID_TOKEN")
