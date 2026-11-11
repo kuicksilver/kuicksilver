@@ -383,11 +383,73 @@ internal fun ConnectionCore.startPreferredProbe() {
     startValidation(p)
 }
 
-/** Client: a preferred-address path still under validation is closed (an application's own migration replaces it; never retried). */
-internal fun ConnectionCore.abandonPreferredProbe() {
-    val p = paths.all.firstOrNull { it.preferred && it !== paths.active } ?: return
+/**
+ * Client: a preferred-address path still under validation is closed and its address returned; null when there is none. An
+ * application's migration from another socket probes the preferred address again from there ([probePreferredFrom]).
+ */
+internal fun ConnectionCore.abandonPreferredProbe(): InetSocketAddress? {
+    val p = paths.all.firstOrNull { it.preferred && it !== paths.active && it.state != PathState.Validated } ?: return null
     paths.remove(p)
     releasePathCid(p)
+    return p.remote
+}
+
+/**
+ * Client, RFC 9000 section 9.6.3: "A client might need to perform a connection migration before it has migrated to the server's
+ * preferred address. In this case, the client SHOULD perform path validation to both the original and preferred server address from
+ * the client's new address concurrently." The application's path [app] (on its new socket) validates the original address; a second
+ * path from the same socket validates the preferred address [target] with its own unused connection ID (section 9.5). Not when the
+ * four paths are taken.
+ */
+internal fun ConnectionCore.probePreferredFrom(
+    app: Path,
+    target: InetSocketAddress,
+) {
+    val p = paths.add(app.socket, target, config.congestionController(), config.newPathInitialRtt, evict = false) ?: return
+    p.amplification.validated = true // our own probe toward the server
+    p.preferred = true
+    p.carrier = app
+    startValidation(p)
+}
+
+/**
+ * Client, RFC 9000 section 9.6.3: the preferred address validated from the socket of the application's path [app] ([probePreferredFrom]).
+ * "If path validation of the server's preferred address succeeds, the client MUST abandon validation of the original address and
+ * migrate to using the server's preferred address": [app], which owns the socket, takes the preferred address with its validation and
+ * the connection ID it was probed with ([Path.swapAddressWith]); its validation of the original address ends, and [p] goes with the
+ * original address and the ID used toward it. The active [app] moves at once (a change of the active path's address,
+ * [PathChangeReason.PreferredAddress]); one under validation reports [ConnectionEvent.PathValidated], and the application's switch to it
+ * is the move to the preferred address.
+ */
+private fun ConnectionCore.adoptPreferred(
+    app: Path,
+    p: Path,
+) {
+    val old = app.remote
+    app.swapAddressWith(p)
+    app.preferred = true
+    p.carrier = null
+    val probedWith = p.peerCid?.takeIf { cids.isActive(it) }
+    p.peerCid = null
+    if (app === paths.active) {
+        val previous = cids.currentPeer
+        if (probedWith != null) cids.makeCurrent(probedWith) else cids.rotatePeerCid(retireOld = false)
+        if (previous != null && previous !== cids.currentPeer) cids.releasePathPeer(previous)
+        remoteCid = cids.activePeerCid()
+    } else {
+        p.peerCid = app.peerCid
+        app.peerCid = probedWith
+    }
+    paths.remove(p)
+    releasePathCid(p)
+    resetForNewIp(app, old)
+    if (app === paths.active) {
+        movedToPreferred = true
+        onRemoteChanged?.invoke(old, app.remote)
+        events += ConnectionEvent.PathChanged(app.id, app.id, PathChangeReason.PreferredAddress)
+    } else {
+        events += ConnectionEvent.PathValidated(app.id)
+    }
 }
 
 /** Server: records whether the 1-RTT packet just received on [p] carries another of our IDs than the active path's packets. */
@@ -683,6 +745,11 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             events += ConnectionEvent.PathValidated(p.id)
             if (preferredMove) {
                 moveToPreferredSocket(p)
+                return
+            }
+            val carrier = p.carrier
+            if (toPreferred && carrier != null && carrier.state != PathState.Closed && paths.all.contains(carrier)) {
+                adoptPreferred(carrier, p)
                 return
             }
             if (toPreferred) {

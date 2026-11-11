@@ -45,6 +45,7 @@ import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.largestDatagramPayload
 import io.kuicksilver.quic.core.memoryCeiling
 import io.kuicksilver.quic.core.pmtudUpperBound
+import io.kuicksilver.quic.core.probePreferredFrom
 import io.kuicksilver.quic.core.pto
 import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
@@ -1032,11 +1033,18 @@ public class ConnectionCore internal constructor(
         // RFC 9000 section 9.5: traffic on a new path to a peer without connection IDs is trivially linkable to the old one
         if (remoteCid.length == 0) throw MigrationRefusedException(MigrationRefusal.ZeroLengthConnectionId)
         this.now = now
-        abandonPreferredProbe() // the application's own move wins over a preferred address still under validation
+        // a preferred address still under validation is probed again from the new path's socket, concurrently with the application's
+        // validation of the original address there (RFC 9000 section 9.6.3); from the same socket the application's path replaces it
+        val preferredTarget = abandonPreferredProbe()
         val p =
             paths.add(socket, remote, config.congestionController(), config.newPathInitialRtt, evict = false)
                 ?: throw IllegalStateException("at most 4 paths")
         p.amplification.validated = true // our own address: nothing to amplify against
+        if (preferredTarget != null && p.socket != paths.active.socket &&
+            !p.isRemote(preferredTarget)
+        ) {
+            probePreferredFrom(p, preferredTarget)
+        }
         return p.id
     }
 
@@ -1062,14 +1070,19 @@ public class ConnectionCore internal constructor(
         check(p.state == PathState.Validated) { "path $id is ${p.state}, not Validated" }
         this.now = now
         switchPath(p, PathChangeReason.ActiveMigration, challengeOld = false)
+        if (p.preferred) movedToPreferred = true // it took the server's preferred address (RFC 9000 section 9.6.3)
     }
 
-    /** Forgets path [id] (never the active one). */
+    /** Forgets path [id] (never the active one), and a preferred-address probe sent from its socket. */
     public fun closePath(id: PathId) {
         val p = paths.byId(id) ?: return
         check(p !== paths.active) { "path $id is active" }
         paths.remove(p)
         releasePathCid(p)
+        paths.all.firstOrNull { it.carrier === p }?.let {
+            paths.remove(it)
+            releasePathCid(it)
+        }
     }
 
     /** Glitch tokens spent per frame type (index 31 for anything above; 0 for an undecryptable packet, 1 for a PING flood), for diagnostics. */

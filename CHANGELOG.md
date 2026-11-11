@@ -637,6 +637,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC client: a migration (`migrate`, `addPath`) from a new socket while the server's preferred address was still
+  being validated closed that validation for good. The preferred address is now validated again from the new socket,
+  concurrently with the original address (RFC 9000 section 9.6.3 SHOULD); when it succeeds the application's new path
+  takes it and the validation of the original address ends ("MUST abandon validation of the original address and
+  migrate to using the server's preferred address"). A migration on the same socket still replaces the probe.
 - QUIC: every PATH_CHALLENGE is now answered (RFC 9000 section 8.2.2 MUST). A fourth challenge waiting at once was
   dropped; it is now queued, past three waiting each costs a glitch token as before, and past 1024 waiting (glitch
   protection off) the connection closes with PROTOCOL_VIOLATION. A server on a wildcard socket with several addresses

@@ -62,6 +62,12 @@ internal class Path(
     var preferred: Boolean = false
 
     /**
+     * Client, a [preferred] path probed from the socket of an application's migration ([ConnectionCore.addPath]): that application
+     * path, which owns the socket. Once this one validates, the application path takes its address (RFC 9000 section 9.6.3).
+     */
+    var carrier: Path? = null
+
+    /**
      * Server: this path is the handshake-time candidate (see `ConnectionCore.onHandshakeAddressChange`): the client address of a
      * handshake-time rebind that the active path does not have at the moment, validated on its own (RFC 9000 sections 8.2 and 9.3.3).
      * It sends nothing but PATH_CHALLENGE (and PATH_RESPONSE) to that address, with the active path's connection ID, and is never

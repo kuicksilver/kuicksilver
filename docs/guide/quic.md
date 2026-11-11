@@ -628,7 +628,11 @@ sequence-1 connection ID, and moves there when the server answers. Only probes g
 validation leaves the connection where it was. A server reached on a public address cannot send the client to a
 loopback, link-local or private address, and nobody to an unspecified, multicast or broadcast one (the `Alt-Svc` rule).
 The server's `disable_active_migration` does not stop the move, and after it the client may migrate. A `migrate` while
-the preferred address is still being validated cancels that validation.
+the preferred address is still being validated validates both from the new socket (RFC 9000 section 9.6.3): the
+original address on the new path, and the preferred address once more. If the preferred address answers first, the new
+path takes it, and `migrate` moves the connection there (the returned `PathEvent.Changed` names the new path, whose
+`remote` is the preferred address); otherwise the move goes to the original address, and the preferred address, should it
+still validate, moves the connection there with `PathChangeReason.PreferredAddress`.
 
 A server follows a client that changes address (RFC 9000 section 9). The first 1-RTT packet from a new address opens a
 path under validation: the server sends a `PATH_CHALLENGE` there (and to the previous address, against an off-path
