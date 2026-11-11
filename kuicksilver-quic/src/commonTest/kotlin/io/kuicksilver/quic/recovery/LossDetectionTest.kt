@@ -108,7 +108,14 @@ class LossDetectionTest {
             if (event.kind == CongestionKind.Lost) lossByPath += "${event.pathId}:${event.persistentCongestion}"
         }
 
-        override fun onDiscarded(bytes: Int) {}
+        val discarded = ArrayList<Pair<io.kuicksilver.quic.CongestionController?, Int>>()
+
+        override fun onDiscarded(
+            cc: io.kuicksilver.quic.CongestionController?,
+            bytes: Int,
+        ) {
+            discarded += cc to bytes
+        }
     }
 
     private fun ld(
@@ -130,6 +137,7 @@ class LossDetectionTest {
         marked: Boolean = false,
         inFlight: Boolean = ackEliciting,
         pathId: Int = 0,
+        cc: io.kuicksilver.quic.CongestionController? = null,
     ) {
         val p = ld.space(space).newSentPacket()
         p.pn = pn
@@ -139,6 +147,7 @@ class LossDetectionTest {
         p.ecnMarked = marked
         p.inFlight = inFlight
         p.pathId = pathId
+        p.cc = cc
         ld.onPacketSent(space, p, at)
     }
 
@@ -347,6 +356,24 @@ class LossDetectionTest {
         assertEquals(2400L, ld.bytesInFlight)
         ld.discard(SpaceId.Initial)
         assertEquals(1200L, ld.bytesInFlight)
+    }
+
+    @Test fun discardedBytesLeaveTheControllerThatCountedThem() {
+        // RFC 9002 section 6.4 with RFC 9000 section 9.4: bytes of a discarded space leave flight in the controller that counted
+        // them; after a migration or a rebinding that need not be the active path's
+        val (ld, l) = ld()
+        val a = io.kuicksilver.quic.NewReno()
+        val b = io.kuicksilver.quic.NewReno()
+        send(ld, SpaceId.Handshake, 0, t0, cc = a)
+        send(ld, SpaceId.Handshake, 1, t0, size = 900, cc = b)
+        send(ld, SpaceId.Handshake, 2, t0, ackEliciting = false, inFlight = false, cc = b)
+        ld.discard(SpaceId.Handshake)
+        assertEquals(listOf<Pair<Any?, Int>>(a to 1200, b to 900), l.discarded)
+        send(ld, SpaceId.Application, 0, t0, cc = b)
+        val app = ld.space(SpaceId.Application).sent
+        app.at(app.start)!!.zeroRtt = true
+        ld.discardZeroRtt {}
+        assertEquals(b to 1200, l.discarded.last(), "rejected 0-RTT too")
     }
 
     @Test fun negative_ackForUnsentPacket() {

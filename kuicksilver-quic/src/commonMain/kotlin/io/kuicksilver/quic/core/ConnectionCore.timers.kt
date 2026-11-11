@@ -369,8 +369,11 @@ internal class ConnectionLossListener(
         for (i in all.indices) (all[i].cc as? io.kuicksilver.quic.Bbr)?.onAckProcessed(now)
     }
 
-    override fun onDiscarded(bytes: Int) {
-        core.cc.onDiscarded(bytes)
+    override fun onDiscarded(
+        cc: io.kuicksilver.quic.CongestionController?,
+        bytes: Int,
+    ) {
+        (cc ?: core.cc).onDiscarded(bytes)
     }
 
     override fun onRttSample(

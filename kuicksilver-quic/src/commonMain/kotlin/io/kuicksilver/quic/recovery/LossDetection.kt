@@ -110,8 +110,14 @@ internal interface LossListener {
     /** One ACK frame newly acknowledged packets and every one of them was reported: per-ACK controllers (BBR) update their model now. */
     fun onAckProcessed(now: TimeMark) {}
 
-    /** Bytes removed from flight because their space was discarded. */
-    fun onDiscarded(bytes: Int)
+    /**
+     * [bytes] of one packet left flight without a congestion signal (its space or its 0-RTT keys were discarded): taken from [cc],
+     * the controller that counted them, which after a migration or rebinding need not be the active path's.
+     */
+    fun onDiscarded(
+        cc: io.kuicksilver.quic.CongestionController?,
+        bytes: Int,
+    )
 }
 
 /** Loss detection and the PTO timer (RFC 9002 sections 5–6, appendix A), over the three packet number spaces. */
@@ -708,21 +714,19 @@ internal class LossDetection(
      */
     fun discardZeroRtt(each: (SentPacket) -> Unit) {
         val sp = space(SpaceId.Application)
-        var removed = 0
         for (i in sp.sent.start until sp.sent.end) {
             val p = sp.sent.at(i) ?: continue
             if (!p.zeroRtt) continue
             each(p)
             if (p.inFlight) {
                 bytesInFlight -= p.size
-                removed += p.size
+                listener.onDiscarded(p.cc, p.size)
             }
             if (p.ackEliciting) sp.ackElicitingInFlight--
             sp.sent.removeAt(i)
             sp.release(p)
         }
         sp.sent.trim()
-        if (removed > 0) listener.onDiscarded(removed)
     }
 
     fun discard(
@@ -731,15 +735,13 @@ internal class LossDetection(
     ) {
         val sp = this.space(space)
         while (sp.lostCount > 0) dropOldestLost(sp, now)
-        var removed = 0
         for (p in sp.sent) {
             if (p.inFlight) {
                 bytesInFlight -= p.size
-                removed += p.size
+                listener.onDiscarded(p.cc, p.size)
             }
             sp.release(p)
         }
-        if (removed > 0) listener.onDiscarded(removed)
         sp.sent.clear()
         sp.clearAcked()
         sp.lossTime = TimeMark.NEVER
