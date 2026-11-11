@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `Kuicksilver.xcframework.zip`, attached to every GitHub release from 0.3.0 and signed with the release key, so a
   Swift-only app adds `.package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "0.3.0"))`
   instead of building the xcframework from a checkout (docs/guide/ios.md, "Swift only"). `tools/release/xcframework.sh`
-  builds the zip reproducibly (dSYM source paths relative to the checkout, slices in a fixed order) and writes its
+  builds the zip reproducibly (slices in a fixed order; the same checksum from any checkout directory) and writes its
   checksum into `Package.swift` before the release commit; `local-release.sh` builds it again, refuses the release when
   the checksums differ, signs it and lists it in the provenance; `verify-release.sh` checks that the tag's
   `Package.swift` names the attached zip. `KuicksilverInfo.VERSION` in the xcframework is now the version it was built
@@ -436,6 +436,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   version it releases the release in preparation.
 
 ### Changed
+
+- Kotlin/Native klibs record source paths relative to the repository (`-Xklib-relative-path-base`) instead of the
+  absolute paths of the machine that built them, in their debug information and in the symbol names Kotlin/Native
+  derives from file paths, so a build no longer depends on (or reveals) the checkout directory.
 
 - Release provenance: from 0.3.0 the GitHub release carries `kuicksilver-<version>.intoto.jsonl`, an in-toto
   attestation bundle (JSON Lines) whose one DSSE envelope holds the SLSA provenance statement and is signed by the release

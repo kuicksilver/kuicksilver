@@ -343,8 +343,9 @@ therefore be in the tagged commit, and the tag goes on the release commit, which
   the gate ran on and the provenance names, and `verify-release.sh` compares exactly those.
 - **The checksum in the release commit, from a reproducible build** (chosen). The zip depends only on the Kotlin and C
   sources, the build scripts, `gradle/` and the pinned OpenSSL and Xcode: no commit hash, no timestamp (fixed zip
-  timestamps and order, the slices sorted in the xcframework's `Info.plist`, the dSYMs naming sources relative to the
-  checkout with `-Xdebug-prefix-map`). The release commit changes none of them, so `xcframework.sh --write` on the tree
+  timestamps and order, the slices sorted in the xcframework's `Info.plist`, source paths relative to the checkout in
+  the klibs, the symbol names derived from them and the dSYMs: `-Xklib-relative-path-base`, `-Xdebug-prefix-map`; two
+  checkouts in different directories gave the same checksum). The release commit changes none of them, so `xcframework.sh --write` on the tree
   just before the commit gives the zip the release builds again from the freshly built OpenSSL, and `local-release.sh`
   refuses the release if the two checksums differ: a published `Package.swift` never names a zip that is not attached.
 

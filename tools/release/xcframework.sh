@@ -12,7 +12,8 @@
 # of them, so the zip built for the release commit equals the one built from the tree just before it:
 #   --write   sets the URL (tag v<version>) and the checksum in Package.swift (step 2 of "Every release", before the commit)
 #   --check   exits 3 when Package.swift does not name exactly that URL and checksum (local-release.sh, after its build)
-# Without either it only builds and prints. Build it in the checkout the release runs from: the dSYMs record source paths.
+# Without either it only builds and prints. Any checkout directory gives the same zip: source paths are relative to it
+# (-Xklib-relative-path-base in kuicksilver.kmp.gradle.kts, -Xdebug-prefix-map in the umbrella's build).
 #
 # Usage: tools/release/xcframework.sh <version> [--write | --check] [--gradle-arg <arg>]...
 # Env: KSL_GRADLE  the Gradle launcher (default ./gradlew --max-workers=2), as for local-release.sh

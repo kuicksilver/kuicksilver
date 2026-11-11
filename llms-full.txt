@@ -5643,7 +5643,8 @@ tools/release/xcframework.sh 0.3.0
 #   build/release/Kuicksilver.xcframework.zip and its SwiftPM checksum (what `swift package compute-checksum` prints)
 ```
 
-The zip is reproducible on the same toolchain: the dSYMs name the sources relative to the checkout, the zip has fixed
+The zip is reproducible on the same toolchain: the klibs, the symbols and the dSYMs name the sources relative to the
+checkout, the zip has fixed
 timestamps and order, and the slices are listed in a fixed order, so the same commit and Xcode give the same checksum
 in any checkout directory. Only the native libraries inside are compared with an independent rebuild by
 `verify-release.sh` ([Which native libraries are reproducible](https://github.com/kuicksilver/kuicksilver/blob/main/docs/verifying.md#which-native-libraries-are-reproducible));

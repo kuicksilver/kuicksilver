@@ -83,7 +83,9 @@ tasks.matching { it.name.startsWith("assembleKuicksilver") && it.name.endsWith("
         outputs.files.files.flatMap { it.walkTopDown().filter { f -> f.isFile && f.extension == "yml" && f.path.contains(".dSYM/") }.toList() }
             .forEach { it.writeText(it.readText().replace("$repositoryRoot/", "")) }
         // xcodebuild -create-xcframework lists the slices in no fixed order; sort them so the zip's checksum is stable
-        outputs.files.files.map { it.resolve("Kuicksilver.xcframework/Info.plist") }.filter { it.isFile }.forEach { sortSlices(it) }
+        val plists = outputs.files.files.flatMap { it.walkTopDown().filter { f -> f.name == "Info.plist" && f.parentFile.name == "Kuicksilver.xcframework" }.toList() }
+        check(plists.isNotEmpty()) { "no Kuicksilver.xcframework/Info.plist in ${outputs.files.files}" }
+        plists.forEach { sortSlices(it) }
     }
 }
 

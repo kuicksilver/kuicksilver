@@ -115,6 +115,14 @@ kotlin {
     macosArm64()   // macosX64 dropped 2026-10-09 (owner decision): deprecated by Kotlin, never tested; the JVM on Intel Macs keeps its JNI library
     iosArm64(); iosSimulatorArm64()
     mingwX64()
+    // klibs record source paths relative to the checkout: in their debug information and in the names Kotlin/Native derives
+    // from file paths (ObjC block bridges), so the published klibs and Kuicksilver.xcframework do not depend on, or reveal,
+    // where the checkout was (tools/release/xcframework.sh relies on it for the SwiftPM checksum)
+    targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+        compilations.configureEach {
+            compileTaskProvider.configure { compilerOptions.freeCompilerArgs.add("-Xklib-relative-path-base=${rootDir.canonicalPath}") }
+        }
+    }
 
     // internal API is not part of the public ABI, so it stays out of the ABI dumps. annotatedWith drops the annotated
     // declarations; in the JVM dumps it keeps their companions and nested classes, so the top-level internal classes are
