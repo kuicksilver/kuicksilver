@@ -935,6 +935,33 @@ class H2RuntimeTest {
             s.release()
         }
 
+    /**
+     * A server that stops reading while our writer is blocked on the transport: once the connection is over (here a
+     * connection error), the client closes the transport within a bound instead of waiting for the writer for good (the
+     * connection, its socket and its slot in the pool would stay).
+     */
+    @Test fun negative_finalDrainToAServerThatStoppedReadingIsBounded() =
+        runTest {
+            val (srv, deferred) = raw()
+            // windows that let the body go as fast as the client writes it (RFC 9113 sections 6.5.2, 6.9)
+            srv.settings(4 to Int.MAX_VALUE.toLong())
+            srv.write(FrameEncoder.windowUpdate(0, Int.MAX_VALUE - 65_535))
+            val client = deferred.await()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            backgroundScope.launch {
+                runCatching { s.sendBody(ByteReadChannel(ByteArray(8 shl 20)), stallMillis = null) { error("stall") } }
+            }
+            runCurrent() // the writer fills the transport (the server reads nothing) and waits in it
+            // PING with a 4-byte payload: FRAME_SIZE_ERROR, a connection error (RFC 9113 section 6.7)
+            srv.write(byteArrayOf(0, 0, 4, 6, 0, 0, 0, 0, 0, 1, 2, 3, 4))
+            runCurrent()
+            assertFalse(client.isClosed, "the writer still waits in the transport")
+            advanceTimeBy(3_000)
+            runCurrent()
+            assertTrue(client.isClosed, "the transport was closed within the bound")
+        }
+
     @Test fun negative_serverHpackBombFailsTheRequestOnly() =
         runTest {
             val (srv, deferred) = raw()

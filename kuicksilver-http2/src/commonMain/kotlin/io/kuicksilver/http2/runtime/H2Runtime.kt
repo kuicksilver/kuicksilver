@@ -610,6 +610,13 @@ internal class H2Runtime(
         for (s in left) fail(s, cause) // a complete response stays complete (fail keeps it)
         onChange()
         kick.trySend(Unit) // the writer drains what is left, then closes the transport
+        if (client) {
+            // a server that stopped reading would hold the writer, and with it the transport and the pool's slot, for good:
+            // the drain is bounded as for [lost] in order (a server bounds it by the engine's send-stall deadline instead)
+            scope.launch(CoroutineName("kuicksilver-h2-close")) {
+                if (withTimeoutOrNull(IN_ORDER_CLOSE_BOUND) { closed.await() } == null) closeTransportOnce(graceful = false)
+            }
+        }
     }
 
     /** Fails [s] with [cause] unless it already failed; a response read to its end stays complete. */

@@ -637,6 +637,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 client: a connection whose protocol was over (after GOAWAY its last stream ended, or a connection error) kept
+  its socket and its place under `maxConnectionsPerRoute` until the engine closed when the server had stopped reading
+  while our writer waited on the socket: nothing bounded the writing of what was left (with the default `pingInterval`,
+  no PING notices it). The transport is now closed hard 2 s after the connection's end when the writer has not finished
+  by then, as it already was for a connection whose PING went unanswered.
 - HTTP/2 server: a request whose field section was above `maxHeaderListSize` (answered 431, RFC 9113 section 8.2) took
   the whole connection down, or failed an unrelated call, when its stream could no longer send by the time the request
   was handled: the client reset the stream in the same read, a later error in that read closed it, or the client's own
