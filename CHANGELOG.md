@@ -637,6 +637,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2: an invalid connection preface whose first frame the decoder refused (an HTTP/1.1 answer, whose "HTT" reads
+  as a frame length above the limit, or a PING of 7 bytes) ended the connection with FRAME_SIZE_ERROR; RFC 9113 section
+  3.4 makes any invalid preface a PROTOCOL_ERROR. Only a malformed SETTINGS frame keeps FRAME_SIZE_ERROR (section 6.5).
 - HTTP/2 server: response heads and trailers were never checked before they were sent, and HPACK wrote a character
   above U+00FF as its low byte: a value with U+010D, U+010A or U+0100 (`call.response.header("X-Name", "č")`) went out
   with a CR, LF or NUL inside, a name with DEL or a byte above 0x7F passed, and `HttpStatusCode(42, …)` went out as

@@ -35,6 +35,9 @@ internal class FrameDecoder(
     var allocatedBytes: Long = 0
         private set
 
+    /** The type of the frame whose header was read last (also after [feed] threw for it). */
+    val lastFrameType: Int get() = type
+
     /** True while a frame is partly read (its header or payload): the input ended inside a frame. */
     val inFrame: Boolean get() = headLen > 0
 
