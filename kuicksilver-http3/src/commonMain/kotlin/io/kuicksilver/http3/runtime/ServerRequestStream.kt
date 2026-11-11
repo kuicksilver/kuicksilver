@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.incrementAndFetch
 
 /** A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). */
@@ -208,7 +209,8 @@ internal suspend fun handleRequestStream(
         // describe (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2)
         val bodyLimit = if (parsed.method == "CONNECT") null else contentLength(parsed.regular)
         pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, bodyLimit, tunnel = { req.tunnel }) { f ->
-            if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
+            // the 431 claims the response on this dispatcher first: an application's respond() meanwhile finds it taken
+            if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && req.claimResponseFor431()) reject431(st) else abort(st, f.code)
             req.done()
         }
         req.receiveEnded()
@@ -244,6 +246,7 @@ private suspend fun H3Session.reject431(st: QuicStream) {
     runCatching {
         st.stopSending(Http3ErrorCode.EXCESSIVE_LOAD)
         st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildResponse(431, Http3Headers.Empty)))
+        afterReject431HeadersForTest?.invoke(st)
         st.output.flushAndClose()
     }
     runCatching { cancelSections(st) }
@@ -295,9 +298,37 @@ internal class ServerRequestImpl(
 
     /** The client's address now: the live active path, read at request time; the session's last seen one only when none is left. */
     override val remoteAddress: InetSocketAddress get() = session.quic.activePath?.remoteAddress ?: session.currentPath.remoteAddress
-    var responseStarted: Boolean = false
+
+    /** Set on the session's dispatcher ([respond], [claimResponseFor431]); read elsewhere only as a hint. */
+    @Volatile var responseStarted: Boolean = false
         private set
     private var finished = false
+
+    /** The runtime answered 431 itself (request trailers above our limit, RFC 9114 section 4.2.2). */
+    private var answered431 = false
+
+    /**
+     * The runtime's 431 takes the response unless the application's started first. Session dispatcher only, as is the
+     * application's own claim in [respond]: two final responses never reach the stream.
+     */
+    fun claimResponseFor431(): Boolean {
+        if (responseStarted || finished) return false
+        answered431 = true
+        responseStarted = true // after: whoever sees it started sees why
+        return true
+    }
+
+    /** The request's own fault ([answered431]): an I/O failure of this exchange, as its trailers are to the application. */
+    private fun checkNotAnswered431() {
+        if (answered431) throw Http3Exception.FieldSectionTooLarge(st.id, session.settings.maxFieldSectionSize)
+    }
+
+    /** Session dispatcher only: the final response can still be sent. */
+    private fun checkResponseOpen() {
+        checkNotAnswered431()
+        check(!responseStarted) { "response already started" }
+        check(!finished) { "request is finished" }
+    }
 
     /** The exchange is over (response sent, both tunnel directions ended, or stream aborted): counts once towards the GOAWAY idle close. */
     fun done() {
@@ -431,8 +462,9 @@ internal class ServerRequestImpl(
         headers: Http3Headers,
     ) {
         require(status in 100..199 && status != 101) { "interim status must be 1xx other than 101" }
-        check(!responseStarted) { "the final response was already sent" }
         withContext(session.dispatcher) {
+            checkNotAnswered431()
+            check(!responseStarted) { "the final response was already sent" }
             writeHeaders(status, headers)
             try {
                 st.output.flush()
@@ -452,7 +484,10 @@ internal class ServerRequestImpl(
         priority: StreamPriority?,
     ): Http3ResponseWriter {
         require(status in 200..599) { "final status must be 200..599" }
-        check(!responseStarted) { "response already started" }
+        if (responseStarted) { // a hint; the claim below is on the dispatcher
+            checkNotAnswered431()
+            throw IllegalStateException("response already started")
+        }
         check(!finished) { "request is finished" }
         // a rejected field or a failed write never leaves the stream half-open: it is reset with H3_INTERNAL_ERROR and the exchange ends
         try {
@@ -461,9 +496,11 @@ internal class ServerRequestImpl(
             withContext(session.dispatcher) { abortInternal() }
             throw e
         } // done() touches session state: on its dispatcher
-        responseStarted = true
-        tunnel = method == "CONNECT" && status in 200..299
         return withContext(session.dispatcher) {
+            // claimed here, where the runtime's own 431 claims it ([claimResponseFor431]) and the body pump reads [tunnel]
+            checkResponseOpen()
+            responseStarted = true
+            tunnel = method == "CONNECT" && status in 200..299
             // an explicit priority wins; else the response's own `priority` field merged into the stream's current schedule
             // (RFC 9218 section 8: a parameter it leaves out keeps that value), as h2o does: the client's signal, or for an
             // unsignalled tunnel its incremental default (sections 10.1, 11), which a field like `u=1` then keeps

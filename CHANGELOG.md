@@ -637,6 +637,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: when request trailers above `maxFieldSectionSize` arrived while the application called `respond()`,
+  both could answer: the runtime's 431 and the application's response went out as two final responses on one stream (a
+  malformed response, to the client that sent the oversized trailers). The response is now taken on the connection's
+  dispatcher by whichever comes first; a `respond()` after the 431 fails with `Http3Exception.FieldSectionTooLarge`, as
+  the request's trailers do.
 - HTTP/3 server: a request that came in 0-RTT and was answered 425 under `Http3EarlyDataPolicy.Reject425`, or was held
   for a handshake that then failed, stayed registered until the connection ended: its stream, its PRIORITY_UPDATE
   routing and, for an Extended CONNECT, its datagram channel. It is now forgotten when it is answered or dropped.
