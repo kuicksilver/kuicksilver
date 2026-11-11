@@ -294,11 +294,13 @@ public class Bbr(
     ) {
         bytesInFlight -= lostBytes
         if (persistentCongestion) {
-            // OnEnterRTO (section 5.6.4.4): "BBR conservatively reduces C.cwnd to a value that will allow 1 C.SMSS to be
-            // transmitted", C.cwnd = C.inflight + 1, floored at BBR.MinPipeCwnd as SetCwnd does (section 5.6.4.6). RFC 9002's
-            // kMinimumWindow (section 7.6.2) is its NewReno controller's response. The loss state was saved when the episode began
+            // RFC 9002 section 7.6.2: "When persistent congestion is declared, the sender's congestion window MUST be reduced to
+            // the minimum congestion window", for BBR BBR.MinPipeCwnd (4 datagrams: SetCwnd never goes below it, section 5.6.4.6).
+            // OnEnterRTO (section 5.6.4.4, C.cwnd = C.inflight + 1 SMSS) would keep more when more is in flight. From there SetCwnd
+            // adds what each ACK delivers, and RestoreCwnd brings the saved window back when the RTO recovery ends. The loss state
+            // was saved when the episode began
             saveCwnd()
-            cwnd = maxOf(sat(bytesInFlight, mss.toLong()), minPipeCwnd)
+            cwnd = minPipeCwnd
             // an RTO recovery, which ends "by repairing all losses" (section 5.6.4.4): once a packet sent from now on is
             // acknowledged (the path carries data again) and every loss declared up to now is settled (acknowledged late, or
             // past the persistent congestion period while its data went again in packets sent since); losses declared later do

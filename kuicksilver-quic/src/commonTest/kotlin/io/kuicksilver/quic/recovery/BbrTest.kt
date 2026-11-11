@@ -300,22 +300,20 @@ class BbrTest {
 
     /**
      * Persistent congestion is BBR's retransmission timeout (RFC 9002 section 7.6.2: "similar to a TCP sender's response on
-     * an RTO"). draft-ietf-ccwg-bbr-06 section 5.6.4.4: "Upon a retransmission timeout (RTO), BBR conservatively reduces
-     * C.cwnd to a value that will allow 1 C.SMSS to be transmitted", `OnEnterRTO(): ... C.cwnd = C.inflight + 1`, and
-     * SetCwnd's floor `C.cwnd = max(C.cwnd, BBR.MinPipeCwnd)` (4 packets). RFC 9002's kMinimumWindow belongs to its NewReno
-     * controller (section 7: "If a sender uses a different controller than that specified in this document, the chosen
-     * controller MUST conform to the congestion control guidelines specified in Section 3.1 of [RFC8085]").
+     * an RTO"), and "When persistent congestion is declared, the sender's congestion window MUST be reduced to the minimum
+     * congestion window": for BBR BBR.MinPipeCwnd, the floor of SetCwnd (draft-ietf-ccwg-bbr-06 section 5.6.4.6, 4 packets).
+     * OnEnterRTO's C.cwnd = C.inflight + 1 (section 5.6.4.4) used to keep six datagrams here, with five still in flight.
      */
-    @Test fun persistentCongestionLeavesRoomForOneDatagramAboveTheFlight() {
+    @Test fun persistentCongestionCollapsesToTheMinimumWindow() {
         val t = TimeMark(1_000_000_000L)
         val cc = bbr()
         inFlight(cc, t, 10)
         cc.onLoss(t + 1.seconds, 5 * 1200, t, persistentCongestion = true) // five datagrams still in flight
-        assertEquals(6L * 1200, cc.cwnd, "C.inflight + 1 SMSS")
+        assertEquals(4L * 1200, cc.cwnd, "BBR.MinPipeCwnd, whatever is still in flight")
         val few = bbr()
         inFlight(few, t, 10)
         few.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
-        assertEquals(4L * 1200, few.cwnd, "BBR.MinPipeCwnd is the floor")
+        assertEquals(4L * 1200, few.cwnd)
     }
 
     /**
