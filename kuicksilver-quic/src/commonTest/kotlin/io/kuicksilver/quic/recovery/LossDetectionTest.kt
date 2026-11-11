@@ -315,6 +315,25 @@ class LossDetectionTest {
         assertEquals(TimeMark.NEVER, srv.timeout(), "server never arms a timer without packets in flight")
     }
 
+    @Test fun clientAntiDeadlockPtoWithOnlyZeroRttInFlight() {
+        // RFC 9002 section 6.2.2.1: "the client MUST set the PTO timer if the client has not received an acknowledgment for any of
+        // its Handshake packets and the handshake is not confirmed ..., even if there are no packets in flight". The server
+        // acknowledged the ClientHello, its Handshake flight was lost; the client's 0-RTT packets are in flight, but their
+        // acknowledgements come in 1-RTT packets it cannot read yet, and the Application space arms no PTO before confirmation
+        val (ld, _) = ld(TlsRole.Client)
+        send(ld, SpaceId.Initial, 0, t0)
+        for (pn in 0L..2L) send(ld, SpaceId.Application, pn, t0)
+        ld.onAck(SpaceId.Initial, ack(0L to 0L), t0 + 50.milliseconds)
+        assertNotEquals(TimeMark.NEVER, ld.timeout(), "the anti-deadlock PTO is armed")
+        val probe = ld.onTimeout(ld.timeout())
+        assertNotNull(probe)
+        assertEquals(SpaceId.Initial, probe.space, "no Handshake keys yet: an Initial probe")
+        ld.handshakeKeysAvailable = true
+        assertEquals(SpaceId.Handshake, assertNotNull(ld.onTimeout(ld.timeout())).space)
+        ld.peerAddressValidated = true
+        assertEquals(TimeMark.NEVER, ld.timeout(), "once the server validated the address, 0-RTT alone arms nothing before confirmation")
+    }
+
     @Test fun persistentCongestionDuration975ms() {
         val (ld, _) = ld()
         sample(ld, 100.milliseconds)

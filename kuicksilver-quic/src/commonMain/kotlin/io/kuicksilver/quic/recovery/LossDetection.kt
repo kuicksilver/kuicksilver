@@ -622,8 +622,14 @@ internal class LossDetection(
 
     private fun ptoTimeAndSpace(): TimeMark {
         if (amplificationBlocked?.invoke() == true) return TimeMark.NEVER
+        // Application packets arm no PTO before the handshake is confirmed (section 6.2.1), so 0-RTT or 1-RTT packets in flight
+        // must not stand in for the Initial and Handshake ones: a client whose only ack-eliciting packets are 0-RTT, whose 1-RTT
+        // acknowledgements it cannot read yet, would arm no timer at all (appendix A.8 counts every space; section 6.2.2.1 rules)
         var anyElicitingInFlight = false
-        for (i in spaces.indices) if (spaces[i].ackElicitingInFlight > 0) anyElicitingInFlight = true
+        for (i in spaces.indices) {
+            val sp = spaces[i]
+            if (sp.ackElicitingInFlight > 0 && (sp.id != SpaceId.Application || handshakeConfirmed)) anyElicitingInFlight = true
+        }
         if (!anyElicitingInFlight) { // padding-only packets count as in flight but elicit nothing
             if (peerCompletedAddressValidation()) return TimeMark.NEVER
             // client before the server validated its address: arm a PTO anyway so a lost flight is repaired (anti-deadlock, section 6.2.2.1)
