@@ -144,9 +144,6 @@ internal class LossDetection(
 
     var handshakeConfirmed: Boolean = false
 
-    /** When the connection took its first RTT sample (or the newest one after persistent congestion), [TimeMark.NEVER] before. */
-    private var firstRttSampleTime: TimeMark = TimeMark.NEVER
-
     /** Client: the server has received a Handshake packet from us (our address is validated); server: always relevant through [handshakeConfirmed]. */
     var peerAddressValidated: Boolean = false
     var ptoCount: Int = 0
@@ -268,7 +265,7 @@ internal class LossDetection(
                     }
                 } // saturate: a peer-chosen value must not wrap
             rtt.onSample(now - largestNewlyAcked.timeSent, ackDelay, handshakeConfirmed, peerMaxAckDelay)
-            if (firstRttSampleTime == TimeMark.NEVER) firstRttSampleTime = now
+            if (rtt.persistentCongestionFrom == TimeMark.NEVER) rtt.persistentCongestionFrom = now
             listener.onRttSample(now, rtt.latest, rtt.min)
         }
         // RFC 9000 section 13.4.2.1: only an ACK that raises the largest acknowledged packet carries counts newer than the last ones
@@ -562,7 +559,7 @@ internal class LossDetection(
             // RFC 9002 section 5.2: min_rtt restarts from the newest sample, and (as ngtcp2) a new persistent congestion period
             // needs packets sent after it, so a lasting RTT increase is not declared persistent congestion again and again
             rtt.onPersistentCongestion()
-            firstRttSampleTime = now
+            rtt.persistentCongestionFrom = now
         }
     }
 
@@ -578,13 +575,14 @@ internal class LossDetection(
         pcc: io.kuicksilver.quic.CongestionController?,
         duration: Duration,
     ): Boolean {
-        if (!rtt.hasSample || firstRttSampleTime == TimeMark.NEVER) return false
+        val from = rtt.persistentCongestionFrom
+        if (!rtt.hasSample || from == TimeMark.NEVER) return false
         var runStart = TimeMark.NEVER
         var prevPn = -1L
         for (k in lost.indices) {
             val p = lost[k]
             if (!p.ackEliciting || !p.inFlight || p.pmtuProbe || p.pathId != pid || p.cc !== pcc) continue
-            if (p.timeSent < firstRttSampleTime) continue
+            if (p.timeSent < from) continue
             if (runStart == TimeMark.NEVER || sp.anyAckedBetween(prevPn, p.pn)) runStart = p.timeSent
             prevPn = p.pn
             if (p.timeSent - runStart > duration) return true

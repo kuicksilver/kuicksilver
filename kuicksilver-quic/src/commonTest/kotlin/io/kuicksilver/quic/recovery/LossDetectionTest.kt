@@ -641,6 +641,21 @@ class LossDetectionTest {
         assertEquals(listOf("0:true", "1:false"), l.lossByPath)
     }
 
+    @Test fun persistentCongestionWaitsForTheNewPathsFirstRttSample() {
+        // RFC 9002 section 7.6.2: "a prior RTT sample existed when these two packets were sent". After a migration to a new address
+        // the new path has its own estimator without a sample: its packets lost before that path's first sample do not establish
+        // persistent congestion just because the old path had one (the first-sample time was per connection)
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        ld.rtt = RttEstimator(333.milliseconds)
+        ld.activePath = 1
+        for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, pathId = 1)
+        ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds)
+        assertEquals(listOf("1:false"), l.lossByPath, "no sample of the new path existed when its lost packets were sent")
+    }
+
     @Test fun persistentCongestionResetsMinRttToTheNewestSample() {
         // RFC 9002 section 5.2: "Endpoints SHOULD set the min_rtt to the newest RTT sample after persistent congestion is established"
         val (ld, _) = ld()
