@@ -150,10 +150,20 @@ class ZeroRttTest {
         assertNull(rememberedApplication(plain))
         val app = byteArrayOf(1, 2, 3)
         val blob = withApplication(plain, app)
-        assertContentEquals(app, rememberedApplication(blob))
+        assertContentEquals(app, rememberedApplication(blob!!))
         assertEquals(1234L, rememberedParameters(blob)!!.third.initialMaxData)
         assertEquals("h3", rememberedParameters(blob)!!.second)
         val tp2 = TransportParametersCodec.encode(TransportParameters().also { it.initialMaxData = 99 }, TlsRole.Server, 27)
+        // a blob that is not ours (`remembered` is public) is left alone, never a failure on the loop
+        for (foreign in listOf(
+            ByteArray(0),
+            byteArrayOf(1, 2, 3),
+            byteArrayOf(0, 0, 0, 1, 9, 'h'.code.toByte()),
+            byteArrayOf(0, 0, 0, 1, 0, 0, 0, 0, 9),
+        )) {
+            assertNull(withApplication(foreign, app))
+            assertNull(rememberedApplication(foreign))
+        }
         val replaced = withTp(blob, tp2)
         assertContentEquals(app, rememberedApplication(replaced))
         assertEquals(99L, rememberedParameters(replaced)!!.third.initialMaxData)

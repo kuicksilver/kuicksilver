@@ -645,6 +645,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   arrive (a stored SETTINGS_MAX_FIELD_SECTION_SIZE bounds the early requests). When the server accepted 0-RTT and then
   sends SETTINGS that lower a stored value, change a non-zero SETTINGS_QPACK_MAX_TABLE_CAPACITY or omit a value stored
   as non-default, the connection ends with H3_SETTINGS_ERROR. Before, the client stored nothing and used the defaults.
+  A ticket whose `remembered` bytes the application replaced with its own is left as it is.
 - HTTP/3 server: a response abandoned because a response field or its trailers were refused (or its head could not be
   written) was reset with H3_INTERNAL_ERROR; RFC 9114 section 4.1.1 says a server that abandons a response after partial
   processing SHOULD use H3_REQUEST_CANCELLED, which it now does, as for a failed body.

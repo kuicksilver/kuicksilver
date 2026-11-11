@@ -157,10 +157,17 @@ internal fun withTp(
     tp: ByteArray,
 ): ByteArray = rememberedBlob(rememberedVersion(blob), rememberedAlpn(blob), tp, rememberedApplication(blob))
 
+/**
+ * [blob] with [application] kept after its parameters, or null when [blob] is no blob of ours (`remembered` is public:
+ * an application may have set anything there), which is then left as it is.
+ */
 internal fun withApplication(
     blob: ByteArray,
     application: ByteArray?,
-): ByteArray = rememberedBlob(rememberedVersion(blob), rememberedAlpn(blob), rememberedTp(blob), application)
+): ByteArray? {
+    tpBounds(blob) ?: return null
+    return rememberedBlob(rememberedVersion(blob), rememberedAlpn(blob), rememberedTp(blob), application)
+}
 
 /** Server: hands the TLS session the context and an admission backed by the replay register at its clock. */
 internal fun ConnectionCore.enableServerEarlyData(early: ServerEarlyData) {

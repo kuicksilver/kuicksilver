@@ -402,10 +402,10 @@ public class ConnectionCore internal constructor(
     /** Client, on the loop: a ticket arrived; it keeps [applicationRemembered] too, now or once it is set. */
     internal fun ticketReceived(ticket: io.kuicksilver.tls.QuicSessionTicket) {
         applicationRemembered?.let { app ->
-            ticket.remembered?.let {
-                ticket.remembered =
-                    io.kuicksilver.quic.core
-                        .withApplication(it, app)
+            ticket.remembered?.let { blob ->
+                io.kuicksilver.quic.core
+                    .withApplication(blob, app)
+                    ?.let { ticket.remembered = it }
             }
         }
         ticketsReceived.addLast(ticket)
@@ -420,10 +420,11 @@ public class ConnectionCore internal constructor(
         applicationRemembered = data
         for (t in ticketsReceived) {
             if (!t.closed) {
-                t.remembered?.let {
-                    t.remembered =
-                        io.kuicksilver.quic.core
-                            .withApplication(it, data)
+                // a blob that is not ours (the application set it) stays as it is
+                t.remembered?.let { blob ->
+                    io.kuicksilver.quic.core
+                        .withApplication(blob, data)
+                        ?.let { t.remembered = it }
                 }
             }
         }
