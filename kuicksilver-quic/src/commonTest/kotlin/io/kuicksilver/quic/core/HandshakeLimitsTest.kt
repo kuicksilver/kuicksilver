@@ -207,7 +207,7 @@ class HandshakeLimitsTest {
         val p = CorePair()
         try {
             assertTrue(p.handshake())
-            p.client.testInjectCrypto = Triple(3, 0L, 70_000)
+            p.client.testInjectCrypto = Triple(3, 1L, 70_000) // a gap at 0: TLS can read none of it
             p.runUntil(limit = 500.milliseconds) {
                 p.closedReason(p.serverEvents) !=
                     null
@@ -217,6 +217,29 @@ class HandshakeLimitsTest {
             assertEquals(0x0dL, r.code)
         } finally {
             p.close()
+        }
+    }
+
+    /**
+     * 0.3.0 cross-review, RFC 9000 section 7.5: the post-handshake CRYPTO budget counted every byte received, duplicates
+     * included, and never refilled, so a long-lived client was closed with CRYPTO_BUFFER_EXCEEDED after 64 KiB of tickets and
+     * retransmissions over its life. Only bytes TLS has not read count; past the cap it is still CRYPTO_BUFFER_EXCEEDED.
+     */
+    @Test fun postHandshakeCryptoCapCountsOnlyUnreadBytes() {
+        val c = CryptoStreams(io.kuicksilver.quic.QuicLimits())
+        val frame = PacketBuffer.of(ByteArray(1000))
+        try {
+            var read = 0L
+            for (i in 0 until 100) {
+                repeat(3) { c.onData(3, i * 1000L, frame, 0, 1000, handshakeDone = true) } // and two retransmissions
+                c.deliver(3) { _, n -> read += n }
+            }
+            assertEquals(100_000L, read, "100 KB of tickets and their retransmissions, each read by TLS")
+            for (i in 0 until 65) c.onData(3, 100_000L + i * 1000L, frame, 0, 1000, handshakeDone = true) // 65,000 bytes unread
+            val e = assertFailsWith<QuicWireException> { c.onData(3, 165_000L, frame, 0, 1000, handshakeDone = true) }
+            assertEquals(0x0dL, e.code, "past 64 KiB unread: CRYPTO_BUFFER_EXCEEDED")
+        } finally {
+            frame.close()
         }
     }
 

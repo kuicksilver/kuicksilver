@@ -493,9 +493,11 @@ internal class StreamManager(
             peerStream(id, 0x04, receiving = true) ?: return
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x04, "RESET_STREAM on our send-only stream $id")
+        val was = r.state
         connReceived += r.onReset(code, finalSize, connFlow, connReceived)
         creditConnection(r.abandon())
-        events += ConnectionEvent.StreamReset(id, code)
+        // once, on the move to Reset Recvd: a repeat (a retransmission) or a reset after all data was read changes nothing to report
+        if (was != RecvState.ResetRecvd && r.state == RecvState.ResetRecvd) events += ConnectionEvent.StreamReset(id, code)
         if (r.stopped) maybeClose(id) // a stopped half has no reader to surface the reset to
     }
 

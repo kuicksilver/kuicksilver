@@ -134,6 +134,22 @@ class StreamStateTest {
         assertNull(m.invariantViolationForTest())
     }
 
+    /**
+     * 0.3.0 cross-review: every RESET_STREAM raised a StreamReset event, so a flood of copies cost an event and a runtime
+     * dispatch each, and a stream whose data was all read reported a reset. The event comes once, on the move to Reset Recvd.
+     */
+    @Test fun negative_repeatedResetRaisesOneEvent() {
+        val m = manager(TlsRole.Server)
+        repeat(100) { m.onResetStream(0, 1, 10) }
+        assertEquals(1, m.events.count { it is ConnectionEvent.StreamReset && it.id == 0L })
+        m.events.clear()
+        recv(m, 4, 0, ByteArray(10), fin = true)
+        assertEquals(10, m.read(4, ByteArray(10), 0, 10))
+        assertEquals(-1, m.read(4, ByteArray(10), 0, 10)) // Data Read
+        m.onResetStream(4, 1, 10)
+        assertTrue(m.events.none { it is ConnectionEvent.StreamReset }, "a reset after Data Read is ignored: ${m.events}")
+    }
+
     /** draft-ietf-quic-reliable-stream-reset-11 section 5.2: once RESET_STREAM_AT is in play, a changed code is an error. */
     @Test fun negative_changedCodeAfterResetStreamAtIsStreamStateError() {
         val m = manager(TlsRole.Server)

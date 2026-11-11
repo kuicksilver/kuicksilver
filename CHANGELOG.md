@@ -637,6 +637,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: after the handshake, every CRYPTO byte received counted toward a 64 KiB budget that never refilled,
+  retransmissions included, so a long-lived client connection to a server that resends or reissues NewSessionTickets
+  was closed with CRYPTO_BUFFER_EXCEEDED. The limit is now on bytes buffered that TLS has not read (RFC 9000 section
+  7.5: the error is for an endpoint "unable to buffer all data in a CRYPTO frame"). Every RESET_STREAM raised a
+  `ConnectionEvent.StreamReset`, copies and resets after all the data was read too; the event now comes once, when the
+  receive half moves to Reset Recvd.
 - QUIC: connection IDs. A peer that retired every connection ID it was given got a replacement for each at once, so
   each 2-byte RETIRE_CONNECTION_ID made the endpoint draw a new ID (with QUIC-LB, a nonce of a space every endpoint of
   the process that uses the key shares). A retirement is now replaced at once while at most twice the IDs the connection
