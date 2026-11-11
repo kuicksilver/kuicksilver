@@ -42,7 +42,8 @@ public class Http3Endpoint private constructor(
      * Opens a client connection to [remote]; the handshake and our SETTINGS are done when this returns, unless the server
      * sent GOAWAY first (it is stopping): the connection is then returned with [Http3Connection.goAwayReceived] set and
      * already closing, and a request on it fails with [Http3Exception.RequestNotProcessed] (retry-safe, RFC 9114 section
-     * 5.2).
+     * 5.2). Any other connection error that ends HTTP/3 before this returns (for example a malformed control
+     * stream from the server) is thrown as [Http3Exception], and the QUIC connection is closed.
      */
     public suspend fun connect(
         remote: InetSocketAddress,
@@ -66,7 +67,9 @@ public class Http3Endpoint private constructor(
      * As [connect] with 0-RTT (ADR-0015): resumes a ticket this endpoint kept from an earlier connection to the same
      * server and returns as soon as 0-RTT keys exist. Requests with `allowEarlyData` (safe methods without a body) then
      * go out in 0-RTT; every other request waits for the handshake. [earlyData] must not be [EarlyDataState.Disabled].
-     * Early requests can be replayed by an attacker (RFC 9846 section 8).
+     * Early requests can be replayed by an attacker (RFC 9846 section 8). A connection error that ends HTTP/3 before this
+     * returns is thrown as [Http3Exception], like [connect]'s; with 0-RTT accepted that includes H3_SETTINGS_ERROR when the
+     * server's SETTINGS are not compatible with the ones stored with the ticket (RFC 9114 section 7.2.4.2).
      */
     @ExperimentalKuicksilverApi
     public suspend fun connectEarly(
