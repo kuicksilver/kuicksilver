@@ -139,6 +139,10 @@ yet, so nothing requires a hosted run to be green before a change lands; the hos
 - [`codeql.yml`](../.github/workflows/codeql.yml): CodeQL security queries over the C shim and the Kotlin JVM code, on
   pull requests and pushes to `main` and `release/**`, and weekly;
 - [`scorecard.yml`](../.github/workflows/scorecard.yml): OpenSSF Scorecard, weekly and on pushes to `main`;
+- [`gradle-wrapper.yml`](../.github/workflows/gradle-wrapper.yml): `gradle/wrapper/gradle-wrapper.jar` must be the jar
+  of an official Gradle release (Gradle's wrapper-validation action), on pull requests and pushes to `main` and
+  `release/**`; a single short job, because Scorecard's Binary-Artifacts check accepts the checked-in jar only when such
+  a workflow has a successful run for the newest commit of `main`;
 - [`perf.yml`](../.github/workflows/perf.yml): the interop runner's throughput measurements against the floors of
   `tools/interop/perf-thresholds.json`, by hand only (shared runners are too noisy for a weekly verdict; the workflow
   is disabled in the repository settings until the maintainer enables it again); the floors warn and do not fail yet;

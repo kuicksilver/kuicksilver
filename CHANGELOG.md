@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the checksums differ, signs it and lists it in the provenance; `verify-release.sh` checks that the tag's
   `Package.swift` names the attached zip. `KuicksilverInfo.VERSION` in the xcframework is now the version it was built
   as, not the `-SNAPSHOT` fallback.
+- CI: `.github/workflows/gradle-wrapper.yml` validates `gradle/wrapper/gradle-wrapper.jar` against the official Gradle
+  releases (Gradle's wrapper-validation action) on every push and pull request to `main` and `release/**`.
 
 - Documentation site: the API reference of the published modules (Dokka HTML, with module and package descriptions,
   source links to the release tag and links into the kotlinx-coroutines, kotlinx-io and Ktor references) and the guide
