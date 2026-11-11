@@ -429,6 +429,47 @@ class ZeroRttTest {
         }
     }
 
+    /**
+     * 0.3.0 cross-review, RFC 9000 section 7.4.1: "a client MUST only use remembered transport parameters" in 0-RTT. The
+     * server's new reset_stream_at was applied as soon as its EncryptedExtensions arrived, so with the Finished still missing
+     * a RESET_STREAM_AT could leave in a 0-RTT packet on an offer the ticket did not carry. The remembered offer counts until
+     * 1-RTT, the new one after.
+     */
+    @Test fun negative_zeroRttUsesTheRememberedResetStreamAt() {
+        val withAt = quicConfig { resetStreamAt = true }
+        val t = ticket(clientQuic = withAt)
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        assertEquals(false, tp.resetStreamAt, "the ticket's server did not offer reset_stream_at")
+        val (p, id) = resumed(t, request = "x", clientQuic = withAt)
+        try {
+            val c = p.client
+            p.filterToServer = { _, _ -> false }
+            p.step()
+            assertEquals(false, c.streams.peerResetStreamAt)
+            tp.resetStreamAt = true // the server's EncryptedExtensions offer it now, its Finished has not arrived
+            tp.originalDestinationConnectionId = c.odcid
+            tp.initialSourceConnectionId = c.remoteCid
+            ConnectionHandshakeSink(c).onPeerTransportParameters(TransportParametersCodec.encode(tp, TlsRole.Server, 27), c.version.version)
+            assertTrue(c.zeroRttWritable, "still sending 0-RTT")
+            assertEquals(false, c.streams.peerResetStreamAt, "0-RTT uses only the remembered (absent) offer")
+            c.streams.resetAt(id, 3, 0)
+            val kinds = generateSequence { c.streams.takeControlFrame() }.map { it.kind }.toList()
+            assertTrue(io.kuicksilver.quic.stream.ControlKind.ResetStream in kinds, "a plain RESET_STREAM: $kinds")
+        } finally {
+            p.close()
+        }
+        val remembered = ticket(serverQuic = withAt, clientQuic = withAt)
+        val (q, _) = resumed(remembered, request = "x", clientQuic = withAt, serverQuic = withAt, serverEarly = early(withAt))
+        try {
+            assertEquals(true, q.client.streams.peerResetStreamAt, "a remembered offer counts in 0-RTT")
+            assertTrue(q.handshake())
+            assertEquals(true, q.client.earlyDataAccepted)
+            assertEquals(true, q.client.streams.peerResetStreamAt)
+        } finally {
+            q.close()
+        }
+    }
+
     private fun t2(): QuicSessionTicket {
         val t = ticket()
         val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)

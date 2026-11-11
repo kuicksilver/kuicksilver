@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC client, 0-RTT with `resetStreamAt`: the server's new `reset_stream_at` transport parameter took effect when its
+  EncryptedExtensions arrived, while 0-RTT could still be sent (the server's Finished not yet received), so a
+  `resetAt` on an early stream could put RESET_STREAM_AT in a 0-RTT packet although the ticket's parameters did not offer
+  it. 0-RTT now uses only the remembered offer, and the new one applies from 1-RTT on (RFC 9000 section 7.4.1).
 - QUIC: a connection in the closing state (after our CONNECTION_CLOSE) still processed every frame the peer sent:
   STREAM data was buffered and charged to flow control, NEW_CONNECTION_ID and RETIRE_CONNECTION_ID changed the
   connection IDs, PATH_CHALLENGEs were answered and events followed the `Closed` one. RFC 9000 section 10.2.1 keeps

@@ -178,6 +178,7 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
         tp.initialMaxStreamsUni,
     )
     connSend.onMaxUpdate(tp.initialMaxData)
+    streams.peerResetStreamAt = tp.resetStreamAt && config.resetStreamAt // the remembered offer; the new one from 1-RTT on
     return true
 }
 
