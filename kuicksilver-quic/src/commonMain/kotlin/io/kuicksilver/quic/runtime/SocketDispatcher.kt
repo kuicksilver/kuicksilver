@@ -51,8 +51,9 @@ import kotlin.concurrent.atomics.incrementAndFetch
  * The receiver blocks in the socket's receive in 100 ms slices on [blocking] (`Dispatchers.IO`) and hands that thread back after
  * a slice that brought nothing and after every [BUSY_ROUNDS] rounds, like the slices of `KslDatagramIo.receive`: holding it for the
  * socket's lifetime pinned one of the 64 `Dispatchers.IO` threads per shared socket, which a process with many such groups
- * could exhaust for every other user of `Dispatchers.IO` (blocking file I/O, DNS). It
- * copies each datagram into its loop's ring ([RING] slots of one datagram each, written by the receiver and read by the loop
+ * could exhaust for every other user of `Dispatchers.IO` (blocking file I/O, DNS).
+ *
+ * The receiver copies each datagram into its loop's ring ([RING] slots of one datagram each, written by the receiver and read by the loop
  * with no lock and no allocation per datagram) and wakes the loop once per receive round. When a loop's ring is full the
  * datagram is dropped and counted ([dropped], `EndpointStats.datagramsDispatchDropped`): the receiver never waits for a loop,
  * so a flood aimed at one loop costs that loop's datagrams only (threat-model 3.4). A datagram ending with a peer's reset token
