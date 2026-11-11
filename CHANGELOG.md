@@ -637,6 +637,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, WebSockets over HTTP/3 (RFC 9220): a call cancelled while its upgrade ran skipped the end of the CONNECT
+  stream: the flush of our side threw the cancellation before the client's direction was stopped, so that direction
+  stayed open and the exchange counted as running until the connection ended. The client's direction is now stopped
+  first, and a cancelled call resets the stream with `H3_REQUEST_CANCELLED` (RFC 9114 section 4.1.1) instead of ending
+  it with a FIN.
 - HTTP/3: a reserved (GREASE) frame type on the peer's control stream spent a glitch token, while on a request stream it
   costs nothing. RFC 9114 sections 7.2.8 and 9 have reserved types ignored, and peers are meant to send them; a peer
   that greased its control stream often could have its connection closed with H3_EXCESSIVE_LOAD. They are now free on
