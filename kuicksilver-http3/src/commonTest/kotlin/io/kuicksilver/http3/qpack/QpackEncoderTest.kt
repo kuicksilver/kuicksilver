@@ -14,6 +14,11 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class QpackEncoderTest {
+    /** Field octets are ISO-8859-1: a wider character is refused, never encoded as its low byte (U+010D as CR). */
+    @Test fun negative_charactersAboveLatin1AreRefused() {
+        kotlin.test.assertFailsWith<IllegalArgumentException> { QpackEncoder().encode(0, listOf("x-name" to "a\u010Db")) }
+    }
+
     private fun QpackDecoder.feed(b: ByteArray) = onEncoderStream(b, 0, b.size)
 
     private fun QpackEncoder.feed(b: ByteArray) = onDecoderStream(b, 0, b.size)

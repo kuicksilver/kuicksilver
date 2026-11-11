@@ -17,6 +17,7 @@ import io.kuicksilver.http2.core.H2Event
 import io.kuicksilver.http2.core.H2HeaderListTooLarge
 import io.kuicksilver.http2.core.H2StreamLimit
 import io.kuicksilver.http2.core.Role
+import io.kuicksilver.http2.message.H2Fields
 import io.kuicksilver.http2.message.H2Messages
 import io.kuicksilver.http2.message.MalformedMessage
 import kotlinx.coroutines.CancellationException
@@ -1073,6 +1074,7 @@ internal class H2Runtime(
         fields: List<Pair<String, String>>,
         endStream: Boolean,
     ) {
+        checkOwnSection(s, if (status in 100..599 && status != 101) null else "status $status", fields)
         guarded(s) { sendHeaders(s.id, listOf(":status" to status.toString()) + fields, endStream) }
         if (endStream) lock.withLock { s.localEnded = true }
     }
@@ -1082,8 +1084,33 @@ internal class H2Runtime(
         s: StreamRt,
         fields: List<Pair<String, String>>,
     ) {
+        checkOwnSection(s, null, fields)
         guarded(s) { sendHeaders(s.id, fields, endStream = true) }
         lock.withLock { s.localEnded = true }
+    }
+
+    /**
+     * A server's own field section obeys what it holds the client to (RFC 9113 sections 8.2.1, 8.2.2, 8.3.2): lowercase
+     * token names, values without NUL, CR, LF or anything above U+00FF (HPACK carries octets), no connection-specific
+     * field, no `te`, and a `:status` of three digits that HTTP/2 allows (never 101, section 8.6). A section that breaks
+     * them is never sent: the stream is reset with INTERNAL_ERROR, so it is not left half-open, and the caller gets an
+     * IllegalArgumentException. [statusFault] is the status's own fault, if any.
+     */
+    private fun checkOwnSection(
+        s: StreamRt,
+        statusFault: String?,
+        fields: List<Pair<String, String>>,
+    ) {
+        val fault =
+            statusFault ?: try {
+                for ((n, v) in fields) H2Fields.checkRegular(n, v, request = false)
+                null
+            } catch (m: MalformedMessage) {
+                m.reason
+            }
+        if (fault == null) return
+        reset(s, Http2ErrorCode.INTERNAL_ERROR)
+        throw IllegalArgumentException("invalid response field section on stream ${s.id}: $fault")
     }
 
     /** Resets [s] with [code] (tests and the server's handlers). */

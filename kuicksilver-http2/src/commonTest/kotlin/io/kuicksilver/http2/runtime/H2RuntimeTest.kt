@@ -18,6 +18,7 @@ import io.kuicksilver.http2.frame.FrameDecoder
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
 import io.kuicksilver.http2.hpack.HpackEncoder
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -118,6 +119,56 @@ class H2RuntimeTest {
             s.release()
             runCurrent()
             assertEquals(0, client.reservedStreams)
+        }
+
+    /**
+     * RFC 9113 sections 8.2.1, 8.2.2, 8.3.2: a response head or trailers the server would generate against the rules are
+     * never sent (a character above U+00FF would reach HPACK as its low byte: U+010D as CR); the stream is reset with
+     * INTERNAL_ERROR and the handler's call fails with IllegalArgumentException.
+     */
+    @Test fun negative_invalidResponseFieldsAreNeverSent() =
+        runTest {
+            val (client, server, _) = pair()
+            val heads =
+                listOf<Pair<Int, List<Pair<String, String>>>>(
+                    200 to listOf("x-name" to "a\u010Db"), // U+010D: CR as its low byte
+                    200 to listOf("x-name" to "a\rb"),
+                    200 to listOf("X-Upper" to "v"),
+                    200 to listOf("x-del\u007F" to "v"),
+                    200 to listOf("connection" to "close"),
+                    200 to listOf("te" to "trailers"),
+                    42 to emptyList(),
+                    101 to emptyList(),
+                )
+            for ((status, fields) in heads) {
+                val failure = CompletableDeferred<Throwable?>()
+                val job = backgroundScope.launch {
+                    val r = server.requests.receive()
+                    failure.complete(runCatching { r.respond(status, fields, endStream = true) }.exceptionOrNull())
+                    r.release()
+                }
+                val s = client.get()
+                val e = assertFailsWith<Http2Exception> { s.response() }
+                assertIs<Http2Exception.StreamReset>(e, "$status $fields: $e")
+                assertEquals(Http2ErrorCode.INTERNAL_ERROR, e.code)
+                assertIs<IllegalArgumentException>(failure.await(), "$status $fields")
+                job.join()
+                s.release()
+            }
+            // trailers too
+            val failure = CompletableDeferred<Throwable?>()
+            backgroundScope.launch {
+                val r = server.requests.receive()
+                r.respond(200)
+                failure.complete(runCatching { r.trailers(listOf("x-t" to "a\u0100")) }.exceptionOrNull())
+                r.release()
+            }
+            val s = client.get()
+            // the head may still have been queued: the reset drops it, else the body fails
+            val e = assertFailsWith<Http2Exception.StreamReset> { s.response().also { s.body.readAll() } }
+            assertEquals(Http2ErrorCode.INTERNAL_ERROR, e.code)
+            assertIs<IllegalArgumentException>(failure.await())
+            s.release()
         }
 
     @Test fun postBodyGoesWithinWindowsAndEnds() =

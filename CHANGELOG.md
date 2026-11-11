@@ -637,6 +637,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 server: response heads and trailers were never checked before they were sent, and HPACK wrote a character
+  above U+00FF as its low byte: a value with U+010D, U+010A or U+0100 (`call.response.header("X-Name", "č")`) went out
+  with a CR, LF or NUL inside, a name with DEL or a byte above 0x7F passed, and `HttpStatusCode(42, …)` went out as
+  `:status 42` (RFC 9113 sections 8.2.1, 8.3.2). Such a section is now refused: the stream is reset with INTERNAL_ERROR
+  and the call fails with IllegalArgumentException; connection-specific fields, `te` and 101 are refused the same way.
+  HPACK and QPACK refuse a character above U+00FF instead of truncating it.
 - HTTP/2 server: trailers that arrived on a stream whose handler had already answered and released it (its response
   still being written to a client that does not read) were taken for a new request: a field section with request
   pseudo-header fields started a handler, outside `maxConcurrentStreams` (RFC 9113 sections 8.1, 5.1.2). Only the field
