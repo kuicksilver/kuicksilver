@@ -929,7 +929,12 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
     *received = 0;
     if (!n)
         return KSL_OK;
+    /* counted before closed is read again, as in ksl_udp_recv.c: ksl_udp_close then sees this receiver and waits for it */
     __atomic_add_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(&u->closed, __ATOMIC_SEQ_CST)) {
+        __atomic_sub_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
+        return KSL_ERROR;
+    }
     uint32_t filled = hand_out(u, bufs, caps, lens, addrs, dsts, ecnv, n, 0);
     int rc = KSL_OK;
     ULONGLONG deadline = timeout_ms < 0 ? 0 : GetTickCount64() + (ULONGLONG)timeout_ms;
@@ -1096,8 +1101,8 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
 
 /* ---- shutdown and close ---- */
 void ksl_udp_shutdown(ksl_udp *u) {
-    if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_ACQ_REL))
-        return; /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD */
+    if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_SEQ_CST))
+        return; /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD (sequentially consistent: ksl_udp_recv_dst) */
     if (u->base)
         return; /* a sender clone: the socket and its other clones go on */
     if (u->wake != INVALID_SOCKET) {
@@ -1134,8 +1139,9 @@ void ksl_udp_close(ksl_udp *u) {
         udp_release(root);
         return;
     }
-    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++)
-        Sleep(1); /* a receiver woke up and leaves the object */
+    /* a receiver still inside was woken by the shutdown and leaves the object: waited for however long that takes */
+    while (__atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0)
+        Sleep(1);
     udp_release(u);
 }
 

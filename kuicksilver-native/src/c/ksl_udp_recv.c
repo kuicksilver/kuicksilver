@@ -4,6 +4,10 @@
  * caller's slots with their address and ECN mark; a shutdown from another thread wakes a blocked receive. */
 #include "ksl_udp_internal.h"
 
+#ifdef KSL_TEST
+void (*ksl_test_udp_recv_entered)(void) = NULL;
+#endif
+
 #ifdef KSL_UDP_ACCEL
 static uint32_t hand_out(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs,
                          uint8_t *dsts, uint8_t *ecnv, uint32_t n, uint32_t from) {
@@ -205,7 +209,19 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
     *received = 0;
     if (!n)
         return KSL_OK;
+    /* counted before closed is read again: ksl_udp_shutdown sets closed and ksl_udp_close then waits while in_recv > 0 (both
+       sequentially consistent), so a receiver either sees closed here and leaves, or is counted and waited for. Counted only
+       after the check above, a receiver between that check and the count was invisible to the close, which freed the socket
+       under it */
     __atomic_add_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(&u->closed, __ATOMIC_SEQ_CST)) {
+        __atomic_sub_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
+        return KSL_ERROR;
+    }
+#ifdef KSL_TEST
+    if (ksl_test_udp_recv_entered)
+        ksl_test_udp_recv_entered();
+#endif
     uint32_t filled = hand_out(u, bufs, caps, lens, addrs, dsts, ecnv, n, 0);
     int rc = KSL_OK;
     uint32_t dropped = 0;

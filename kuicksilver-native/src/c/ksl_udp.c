@@ -443,8 +443,8 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
 }
 
 void ksl_udp_shutdown(ksl_udp *u) {
-    if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_ACQ_REL))
-        return; /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD */
+    if (!u || __atomic_exchange_n(&u->closed, 1, __ATOMIC_SEQ_CST))
+        return; /* one shutdown wins; a blocked receiver reads it with KSL_ALOAD (sequentially consistent: ksl_udp_recv_dst) */
     if (u->base)
         return; /* a sender clone: the socket and its other clones go on */
     if (u->wake[1] >= 0) {
@@ -489,10 +489,12 @@ void ksl_udp_close(ksl_udp *u) {
         udp_release(root);
         return;
     }
-    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) {
+    /* a receiver still inside was woken by the shutdown and leaves the object: waited for however long that takes (a bound here
+       freed the socket under a receiver that had not left yet) */
+    while (__atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0) {
         struct timespec ts = {0, 1000000};
         nanosleep(&ts, NULL);
-    } /* a receiver woke up and leaves the object */
+    }
     udp_release(u);
 }
 
