@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class)
+@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class, ExperimentalAtomicApi::class)
 
 package io.kuicksilver.tls
 
@@ -28,6 +28,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
@@ -76,7 +78,10 @@ public class TlsConnection private constructor(
     private var overrideCtx: KslContext.Lease? = null
     private var cacheKey: String? = null
     private var reused = false
-    private var closed = false
+
+    /** Set once by [close] or when the pumps' job ends; read by every thread (the pumps, the owner's close, a timeout). */
+    private val closedFlag = AtomicBoolean(false)
+    private val closed: Boolean get() = closedFlag.load()
     private var readerJob: Job? = null
     private var writerJob: Job? = null
 
@@ -143,6 +148,9 @@ public class TlsConnection private constructor(
             scope.coroutineContext[Job]?.cancel()
             throw t
         }
+        // the native state goes when the pumps' job ends, however it ends: close(), or the caller's job cancelled (the
+        // documented "cancelling it ends the connection"), also when the owner never calls close()
+        scope.coroutineContext[Job]!!.invokeOnCompletion { ended() }
     }
 
     private fun setUpClient() {
@@ -818,17 +826,27 @@ public class TlsConnection private constructor(
 
     /** Cancels the pumps and frees the native session once they have stopped and nobody holds the lock (never while any caller is inside ksl). */
     override fun close() {
-        if (closed) return
-        closed = true
-        val job = scope.coroutineContext[Job]!!
+        if (!closedFlag.compareAndSet(false, true)) return
         inputChannel.cancel(TlsException.Protocol(null, "connection closed", null))
         outputChannel.cancel(TlsException.Protocol(null, "connection closed", null))
-        job.invokeOnCompletion {
-            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-            kotlinx.coroutines.GlobalScope.launch(Dispatchers.Default) { lock.withLock { freeNative() } }
-        }
-        job.cancel()
+        scope.coroutineContext[Job]!!.cancel() // its completion frees the native session ([ended])
     }
+
+    /**
+     * The pumps' job ended: through [close], or because the caller's job was cancelled, which ends the connection as a close
+     * does: the channels fail (after [close] they have already). The native session is freed once nobody holds the lock.
+     */
+    private fun ended() {
+        if (closedFlag.compareAndSet(false, true)) {
+            inputChannel.cancel(TlsException.Protocol(null, "connection closed", null))
+            outputChannel.cancel(TlsException.Protocol(null, "connection closed", null))
+        }
+        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+        kotlinx.coroutines.GlobalScope.launch(Dispatchers.Default) { lock.withLock { freeNative() } }
+    }
+
+    /** Whether the native session was freed (tests). */
+    internal val nativeFreedForTest: Boolean get() = ssl == 0L
 
     private fun freeNative() {
         if (ssl != 0L) {
@@ -904,7 +922,8 @@ public class TlsConnection private constructor(
         /**
          * Runs a client handshake over `transportIn`/`transportOut` and returns once it completed and the server passed
          * [TlsConfig.trust] and the host name check. A cached session for the same name and trust is resumed automatically
-         * and re-checked. The pumps run in [context] (their parent job, if any); cancelling it ends the connection.
+         * and re-checked. The pumps run in [context] (their parent job, if any); cancelling it ends the connection as [close] does
+         * (the channels fail, the native session is freed).
          * Throws [TlsException]: [TlsException.Config] for a server configuration or a client without a reference identifier,
          * [TlsException.Verify], [TlsException.AlertReceived], or [TlsException.Protocol] (also after
          * [TlsConfig.handshakeTimeout]). On failure the alert is flushed and `transportOut` is closed.

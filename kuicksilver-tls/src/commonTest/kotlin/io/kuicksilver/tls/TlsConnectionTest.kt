@@ -544,6 +544,31 @@ class TlsConnectionTest {
         }
     }
 
+    /**
+     * Cancelling the job the connection was started in ends it as a close does (the documented contract): the channels fail
+     * and the native session is freed, although nobody called close(). It was freed only by close(), so an owner that ended
+     * the connection through its job (or never got it: a handshake result dropped by a timeout) leaked the SSL object.
+     */
+    @Test fun cancellingTheCallersJobFreesTheNativeSession(): Unit =
+        runBlocking {
+            val pair = ChannelPair()
+            val clientJob = kotlinx.coroutines.Job()
+            val serverJob = kotlinx.coroutines.Job()
+            val (c, s) =
+                withTimeout(20.seconds) {
+                    val c = async(Dispatchers.Default) { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
+                    val s = async(Dispatchers.Default) { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server(), serverJob) }
+                    c.await() to s.await()
+                }
+            assertTrue(!c.nativeFreedForTest && !s.nativeFreedForTest)
+            clientJob.cancel()
+            serverJob.cancel()
+            withTimeout(5.seconds) {
+                while (!c.nativeFreedForTest || !s.nativeFreedForTest) delay(10)
+            }
+            assertFailsWith<Exception> { withTimeout(5.seconds) { c.input.readExactly(1) } }
+        }
+
     @Test fun cancellationNotWrapped() {
         val pair = ChannelPair()
         runBlocking {

@@ -948,6 +948,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   reads on to what the peer sent, and the connection's reason is the session's only when no capsule came. A
   WebTransport stream whose pump the lost connection cancelled before it ran now ends instead of leaving the
   application waiting.
+- TLS over TCP: a `TlsConnection` freed its native session (the OpenSSL object, its context reference and a cached
+  session it took) only from `close()`. A connection ended by cancelling the job of the `context` it was started in,
+  which the API documents as ending it, kept that native state for the rest of the process, as did one whose owner never
+  got it (see the Ktor server's TLS handshake deadline below). The native session is now freed whenever the
+  connection's job ends, and `input` and `output` fail as after `close()`. Two concurrent `close()` calls no longer both
+  run the tear-down (the closed flag was a plain field read and written from several threads).
 
 ## [0.2.1] - 2026-11-04
 
