@@ -940,9 +940,10 @@ static void udp_close_waits_for_a_slow_receiver(void) {
         nanosleep(&ts, NULL);
     }
     ksl_test_udp_recv_entered = NULL; /* read by the receiver before it said it was inside */
-    ksl_udp_close(u); /* returns only once the receiver has left */
+    ksl_udp_close(u);                 /* returns only once the receiver has left */
     pthread_join(t, NULL);
-    CHECK(r.rc == KSL_ERROR, "udp_close_waits_for_a_slow_receiver: the receiver leaves on the shutdown, then the socket is freed");
+    CHECK(r.rc == KSL_ERROR,
+          "udp_close_waits_for_a_slow_receiver: the receiver leaves on the shutdown, then the socket is freed");
 }
 #endif
 
