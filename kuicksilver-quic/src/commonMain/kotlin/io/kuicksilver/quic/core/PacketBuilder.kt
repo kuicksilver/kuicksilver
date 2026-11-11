@@ -352,7 +352,7 @@ internal class PacketBuilder(
         maxLen: Int,
         now: TimeMark,
     ): Int {
-        congested = c.cc.bytesInFlight >= c.cc.cwnd && c.probePending.all { it == 0 }
+        congested = c.cc.bytesInFlight >= c.cc.cwnd && !probeDue()
         initialAckOnly = c.role == TlsRole.Server && maxLen < 1200
         if (!congested) pacer(now)
         var pos = 0
@@ -386,6 +386,18 @@ internal class PacketBuilder(
             pos += buildPacket(buf, pos, maxLen, lastBuilt, now, padToEnd = true)
         }
         return pos
+    }
+
+    /**
+     * A PTO probe is owed in a space that can still send it (RFC 9002 sections 6.2.4, 7.5): only then is the datagram exempt from
+     * the congestion window. A count left in a discarded space, or one without write keys, exempts nothing.
+     */
+    private fun probeDue(): Boolean {
+        val pending = c.probePending
+        for (i in pending.indices) {
+            if (pending[i] > 0 && !c.spaceDiscarded[i] && c.writeKeys[spaceLevel(SpaceId.entries[i])] != null) return true
+        }
+        return false
     }
 
     private fun pacer(now: TimeMark) {

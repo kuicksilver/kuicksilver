@@ -105,6 +105,9 @@ internal fun ConnectionCore.onRetry(
         for (i in 0 until f.cryptoCount) cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
     }
     loss.discard(SpaceId.Initial, now)
+    // the Retry restarts the handshake (RFC 9002 section 6.3): no probe of the first flight is owed any more
+    probePending[SpaceId.Initial.ordinal] = 0
+    probePending[SpaceId.Application.ordinal] = 0
     // 0-RTT sent before the Retry reached a server that kept no state: send it again (RFC 9001 section 4.6.2 allows 0-RTT after a Retry)
     loss.discardZeroRtt { p -> streams.onFramesLost(p.frames) }
     installInitialKeys(version)
@@ -186,6 +189,9 @@ internal fun ConnectionCore.discardSpace(space: SpaceId) {
         initialReadOriginal = null
     }
     loss.discard(space, now)
+    // a probe still owed in the space can never be built now; left pending it would exempt every datagram from the congestion
+    // window (RFC 9002 section 7: only packets sent on a PTO expiration are)
+    probePending[i] = 0
     cryptoStreams.discard(level)
     receiver.dropBuffered(space)
 }
