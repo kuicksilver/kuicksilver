@@ -433,12 +433,24 @@ internal class H2Runtime(
         val s = StreamRt(this, e.streamId, headRequest = false)
         lock.withLock { streams[e.streamId] = s }
         if (e.tooLarge) {
-            // RFC 9113 section 8.2 and the core's contract: a server answers 431
-            withCore {
-                sendHeaders(s.id, listOf(":status" to "431") + ownResponseFields(), endStream = true)
-                release(s.id)
+            // RFC 9113 section 8.2 and the core's contract: a server answers 431. The stream may no longer be sendable by now
+            // (the peer's RST_STREAM, a stream or connection error later in the same read): nothing goes then, and a 431 head
+            // above the peer's own SETTINGS_MAX_HEADER_LIST_SIZE (section 6.5.2) cannot go either, so the stream is reset;
+            // either way the stream is released, and this event never fails the dispatcher (another stream's caller)
+            try {
+                withCore {
+                    try {
+                        sendHeaders(s.id, listOf(":status" to "431") + ownResponseFields(), endStream = true)
+                    } catch (_: IllegalStateException) {
+                        // ended under us: nothing to answer
+                    } catch (_: H2HeaderListTooLarge) {
+                        reset(s.id, Http2ErrorCode.CANCEL, clock())
+                    }
+                    release(s.id)
+                }
+            } finally {
+                lock.withLock { streams.remove(s.id) }
             }
-            lock.withLock { streams.remove(s.id) }
             return
         }
         val r =

@@ -637,6 +637,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 server: a request whose field section was above `maxHeaderListSize` (answered 431, RFC 9113 section 8.2) took
+  the whole connection down, or failed an unrelated call, when its stream could no longer send by the time the request
+  was handled: the client reset the stream in the same read, a later error in that read closed it, or the client's own
+  SETTINGS_MAX_HEADER_LIST_SIZE was too small for the 431 head. The 431 threw out of the event dispatch: on the reader
+  the connection ended with GOAWAY INTERNAL_ERROR; on an application thread that happened to dispatch, its call failed,
+  and inside a stream's `release` that stream and the 431 stream both kept their slot under `maxConcurrentStreams`
+  until the connection ended. Nothing is answered on a stream that ended, a 431 head the client cannot take resets the
+  stream with CANCEL, and the stream is always released.
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS

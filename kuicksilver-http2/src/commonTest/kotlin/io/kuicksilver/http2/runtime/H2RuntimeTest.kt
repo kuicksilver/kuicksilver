@@ -626,6 +626,53 @@ class H2RuntimeTest {
             runCurrent()
         }
 
+    /** A request on stream [id] whose field section (about 1.5 KB, literals only) is above a server's 1 KiB limit. */
+    private fun oversizedRequest(id: Int): ByteArray {
+        // :method GET, :scheme https, :path / (RFC 7541 appendix A), :authority without indexing, then a 1500-byte field
+        val block =
+            byteArrayOf(0x82.toByte(), 0x87.toByte(), 0x84.toByte(), 0x01) + hpackString("example.com") +
+                byteArrayOf(0x00) + hpackString("x-big") + hpackString("b".repeat(1_500))
+        return FrameEncoder.headers(id, block, true, true, -1)
+    }
+
+    /**
+     * An oversized request (RFC 9113 section 8.2: answered 431) reset by the client in the same read: the stream is closed
+     * before its event is dispatched, so no 431 can go. The dispatcher (here the test's thread, in a real server possibly
+     * another stream's caller) does not fail, the stream is released and the connection lives on.
+     */
+    @Test fun oversizedRequestResetBeforeItsDispatchIsReleasedWithoutAnAnswer() =
+        runTest {
+            val (_, server, _) = pair(serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+            runCurrent()
+            server.rt.holdDispatchForTest()
+            server.rt.receiveWithoutDispatchForTest(oversizedRequest(1) + FrameEncoder.rstStream(1, Http2ErrorCode.CANCEL.code))
+            server.rt.releaseDispatchForTest()
+            runCurrent()
+            server.rt.lock.withLock {
+                assertEquals(0, server.rt.core.peerStreams, "the stream no longer counts toward our limit")
+                assertFalse(server.rt.core.isClosed)
+            }
+        }
+
+    /**
+     * An oversized request from a client whose own SETTINGS_MAX_HEADER_LIST_SIZE (RFC 9113 section 6.5.2) is too small for
+     * the 431 head: the stream is reset instead, released, and the connection lives on.
+     */
+    @Test fun oversizedRequestToAClientThatCannotTakeThe431IsReset() =
+        runTest {
+            val (_, server, _) =
+                pair(clientSettings = Http2Settings(maxHeaderListSize = 8), serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+            runCurrent()
+            server.rt.holdDispatchForTest()
+            server.rt.receiveWithoutDispatchForTest(oversizedRequest(1))
+            server.rt.releaseDispatchForTest()
+            // (before the client reads the reset: stream 1 is one it never opened, which ends its side of this test's wiring)
+            server.rt.lock.withLock {
+                assertEquals(0, server.rt.core.peerStreams, "the stream no longer counts toward our limit")
+                assertFalse(server.rt.core.isClosed)
+            }
+        }
+
     /**
      * RFC 9113 section 8.1: a server may answer before the whole request and then stop it with RST_STREAM NO_ERROR; the
      * client keeps the response (its content included, even when the reset arrives before the application read it) and
