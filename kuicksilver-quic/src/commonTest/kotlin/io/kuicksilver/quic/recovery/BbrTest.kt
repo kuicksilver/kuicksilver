@@ -299,6 +299,17 @@ class BbrTest {
         }
 
     /**
+     * RFC 9002 section 7.7: "Senders SHOULD limit bursts to the initial congestion window." BBR's C.send_quantum (1 ms at the
+     * pacing rate, up to 64 KiB) passed it above about 15 MB/s; the burst handed to the pacer is now capped there.
+     */
+    @Test fun theBurstStaysWithinTheInitialWindowAtAHighRate() {
+        val b = Bottleneck(bbr(), 100_000_000L, 10.milliseconds) // 800 Mbit/s
+        b.run(2.seconds)
+        assertTrue(b.cc.pacingRateForTest > 15_000_000L, "pacing at ${b.cc.pacingRateForTest} B/s")
+        assertEquals(12_000, b.cc.sendQuantum, "min(10 x 1200, max(14 720, 2 x 1200))")
+    }
+
+    /**
      * C.is_cwnd_limited is set by the packet that fills the window. The sender stops once less than a datagram of room is left
      * (RFC 9002 section 7 forbids taking bytes in flight above the window), so the window is full then, not only when bytes in
      * flight reach it exactly: with 1100-byte packets in a 12 000-byte window the eleventh never goes.

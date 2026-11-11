@@ -673,6 +673,15 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   section 7.8). A sender that runs out of data or flow-control credit with room in the window no longer grows it.
 - NewReno and CUBIC recompute the initial window when the datagram size changes: a window still at its initial value
   shrinks with a smaller size; a larger size never raises it (RFC 9002 section 7.2, RFC 8899 section 3).
+- BBR's bursts (its send quantum, up to 64 KiB) exceeded the initial window above about 15 MB/s (RFC 9002 section 7.7);
+  the burst is now capped at the initial window. Over loopback (`UdpThroughputBenchmark`, JVM) BBR moves 208-214 MiB/s
+  instead of 225-231, as CUBIC does.
+- A window smaller than the MTU (a window that collapsed before DPLPMTUD raised the MTU to a jumbo size) sent nothing
+  any more; a datagram is now cut to the room left when that is at least 1200 bytes. A NewReno or CUBIC reduction no
+  longer lifts such a window to the new 2-datagram minimum (RFC 8899 section 3).
+- Persistent congestion of another path's lost packets was judged with the active path's RTT; it now uses that path's
+  own estimate. A probe owed for rejected 0-RTT stayed owed and let one datagram pass the window; Application data
+  waiting for its keys during the handshake let the window grow.
 - Bytes of a discarded space or of rejected 0-RTT were taken from the active path's congestion controller, whichever
   controller had counted them. The PTO backoff wrapped after 31 unanswered PTOs (possible only with both idle timeouts
   disabled): the timer fired at once, then restarted; it now stops doubling at 2^30.

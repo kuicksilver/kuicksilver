@@ -47,8 +47,9 @@ benchmark {
         // the QUIC core alone (in-memory loopback, Null and ksl crypto): `./gradlew :kuicksilver-bench:jvmCoreBenchmark` / `macosArm64CoreBenchmark`
         register("core") { include("CoreThroughputBenchmark"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
         // whole connections (handshake and close) through the core with ksl crypto: `./gradlew :kuicksilver-bench:jvmHandshakeBenchmark` / `macosArm64HandshakeBenchmark`
-        // whole endpoints over loopback UDP, the accelerated socket and CUBIC (Null crypto): `./gradlew :kuicksilver-bench:jvmUdpBenchmark`
-        register("udp") { include("UdpThroughputBenchmark"); param("io", "accelerated"); param("cc", "cubic"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
+        // whole endpoints over loopback UDP, the accelerated socket and CUBIC (Null crypto): `./gradlew :kuicksilver-bench:jvmUdpBenchmark`;
+        // -Pcc=bbr (or cubic,bbr) picks the congestion controller
+        register("udp") { include("UdpThroughputBenchmark"); param("io", "accelerated"); param("cc", *(providers.gradleProperty("cc").orNull ?: "cubic").split(",").toTypedArray()); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
         register("handshake") { include("HandshakeBenchmark"); include("EndpointHandshakeBenchmark"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
         // the server's endpoint loops on one port (one socket and a receiver thread where the kernel does not balance: Apple, Windows),
         // handshakes and 8 bulk connections from 8 client endpoints: `./gradlew :kuicksilver-bench:jvmLoopsBenchmark` / `macosArm64LoopsBenchmark`

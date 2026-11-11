@@ -61,7 +61,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9002 | §6.3, §6.4 — Retry and discarding keys | ✅ | 0.3.0 | A Retry or discarded keys take their packets out of flight from the controller that counted them, without a congestion signal. | [details](rfc/9002.md#s6-3-retry-and-discarding-keys) |
 | RFC 9002 | §7, §7.2–§7.5 — the congestion window | ✅ | 0.3.0 | No datagram takes bytes in flight above the window except PTO probes, and PMTU probes count in flight. | [details](rfc/9002.md#s7-congestion-window) |
 | RFC 9002 | §7.6 — persistent congestion | ✅ | 0.3.0 | Persistent congestion is judged across packet number spaces and per path, and every controller collapses to its minimum window. | [details](rfc/9002.md#s7-6-persistent-congestion) |
-| RFC 9002 | §7.7 — pacing and bursts | ✅ | 0.3.0 | Every controller is paced at any RTT, NewReno and CUBIC in bursts of at most the initial window. | [details](rfc/9002.md#s7-7-pacing) |
+| RFC 9002 | §7.7 — pacing and bursts | ✅ | 0.3.0 | Every controller is paced at any RTT, in bursts of at most the initial window. | [details](rfc/9002.md#s7-7-pacing) |
 | RFC 9002 | §7.8 — underutilizing the congestion window | ✅ | 0.3.0 | The window grows only when the sender filled it or was held back by pacing. | [details](rfc/9002.md#s7-8-underutilizing-the-congestion-window) |
 | RFC 9438 | CUBIC | ✅ | 0.2.0 | CUBIC is the default congestion controller. | [details](rfc/9438.md#cubic) |
 | draft-ietf-ccwg-bbr | BBR (BBRv3) | ✅ | 0.2.0 | An experimental, opt-in BBRv3 controller follows draft-06. | [details](rfc/draft-ietf-ccwg-bbr.md#bbr-bbrv3) |

@@ -436,7 +436,12 @@ public class Bbr(
         return (STARTUP_PACING_GAIN * initialCwnd * 1e9 / nanos).toLong() // InitPacingRate (section 5.6.2)
     }
 
-    override val sendQuantum: Int get() = quantum
+    /**
+     * The largest burst handed to the pacer: C.send_quantum, but at most the initial window of RFC 9002 section 7.2 ("Senders
+     * SHOULD limit bursts to the initial congestion window", section 7.7). The model's quantization budget keeps the draft's
+     * C.send_quantum (section 5.6.4.2).
+     */
+    override val sendQuantum: Int get() = minOf(quantum.toLong(), burstLimit(mss)).toInt()
 
     private fun updateModelAndState(now: TimeMark) {
         updateLatestDeliverySignals()
@@ -924,6 +929,9 @@ public class Bbr(
     }
 
     private companion object {
+        /** RFC 9002 section 7.2's initial window, min(10 datagrams, max(14 720 bytes, 2 datagrams)): the burst limit of section 7.7. */
+        fun burstLimit(mss: Int): Long = minOf(10L * mss, maxOf(14720L, 2L * mss))
+
         /** RFC 9002 section 7.2, min(10 datagrams, max(14 720 bytes, 2 datagrams)), raised to BBR.MinPipeCwnd. */
         fun initialWindow(mss: Int): Long = maxOf(minOf(10L * mss, maxOf(14720L, 2L * mss)), 4L * mss)
 

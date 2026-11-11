@@ -590,8 +590,9 @@ One connection over loopback moved 25–35 MiB/s with a third to half of a core 
 | throughput (second of two transfers) | 28–35 MiB/s | 250–253 MiB/s |
 | process CPU per GiB (second transfer) | 21 s | 10.6–10.7 s |
 
-Nothing of RFC 9002 or flow control was the limit: the window was never full, nothing was lost, pacing is off below
-1 ms of RTT for CUBIC (`Pacer`), and a stream window of 512 KiB and more never ran out with the writer at most 80 KiB
+Nothing of RFC 9002 or flow control was the limit: the window was never full, nothing was lost, pacing was off below
+1 ms of RTT for CUBIC (`Pacer`; since 2026-11-11 every controller is paced at any RTT, in bursts of at most the initial
+window, RFC 9002 section 7.7: [the RFC 9002 §7.7 row](spec/rfc/9002.md#s7-7-pacing) has the numbers), and a stream window of 512 KiB and more never ran out with the writer at most 80 KiB
 ahead. The sender had nothing to send: the application's writer was. Each `writeFully` of 16 KiB flushes (`autoFlush`)
 by hopping onto the loop's dispatcher (`withContext`). The loop's receiver, reading the socket on the loop's own thread
 while datagrams flow (`runtime/BatchReceiver.kt`), let queued work run only every 16 datagrams or 1 ms, and waited up
