@@ -88,6 +88,22 @@ class ServerH1FramingTest {
             }
         }
 
+    /**
+     * RFC 9112 section 2.2: "a recipient MAY recognize a single LF as a line terminator and ignore any preceding CR". The
+     * server does so in the request line, the field section and a trailer section (as Go's net/http and nginx), and only
+     * there: the chunk-size line takes CRLF alone (`h1.ChunkedBodyTest.negative_bareLfInChunkSizeLineIsRejected`).
+     */
+    @Test fun bareLfEndsTheLinesOfTheHead() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(port, "POST /echo HTTP/1.1\nHost: s\nContent-Length: 4\nConnection: close\n\nabcd", tls = null)
+                    }
+                assertTrue(resp.startsWith("HTTP/1.1 200 ") && resp.endsWith("body=abcd"), resp)
+            }
+        }
+
     /** Conflicting Content-Length values: 400 and close (RFC 9112 section 6.3 item 5). */
     @Test fun negative_invalidContentLengthIsRejected() =
         serverTest {

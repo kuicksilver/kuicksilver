@@ -140,6 +140,44 @@ class ClientH1FramingTest {
         }
 
     /**
+     * RFC 9112 section 2.2: a bare LF ends the status line and each field line of a response head (a MAY the client takes,
+     * as for the server's request head); the chunk-size line takes CRLF alone (`h1.ChunkedBodyTest`).
+     */
+    @Test fun bareLfEndsTheLinesOfAResponseHead() =
+        clientTest {
+            rawServerPerConnection({ _, input, output ->
+                readHead(input)
+                output.writeStringUtf8("HTTP/1.1 200 OK\nContent-Length: 2\nX-A: b\n\nok")
+            }) { port ->
+                testClient().use { c ->
+                    val r = c.get("http://127.0.0.1:$port/")
+                    assertEquals("b", r.headers["X-A"])
+                    assertEquals("ok", r.bodyAsText())
+                }
+            }
+        }
+
+    /**
+     * A coding before the final `chunked` (`Transfer-Encoding: gzip, chunked`, which a server sends to a client that asked
+     * for it with `TE: gzip`): the chunked coding is removed (RFC 9112 section 7), the other codings are the application's
+     * to remove, so the body reaches it still coded and the Transfer-Encoding field as the server sent it (as a request body
+     * the application coded itself goes out, `contentTransferEncodingEndsWithChunked`).
+     */
+    @Test fun codingsBeforeChunkedReachTheApplication() =
+        clientTest {
+            rawServerPerConnection({ _, input, output ->
+                readHead(input)
+                output.writeStringUtf8("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n5\r\nzzzzz\r\n0\r\n\r\n")
+            }) { port ->
+                testClient().use { c ->
+                    val r = c.get("http://127.0.0.1:$port/")
+                    assertEquals("gzip, chunked", r.headers[HttpHeaders.TransferEncoding])
+                    assertEquals("zzzzz", r.bodyAsText())
+                }
+            }
+        }
+
+    /**
      * A trailer section after the last chunk (RFC 9112 section 7.1.2) ends the body like an empty one, and the connection
      * stays reusable. Before, the body failed with "Expected CR" and the connection was closed.
      */
