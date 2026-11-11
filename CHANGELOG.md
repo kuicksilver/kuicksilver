@@ -979,6 +979,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `IllegalStateException` ("the client is closed") on HTTP/3, or an `IOException` from the closed selector on a TCP
   connect, instead of `ClientEngineClosedException`. The engine now checks again once the call is attached and fails it
   with `ClientEngineClosedException`.
+- Ktor client: a WebSocket over HTTP/1.1 resolved its host under a connect timeout of its own and then started a fresh
+  one for the wait for a pool slot and the TCP and TLS connect, so with a slow resolver it could take up to twice the
+  connect timeout before the answer to its handshake was even awaited. Resolving and connecting now share one connect
+  timeout, as for any other request; the answer to the handshake keeps its own, counted from the connection
+  (documented in `connectTimeout` and the guide's WebSocket section).
 
 ## [0.2.1] - 2026-11-04
 

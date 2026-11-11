@@ -876,7 +876,10 @@ WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin alre
 mode is `H3Only`); over HTTP/3 the handshake is RFC 9220 and the plugin sees the usual 101. Over HTTP/1.1 at most one
 WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
 any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
-the name counts as the host.
+the name counts as the host. The connect timeout applies twice to such a WebSocket, in two phases: resolving the name,
+waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
+arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
+to the address is in neither: only the call (its request timeout or cancellation) bounds it.
 
 ### Discovery and Alt-Svc
 
