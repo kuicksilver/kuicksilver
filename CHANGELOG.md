@@ -637,6 +637,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: a response abandoned because a response field or its trailers were refused (or its head could not be
+  written) was reset with H3_INTERNAL_ERROR; RFC 9114 section 4.1.1 says a server that abandons a response after partial
+  processing SHOULD use H3_REQUEST_CANCELLED, which it now does, as for a failed body.
 - HTTP/3 client: a response with a field value longer than the decoder takes was reset with H3_EXCESSIVE_LOAD, and one
   whose string length did not fit a 62-bit integer ended the whole connection; RFC 9204 section 7.4 makes "a value
   larger than it is able to decode" a stream error of type QPACK_DECOMPRESSION_FAILED. Both are now that stream error.

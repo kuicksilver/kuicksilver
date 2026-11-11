@@ -507,7 +507,8 @@ internal class ServerRequestImpl(
             throw IllegalStateException("response already started")
         }
         check(!finished) { "request is finished" }
-        // a rejected field or a failed write never leaves the stream half-open: it is reset with H3_INTERNAL_ERROR and the exchange ends
+        // a rejected field or a failed write never leaves the stream half-open: the response is abandoned, reset with
+        // H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), and the exchange ends
         try {
             validateFields(status, headers)
         } catch (e: IllegalArgumentException) {
@@ -565,8 +566,10 @@ internal class ServerRequestImpl(
 
     /** Session dispatcher only: [done] changes the session's maps and counters. */
     private fun abortInternal() {
-        runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
-        runCatching { st.stopSending(Http3ErrorCode.INTERNAL_ERROR) }
+        // RFC 9114 section 4.1.1: "When a server abandons a response after partial processing, it SHOULD abort its response
+        // stream with the error code H3_REQUEST_CANCELLED"
+        runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+        runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
         done()
     }
 
@@ -699,8 +702,8 @@ internal class ResponseWriterImpl(
                         e
                     }
                 if (refused != null) {
-                    runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
-                    runCatching { st.stopSending(Http3ErrorCode.INTERNAL_ERROR) }
+                    runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) } // abandoned after partial processing
+                    runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
                     request?.done()
                     throw refused
                 }

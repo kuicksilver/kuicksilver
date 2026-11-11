@@ -695,6 +695,8 @@ class RequestTest {
                             }.exceptionOrNull()
                         }
                     assertIs<Http3Exception>(e, "the client sees the reset instead of hanging: $e")
+                    // RFC 9114 section 4.1.1: a response abandoned after partial processing is H3_REQUEST_CANCELLED
+                    assertEquals(Http3ErrorCode.REQUEST_CANCELLED, assertIs<Http3Exception.Protocol>(e).h3Code)
                 }
             }
         }
@@ -856,6 +858,8 @@ class RequestTest {
                 assertFailsWith<IllegalArgumentException> { w.finish(Http3Headers.of("connection" to "close")) }
                 val body = withTimeout(5.seconds) { resp.await() }
                 assertTrue(body.isFailure, "the client saw a complete body ${body.getOrNull()?.decodeToString()}")
+                // RFC 9114 section 4.1.1: abandoned after partial processing
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, assertIs<Http3Exception.Protocol>(body.exceptionOrNull()).h3Code)
                 // te is a request field: not in response trailers either (RFC 9110 section 10.1.4)
                 val r2 =
                     async {
