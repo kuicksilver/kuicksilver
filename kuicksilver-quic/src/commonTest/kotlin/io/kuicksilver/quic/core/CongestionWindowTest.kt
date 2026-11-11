@@ -124,4 +124,20 @@ class CongestionWindowTest {
             p.close()
         }
     }
+
+    /**
+     * A window of 10.5 datagrams: the check used to stop only once bytes in flight reached the window, so the eleventh datagram
+     * went out with 600 bytes of room and left 600 bytes more in flight than the window allows.
+     */
+    @Test fun noDatagramTakesBytesInFlightAboveTheWindow() {
+        val p = confirmedPair { FixedWindow(12_600) }
+        val batch = PacketBatch(64)
+        try {
+            fillWindow(p, p.client, batch)
+            assertEquals(12_000L, p.client.cc.bytesInFlight, "ten full datagrams; the eleventh does not fit")
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
 }

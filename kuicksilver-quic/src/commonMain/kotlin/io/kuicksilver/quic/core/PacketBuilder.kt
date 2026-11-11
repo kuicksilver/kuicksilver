@@ -181,7 +181,7 @@ internal class PacketBuilder(
         if (pnExhausted) return exhausted(count)
         // one send quantum went out with window and data left: ask for the next poll when the pacer allows the next datagram (at
         // once without pacing), or the rest would wait for the peer's next packet and the sender would look application-limited
-        if (!congested && bytes >= c.cc.sendQuantum && c.closeFrame == null && c.cc.bytesInFlight < c.cc.cwnd &&
+        if (!congested && bytes >= c.cc.sendQuantum && c.closeFrame == null && c.cc.bytesInFlight + c.path.mtu <= c.cc.cwnd &&
             hasData(SpaceId.Application) && pacerWakeup == TimeMark.NEVER
         ) {
             pacer(now)
@@ -352,7 +352,9 @@ internal class PacketBuilder(
         maxLen: Int,
         now: TimeMark,
     ): Int {
-        congested = c.cc.bytesInFlight >= c.cc.cwnd && !probeDue()
+        // RFC 9002 section 7: no packet may take bytes_in_flight above the window. The datagram is at most maxLen bytes, so it goes
+        // only while that much still fits: a full window is one with less than a datagram left
+        congested = c.cc.bytesInFlight + maxLen > c.cc.cwnd && !probeDue()
         initialAckOnly = c.role == TlsRole.Server && maxLen < 1200
         if (!congested) pacer(now)
         var pos = 0
