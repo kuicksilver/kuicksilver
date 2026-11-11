@@ -135,6 +135,58 @@ class PathTest {
         }
     }
 
+    /** The first frame type of the 1-RTT packet in a Null-protected datagram, or -1. */
+    private fun firstOneRttFrame(
+        d: ByteArray,
+        dcidLen: Int,
+    ): Int {
+        if (d[0].toInt() and 0x80 != 0) return -1
+        val pnLen = (d[0].toInt() and 0x03) + 1
+        return d[1 + dcidLen + pnLen].toInt() and 0xff
+    }
+
+    /**
+     * RFC 9000 section 9.3.3: "An endpoint that receives a PATH_CHALLENGE on an active path SHOULD send a non-probing packet in
+     * response." It held only by chance: the PATH_RESPONSE rode with an ACK in a normal packet, but with a PATH_CHALLENGE of our own
+     * pending on that path both left in a probing-only packet and the ACK waited for max_ack_delay (0.3.0 cross-review). The packet
+     * that carried the challenge is now acknowledged at once.
+     */
+    @Test fun pathChallengeOnTheActivePathGetsANonProbingAnswer() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            p.settle()
+            s.paths.active.challengePending = true // our own validation of the active path is under way (section 9.3.2)
+            c.testInjectPathChallenges = 1
+            val batch = io.kuicksilver.quic.PacketBatch(4)
+            val n = c.poll(batch, p.now)
+            assertEquals(1, n, "the client's probe")
+            val probe = batch.buffer(0).toByteArray(batch.length(0))
+            batch.close()
+            assertEquals(0x1a, firstOneRttFrame(probe, s.localCid.length), "a PATH_CHALLENGE alone")
+            assertTrue(
+                !s.loss
+                    .space(io.kuicksilver.quic.recovery.SpaceId.Application)
+                    .ack.ackRequired,
+            )
+            p.feed(p.server, probe, p.clientAddr)
+            assertTrue(
+                s.loss
+                    .space(io.kuicksilver.quic.recovery.SpaceId.Application)
+                    .ack.ackRequired,
+                "the packet with the challenge is acknowledged at once, not after max_ack_delay",
+            )
+            val out = io.kuicksilver.quic.PacketBatch(8)
+            val m = s.poll(out, p.now)
+            val sent = (0 until m).map { firstOneRttFrame(out.buffer(it).toByteArray(out.length(it)), c.localCid.length) }
+            out.close()
+            assertTrue(sent.contains(0x1a), "the probe with the PATH_RESPONSE: $sent")
+            assertTrue(sent.any { it == 0x02 || it == 0x03 }, "and a non-probing packet (an ACK) in the same flight: $sent")
+        } finally {
+            p.close()
+        }
+    }
+
     /** With glitch protection off the queue of owed responses is still bounded: the challenge past it closes the connection. */
     @Test fun negative_pathResponseQueueHasAHardBound() {
         val (p, _) = connected()

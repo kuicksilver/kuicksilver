@@ -637,6 +637,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a packet carrying a PATH_CHALLENGE on the active path is acknowledged at once, so a non-probing packet
+  answers it (RFC 9000 section 9.3.3 SHOULD) also when our own PATH_CHALLENGE on that path sends the PATH_RESPONSE in a
+  probing-only packet; the ACK used to wait for `max_ack_delay` then.
 - QUIC, ECN: a move of a path's peer address to another IP during the handshake started congestion control, RTT and
   DPLPMTUD over but kept the old address's ECN validation; it now starts over too (RFC 9000 section 13.4.2: per network
   path). The one-congestion-event-per-recovery-period rule for CE reports was kept for the whole connection, so a CE

@@ -694,6 +694,9 @@ internal fun ConnectionCore.onPathChallenge(
         notePeerDcid(p)
         p.peerProbed = true
     }
+    // RFC 9000 section 9.3.3: "An endpoint that receives a PATH_CHALLENGE on an active path SHOULD send a non-probing packet in
+    // response": the ACK of this packet leaves at once, beside the PATH_RESPONSE or right behind it when that goes in a probe of its own
+    if (p === paths.active) loss.space(SpaceId.Application).ack.acknowledgeAtOnce()
     if (paths.responses >= Paths.FREE_RESPONSES) glitch(0x1a)
     val at = serverLocal(receiver.local)
     val own = p.local

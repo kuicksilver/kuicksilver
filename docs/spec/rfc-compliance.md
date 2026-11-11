@@ -59,6 +59,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | draft-ietf-ccwg-bbr | BBR (BBRv3) | ✅ | 0.2.0 | An experimental, opt-in BBRv3 controller follows draft-06. | [details](rfc/draft-ietf-ccwg-bbr.md#bbr-bbrv3) |
 | RFC 9221 | DATAGRAM frames | ✅ | 0.2.0 | DATAGRAM frames are advertised by default and sent and received within the peer's size limit. | [details](rfc/9221.md#datagram-frames) |
 | RFC 8899 | §3, §4.1 — DF on the socket for PMTUD probes | ✅ | 0.3.0 | The native UDP socket sets Don't Fragment for MTU probes on every platform that offers it. | [details](rfc/8899.md#s3-df-on-the-socket-for-pmtud) |
+| RFC 8899 | §3, §4.3, §4.6, §5.1.1 — probing, black holes, Packet Too Big, timers | ✅ | 0.3.0 | Probe loss is no congestion signal, black holes fall back to 1200 bytes, Packet Too Big messages are validated hints, and the search repeats every 600 s. | [details](rfc/8899.md#s3-probing-black-holes-ptb-timers) |
 | draft-ietf-quic-reliable-stream-reset | RESET_STREAM_AT | 🔶 | 0.3.0 | An experimental, off-by-default RESET_STREAM_AT delivers a reliable prefix of a reset stream. | [details](rfc/draft-ietf-quic-reliable-stream-reset.md#reset-stream-at) |
 | RFC 9287 | grease bit | ✅ | 0.2.0 | The QUIC bit is greased only towards a peer that advertised `grease_quic_bit`. | [details](rfc/9287.md#grease-bit) |
 | RFC 9218 | priorities (transport part: the scheduler) | ✅ | 0.2.0 | The stream scheduler orders streams by urgency and the incremental flag. | [details](rfc/9218.md#priorities-transport-part-the-scheduler) |

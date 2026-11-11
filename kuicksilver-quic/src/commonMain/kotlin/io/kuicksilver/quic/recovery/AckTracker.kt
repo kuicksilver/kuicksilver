@@ -24,6 +24,9 @@ internal class AckTracker(
     private var firstPendingTime = TimeMark(0)
     private var required = false
 
+    /** [acknowledgeAtOnce] was called for the packet being processed. */
+    private var atOnce = false
+
     /** Packets at or below this are no longer reported (the peer acknowledged our ACK for them). */
     private var floor = -1L
 
@@ -111,8 +114,18 @@ internal class AckTracker(
         if (ackEliciting) {
             pending++
             if (pending == 1) firstPendingTime = now
-            if (immediate || pending >= 2 || reordered || ce) required = true
+            if (immediate || pending >= 2 || reordered || ce || atOnce) required = true
         }
+        atOnce = false
+    }
+
+    /**
+     * The packet whose frames are being processed is acknowledged at once, not after max_ack_delay: it carried a PATH_CHALLENGE on the
+     * active path, which "SHOULD send a non-probing packet in response" (RFC 9000 section 9.3.3), and the ACK makes the packet that
+     * follows the probe a non-probing one.
+     */
+    fun acknowledgeAtOnce() {
+        atOnce = true
     }
 
     private fun insert(pn: Long) {
