@@ -52,6 +52,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -296,14 +297,18 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             // the request-head deadline of the first request counts from here, the TLS handshake included
                             val accepted = TimeSource.Monotonic.markNow()
                             client.setCloseTimeout(null) // the engine bounds the close (closeWithin), on progress
-                            connectionScope.launch {
+                            // a stop between accept() and here leaves the scope cancelled: the coroutine still starts and
+                            // aborts the socket, which releases its slot (a plain launch never ran, nor its finally)
+                            connectionScope.launchOrElse(onCancelled = { client.abort() }) {
                                 val sock: Socket
                                 val peer: List<Certificate>
                                 val remote = client.remoteAddress as? InetSocketAddress
                                 if (tlsConfig != null) {
                                     val t =
                                         try {
-                                            withTimeoutOrNull(headerTimeout) { client.tlsServer(tlsConfig) }
+                                            // a handshake that completes as the deadline fires (or a stop comes) is
+                                            // dropped by the timeout: its TLS session is aborted, not leaked
+                                            withTimeoutOrRelease(headerTimeout, { it.abort() }) { client.tlsServer(tlsConfig) }
                                                 ?: throw IOException("No TLS handshake within the request header timeout ($headerTimeout)")
                                         } catch (e: Throwable) {
                                             // never a close without a bound (the socket has none of its own): it would keep
@@ -320,7 +325,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                                     "tlsHandshakeFailed",
                                                 ) { tlsHandshakeFailed(remote, e) }
                                             }
-                                            return@launch
+                                            return@launchOrElse
                                         } // a failed handshake ends only this connection
                                     t.setCloseTimeout(null)
                                     sock = t
@@ -331,7 +336,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 }
                                 val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else NO_ALT_SVC
                                 if (h2Offered && (sock as? io.kuicksilver.ktor.network.TlsSocket)?.negotiatedAlpn == H2_ALPN) {
-                                    return@launch serveH2(
+                                    return@launchOrElse serveH2(
                                         sock,
                                         remote,
                                         peer,
@@ -573,6 +578,47 @@ internal suspend fun <S : Any> acceptLoop(
         }
     }
 }
+
+/**
+ * [withTimeoutOrNull] that loses nothing [block] made: kotlinx's drops the block's result when the deadline fires while
+ * the block finishes its last non-suspending steps, or when the caller is cancelled as it resumes (its KDoc: "the timeout
+ * event is asynchronous with respect to the code running in the block"). Such a result goes to [release]; null after the
+ * deadline, and the caller's cancellation is rethrown.
+ */
+internal suspend fun <T : Any> withTimeoutOrRelease(
+    timeout: Duration,
+    release: (T) -> Unit,
+    block: suspend () -> T,
+): T? {
+    var made: T? = null
+    val result =
+        try {
+            withTimeoutOrNull(timeout) { block().also { made = it } }
+        } catch (e: Throwable) {
+            made?.let(release)
+            throw e
+        }
+    if (result == null) made?.let(release)
+    return result
+}
+
+/**
+ * Launches [block] even when this scope is already cancelled ([CoroutineStart.ATOMIC]), and then runs [onCancelled]
+ * instead of it: what the caller handed over (an accepted socket) is released either way. A plain `launch` on a cancelled
+ * scope never runs its body, nor a `finally` in it.
+ */
+internal fun CoroutineScope.launchOrElse(
+    onCancelled: () -> Unit,
+    block: suspend CoroutineScope.() -> Unit,
+): Job =
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    launch(start = CoroutineStart.ATOMIC) {
+        if (!isActive) {
+            onCancelled()
+            return@launch
+        }
+        block()
+    }
 
 /**
  * Closes [sock] gracefully (what was written is still sent, then TLS `close_notify` and FIN) for as long as the drain

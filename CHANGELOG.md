@@ -959,6 +959,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   without close_notify (truncation)" without a cause: ktor-io reads a channel failed with a cause as one that ended, and
   the failure was dropped. It is now the exception's cause, so the application and the Ktor server's
   `tlsHandshakeFailed` event see it.
+- Ktor server: a TLS handshake that completed just as the request-head deadline (`requestHeaderTimeoutSeconds`) fired,
+  or as the engine stopped, was dropped by the deadline (kotlinx's `withTimeoutOrNull` discards a result that arrives
+  with its timeout) and its TLS session was never closed: one native TLS session per occurrence for the rest of the
+  process. That session is now aborted. And a connection accepted just before a hard stop (the grace period ran out)
+  whose coroutine was launched on the already cancelled connection scope never ran: neither its handshake nor its close,
+  so the socket stayed open and kept its `maxTcpConnections` and `maxTcpConnectionsPerIp` slot. Such a connection is now
+  aborted, which releases the slot.
 
 ## [0.2.1] - 2026-11-04
 
