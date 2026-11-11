@@ -29,6 +29,7 @@ import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -192,7 +193,14 @@ private suspend fun H3Session.requestOnDispatcher(
         if (goAwaySentId != null) throw Http3Exception.RequestNotProcessed.ownGoAway()
         // before a stream is opened: a refused section costs no stream credit (the id is not known yet: -1)
         val fields = PseudoHeaders.buildRequest(r)
-        PseudoHeaders.requireValidRequest(fields)
+        // RFC 9220 section 3 (RFC 8441 section 4): `:protocol` only once the server enabled Extended CONNECT in its SETTINGS
+        val connectProtocolEnabled = r.protocol != null && awaitPeerSettings().enableConnectProtocol
+        PseudoHeaders.requireValidRequest(fields, connectProtocolEnabled)
+        // RFC 9114 section 4.1.2: a request without content cannot match a non-zero content-length (sendBody holds a body to it)
+        if (r.body == null && r.method != "CONNECT") {
+            val declared = r.headers["content-length"]?.toLongOrNull()
+            require(declared == null || declared == 0L) { "invalid request: content-length $declared without a body" }
+        }
         checkPeerFieldLimit(-1, fields)
         val st =
             try {
@@ -279,6 +287,9 @@ private suspend fun H3Session.exchange(
                 onSkipped = { glitch("unknown frame on a request stream") },
                 onBuffered = { bufferedHeaderBytes += it },
                 webTransport = settings.webTransport,
+                // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
+                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { st.input.closedCause != null || noMoreInserts() } },
+                limitReadAhead = if (settings.qpackBlockedStreams > 0) ({ st.readAhead = it }) else null,
             )
         var interimBytes = 0L
         while (true) {
@@ -420,8 +431,18 @@ private suspend fun H3Session.sendBody(
     sendFailure: CompletableDeferred<Unit>,
 ) {
     val buf = ByteArray(CHUNK)
+    // the content must match its content-length (RFC 9114 section 4.1.2): else the request is abandoned, not sent malformed
+    val declared = if (r.method == "CONNECT") null else r.headers["content-length"]?.toLongOrNull()
+
+    fun abandon(e: Throwable) {
+        sendFailure.completeExceptionally(e)
+        runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+        runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
+        r.body?.cancel(e)
+    }
     try {
         r.body?.let { body ->
+            var sent = 0L
             while (true) {
                 val n = body.readAvailable(buf, 0, buf.size)
                 if (n <
@@ -432,11 +453,14 @@ private suspend fun H3Session.sendBody(
                 if (n >
                     0
                 ) {
+                    if (declared != null && sent + n > declared) return abandon(ContentLengthMismatch(declared, sent + n, more = true))
                     st.output.writeFrame(FrameType.DATA, buf, 0, n)
                     st.output.flush()
+                    sent += n
                 }
             }
             body.closedCause?.let { throw it }
+            if (declared != null && sent != declared) return abandon(ContentLengthMismatch(declared, sent, more = false))
         }
         r.trailers?.let { cb -> withContext(callbacks) { cb() } }?.let { t ->
             val refused =
@@ -451,11 +475,7 @@ private suspend fun H3Session.sendBody(
                 }
             if (refused != null) {
                 // the request cannot be completed: the exchange is abandoned both ways and its caller gets this failure
-                sendFailure.completeExceptionally(refused)
-                runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
-                runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
-                r.body?.cancel(refused)
-                return
+                return abandon(refused)
             }
             st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, t.fields))
         }
@@ -534,9 +554,22 @@ internal class ResponseImpl(
         sendFailure?.invokeOnCompletion { cause ->
             if (cause != null) {
                 pump.cancel()
+                cancelSectionsAfterPump()
                 bodyChannel.cancel(cause)
                 trailersDeferred.completeExceptionally(cause)
             }
+        }
+    }
+
+    /**
+     * Reading is abandoned with the cancelled [pump]: response trailers it left blocked on the dynamic table would hold a
+     * blocked-stream slot for good, and the peer's encoder would wait for them (RFC 9204 section 4.4.2): QPACK forgets the
+     * stream once the pump is over, so a pump still running to its next suspension cannot block the stream again after it.
+     */
+    private fun cancelSectionsAfterPump() {
+        session.scope.launch {
+            pump.join()
+            runCatching { session.cancelSections(st) }
         }
     }
 
@@ -560,13 +593,22 @@ internal class ResponseImpl(
     }
 
     override fun cancel(code: Long) {
+        val sent = clientStreamCode(code)
         pump.cancel()
         sender?.cancel()
-        runCatching { st.stopSending(code) }
-        runCatching { st.reset(code) }
-        session.scope.launch { runCatching { session.cancelSections(st) } }
-        val e = CancellationException("response cancelled with ${Http3ErrorCode.name(code)}")
+        runCatching { st.stopSending(sent) }
+        runCatching { st.reset(sent) }
+        cancelSectionsAfterPump()
+        val e = CancellationException("response cancelled with ${Http3ErrorCode.name(sent)}")
         bodyChannel.cancel(e)
         trailersDeferred.cancel(e)
     }
 }
+
+/**
+ * The code a client resets or stops a request stream with: RFC 9114 section 4.1.1, "Clients MUST NOT use the
+ * H3_REQUEST_REJECTED error code, except when a server has requested closure of the request stream with this error
+ * code" (it says the server did not process the request), so an application's H3_REQUEST_REJECTED becomes
+ * H3_REQUEST_CANCELLED.
+ */
+internal fun clientStreamCode(code: Long): Long = if (code == Http3ErrorCode.REQUEST_REJECTED) Http3ErrorCode.REQUEST_CANCELLED else code

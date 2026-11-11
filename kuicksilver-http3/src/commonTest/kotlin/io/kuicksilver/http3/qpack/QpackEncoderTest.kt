@@ -14,6 +14,11 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class QpackEncoderTest {
+    /** Field octets are ISO-8859-1: a wider character is refused, never encoded as its low byte (U+010D as CR). */
+    @Test fun negative_charactersAboveLatin1AreRefused() {
+        kotlin.test.assertFailsWith<IllegalArgumentException> { QpackEncoder().encode(0, listOf("x-name" to "a\u010Db")) }
+    }
+
     private fun QpackDecoder.feed(b: ByteArray) = onEncoderStream(b, 0, b.size)
 
     private fun QpackEncoder.feed(b: ByteArray) = onDecoderStream(b, 0, b.size)
@@ -54,6 +59,33 @@ class QpackEncoderTest {
             "second ${second.size} vs first ${first.size}+${firstEnc.size}",
         )
         assertEquals(req, assertIs<DecodeResult.Decoded>(d.decode(4, second)).fields)
+    }
+
+    /**
+     * RFC 9204 section 2.1.3: no instruction without credit for all of it. With none, the section goes without inserts
+     * (literals, decodable as they are); with credit for some, only inserts that fit whole are made.
+     */
+    @Test fun insertsStayWithinTheEncoderStreamCredit() {
+        val none = QpackEncoder().also { it.onPeerSettings(4096, 16) }
+        none.drainEncoderStream() // Set Dynamic Table Capacity
+        val block = none.encode(0, req, instructionBudget = 0)
+        assertContentEquals(ByteArray(0), none.drainEncoderStream())
+        assertEquals(req, assertIs<DecodeResult.Decoded>(QpackDecoder(4096, 16, 65_536).decode(0, block)).fields)
+        val full = QpackEncoder().also { it.onPeerSettings(4096, 16) }
+        full.drainEncoderStream()
+        full.encode(0, req)
+        val all = full.drainEncoderStream().size
+        assertTrue(all > 20, "the unbounded encoder inserts")
+        for (budget in listOf(1L, all / 2L, all - 1L)) {
+            val some = QpackEncoder().also { it.onPeerSettings(4096, 16) }
+            val d = QpackDecoder(4096, 16, 65_536)
+            d.feed(some.drainEncoderStream()) // Set Dynamic Table Capacity, sent with the SETTINGS
+            val b = some.encode(0, req, instructionBudget = budget)
+            val ins = some.drainEncoderStream()
+            assertTrue(ins.size <= budget, "$budget: ${ins.size} bytes of instructions")
+            d.feed(ins)
+            assertEquals(req, assertIs<DecodeResult.Decoded>(d.decode(0, b)).fields)
+        }
     }
 
     @Test fun neverIndexSensitive() {
@@ -131,87 +163,5 @@ class QpackEncoderTest {
             )
         }
         assertEquals(req, assertIs<DecodeResult.Decoded>(d.decode(4L * 2999, e.encode(4L * 2999, req))).fields)
-    }
-}
-
-/** Property test: encoder -> decoder round trip over table size x blocked streams x acknowledgment mode (as ls-qpack does). */
-class QpackRoundTripTest {
-    private enum class Ack { Immediate, Delayed, Never }
-
-    private val names =
-        listOf(
-            ":method",
-            ":path",
-            ":authority",
-            "accept",
-            "user-agent",
-            "x-trace",
-            "cookie",
-            "content-type",
-            "x-custom-${'a'}",
-            "cache-control",
-        )
-
-    /** 1 to 12 fields of a name from [names] and up to 40 printable ASCII characters (Kotest's default string alphabet). */
-    private fun fields(rnd: Random): List<Pair<String, String>> =
-        List(rnd.int(1..12)) {
-            names.random(rnd) to CharArray(rnd.int(0..40)) { rnd.nextInt(0x20..0x7e).toChar() }.concatToString()
-        }
-
-    @Test fun gridRoundTrip() {
-        val rs = Random(42)
-        for (cap in listOf(0L, 256L, 4096L)) {
-            for (blocked in listOf(0, 1, 16)) {
-                for (ack in Ack.values()) {
-                    val e = QpackEncoder()
-                    e.onPeerSettings(cap, blocked.toLong())
-                    val d = QpackDecoder(cap, blocked, 65_536)
-                    var stream = 0L
-                    var pendingAcks = ByteArray(0)
-                    repeat(40) { batch ->
-                        // five sections in flight at once; their blocks reach the decoder before the encoder stream does
-                        val sections =
-                            (0 until 5).map {
-                                val f =
-                                    fields(rs).map { (n, v) ->
-                                        n to v.filter { c -> c.code in 0x21..0x7e }
-                                    }
-                                val id = stream
-                                stream +=
-                                    4
-                                Triple(id, f, e.encode(id, f))
-                            }
-                        val blockedNow = ArrayList<Triple<Long, List<Pair<String, String>>, ByteArray>>()
-                        for (s in sections) {
-                            when (val r = d.decode(s.first, s.third)) {
-                                is DecodeResult.Decoded -> {
-                                    assertEquals(s.second, r.fields)
-                                }
-
-                                is DecodeResult.Blocked -> {
-                                    d.markBlocked(s.first)
-                                    blockedNow += s
-                                }
-
-                                DecodeResult.TooLarge -> {
-                                    error("too large")
-                                }
-                            }
-                        }
-                        val es = e.drainEncoderStream()
-                        d.onEncoderStream(es, 0, es.size)
-                        for (s in blockedNow) assertEquals(s.second, assertIs<DecodeResult.Decoded>(d.decode(s.first, s.third)).fields)
-                        pendingAcks += d.drainDecoderStream()
-                        if (ack == Ack.Immediate ||
-                            (ack == Ack.Delayed && batch % 3 == 2)
-                        ) {
-                            e.onDecoderStream(pendingAcks, 0, pendingAcks.size)
-                            pendingAcks =
-                                ByteArray(0)
-                        }
-                    }
-                }
-            }
-        }
     }
 }

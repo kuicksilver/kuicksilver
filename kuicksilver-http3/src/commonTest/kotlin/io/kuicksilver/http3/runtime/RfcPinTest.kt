@@ -76,7 +76,12 @@ class RfcPinTest {
 
     /** What may not follow the trailers: DATA, or another HEADERS. */
     private val afterTrailers: List<(RawPeer, Long) -> ByteArray> =
-        listOf({ raw, _ -> raw.data(data) }, { raw, id -> raw.headers(id, listOf("x-b" to "2")) })
+        listOf(
+            { raw, _ -> raw.data(data) },
+            { raw, id -> raw.headers(id, listOf("x-b" to "2")) },
+            // a HEADERS frame whose declared length is above the cap: refused from its header, still after the trailers
+            { _, _ -> VarInt.encode(FrameType.HEADERS) + VarInt.encode(1L shl 20) },
+        )
 
     /** RFC 9114 section 4.1: a request's DATA before its HEADERS is H3_FRAME_UNEXPECTED. */
     @Test fun dataBeforeHeadersOnServerIsFrameUnexpected() =

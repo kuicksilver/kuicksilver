@@ -84,9 +84,16 @@ internal class QpackEncoder(
         return true
     }
 
+    /**
+     * The field section of [fields] for [streamId]; the insert instructions it needs wait in [drainEncoderStream]. At most
+     * [instructionBudget] bytes of them: RFC 9204 section 2.1.3, "an encoder SHOULD NOT write an instruction unless
+     * sufficient stream and connection flow-control credit is available for the entire instruction"; a field whose insert
+     * would not fit goes as a literal (or a reference to what the table already holds).
+     */
     fun encode(
         streamId: Long,
         fields: List<Pair<String, String>>,
+        instructionBudget: Long = Long.MAX_VALUE,
     ): ByteArray {
         val body = QpackWriter()
         val used = ArrayList<Long>()
@@ -110,22 +117,25 @@ internal class QpackEncoder(
                     if (size > capacity / 2 || !evictable(size)) continue
                     val sIdx = StaticTable.findName(name)
                     val dIdx = table.findName(name)
+                    val ins = QpackWriter()
                     when {
                         sIdx >= 0 -> {
-                            enc.writeInt(0xc0, 6, sIdx.toLong())
-                            enc.writeStringAuto(0, 7, value)
+                            ins.writeInt(0xc0, 6, sIdx.toLong())
+                            ins.writeStringAuto(0, 7, value)
                         }
 
                         dIdx >= 0 && dIdx >= table.evictionBoundary(size) -> {
-                            enc.writeInt(0x80, 6, table.insertCount - dIdx - 1)
-                            enc.writeStringAuto(0, 7, value)
+                            ins.writeInt(0x80, 6, table.insertCount - dIdx - 1)
+                            ins.writeStringAuto(0, 7, value)
                         }
 
                         else -> {
-                            enc.writeStringAuto(0x40, 5, name)
-                            enc.writeStringAuto(0, 7, value)
+                            ins.writeStringAuto(0x40, 5, name)
+                            ins.writeStringAuto(0, 7, value)
                         }
                     }
+                    if (enc.size.toLong() + ins.size > instructionBudget) continue // no credit for the whole instruction
+                    enc.writeBytes(ins.toByteArray())
                     table.insert(name, value)
                 }
                 table.insertCount

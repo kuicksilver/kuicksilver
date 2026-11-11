@@ -175,6 +175,55 @@ class ServerH3Test {
             }
         }
 
+    /**
+     * RFC 9110 section 10.1.1: `Expect: 100-continue` gets an interim 100 once the application reads the body, and the
+     * client, which holds its content until then, completes; another expectation is answered 417.
+     */
+    @Test fun expectContinueGetsAnInterim100() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routing { post("/") { call.respondText(call.receive<String>()) } } }
+            try {
+                h3(port) { c ->
+                    val body =
+                        io.ktor.utils.io
+                            .ByteChannel()
+                    val interim = ArrayList<Int>()
+                    val r =
+                        kotlinx.coroutines.withTimeout(10.seconds) {
+                            c.request(
+                                http3Request("POST", "server.test", "/") {
+                                    headers =
+                                        io.kuicksilver.http3.Http3Headers
+                                            .of("expect" to "100-continue", "content-length" to "2")
+                                    this.body = body
+                                    onInformational = { status, _ ->
+                                        interim += status
+                                        // the content goes only after the 100
+                                        body.writeFully("hi".encodeToByteArray())
+                                        body.flushAndClose()
+                                    }
+                                },
+                            )
+                        }
+                    assertEquals(listOf(100), interim)
+                    assertEquals(200, r.status)
+                    assertEquals("hi", r.body.readFullBody().decodeToString())
+                    val other =
+                        c.request(
+                            http3Request("POST", "server.test", "/") {
+                                headers =
+                                    io.kuicksilver.http3.Http3Headers
+                                        .of("expect" to "something-else", "content-length" to "2")
+                                this.body = ByteReadChannel("hi")
+                            },
+                        )
+                    assertEquals(417, other.status)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     /** HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): no DATA frame leaves the server, HEAD keeps content-length. */
     @Test fun headAnd204And304SendNoData() =
         h3ServerTest {
@@ -196,6 +245,8 @@ class ServerH3Test {
                         val r = c.request(get("/$status"))
                         assertEquals(status, r.status)
                         assertEquals(0, r.body.readFullBody().size)
+                        // RFC 9110 section 8.6: never on a 204; on a 304 only the length a 200 would have (here the body's)
+                        assertEquals(if (status == 204) null else "4", r.headers["content-length"], "$status")
                     }
                     // the raw stream: HEADERS, then FIN, no DATA frame
                     for ((method, path) in listOf("HEAD" to "/h", "GET" to "/204", "GET" to "/304")) {

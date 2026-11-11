@@ -62,7 +62,9 @@ public class Http3Connection private constructor(
      * (the connection lives on), and with the connection's error once it is gone. Cancelling the call resets the stream
      * with H3_REQUEST_CANCELLED. A request the peer would have to treat as malformed (RFC 9114 sections 4.2, 4.3.1: see
      * [Http3Request]) throws IllegalArgumentException before a stream is opened; so do its trailers, which also abandon
-     * the request (the stream is reset with H3_REQUEST_CANCELLED).
+     * the request (the stream is reset with H3_REQUEST_CANCELLED). A request with a `protocol` (Extended CONNECT) waits
+     * for the peer's SETTINGS and throws IllegalArgumentException unless they enable it (RFC 9220 section 3); [connect]
+     * is the usual way to make one.
      */
     public suspend fun request(request: Http3Request): Http3Response {
         check(role == Http3Role.Client) { "request() is client-only" }

@@ -388,6 +388,48 @@ public class ConnectionCore internal constructor(
     internal var remembered: TransportParameters? = null
     internal var rememberedAlpn: String? = null
 
+    /**
+     * Client: what the application kept with the ticket this connection resumed for 0-RTT ([setApplicationRemembered] on
+     * the connection that received it); set before the first poll and never changed, null without one.
+     */
+    @kotlin.concurrent.Volatile
+    internal var rememberedApplication: ByteArray? = null
+
+    /** Client: what the application keeps with tickets this connection receives, and the tickets received so far. */
+    private var applicationRemembered: ByteArray? = null
+    private val ticketsReceived = ArrayDeque<io.kuicksilver.tls.QuicSessionTicket>()
+
+    /** Client, on the loop: a ticket arrived; it keeps [applicationRemembered] too, now or once it is set. */
+    internal fun ticketReceived(ticket: io.kuicksilver.tls.QuicSessionTicket) {
+        applicationRemembered?.let { app ->
+            ticket.remembered?.let { blob ->
+                io.kuicksilver.quic.core
+                    .withApplication(blob, app)
+                    ?.let { ticket.remembered = it }
+            }
+        }
+        ticketsReceived.addLast(ticket)
+        if (ticketsReceived.size > MAX_TICKETS_UPDATED) ticketsReceived.removeFirst()
+    }
+
+    /**
+     * Client, on the loop: [data] is kept with every ticket this connection received or receives (HTTP/3: the server's
+     * SETTINGS, RFC 9114 section 7.2.4.2). Tickets another connection consumed meanwhile are left alone.
+     */
+    internal fun setApplicationRemembered(data: ByteArray) {
+        applicationRemembered = data
+        for (t in ticketsReceived) {
+            if (!t.closed) {
+                // a blob that is not ours (the application set it) stays as it is
+                t.remembered?.let { blob ->
+                    io.kuicksilver.quic.core
+                        .withApplication(blob, data)
+                        ?.let { t.remembered = it }
+                }
+            }
+        }
+    }
+
     /** The peer's transport parameters as they arrived, stored with tickets (client). */
     internal var peerTpEncoded: ByteArray? = null
     internal var earlyAccepted: Boolean? = null
@@ -408,6 +450,9 @@ public class ConnectionCore internal constructor(
 
     /** The peer's FIN and every byte before it arrived on stream [id] (RFC 9000 section 3.2, "Data Recvd" or "Data Read"). */
     internal fun streamReceivedAll(id: Long): Boolean = streams.receivedAll(id)
+
+    /** [StreamManager.sendCredit] of [id]. */
+    internal fun streamSendCredit(id: Long): Long = streams.sendCredit(id)
 
     /** Set by the endpoint so issued connection IDs route back to this core. */
     internal var registrar: CidRegistrar = NoopRegistrar
@@ -1086,6 +1131,9 @@ public class ConnectionCore internal constructor(
 
         /** The longest NEW_TOKEN token a client keeps: the bound it applies to Retry tokens (threat-model 3.3). */
         internal const val MAX_KEPT_TOKEN = 1024
+
+        /** Tickets of a connection that [setApplicationRemembered] still updates (the latest ones). */
+        internal const val MAX_TICKETS_UPDATED = 8
 
         /** A client connection to [remote]; the first [poll] produces the Initial datagrams. [random] supplies its connection IDs, PATH_CHALLENGE data and skipped packet numbers: a CSPRNG outside tests (predictable IDs would let an off-path attacker forge them). */
         public fun client(

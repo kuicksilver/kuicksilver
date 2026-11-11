@@ -37,6 +37,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -48,6 +49,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.incrementAndFetch
 
 /** A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). */
@@ -57,6 +59,8 @@ internal suspend fun handleRequestStream(
 ) = with(session) {
     // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
+    // RFC 9204 section 2.2.1: with blocked sections possible, nothing of the first field section is taken ahead of it
+    if (settings.qpackBlockedStreams > 0) st.readAhead = RequestFrames.FRAME_HEADER_AHEAD
     val firstType =
         if (settings.webTransport) {
             try {
@@ -74,6 +78,7 @@ internal suspend fun handleRequestStream(
         }
     if (firstType == FrameType.WT_STREAM) {
         bidiSettled(st.id) // a WebTransport stream, not a request: never a session
+        st.readAhead = Long.MAX_VALUE // its data carries no field section: read ahead as any stream
         wt.onBidi(st)
         return@with
     }
@@ -100,6 +105,9 @@ internal suspend fun handleRequestStream(
                 onBuffered = { bufferedHeaderBytes += it },
                 firstType = firstType,
                 webTransport = settings.webTransport,
+                // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
+                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { st.input.closedCause != null || noMoreInserts() } },
+                limitReadAhead = if (settings.qpackBlockedStreams > 0) ({ st.readAhead = it }) else null,
             )
         beforeRequestHeadersForTest?.invoke(st)
         val first =
@@ -115,6 +123,8 @@ internal suspend fun handleRequestStream(
                 // or dropped with the reset (RFC 9204 section 4.4.2)
                 runCatching { cancelSections(st) }
                 return@with
+            } catch (e: StreamAbandoned) {
+                return@with // reset while its HEADERS waited for inserts: the Stream Cancellation went out
             }
         val block =
             when (first) {
@@ -142,7 +152,7 @@ internal suspend fun handleRequestStream(
             } catch (
                 e: StreamFailure,
             ) {
-                reject431(st)
+                reject431(st, e.code)
                 return@with
             } catch (e: StreamAbandoned) {
                 return@with
@@ -181,6 +191,8 @@ internal suspend fun handleRequestStream(
                 req.receivedEarly = true
             } else if (policy is Http3EarlyDataPolicy.Reject425) {
                 reject425(st)
+                handedOff = true
+                req.done() // the request registered itself (its datagrams too): never handed over, it ends here
                 return@with
             } else {
                 earlyHeldForHandshake.incrementAndFetch()
@@ -189,7 +201,10 @@ internal suspend fun handleRequestStream(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Throwable) {
-                    return@with // the handshake failed: a replayed request never runs
+                    // the handshake failed: a replayed request never runs
+                    handedOff = true
+                    req.done()
+                    return@with
                 }
             }
         }
@@ -203,7 +218,8 @@ internal suspend fun handleRequestStream(
         // describe (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2)
         val bodyLimit = if (parsed.method == "CONNECT") null else contentLength(parsed.regular)
         pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, bodyLimit, tunnel = { req.tunnel }) { f ->
-            if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
+            // the 431 claims the response on this dispatcher first: an application's respond() meanwhile finds it taken
+            if (f.error is Http3Exception.FieldSectionTooLarge && req.claimResponseFor431()) reject431(st, f.code) else abort(st, f.code)
             req.done()
         }
         req.receiveEnded()
@@ -225,7 +241,10 @@ internal fun H3Session.wtSessionEnded(
     session?.ended() ?: wt.unregister(streamId)
 }
 
-/** 431 and STOP_SENDING H3_EXCESSIVE_LOAD (RFC 9114 section 4.2.2; quic-go CVE-2025-64702). */
+/**
+ * 425 Too Early for a request that came in 0-RTT and the policy does not run early (RFC 8470 section 5.2): the request is
+ * not read (STOP_SENDING H3_NO_ERROR) and the client may send it again after the handshake.
+ */
 private suspend fun H3Session.reject425(st: QuicStream) {
     runCatching {
         st.stopSending(Http3ErrorCode.NO_ERROR)
@@ -235,10 +254,18 @@ private suspend fun H3Session.reject425(st: QuicStream) {
     runCatching { cancelSections(st) }
 }
 
-private suspend fun H3Session.reject431(st: QuicStream) {
+/**
+ * 431 and STOP_SENDING (RFC 9114 section 4.2.2; quic-go CVE-2025-64702): H3_EXCESSIVE_LOAD, or [stopCode]
+ * QPACK_DECOMPRESSION_FAILED for a value longer than we decode, the stream error RFC 9204 section 7.4 requires.
+ */
+private suspend fun H3Session.reject431(
+    st: QuicStream,
+    stopCode: Long = Http3ErrorCode.EXCESSIVE_LOAD,
+) {
     runCatching {
-        st.stopSending(Http3ErrorCode.EXCESSIVE_LOAD)
+        st.stopSending(stopCode)
         st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildResponse(431, Http3Headers.Empty)))
+        afterReject431HeadersForTest?.invoke(st)
         st.output.flushAndClose()
     }
     runCatching { cancelSections(st) }
@@ -290,9 +317,37 @@ internal class ServerRequestImpl(
 
     /** The client's address now: the live active path, read at request time; the session's last seen one only when none is left. */
     override val remoteAddress: InetSocketAddress get() = session.quic.activePath?.remoteAddress ?: session.currentPath.remoteAddress
-    var responseStarted: Boolean = false
+
+    /** Set on the session's dispatcher ([respond], [claimResponseFor431]); read elsewhere only as a hint. */
+    @Volatile var responseStarted: Boolean = false
         private set
     private var finished = false
+
+    /** The runtime answered 431 itself (request trailers above our limit, RFC 9114 section 4.2.2). */
+    private var answered431 = false
+
+    /**
+     * The runtime's 431 takes the response unless the application's started first. Session dispatcher only, as is the
+     * application's own claim in [respond]: two final responses never reach the stream.
+     */
+    fun claimResponseFor431(): Boolean {
+        if (responseStarted || finished) return false
+        answered431 = true
+        responseStarted = true // after: whoever sees it started sees why
+        return true
+    }
+
+    /** The request's own fault ([answered431]): an I/O failure of this exchange, as its trailers are to the application. */
+    private fun checkNotAnswered431() {
+        if (answered431) throw Http3Exception.FieldSectionTooLarge(st.id, session.settings.maxFieldSectionSize)
+    }
+
+    /** Session dispatcher only: the final response can still be sent. */
+    private fun checkResponseOpen() {
+        checkNotAnswered431()
+        check(!responseStarted) { "response already started" }
+        check(!finished) { "request is finished" }
+    }
 
     /** The exchange is over (response sent, both tunnel directions ended, or stream aborted): counts once towards the GOAWAY idle close. */
     fun done() {
@@ -426,8 +481,9 @@ internal class ServerRequestImpl(
         headers: Http3Headers,
     ) {
         require(status in 100..199 && status != 101) { "interim status must be 1xx other than 101" }
-        check(!responseStarted) { "the final response was already sent" }
         withContext(session.dispatcher) {
+            checkNotAnswered431()
+            check(!responseStarted) { "the final response was already sent" }
             writeHeaders(status, headers)
             try {
                 st.output.flush()
@@ -447,18 +503,24 @@ internal class ServerRequestImpl(
         priority: StreamPriority?,
     ): Http3ResponseWriter {
         require(status in 200..599) { "final status must be 200..599" }
-        check(!responseStarted) { "response already started" }
+        if (responseStarted) { // a hint; the claim below is on the dispatcher
+            checkNotAnswered431()
+            throw IllegalStateException("response already started")
+        }
         check(!finished) { "request is finished" }
-        // a rejected field or a failed write never leaves the stream half-open: it is reset with H3_INTERNAL_ERROR and the exchange ends
+        // a rejected field or a failed write never leaves the stream half-open: the response is abandoned, reset with
+        // H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), and the exchange ends
         try {
-            validateFields(headers)
+            validateFields(status, headers)
         } catch (e: IllegalArgumentException) {
             withContext(session.dispatcher) { abortInternal() }
             throw e
         } // done() touches session state: on its dispatcher
-        responseStarted = true
-        tunnel = method == "CONNECT" && status in 200..299
         return withContext(session.dispatcher) {
+            // claimed here, where the runtime's own 431 claims it ([claimResponseFor431]) and the body pump reads [tunnel]
+            checkResponseOpen()
+            responseStarted = true
+            tunnel = method == "CONNECT" && status in 200..299
             // an explicit priority wins; else the response's own `priority` field merged into the stream's current schedule
             // (RFC 9218 section 8: a parameter it leaves out keeps that value), as h2o does: the client's signal, or for an
             // unsignalled tunnel its incremental default (sections 10.1, 11), which a field like `u=1` then keeps
@@ -492,7 +554,10 @@ internal class ServerRequestImpl(
                 }
             }
             // HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what the application writes is dropped
-            ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = method == "HEAD" || status == 204 || status == 304)
+            val discard = method == "HEAD" || status == 204 || status == 304
+            // the content must match its content-length (RFC 9114 section 4.1.2); a tunnel's says nothing about its bytes
+            val declared = if (discard || tunnel) null else headers["content-length"]?.toLong()
+            ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = discard, declaredLength = declared)
         }
     }
 
@@ -502,18 +567,37 @@ internal class ServerRequestImpl(
 
     /** Session dispatcher only: [done] changes the session's maps and counters. */
     private fun abortInternal() {
-        runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
-        runCatching { st.stopSending(Http3ErrorCode.INTERNAL_ERROR) }
+        // RFC 9114 section 4.1.1: "When a server abandons a response after partial processing, it SHOULD abort its response
+        // stream with the error code H3_REQUEST_CANCELLED"
+        runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+        runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
         done()
     }
 
-    /** Response fields: no pseudo-headers, no connection-specific fields, and no `te` (a request-only field, RFC 9110 section 10.1.4). */
-    private fun validateFields(headers: Http3Headers) {
+    /**
+     * Response fields: no pseudo-headers, no connection-specific fields, and no `te` (a request-only field, RFC 9110 section
+     * 10.1.4); no `content-length` in a 1xx or 204 (RFC 9110 section 8.6) nor in a 2xx to CONNECT (section 9.3.6).
+     */
+    private fun validateFields(
+        status: Int,
+        headers: Http3Headers,
+    ) {
         for ((n, v) in headers.fields) {
             require(
                 !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null &&
                     n !in FieldValidator.CONNECTION_SPECIFIC && n != "te",
             ) { "invalid response field '$n'" }
+        }
+        // RFC 9110 sections 2.2, 8.6: 1*DIGIT, several values only when identical (as we require of the peer)
+        try {
+            FieldValidator.checkContentLength(headers.fields)
+        } catch (m: MalformedMessage) {
+            throw IllegalArgumentException("invalid response: ${m.reason}")
+        }
+        if (status in 100..199 || status == 204 || (method == "CONNECT" && status in 200..299)) {
+            require(
+                headers["content-length"] == null,
+            ) { "content-length in a $status response${if (method == "CONNECT") " to CONNECT" else ""}" }
         }
     }
 
@@ -521,7 +605,7 @@ internal class ServerRequestImpl(
         status: Int,
         headers: Http3Headers,
     ) {
-        validateFields(headers)
+        validateFields(status, headers)
         val fields = PseudoHeaders.buildResponse(status, headers)
         session.checkPeerFieldLimit(st.id, fields)
         try {
@@ -551,23 +635,38 @@ internal class ResponseWriterImpl(
     private val st: QuicStream,
     private val request: ServerRequestImpl?,
     private val discardBody: Boolean = false,
+    /** The response's content-length: content that does not match it is never sent as a complete response. */
+    private val declaredLength: Long? = null,
 ) : Http3ResponseWriter {
     private val channel = ByteChannel()
     override val output: ByteWriteChannel get() = channel
     private var finishing = false
+
+    /** Why the pump abandoned the response (set before it ends): [finish] reports it, also once the channel was closed. */
+    @Volatile private var abandoned: Throwable? = null
     internal val pump: Job =
         session.scope.launch {
             val buf = ByteArray(CHUNK)
+            var sent = 0L
             try {
                 while (true) {
                     val n = channel.readAvailable(buf, 0, buf.size)
                     if (n < 0) break
                     if (n > 0 && !discardBody) {
+                        // RFC 9114 section 4.1.2: content beyond its content-length makes the response malformed; the piece
+                        // that would cross it is not sent, and the response is abandoned (below)
+                        if (declaredLength != null &&
+                            sent + n > declaredLength
+                        ) {
+                            throw ContentLengthMismatch(declaredLength, sent + n, more = true)
+                        }
                         st.output.writeFrame(FrameType.DATA, buf, 0, n)
                         st.output.flush()
+                        sent += n
                     }
                 }
                 channel.closedCause?.let { throw it }
+                if (declaredLength != null && sent != declaredLength) throw ContentLengthMismatch(declaredLength, sent, more = false)
                 if (!finishing) {
                     st.output.flushAndClose()
                     request?.responseComplete()
@@ -579,7 +678,8 @@ internal class ResponseWriterImpl(
                 // response is abandoned after partial processing, "it SHOULD abort its response stream with the error code
                 // H3_REQUEST_CANCELLED" (RFC 9114 section 4.1.1); never left without a FIN or a reset
                 if (H3Session.transportCause(e) == null) runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
-                channel.cancel(session.map(e))
+                abandoned = session.map(e)
+                channel.cancel(abandoned)
                 request?.done()
             }
         }
@@ -593,6 +693,7 @@ internal class ResponseWriterImpl(
         finishing = true
         channel.flushAndClose()
         pump.join()
+        abandoned?.let { throw it }
         channel.closedCause?.let { throw session.map(it) }
         withContext(session.dispatcher) {
             if (trailers != null) {
@@ -608,8 +709,8 @@ internal class ResponseWriterImpl(
                         e
                     }
                 if (refused != null) {
-                    runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
-                    runCatching { st.stopSending(Http3ErrorCode.INTERNAL_ERROR) }
+                    runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) } // abandoned after partial processing
+                    runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
                     request?.done()
                     throw refused
                 }
@@ -631,3 +732,19 @@ internal class ResponseWriterImpl(
         }
     }
 }
+
+/**
+ * Content that does not match its content-length (RFC 9114 section 4.1.2): the message would be malformed, so it is
+ * abandoned (reset with H3_REQUEST_CANCELLED, section 4.1.1) instead of being sent as if complete.
+ */
+internal class ContentLengthMismatch(
+    declared: Long,
+    actual: Long,
+    more: Boolean,
+) : kotlinx.io.IOException(
+        if (more) {
+            "more content than its content-length $declared (RFC 9114 section 4.1.2); the stream was reset"
+        } else {
+            "$actual bytes of content, content-length $declared (RFC 9114 section 4.1.2); the stream was reset"
+        },
+    )

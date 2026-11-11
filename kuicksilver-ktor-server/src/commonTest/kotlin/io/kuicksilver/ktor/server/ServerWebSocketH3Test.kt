@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.content.OutgoingContent
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.application.install
+import io.ktor.server.response.respond
+import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.server.websocket.webSocketRaw
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.readAvailable
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.RawWebSocket
@@ -20,11 +26,14 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -202,6 +211,53 @@ class ServerWebSocketH3Test {
                 h3(
                     port,
                 ) { c -> assertEquals(404, assertFailsWith<Http3Exception.ConnectRejected> { c.connect(wsRequest, "websocket") }.status) }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A call cancelled while its upgrade runs, with an upgrade that never ends the stream itself (Ktor's own WebSocket
+     * session closes its output when it ends): the CONNECT stream is reset with H3_REQUEST_CANCELLED (RFC 9114 section
+     * 4.1.1) and the client's direction is stopped, instead of the stream staying open both ways, and the exchange counted
+     * as running, until the connection's idle timeout.
+     */
+    @Test fun cancelledUpgradeResetsItsStream() =
+        h3ServerTest {
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        get("/ws") {
+                            val callJob = call.coroutineContext.job
+                            call.respond(
+                                object : OutgoingContent.ProtocolUpgrade() {
+                                    override suspend fun upgrade(
+                                        input: ByteReadChannel,
+                                        output: ByteWriteChannel,
+                                        engineContext: CoroutineContext,
+                                        userContext: CoroutineContext,
+                                    ): Job {
+                                        callJob.cancel() // the call goes while the upgrade runs
+                                        return Job() // and the upgrade never ends by itself
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            try {
+                h3(port) { c ->
+                    val stream = c.connect(wsRequest, "websocket")
+                    val failure =
+                        withTimeout(5.seconds) {
+                            assertFailsWith<Http3Exception> {
+                                val b = ByteArray(1024)
+                                while (stream.input.readAvailable(b, 0, b.size) >= 0) { }
+                            }
+                        }
+                    assertIs<Http3Exception.Protocol>(failure)
+                    assertEquals(Http3ErrorCode.REQUEST_CANCELLED, failure.h3Code)
+                }
             } finally {
                 server.stop(100, 500)
             }

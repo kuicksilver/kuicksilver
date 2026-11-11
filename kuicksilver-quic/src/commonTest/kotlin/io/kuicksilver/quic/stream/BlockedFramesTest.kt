@@ -67,6 +67,28 @@ class BlockedFramesTest {
 
     private fun List<ControlFrame>.of(kind: ControlKind) = filter { it.kind == kind }
 
+    /**
+     * The credit HTTP/3 sizes QPACK instructions by (RFC 9204 section 2.1.3): the smaller of the stream's and the
+     * connection's, less what the stream holds unsent; it comes back with MAX_DATA.
+     */
+    @Test fun sendCreditIsTheSmallerCreditLessUnsentData() {
+        val m = manager(peerMaxData = 500, streamWindow = 300)
+        val id = m.open(bidi = false, StreamPriority.Default)
+        assertEquals(300, m.sendCredit(id))
+        m.write(id, ByteArray(100), 0, 100, false)
+        assertEquals(200, m.sendCredit(id), "100 held unsent")
+        sendOnce(m)
+        assertEquals(200, m.sendCredit(id), "sent: 100 of the stream's 300")
+        val other = m.open(bidi = false, StreamPriority.Default)
+        m.write(other, ByteArray(300), 0, 300, false)
+        repeat(3) { sendOnce(m) }
+        assertEquals(100, m.sendCredit(id), "the connection's 500, 400 of them used")
+        assertEquals(0, m.sendCredit(other))
+        assertTrue(m.onMaxData(10_000))
+        assertEquals(200, m.sendCredit(id))
+        assertEquals(0, m.sendCredit(12_345), "no such stream")
+    }
+
     @Test fun blockedSenderReportsDataBlockedOncePerLimit() {
         val m = manager(peerMaxData = 500)
         val id = m.open(bidi = true, StreamPriority.Default)

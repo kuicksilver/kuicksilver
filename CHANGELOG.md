@@ -637,6 +637,121 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: `Http3Response.cancel(code)` and a client `Http3Stream`'s `reset`/`stopSending` sent H3_REQUEST_REJECTED
+  when the application passed it, a code clients MUST NOT use (RFC 9114 section 4.1.1: it tells that the server did not
+  process the request). It now goes out as H3_REQUEST_CANCELLED.
+- HTTP/3 client over 0-RTT (RFC 9114 section 7.2.4.2): the client now stores the server's SETTINGS with its session
+  tickets ("Clients SHOULD store the settings") and complies with them in 0-RTT until the new connection's SETTINGS
+  arrive (a stored SETTINGS_MAX_FIELD_SECTION_SIZE bounds the early requests). When the server accepted 0-RTT and then
+  sends SETTINGS that lower a stored value, change a non-zero SETTINGS_QPACK_MAX_TABLE_CAPACITY or omit a value stored
+  as non-default, the connection ends with H3_SETTINGS_ERROR. Before, the client stored nothing and used the defaults.
+  A ticket whose `remembered` bytes the application replaced with its own is left as it is.
+- HTTP/3 server: a response abandoned because a response field or its trailers were refused (or its head could not be
+  written) was reset with H3_INTERNAL_ERROR; RFC 9114 section 4.1.1 says a server that abandons a response after partial
+  processing SHOULD use H3_REQUEST_CANCELLED, which it now does, as for a failed body.
+- HTTP/3 client: a response with a field value longer than the decoder takes was reset with H3_EXCESSIVE_LOAD, and one
+  whose string length did not fit a 62-bit integer ended the whole connection; RFC 9204 section 7.4 makes "a value
+  larger than it is able to decode" a stream error of type QPACK_DECOMPRESSION_FAILED. Both are now that stream error.
+  A server still answers such a request with 431 (RFC 9114 section 4.2.2), and now stops it with
+  QPACK_DECOMPRESSION_FAILED instead of H3_EXCESSIVE_LOAD.
+- HTTP/3 with the QPACK dynamic table: a field section that waited for inserts had been read off its stream whole first,
+  so its bytes left the flow-control window and the peer got the credit back (RFC 9204 section 2.2.1: SHOULD remain in
+  the window). With blocked streams allowed, request streams are now read without read-ahead and a section's prefix
+  first; a section that needs inserts waits there, its other bytes left in the transport.
+- HTTP/3 with the QPACK dynamic table (`enableQpackDynamicTable()`): the encoder wrote insert instructions whatever the
+  encoder stream's flow-control credit, under its lock (RFC 9204 section 2.1.3: SHOULD NOT), so a peer that granted
+  the stream no credit could leave every field section waiting behind instructions it would not take. An insert is now
+  made only when the encoder stream has the credit for the whole instruction; the field goes as a literal otherwise.
+- HTTP/3 client: `Http3Connection.request()` with a `protocol` (Extended CONNECT) sent `:protocol` without waiting for
+  the server's SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 9220 section 3, RFC 8441 section 4), although its documentation
+  promised that a request the server must refuse fails locally. It now waits for the server's SETTINGS and throws
+  IllegalArgumentException unless they enable Extended CONNECT; `connect()` behaves as before.
+- HTTP/3: a response `content-length` was not checked before it went out (`respond(200, content-length: abc)` or two
+  conflicting values passed, and our own client then took the response for malformed), and neither a response nor a
+  request body was held to its `content-length`. A malformed value now fails `respond` with IllegalArgumentException,
+  and content that does not match the declared length (more, or less at the end) is never sent as a complete message:
+  the stream is reset with H3_REQUEST_CANCELLED (RFC 9114 sections 4.1.1, 4.1.2) and the writer or the request fails
+  with an IOException. HTTP/2 already did this for responses. A request without a body (or with trailers only) and a
+  non-zero `content-length` fails with IllegalArgumentException before a stream is opened.
+- HTTP/3: a 204 from the Ktor server engine went out with the content's Content-Length, and Ktor's `Content-Length: 0`
+  went out on a 304 (RFC 9110 section 8.6); the engine now drops both, as over HTTP/1.1 and HTTP/2, and drops it from the
+  2xx of a WebSocket CONNECT. `Http3ServerRequest.sendInformational`, `respond` and `acceptConnect` refuse
+  `content-length` on a 1xx, a 204 and a 2xx to CONNECT (section 9.3.6) with IllegalArgumentException.
+- Ktor server over HTTP/3: a request with `Expect: 100-continue` never got its interim 100 (RFC 9110 section 10.1.1:
+  MUST), so a client that held its content until then waited for its own timeout (curl: 1 s), or for good. As over
+  HTTP/1.1 and HTTP/2, the 100 now goes out when the application first reads the body, and another expectation is
+  answered 417.
+- HTTP/3: a HEADERS frame after the trailers whose declared length was above the field section cap was a stream error
+  (H3_EXCESSIVE_LOAD: a 431 on the server, `FieldSectionTooLarge` on the client) instead of the connection error
+  H3_FRAME_UNEXPECTED that RFC 9114 section 4.1 requires for any frame after the trailers. A smaller one already was.
+- HTTP/2 and HTTP/3 servers: a request whose `:scheme` was no URI scheme (`ht tp`, `1http`, `http:`) was accepted;
+  only control characters were refused. `:scheme` is the scheme portion of the target URI (RFC 9113 section 8.3.1,
+  RFC 9114 section 4.3.1), so a value outside RFC 3986 section 3.1's syntax now makes the request malformed. The shared
+  field vectors carry the cases.
+- HTTP/2 client (internal `H2ClientConnection.open`): a request with `:protocol` (Extended CONNECT) went out whether or
+  not the server had sent SETTINGS_ENABLE_CONNECT_PROTOCOL = 1 (RFC 8441 section 4). It now fails locally with
+  IllegalArgumentException until the server enabled it. The Ktor engine never sends `:protocol` over HTTP/2.
+- HTTP/2 client: requests whose HEADERS were still queued when the server's GOAWAY arrived were written afterwards
+  when their stream ID was not above the GOAWAY's last stream (a graceful GOAWAY names 2^31 - 1), opening streams after
+  the GOAWAY (RFC 9113 section 6.8: MUST NOT). They are now dropped unwritten and fail as not processed, so the engine
+  sends them on another connection.
+- HTTP/2: an invalid connection preface whose first frame the decoder refused (an HTTP/1.1 answer, whose "HTT" reads
+  as a frame length above the limit, or a PING of 7 bytes) ended the connection with FRAME_SIZE_ERROR; RFC 9113 section
+  3.4 makes any invalid preface a PROTOCOL_ERROR. Only a malformed SETTINGS frame keeps FRAME_SIZE_ERROR (section 6.5).
+- HTTP/2 server: response heads and trailers were never checked before they were sent, and HPACK wrote a character
+  above U+00FF as its low byte: a value with U+010D, U+010A or U+0100 (`call.response.header("X-Name", "č")`) went out
+  with a CR, LF or NUL inside, a name with DEL or a byte above 0x7F passed, and `HttpStatusCode(42, …)` went out as
+  `:status 42` (RFC 9113 sections 8.2.1, 8.3.2). Such a section is now refused: the stream is reset with INTERNAL_ERROR
+  and the call fails with IllegalArgumentException; connection-specific fields, `te` and 101 are refused the same way.
+  HPACK and QPACK refuse a character above U+00FF instead of truncating it.
+- HTTP/2 server: trailers that arrived on a stream whose handler had already answered and released it (its response
+  still being written to a client that does not read) were taken for a new request: a field section with request
+  pseudo-header fields started a handler, outside `maxConcurrentStreams` (RFC 9113 sections 8.1, 5.1.2). Only the field
+  section that opens a stream is a request now; such trailers are dropped.
+- Ktor server, WebSockets over HTTP/3 (RFC 9220): a call cancelled while its upgrade ran skipped the end of the CONNECT
+  stream: the flush of our side threw the cancellation before the client's direction was stopped, so that direction
+  stayed open and the exchange counted as running until the connection ended. The client's direction is now stopped
+  first, and a cancelled call resets the stream with `H3_REQUEST_CANCELLED` (RFC 9114 section 4.1.1) instead of ending
+  it with a FIN.
+- HTTP/3: a reserved (GREASE) frame type on the peer's control stream spent a glitch token, while on a request stream it
+  costs nothing. RFC 9114 sections 7.2.8 and 9 have reserved types ignored, and peers are meant to send them; a peer
+  that greased its control stream often could have its connection closed with H3_EXCESSIVE_LOAD. They are now free on
+  the control stream too; other unknown frame types still spend a token each.
+- HTTP/3 client (`Http3Connection.request`): when the request's trailers were refused (above the server's
+  SETTINGS_MAX_FIELD_SECTION_SIZE) after the response had begun, the response was abandoned without a QPACK Stream
+  Cancellation (RFC 9204 section 4.4.2). Response trailers blocked on the dynamic table at that moment kept their
+  blocked-stream slot for the connection's life; with `enableQpackDynamicTable()`, 16 such requests made the next
+  legitimately blocked section end the connection with QPACK_DECOMPRESSION_FAILED. The stream is now cancelled once the
+  response's reader stopped, as it is for `cancel()`. The Ktor engine was not affected.
+- HTTP/3 server: when request trailers above `maxFieldSectionSize` arrived while the application called `respond()`,
+  both could answer: the runtime's 431 and the application's response went out as two final responses on one stream (a
+  malformed response, to the client that sent the oversized trailers). The response is now taken on the connection's
+  dispatcher by whichever comes first; a `respond()` after the 431 fails with `Http3Exception.FieldSectionTooLarge`, as
+  the request's trailers do.
+- HTTP/3 server: a request that came in 0-RTT and was answered 425 under `Http3EarlyDataPolicy.Reject425`, or was held
+  for a handshake that then failed, stayed registered until the connection ended: its stream, its PRIORITY_UPDATE
+  routing and, for an Extended CONNECT, its datagram channel. It is now forgotten when it is answered or dropped.
+- HTTP/3 WebTransport: every session stayed reachable until its QUIC connection closed (a handler on the connection's
+  end held it, with its CONNECT stream and request). A client that opens and closes sessions one after another on one
+  connection to a server with `webTransport` grew the server's memory by about 10 KB per session for as long as it kept
+  the connection open. The handler is now removed when the session ends.
+- HTTP/2: with `Http2Settings.maxFrameSize` raised above its 16 KiB default, the frame decoder allocated a frame's whole
+  declared payload as soon as its 9-byte header arrived, so a peer could hold up to 16 MiB per connection by declaring a
+  large frame and sending nothing more. The payload buffer now starts at 16 KiB at most and grows with the bytes that
+  arrive.
+- HTTP/2 client: a connection whose protocol was over (after GOAWAY its last stream ended, or a connection error) kept
+  its socket and its place under `maxConnectionsPerRoute` until the engine closed when the server had stopped reading
+  while our writer waited on the socket: nothing bounded the writing of what was left (with the default `pingInterval`,
+  no PING notices it). The transport is now closed hard 2 s after the connection's end when the writer has not finished
+  by then, as it already was for a connection whose PING went unanswered.
+- HTTP/2 server: a request whose field section was above `maxHeaderListSize` (answered 431, RFC 9113 section 8.2) took
+  the whole connection down, or failed an unrelated call, when its stream could no longer send by the time the request
+  was handled: the client reset the stream in the same read, a later error in that read closed it, or the client's own
+  SETTINGS_MAX_HEADER_LIST_SIZE was too small for the 431 head. The 431 threw out of the event dispatch: on the reader
+  the connection ended with GOAWAY INTERNAL_ERROR; on an application thread that happened to dispatch, its call failed,
+  and inside a stream's `release` that stream and the 431 stream both kept their slot under `maxConcurrentStreams`
+  until the connection ended. Nothing is answered on a stream that ended, a 431 head the client cannot take resets the
+  stream with CANCEL, and the stream is always released.
 - HTTP/2: a request or response body started before the peer's SETTINGS arrived could be reset with
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS

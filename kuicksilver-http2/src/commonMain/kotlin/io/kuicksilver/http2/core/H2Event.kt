@@ -9,13 +9,15 @@ internal sealed interface H2Event {
     /**
      * A field section on [streamId]: request or response headers, an interim (1xx) response or trailers. [tooLarge]: the
      * section passed our SETTINGS_MAX_HEADER_LIST_SIZE and [fields] stops at the limit (a server answers 431, a client
-     * fails the request; RFC 9113 section 8.2).
+     * fails the request; RFC 9113 section 8.2). [opening]: the peer opened [streamId] with this section (a server's new
+     * request); any other section belongs to a stream the driver already knows, or released (never a new request).
      */
     class HeadersReceived(
         val streamId: Int,
         val fields: List<Pair<String, String>>,
         val endStream: Boolean,
         val tooLarge: Boolean,
+        val opening: Boolean = false,
     ) : H2Event
 
     /** Content of [streamId]; the driver calls [H2ConnectionCore.consumed] once the application has read it. */

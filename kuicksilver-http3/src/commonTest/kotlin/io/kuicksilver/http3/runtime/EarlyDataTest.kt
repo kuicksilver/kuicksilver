@@ -60,6 +60,7 @@ class EarlyDataTest {
 
     private class Fixture(
         policy: Http3EarlyDataPolicy,
+        settings: Http3Settings.Builder.() -> Unit = {},
     ) : AutoCloseable {
         val net = MemoryNet()
         private val a = net.open(InetSocketAddress("10.0.0.1", 1111))
@@ -79,7 +80,11 @@ class EarlyDataTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> })
         lateinit var server: Http3Endpoint
         lateinit var client: Http3Endpoint
-        val serverSettings: Http3Settings = http3Settings { earlyData = policy }
+        val serverSettings: Http3Settings =
+            http3Settings {
+                earlyData = policy
+                settings()
+            }
 
         suspend fun start() {
             server =
@@ -127,10 +132,11 @@ class EarlyDataTest {
             }
         }
 
-        /** A first connection that leaves the client endpoint a ticket. */
+        /** A first connection that leaves the client endpoint a ticket (with the server's SETTINGS kept in it). */
         suspend fun warmUp() {
             val c = client.connectEarly(server.localAddress, H3Fixtures.client())
             repeat(2) { assertEquals(200, c.request(get()).also { it.body.readAllBytes() }.status) }
+            c.peerSettings.first { it != null }
             c.close()
         }
 
@@ -605,6 +611,78 @@ class EarlyDataTest {
             }
         }
 
+    /**
+     * RFC 9114 section 7.2.4.2: "Clients SHOULD store the settings the server provided in the HTTP/3 connection where
+     * resumption information was provided", and "MUST comply with stored settings ... when attempting 0-RTT". The ticket
+     * keeps the server's SETTINGS; a 0-RTT request above the stored SETTINGS_MAX_FIELD_SECTION_SIZE fails locally before
+     * the server's SETTINGS of the new connection arrived, and one within it is answered.
+     */
+    @Test fun storedSettingsBindTheZeroRttRequests(): Unit =
+        runBlocking {
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { maxFieldSectionSize = 1_000 }.use { f ->
+                withTimeout(20.seconds) {
+                    f.start()
+                    f.warmUp()
+                    f.net.delay = 50.milliseconds
+                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                    assertTrue(!c.quic.isHandshakeComplete, "connectEarly returned before the handshake")
+                    assertEquals(1_000L, c.session.storedPeerSettings?.get(maxField))
+                    val big =
+                        http3Request("GET", "server.test", "/") {
+                            headers = Http3Headers.of("x-big" to "v".repeat(2_000))
+                            @OptIn(ExperimentalKuicksilverApi::class)
+                            allowEarlyData = true
+                        }
+                    kotlin.test.assertFailsWith<io.kuicksilver.http3.Http3Exception.FieldSectionTooLarge> { c.request(big) }
+                    assertTrue(c.peerSettings.value == null, "decided before the server's SETTINGS of this connection")
+                    assertEquals(
+                        "GET ok",
+                        c
+                            .request(f.get(early = true))
+                            .body
+                            .readAllBytes()
+                            .decodeToString(),
+                    )
+                    c.quic.awaitHandshake()
+                    assertEquals(true, c.quic.earlyDataAccepted)
+                }
+            }
+        }
+
+    /**
+     * RFC 9114 section 7.2.4.2: a server that accepted 0-RTT and then sends SETTINGS that lower a stored value, or omit one
+     * stored with a non-default value, ends the connection with H3_SETTINGS_ERROR. The server here sends other SETTINGS
+     * than its ticket context says (a test hook); ours never does.
+     */
+    @Test fun negative_settingsIncompatibleWithTheStoredOnesAreSettingsError(): Unit =
+        runBlocking {
+            val changes =
+                listOf<(List<Pair<Long, Long>>) -> List<Pair<Long, Long>>>(
+                    { l -> l.map { if (it.first == maxField) it.first to 500L else it } },
+                    { l -> l.filter { it.first != maxField } },
+                )
+            for (change in changes) {
+                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { maxFieldSectionSize = 1_000 }.use { f ->
+                    withTimeout(20.seconds) {
+                        f.start()
+                        f.warmUp()
+                        H3Session.createdForTest = { if (it.isServer) it.ourSettingsForTest = change }
+                        try {
+                            val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                            val end = c.closed.await()
+                            assertEquals(true, c.quic.earlyDataAccepted)
+                            val e = kotlin.test.assertIs<io.kuicksilver.http3.Http3Exception.Protocol>(end, "$end")
+                            assertEquals(io.kuicksilver.http3.Http3ErrorCode.SETTINGS_ERROR, e.h3Code)
+                        } finally {
+                            H3Session.createdForTest = null
+                        }
+                    }
+                }
+            }
+        }
+
+    private val maxField = io.kuicksilver.http3.frame.SettingsId.MAX_FIELD_SECTION_SIZE
+
     @Test fun earlyGetIsAnsweredIn0Rtt(): Unit =
         runBlocking {
             Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
@@ -734,6 +812,13 @@ class EarlyDataTest {
                     assertEquals("POST ok", r.body.readAllBytes().decodeToString())
                     assertEquals(1, c.session.early425Retries, "425 Too Early, then one retry after the handshake")
                     assertEquals(1, f.executions.load())
+                    // the rejected request is forgotten too, not only the one that ran (its stream, PRIORITY_UPDATE routing)
+                    val s = f.accepted.last().session
+                    val left =
+                        withTimeoutOrNull(5.seconds) {
+                            while (withContext(s.dispatcher) { s.activeServerRequests.isNotEmpty() }) kotlinx.coroutines.yield()
+                        }
+                    assertTrue(left != null, "a request the server answered with 425 is still registered")
                 }
             }
         }

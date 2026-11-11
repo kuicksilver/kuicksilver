@@ -15,11 +15,13 @@ import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -694,7 +696,223 @@ class RequestTest {
                             }.exceptionOrNull()
                         }
                     assertIs<Http3Exception>(e, "the client sees the reset instead of hanging: $e")
+                    // RFC 9114 section 4.1.1: a response abandoned after partial processing is H3_REQUEST_CANCELLED
+                    assertEquals(Http3ErrorCode.REQUEST_CANCELLED, assertIs<Http3Exception.Protocol>(e).h3Code)
                 }
+            }
+        }
+
+    /**
+     * RFC 9110 section 8.6: "A server MUST NOT send a Content-Length header field in any response with a status code of
+     * 1xx (Informational) or 204 (No Content)", and section 9.3.6: none in a 2xx to CONNECT. Such a head is refused
+     * locally with IllegalArgumentException (a final one also resets the stream).
+     */
+    @Test fun negative_contentLengthWhereNoneIsAllowedIsRefused() =
+        h3Test {
+            val cl = Http3Headers.of("content-length" to "0")
+            H3Pair.open().useScoped { p ->
+                launch {
+                    val r = p.server.acceptRequest()
+                    assertFailsWith<IllegalArgumentException> { r.sendInformational(103, cl) }
+                    assertFailsWith<IllegalArgumentException> { r.respond(204, cl) }
+                }
+                val e =
+                    withTimeoutOrNull(3.seconds) {
+                        runCatching {
+                            p.client
+                                .request(get("/"))
+                                .body
+                                .readAllBytes()
+                        }.exceptionOrNull()
+                    }
+                assertIs<Http3Exception>(e, "the client sees the reset: $e")
+            }
+            H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                launch { assertFailsWith<IllegalArgumentException> { p.server.acceptRequest().acceptConnect(cl) } }
+                val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.connect(get("/"), "test-tunnel") }.exceptionOrNull() }
+                assertIs<Http3Exception>(e, "the client sees the reset: $e")
+            }
+        }
+
+    /**
+     * RFC 9110 sections 2.2, 8.6 and RFC 9114 section 4.1.2 on what we send: a response `content-length` that is not
+     * 1*DIGIT, or conflicting values, is refused; content that does not match the declared length (more, or fewer at the
+     * end) is never sent as a complete message: the stream is reset with H3_REQUEST_CANCELLED and the sender's call fails.
+     * The client's request body likewise.
+     */
+    @Test fun negative_sentContentLengthMustBeValid() =
+        h3Test {
+            for (cl in listOf(listOf("content-length" to "abc"), listOf("content-length" to "3", "content-length" to "4"))) {
+                H3Pair.open().useScoped { p ->
+                    launch { assertFailsWith<IllegalArgumentException> { p.server.acceptRequest().respond(200, Http3Headers(cl)) } }
+                    val e =
+                        withTimeoutOrNull(3.seconds) {
+                            runCatching {
+                                p.client
+                                    .request(get("/"))
+                                    .body
+                                    .readAllBytes()
+                            }.exceptionOrNull()
+                        }
+                    assertIs<Http3Exception>(e, "the client sees the reset: $e")
+                }
+            }
+        }
+
+    /** [negative_sentContentLengthMustBeValid] for a response's content. */
+    @Test fun negative_responseContentMustMatchItsContentLength() =
+        h3Test {
+            for (content in listOf("abc", "abcdefg")) { // fewer and more than 5
+                H3Pair.open().useScoped { p ->
+                    launch {
+                        val w = p.server.acceptRequest().respond(200, Http3Headers.of("content-length" to "5"))
+                        val failure =
+                            runCatching {
+                                w.output.writeFully(content.encodeToByteArray())
+                                w.finish()
+                            }.exceptionOrNull()
+                        assertIs<ContentLengthMismatch>(failure, "$content: $failure")
+                    }
+                    // the reset may overtake the response head (RFC 9000 section 3.2: a reset stream's data may be discarded)
+                    val e =
+                        withTimeoutOrNull(3.seconds) {
+                            runCatching {
+                                p.client
+                                    .request(get("/"))
+                                    .body
+                                    .readAllBytes()
+                            }.exceptionOrNull()
+                        }
+                    val reset = assertIs<Http3Exception.Protocol>(e, "$content: $e")
+                    assertEquals(Http3ErrorCode.REQUEST_CANCELLED, reset.h3Code)
+                }
+            }
+        }
+
+    /**
+     * RFC 9114 section 4.1.2: a request without a body (trailers only, or nothing) cannot carry a non-zero
+     * content-length: it fails locally with IllegalArgumentException before a stream is opened.
+     */
+    @Test fun negative_requestWithoutBodyButContentLengthFailsLocally() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                for (withTrailers in listOf(false, true)) {
+                    val post =
+                        http3Request("POST", "server.test", "/") {
+                            headers = Http3Headers.of("content-length" to "5")
+                            if (withTrailers) trailers = { Http3Headers.of("x-t" to "1") }
+                        }
+                    assertFailsWith<IllegalArgumentException> { p.client.request(post) }
+                }
+                // a zero length without a body is fine
+                launch {
+                    p.server
+                        .acceptRequest()
+                        .respond(204)
+                        .finish()
+                }
+                val zero = http3Request("POST", "server.test", "/") { headers = Http3Headers.of("content-length" to "0") }
+                assertEquals(204, p.client.request(zero).status)
+            }
+        }
+
+    /** [negative_sentContentLengthMustBeValid] for a request's content. */
+    @Test fun negative_requestContentMustMatchItsContentLength() =
+        h3Test {
+            for (content in listOf("abc", "abcdefg")) {
+                H3Pair.open().useScoped { p ->
+                    // a request reset before its HEADERS were read never surfaces: the reader is not waited for
+                    val reader =
+                        launch {
+                            runCatching {
+                                p.server
+                                    .acceptRequest()
+                                    .body
+                                    .readAllBytes()
+                            }
+                        }
+                    val post =
+                        io.kuicksilver.http3.http3Request("POST", "server.test", "/") {
+                            headers = Http3Headers.of("content-length" to "5")
+                            body =
+                                io.ktor.utils.io
+                                    .ByteReadChannel(content)
+                        }
+                    val e =
+                        withTimeoutOrNull(3.seconds) {
+                            runCatching {
+                                p.client
+                                    .request(post)
+                                    .body
+                                    .readAllBytes()
+                            }.exceptionOrNull()
+                        }
+                    assertIs<ContentLengthMismatch>(e, "$content: $e")
+                    reader.cancel()
+                }
+            }
+        }
+
+    /**
+     * RFC 9114 section 4.1.1: "Clients MUST NOT use the H3_REQUEST_REJECTED error code". An application that cancels a
+     * response, or resets or stops an Extended CONNECT stream, with it sends H3_REQUEST_CANCELLED instead.
+     */
+    @Test fun negative_clientNeverSendsRequestRejected() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(io.kuicksilver.http3.frame.SettingsId.ENABLE_CONNECT_PROTOCOL to 1L))
+                val stops = kotlinx.coroutines.channels.Channel<Long>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                val resets = kotlinx.coroutines.channels.Channel<Long>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                launch {
+                    repeat(2) {
+                        val st = s.acceptBidi()
+                        // the request's HEADERS (and nothing more yet), then a 200 that leaves the stream open
+                        peerMayHaveClosed {
+                            st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                            st.output.flush()
+                        }
+                        launch {
+                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                            stops.send(st.awaitSendStopped())
+                        }
+                        launch {
+                            val e = runCatching { st.input.readAllBytes() }.exceptionOrNull()
+                            val reset = generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Reset>().firstOrNull()
+                            if (reset != null) resets.send(reset.code)
+                        }
+                    }
+                }
+                val r = client.request(get())
+                r.cancel(Http3ErrorCode.REQUEST_REJECTED)
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { stops.receive() })
+                val tunnel = client.connect(get("/chat"), "websocket")
+                tunnel.stopSending(Http3ErrorCode.REQUEST_REJECTED)
+                tunnel.reset(Http3ErrorCode.REQUEST_REJECTED)
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { stops.receive() })
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { resets.receive() })
+                c.close()
+            }
+        }
+
+    /**
+     * RFC 9220 section 3 (RFC 8441 section 4): `request()` with a `protocol` (Extended CONNECT) waits for the server's
+     * SETTINGS and fails locally with IllegalArgumentException when they do not enable it; with them it goes out.
+     */
+    @Test fun negative_protocolNeedsTheServersConnectSetting() =
+        h3Test {
+            fun ext() =
+                io.kuicksilver.http3.http3Request("CONNECT", "server.test", "/chat") {
+                    protocol = "websocket"
+                }
+            H3Pair.open().useScoped { p ->
+                assertFailsWith<IllegalArgumentException> { p.client.request(ext()) }
+            }
+            H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                launch { p.server.acceptRequest().acceptConnect() }
+                assertEquals(200, withTimeoutOrNull(3.seconds) { p.client.request(ext()).status })
             }
         }
 
@@ -756,6 +974,8 @@ class RequestTest {
                 assertFailsWith<IllegalArgumentException> { w.finish(Http3Headers.of("connection" to "close")) }
                 val body = withTimeout(5.seconds) { resp.await() }
                 assertTrue(body.isFailure, "the client saw a complete body ${body.getOrNull()?.decodeToString()}")
+                // RFC 9114 section 4.1.1: abandoned after partial processing
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, assertIs<Http3Exception.Protocol>(body.exceptionOrNull()).h3Code)
                 // te is a request field: not in response trailers either (RFC 9110 section 10.1.4)
                 val r2 =
                     async {

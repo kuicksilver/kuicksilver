@@ -26,6 +26,8 @@ internal class QpackRuntime(
     settings: Http3Settings,
     private val encoderOut: suspend (ByteArray) -> Unit,
     private val decoderOut: (ByteArray) -> Unit,
+    /** The encoder stream's send credit now (RFC 9204 section 2.1.3): inserts that would not fit are not made. */
+    private val encoderCredit: suspend () -> Long = { Long.MAX_VALUE },
 ) {
     private val encoder = QpackEncoder(settings.encoderMaxTableCapacity)
     private val decoder = QpackDecoder(settings.qpackMaxTableCapacity, settings.qpackBlockedStreams.toInt(), settings.maxFieldSectionSize)
@@ -58,7 +60,9 @@ internal class QpackRuntime(
         fields: List<Pair<String, String>>,
     ): ByteArray =
         encLock.withLock {
-            val block = encoder.encode(streamId, fields)
+            // the credit is asked of the transport (a hop onto its loop) only when an insert is possible at all
+            val budget = if (encoder.capacity == 0L) 0L else encoderCredit()
+            val block = encoder.encode(streamId, fields, budget)
             val ins = encoder.drainEncoderStream()
             if (ins.isNotEmpty()) encoderOut(ins)
             lastEncodedSize = block.size + ins.size
@@ -95,6 +99,28 @@ internal class QpackRuntime(
         }
     }
 
+    /**
+     * Before a field section's bytes are read: RFC 9204 section 2.2.1, "While blocked, encoded field section data SHOULD
+     * remain in the blocked stream's flow-control window". A section whose prefix (the [encodedRic] its first bytes give)
+     * references inserts not yet received counts as blocked and waits for them here, so the rest of it stays unread in the
+     * transport and the peer gets no credit back for it; [abandoned] is polled as in [decode].
+     */
+    suspend fun awaitInserts(
+        streamId: Long,
+        encodedRic: Long,
+        abandoned: () -> Boolean = { false },
+    ) {
+        val ric = decoder.requiredInsertCount(encodedRic)
+        if (ric <= decoder.insertCount) return
+        decoder.markBlocked(streamId)
+        while (withTimeoutOrNull(BLOCKED_POLL) { inserts.first { it >= ric } } == null) {
+            if (abandoned()) {
+                cancelStream(streamId)
+                throw StreamAbandoned()
+            }
+        }
+    }
+
     suspend fun onPeerEncoderStream(
         bytes: ByteArray,
         len: Int,
@@ -114,12 +140,16 @@ internal class QpackRuntime(
      * Client, the server rejected 0-RTT (RFC 9001 section 4.6.2): what the codecs hold unsent was made for the early streams
      * the server never saw, and goes. Before the handshake completes nothing of the server has been read, so the decoder
      * can only hold Stream Cancellations of early requests, and the encoder, which knows no peer SETTINGS yet, nothing (it
-     * may use the dynamic table only after them, RFC 9204 section 3.2.3, and this client stores no settings for 0-RTT).
+     * uses the dynamic table only after them, RFC 9204 section 3.2.3: settings stored for 0-RTT bound what the client
+     * sends, but never turn the dynamic table on before the server's own SETTINGS).
      */
     fun onEarlyDataRejected() {
         decoder.drainDecoderStream()
         encoder.drainEncoderStream()
     }
+
+    /** Streams whose section waits for the peer's encoder stream (a test hook; the session's dispatcher). */
+    val blockedStreamsForTest: Int get() = decoder.blockedCount
 
     /** The stream was abandoned before its field sections were all decoded. */
     suspend fun cancelStream(streamId: Long) {

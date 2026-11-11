@@ -423,6 +423,7 @@ internal class ConnectionHandshakeSink(
             return
         }
         ticket.remembered = rememberedBlob(core.version.version, core.negotiatedAlpn, tp) // the negotiated version (RFC 9369 section 5)
+        core.ticketReceived(ticket)
         core.events += ConnectionEvent.SessionTicket(ticket)
     }
 

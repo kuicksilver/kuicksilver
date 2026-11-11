@@ -196,7 +196,7 @@ while (true) {
 
 Malformed requests never reach `acceptRequest`: their stream is reset with `H3_MESSAGE_ERROR` (that includes a
 `content-length` that is not digits or conflicts with another; identical repeats collapse to one field). A response
-field the validator rejects makes `respond` throw and resets the stream with `H3_INTERNAL_ERROR`. A response whose
+field the validator rejects makes `respond` throw and resets the stream with `H3_REQUEST_CANCELLED`. A response whose
 `output` the application cancels (with any cause) is abandoned: the stream is reset with `H3_REQUEST_CANCELLED` (RFC
 9114 section 4.1.1), never ended with a FIN. A request body the
 application has not finished reading when its response is complete is dropped with `STOP_SENDING H3_NO_ERROR`; the
@@ -208,7 +208,7 @@ rather than sending DATA the client must treat as malformed. A request whose hea
 section is above `maxFieldSectionSize` once decoded is answered with 431 and `STOP_SENDING H3_EXCESSIVE_LOAD` by the
 connection itself. The other way round, a section above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is never sent:
 `request` fails with `FieldSectionTooLarge` before it opens a stream, `respond` and `finish(trailers)` fail before
-writing; refused trailers also reset the stream with `H3_INTERNAL_ERROR`, since the body already went out. Refused request
+writing; refused trailers also reset the stream with `H3_REQUEST_CANCELLED`, since the body already went out. Refused request
 trailers reset the stream with `H3_REQUEST_CANCELLED`, and `request` (or, once the response began, its body and
 `trailers`) fails with `FieldSectionTooLarge`. `request.remoteAddress` follows the client's path when it migrates.
 
@@ -234,7 +234,7 @@ again on a new connection (the Ktor engine does that by itself). Once the reques
 `Http3Endpoint.close()` ends every connection at once, without GOAWAY, with `H3_NO_ERROR` (a QUIC endpoint's `close()`
 sends application code 0, which HTTP/3 does not define); `Http3Endpoint.shutdown(grace)` is the graceful way.
 
-A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream — reserved GREASE types on a request stream are free —
+A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream — reserved GREASE types are free on both —
 unidirectional streams that end or are reset before their type, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
 connection with `H3_EXCESSIVE_LOAD`. `Http3Settings.glitchProtection = false` turns this off.
 

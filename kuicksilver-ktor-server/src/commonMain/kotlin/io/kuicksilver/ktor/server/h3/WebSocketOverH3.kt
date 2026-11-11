@@ -9,11 +9,15 @@ import io.ktor.http.HeadersBuilder
 import io.ktor.http.content.OutgoingContent
 import io.ktor.server.application.PipelineCall
 import io.ktor.utils.io.cancel
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.server.ServerWebSocketInput
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.random.Random
@@ -39,8 +43,12 @@ internal object WebSocketOverH3 {
         return b.build()
     }
 
-    /** Headers of the 101 that Ktor produced, minus what RFC 9220 section 3 leaves out of the `:status 200` answer. */
-    val DROPPED: Set<String> = setOf("connection", "upgrade", "sec-websocket-accept", "transfer-encoding", "keep-alive", "proxy-connection")
+    /**
+     * Headers of the 101 that Ktor produced, minus what RFC 9220 section 3 leaves out of the `:status 200` answer, and
+     * `content-length`, which a 2xx to CONNECT never carries (RFC 9110 section 9.3.6).
+     */
+    val DROPPED: Set<String> =
+        setOf("connection", "upgrade", "sec-websocket-accept", "transfer-encoding", "keep-alive", "proxy-connection", "content-length")
 }
 
 /** The response of a WebSocket-over-HTTP/3 call: the upgrade becomes `acceptConnect()` and the stream carries the frames. */
@@ -74,8 +82,17 @@ internal class H3UpgradeResponse(
         } finally {
             webSocket?.done()
             guard.cancel()
-            stream.output.flushAndClose()
+            // the receive side first: it never suspends, so a cancelled call still stops the client's direction
             stream.input.cancel()
+            // a call cancelled while the session ran (or while this flush waits) cannot end the stream in order: it is reset
+            // with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), never left with neither a FIN nor a reset
+            try {
+                currentCoroutineContext().ensureActive()
+                stream.output.flushAndClose()
+            } catch (e: CancellationException) {
+                runCatching { stream.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                throw e
+            }
         }
     }
 }

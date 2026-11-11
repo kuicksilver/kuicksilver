@@ -12,6 +12,7 @@ import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.WebTransportException
 import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.useScoped
@@ -19,6 +20,7 @@ import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -30,6 +32,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** A client and a server session over [p]: the server accepts the first WebTransport request. */
@@ -71,6 +74,33 @@ class WebTransportStreamsTest {
                     assertContentEquals(payload, withTimeout(5.seconds) { got.await() })
                 }
                 echoes.forEach { it.join() }
+            }
+        }
+
+    /**
+     * With blocked QPACK sections allowed, a request stream is read with almost no read-ahead (RFC 9204 section 2.2.1);
+     * a WebTransport stream that arrives on the same path carries no field section and gets the transport's usual
+     * read-ahead back, so an upload is not pulled a few bytes at a time.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun webTransportStreamsKeepTheUsualReadAheadWithTheDynamicTable() =
+        h3Test {
+            val dyn =
+                http3Settings {
+                    enableConnectProtocol = true
+                    webTransport = true
+                    enableQpackDynamicTable()
+                }
+            H3Pair.open(clientSettings = dyn, serverSettings = dyn).useScoped { p ->
+                val (client, server) = sessions(p)
+                val accepted = async { server.acceptBidi() }
+                val st = client.openBidi()
+                st.output.writeFully(ByteArray(100_000))
+                st.output.flushAndClose()
+                val got = withTimeout(5.seconds) { accepted.await() } as WtStreamImpl
+                assertTrue(got.st.readAhead >= 65_536, "read-ahead ${got.st.readAhead}")
+                assertEquals(100_000, withTimeout(5.seconds) { got.input.readAllBytes() }.size)
             }
         }
 

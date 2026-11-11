@@ -17,7 +17,9 @@ import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameDecoder
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
+import io.kuicksilver.http2.frame.SettingId
 import io.kuicksilver.http2.hpack.HpackEncoder
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -34,6 +36,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -117,6 +120,57 @@ class H2RuntimeTest {
             s.release()
             runCurrent()
             assertEquals(0, client.reservedStreams)
+        }
+
+    /**
+     * RFC 9113 sections 8.2.1, 8.2.2, 8.3.2: a response head or trailers the server would generate against the rules are
+     * never sent (a character above U+00FF would reach HPACK as its low byte: U+010D as CR); the stream is reset with
+     * INTERNAL_ERROR and the handler's call fails with IllegalArgumentException.
+     */
+    @Test fun negative_invalidResponseFieldsAreNeverSent() =
+        runTest {
+            val (client, server, _) = pair()
+            val heads =
+                listOf<Pair<Int, List<Pair<String, String>>>>(
+                    200 to listOf("x-name" to "a\u010Db"), // U+010D: CR as its low byte
+                    200 to listOf("x-name" to "a\rb"),
+                    200 to listOf("X-Upper" to "v"),
+                    200 to listOf("x-del\u007F" to "v"),
+                    200 to listOf("connection" to "close"),
+                    200 to listOf("te" to "trailers"),
+                    42 to emptyList(),
+                    101 to emptyList(),
+                )
+            for ((status, fields) in heads) {
+                val failure = CompletableDeferred<Throwable?>()
+                val job =
+                    backgroundScope.launch {
+                        val r = server.requests.receive()
+                        failure.complete(runCatching { r.respond(status, fields, endStream = true) }.exceptionOrNull())
+                        r.release()
+                    }
+                val s = client.get()
+                val e = assertFailsWith<Http2Exception> { s.response() }
+                assertIs<Http2Exception.StreamReset>(e, "$status $fields: $e")
+                assertEquals(Http2ErrorCode.INTERNAL_ERROR, e.code)
+                assertIs<IllegalArgumentException>(failure.await(), "$status $fields")
+                job.join()
+                s.release()
+            }
+            // trailers too
+            val failure = CompletableDeferred<Throwable?>()
+            backgroundScope.launch {
+                val r = server.requests.receive()
+                r.respond(200)
+                failure.complete(runCatching { r.trailers(listOf("x-t" to "a\u0100")) }.exceptionOrNull())
+                r.release()
+            }
+            val s = client.get()
+            // the head may still have been queued: the reset drops it, else the body fails
+            val e = assertFailsWith<Http2Exception.StreamReset> { s.response().also { s.body.readAll() } }
+            assertEquals(Http2ErrorCode.INTERNAL_ERROR, e.code)
+            assertIs<IllegalArgumentException>(failure.await())
+            s.release()
         }
 
     @Test fun postBodyGoesWithinWindowsAndEnds() =
@@ -566,6 +620,53 @@ class H2RuntimeTest {
         }
 
     /**
+     * RFC 8441 section 4: `:protocol` only once the server sent SETTINGS_ENABLE_CONNECT_PROTOCOL = 1; before (or without)
+     * it the request fails locally with IllegalArgumentException instead of going out malformed.
+     */
+    @Test fun negative_extendedConnectNeedsTheServersSetting() =
+        runTest {
+            for (enabled in listOf(false, true)) {
+                val (srv, deferred) = raw()
+                if (enabled) srv.settings(SettingId.ENABLE_CONNECT_PROTOCOL to 1L) else srv.settings()
+                val client = deferred.await()
+                assertTrue(client.tryReserve())
+                val open = {
+                    client.open("CONNECT", "https", "example.com", "/chat", listOf(":protocol" to "websocket"), endStream = false)
+                }
+                if (enabled) {
+                    open().release()
+                } else {
+                    assertFailsWith<IllegalArgumentException> { open() }
+                }
+            }
+        }
+
+    /**
+     * RFC 9113 section 6.8: "Receivers of a GOAWAY frame MUST NOT open additional streams on the connection". Requests
+     * whose HEADERS were still queued when a graceful GOAWAY (last stream 2^31 - 1) arrived are not written: they fail as
+     * not processed (the engine retries them elsewhere), and the server sees no HEADERS.
+     */
+    @Test fun negative_queuedRequestsAreNotOpenedAfterAGoAway() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            runCurrent()
+            srv.read()
+            val a = client.get("/a")
+            val b = client.get("/b")
+            // the GOAWAY reaches the core before the writer ran
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.goAway(Int.MAX_VALUE, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+            runCurrent()
+            for (s in listOf(a, b)) {
+                val e = assertFailsWith<Http2Exception> { s.response() }
+                assertTrue(e.notProcessed, "a request never opened is not processed: $e")
+                s.release()
+            }
+            assertTrue(srv.read().none { it is Frame.Headers }, "HEADERS went out after the GOAWAY")
+        }
+
+    /**
      * A GOAWAY on a connection without streams closes the core at once, under the lock, while its event may still wait
      * for another thread's dispatch: whoever then finds the connection unusable must also see the GOAWAY's code (the pool
      * reads HTTP_1_1_REQUIRED from it, RFC 9113 section 7; seen too early it was null and the call failed with "the
@@ -624,6 +725,97 @@ class H2RuntimeTest {
             assertIs<Http2Exception.ConnectionClosed>(e, "the connection's end, not $e")
             server.rt.releaseDispatchForTest()
             runCurrent()
+        }
+
+    /** A request on stream [id] whose field section (about 1.5 KB, literals only) is above a server's 1 KiB limit. */
+    private fun oversizedRequest(id: Int): ByteArray {
+        // :method GET, :scheme https, :path / (RFC 7541 appendix A), :authority without indexing, then a 1500-byte field
+        val block =
+            byteArrayOf(0x82.toByte(), 0x87.toByte(), 0x84.toByte(), 0x01) + hpackString("example.com") +
+                byteArrayOf(0x00) + hpackString("x-big") + hpackString("b".repeat(1_500))
+        return FrameEncoder.headers(id, block, true, true, -1)
+    }
+
+    /** A field section on stream [id] of literals without indexing (the server's HPACK table stays as the client left it). */
+    private fun literalHeaders(
+        id: Int,
+        fields: List<Pair<String, String>>,
+        endStream: Boolean,
+    ): ByteArray {
+        var block = ByteArray(0)
+        for ((n, v) in fields) block += byteArrayOf(0x00) + hpackString(n) + hpackString(v)
+        return FrameEncoder.headers(id, block, endStream, true, -1)
+    }
+
+    /**
+     * Trailers that carry request pseudo-header fields, on a stream whose handler answered and released it while its
+     * response was still queued: RFC 9113 section 8.1 makes them malformed, and they are no new request (which would run
+     * a handler outside SETTINGS_MAX_CONCURRENT_STREAMS, section 5.1.2). Above our header list limit they do not end the
+     * connection either.
+     */
+    @Test fun negative_trailersOnAReleasedStreamStartNoRequest() =
+        runTest {
+            val (_, server, _) = pair(serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+            runCurrent()
+            val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "example.com", ":path" to "/")
+            val trailers =
+                listOf(
+                    listOf(":method" to "DELETE") + post.drop(1),
+                    post + ("x-big" to "b".repeat(1_500)), // above the limit: no 431 on a stream that cannot take one
+                )
+            for ((i, t) in trailers.withIndex()) {
+                val id = 1 + 2 * i
+                server.rt.holdDispatchForTest()
+                server.rt.receiveWithoutDispatchForTest(literalHeaders(id, post, endStream = false))
+                server.rt.releaseDispatchForTest()
+                val r = assertNotNull(server.requests.tryReceive().getOrNull())
+                // answered and released before the writer ran: the response is still queued, the stream half-closed (local)
+                r.respond(200, endStream = true)
+                r.release()
+                server.rt.holdDispatchForTest()
+                server.rt.receiveWithoutDispatchForTest(literalHeaders(id, t, endStream = true))
+                server.rt.releaseDispatchForTest()
+                assertTrue(server.requests.tryReceive().isFailure, "trailers became a request")
+            }
+            server.rt.lock.withLock { assertFalse(server.rt.core.isClosed) }
+        }
+
+    /**
+     * An oversized request (RFC 9113 section 8.2: answered 431) reset by the client in the same read: the stream is closed
+     * before its event is dispatched, so no 431 can go. The dispatcher (here the test's thread, in a real server possibly
+     * another stream's caller) does not fail, the stream is released and the connection lives on.
+     */
+    @Test fun oversizedRequestResetBeforeItsDispatchIsReleasedWithoutAnAnswer() =
+        runTest {
+            val (_, server, _) = pair(serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+            runCurrent()
+            server.rt.holdDispatchForTest()
+            server.rt.receiveWithoutDispatchForTest(oversizedRequest(1) + FrameEncoder.rstStream(1, Http2ErrorCode.CANCEL.code))
+            server.rt.releaseDispatchForTest()
+            runCurrent()
+            server.rt.lock.withLock {
+                assertEquals(0, server.rt.core.peerStreams, "the stream no longer counts toward our limit")
+                assertFalse(server.rt.core.isClosed)
+            }
+        }
+
+    /**
+     * An oversized request from a client whose own SETTINGS_MAX_HEADER_LIST_SIZE (RFC 9113 section 6.5.2) is too small for
+     * the 431 head: the stream is reset instead, released, and the connection lives on.
+     */
+    @Test fun oversizedRequestToAClientThatCannotTakeThe431IsReset() =
+        runTest {
+            val (_, server, _) =
+                pair(clientSettings = Http2Settings(maxHeaderListSize = 8), serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+            runCurrent()
+            server.rt.holdDispatchForTest()
+            server.rt.receiveWithoutDispatchForTest(oversizedRequest(1))
+            server.rt.releaseDispatchForTest()
+            // (before the client reads the reset: stream 1 is one it never opened, which ends its side of this test's wiring)
+            server.rt.lock.withLock {
+                assertEquals(0, server.rt.core.peerStreams, "the stream no longer counts toward our limit")
+                assertFalse(server.rt.core.isClosed)
+            }
         }
 
     /**
@@ -886,6 +1078,33 @@ class H2RuntimeTest {
             val s = client.get()
             assertEquals(200, s.response().status)
             s.release()
+        }
+
+    /**
+     * A server that stops reading while our writer is blocked on the transport: once the connection is over (here a
+     * connection error), the client closes the transport within a bound instead of waiting for the writer for good (the
+     * connection, its socket and its slot in the pool would stay).
+     */
+    @Test fun negative_finalDrainToAServerThatStoppedReadingIsBounded() =
+        runTest {
+            val (srv, deferred) = raw()
+            // windows that let the body go as fast as the client writes it (RFC 9113 sections 6.5.2, 6.9)
+            srv.settings(4 to Int.MAX_VALUE.toLong())
+            srv.write(FrameEncoder.windowUpdate(0, Int.MAX_VALUE - 65_535))
+            val client = deferred.await()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            backgroundScope.launch {
+                runCatching { s.sendBody(ByteReadChannel(ByteArray(8 shl 20)), stallMillis = null) { error("stall") } }
+            }
+            runCurrent() // the writer fills the transport (the server reads nothing) and waits in it
+            // PING with a 4-byte payload: FRAME_SIZE_ERROR, a connection error (RFC 9113 section 6.7)
+            srv.write(byteArrayOf(0, 0, 4, 6, 0, 0, 0, 0, 0, 1, 2, 3, 4))
+            runCurrent()
+            assertFalse(client.isClosed, "the writer still waits in the transport")
+            advanceTimeBy(3_000)
+            runCurrent()
+            assertTrue(client.isClosed, "the transport was closed within the bound")
         }
 
     @Test fun negative_serverHpackBombFailsTheRequestOnly() =

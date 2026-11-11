@@ -17,8 +17,13 @@ internal sealed interface DecodeResult {
         val requiredInsertCount: Long,
     ) : DecodeResult
 
-    /** The decoded size passed the limit; decoding stopped there. */
-    object TooLarge : DecodeResult
+    /**
+     * The decoded size passed the limit; decoding stopped there. [valueTooLong]: one string literal was longer than we
+     * decode (RFC 9204 section 7.4, "a value larger than it is able to decode"), not just the sum of the fields.
+     */
+    class TooLarge(
+        val valueTooLong: Boolean,
+    ) : DecodeResult
 }
 
 /**
@@ -204,12 +209,12 @@ internal class QpackDecoder(
                 } catch (e: QpackStringTooLong) {
                     // one string larger than we decode: the section is too large, a stream error (RFC 9204 section 7.4)
                     acknowledge(streamId, ric)
-                    return DecodeResult.TooLarge
+                    return DecodeResult.TooLarge(valueTooLong = true)
                 }
             size += entrySize(f.first, f.second)
             if (size > maxFieldSectionSize) {
                 acknowledge(streamId, ric)
-                return DecodeResult.TooLarge
+                return DecodeResult.TooLarge(valueTooLong = false)
             }
             fields += f
         }
@@ -255,6 +260,9 @@ internal class QpackDecoder(
                 dynamic(base + i).first to r.readString(7, fieldLimits)
             }
         }
+
+    /** The Required Insert Count of a field section whose prefix encodes [encoded] (section 4.5.1.1); QpackError when invalid. */
+    fun requiredInsertCount(encoded: Long): Long = requiredInsertCount(QpackReader(ByteArray(0), 0, 0), encoded)
 
     /** RFC 9204 section 4.5.1.1. */
     private fun requiredInsertCount(

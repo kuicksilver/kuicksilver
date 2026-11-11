@@ -29,6 +29,7 @@ import io.kuicksilver.http3.webtransport.WtSettings
 import io.kuicksilver.http3.webtransport.WtVersion
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.rememberWithTickets
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
 
@@ -136,7 +137,8 @@ private suspend fun H3Session.readControl(st: QuicStream) {
         val len = st.input.readVarInt()
         when (FrameRules.checkControl(type, first, isServer, settings.webTransport)) {
             FrameAction.Skip -> {
-                glitch("unknown frame on the control stream")
+                // reserved (GREASE) types are there to be ignored (sections 7.2.8, 9) and cost nothing, as on request streams
+                if (!FrameType.isGrease(type)) glitch("unknown frame on the control stream")
                 st.input.skipExact(len)
             }
 
@@ -193,7 +195,9 @@ internal fun H3Session.checkPeerFieldLimit(
     streamId: Long,
     fields: List<Pair<String, String>>,
 ) {
-    val limit = peerSettings.value?.maxFieldSectionSize ?: return
+    // until the server's SETTINGS arrive, the ones stored for 0-RTT bind us (RFC 9114 section 7.2.4.2)
+    val ps = peerSettings.value
+    val limit = (if (ps != null) ps.maxFieldSectionSize else storedPeerSettings?.get(SettingsId.MAX_FIELD_SECTION_SIZE)) ?: return
     var size = 0L
     for ((n, v) in fields) {
         size += entrySize(n, v)
@@ -226,6 +230,18 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
         !quic.peerSupportsDatagrams
     ) {
         throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "H3_DATAGRAM without QUIC datagram support")
+    }
+    if (!isServer) {
+        // RFC 9114 section 7.2.4.2: after an accepted 0-RTT, SETTINGS that lower or omit what the client relied on are
+        // H3_SETTINGS_ERROR (whether 0-RTT was accepted is known once the handshake is: SETTINGS are 1-RTT data)
+        storedPeerSettings?.let { stored ->
+            if (quic.earlyDataAccepted == null) quic.awaitHandshake()
+            if (quic.earlyDataAccepted == true) {
+                StoredSettings.incompatibility(stored, m)?.let { throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, it) }
+            }
+        }
+        // kept with this connection's tickets for the next 0-RTT ("Clients SHOULD store the settings")
+        quic.rememberWithTickets(SettingsCodec.encode(StoredSettings.kept(m)))
     }
     qpack.onPeerSettings(ps.qpackMaxTableCapacity, ps.qpackBlockedStreams)
     peerWtVersion = WtVersion.of(m)

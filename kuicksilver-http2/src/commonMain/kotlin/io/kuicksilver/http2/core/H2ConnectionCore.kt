@@ -7,6 +7,7 @@ import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameDecoder
 import io.kuicksilver.http2.frame.FrameEncoder
+import io.kuicksilver.http2.frame.FrameType
 import io.kuicksilver.http2.frame.H2
 import io.kuicksilver.http2.frame.H2ConnectionError
 import io.kuicksilver.http2.frame.H2StreamError
@@ -245,7 +246,16 @@ internal class H2ConnectionCore(
                     p += n
                     continue
                 }
-                p += decoder.feed(buf, p, end - p)
+                p +=
+                    try {
+                        decoder.feed(buf, p, end - p)
+                    } catch (e: H2ConnectionError) {
+                        // section 3.4: before the peer's SETTINGS anything but a malformed SETTINGS frame (section 6.5) is an
+                        // invalid preface, a PROTOCOL_ERROR whatever else is wrong with the frame (an HTTP/1.1 "HTT" reads
+                        // as a length above SETTINGS_MAX_FRAME_SIZE)
+                        if (peerSettingsSeen || decoder.lastFrameType == FrameType.SETTINGS) throw e
+                        throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "invalid connection preface: ${e.message}")
+                    }
                 val f =
                     try {
                         decoder.next()

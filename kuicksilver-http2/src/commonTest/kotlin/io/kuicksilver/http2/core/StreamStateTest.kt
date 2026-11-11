@@ -414,6 +414,18 @@ class StreamStateTest {
         val client = RawH2Peer(Role.CLIENT)
         client.send(FrameEncoder.settingsAck())
         client.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR) // the server's first frame is SETTINGS (not an ACK)
+        // a first frame the decoder refuses is an invalid preface too, not a FRAME_SIZE_ERROR: a PING of 7 bytes, and an
+        // HTTP/1.1 answer whose "HTT" reads as a length of 0x485454
+        val shortPing = RawH2Peer(Role.SERVER)
+        shortPing.send(H2.PREFACE, byteArrayOf(0, 0, 7, 6, 0, 0, 0, 0, 0) + ByteArray(7))
+        shortPing.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        val http1 = RawH2Peer(Role.CLIENT)
+        http1.send("HTTP/1.1 400 Bad Request\r\n\r\n".encodeToByteArray())
+        http1.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        // a malformed SETTINGS stays what section 6.5 makes it
+        val badSettings = RawH2Peer(Role.CLIENT)
+        badSettings.send(FrameEncoder.raw(FrameType.SETTINGS, 0, 0, ByteArray(7)))
+        badSettings.assertConnectionError(Http2ErrorCode.FRAME_SIZE_ERROR)
     }
 
     @Test

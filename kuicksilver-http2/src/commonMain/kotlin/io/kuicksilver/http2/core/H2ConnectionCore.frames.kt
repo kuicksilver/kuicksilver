@@ -165,7 +165,7 @@ internal fun H2ConnectionCore.onHeaders(
         ns.finalHeadersReceived = true
         streams[id] = ns
         peerStreams++
-        emit(H2Event.HeadersReceived(id, fields, endStream, !fits))
+        emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true))
         return
     }
     if (s.state == StreamState.CLOSED) {
@@ -402,7 +402,10 @@ internal fun H2ConnectionCore.onGoAway(f: Frame.GoAway) {
     peerLastStreamId = minOf(peerLastStreamId, f.lastStreamId)
     val code = Http2ErrorCode.of(f.errorCode)
     emit(H2Event.GoAway(peerLastStreamId, code, f.debug.copyOf(minOf(f.debug.size, 1_024))))
-    for (s in streams.values.filter { it.local && it.id > peerLastStreamId && it.state != StreamState.CLOSED }) {
+    // and "Receivers of a GOAWAY frame MUST NOT open additional streams": a stream whose HEADERS are still queued was never
+    // opened for the peer, whatever its ID; it goes the same way (never written, retry-safe)
+    val refused = streams.values.filter { it.local && (it.id > peerLastStreamId || !it.headersSent) && it.state != StreamState.CLOSED }
+    for (s in refused) {
         closeStream(s, weReset = false)
         emit(H2Event.StreamReset(s.id, Http2ErrorCode.REFUSED_STREAM, byPeer = true, notProcessed = true))
     }

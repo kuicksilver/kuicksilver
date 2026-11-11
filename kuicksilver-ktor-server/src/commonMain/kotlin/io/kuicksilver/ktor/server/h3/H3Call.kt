@@ -18,10 +18,13 @@ import io.ktor.server.application.PipelineCall
 import io.ktor.server.engine.BaseApplicationCall
 import io.ktor.server.engine.BaseApplicationRequest
 import io.ktor.server.engine.BaseApplicationResponse
+import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.request.RequestCookies
 import io.ktor.server.request.encodeParameters
 import io.ktor.server.response.ResponseHeaders
+import io.ktor.server.response.respond
 import io.ktor.util.cio.use
+import io.ktor.util.pipeline.PipelinePhase
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
@@ -91,6 +94,28 @@ internal class H3Call(
         val gatewayMarked = h3.headers[EARLY_DATA_FIELD.lowercase()] != null
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         if (h3.receivedEarly || gatewayMarked) attributes.put(ReceivedEarlyKey, true)
+        if (!webSocket && !webTransport) answerExpectation()
+    }
+
+    /**
+     * RFC 9110 section 10.1.1: a client that sent `Expect: 100-continue` waits for an interim 100 before the content; it
+     * goes out when the application first reads the body (as on HTTP/1.1 and HTTP/2), never twice. Another expectation is
+     * answered 417.
+     */
+    private fun answerExpectation() {
+        val expect = request.headers[HttpHeaders.Expect]?.lowercase() ?: return
+        val phase = PipelinePhase("H3ExpectedHeaderPhase")
+        request.pipeline.insertPhaseBefore(ApplicationReceivePipeline.Before, phase)
+        var sent = false
+        request.pipeline.intercept(phase) {
+            if (sent || response.isCommitted) return@intercept
+            sent = true
+            if (expect != "100-continue") {
+                this@H3Call.respond(HttpStatusCode.ExpectationFailed)
+            } else {
+                runCatching { h3.sendInformational(100) } // a stream that failed meanwhile fails the read that follows
+            }
+        }
     }
 
     companion object {
@@ -226,11 +251,23 @@ internal open class H3Response(
             // an alternative is authoritative for its origin and may clear it (RFC 7838 section 2.2): the engine's `clear`
             // on every response that does not carry its own Alt-Svc, a 421 excepted, as on HTTP/1.1
             if (headersBuilder["Alt-Svc"] == null && statusCode.value != 421) altSvc()?.let { headersBuilder.append("Alt-Svc", it) }
+            dropFramingFieldsOfAResponseWithoutContent()
             h3.respond(statusCode.value, h3Headers())
         }.also {
             writer = it
             answered = true
         }
+
+    /**
+     * A 204 has no Content-Length (RFC 9110 section 8.6); a 304 keeps one only when it is the length a 200 would have had,
+     * which Ktor's `Content-Length: 0` for empty content does not say. As on HTTP/1.1 and HTTP/2.
+     */
+    private fun dropFramingFieldsOfAResponseWithoutContent() {
+        when (statusCode.value) {
+            204 -> headersBuilder.remove(HttpHeaders.ContentLength)
+            304 -> if (headersBuilder.getAll(HttpHeaders.ContentLength) == listOf("0")) headersBuilder.remove(HttpHeaders.ContentLength)
+        }
+    }
 
     override suspend fun responseChannel(): ByteWriteChannel = start().output
 

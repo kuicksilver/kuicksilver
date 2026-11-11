@@ -24,6 +24,7 @@ import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.wire.PacketHeaderCodec
 import io.kuicksilver.quic.wire.PacketHeaderView
 import io.kuicksilver.quic.wire.PacketType
+import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.EncryptionLevel
@@ -37,6 +38,7 @@ import io.kuicksilver.tls.TlsRole
 import kotlin.random.Random
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -134,6 +136,37 @@ class ZeroRttTest {
         assertNull(rememberedParameters(byteArrayOf(0xff.toByte())))
         assertNull(rememberedParameters(byteArrayOf(0, 0, 0, 1, 5, 'h'.code.toByte(), '3'.code.toByte())))
         assertNotNull(rememberedParameters(rememberedBlob(1, "h3", ByteArray(0))))
+        // a parameters length that runs past the end
+        assertNull(rememberedParameters(byteArrayOf(0, 0, 0, 1, 0, 0, 0, 0, 9)))
+    }
+
+    /**
+     * What the application keeps with a ticket (HTTP/3: the server's SETTINGS, RFC 9114 section 7.2.4.2) rides after the
+     * transport parameters: it survives replacing them, it can be set afterwards, and the parameters still parse.
+     */
+    @Test fun applicationDataRidesWithTheRememberedParameters() {
+        val tp = TransportParametersCodec.encode(TransportParameters().also { it.initialMaxData = 1234 }, TlsRole.Server, 27)
+        val plain = rememberedBlob(1, "h3", tp)
+        assertNull(rememberedApplication(plain))
+        val app = byteArrayOf(1, 2, 3)
+        val blob = withApplication(plain, app)
+        assertContentEquals(app, rememberedApplication(blob!!))
+        assertEquals(1234L, rememberedParameters(blob)!!.third.initialMaxData)
+        assertEquals("h3", rememberedParameters(blob)!!.second)
+        val tp2 = TransportParametersCodec.encode(TransportParameters().also { it.initialMaxData = 99 }, TlsRole.Server, 27)
+        // a blob that is not ours (`remembered` is public) is left alone, never a failure on the loop
+        for (foreign in listOf(
+            ByteArray(0),
+            byteArrayOf(1, 2, 3),
+            byteArrayOf(0, 0, 0, 1, 9, 'h'.code.toByte()),
+            byteArrayOf(0, 0, 0, 1, 0, 0, 0, 0, 9),
+        )) {
+            assertNull(withApplication(foreign, app))
+            assertNull(rememberedApplication(foreign))
+        }
+        val replaced = withTp(blob, tp2)
+        assertContentEquals(app, rememberedApplication(replaced))
+        assertEquals(99L, rememberedParameters(replaced)!!.third.initialMaxData)
     }
 
     /**

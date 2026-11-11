@@ -54,10 +54,13 @@ public interface Http3Stream {
      */
     public suspend fun sendDatagram(payload: ByteArray)
 
-    /** Aborts sending with [code] (RESET_STREAM). */
+    /**
+     * Aborts sending with [code] (RESET_STREAM). On a client, H3_REQUEST_REJECTED goes out as H3_REQUEST_CANCELLED (RFC
+     * 9114 section 4.1.1: clients MUST NOT use it).
+     */
     public fun reset(code: Long)
 
-    /** Asks the peer to stop sending with [code] (STOP_SENDING). */
+    /** Asks the peer to stop sending with [code] (STOP_SENDING); on a client, H3_REQUEST_REJECTED as for [reset]. */
     public fun stopSending(code: Long)
 
     /**

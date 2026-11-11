@@ -21,6 +21,12 @@ internal object H2Fields {
     val CONNECTION_SPECIFIC: Set<String> = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade")
     private const val TCHAR_SYMBOLS = "!#$%&'*+-.^_`|~"
 
+    /** RFC 3986 section 3.1: `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`. */
+    fun isScheme(s: String): Boolean =
+        s.isNotEmpty() && s[0].isAsciiLetter() && s.all { it.isAsciiLetter() || it in '0'..'9' || it == '+' || it == '-' || it == '.' }
+
+    private fun Char.isAsciiLetter() = this in 'a'..'z' || this in 'A'..'Z'
+
     /** A token (RFC 9110 section 5.6.2), any case: an HTTP method (section 9.1). */
     fun isToken(t: String): Boolean = t.isNotEmpty() && t.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in TCHAR_SYMBOLS }
 
@@ -246,6 +252,8 @@ internal object H2Messages {
         if (!H2Fields.isToken(method)) throw MalformedMessage(":method is not a token")
         val protocol = pseudo[":protocol"]
         val scheme = pseudo[":scheme"]
+        // section 8.3.1: the scheme portion of the target URI, so RFC 3986 section 3.1's syntax
+        if (!scheme.isNullOrEmpty() && !H2Fields.isScheme(scheme)) throw MalformedMessage(":scheme is not a URI scheme")
         val path = pseudo[":path"]
         var host: String? = null
         for ((n, v) in regular) {
@@ -364,11 +372,15 @@ internal object H2Messages {
 
     /**
      * Our own request [fields] must pass the checks the peer applies ([parseRequest]): the caller gets
-     * IllegalArgumentException instead of a stream the peer resets with PROTOCOL_ERROR.
+     * IllegalArgumentException instead of a stream the peer resets with PROTOCOL_ERROR. [connectProtocolEnabled]: the peer
+     * sent SETTINGS_ENABLE_CONNECT_PROTOCOL = 1, without which `:protocol` MUST NOT be used (RFC 8441 section 4).
      */
-    fun requireValidRequest(fields: List<Pair<String, String>>) {
+    fun requireValidRequest(
+        fields: List<Pair<String, String>>,
+        connectProtocolEnabled: Boolean = false,
+    ) {
         try {
-            parseRequest(fields, connectProtocolEnabled = true)
+            parseRequest(fields, connectProtocolEnabled)
         } catch (e: MalformedMessage) {
             throw IllegalArgumentException("invalid request: ${e.reason}")
         }

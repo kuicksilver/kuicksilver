@@ -177,4 +177,10 @@ class HpackLimitsTest {
         twice.setPeerMaxTableSize(200)
         assertContentEquals(bytes(0x3f, 0x45, 0x3f, 0xa9, 0x01), twice.encode(emptyList()))
     }
+
+    /** Field octets are ISO-8859-1: a wider character is refused, never encoded as its low byte (U+010D as CR). */
+    @Test
+    fun negative_charactersAboveLatin1AreRefused() {
+        kotlin.test.assertFailsWith<IllegalArgumentException> { HpackEncoder().encode(listOf("x-name" to "a\u010Db")) }
+    }
 }

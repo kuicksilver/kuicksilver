@@ -17,6 +17,7 @@ import io.kuicksilver.http2.core.H2Event
 import io.kuicksilver.http2.core.H2HeaderListTooLarge
 import io.kuicksilver.http2.core.H2StreamLimit
 import io.kuicksilver.http2.core.Role
+import io.kuicksilver.http2.message.H2Fields
 import io.kuicksilver.http2.message.H2Messages
 import io.kuicksilver.http2.message.MalformedMessage
 import kotlinx.coroutines.CancellationException
@@ -381,7 +382,9 @@ internal class H2Runtime(
     private fun onHeaders(e: H2Event.HeadersReceived) {
         val s = lock.withLock { streams[e.streamId] }
         if (s == null) {
-            if (!client) newRequest(e)
+            // only the section that opened the stream is a request: trailers on a stream the handler already released (its
+            // response still being written) are dropped, never processed as a new one (RFC 9113 sections 8.1, 5.1.2)
+            if (!client && e.opening) newRequest(e)
             return
         }
         if (e.tooLarge) {
@@ -433,12 +436,24 @@ internal class H2Runtime(
         val s = StreamRt(this, e.streamId, headRequest = false)
         lock.withLock { streams[e.streamId] = s }
         if (e.tooLarge) {
-            // RFC 9113 section 8.2 and the core's contract: a server answers 431
-            withCore {
-                sendHeaders(s.id, listOf(":status" to "431") + ownResponseFields(), endStream = true)
-                release(s.id)
+            // RFC 9113 section 8.2 and the core's contract: a server answers 431. The stream may no longer be sendable by now
+            // (the peer's RST_STREAM, a stream or connection error later in the same read): nothing goes then, and a 431 head
+            // above the peer's own SETTINGS_MAX_HEADER_LIST_SIZE (section 6.5.2) cannot go either, so the stream is reset;
+            // either way the stream is released, and this event never fails the dispatcher (another stream's caller)
+            try {
+                withCore {
+                    try {
+                        sendHeaders(s.id, listOf(":status" to "431") + ownResponseFields(), endStream = true)
+                    } catch (_: IllegalStateException) {
+                        // ended under us: nothing to answer
+                    } catch (_: H2HeaderListTooLarge) {
+                        reset(s.id, Http2ErrorCode.CANCEL, clock())
+                    }
+                    release(s.id)
+                }
+            } finally {
+                lock.withLock { streams.remove(s.id) }
             }
-            lock.withLock { streams.remove(s.id) }
             return
         }
         val r =
@@ -598,6 +613,13 @@ internal class H2Runtime(
         for (s in left) fail(s, cause) // a complete response stays complete (fail keeps it)
         onChange()
         kick.trySend(Unit) // the writer drains what is left, then closes the transport
+        if (client) {
+            // a server that stopped reading would hold the writer, and with it the transport and the pool's slot, for good:
+            // the drain is bounded as for [lost] in order (a server bounds it by the engine's send-stall deadline instead)
+            scope.launch(CoroutineName("kuicksilver-h2-close")) {
+                if (withTimeoutOrNull(IN_ORDER_CLOSE_BOUND) { closed.await() } == null) closeTransportOnce(graceful = false)
+            }
+        }
     }
 
     /** Fails [s] with [cause] unless it already failed; a response read to its end stays complete. */
@@ -1052,6 +1074,7 @@ internal class H2Runtime(
         fields: List<Pair<String, String>>,
         endStream: Boolean,
     ) {
+        checkOwnSection(s, if (status in 100..599 && status != 101) null else "status $status", fields)
         guarded(s) { sendHeaders(s.id, listOf(":status" to status.toString()) + fields, endStream) }
         if (endStream) lock.withLock { s.localEnded = true }
     }
@@ -1061,8 +1084,33 @@ internal class H2Runtime(
         s: StreamRt,
         fields: List<Pair<String, String>>,
     ) {
+        checkOwnSection(s, null, fields)
         guarded(s) { sendHeaders(s.id, fields, endStream = true) }
         lock.withLock { s.localEnded = true }
+    }
+
+    /**
+     * A server's own field section obeys what it holds the client to (RFC 9113 sections 8.2.1, 8.2.2, 8.3.2): lowercase
+     * token names, values without NUL, CR, LF or anything above U+00FF (HPACK carries octets), no connection-specific
+     * field, no `te`, and a `:status` of three digits that HTTP/2 allows (never 101, section 8.6). A section that breaks
+     * them is never sent: the stream is reset with INTERNAL_ERROR, so it is not left half-open, and the caller gets an
+     * IllegalArgumentException. [statusFault] is the status's own fault, if any.
+     */
+    private fun checkOwnSection(
+        s: StreamRt,
+        statusFault: String?,
+        fields: List<Pair<String, String>>,
+    ) {
+        val fault =
+            statusFault ?: try {
+                for ((n, v) in fields) H2Fields.checkRegular(n, v, request = false)
+                null
+            } catch (m: MalformedMessage) {
+                m.reason
+            }
+        if (fault == null) return
+        reset(s, Http2ErrorCode.INTERNAL_ERROR)
+        throw IllegalArgumentException("invalid response field section on stream ${s.id}: $fault")
     }
 
     /** Resets [s] with [code] (tests and the server's handlers). */

@@ -171,6 +171,55 @@ public suspend fun QuicStream.awaitSendStopped(): Long =
     (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendStopped?.await() ?: kotlinx.coroutines.awaitCancellation()
 
 /**
+ * Client: what the application kept with the session ticket this connection resumed for 0-RTT
+ * ([rememberWithTickets] on the connection that received it), or null: no 0-RTT attempted, no ticket, nothing kept, or
+ * a connection of another implementation. HTTP/3 keeps the server's SETTINGS there (RFC 9114 section 7.2.4.2).
+ */
+@InternalKuicksilverApi
+public val QuicConnection.rememberedApplicationData: ByteArray?
+    get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.core?.rememberedApplication
+
+/**
+ * Client: keeps [data] with every session ticket this connection received or receives (its latest few), for a later
+ * 0-RTT connection to read as [rememberedApplicationData]. Ignored for connections of other implementations.
+ */
+@InternalKuicksilverApi
+public suspend fun QuicConnection.rememberWithTickets(data: ByteArray) {
+    val c = this as? io.kuicksilver.quic.runtime.ConnectionRuntime ?: return
+    kotlinx.coroutines.withContext(c.loopDispatcher) { c.core.setApplicationRemembered(data.copyOf()) }
+}
+
+/**
+ * How far beyond what its reader consumed so far [QuicStream.input] may take bytes from the transport (at least 1;
+ * Long.MAX_VALUE, the default, for no limit beyond the input's 64 KiB buffer). Setting it fixes a stream offset: later
+ * reads never take bytes past it unless they ask for them. Bytes taken leave the stream's flow-control window; a reader
+ * that must leave data in the window until it can use it (RFC 9204 section 2.2.1: a blocked QPACK field section) sets it
+ * to the end of what it is about to read. Set it from the reader, between its reads. Ignored for streams of other
+ * implementations.
+ */
+@InternalKuicksilverApi
+public var QuicStream.readAhead: Long
+    get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.readAhead ?: Long.MAX_VALUE
+    set(v) {
+        require(v >= 1) { "readAhead must be at least 1, got $v" }
+        (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.readAhead = v
+    }
+
+/** Test hook: the bytes [QuicStream.input] took from the transport so far (the stream offset its buffer ends at); 0 for other implementations. */
+@InternalKuicksilverApi
+public val QuicStream.inputTakenForTest: Long
+    get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.inputTakenForTest ?: 0
+
+/**
+ * Bytes [this] stream could still send now without waiting for the peer's MAX_STREAM_DATA or MAX_DATA (RFC 9000 section
+ * 4.1): its own and the connection's credit, less what it already holds unsent (bytes still buffered in
+ * [QuicStream.output] are not counted). HTTP/3 sizes its QPACK encoder instructions by it (RFC 9204 section 2.1.3).
+ * [Long.MAX_VALUE] for streams of other implementations.
+ */
+@InternalKuicksilverApi
+public suspend fun QuicStream.sendCredit(): Long = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendCredit() ?: Long.MAX_VALUE
+
+/**
  * True once the peer's FIN and every byte before it have arrived on [this] stream (RFC 9000 section 3.2, the receiving
  * part's "Data Recvd" state, or "Data Read" once the application read them): reading [QuicStream.input] needs nothing more
  * from the network, so it ends whole even after the connection is lost. It turns true once the endpoint's loop processed

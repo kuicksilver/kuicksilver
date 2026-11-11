@@ -41,7 +41,13 @@ internal class QpackLimits(
 )
 
 /** Field names and values are octets (RFC 9110 section 5.5): one char per byte, ISO-8859-1. */
-internal fun String.latin1(): ByteArray = ByteArray(length) { this[it].code.toByte() }
+internal fun String.latin1(): ByteArray =
+    ByteArray(length) {
+        val c = this[it].code
+        // never the low byte of a wider character (U+010D would go out as CR): callers check fields first, this is the last line
+        require(c <= 0xFF) { "character U+${c.toString(16).uppercase().padStart(4, '0')} outside ISO-8859-1 in a field" }
+        c.toByte()
+    }
 
 internal fun ByteArray.latin1(
     off: Int = 0,
@@ -103,7 +109,15 @@ internal class QpackReader(
         limits: QpackLimits,
     ): String {
         val huffman = (peek() shr prefixBits) and 1 == 1
-        val len = readInt(prefixBits, limits)
+        // a length past the integer range is a string longer than we decode too (RFC 9204 section 7.4), not a broken stream
+        val len =
+            try {
+                readInt(prefixBits, limits)
+            } catch (e: QpackTruncated) {
+                throw e
+            } catch (_: QpackError) {
+                tooLong(limits.maxInteger, limits)
+            }
         // ceilings first (a Huffman literal decodes to at least 8/30 of its length), then "not all here yet"
         if (len > limits.maxStringLength.toLong() * (if (huffman) 4 else 1)) tooLong(len, limits)
         if (len > remaining) {

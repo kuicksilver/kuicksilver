@@ -60,6 +60,22 @@ internal class StreamRuntime(
     internal var receivedAll: Boolean = false
         private set
 
+    /** Bytes [input] took from the core so far (a test hook). */
+    internal val inputTakenForTest: Long get() = inChannel?.takenForTest ?: 0
+
+    /** How far beyond the reader's position [input] may take bytes from the core ([io.kuicksilver.quic.readAhead]). */
+    internal var readAhead: Long
+        get() = inChannel?.readAhead ?: Long.MAX_VALUE
+        set(v) {
+            inChannel?.readAhead = v
+        }
+
+    /** The core's [io.kuicksilver.quic.stream.StreamManager.sendCredit] for this stream, read on the loop; 0 once it is gone. */
+    internal suspend fun sendCredit(): Long =
+        kotlinx.coroutines.withContext(loop.dispatcher) {
+            if (live()) conn.core.streamSendCredit(id) else 0L
+        }
+
     /** On the loop: notes whether the core holds the whole stream now; once true it stays true. */
     internal fun updateReceivedAll() {
         if (!receivedAll && current && conn.core.streamReceivedAll(id)) receivedAll = true
