@@ -40,6 +40,9 @@ internal class PacketBuilder(
     /** Set while a probe datagram for a path other than the active one is built: only PATH_CHALLENGE/PATH_RESPONSE and padding go in (RFC 9000 section 9.1). */
     private var probeTarget: Path? = null
 
+    /** With [probeTarget]: the packet carries only the responses owed from this other local address (Paths.responseFrom). */
+    private var strayFrom: io.ktor.network.sockets.InetSocketAddress? = null
+
     /** The ECN codepoint of the datagram being built (per path validation state). */
     private var currentMark: io.kuicksilver.quic.Ecn = io.kuicksilver.quic.Ecn.NotEct
 
@@ -62,6 +65,52 @@ internal class PacketBuilder(
         pacerWakeup = TimeMark.NEVER
         // probes of other paths first: a PATH_CHALLENGE or PATH_RESPONSE must go to its own address (RFC 9000 section 8.2)
         if (c.writeKeys[3] != null && c.closeFrame == null) {
+            // a PATH_RESPONSE "MUST be sent on the network path where the PATH_CHALLENGE was received" (section 8.2.2): one that reached
+            // another of our addresses than its path's leaves from that address, in a datagram of its own
+            while (count < out.capacity) {
+                val i = c.paths.nextStrayResponse()
+                if (i < 0) break
+                val target = c.paths.responsePath[i]!!
+                val from = c.paths.responseFrom[i]!!
+                var limit = minOf(out.segmentSize, target.mtu)
+                if (!target.amplification.validated) {
+                    val budget = target.amplification.budget()
+                    if (budget < 64) {
+                        c.paths.dropResponsesFrom(target, from)
+                        continue
+                    }
+                    limit = minOf(limit.toLong(), budget).toInt()
+                }
+                val dcid = c.dcidFor(target)
+                if (dcid == null) {
+                    c.paths.dropResponsesFrom(target, from)
+                    continue
+                }
+                probeTarget = target
+                strayFrom = from
+                currentMark = target.ecn.markFor()
+                val n =
+                    try {
+                        buildPacket(out.buffer(count), 0, limit, SpaceId.Application, now, padToEnd = true, target = target, dcid = dcid)
+                    } finally {
+                        probeTarget = null
+                        strayFrom = null
+                    }
+                if (pnExhausted) return exhausted(count)
+                if (n == 0) {
+                    c.paths.dropResponsesFrom(target, from)
+                    continue
+                }
+                out.setLength(count, n)
+                out.setAddress(count, target.remote)
+                out.setPath(count, target.socket)
+                out.setLocalAddress(count, from)
+                out.setEcn(count, currentMark)
+                count++
+                bytes += n
+                c.bytesSent += n
+                target.amplification.onSent(n)
+            }
             while (count < out.capacity) {
                 val target = c.paths.nextProbe() ?: break
                 var limit = minOf(out.segmentSize, target.mtu)
@@ -535,7 +584,9 @@ internal class PacketBuilder(
                 true // RFC 8899: PING and padding only
             // a probe of another path: only PATH_CHALLENGE / PATH_RESPONSE, expanded to 1200 bytes (RFC 9000 sections 8.2.1, 9.1)
         } else if (probeTarget != null) {
-            if (target.challengePending &&
+            val stray = strayFrom
+            if (stray == null &&
+                target.challengePending &&
                 w.remaining >= 9
             ) {
                 FrameEncoder.pathChallenge(w, c.newChallengeData(target))
@@ -553,7 +604,7 @@ internal class PacketBuilder(
                 9
             ) {
                 val r =
-                    c.paths.takeResponseFor(target) ?: break
+                    (if (stray == null) c.paths.takeResponseFor(target) else c.paths.takeResponseFrom(target, stray)) ?: break
                 FrameEncoder.pathResponse(w, r)
                 frames.flags =
                     frames.flags or SentFrames.PATH_RESPONSE

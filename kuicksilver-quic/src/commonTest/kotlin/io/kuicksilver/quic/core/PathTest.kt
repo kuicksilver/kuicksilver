@@ -116,15 +116,61 @@ class PathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 8.2.2: "On receiving a PATH_CHALLENGE frame, an endpoint MUST respond by echoing the data contained in the
+     * PATH_CHALLENGE frame in a PATH_RESPONSE frame." Until 0.3.0 (cross-review) a fourth waiting challenge was dropped. Every one is
+     * answered now; past three waiting each costs a glitch token, so a flood still closes the connection.
+     */
     @Test fun negative_pathChallengeQueueCap() {
         val (p, c) = connected()
         try {
             c.testInjectPathChallenges = 10
             p.settle(5)
             val s = p.server()
-            assertEquals(3, s.pathResponsesSentForTest, "at most 3 PATH_RESPONSE queued (spec 4.7)")
-            assertEquals(7L, s.stats.glitchTokensSpent)
+            assertEquals(10, s.pathResponsesSentForTest, "every PATH_CHALLENGE answered")
+            assertEquals(7L, s.stats.glitchTokensSpent, "the 4th to 10th waiting at once cost a token each")
             assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** With glitch protection off the queue of owed responses is still bounded: the challenge past it closes the connection. */
+    @Test fun negative_pathResponseQueueHasAHardBound() {
+        val (p, _) = connected()
+        try {
+            val s = p.server()
+            repeat(Paths.MAX_RESPONSES) { assertTrue(s.paths.queueResponse(it.toLong(), s.paths.active)) }
+            assertFalse(s.paths.queueResponse(-1L, s.paths.active))
+            assertEquals(Paths.MAX_RESPONSES, s.paths.responses)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 8.2.2: a PATH_RESPONSE "MUST be sent on the network path where the PATH_CHALLENGE was received". A challenge from
+     * the client's address that reached another address of a wildcard server was answered from the path's own address (0.3.0
+     * cross-review); the answer now leaves from the address the challenge reached, in a datagram of its own, and the path stays.
+     */
+    @Test fun pathResponseLeavesFromTheLocalAddressTheChallengeReached() {
+        val a = InetSocketAddress("192.0.2.10", 443)
+        val b = InetSocketAddress("192.0.2.11", 443)
+        val p = EndpointPair()
+        try {
+            p.serverLocal = a
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.settle()
+            val s = p.server()
+            val sentBefore = p.serverSentLocal.size
+            val responsesBefore = s.pathResponsesSentForTest
+            p.serverLocal = b
+            c.testInjectPathChallenges = 1
+            p.settle(3)
+            assertEquals(responsesBefore + 1, s.pathResponsesSentForTest)
+            assertTrue(b in p.serverSentLocal.drop(sentBefore), "the response left from $b: ${p.serverSentLocal.drop(sentBefore).toSet()}")
+            assertEquals(a, s.paths.active.local, "the path keeps its address")
         } finally {
             p.close()
         }

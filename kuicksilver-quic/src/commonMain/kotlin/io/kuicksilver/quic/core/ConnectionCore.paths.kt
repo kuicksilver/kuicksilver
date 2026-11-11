@@ -22,6 +22,7 @@ import io.kuicksilver.quic.recordForTest
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.ConnectionId
+import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.tls.TlsRole
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -597,7 +598,11 @@ internal fun ConnectionCore.onPathFailed(
     }
 }
 
-/** PATH_CHALLENGE from [from]: the response goes back there (RFC 9000 section 8.2.2); at most three wait, more cost a glitch token (threat-model 3.2). */
+/**
+ * PATH_CHALLENGE from [from]: answered once, back on the network path it came by (RFC 9000 section 8.2.2), from the local address it
+ * reached. Every one is answered; past three waiting each costs a glitch token, and past [Paths.MAX_RESPONSES] the connection closes
+ * (threat-model 3.2): a flood ends the connection, never a challenge left unanswered on an open one.
+ */
 internal fun ConnectionCore.onPathChallenge(
     data: Long,
     socket: PathId,
@@ -623,7 +628,12 @@ internal fun ConnectionCore.onPathChallenge(
         notePeerDcid(p)
         p.peerProbed = true
     }
-    if (!paths.queueResponse(data, p)) glitch(0x1a)
+    if (paths.responses >= Paths.FREE_RESPONSES) glitch(0x1a)
+    val at = serverLocal(receiver.local)
+    val own = p.local
+    if (!paths.queueResponse(data, p, if (at != null && own != null && at != own) at else null)) {
+        throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x1a, "more than ${Paths.MAX_RESPONSES} PATH_RESPONSEs owed")
+    }
 }
 
 /** PATH_RESPONSE: validates the path whose challenge it answers, wherever it arrived (RFC 9000 section 8.2.3); unknown data is ignored. */
