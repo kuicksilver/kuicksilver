@@ -282,13 +282,6 @@ class ZeroRttTest {
     }
 
     /**
-     * RFC 9001 section 4.6.2: "When 0-RTT is rejected, all connection characteristics that the client assumed might be
-     * incorrect ... The client therefore MUST reset the state of all streams". The stream opened in 0-RTT is gone (nothing
-     * of it is sent again), its ID and its flow-control credit are free again (as ngtcp2's `conn_discard_early_data_state`
-     * and quic-go's `streamsMap.ResetFor0RTT`), and the application sends what it still wants on a new stream.
-     */
-
-    /**
      * 0.3.0 cross-review, RFC 9001 section 4.6.2: "When 0-RTT is rejected, ... a client SHOULD treat receipt of an acknowledgment for
      * a 0-RTT packet as a connection error of type PROTOCOL_VIOLATION, if it is able to detect the condition." The client knows
      * which packet numbers its 0-RTT packets took; an acknowledgment of one after the rejection closes the connection.
@@ -319,6 +312,22 @@ class ZeroRttTest {
         } finally {
             p.close()
         }
+        // end to end: the server's 1-RTT packet carries an ACK frame of the rejected 0-RTT packet numbers
+        val (e, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        try {
+            assertTrue(e.handshake())
+            val c = e.client
+            assertEquals(false, c.earlyDataAccepted)
+            val first = c.zeroRttFirstPn
+            val last = c.zeroRttLastPn
+            assertTrue(first in 0..63 && last in first..63, "small packet numbers: $first..$last")
+            e.server!!.testInjectFrames += 3 to byteArrayOf(0x02, last.toByte(), 0, 0, (last - first).toByte())
+            assertTrue(e.runUntil(limit = 1.seconds) { e.closedReason(e.clientEvents) != null })
+            val r = assertIs<io.kuicksilver.quic.QuicException.ConnectionLost.TransportClosed>(e.closedReason(e.clientEvents))
+            assertEquals(io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION, r.code)
+        } finally {
+            e.close()
+        }
         val (q, _) = resumed(ticket())
         try {
             assertTrue(q.handshake())
@@ -334,6 +343,12 @@ class ZeroRttTest {
         }
     }
 
+    /**
+     * RFC 9001 section 4.6.2: "When 0-RTT is rejected, all connection characteristics that the client assumed might be
+     * incorrect ... The client therefore MUST reset the state of all streams". The stream opened in 0-RTT is gone (nothing
+     * of it is sent again), its ID and its flow-control credit are free again (as ngtcp2's `conn_discard_early_data_state`
+     * and quic-go's `streamsMap.ResetFor0RTT`), and the application sends what it still wants on a new stream.
+     */
     @Test fun zeroRttRejectedResetsStreams() {
         // the server's application context changed: TLS refuses the early data (RFC 9001 section 4.6.3)
         val (p, id) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
