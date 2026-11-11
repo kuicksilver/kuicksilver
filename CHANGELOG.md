@@ -989,6 +989,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   for at all: a use after free for a direct C user (Kuicksilver's own Kotlin and Native layers never close while a
   receiver is inside). A receiver is now counted before it checks the closed flag again, and the close waits until every
   receiver inside has left, which the shutdown wakes at once.
+- QUIC over `ksl_udp`: closing a socket while another thread was still inside a native call on it (a sender in a
+  large batch, a descheduled receiver) spun the closing thread, usually an endpoint's loop thread, at full speed until
+  the call returned. After a short spin it now sleeps a millisecond between looks.
 
 ## [0.2.1] - 2026-11-04
 

@@ -1244,6 +1244,9 @@ public class SessionCache(
 
 internal expect fun nowSeconds(): Long
 
+/** Blocks the calling thread for about [millis] ms (a wait that has nothing to suspend on). */
+internal expect fun sleepMillis(millis: Int)
+
 /** Test hook: seconds added to the clock of a resumption's re-verification, to age a cached chain without waiting. */
 @kotlin.concurrent.Volatile
 internal var resumptionClockSkewForTest: Long = 0L

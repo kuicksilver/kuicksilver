@@ -3,3 +3,5 @@
 package io.kuicksilver.tls
 
 internal actual fun nowSeconds(): Long = System.currentTimeMillis() / 1000
+
+internal actual fun sleepMillis(millis: Int): Unit = Thread.sleep(millis.toLong())
