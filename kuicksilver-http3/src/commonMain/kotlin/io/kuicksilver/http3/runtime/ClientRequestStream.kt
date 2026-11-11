@@ -420,8 +420,18 @@ private suspend fun H3Session.sendBody(
     sendFailure: CompletableDeferred<Unit>,
 ) {
     val buf = ByteArray(CHUNK)
+    // the content must match its content-length (RFC 9114 section 4.1.2): else the request is abandoned, not sent malformed
+    val declared = if (r.method == "CONNECT") null else r.headers["content-length"]?.toLongOrNull()
+
+    fun abandon(e: Throwable) {
+        sendFailure.completeExceptionally(e)
+        runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+        runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
+        r.body?.cancel(e)
+    }
     try {
         r.body?.let { body ->
+            var sent = 0L
             while (true) {
                 val n = body.readAvailable(buf, 0, buf.size)
                 if (n <
@@ -432,11 +442,14 @@ private suspend fun H3Session.sendBody(
                 if (n >
                     0
                 ) {
+                    if (declared != null && sent + n > declared) return abandon(ContentLengthMismatch(declared, sent + n, more = true))
                     st.output.writeFrame(FrameType.DATA, buf, 0, n)
                     st.output.flush()
+                    sent += n
                 }
             }
             body.closedCause?.let { throw it }
+            if (declared != null && sent != declared) return abandon(ContentLengthMismatch(declared, sent, more = false))
         }
         r.trailers?.let { cb -> withContext(callbacks) { cb() } }?.let { t ->
             val refused =
@@ -451,11 +464,7 @@ private suspend fun H3Session.sendBody(
                 }
             if (refused != null) {
                 // the request cannot be completed: the exchange is abandoned both ways and its caller gets this failure
-                sendFailure.completeExceptionally(refused)
-                runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
-                runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
-                r.body?.cancel(refused)
-                return
+                return abandon(refused)
             }
             st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, t.fields))
         }

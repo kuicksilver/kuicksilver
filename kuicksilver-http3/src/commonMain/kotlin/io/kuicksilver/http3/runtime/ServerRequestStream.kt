@@ -538,7 +538,10 @@ internal class ServerRequestImpl(
                 }
             }
             // HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what the application writes is dropped
-            ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = method == "HEAD" || status == 204 || status == 304)
+            val discard = method == "HEAD" || status == 204 || status == 304
+            // the content must match its content-length (RFC 9114 section 4.1.2); a tunnel's says nothing about its bytes
+            val declared = if (discard || tunnel) null else headers["content-length"]?.toLong()
+            ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = discard, declaredLength = declared)
         }
     }
 
@@ -566,6 +569,12 @@ internal class ServerRequestImpl(
                 !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null &&
                     n !in FieldValidator.CONNECTION_SPECIFIC && n != "te",
             ) { "invalid response field '$n'" }
+        }
+        // RFC 9110 sections 2.2, 8.6: 1*DIGIT, several values only when identical (as we require of the peer)
+        try {
+            FieldValidator.checkContentLength(headers.fields)
+        } catch (m: MalformedMessage) {
+            throw IllegalArgumentException("invalid response: ${m.reason}")
         }
         if (status in 100..199 || status == 204 || (method == "CONNECT" && status in 200..299)) {
             require(headers["content-length"] == null) { "content-length in a $status response${if (method == "CONNECT") " to CONNECT" else ""}" }
@@ -606,23 +615,34 @@ internal class ResponseWriterImpl(
     private val st: QuicStream,
     private val request: ServerRequestImpl?,
     private val discardBody: Boolean = false,
+    /** The response's content-length: content that does not match it is never sent as a complete response. */
+    private val declaredLength: Long? = null,
 ) : Http3ResponseWriter {
     private val channel = ByteChannel()
     override val output: ByteWriteChannel get() = channel
     private var finishing = false
+
+    /** Why the pump abandoned the response (set before it ends): [finish] reports it, also once the channel was closed. */
+    @Volatile private var abandoned: Throwable? = null
     internal val pump: Job =
         session.scope.launch {
             val buf = ByteArray(CHUNK)
+            var sent = 0L
             try {
                 while (true) {
                     val n = channel.readAvailable(buf, 0, buf.size)
                     if (n < 0) break
                     if (n > 0 && !discardBody) {
+                        // RFC 9114 section 4.1.2: content beyond its content-length makes the response malformed; the piece
+                        // that would cross it is not sent, and the response is abandoned (below)
+                        if (declaredLength != null && sent + n > declaredLength) throw ContentLengthMismatch(declaredLength, sent + n, more = true)
                         st.output.writeFrame(FrameType.DATA, buf, 0, n)
                         st.output.flush()
+                        sent += n
                     }
                 }
                 channel.closedCause?.let { throw it }
+                if (declaredLength != null && sent != declaredLength) throw ContentLengthMismatch(declaredLength, sent, more = false)
                 if (!finishing) {
                     st.output.flushAndClose()
                     request?.responseComplete()
@@ -634,7 +654,8 @@ internal class ResponseWriterImpl(
                 // response is abandoned after partial processing, "it SHOULD abort its response stream with the error code
                 // H3_REQUEST_CANCELLED" (RFC 9114 section 4.1.1); never left without a FIN or a reset
                 if (H3Session.transportCause(e) == null) runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
-                channel.cancel(session.map(e))
+                abandoned = session.map(e)
+                channel.cancel(abandoned)
                 request?.done()
             }
         }
@@ -648,6 +669,7 @@ internal class ResponseWriterImpl(
         finishing = true
         channel.flushAndClose()
         pump.join()
+        abandoned?.let { throw it }
         channel.closedCause?.let { throw session.map(it) }
         withContext(session.dispatcher) {
             if (trailers != null) {
@@ -686,3 +708,19 @@ internal class ResponseWriterImpl(
         }
     }
 }
+
+/**
+ * Content that does not match its content-length (RFC 9114 section 4.1.2): the message would be malformed, so it is
+ * abandoned (reset with H3_REQUEST_CANCELLED, section 4.1.1) instead of being sent as if complete.
+ */
+internal class ContentLengthMismatch(
+    declared: Long,
+    actual: Long,
+    more: Boolean,
+) : kotlinx.io.IOException(
+        if (more) {
+            "more content than its content-length $declared (RFC 9114 section 4.1.2); the stream was reset"
+        } else {
+            "$actual bytes of content, content-length $declared (RFC 9114 section 4.1.2); the stream was reset"
+        },
+    )

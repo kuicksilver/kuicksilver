@@ -637,6 +637,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a response `content-length` was not checked before it went out (`respond(200, content-length: abc)` or two
+  conflicting values passed, and our own client then took the response for malformed), and neither a response nor a
+  request body was held to its `content-length`. A malformed value now fails `respond` with IllegalArgumentException,
+  and content that does not match the declared length (more, or less at the end) is never sent as a complete message:
+  the stream is reset with H3_REQUEST_CANCELLED (RFC 9114 sections 4.1.1, 4.1.2) and the writer or the request fails
+  with an IOException. HTTP/2 already did this for responses.
 - HTTP/3: a 204 from the Ktor server engine went out with the content's Content-Length, and Ktor's `Content-Length: 0`
   went out on a 304 (RFC 9110 section 8.6); the engine now drops both, as over HTTP/1.1 and HTTP/2, and drops it from the
   2xx of a WebSocket CONNECT. `Http3ServerRequest.sendInformational`, `respond` and `acceptConnect` refuse

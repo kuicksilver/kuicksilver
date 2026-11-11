@@ -724,6 +724,62 @@ class RequestTest {
         }
 
     /**
+     * RFC 9110 sections 2.2, 8.6 and RFC 9114 section 4.1.2 on what we send: a response `content-length` that is not
+     * 1*DIGIT, or conflicting values, is refused; content that does not match the declared length (more, or fewer at the
+     * end) is never sent as a complete message: the stream is reset with H3_REQUEST_CANCELLED and the sender's call fails.
+     * The client's request body likewise.
+     */
+    @Test fun negative_sentContentLengthMustBeValid() =
+        h3Test {
+            for (cl in listOf(listOf("content-length" to "abc"), listOf("content-length" to "3", "content-length" to "4"))) {
+                H3Pair.open().useScoped { p ->
+                    launch { assertFailsWith<IllegalArgumentException> { p.server.acceptRequest().respond(200, Http3Headers(cl)) } }
+                    val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.request(get("/")).body.readAllBytes() }.exceptionOrNull() }
+                    assertIs<Http3Exception>(e, "the client sees the reset: $e")
+                }
+            }
+        }
+
+    /** [negative_sentContentLengthMustBeValid] for a response's content. */
+    @Test fun negative_responseContentMustMatchItsContentLength() =
+        h3Test {
+            for (content in listOf("abc", "abcdefg")) { // fewer and more than 5
+                H3Pair.open().useScoped { p ->
+                    launch {
+                        val w = p.server.acceptRequest().respond(200, Http3Headers.of("content-length" to "5"))
+                        val failure =
+                            runCatching {
+                                w.output.writeFully(content.encodeToByteArray())
+                                w.finish()
+                            }.exceptionOrNull()
+                        assertIs<ContentLengthMismatch>(failure, "$content: $failure")
+                    }
+                    // the reset may overtake the response head (RFC 9000 section 3.2: a reset stream's data may be discarded)
+                    val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.request(get("/")).body.readAllBytes() }.exceptionOrNull() }
+                    val reset = assertIs<Http3Exception.Protocol>(e, "$content: $e")
+                    assertEquals(Http3ErrorCode.REQUEST_CANCELLED, reset.h3Code)
+                }
+            }
+        }
+
+    /** [negative_sentContentLengthMustBeValid] for a request's content. */
+    @Test fun negative_requestContentMustMatchItsContentLength() =
+        h3Test {
+            for (content in listOf("abc", "abcdefg")) {
+                H3Pair.open().useScoped { p ->
+                    launch { runCatching { p.server.acceptRequest().body.readAllBytes() } }
+                    val post =
+                        io.kuicksilver.http3.http3Request("POST", "server.test", "/") {
+                            headers = Http3Headers.of("content-length" to "5")
+                            body = io.ktor.utils.io.ByteReadChannel(content)
+                        }
+                    val e = withTimeoutOrNull(3.seconds) { runCatching { p.client.request(post).body.readAllBytes() }.exceptionOrNull() }
+                    assertIs<ContentLengthMismatch>(e, "$content: $e")
+                }
+            }
+        }
+
+    /**
      * RFC 9114 sections 4.2 and 4.3.1: a request the peer would reject as malformed (te other than trailers, a
      * connection-specific field, a method that is not a token, a path that is not absolute, userinfo in :authority, a
      * host differing from :authority) fails locally with IllegalArgumentException before a stream is opened.
