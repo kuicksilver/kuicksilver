@@ -637,6 +637,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server over HTTP/3: a request with `Expect: 100-continue` never got its interim 100 (RFC 9110 section 10.1.1:
+  MUST), so a client that held its content until then waited for its own timeout (curl: 1 s), or for good. As over
+  HTTP/1.1 and HTTP/2, the 100 now goes out when the application first reads the body, and another expectation is
+  answered 417.
 - HTTP/3: a HEADERS frame after the trailers whose declared length was above the field section cap was a stream error
   (H3_EXCESSIVE_LOAD: a 431 on the server, `FieldSectionTooLarge` on the client) instead of the connection error
   H3_FRAME_UNEXPECTED that RFC 9114 section 4.1 requires for any frame after the trailers. A smaller one already was.
