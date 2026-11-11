@@ -1516,7 +1516,10 @@ at most `SessionTicketConfig.ticketLifetime`.
 `TlsConnection.client(transportIn, transportOut, config)` and `TlsConnection.server(...)` run TLS over any pair of
 ktor-io channels, so a TLS session can live inside a QUIC stream or a test harness. `input` and `output` carry
 plaintext; `shutdown()` sends what is still queued and `close_notify`, waits for the peer's, and closes after 3 s in
-all at the latest, also when the peer stopped reading.
+all at the latest, also when the peer stopped reading. `close()` ends the connection at once. Cancelling the job of the
+`context` passed to `client`/`server` ends it the same way: `input` and `output` fail and the native session is freed,
+without a `close()`. When the transport fails (a reset), the `TlsException.Protocol` of the handshake or of the input
+carries the transport's failure as its cause.
 
 ### Key logging
 
@@ -2831,7 +2834,10 @@ WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin alre
 mode is `H3Only`); over HTTP/3 the handshake is RFC 9220 and the plugin sees the usual 101. Over HTTP/1.1 at most one
 WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
 any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
-the name counts as the host.
+the name counts as the host. The connect timeout applies twice to such a WebSocket, in two phases: resolving the name,
+waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
+arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
+to the address is in neither: only the call (its request timeout or cancellation) bounds it.
 
 #### Discovery and Alt-Svc
 
@@ -3530,9 +3536,16 @@ section 6.8: first with the largest stream identifier and a PING, then with the 
 back) and closes when those requests are done; streams the client opens after that are not processed. The stop returns
 as soon as they have: each HTTP/3
 connection closes with H3_NO_ERROR once its last response is acknowledged and read — the client closes it (a
-Kuicksilver client does), or the server three seconds later. At the end of the grace period the calls still
-running are cancelled and the connections left are closed with H3_NO_ERROR; the stop then waits for those calls to end,
-until `timeoutMillis` after it began at most.
+Kuicksilver client does), or the server a quarter of the grace period later (three seconds at most; at least four
+smoothed round trips). A browser or curl keeps an idle connection open, so that wait is what a stop takes with one
+connected; with the quarter, Ktor's default `stop(500, 500)` ends gracefully on a low-latency path (a few milliseconds of
+RTT). Where the round trip is longer, the GOAWAY round (two RTTs, at least 50 ms), that wait and the QUIC closing period
+(three PTOs, RFC 9000 section 10.2) can exceed a short grace period: give it a second or more. At the end of the grace
+period the calls still running are cancelled and the connections left are closed with H3_NO_ERROR (TCP connections still
+writing a response are aborted instead of drained); the stop then waits for those calls to end, until `timeoutMillis`
+after it began at most. As in Ktor's CIO engine, `stop(500, 500)` leaves no time for that last step: the stop may return
+while the sockets cut at the grace deadline are still closing, so pass a `timeoutMillis` above the grace period where a
+restart binds the same port at once.
 
 ### 0-RTT (opt-in, experimental)
 
