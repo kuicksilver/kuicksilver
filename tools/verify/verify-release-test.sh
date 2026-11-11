@@ -92,22 +92,13 @@ cp "$rb/android/arm64-v8a/libksl.so" "$x/jni/arm64-v8a/"
 cp "$rb/klib/macos_arm64"/*.a "$x/default/targets/macos_arm64/included/"
 printf '{"cyclonedx":"stand-in"}\n' > "$x/bom.cdx.json"
 
-envelope() { # <statement.json> <out.intoto.jsonl> [<key name>]: the in-toto bundle, one DSSE envelope signed over its PAE
-  python3 - "$1" "$2.pae" "$2.payload" <<'PY'
-import json, sys
-st, pae, body = sys.argv[1:4]
-b = json.dumps(json.load(open(st)), separators=(",", ":")).encode(); t = b"application/vnd.in-toto+json"
-open(body, "wb").write(b); open(pae, "wb").write(b"DSSEv1 %d %s %d %s" % (len(t), t, len(b), b))
-PY
-  gpg --homedir "$tmp/gpg-${3:-test}" --batch --pinentry-mode loopback --passphrase '' --detach-sign -o "$2.sig" "$2.pae"
-  python3 - "$2.payload" "$2.sig" > "$2" <<'PY'
-import base64, json, sys
-b, s = (open(p, "rb").read() for p in sys.argv[1:3])
-print('{"note":"an unrecognised line, ignored"}')
-print(json.dumps({"payloadType": "application/vnd.in-toto+json", "payload": base64.b64encode(b).decode(),
-                  "signatures": [{"keyid": "test", "sig": base64.b64encode(s).decode()}]}, separators=(",", ":")))
-PY
-  rm -f "$2.pae" "$2.payload" "$2.sig"
+envelope() { # <statement.json> <out.intoto.jsonl> [<key name>]: the in-toto bundle as the release writes it
+  # (tools/release/dsse.py, an armored signature over the PAE), after an unrecognised line the verifier must ignore
+  python3 "$here/../release/dsse.py" payload "$1" "$2.payload" "$2.pae" >/dev/null || return 1
+  gpg --homedir "$tmp/gpg-${3:-test}" --batch --pinentry-mode loopback --passphrase '' --armor --detach-sign -o "$2.pae.asc" "$2.pae"
+  python3 "$here/../release/dsse.py" envelope "$2.payload" "$2.env" --sig "$2.pae.asc" --keyid test >/dev/null || return 1
+  { echo '{"note":"an unrecognised line, ignored"}'; cat "$2.env"; } > "$2"
+  rm -f "$2.pae" "$2.pae.asc" "$2.payload" "$2.env"
 }
 statement() { # <in-toto bundle>: its Statement, pretty, on stdout
   python3 -c 'import base64,json,sys
