@@ -467,6 +467,52 @@ internal class PacketBuilder(
         return bit
     }
 
+    /**
+     * Re-encodes the ACK frame at `[from, to)` of [buf] with longer variable-length integers (RFC 9000 section 16: values "do not need
+     * to be encoded on the minimum number of bytes necessary, with the sole exception of the Frame Type field") until it grew by at
+     * least [grow] bytes, by no more than [room], or every field is 8 bytes long; returns where it now ends.
+     */
+    private fun stretchAck(
+        buf: PacketBuffer,
+        from: Int,
+        to: Int,
+        grow: Int,
+        room: Int,
+    ): Int {
+        val values = LongArray(to - from)
+        val sizes = IntArray(to - from)
+        var n = 0
+        var at = from + 1 // the frame type stays one byte
+        while (at < to) {
+            val len = 1 shl ((buf[at].toInt() and 0xff) ushr 6)
+            var v = (buf[at].toLong() and 0x3f)
+            for (i in 1 until len) v = (v shl 8) or (buf[at + i].toLong() and 0xff)
+            values[n] = v
+            sizes[n++] = len
+            at += len
+        }
+        var need = minOf(grow, room)
+        var left = room
+        for (i in 0 until n) {
+            if (need <= 0) break
+            val s = sizes[i]
+            var target = 8
+            for (t in intArrayOf(2, 4, 8)) {
+                if (t > s && t - s >= need) {
+                    target = t
+                    break
+                }
+            }
+            if (target <= s || target - s > left) continue
+            left -= target - s
+            need -= target - s
+            sizes[i] = target
+        }
+        at = from + 1
+        for (i in 0 until n) at = VarInt.writeFixed(buf, at, values[i], sizes[i])
+        return at
+    }
+
     private fun buildPacket(
         buf: PacketBuffer,
         start: Int,
@@ -479,6 +525,8 @@ internal class PacketBuilder(
         padIfNoRoomAfter: Boolean = false,
     ): Int {
         var padToEnd = padToEnd
+        var ackFrom = -1 // where this packet's ACK frame starts and ends ([stretchAck])
+        var ackTo = -1
         val level = spaceLevel(space)
         val key = c.writeKeys[level] ?: return 0
         val sp = c.loss.space(space)
@@ -615,13 +663,16 @@ internal class PacketBuilder(
             val a = sp.ack
             // a test probe (testInjectPathChallenges) carries no ACK: a probing-only packet, RFC 9000 section 9.1
             if (a.hasRanges && (hasAckToSend(space, now) || hasData(space)) && !mirroring &&
-                c.testInjectPathChallenges == 0 && type != PacketType.ZeroRtt
+                c.testInjectPathChallenges == 0 && type != PacketType.ZeroRtt &&
+                (!c.testAckOnlyAfterAckEliciting || a.ackElicitingPending)
             ) {
                 val o = a.ackOverhead(now, c.config.ackDelayExponent)
                 if (o <=
                     w.remaining
                 ) {
+                    ackFrom = w.pos
                     a.writeAck(w, now, c.config.ackDelayExponent)
+                    ackTo = w.pos
                     frames.ackLargest = a.largestReceived
                     if (space ==
                         SpaceId.Application
@@ -901,12 +952,18 @@ internal class PacketBuilder(
         // RFC 9000 section 10.3: "SHOULD ensure that all packets it sends are at least 22 bytes longer than the minimum connection
         // ID length that it requests the peer to include in its packets, adding PADDING frames as necessary", so that the peer's
         // Stateless Reset (one byte shorter) looks like a packet to us. A long header always is: it carries our ID as its SCID
-        // beside 28 bytes or more. PADDING makes an ACK-only packet count as in flight (RFC 9002 section 2)
+        // beside 28 bytes or more. An ACK-only packet grows by longer varints in its ACK frame instead (section 16): PADDING would
+        // put it in flight (RFC 9002 section 2), outside the window it is sent past, and a peer that acknowledges only
+        // ack-eliciting packets (section 13.2.1) would never take it out again
         if (type == PacketType.OneRtt) {
             val short = c.localCid.length + 22 - (w.pos + 16 - start)
             if (short > 0) {
-                w.zero(minOf(short, w.remaining))
-                padded = true
+                if (!ackEliciting && !padded && close == null && ackFrom >= 0 && ackTo == w.pos) {
+                    w.pos = stretchAck(buf, ackFrom, ackTo, short, w.remaining)
+                } else {
+                    w.zero(minOf(short, w.remaining))
+                    padded = true
+                }
             }
         }
         val payloadEnd = w.pos

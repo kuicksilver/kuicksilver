@@ -186,6 +186,9 @@ public class ConnectionCore internal constructor(
     internal var oneRttSinceRotation = 0
     internal var testInjectPathChallenges = 0
 
+    /** Test hook: ACK frames go out only while an ack-eliciting packet waits for one (a peer such as quic-go, RFC 9000 section 13.2.1). */
+    internal var testAckOnlyAfterAckEliciting = false
+
     /** Packets sealed with the 0-RTT key (RFC 9001 section 6.6 counts them toward its confidentiality limit). */
     internal var zeroRttPacketsSealed = 0L
 
