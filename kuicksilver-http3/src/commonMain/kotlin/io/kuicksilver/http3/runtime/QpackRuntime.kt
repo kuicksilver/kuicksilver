@@ -60,7 +60,9 @@ internal class QpackRuntime(
         fields: List<Pair<String, String>>,
     ): ByteArray =
         encLock.withLock {
-            val block = encoder.encode(streamId, fields, encoderCredit())
+            // the credit is asked of the transport (a hop onto its loop) only when an insert is possible at all
+            val budget = if (encoder.capacity == 0L) 0L else encoderCredit()
+            val block = encoder.encode(streamId, fields, budget)
             val ins = encoder.drainEncoderStream()
             if (ins.isNotEmpty()) encoderOut(ins)
             lastEncodedSize = block.size + ins.size
@@ -138,7 +140,8 @@ internal class QpackRuntime(
      * Client, the server rejected 0-RTT (RFC 9001 section 4.6.2): what the codecs hold unsent was made for the early streams
      * the server never saw, and goes. Before the handshake completes nothing of the server has been read, so the decoder
      * can only hold Stream Cancellations of early requests, and the encoder, which knows no peer SETTINGS yet, nothing (it
-     * may use the dynamic table only after them, RFC 9204 section 3.2.3, and this client stores no settings for 0-RTT).
+     * uses the dynamic table only after them, RFC 9204 section 3.2.3: settings stored for 0-RTT bound what the client
+     * sends, but never turn the dynamic table on before the server's own SETTINGS).
      */
     fun onEarlyDataRejected() {
         decoder.drainDecoderStream()
