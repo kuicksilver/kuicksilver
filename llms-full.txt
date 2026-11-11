@@ -627,14 +627,18 @@ sequence-1 connection ID, and moves there when the server answers. Only probes g
 validation leaves the connection where it was. A server reached on a public address cannot send the client to a
 loopback, link-local or private address, and nobody to an unspecified, multicast or broadcast one (the `Alt-Svc` rule).
 The server's `disable_active_migration` does not stop the move, and after it the client may migrate. A `migrate` while
-the preferred address is still being validated cancels that validation.
+the preferred address is still being validated validates both from the new socket (RFC 9000 section 9.6.3): the
+original address on the new path, and the preferred address once more. If the preferred address answers first, the new
+path takes it, and `migrate` moves the connection there (the returned `PathEvent.Changed` names the new path, whose
+`remote` is the preferred address); otherwise the move goes to the original address, and the preferred address, should it
+still validate, moves the connection there with `PathChangeReason.PreferredAddress`.
 
 A server follows a client that changes address (RFC 9000 section 9). The first 1-RTT packet from a new address opens a
 path under validation: the server sends a `PATH_CHALLENGE` there (and to the previous address, against an off-path
 attacker replaying the client's packets), limits what it sends to the unvalidated address to three times what it
 received from it, and moves the connection only on a non-probing packet with the highest packet number seen. A NAT
 rebinding (same IP, new port) keeps the congestion window and RTT; a new IP starts from the initial window. When the
-new path never answers within max(3 × PTO, 6 × initial RTT) the server returns to the last validated path. A rebinding
+new path never answers within three times the larger of the PTO and a new path's PTO (about 3 s) the server returns to the last validated path. A rebinding
 that happens before the handshake is complete (the client's retransmitted Initials arrive from a new port) cannot be
 answered yet: the server follows the latest decrypted Initial or Handshake packet, with a fresh three-times budget for
 the new address, sends a `PATH_CHALLENGE` there first and repeats it every PTO (the client answers once it holds
@@ -666,7 +670,7 @@ Migration timing: a probe on a new path must carry a connection ID of the server
 observer cannot link the two networks (RFC 9000 section 9.5). The server issues its spare IDs, up to the client's
 `active_connection_id_limit` (default 4), in its first 1-RTT flight (section 5.1.1), so they normally arrive with the
 handshake. If the network changes before they did (a lost datagram, a peer that issues late), `probe()` does not
-reuse the active path's ID: it waits up to max(3 × PTO, 6 × initial RTT) for a `NEW_CONNECTION_ID`, probes as soon as
+reuse the active path's ID: it waits up to three times the larger of the PTO and a new path's PTO (about 3 s) for a `NEW_CONNECTION_ID`, probes as soon as
 one arrives, and otherwise fails with `PathFailureReason.NoSpareConnectionId` (`PathEvent.Failed.reason`,
 `PathValidationException.reason`) rather than as a silent path. Migrating right after `connect()` therefore needs no
 wait of its own. `paths` lists the live paths (the first is the one the connection started on), `activePath` is the one it sends on now,
@@ -787,7 +791,8 @@ Every connection carries a token bucket (1000 tokens, 33 back per second) that p
 without moving anything forward: a
 `STREAMS_BLOCKED` repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
 number we already hold, a `RETIRE_CONNECTION_ID` for an ID that is already retired (one for a sequence number we never issued is a
-`PROTOCOL_VIOLATION`), a third PING-only packet within one
+`PROTOCOL_VIOLATION`) or one that retires more than twice the IDs we keep issued within 3 PTO (its replacement then waits
+until an earlier retired ID stops routing), a third PING-only packet within one
 RTT (the two probes of a PTO may both be PING-only, so a pair is free). A 1-RTT packet that fails to decrypt is discarded silently and spends nothing: anyone who has seen a connection ID
 can forge such packets (RFC 9000 section 12.2). A `MAX_DATA`, `MAX_STREAM_DATA` or `MAX_STREAMS` that raises nothing is
 ignored for free: it is what a retransmitted or reordered update looks like (quic-go repeats `MAX_STREAMS` in every
