@@ -185,6 +185,8 @@ internal class LossDetection(
         space: SpaceId,
         ack: AckFrameView,
         now: TimeMark,
+        /** When the packet carrying the ACK arrived: earlier than [now] for one that waited for its keys (RFC 9002 section 5.3). */
+        arrivedAt: TimeMark = now,
     ) {
         val sp = this.space(space)
         if (ack.largest >
@@ -264,7 +266,10 @@ internal class LossDetection(
                         (micros * 1000).nanoseconds
                     }
                 } // saturate: a peer-chosen value must not wrap
-            rtt.onSample(now - largestNewlyAcked.timeSent, ackDelay, handshakeConfirmed, peerMaxAckDelay)
+            // "an endpoint SHOULD subtract such local delays from its RTT sample" (section 5.3): a packet held for its keys is
+            // sampled at its arrival, unless it claims a packet sent after that (only a guessing peer can): then at [now] as before
+            val sampleAt = if (arrivedAt >= largestNewlyAcked.timeSent) arrivedAt else now
+            rtt.onSample(sampleAt - largestNewlyAcked.timeSent, ackDelay, handshakeConfirmed, peerMaxAckDelay)
             if (rtt.persistentCongestionFrom == TimeMark.NEVER) rtt.persistentCongestionFrom = now
             listener.onRttSample(now, rtt.latest, rtt.min)
         }

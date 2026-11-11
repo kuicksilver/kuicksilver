@@ -57,6 +57,12 @@ internal class PacketReceiver(
     private val frames = FrameDispatcher(c, this)
     internal val reader = WireReader(NO_PACKET, 0, 0)
     internal var now = TimeMark(0)
+
+    /**
+     * When the packet being processed arrived: [now], or for a packet held for its keys and fed again ([replayBuffered]) the
+     * time it came in. An ACK it carries is an RTT sample from then: the wait for keys is a local delay (RFC 9002 section 5.3).
+     */
+    internal var arrivedAt = TimeMark(0)
     internal var space = SpaceId.Initial
     private var packetType = PacketType.Initial
     internal var level = 0
@@ -70,6 +76,7 @@ internal class PacketReceiver(
         val local: InetSocketAddress?,
         val ecn: io.kuicksilver.quic.Ecn,
         val datagramLength: Int,
+        val arrivedAt: TimeMark,
     )
 
     private val buffered = ArrayList<Buffered>()
@@ -116,6 +123,7 @@ internal class PacketReceiver(
         local: InetSocketAddress? = null,
     ) {
         this.now = now
+        arrivedAt = now
         this.socket = socket
         this.local = local
         this.from = from
@@ -302,7 +310,7 @@ internal class PacketReceiver(
             val bytes = ByteArray(hv.packetEnd - hv.pnOffset + (hv.pnOffset - headerStart()))
             val start = headerStart()
             data.copyTo(bytes, start, 0, bytes.size)
-            buffered += Buffered(level, bytes, from, socket, local, datagramEcn, datagramLength)
+            buffered += Buffered(level, bytes, from, socket, local, datagramEcn, datagramLength, now)
             // a 1-RTT packet held for the handshake's end counts as handled: its datagram is no Stateless Reset candidate (RFC 9000
             // section 10.3.1; the client's reset tokens come in 1-RTT frames the server has not processed yet)
             return beforeFinished
@@ -555,6 +563,7 @@ internal class PacketReceiver(
         val savedFrom = from
         val savedLength = datagramLength
         val savedEcn = datagramEcn
+        val savedArrival = arrivedAt
         try {
             for (b in again) {
                 val buf = PacketBuffer.allocate(b.bytes.size)
@@ -565,6 +574,7 @@ internal class PacketReceiver(
                     from = b.from
                     datagramLength = b.datagramLength
                     datagramEcn = b.ecn
+                    arrivedAt = b.arrivedAt
                     var off = 0
                     while (off <
                         b.bytes.size
@@ -588,6 +598,7 @@ internal class PacketReceiver(
             from = savedFrom
             datagramLength = savedLength
             datagramEcn = savedEcn
+            arrivedAt = savedArrival
         }
     }
 

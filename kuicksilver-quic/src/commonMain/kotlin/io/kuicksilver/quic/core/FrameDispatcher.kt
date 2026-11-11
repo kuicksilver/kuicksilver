@@ -30,7 +30,7 @@ internal class FrameDispatcher(
     override fun ping() {}
 
     override fun ack(ack: AckFrameView) {
-        c.loss.onAck(r.space, ack, r.now)
+        c.loss.onAck(r.space, ack, r.now, r.arrivedAt)
         c.checkPmtuBlackHoles()
     }
 
