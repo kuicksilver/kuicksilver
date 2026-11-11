@@ -1202,6 +1202,13 @@ val qlogDir = "/var/log/kuicksilver/qlog"
 val quicWithQlog = quicConfig { qlog = DirectoryQlogSink(qlogDir) }
 ```
 
+On Android, `qlogDirectory(context, name = "kuicksilver-qlog")` (experimental, 0.3.0, in `io.kuicksilver.quic.qlog`)
+returns a `DirectoryQlogSink` for the directory `name` in the app's cache directory. It creates the directory owner-only
+(0700) at once and checks it like any other. The cache directory is private to the app, is not backed up, and is the
+first thing the system clears when storage runs low. Pull the traces with `adb shell run-as <package> ls cache/kuicksilver-qlog`
+(debuggable builds). The helper works in release builds too, since a trace holds no keys. Below API 26 it throws
+`IllegalArgumentException`: without `java.nio.file` the directory cannot be checked, so qlog is refused there.
+
 A sink is called on the endpoint loop, so a file sink on a slow disk would slow every connection of the loop. Wrap it in
 `AsyncQlogSink`: the loop only queues records, and one writer on `Dispatchers.IO` (one thread at a time) opens, writes and
 closes the files. Its queue holds `queueCapacity` records (8192) over all connections; a record that finds it full is

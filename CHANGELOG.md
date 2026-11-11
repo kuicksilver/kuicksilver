@@ -232,6 +232,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `File(context.filesDir, "altsvc.tsv")` (`docs/guide/ktor.md`, "Discovery and Alt-Svc"). It works on API 24 and 25 too:
   nothing on its path uses `java.nio.file` or `File.toPath()`, which arrived in API 26. The `kotlinx.io.files.Path`
   constructor is unchanged.
+- QUIC: experimental `qlogDirectory(context, name)` on Android (`io.kuicksilver.quic.qlog`), the qlog counterpart of
+  `keylogFile(context, name)`: a `DirectoryQlogSink` for the directory `name` (default `kuicksilver-qlog`) in the app's
+  cache directory, which is private and not backed up. The directory is created owner-only (0700) and checked at once.
+  Below API 26 it throws `IllegalArgumentException`, as `DirectoryQlogSink` refuses there (`docs/guide/quic.md`, "qlog").
 - QUIC: experimental `QuicConnection.peerSupportsDatagrams`, true once the peer advertised `max_datagram_frame_size`
   above 0 (RFC 9221 section 3), exactly when `sendDatagram` does not answer `PeerDoesNotSupport`. `maxDatagramSize` is 0
   without support and also with a limit of 2 (room for an empty datagram only) or 1 (room for none: even an empty datagram is `TooLarge(0)`); this

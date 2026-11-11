@@ -1478,6 +1478,10 @@ HttpClient(Kuicksilver) {
 }
 ```
 
+On Android, `http3 { qlog = AsyncQlogSink(qlogDirectory(context)) }` writes the traces to a directory in the app's
+cache directory, created owner-only (API 26 and up; [QUIC: qlog](quic.md#qlog)). It is the counterpart of
+`keylogFile(context)`.
+
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.
 

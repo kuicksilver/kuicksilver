@@ -149,6 +149,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `Cubic(maxDatagramSize, hystart)`, `NewReno(maxDatagramSize)` | | 1200, `true` | the stable congestion controllers |
 | `Bbr(maxDatagramSize, random)` (*experimental*) | | 1200, `null` (jitter from send and ACK times) | BBRv3 ([Choosing a congestion controller](quic.md#choosing-a-congestion-controller)) |
 | `DirectoryQlogSink(directory)`, `DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes)` (*experimental*) | | 256 open traces, 1 GiB in all | one `<odcid>_<client\|server>_<random>.sqlog` file per connection, created exclusively, never through a link; creates the directory owner-only and refuses one another user could change |
+| `qlogDirectory(context, name)` (Android, *experimental*) | | `name = "kuicksilver-qlog"` | a `DirectoryQlogSink` in the app's cache directory, created owner-only at once; API 26 and up (refused below) |
 | `AsyncQlogSink(delegate, queueCapacity, sampleEvery, dispatcher)` (*experimental*) | | 8192 records, 1 (every connection), `Dispatchers.IO.limitedParallelism(1)` | runs a sink off the endpoint loop; a full queue drops records (`dropped`) |
 | `NetworkMigrator(connection, networks, openIo, scope)` (*experimental*) | | no defaults; client connections only | follows a `Flow` of networks ([Network changes](quic.md#network-changes)) |
 | `QuicConnection.rebind(local, prefer)` (*experimental*) | | `null` (wildcard of the peer's family), `Accelerated` | moves the connection to a fresh socket |

@@ -240,6 +240,7 @@ type is experimental, so are its members.
 | `ConnectionCore`, `EndpointCore`, `QuicConnection.core`, `QuicConfig.toBuilder()`, `QuicEndpointConfig.toBuilder()` | the sans-IO core used directly |
 | `NetworkMigrator`, `MigrationEvent`, `QuicConnection.rebind` | automatic migration (`QuicConnection.migrate`, `addPath`, `probe`, `switchTo` are stable) |
 | Android: `QuicConnection.followDefaultNetwork(connectivityManager, scope)`, `ConnectivityManager.defaultNetworks()`, `DatagramIo.open(local, network, prefer)` | following the default network on Android |
+| Android: `qlogDirectory(context, name)` | a qlog directory in the app's cache directory |
 | Apple: `QuicConnection.followDefaultNetwork(scope)`, `nwPathUpdates()`, `NwPathKey`, `NwInterfaceType`, `DatagramIo.open(local, interfaceIndex, prefer)` | following the default network on iOS and macOS |
 | `PathFailureReason`, `PathValidationException`, the `reason` of `PathEvent.Failed` and `ConnectionEvent.PathFailed` | why a path failed (`NoSpareConnectionId`, …) |
 | `PathEvent.SocketLost`, `SocketDefunctException` | sockets the system took away (suspended iOS apps) |
