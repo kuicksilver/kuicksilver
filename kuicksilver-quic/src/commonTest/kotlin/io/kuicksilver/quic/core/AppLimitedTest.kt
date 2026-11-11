@@ -147,4 +147,20 @@ class AppLimitedTest {
             assertEquals(grown, cc.cwnd, "application-limited: it does not")
         }
     }
+
+    @Test fun dataWaitingForApplicationKeysIsApplicationLimited() {
+        // before 1-RTT (or 0-RTT) keys, Application data cannot use the window: handshake ACKs must not grow it on its account
+        val p = io.kuicksilver.quic.CorePair()
+        val batch = io.kuicksilver.quic.PacketBatch(16)
+        try {
+            val c = p.client
+            c.testInjectMaxData = 1 // a frame that waits for 1-RTT keys
+            c.poll(batch, p.now)
+            assertTrue(c.writeKeys[3] == null, "no 1-RTT keys yet")
+            assertTrue(c.builder.appLimited, "nothing the window could carry was left")
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
 }

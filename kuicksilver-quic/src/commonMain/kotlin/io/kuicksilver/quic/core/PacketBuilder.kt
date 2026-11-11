@@ -33,7 +33,8 @@ internal class PacketBuilder(
     var pacerWakeup: TimeMark = TimeMark.NEVER
 
     /**
-     * The last poll left nothing to send on the active path (no data, or flow control holds it): with room in the window, the
+     * The last poll left nothing to send on the active path (no data, flow control holds it, or no keys to send it with yet):
+     * with room in the window, the
      * window is under-used (RFC 9002 section 7.8). False when a poll stopped with data left, for the window, the pacer, the send
      * quantum or a full batch: the sender "would have fully utilized the congestion window without pacing delay".
      */
@@ -209,7 +210,8 @@ internal class PacketBuilder(
             pacer(now)
             if (pacerWakeup == TimeMark.NEVER) pacerWakeup = now
         }
-        if (c.closeFrame == null) appLimited = !hasData(SpaceId.Application)
+        // data that waits for 1-RTT keys (or 0-RTT ones) cannot use the window: it does not count as data left
+        if (c.closeFrame == null) appLimited = (c.writeKeys[3] == null && !zeroRtt) || !hasData(SpaceId.Application)
         // the sender ran out of data with room in the window and no pacing delay: the next rate samples show the application's pace
         if (!congested && count < out.capacity && bytes < c.cc.sendQuantum && c.closeFrame == null && appLimited) {
             (c.cc as? io.kuicksilver.quic.Bbr)?.onAppLimited()
