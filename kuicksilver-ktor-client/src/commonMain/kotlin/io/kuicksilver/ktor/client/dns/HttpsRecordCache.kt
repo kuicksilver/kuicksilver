@@ -137,8 +137,11 @@ internal class HttpsRecords(
      * says "Clients MUST ensure that their DNS cache is partitioned for each local network, or flushed on network changes".
      * Without it every request asks the source (one lookup per name at a time still).
      */
-    private val caching: Boolean = true,
+    caching: Boolean = true,
 ) {
+    /** [caching], until [stopCaching]; read and written under [lock]. */
+    private var caching = caching
+
     /** The lookups' own job under [parent]: [close] cancels the ones still running, so they do not hold up a closing engine. */
     private val job = SupervisorJob(parent.coroutineContext[Job])
     private val scope = CoroutineScope(parent.coroutineContext + job)
@@ -163,6 +166,18 @@ internal class HttpsRecords(
     /** Forgets every answer and drops the answers of lookups still running: they belong to the old network. */
     suspend fun onNetworkChanged() =
         lock.withLock {
+            generation++
+            cache.clear()
+            inFlight.clear()
+        }
+
+    /**
+     * Drops the answers kept and keeps none from now on: the engine no longer sees network changes (the network source of
+     * `connectionMigration` failed or ended), so RFC 9460 section 12 allows no cache.
+     */
+    suspend fun stopCaching() =
+        lock.withLock {
+            caching = false
             generation++
             cache.clear()
             inFlight.clear()

@@ -183,6 +183,7 @@ internal class KuicksilverEngine(
     init {
         followedNetworks?.let { networks ->
             migrationScope.launch(CoroutineName("kuicksilver-network-follower")) {
+                var failure: Exception? = null
                 try {
                     networks.collect { n ->
                         followedNetwork = n?.toString()
@@ -193,18 +194,23 @@ internal class KuicksilverEngine(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // the source failed (on Android, no more network callbacks): the engine knows the network no longer
-                    followedNetworkKnown = false
-                    runCatching {
-                        if (events.logger.isEnabled(LogLevel.Info)) {
-                            events.logger.log(
-                                LogLevel.Info,
-                                "the network source of connectionMigration failed; network changes are no longer seen",
-                                e,
-                            )
-                        }
+                    failure = e
+                }
+                // the source failed (on Android, no more network callbacks) or ended: the engine no longer sees network
+                // changes, so it keeps no HTTPS records of its own any more (RFC 9460 section 12)
+                followedNetworkKnown = false
+                httpsRecords?.stopCaching()
+                runCatching {
+                    if (events.logger.isEnabled(LogLevel.Info)) {
+                        events.logger.log(
+                            LogLevel.Info,
+                            "the network source of connectionMigration ${if (failure != null) "failed" else "ended"}; " +
+                                "network changes are no longer seen",
+                            failure,
+                        )
                     }
                 }
+                followedNetworkUpdates.value++
             }
         }
         val requests = coroutineContext[Job]!!

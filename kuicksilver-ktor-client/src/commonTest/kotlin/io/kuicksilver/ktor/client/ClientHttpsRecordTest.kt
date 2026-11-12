@@ -25,6 +25,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -313,6 +314,85 @@ class ClientHttpsRecordTest {
                     c.get("https://server.test:$port/")
                 }
                 assertEquals(2, records.asked.size, "asked again: ${records.asked}")
+            } finally {
+                server.stopSuspend(0, 0)
+            }
+        }
+
+    /** A migration hook whose [networks] are the engine's network (no `networkId`). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun following(networks: kotlinx.coroutines.flow.Flow<Any?>) =
+        object : Http3ConnectionMigration {
+            override fun start(
+                connection: io.kuicksilver.quic.QuicConnection,
+                scope: kotlinx.coroutines.CoroutineScope,
+            ) = error("no HTTP/3 connection in this test")
+
+            override val networks = networks
+        }
+
+    /**
+     * RFC 9460 section 12: "Clients MUST ensure that their DNS cache is partitioned for each local network, or flushed on
+     * network changes". The networks `connectionMigration` follows are a source of network changes (when `networkId` is not
+     * set): answers are cached and flushed when the network changes. Before, such an engine kept no answers.
+     */
+    @Test fun negative_connectionMigrationNetworksFlushTheCache() =
+        clientTest {
+            val (server, port) =
+                testServer(configure = {
+                    http3 = false
+                    altSvc = false
+                }) { routing { get("/") { call.respondText("h1") } } }
+            try {
+                val name = "_$port._https.server.test"
+                val records = Records(mapOf(name to listOf(record(name, 1, ".", "h2"))))
+                val networks = kotlinx.coroutines.flow.MutableStateFlow<Any?>("wifi")
+                client(records.source, more = { http3 { connectionMigration = following(networks) } }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.followedNetworkUpdates.first { it >= 1 }
+                    c.get("https://server.test:$port/")
+                    c.get("https://server.test:$port/")
+                    assertEquals(1, records.asked.size, "cached: ${records.asked}")
+                    networks.value = "cellular"
+                    engine.followedNetworkUpdates.first { it >= 2 }
+                    c.get("https://server.test:$port/")
+                    assertEquals(2, records.asked.size, "asked again on the new network: ${records.asked}")
+                }
+            } finally {
+                server.stopSuspend(0, 0)
+            }
+        }
+
+    /** A network source that fails leaves the engine blind to network changes: the cache is dropped and no longer kept. */
+    @Test fun negative_failedNetworkSourceStopsCaching() =
+        clientTest {
+            val (server, port) =
+                testServer(configure = {
+                    http3 = false
+                    altSvc = false
+                }) { routing { get("/") { call.respondText("h1") } } }
+            try {
+                val name = "_$port._https.server.test"
+                val records = Records(mapOf(name to listOf(record(name, 1, ".", "h2"))))
+                val fail = CompletableDeferred<Unit>()
+                val networks =
+                    kotlinx.coroutines.flow.flow<Any?> {
+                        emit("wifi")
+                        fail.await()
+                        throw kotlinx.io.IOException("no more network callbacks")
+                    }
+                client(records.source, more = { http3 { connectionMigration = following(networks) } }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.followedNetworkUpdates.first { it >= 1 }
+                    c.get("https://server.test:$port/")
+                    c.get("https://server.test:$port/")
+                    assertEquals(1, records.asked.size, "cached: ${records.asked}")
+                    fail.complete(Unit)
+                    engine.followedNetworkUpdates.first { it >= 2 }
+                    c.get("https://server.test:$port/")
+                    c.get("https://server.test:$port/")
+                    assertEquals(3, records.asked.size, "no cache any more: ${records.asked}")
+                }
             } finally {
                 server.stopSuspend(0, 0)
             }
