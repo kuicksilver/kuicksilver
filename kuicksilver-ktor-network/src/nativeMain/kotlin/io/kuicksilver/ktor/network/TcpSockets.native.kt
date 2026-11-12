@@ -263,6 +263,9 @@ internal actual fun platformResolveTcp(
     return tcpResolve(name, port, numericHost).map { it.toTcpAddress() }
 }
 
+/** None here: the system's own caches (mDNSResponder, the Windows DNS client, systemd-resolved) do it, as before. */
+internal actual fun platformLookupCacheTtl(): LookupTtl = LookupTtl(0, 0)
+
 internal actual fun platformResolveFamily(
     name: String,
     ipv6: Boolean,

@@ -23,6 +23,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.io.IOException
 import kotlin.concurrent.Volatile
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * The addresses of a name as they arrive, one family at a time: RFC 8305 section 3 has the client send "both AAAA and A
@@ -119,11 +121,9 @@ public suspend fun resolveBoth(
         val a4 = v4.await()
         val out = (a6.getOrNull().orEmpty() + a4.getOrNull().orEmpty()).distinct()
         if (out.isNotEmpty()) return@coroutineScope out
-        val failures = listOfNotNull(a6.exceptionOrNull(), a4.exceptionOrNull())
+        val failures = listOfNotNull(a6.exceptionOrNull(), a4.exceptionOrNull()).distinct()
         if (failures.isEmpty()) throw IOException("$name resolved to no address")
-        val first = failures.first()
-        for (e in failures.drop(1)) if (e !== first) first.addSuppressed(e)
-        throw first
+        throw sharedFailures(name, failures) // the lookups' failures are shared by the request: never changed
     }
 
 private suspend fun <T> runCatchingLookup(block: suspend () -> T): Result<T> =
@@ -142,10 +142,11 @@ private suspend fun <T> runCatchingLookup(block: suspend () -> T): Result<T> =
  * threads, one per address family"). On the JVM, a resolver the application installed (`InetAddressResolverProvider`,
  * `jdk.net.hosts.file`) is honoured instead: `InetAddress.getAllByName` then answers both families at once.
  *
- * Empty when the name has no address of that family; an [IOException] when the lookup failed. Lookups block a thread and
- * cannot be interrupted: they run on a view of [Dispatchers.IO] limited to [MAX_CONCURRENT_LOOKUPS] threads, so a resolver
- * that stalls holds at most that many and never the threads the socket loops run on (threat model 3.21); one lookup of a
- * name and family is in flight at a time, shared by every caller that asks for it meanwhile. A caller does not wait for a
+ * Empty when the name has no address of that family; an [IOException] when the lookup failed. An answer is kept as long
+ * as the platform's resolver cache would keep it ([platformLookupCacheTtl]). Lookups block a thread and cannot be
+ * interrupted: they run on a view of [Dispatchers.IO] limited to [MAX_CONCURRENT_LOOKUPS] threads per family, so a
+ * resolver that stalls holds at most that many and never the threads the socket loops run on (threat model 3.21.1); one
+ * lookup of a name and family is in flight at a time, shared by every caller that asks for it meanwhile. A caller does not wait for a
  * lookup once it is cancelled; the lookup itself finishes on its thread (its answer still reaches the system's cache, as
  * RFC 8305 section 5 has it: "the DNS client resolver SHOULD still process DNS replies from the network for a short period
  * of time") and is then forgotten.
@@ -157,15 +158,19 @@ public suspend fun resolveFamily(
 ): List<TcpAddress> = sharedLookup(name, ipv6).filter { it.isIpv6 == ipv6 }.distinct()
 
 /**
- * How many name lookups run at once, process-wide. `getaddrinfo` and `getAllByName` block their thread for as long as
- * the system resolver takes (a stalled DNS server: tens of seconds), and [Dispatchers.IO] (64 threads by default) also
- * runs the engines' socket loops; 8 leaves those loops nearly all of it while lookups of different names still proceed
- * in parallel (Chromium runs 6 system lookups at once).
+ * How many name lookups of one address family run at once, process-wide (so at most twice this in all). `getaddrinfo`
+ * blocks its thread for as long as the system resolver takes (a stalled DNS server: tens of seconds), and
+ * [Dispatchers.IO] (64 threads by default) also runs the engines' socket loops; 8 per family leaves those loops most of it
+ * while lookups of different names still proceed in parallel (Chromium runs 6 system lookups at once). Each family has
+ * its own budget: on a network that drops AAAA queries, stalled IPv6 lookups never hold up the IPv4 ones of other names.
  */
 internal const val MAX_CONCURRENT_LOOKUPS: Int = 8
 
 @OptIn(ExperimentalCoroutinesApi::class)
-private val lookupDispatcher = Dispatchers.IO.limitedParallelism(MAX_CONCURRENT_LOOKUPS)
+private val lookupDispatcherV6 = Dispatchers.IO.limitedParallelism(MAX_CONCURRENT_LOOKUPS)
+
+@OptIn(ExperimentalCoroutinesApi::class)
+private val lookupDispatcherV4 = Dispatchers.IO.limitedParallelism(MAX_CONCURRENT_LOOKUPS)
 
 /** The lookups in flight, by name and family; each removes itself when it completes. */
 private val lookupLock = Mutex()
@@ -176,9 +181,45 @@ private val lookupsInFlight = HashMap<Pair<String, Boolean>, Deferred<List<TcpAd
 internal var blockingLookupForTest: ((String, Boolean) -> List<TcpAddress>)? = null
 
 /**
- * The addresses of one family of [name] (port 0) from the lookup in flight for it, or a new one on [lookupDispatcher].
- * The lookup is not a child of the caller: a cancelled caller leaves it to the others waiting for it, or to finish on its
- * own.
+ * How long a lookup's answer is kept ([platformLookupCacheTtl]): on the JVM what `InetAddress` itself would keep it (its
+ * cache is not in the path any more), so a host without a caching resolver does not pay two `getaddrinfo` per connection.
+ */
+internal class LookupTtl(
+    /** Seconds an answer with addresses is kept; 0: not kept, negative: for ever. */
+    val positiveSeconds: Long,
+    /** Seconds a failed or empty answer is kept; 0: not kept, negative: for ever. */
+    val negativeSeconds: Long,
+)
+
+/** The cache lifetimes of this platform: the JDK's `networkaddress.cache.ttl` and `.negative.ttl`; none elsewhere. */
+internal expect fun platformLookupCacheTtl(): LookupTtl
+
+private val lookupTtl: LookupTtl by lazy { platformLookupCacheTtl() }
+
+/** Replaces [platformLookupCacheTtl] and keeps answers of [blockingLookupForTest] too (tests). */
+@Volatile
+internal var cacheTtlForTest: LookupTtl? = null
+
+private class Cached(
+    val answer: Result<List<TcpAddress>>,
+    val at: TimeSource.Monotonic.ValueTimeMark,
+    val ttlSeconds: Long,
+) {
+    fun fresh(): Boolean = ttlSeconds < 0 || at.elapsedNow() < ttlSeconds.seconds
+}
+
+/** Answers kept for their TTL, by name and family, under [lookupLock]; at most [MAX_CACHED], the oldest dropped first. */
+private val lookupCache = LinkedHashMap<Pair<String, Boolean>, Cached>()
+
+internal const val MAX_CACHED: Int = 1000
+
+/** Forgets the kept answers (tests). */
+internal suspend fun clearLookupCacheForTest() = lookupLock.withLock { lookupCache.clear() }
+
+/**
+ * The addresses of one family of [name] (port 0): a kept answer, else the lookup in flight for it, else a new one on the
+ * family's dispatcher. The lookup is not a child of the caller: a cancelled caller leaves it to the others waiting for it,
+ * or to finish on its own (and be kept).
  */
 @OptIn(DelicateCoroutinesApi::class)
 private suspend fun sharedLookup(
@@ -186,16 +227,28 @@ private suspend fun sharedLookup(
     ipv6: Boolean,
 ): List<TcpAddress> {
     val key = name to ipv6
+    val test = blockingLookupForTest
+    val caching = test == null || cacheTtlForTest != null
     val lookup =
         lookupLock.withLock {
+            if (caching) {
+                lookupCache[key]?.let { c -> if (c.fresh()) return c.answer.getOrThrow() else lookupCache.remove(key) }
+            }
             lookupsInFlight[key] ?: GlobalScope
-                .async(lookupDispatcher, CoroutineStart.LAZY) {
+                .async(if (ipv6) lookupDispatcherV6 else lookupDispatcherV4, CoroutineStart.LAZY) {
+                    var answer: Result<List<TcpAddress>>? = null
                     try {
-                        blockingLookupForTest?.invoke(name, ipv6) ?: platformResolveFamily(name, ipv6)
+                        (test?.invoke(name, ipv6) ?: platformResolveFamily(name, ipv6)).also { answer = Result.success(it) }
+                    } catch (e: Throwable) {
+                        if (e !is CancellationException) answer = Result.failure(e)
+                        throw e
                     } finally {
                         val self = coroutineContext[Job]
                         withContext(NonCancellable) {
-                            lookupLock.withLock { if (lookupsInFlight[key] === self) lookupsInFlight.remove(key) }
+                            lookupLock.withLock {
+                                if (lookupsInFlight[key] === self) lookupsInFlight.remove(key)
+                                answer?.takeIf { caching }?.let { a -> keep(key, a) }
+                            }
                         }
                     }
                 }.also {
@@ -204,6 +257,20 @@ private suspend fun sharedLookup(
                 }
         }
     return lookup.await()
+}
+
+/** Keeps [answer] for its TTL (under [lookupLock]). */
+private fun keep(
+    key: Pair<String, Boolean>,
+    answer: Result<List<TcpAddress>>,
+) {
+    val positive = answer.getOrNull()?.isNotEmpty() == true
+    val ttls = cacheTtlForTest ?: lookupTtl
+    val ttl = if (positive) ttls.positiveSeconds else ttls.negativeSeconds
+    if (ttl == 0L) return
+    lookupCache.remove(key)
+    while (lookupCache.size >= MAX_CACHED) lookupCache.remove(lookupCache.keys.first())
+    lookupCache[key] = Cached(answer, TimeSource.Monotonic.markNow(), ttl)
 }
 
 /** The lookups in flight (tests). */

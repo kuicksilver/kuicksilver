@@ -199,18 +199,43 @@ class HappyEyeballsResolutionTest {
             assertEquals(listOf(v6a to 0L, v4a to 10L), log.started)
         }
 
-    @Test fun noAddressesFailsWithTheLookupFailure() =
+    @Test fun negative_noAddressesFailsWithTheLookupFailuresUnchanged() =
         runTest {
             suspend fun fail(r: Fake) = raceAddresses("example.test", r, 250.milliseconds, order, connect = { it }, close = {})
-            val r = Fake()
-            r.aaaa.completeExceptionally(IOException("aaaa failed"))
-            r.a.completeExceptionally(IOException("a failed"))
-            val e = assertFailsWith<IOException> { fail(r) }
-            assertTrue(e.message!!.endsWith("failed"), "${e.message}")
+            // the lookups' failures are shared with the request's other races: never changed, carried by a fresh exception
+            val aaaaFailed = IOException("aaaa failed")
+            val aFailed = IOException("a failed")
+            repeat(2) {
+                val r = Fake()
+                r.aaaa.completeExceptionally(aaaaFailed)
+                r.a.completeExceptionally(aFailed)
+                val e = assertFailsWith<IOException> { fail(r) }
+                assertEquals("example.test could not be resolved", e.message)
+                assertTrue(e.suppressedExceptions.isNotEmpty() || e.cause != null)
+            }
+            assertEquals(emptyList(), aaaaFailed.suppressedExceptions)
+            assertEquals(emptyList(), aFailed.suppressedExceptions)
             val r2 = Fake()
             r2.aaaa.complete(emptyList())
             r2.a.complete(emptyList())
             assertEquals("example.test resolved to no address", assertFailsWith<IOException> { fail(r2) }.message)
+        }
+
+    @Test fun negative_aForeignCancellationOfAnAttemptIsAFailure() =
+        runTest {
+            // an attempt that ends with a CancellationException of its own (a timeout inside it) counts as failed: the
+            // race goes on to the next address instead of waiting for ever
+            val r = Fake()
+            val log = Log()
+            val won =
+                race(r, log) { a ->
+                    if (a == v6a) throw CancellationException("its own timeout")
+                    a
+                }
+            r.aaaa.complete(listOf(v6a))
+            r.a.complete(listOf(v4a))
+            assertSame(v4a, won.await())
+            assertEquals(listOf(v6a to 0L, v4a to 10L), log.started)
         }
 
     @Test fun cancellingTheRaceCancelsTheLookups() =

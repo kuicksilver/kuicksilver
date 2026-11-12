@@ -52,7 +52,7 @@ class ResolveTcpTest {
     /**
      * A resolver that stalls holds at most [MAX_CONCURRENT_LOOKUPS] threads however many requests wait for it, the other
      * threads of `Dispatchers.IO` (the socket loops') keep running, and one lookup per name and family is in flight: 40
-     * callers of 20 stalled names make 40 lookups (AAAA and A), 8 of them running.
+     * callers of 20 stalled names make 40 lookups (AAAA and A), 8 of each family running.
      */
     @Test fun negative_stalledResolverHoldsBoundedThreads() =
         runBlocking<Unit> {
@@ -68,7 +68,7 @@ class ResolveTcpTest {
                     val m = maxInside.load()
                     if (now <= m || maxInside.compareAndSet(m, now)) break
                 }
-                if (now == MAX_CONCURRENT_LOOKUPS) boundReached.complete(Unit)
+                if (now == 2 * MAX_CONCURRENT_LOOKUPS) boundReached.complete(Unit)
                 runBlocking { gate.await() } // a blocked system call: the thread is held until the gate opens
                 inside.addAndFetch(-1)
                 if (ipv6) emptyList() else listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), 0))
@@ -83,15 +83,66 @@ class ResolveTcpTest {
                 withTimeout(10.seconds) { boundReached.await() }
                 // the socket loops' dispatcher still has threads
                 assertEquals(42, withTimeout(5.seconds) { withContext(Dispatchers.IO) { 42 } })
-                assertEquals(MAX_CONCURRENT_LOOKUPS, inside.load())
+                assertEquals(2 * MAX_CONCURRENT_LOOKUPS, inside.load()) // 8 per family
                 gate.complete(Unit)
                 val results = withTimeout(10.seconds) { callers.awaitAll() }
                 results.forEach { assertEquals(listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), 443)), it) }
                 assertEquals(40, calls.load(), "one lookup per name and family")
-                assertEquals(MAX_CONCURRENT_LOOKUPS, maxInside.load())
+                assertEquals(2 * MAX_CONCURRENT_LOOKUPS, maxInside.load())
                 assertEquals(0, lookupsInFlightForTest())
             } finally {
                 gate.complete(Unit)
+                blockingLookupForTest = null
+            }
+        }
+
+    /**
+     * Each family has its own budget: on a network that drops AAAA queries, a storm of stalled IPv6 lookups does not hold
+     * up the IPv4 lookup of another name.
+     */
+    @Test fun negative_stalledAaaaLookupsDoNotBlockALookupsOfOtherNames() =
+        runBlocking<Unit> {
+            val gate = CompletableDeferred<Unit>()
+            blockingLookupForTest = { name, ipv6 ->
+                if (ipv6) runBlocking { gate.await() }
+                if (ipv6) emptyList() else listOf(TcpAddress(byteArrayOf(127, 0, 0, if (name == "other.test") 2 else 1), 0))
+            }
+            try {
+                val stalled =
+                    (0 until 20).map { i ->
+                        async(start = CoroutineStart.UNDISPATCHED) { resolveFamily("stalled-$i.test", true) }
+                    }
+                val a = withTimeout(10.seconds) { resolveFamily("other.test", false) }
+                assertEquals(listOf(TcpAddress(byteArrayOf(127, 0, 0, 2), 0)), a)
+                gate.complete(Unit)
+                withTimeout(10.seconds) { stalled.awaitAll() }
+            } finally {
+                gate.complete(Unit)
+                blockingLookupForTest = null
+            }
+        }
+
+    /** Answers are kept for the platform's TTLs (the JDK's `networkaddress.cache.ttl`), positive and negative alike. */
+    @Test fun answersAreKeptForTheirTtl() =
+        runBlocking<Unit> {
+            var calls = 0
+            blockingLookupForTest = { name, _ ->
+                calls++
+                if (name == "none.test") throw IOException("NXDOMAIN") else listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), 0))
+            }
+            try {
+                cacheTtlForTest = LookupTtl(30, 10)
+                clearLookupCacheForTest()
+                repeat(3) { resolveFamily("kept.test", false) }
+                repeat(3) { assertFailsWith<IOException> { resolveFamily("none.test", false) } }
+                assertEquals(2, calls)
+                cacheTtlForTest = LookupTtl(0, 0)
+                clearLookupCacheForTest()
+                repeat(2) { resolveFamily("kept.test", false) }
+                assertEquals(4, calls)
+            } finally {
+                cacheTtlForTest = null
+                clearLookupCacheForTest()
                 blockingLookupForTest = null
             }
         }

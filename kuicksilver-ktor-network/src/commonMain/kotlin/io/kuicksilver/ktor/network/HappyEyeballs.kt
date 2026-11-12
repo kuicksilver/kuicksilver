@@ -208,7 +208,10 @@ private enum class FamilyState { NotAsked, Pending, Positive, Negative }
  *   negative or failed, or as the last resort [lastResortDelay] after the last attempt started without a connection (or
  *   at once when all of them failed); the resolution synthesizes the answer.
  *
- * [known] (with no [resolution]): a list given up front, both families settled.
+ * [known] (with no [resolution]): a list given up front, both families settled. [failures] collects every attempt's failure
+ * as it comes (a caller whose own timeout ends the race still has them); when every attempt failed, [chooseFailure] picks
+ * the one thrown, the others suppressed in it (each attempt's failure is its own; a lookup's failure, which a request's
+ * other races share, is never changed: a fresh [IOException] carries it).
  */
 @InternalKuicksilverApi
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -222,6 +225,8 @@ public suspend fun <S> raceAddresses(
     resolutionDelay: Duration = RESOLUTION_DELAY,
     lastResortDelay: Duration = LAST_RESORT_SYNTHESIS_DELAY,
     known: List<TcpAddress> = emptyList(),
+    failures: MutableList<Throwable>? = null,
+    chooseFailure: (List<Throwable>) -> Throwable = { it.last() },
 ): S {
     require(attemptDelay.isPositive()) { "attemptDelay must be positive, was $attemptDelay" }
     require(resolution != null || known.isNotEmpty()) { "no address to connect to" }
@@ -305,7 +310,10 @@ public suspend fun <S> raceAddresses(
                         try {
                             connect(next)
                         } catch (e: CancellationException) {
-                            throw e
+                            // the race's own end; else the attempt's (a timeout inside it), a failure like any other
+                            currentCoroutineContext().ensureActive()
+                            events.trySend(RaceEvent.Failed(e))
+                            return@launch
                         } catch (e: Throwable) {
                             events.trySend(RaceEvent.Failed(e))
                             return@launch
@@ -350,7 +358,7 @@ public suspend fun <S> raceAddresses(
                         askIpv4() // section 7.2: every IPv6 attempt failed already, nothing to wait for
                         continue
                     }
-                    throw raceFailure(host, errors, lookupErrors)
+                    throw raceFailure(host, errors, lookupErrors, chooseFailure)
                 }
                 select<Unit> {
                     won.onJoin {}
@@ -390,6 +398,7 @@ public suspend fun <S> raceAddresses(
 
                             is RaceEvent.Failed -> {
                                 errors += e.cause
+                                failures?.add(e.cause)
                                 inFlight--
                                 maybeStart(due = true)
                             }
@@ -429,21 +438,33 @@ public suspend fun <S> raceAddresses(
     return won.getCompleted()
 }
 
-/** The race's failure: the last attempt's with the others suppressed, else the lookups', else "no address". */
+/**
+ * The race's failure: the attempt failure [chooseFailure] picks, the others suppressed in it (they are the race's own);
+ * else the lookups' (shared with the request's other races, so never changed: one alone as it is, several as the causes
+ * of a fresh [IOException]); else "no address".
+ */
 private fun raceFailure(
     host: String,
     errors: List<Throwable>,
     lookupErrors: List<Throwable>,
+    chooseFailure: (List<Throwable>) -> Throwable,
 ): Throwable {
-    if (errors.isNotEmpty()) return lastWithSuppressed(errors)
-    if (lookupErrors.isNotEmpty()) return lastWithSuppressed(lookupErrors)
+    if (errors.isNotEmpty()) {
+        val chosen = chooseFailure(errors)
+        for (e in errors.distinct()) if (e !== chosen) chosen.addSuppressed(e)
+        return chosen
+    }
+    if (lookupErrors.isNotEmpty()) return sharedFailures(host, lookupErrors.distinct())
     return IOException("$host resolved to no address")
 }
 
-private fun lastWithSuppressed(errors: List<Throwable>): Throwable {
-    val last = errors.last()
-    for (e in errors) if (e !== last) last.addSuppressed(e)
-    return last
+/** [shared] failures as one throwable without changing any of them: the only one, or a fresh [IOException] with them. */
+internal fun sharedFailures(
+    host: String,
+    shared: List<Throwable>,
+): Throwable {
+    if (shared.size == 1) return shared.single()
+    return IOException("$host could not be resolved", shared.last()).also { e -> shared.dropLast(1).forEach { e.addSuppressed(it) } }
 }
 
 private fun Byte.u(): Int = toInt() and 0xff
