@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class, ExperimentalKuicksilverApi::class)
+@file:OptIn(InternalKuicksilverApi::class, ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.ktor.client
 
@@ -14,20 +14,25 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readLine
+import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
 import io.ktor.websocket.RawWebSocket
 import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http2.Http2ErrorCode
+import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -81,6 +86,8 @@ class ClientH2WebSocketTest {
     }
 
     private fun client() = testClient(block = { install(WebSockets) })
+
+    private fun engine(c: io.ktor.client.HttpClient) = c.engine as KuicksilverEngine
 
     @Test fun webSocketUsesAnH2ConnectionThatAllowsExtendedConnect() =
         clientTest {
@@ -254,6 +261,308 @@ class ClientH2WebSocketTest {
                     }
                     val reset = assertIs<Http2Exception.StreamReset>(withTimeout(10.seconds) { failure.await() })
                     assertEquals(Http2ErrorCode.CANCEL, reset.code)
+                }
+            }
+        }
+
+    /** An HTTP/1.1 WebSocket echo on a TLS connection: the 101 with its real accept, then each text frame back with "h1:". */
+    private suspend fun CoroutineScope.h1Echo(
+        input: io.ktor.utils.io.ByteReadChannel,
+        output: io.ktor.utils.io.ByteWriteChannel,
+    ) {
+        var key = ""
+        input.readLine(io.ktor.utils.io.LineEnding.Lenient) ?: return
+        while (true) {
+            val h = input.readLine(io.ktor.utils.io.LineEnding.Lenient) ?: return
+            if (h.isEmpty()) break
+            if (h.startsWith("Sec-WebSocket-Key:", ignoreCase = true)) key = h.substringAfter(':').trim()
+        }
+        output.writeStringUtf8(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                "Sec-WebSocket-Accept: ${kotlin.io.encoding.Base64.encode(
+                    io.ktor.util.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encodeToByteArray()),
+                )}\r\n\r\n",
+        )
+        output.flush()
+        val ws = RawWebSocket(input, output, masking = false, coroutineContext = coroutineContext)
+        for (frame in ws.incoming) {
+            when (frame) {
+                is Frame.Text -> {
+                    ws.outgoing.send(Frame.Text("h1:" + frame.readText()))
+                }
+
+                is Frame.Close -> {
+                    ws.outgoing.send(Frame.Close())
+                }
+
+                else -> {}
+            }
+        }
+        ws.outgoing.close()
+    }
+
+    /** The WebSocket's echo and the version it went over. */
+    private suspend fun io.ktor.client.HttpClient.echoOnce(port: Int): Pair<HttpProtocolVersion, String> {
+        var result: Pair<HttpProtocolVersion, String>? = null
+        withTimeout(10.seconds) {
+            webSocket("wss://127.0.0.1:$port/ws") {
+                send(Frame.Text("x"))
+                result = call.response.version to (incoming.receive() as Frame.Text).readText()
+            }
+        }
+        return result!!
+    }
+
+    /**
+     * RFC 9113 section 8.7: a CONNECT the server refused with REFUSED_STREAM was not processed and goes again; here on the
+     * same connection, which still allows Extended CONNECT.
+     */
+    @Test fun refusedStreamWebSocketGoesAgain() =
+        clientTest {
+            val connects = AtomicInt(0)
+            tlsH2WithSilentUdp(enableConnectProtocol = true, onRequest = { _, r ->
+                if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                if (connects.addAndFetch(1) == 1) r.reset(Http2ErrorCode.REFUSED_STREAM) else echo(r)
+            }) { port, log ->
+                client().use { c ->
+                    c.get("https://127.0.0.1:$port/")
+                    assertEquals(HttpProtocolVersion.HTTP_2_0 to "echo:x", c.echoOnce(port))
+                    assertEquals(2, connects.load())
+                    assertEquals(1, log.acceptCount)
+                }
+            }
+        }
+
+    /**
+     * A CONNECT above the server's GOAWAY was not processed (RFC 9113 section 8.7) and goes again; the connection takes no
+     * new streams any more, and a WebSocket never opens an HTTP/2 connection, so the repeat goes over HTTP/1.1.
+     */
+    @Test fun webSocketAboveAGoAwayGoesAgainOverH1() =
+        clientTest {
+            val conns = Channel<io.kuicksilver.http2.runtime.H2ServerConnection>(Channel.UNLIMITED)
+            tlsH2WithSilentUdp(
+                enableConnectProtocol = true,
+                onConnection = { _, conn -> conns.send(conn) },
+                h1 = { _, input, output -> h1Echo(input, output) },
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    conns.receive().goAway(Http2ErrorCode.NO_ERROR)
+                    r.reset(Http2ErrorCode.REFUSED_STREAM)
+                },
+            ) { port, log ->
+                client().use { c ->
+                    c.get("https://127.0.0.1:$port/")
+                    assertEquals(HttpProtocolVersion.HTTP_1_1 to "h1:x", c.echoOnce(port))
+                    assertEquals(listOf<String?>("h2", "http/1.1"), log.protocols)
+                }
+            }
+        }
+
+    /**
+     * RFC 9113 section 7: HTTP_1_1_REQUIRED on the CONNECT marks the route, and the WebSocket goes again over HTTP/1.1
+     * (a WebSocket handshake is idempotent and has no body).
+     */
+    @Test fun http11RequiredSendsTheWebSocketOverH1() =
+        clientTest {
+            tlsH2WithSilentUdp(
+                enableConnectProtocol = true,
+                h1 = { _, input, output -> h1Echo(input, output) },
+                onRequest = { _, r -> if (r.method == "CONNECT") r.reset(Http2ErrorCode.HTTP_1_1_REQUIRED) else ok(r) },
+            ) { port, log ->
+                client().use { c ->
+                    c.get("https://127.0.0.1:$port/")
+                    assertEquals(HttpProtocolVersion.HTTP_1_1 to "h1:x", c.echoOnce(port))
+                    assertEquals(listOf<String?>("h2", "http/1.1"), log.protocols)
+                }
+            }
+        }
+
+    /** Through an HTTP CONNECT proxy the HTTP/2 connection is end to end with the origin, so the WebSocket uses it too. */
+    @Test fun throughAConnectProxyTheWebSocketGoesOverH2() =
+        clientTest {
+            tlsH2WithSilentUdp(enableConnectProtocol = true, onRequest = { _, r ->
+                if (r.method == "CONNECT") echo(r) else ok(r)
+            }) { port, log ->
+                ClientProxyTest().tunnelProxy(port) { proxyPort, head ->
+                    testClient(
+                        engine = {
+                            proxy =
+                                io.ktor.client.engine.ProxyBuilder
+                                    .http(io.ktor.http.Url("http://127.0.0.1:$proxyPort"))
+                        },
+                        block = { install(WebSockets) },
+                    ).use { c ->
+                        assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                        assertEquals(HttpProtocolVersion.HTTP_2_0 to "echo:x", c.echoOnce(port))
+                        assertTrue(head().first().startsWith("CONNECT 127.0.0.1:$port"))
+                        assertEquals(1, log.acceptCount)
+                    }
+                }
+            }
+        }
+
+    /**
+     * A connection whose server's SETTINGS never come does not hold a WebSocket for the whole connect timeout: after the
+     * settings budget it goes over HTTP/1.1.
+     */
+    @Test fun negative_settingsThatNeverComeSendTheWebSocketOverH1() =
+        clientTest {
+            val never = CompletableDeferred<Unit>()
+            val getArrived = CompletableDeferred<Unit>()
+            tlsH2WithSilentUdp(
+                enableConnectProtocol = true,
+                holdOutputUntil = never,
+                h1 = { _, input, output -> h1Echo(input, output) },
+                onRequest = { _, r ->
+                    getArrived.complete(Unit)
+                    ok(r)
+                },
+            ) { port, log ->
+                testClient(engine = { connectTimeout = 30.seconds }, block = { install(WebSockets) }).use { c ->
+                    engine(c).h1.h2WebSocketSettingsWaitMillis = 200
+                    coroutineScopeOf { scope ->
+                        scope.launch { runCatching { c.get("https://127.0.0.1:$port/") } }
+                        withTimeout(10.seconds) { getArrived.await() }
+                        assertEquals(HttpProtocolVersion.HTTP_1_1 to "h1:x", c.echoOnce(port))
+                    }
+                    assertEquals(listOf<String?>("h2", "http/1.1"), log.protocols)
+                }
+            }
+        }
+
+    /**
+     * The orderly close's wait is bounded as a whole: a server that never opens its window again keeps the session's last
+     * frames (and END_STREAM) from going out, and after the close wait the stream is reset with CANCEL and its slot comes
+     * back, instead of a sender that waits for ever.
+     */
+    @Test fun negative_closeWaitIsBoundedWhenTheServerNeverOpensTheWindow() =
+        clientTest {
+            val failure = CompletableDeferred<Throwable>()
+            val sent = CompletableDeferred<Unit>()
+            tlsH2WithSilentUdp(
+                settings = Http2Settings(initialStreamWindow = 1_024),
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.invokeOnFailure { failure.complete(it) }
+                    r.respond(200)
+                    sent.await()
+                    // a Close 1000 of the server's, so the client's session closes at once; the stream stays open, and the
+                    // client's frames are never read: no WINDOW_UPDATE
+                    r.sendBody(ByteReadChannel(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte())), end = false)
+                    kotlinx.coroutines.awaitCancellation()
+                },
+            ) { port, _ ->
+                client().use { c ->
+                    engine(c).h1.h2WebSocketCloseWaitMillis = 200
+                    c.get("https://127.0.0.1:$port/")
+                    withTimeout(10.seconds) {
+                        c.webSocket("wss://127.0.0.1:$port/ws") {
+                            outgoing.send(Frame.Binary(true, ByteArray(8_192)))
+                            sent.complete(Unit)
+                            while (!incoming.receiveCatching().isClosed) { }
+                        }
+                    }
+                    val reset = assertIs<Http2Exception.StreamReset>(withTimeout(10.seconds) { failure.await() })
+                    assertEquals(Http2ErrorCode.CANCEL, reset.code)
+                    assertEquals(0, engine(c).h1.h2.streamCount)
+                }
+            }
+        }
+
+    /**
+     * A connection that carries only a WebSocket is in use, not idle: the pool's idle retirement (idleTimeout) does not
+     * count it while the session runs, and does once it ended.
+     */
+    @Test fun aConnectionCarryingAWebSocketIsNotIdle() =
+        clientTest {
+            val opened = CompletableDeferred<Unit>()
+            val proceed = CompletableDeferred<Unit>()
+            tlsH2WithSilentUdp(enableConnectProtocol = true, onRequest = { _, r ->
+                if (r.method == "CONNECT") echo(r) else ok(r)
+            }) { port, _ ->
+                client().use { c ->
+                    val pool = engine(c).h1.h2
+                    c.get("https://127.0.0.1:$port/")
+                    assertTrue(pool.evictExpired() != null, "idle after the GET: its retirement is scheduled")
+                    coroutineScopeOf { scope ->
+                        val ws =
+                            scope.launch {
+                                c.webSocket("wss://127.0.0.1:$port/ws") {
+                                    opened.complete(Unit)
+                                    proceed.await()
+                                }
+                            }
+                        withTimeout(10.seconds) { opened.await() }
+                        assertEquals(null, pool.evictExpired(), "the WebSocket's stream: nothing idle to retire")
+                        assertEquals(1, pool.connectionCount)
+                        proceed.complete(Unit)
+                        ws.join()
+                    }
+                }
+            }
+        }
+
+    /** A server's GOAWAY at or above the WebSocket's stream lets the session go on (RFC 9113 section 6.8). */
+    @Test fun goAwayLeavesAnOpenSessionRunning() =
+        clientTest {
+            val conns = Channel<io.kuicksilver.http2.runtime.H2ServerConnection>(Channel.UNLIMITED)
+            tlsH2WithSilentUdp(enableConnectProtocol = true, onConnection = { _, conn -> conns.send(conn) }, onRequest = { _, r ->
+                if (r.method == "CONNECT") echo(r) else ok(r)
+            }) { port, _ ->
+                client().use { c ->
+                    c.get("https://127.0.0.1:$port/")
+                    val conn = conns.receive()
+                    withTimeout(10.seconds) {
+                        c.webSocket("wss://127.0.0.1:$port/ws") {
+                            send(Frame.Text("a"))
+                            assertEquals("echo:a", (incoming.receive() as Frame.Text).readText())
+                            conn.goAway(Http2ErrorCode.NO_ERROR)
+                            send(Frame.Text("b"))
+                            assertEquals("echo:b", (incoming.receive() as Frame.Text).readText())
+                        }
+                    }
+                }
+            }
+        }
+
+    /**
+     * Messages larger than a stream window both ways: the session's reading credits the peer (WINDOW_UPDATE as it
+     * consumes) and the sender waits for window, so 2 MiB pass a 64 KiB stream window intact.
+     */
+    @Test fun messagesLargerThanTheWindowsPassBothWays() =
+        clientTest {
+            tlsH2WithSilentUdp(
+                settings = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536),
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.respond(200)
+                    val out = ByteChannel()
+                    val sender = launch { runCatching { r.sendBody(out) } }
+                    val ws = RawWebSocket(r.body, out, masking = false, coroutineContext = coroutineContext)
+                    for (frame in ws.incoming) {
+                        if (frame is Frame.Binary) ws.outgoing.send(Frame.Binary(true, frame.data.reversedArray()))
+                        if (frame is Frame.Close) break
+                    }
+                    ws.outgoing.close()
+                    sender.join()
+                },
+            ) { port, _ ->
+                testClient(
+                    engine = { http2 { settings = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536) } },
+                    block = { install(WebSockets) },
+                ).use { c ->
+                    c.get("https://127.0.0.1:$port/")
+                    val big = ByteArray(2 * 1024 * 1024) { (it * 31).toByte() }
+                    withTimeout(30.seconds) {
+                        c.webSocket("wss://127.0.0.1:$port/ws") {
+                            assertEquals(HttpProtocolVersion.HTTP_2_0, call.response.version)
+                            send(Frame.Binary(true, big))
+                            val back = incoming.receive() as Frame.Binary
+                            assertTrue(back.data.contentEquals(big.reversedArray()))
+                        }
+                    }
                 }
             }
         }

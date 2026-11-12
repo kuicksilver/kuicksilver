@@ -314,12 +314,19 @@ internal class H1Pool(
         key: String,
     ): Boolean = config.http2.enabled && data.url.protocol.isSecure() && !h2Refused.isRefused(key)
 
+    /** How long a WebSocket waits for the SETTINGS of a new HTTP/2 connection before it goes over HTTP/1.1 (tests lower it). */
+    internal var h2WebSocketSettingsWaitMillis: Long = 1_000
+
+    /** A WebSocket's wait for its last frames and the server's END_STREAM after an orderly close (tests lower it). */
+    internal var h2WebSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.h2.H2_WEBSOCKET_CLOSE_WAIT_MILLIS
+
     /**
      * A stream for a WebSocket over HTTP/2 (RFC 8441) on a usable connection of [key] whose server enabled Extended CONNECT,
      * reserved; null when there is none, and the WebSocket goes over HTTP/1.1 as before. RFC 8441 section 3: a client MAY
      * use Extended CONNECT "Upon receipt of SETTINGS_ENABLE_CONNECT_PROTOCOL with a value of 1", and the setting's initial
      * value is 0, so a connection whose server's SETTINGS have not arrived yet (it carries its first request) is waited
-     * for, by the caller's connect timeout, before the WebSocket decides. A connection that allows it but has no free
+     * for before the WebSocket decides: at most [h2WebSocketSettingsWaitMillis] (1 s, within the connect timeout), then
+     * the WebSocket goes over HTTP/1.1. A connection that allows it but has no free
      * stream is not waited for: the WebSocket takes a connection of its own (HTTP/1.1). A connection quiet for a while
      * gets the health PING other requests get first.
      */
@@ -328,6 +335,9 @@ internal class H1Pool(
         key: String,
     ): H2Conn? {
         val signal = h2.watch(key)
+        val started =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
         try {
             while (true) {
                 val seen = h2.version(key)
@@ -351,8 +361,10 @@ internal class H1Pool(
                     return c
                 }
                 if (!pending) return null
-                // its SETTINGS (or its end) bump the route
-                signal.first { it > seen }
+                // its SETTINGS (or its end) bump the route; a server that sends none within the budget does not hold the
+                // WebSocket for its whole connect timeout: it goes over HTTP/1.1
+                val left = h2WebSocketSettingsWaitMillis - started.elapsedNow().inWholeMilliseconds
+                if (left <= 0 || withTimeoutOrNull(left) { signal.first { it > seen } } == null) return null
             }
         } finally {
             h2.unwatch(key)
@@ -716,7 +728,9 @@ internal class H1Pool(
                     // RFC 8441: the WebSocket's Extended CONNECT; it holds its keys (RFC 6455 section 4.1) until the server
                     // answered, and that answer comes within the connect timeout, as over HTTP/1.1
                     try {
-                        return connectingWithin(data) { h2WebSocket(h2c, data, callContext, events, released) }
+                        return connectingWithin(data) {
+                            h2WebSocket(h2c, data, callContext, events, h2WebSocketCloseWaitMillis, released)
+                        }
                     } finally {
                         obtained.held?.release()
                     }

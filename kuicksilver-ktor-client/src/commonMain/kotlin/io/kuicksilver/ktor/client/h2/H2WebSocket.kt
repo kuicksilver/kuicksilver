@@ -24,6 +24,7 @@ import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http2.runtime.H2ClientStream
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.ktor.client.EngineEvents
+import io.kuicksilver.ktor.client.h3.H3Pool
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.authority
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.h3Path
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.headersOf
@@ -40,26 +41,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
-import kotlin.time.Duration.Companion.seconds
 
 /** The upgrade token of RFC 8441 section 5 (`:protocol`). */
 private const val WEBSOCKET = "websocket"
 
 /**
- * Fields of Ktor's HTTP/1.1 WebSocket handshake that the Extended CONNECT leaves out (RFC 8441 section 5: "Implementations
- * using this extended CONNECT to bootstrap WebSockets do not do the processing of the Sec-WebSocket-Key and
- * Sec-WebSocket-Accept header fields"); `connection`, `upgrade` and `host` ("They MUST NOT be included in the CONNECT
- * request") are connection-specific and never sent over HTTP/2 anyway ([headersOf]).
+ * How long a WebSocket whose session ended in order (its Close sent, its output closed) waits for its last frames and
+ * END_STREAM to go out and for the server's END_STREAM before the stream is reset: RFC 6455 section 7.1.1, the client
+ * "SHOULD wait for the server to close the connection but MAY close the connection at any time after sending and
+ * receiving a Close message, e.g., if it has not received a TCP Close from the server in a reasonable time period".
  */
-private val HANDSHAKE_ONLY = setOf("sec-websocket-key", "sec-websocket-accept")
-
-/**
- * How long a WebSocket whose session ended in order (its Close sent and the stream's END_STREAM queued) waits for the
- * server's END_STREAM before the stream is reset: RFC 6455 section 7.1.1, the client "SHOULD wait for the server to close
- * the connection but MAY close the connection at any time after sending and receiving a Close message, e.g., if it has
- * not received a TCP Close from the server in a reasonable time period".
- */
-private val CLOSE_WAIT = 5.seconds
+internal const val H2_WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
 
 /**
  * A WebSocket over HTTP/2 (RFC 8441) on a stream of [conn], reserved by the caller on a connection whose server enabled
@@ -71,7 +63,7 @@ private val CLOSE_WAIT = 5.seconds
  *
  * The session's frames go out as DATA within the server's windows and come in through the stream's own window (flow
  * control follows the session's reading, RFC 9113 section 5.2). When the call ends, a session that ended in order has its
- * END_STREAM out and waits up to [CLOSE_WAIT] for the server's; anything else (a failed or cancelled call, a handshake
+ * END_STREAM out and waits up to [closeWaitMillis] (5 s) for its last frames to go out and the server's; anything else (a failed or cancelled call, a handshake
  * refused here) resets the stream with CANCEL (section 5: "RST exceptions are represented with the RST_STREAM frame ...
  * with the CANCEL error code").
  *
@@ -84,12 +76,16 @@ internal suspend fun h2WebSocket(
     data: HttpRequestData,
     callContext: CoroutineContext,
     events: EngineEvents,
+    closeWaitMillis: Long = H2_WEBSOCKET_CLOSE_WAIT_MILLIS,
     onReleased: (kept: Boolean) -> Unit,
 ): HttpResponseData {
     val requestTime = GMTDate()
     val url = data.url
+    // RFC 8441 section 5: "Implementations using this extended CONNECT to bootstrap WebSockets do not do the processing of
+    // the Sec-WebSocket-Key and Sec-WebSocket-Accept header fields", as RFC 9220 (WS_HOP_BY_HOP); `connection`, `upgrade`
+    // and `host` ("MUST NOT be included in the CONNECT request") are connection-specific and never sent ([headersOf])
     val fields =
-        headersOf(data, data.body.unwrap()).fields.filter { it.first !in HANDSHAKE_ONLY } +
+        headersOf(data, data.body.unwrap()).fields.filter { it.first !in H3Pool.WS_HOP_BY_HOP } +
             listOfNotNull(
                 data.priority
                     ?.let {
@@ -165,11 +161,15 @@ internal suspend fun h2WebSocket(
                 release()
                 return@invokeOnCompletion
             }
+            // one bound for both: the last frames may wait for a window the server never opens again
             GlobalScope.launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket-close")) {
                 try {
-                    sender.join()
-                    withTimeoutOrNull(CLOSE_WAIT) { stream.awaitServerEnd() }
+                    withTimeoutOrNull(closeWaitMillis) {
+                        sender.join()
+                        stream.awaitServerEnd()
+                    }
                 } finally {
+                    sender.cancel()
                     release()
                 }
             }
