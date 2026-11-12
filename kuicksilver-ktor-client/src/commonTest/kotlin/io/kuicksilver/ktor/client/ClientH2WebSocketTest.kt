@@ -547,6 +547,11 @@ class ClientH2WebSocketTest {
                     }
                     ws.outgoing.close()
                     sender.join()
+                    // RFC 8441 section 5: an orderly close is END_STREAM both ways. The client's END_STREAM follows its Close;
+                    // releasing the stream before it arrives stops the client with RST_STREAM NO_ERROR (RFC 9113 section 8.1)
+                    // and fails the stream's body under the session's reader, a child of this handler, which then failed the
+                    // test (about 1 in 20 on macosArm64): the handler waits for it, as the server engine does
+                    assertTrue(withTimeout(10.seconds) { r.awaitClientEnd() })
                 },
             ) { port, _ ->
                 testClient(
