@@ -363,7 +363,8 @@ internal object AltSvcParser {
  * [AltSvcEntry.expiresAtEpochMillis], which a store keeps across restarts ([FileAltSvcStore]), where only wall time
  * means the same before and after; a monotonic clock starts over with each process. A step of the system clock therefore
  * moves every entry's end of freshness by the step (a forward step expires entries early, the safe side; a backward one
- * keeps them longer, by at most the step). Broken marks, which no store keeps, run on a monotonic clock ([BrokenAltSvc]).
+ * keeps them longer, by at most the step). Broken marks, which no store keeps, end on a monotonic clock or the wall clock,
+ * whichever passes first ([BrokenAltSvc]).
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class AltSvcCache(

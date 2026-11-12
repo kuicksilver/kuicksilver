@@ -20,7 +20,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   from a `FileAltSvcStore`'s file before it returns), their broken marks and RTTs; call it where the application clears
   cookies or site data. `AltSvcStore.clear()` (experimental) backs it: a default method that throws
   `UnsupportedOperationException`, so stores written for 0.2.x keep working (for them a full clear removes the origins
-  seen since the client started, with a warning that others kept from earlier may remain); override it for section 9.4.
+  seen since the client started, with a warning that others kept from earlier may remain, and the call returns false);
+  override it for section 9.4. `clearAlternativeServices` returns whether everything asked for was removed.
 - HTTP/2: the ALTSVC frame (RFC 7838 section 4, type 0xa). The Ktor server sends the engine's `Alt-Svc` value as one on
   HTTP/2 besides the field (see the HTTP/2 server entry); the Ktor client learns from it as from the header: a frame on a
   request stream for the connection's origin, one on stream 0 only when its Origin is that origin, in `Auto`, never
@@ -30,10 +31,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `followDefaultNetwork` factories return their system source, and while `networkId` is not set it is the engine's
   network: a change resets broken marks and QUIC confirmation, drops the `Alt-Svc` alternatives without `persist=1`
   (RFC 7838 section 2.2) and flushes the HTTPS record cache, which such an engine now keeps. `networkId` wins when set.
-  A platform handle is no stable identity (an Android `Network` number is reused after a reboot; an Apple path key names
-  the interface, so a move between Wi-Fi networks on one interface is not seen): a followed value is never stored, and
-  its first value after a start counts as a change, as for what was learned before it came (a request waits up to
-  200 ms for it). A store that throws while a change is applied loses that change, not the following.
+  On iOS and macOS the followed network is the default path's interface, gateways and the interface's addresses
+  (`nwPathIdentities()`, compared in memory only), so a move between Wi-Fi networks on one interface is a change too;
+  on Android the `Network`. Neither survives a restart, so a followed value is never stored, and its first value after
+  a start counts as a change, as for what was learned before it came (requests wait for it until 200 ms after the client
+  was created, one deadline for all). A store that throws while a change is applied loses that change, not the following.
 - Ktor client: `AltSvcStore.networkId` (experimental): the network the stored alternatives were learned on.
   `InMemoryAltSvcStore` keeps it, `FileAltSvcStore` writes it as the file's first line (which earlier versions skip), and
   the engine compares it with the first network `networkId` reports, so alternatives without `persist=1` learned on
@@ -457,8 +459,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   generation of the message", `ma` "the number of seconds since the response was generated"): the first valid member of
   `Age` plus the time from the request to the response is subtracted (RFC 9111 section 4.2.3, `corrected_age_value`).
   Before, freshness counted from receipt, so a copy a CDN had kept for a day stayed fresh for another day.
-- Ktor client: broken-alternative marks run on a monotonic clock instead of the wall clock, so a step of the system clock
-  neither extends nor cuts their backoff (they are kept in memory only). `Alt-Svc` freshness stays on the wall clock: its
+- Ktor client: a broken-alternative mark ends on whichever of a monotonic clock and the wall clock passes its end first:
+  a backward step of the system clock cannot extend its backoff, nor deep sleep (which stops the monotonic clock on
+  Android and iOS) stretch it; before, it ran on the wall clock alone. `Alt-Svc` freshness stays on the wall clock: its
   expiry is epoch time that `FileAltSvcStore` keeps across restarts.
 - Ktor client: of the cached alternatives of an origin, the first fresh one that is not marked broken is used, in the
   server's order (RFC 7838 section 2.4). Before, a broken mark on the first one sent the call to TCP although a second

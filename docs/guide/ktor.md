@@ -934,20 +934,24 @@ without `persist=1` are dropped when the network changes (RFC 7838 section 2.2):
 or, while `networkId` is not set, when the networks `connectionMigration` follows do (the `followDefaultNetwork`
 factories). With `networkId`, a store also keeps the network its entries were learned on (`AltSvcStore.networkId`,
 experimental; `FileAltSvcStore` writes it to its file), so the first request after a restart on another network drops
-them too. A followed network has no identity that survives a restart (an Android `Network` is a number reused after a
-reboot; an Apple path key names the interface, so a move between two Wi-Fi networks on one interface is not seen at
-all): it is never stored, and at its first value after a start the engine takes the network as changed, as it does for
-what it learned before that value came (a request waits up to 200 ms for it). Give `networkId` an identity of your own
-for detection across restarts and on one interface. `clearOnNetworkChange = false` keeps them. Without either source
-the engine sees no network change.
+them too. A followed network is compared in memory: on Android the `Network` (a number the system gives each new
+connection), on iOS and macOS the default path's interface, gateways and the interface's addresses, so a move between
+two Wi-Fi networks on one interface is a change as well (a path that tells neither gateways nor addresses counts as a
+change at each update). Neither survives a restart (the Android number is reused after a reboot; the Apple identity
+holds local addresses and is never written), so it is never stored: at its first value after a start the engine takes
+the network as changed, as it does for what it learned before that value came; requests wait for that value until
+200 ms after the client was created, one deadline for all, then go on without it. Give `networkId` an identity of your
+own for detection across restarts. `clearOnNetworkChange = false` keeps them. Without either source the engine sees no
+network change.
 
 RFC 7838 section 9.4: "In a user agent, any alternative service information MUST be removed when origin-specific data is
 cleared (typically, when cookies [RFC6265] are cleared)". Call `client.clearAlternativeServices(url)` (experimental) where
 the application clears an origin's cookies or other site data, or `client.clearAlternativeServices()` for all of them:
 the cached alternatives (persistent ones too, and from the store file before it returns), broken marks and RTTs go;
-open HTTP/3 connections stay (`closeHttp3Connections()` closes them). A store of your own overrides `AltSvcStore.clear()`;
-one that does not (written before 0.3.0) gets the origins seen since the client started removed one by one, and a
-warning that others it kept from earlier may remain.
+open HTTP/3 connections stay (`closeHttp3Connections()` closes them). It returns whether everything asked for went. A
+store of your own overrides `AltSvcStore.clear()`; for one that does not (written before 0.3.0) a full clear removes
+the origins seen since the client started one by one, logs a warning that others it kept from earlier may remain, and
+returns false, so the application can clear the store's own data.
 
 ### HTTPS records (experimental)
 
