@@ -1285,8 +1285,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   section 5.2) left without it, IPv6 on an IPv6-only network say; a name's addresses are now used only when both came,
   and looked up as usual otherwise. "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it
   was kept for the SOA's negative TTL, RFC 2308 section 5, although the negative answer is about "the data field of the
-  last CNAME", RFC 2308 section 1, and a CNAME "may be cached" only for its TTL, RFC 1035 section 3.2.1). The record cache counts TTLs on a monotonic clock: a wall
-  clock stepped back no longer keeps a record, a forged one included, past its TTL. The KDoc of
+  last CNAME", RFC 2308 section 1, and a CNAME "may be cached" only for its TTL, RFC 1035 section 3.2.1). The record cache counts a TTL on both the monotonic and the
+  wall clock and expires an entry once either has seen it pass: a wall clock stepped back no longer keeps a record, a
+  forged one included, past its TTL, and neither does a device that slept (the monotonic clock stops in sleep on most
+  platforms). The KDoc of
   `HttpsRecordSource.Exchange` and the guide now say that the engine matches a response by its question, not its ID (the
   queries carry ID 0), so an exchange over plain UDP or TCP must set and check a random ID of its own. An alias
   target that is a CNAME is now resolved from the answer's own records (the RRset and addresses at the end of its

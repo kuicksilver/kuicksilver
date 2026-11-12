@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client.dns
 
+import io.kuicksilver.ktor.client.ExpiryClock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -20,19 +21,20 @@ import kotlin.random.Random
 import kotlin.time.Duration
 
 /**
- * The HTTPS records of query names, and addresses of names, by their TTL (never longer: RFC 1035 section 3.2.1 lets a
- * record be cached for its TTL; capped at [MAX_TTL_S]): at most [MAX_NAMES] names each, the least recently used dropped
+ * The HTTPS records of query names, and addresses of names, by their TTL (RFC 1035 section 3.2.1: the TTL "specifies the
+ * time interval that the resource record may be cached"; capped at [MAX_TTL_S]), counted on an [ExpiryClock], so neither a
+ * wall clock stepped back nor a device that slept keeps an entry longer: at most [MAX_NAMES] names each, the least recently used dropped
  * first. A name without records (NXDOMAIN, NODATA) is remembered for the SOA's negative TTL (RFC 2308 section 5), and not
  * at all without one ("Negative responses without SOA records SHOULD NOT be cached"). A failed lookup is never stored.
  * Not thread-safe: [HttpsRecords] locks it.
  */
 internal class HttpsRecordCache(
-    /** Milliseconds on a monotonic clock: a wall clock stepped back would keep records past their TTL. */
-    private val nowMillis: () -> Long,
+    private val clock: ExpiryClock,
 ) {
     private class Entry<T>(
         val value: T,
-        val expiresAt: Long,
+        val stored: ExpiryClock.Mark,
+        val ttlMillis: Long,
     )
 
     private val map = LinkedHashMap<String, Entry<List<SvcbRecord>>>()
@@ -68,7 +70,7 @@ internal class HttpsRecordCache(
 
     private fun <T> LinkedHashMap<String, Entry<T>>.fresh(name: String): T? {
         val e = remove(name) ?: return null
-        if (nowMillis() >= e.expiresAt) return null
+        if (clock.elapsedMillis(e.stored) >= e.ttlMillis) return null
         this[name] = e
         return e.value
     }
@@ -81,7 +83,7 @@ internal class HttpsRecordCache(
         val ttl = ttlSeconds.coerceAtMost(MAX_TTL_S)
         remove(name)
         if (ttl <= 0) return
-        this[name] = Entry(value, nowMillis() + ttl * 1000)
+        this[name] = Entry(value, clock.mark(), ttl * 1000)
         while (size > MAX_NAMES) remove(keys.first())
     }
 
@@ -131,7 +133,8 @@ internal class HttpsRecords(
     private val lookup: suspend (String) -> DnsAnswer?,
     parent: CoroutineScope,
     private val queryTimeout: Duration,
-    nowMillis: () -> Long,
+    /** The clock of the TTLs. */
+    internal val clock: ExpiryClock,
     private val random: Random = Random,
     /**
      * Whether answers are kept by TTL: only where a network change is seen ([onNetworkChanged]), since RFC 9460 section 12
@@ -154,10 +157,7 @@ internal class HttpsRecords(
     fun background(block: suspend () -> Unit): Job = scope.launch { block() }
 
     private val lock = Mutex()
-    private val cache = HttpsRecordCache(nowMillis)
-
-    /** The clock of the cache (tests). */
-    internal val nowMillisForTest: () -> Long = nowMillis
+    private val cache = HttpsRecordCache(clock)
     private val inFlight = HashMap<String, Deferred<DnsAnswer?>>()
     private var generation = 0L
 

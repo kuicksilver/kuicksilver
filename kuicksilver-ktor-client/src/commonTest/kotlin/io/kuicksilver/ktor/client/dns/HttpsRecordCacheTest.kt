@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client.dns
 
+import io.kuicksilver.ktor.client.ExpiryClock
 import io.kuicksilver.ktor.client.HttpsRecordSource
 import io.kuicksilver.ktor.client.isSecure
 import io.kuicksilver.ktor.client.lookup
@@ -26,7 +27,7 @@ class HttpsRecordCacheTest {
 
     @Test fun ttlKeptAndBounded() {
         var now = 0L
-        val cache = HttpsRecordCache { now }
+        val cache = HttpsRecordCache(ExpiryClock { now })
         cache.put("short.example", listOf(rec("short.example", 5)), null)
         cache.put("long.example", listOf(rec("long.example", 10_000_000)), null)
         cache.put("none.example", emptyList(), 120)
@@ -50,6 +51,32 @@ class HttpsRecordCacheTest {
         assertEquals(1, cache.get("o1499.example")?.size)
     }
 
+    @Test fun negative_wallClockAloneExpiresAnEntry() {
+        // the monotonic clock stops while a device sleeps: the wall clock still sees the TTL pass
+        var mono = 0L
+        var wall = 1_000_000L
+        val cache = HttpsRecordCache(ExpiryClock({ mono }, { wall }))
+        cache.put("a.example", listOf(rec("a.example", 60)), null)
+        cache.putAddresses("a.example", listOf(ByteArray(4)), 60)
+        mono = 1_000 // a second awake, then the device slept for an hour
+        wall += 3_600_000
+        assertNull(cache.get("a.example"))
+        assertNull(cache.addressesOf("a.example"))
+    }
+
+    @Test fun negative_wallClockSteppedBackDoesNotExtendAnEntry() {
+        // a wall clock stepped back (NTP, by hand): the monotonic clock still sees the TTL pass
+        var mono = 0L
+        var wall = 1_000_000L
+        val cache = HttpsRecordCache(ExpiryClock({ mono }, { wall }))
+        cache.put("a.example", listOf(rec("a.example", 60)), null)
+        wall -= 3_600_000
+        mono = 59_999
+        assertEquals(1, cache.get("a.example")?.size)
+        mono = 60_000
+        assertNull(cache.get("a.example"))
+    }
+
     @Test fun oneLookupPerNameAndFailuresNotCached() =
         runTest {
             var calls = 0
@@ -60,7 +87,7 @@ class HttpsRecordCacheTest {
                     calls++
                     gate.await()
                     if (fail) null else DnsAnswer(listOf(rec(name, 300)))
-                }, backgroundScope, 10.seconds, { testScheduler.currentTime })
+                }, backgroundScope, 10.seconds, ExpiryClock { testScheduler.currentTime })
             val a = async { records.records("a.example") }
             val b = async { records.records("a.example") }
             testScheduler.runCurrent()
@@ -81,7 +108,7 @@ class HttpsRecordCacheTest {
                 HttpsRecords({
                     calls++
                     awaitCancellation()
-                }, backgroundScope, 10.seconds, { testScheduler.currentTime })
+                }, backgroundScope, 10.seconds, ExpiryClock { testScheduler.currentTime })
             assertNull(records.records("a.example")) // virtual time: ends at the query timeout
             assertEquals(10_000, testScheduler.currentTime)
             assertNull(records.records("a.example")) // nothing stuck in flight: asked again

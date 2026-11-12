@@ -411,12 +411,14 @@ class ClientHttpsRecordTest {
         )
     }
 
-    @Test fun negative_recordCacheDoesNotReadTheWallClock() {
-        // RFC 1035 section 3.2.1 keeps a record for its TTL: a wall clock stepped back (by NTP, by hand) must not keep a
-        // cached record, a forged one included, past it; the cache counts on a monotonic clock from the engine's start
+    @Test fun recordCacheCountsOnTheMonotonicAndTheWallClock() {
+        // ExpiryClock: neither a wall clock stepped back nor a device that slept keeps a record past its TTL
+        // (HttpsRecordCacheTest pins both); here: the engine gives the cache both clocks, not the time of day alone
         client(Records(emptyMap()).source).use { c ->
-            val now = (c.engine as KuicksilverEngine).httpsRecordsForTest!!.nowMillisForTest()
-            assertTrue(now in 0..<getTimeMillis() / 2, "the record cache reads the time of day: $now")
+            val clock = (c.engine as KuicksilverEngine).httpsRecordsForTest!!.clock
+            assertTrue(clock.monotonicForTest() in 0..<getTimeMillis() / 2, "the record cache's monotonic clock is the time of day")
+            val mark = clock.mark()
+            assertTrue(clock.elapsedMillis(mark) in 0..60_000)
         }
     }
 }
