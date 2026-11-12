@@ -222,8 +222,8 @@ public class ConnectionCore internal constructor(
     /** The runtime's hook: ECN validation failed on [PathId]; a per-socket marker clears its IP_TOS. */
     internal var onEcnFailed: ((PathId) -> Unit)? = null
 
-    /** Set by the endpoint: the active path's remote address changed (old, new), for its address index. */
-    internal var onRemoteChanged: ((InetSocketAddress, InetSocketAddress) -> Unit)? = null
+    /** The peer addresses of [paths] under which the endpoint lists this connection (`EndpointCore.byRemote`); the endpoint's to keep. */
+    internal val registeredRemotes = ArrayList<io.kuicksilver.quic.core.AddressClass.AddrKey>(2)
 
     /** Tells the path what its socket can do; `ecnSend` starts ECN validation (the first ten packets go out ECT(0)). */
     public fun setPathCapabilities(

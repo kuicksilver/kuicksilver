@@ -450,7 +450,6 @@ private fun ConnectionCore.adoptPreferred(
     resetForNewIp(app, old)
     if (app === paths.active) {
         movedToPreferred = true
-        onRemoteChanged?.invoke(old, app.remote)
         events += ConnectionEvent.PathChanged(app.id, app.id, PathChangeReason.PreferredAddress)
     } else {
         events += ConnectionEvent.PathValidated(app.id)
@@ -558,7 +557,6 @@ internal fun ConnectionCore.switchPath(
     p.peerProbed = false
     loss.rtt = p.rtt
     loss.activePath = p.id.value
-    if (old.remote != p.remote) onRemoteChanged?.invoke(old.remote, p.remote)
     // RFC 9000 section 9.3.3: probe the previous path too, against off-path forwarding
     if (challengeOld && old.state == PathState.Validated) revalidatePreviousPath(old)
     // RFC 9000 section 9.5: the new path keeps the unused ID it probed with (or takes one); the old path keeps its own while it is still probed, otherwise it is retired
@@ -923,7 +921,6 @@ private fun ConnectionCore.applyHandshakeMove(
         if (p.state != PathState.Validating && p.state != PathState.Validated && !completesClientHello) startValidation(p)
         resetForNewIp(p, old)
         lastReceivedOnActivePath = now
-        onRemoteChanged?.invoke(old, from)
         qlog?.metricsUpdated(stats, now)
         return
     }
@@ -948,7 +945,6 @@ private fun ConnectionCore.applyHandshakeMove(
         // yet drops the first one)
         startValidation(p)
     }
-    onRemoteChanged?.invoke(old, from)
     qlog?.metricsUpdated(stats, now)
 }
 
@@ -1161,9 +1157,9 @@ internal fun ConnectionCore.restoreHandshakeAddress(
     handshakeFlightElsewhere = false
     lastReceivedOnActivePath = now
     handshakeRestores++
-    if (!resendAtOnce) return onRestored(old, fallback)
+    if (!resendAtOnce) return onRestored()
     resendInFlightAtOnce()
-    onRestored(old, fallback)
+    onRestored()
 }
 
 /** No PATH_CHALLENGE of [p]'s current validation is pending, repeated or awaited any more. */
@@ -1336,7 +1332,6 @@ private fun ConnectionCore.adoptHandshakeCandidate(k: Path) {
     resendInFlightAtOnce()
     events += ConnectionEvent.PathValidated(p.id)
     issueNewToken(p.remote)
-    onRemoteChanged?.invoke(old, p.remote)
     qlog?.metricsUpdated(stats, now)
 }
 
@@ -1372,10 +1367,6 @@ internal fun ConnectionCore.dropHandshakeCandidate() {
     }
 }
 
-private fun ConnectionCore.onRestored(
-    old: InetSocketAddress,
-    fallback: HandshakeFallback,
-) {
-    onRemoteChanged?.invoke(old, fallback.remote)
+private fun ConnectionCore.onRestored() {
     qlog?.metricsUpdated(stats, now)
 }

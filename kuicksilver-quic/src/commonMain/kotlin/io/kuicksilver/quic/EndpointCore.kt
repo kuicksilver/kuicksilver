@@ -509,24 +509,50 @@ public class EndpointCore internal constructor(
                 }
             }
         }
-        byRemote.getOrPut(AddressClass.addrKey(core.remoteAddress)) { ArrayList(1) } += core
-        core.onRemoteChanged =
-            {
-                old,
-                new,
-                ->
-                val oldKey = AddressClass.addrKey(old)
-                byRemote[oldKey]?.let { l ->
-                    l.remove(core)
-                    if (l.isEmpty()) byRemote.remove(oldKey)
-                }
-                byRemote.getOrPut(AddressClass.addrKey(new)) { ArrayList(1) } +=
-                    core
-            }
+        syncRemotes(core)
+        core.paths.onRemotesChanged = { syncRemotes(core) }
     }
 
-    /** Connections by the remote address of their active path: Stateless Reset candidates for an unknown short header are only those at its source. */
+    /**
+     * Connections by every peer address one of their paths sends to: the Stateless Reset candidates for a datagram that no connection
+     * takes are those at its source (RFC 9000 section 10.3.1: "all stateless reset tokens associated with the remote address on which
+     * the datagram was received", for "remote addresses for datagrams it has recently sent": a path under validation, the preferred
+     * address being probed and the old address being revalidated included), and a Packet Too Big is matched among them.
+     */
     internal val byRemote = HashMap<AddressClass.AddrKey, ArrayList<ConnectionCore>>()
+
+    /** Lists [core] in [byRemote] under the peer address of each of its paths, and nowhere else. Runs only when its paths change. */
+    private fun syncRemotes(core: ConnectionCore) {
+        val keys = core.registeredRemotes
+        val all = core.paths.all
+        var i = 0
+        while (i < keys.size) {
+            val k = keys[i]
+            if (all.none { AddressClass.addrKey(it.remote) == k }) {
+                unlist(core, k)
+                keys.removeAt(i)
+            } else {
+                i++
+            }
+        }
+        for (p in all) {
+            val k = AddressClass.addrKey(p.remote)
+            if (k !in keys) {
+                keys += k
+                byRemote.getOrPut(k) { ArrayList(1) } += core
+            }
+        }
+    }
+
+    private fun unlist(
+        core: ConnectionCore,
+        k: AddressClass.AddrKey,
+    ) {
+        byRemote[k]?.let { l ->
+            l.remove(core)
+            if (l.isEmpty()) byRemote.remove(k)
+        }
+    }
 
     // ---- dirty connections: the loop polls only connections something happened to since its last flush ----
     private val dirty = ArrayList<ConnectionCore>()
@@ -1067,13 +1093,9 @@ public class EndpointCore internal constructor(
             dirty.remove(core)
             core.dirty = false
         }
-        val remoteKey = AddressClass.addrKey(core.remoteAddress)
-        byRemote[remoteKey]?.let { l ->
-            l.remove(core)
-            if (l.isEmpty()) byRemote.remove(remoteKey)
-        }
-        core.onRemoteChanged =
-            null
+        for (k in core.registeredRemotes) unlist(core, k)
+        core.registeredRemotes.clear()
+        core.paths.onRemotesChanged = null
         releaseSlot(core)
     }
 

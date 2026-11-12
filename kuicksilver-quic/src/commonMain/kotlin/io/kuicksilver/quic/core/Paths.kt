@@ -30,7 +30,11 @@ internal class Path(
             field = value
             remoteKey = AddressClass.ipKey(value)
             addressEpoch++
+            owner?.remotesChanged()
         }
+
+    /** The [Paths] this path belongs to while it is one of them: told when [remote] changes. */
+    var owner: Paths? = null
 
     /** Counts changes of [remote]: a packet sent in this epoch went to the current address ([io.kuicksilver.quic.recovery.SentPacket.addressEpoch]). */
     var addressEpoch: Int = 0
@@ -280,6 +284,20 @@ internal class Paths(
     val all = ArrayList<Path>(2).also { it += first }
     var active: Path = first
 
+    /**
+     * Told when the set of peer addresses of these paths may have changed: a path was added or removed or took another address. The
+     * endpoint keeps its Stateless Reset candidates by every address a path sends to (RFC 9000 section 10.3.1).
+     */
+    var onRemotesChanged: (() -> Unit)? = null
+
+    init {
+        first.owner = this
+    }
+
+    fun remotesChanged() {
+        onRemotesChanged?.invoke()
+    }
+
     /** The most recent path that passed validation, to fall back to (RFC 9000 section 9.3.2). */
     var lastValidated: Path = first
     private var nextId = 1
@@ -350,6 +368,8 @@ internal class Paths(
         val p = Path(id, remote, socket ?: id, cc, initialRtt)
         p.lastReceivedAt = now
         all += p
+        p.owner = this
+        remotesChanged()
         return p
     }
 
@@ -388,6 +408,10 @@ internal class Paths(
         all.remove(p)
         p.state = PathState.Closed
         dropResponses { it === p }
+        if (p.owner === this) {
+            p.owner = null
+            remotesChanged()
+        }
     }
 
     /** Removes the queued responses whose path [drop] selects. */

@@ -6,12 +6,16 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.native.of
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
+import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.PreferredAddress
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.endpoint.EndpointPair
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.KslQuicCrypto
@@ -19,6 +23,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -313,6 +318,37 @@ class PreferredAddressTest {
             c.writeStream(sid, ByteArray(5000), 0, 5000, true)
             assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "data flows there")
             assertNull(p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun statelessResetFromThePreferredAddressUnderValidationIsDetected() {
+        // RFC 9000 section 10.3.1: "An endpoint remembers all stateless reset tokens associated with the connection IDs and remote
+        // addresses for datagrams it has recently sent" and compares a datagram "with all stateless reset tokens associated with the
+        // remote address on which the datagram was received". The client sends PATH_CHALLENGEs to the preferred address under
+        // validation, so a Stateless Reset from there ends the connection; only the active path's address was looked at, and the reset
+        // was dropped as an unknown packet
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        p.dropToPreferred = true
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            assertTrue(p.runUntil(5.seconds) { pathTo(c, v4)?.state == PathState.Validating }, "the preferred probe started")
+            p.step()
+            val token = c.peerTp!!.preferredAddressToken!!
+            val reset = ByteArray(64) { (it * 37 + 11).toByte() }
+            reset[0] = 0x45 // a short header with a connection ID the client does not know
+            token.copyInto(reset, reset.size - 16)
+            val b = PacketBuffer.of(reset)
+            try {
+                p.client.handleDatagram(b, reset.size, v4, Ecn.NotEct, p.now)
+            } finally {
+                b.close()
+            }
+            p.client.processPending(p.now)
+            p.drain(c)
+            assertIs<QuicException.ConnectionLost.StatelessReset>(p.closed(c), "${p.events[c]}")
         } finally {
             p.close()
         }
