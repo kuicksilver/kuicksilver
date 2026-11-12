@@ -7,7 +7,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.TimeSource
 
 /**
- * The engine's `Alt-Svc` on one HTTP/2 connection (RFC 7838). Section 3: "When using HTTP/2 ([RFC7540]), servers SHOULD
+ * The engine's `Alt-Svc` on one HTTP/2 connection (RFC 7838). Section 3: "When using HTTP/2 (RFC 7540), servers SHOULD
  * instead send an ALTSVC frame (Section 4). A single ALTSVC frame can be sent for a connection; a new frame is not needed for
  * every request. Note that, despite this recommendation, Alt-Svc header fields remain valid in responses delivered over
  * HTTP/2." So both go out: the ALTSVC frame for the clients that read it, the field for those that read only the header

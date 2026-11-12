@@ -413,7 +413,7 @@ internal class H2ConnectionCore(
     /**
      * A server's ALTSVC frame (RFC 7838 section 4) on [streamId], a request stream it can still send on: [value] (an
      * `Alt-Svc` field value of ASCII characters) applies to the origin of that stream, so the Origin field is empty. Section
-     * 3: "When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame". It is queued with the control frames,
+     * 3: "When using HTTP/2 (RFC 7540), servers SHOULD instead send an ALTSVC frame". It is queued with the control frames,
      * ahead of the stream's next field block. Throws IllegalStateException on a client or a stream that cannot send, and
      * IllegalArgumentException for a value that is not ASCII or does not fit one frame of the peer's size.
      */

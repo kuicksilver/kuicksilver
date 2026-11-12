@@ -530,7 +530,7 @@ internal class AltSvcCache(
  * too, and from the store file of a [FileAltSvcStore] before this returns), the alternatives marked broken, and the RTTs
  * kept for the HTTP/3 head start; without an origin also the networks where QUIC was seen working. RFC 7838 section 9.4:
  * "In a user agent, any alternative service information MUST be removed when origin-specific data is cleared (typically,
- * when cookies [RFC6265] are cleared)": call it wherever the application clears cookies or other site data. Open HTTP/3
+ * when cookies (RFC 6265) are cleared)": call it wherever the application clears cookies or other site data. Open HTTP/3
  * connections are not closed (`closeHttp3Connections()` does that); the next `Alt-Svc` the origin sends is learned again.
  * Returns true when everything asked for was removed; false when the client's engine is not Kuicksilver (nothing was done),
  * or when, without an origin, the [AltSvcStore] does not implement [AltSvcStore.clear]: then only the origins seen since the
