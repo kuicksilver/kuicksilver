@@ -149,6 +149,32 @@ class ClientDeflateKtorTest {
         }
 
     /**
+     * RFC 7692 section 6.1: Ktor's extension compresses each fragment of a message on its own and sets RSV1 on every one,
+     * which a conforming receiver refuses (Kuicksilver's server closed with 1002). The client engine sends such a message
+     * as an RFC 7692 one, and this library's server reassembles it.
+     */
+    @Test fun ktorsFragmentedCompressedMessageGoesOutAsRfc7692() =
+        clientTest {
+            val (server, port) =
+                testServer(plain = true) {
+                    install(ServerWebSockets) { extensions { install(PerMessageDeflate) } }
+                    routing { serverWebSocket("/ws") { send(Frame.Text((incoming.receive() as Frame.Text).readText())) } }
+                }
+            try {
+                testClient(block = { install(WebSockets) { extensions { install(WebSocketDeflateExtension) } } }).use { c ->
+                    c.webSocket("ws://127.0.0.1:$port/ws") {
+                        send(Frame.Text(false, "fragmented ".encodeToByteArray()))
+                        send(Frame.Text(false, "and compressed ".encodeToByteArray()))
+                        send(Frame.Text(true, "by Ktor".encodeToByteArray()))
+                        assertEquals("fragmented and compressed by Ktor", (incoming.receive() as Frame.Text).readText())
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
      * RFC 7692 section 6: after decompression the payload is "subject to the constraints for the original data type
      * again". A compressed text message that inflates to C0 AF, with Ktor's extension negotiated, closes with 1007: the
      * engine inflates it by the extension's name. Before, Ktor's extension inflated it in the session and nothing checked.

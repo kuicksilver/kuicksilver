@@ -15,6 +15,7 @@ import io.ktor.websocket.WebSocketExtensionHeader
 import io.ktor.websocket.parseWebSocketExtensions
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.ktor.network.SentCompression
 import io.kuicksilver.ktor.network.Utf8Validator
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
@@ -409,6 +410,25 @@ public fun negotiatedWebSocketInflate(
         parseParameters(accepted.single(), response = true)
             ?: throw ProtocolViolationException("Invalid permessage-deflate response: an unknown, repeated or malformed parameter")
     return WebSocketInflate(if (client) p.serverNoContextTakeover else p.clientNoContextTakeover, maxMessageSize)
+}
+
+/**
+ * How the messages this side sends are compressed, for the output guard ([SentCompression]): by this library's
+ * [PerMessageDeflate] (or not at all), by Ktor's `WebSocketDeflateExtension` (a frame at a time), or by another
+ * implementation of the agreed `permessage-deflate` among the [installed] extensions, taken to send RFC 7692 messages.
+ */
+@InternalKuicksilverApi
+public fun sentCompression(
+    installed: List<WebSocketExtension<*>>,
+    perMessageDeflate: Boolean,
+): SentCompression {
+    if (!perMessageDeflate) return SentCompression.Checked
+    val deflate = installed.firstOrNull { e -> e.protocols.any { it.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true) } }
+    return when {
+        deflate is PerMessageDeflate -> SentCompression.Checked
+        deflate != null && deflate::class.simpleName == "WebSocketDeflateExtension" -> SentCompression.PerFrame
+        else -> SentCompression.PerMessage
+    }
 }
 
 /**

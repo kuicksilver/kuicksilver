@@ -18,6 +18,7 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.charsets.Charsets
 import io.ktor.utils.io.writeFully
 import io.ktor.websocket.ProtocolViolationException
+import io.kuicksilver.ktor.network.SentCompression
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.negotiatedPerMessageDeflate
@@ -27,6 +28,7 @@ import io.kuicksilver.ktor.network.webSocketTextCheckable
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.network.websocket.negotiatedWebSocketInflate
 import io.kuicksilver.ktor.network.websocket.perMessageDeflate
+import io.kuicksilver.ktor.network.websocket.sentCompression
 import io.kuicksilver.ktor.network.websocket.webSocketExtensions
 import io.kuicksilver.ktor.network.websocket.webSocketRsvConflict
 import kotlin.coroutines.CoroutineContext
@@ -53,7 +55,7 @@ internal class ServerWebSocket(
 ) {
     private val deflate: PerMessageDeflate? = attributes.perMessageDeflate()
     private val checkText: Boolean
-    private val inflateSent: Boolean
+    private val sentCompression: SentCompression
 
     val channel: ByteReadChannel
 
@@ -65,7 +67,7 @@ internal class ServerWebSocket(
         val own = deflate?.serverInflate()
         val inflate = own ?: if (perMessageDeflate) negotiatedWebSocketInflate(answer, client = false, Long.MAX_VALUE) else null
         checkText = webSocketTextCheckable(offered, accepted)
-        inflateSent = perMessageDeflate && own == null
+        sentCompression = sentCompression(attributes.webSocketExtensions(), perMessageDeflate)
         channel =
             guardWebSocketInput(
                 input,

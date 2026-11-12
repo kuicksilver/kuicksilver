@@ -1085,7 +1085,7 @@ internal class H3Pool(
                     maxMessageSize = config.webSocketMaxMessageSize,
                     checkText = handshake.checkText,
                 ),
-                guardWebSocketOutput(stream.output, masking = true, handshake.checkText, handshake.inflateSent),
+                guardWebSocketOutput(stream.output, masking = true, handshake.checkText, handshake.sentCompression),
                 masking = false,
                 coroutineContext = callContext,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,

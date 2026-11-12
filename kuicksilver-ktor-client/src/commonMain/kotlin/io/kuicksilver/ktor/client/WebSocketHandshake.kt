@@ -10,6 +10,7 @@ import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.websocket.websocketServerAccept
 import io.ktor.websocket.ProtocolViolationException
+import io.kuicksilver.ktor.network.SentCompression
 import io.kuicksilver.ktor.network.negotiatedPerMessageDeflate
 import io.kuicksilver.ktor.network.negotiatedWebSocketRsv
 import io.kuicksilver.ktor.network.webSocketExtensionNames
@@ -17,6 +18,7 @@ import io.kuicksilver.ktor.network.webSocketTextCheckable
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.network.websocket.WebSocketInflate
 import io.kuicksilver.ktor.network.websocket.negotiatedWebSocketInflate
+import io.kuicksilver.ktor.network.websocket.sentCompression
 import io.kuicksilver.ktor.network.websocket.webSocketExtensions
 import io.kuicksilver.ktor.network.websocket.webSocketRsvConflict
 import io.kuicksilver.tls.KslCrypto
@@ -27,16 +29,15 @@ import kotlin.io.encoding.Base64
 /**
  * What the frames may carry after a WebSocket handshake: the RSV bits of the server's ([allowedRsv]; [perMessageDeflate]
  * when RFC 7692 section 6.1 governs RSV1), whether text is checked as UTF-8 ([checkText]), how the frame guard
- * decompresses the server's permessage-deflate messages ([inflate], whichever extension negotiated it), and whether the
- * output guard inflates the client's compressed text on the side to check it ([inflateSent]: an extension other than
- * this library's `PerMessageDeflate` compresses it).
+ * decompresses the server's permessage-deflate messages ([inflate], whichever extension negotiated it), and how the
+ * client's own messages are compressed, for the output guard ([sentCompression]).
  */
 internal class WebSocketHandshake(
     val allowedRsv: Int,
     val perMessageDeflate: Boolean,
     val checkText: Boolean,
     val inflate: WebSocketInflate?,
-    val inflateSent: Boolean,
+    val sentCompression: SentCompression,
 )
 
 /**
@@ -123,7 +124,6 @@ internal fun webSocketAfterHandshake(
     val deflate = installed.firstNotNullOfOrNull { it as? PerMessageDeflate }
     // permessage-deflate is decompressed by the engine whichever extension negotiated it (RFC 7692 section 6): this
     // library's with its own limit and checks, another one (Ktor's) by the parameters of the answer
-    val ownDeflate = deflate != null && perMessageDeflate
     val inflate =
         try {
             when {
@@ -136,7 +136,7 @@ internal fun webSocketAfterHandshake(
         }
     if (deflate != null) callContext[Job]?.invokeOnCompletion { deflate.dispose() }
     val checkText = webSocketTextCheckable(offered, accepted)
-    return WebSocketHandshake(allowedRsv, perMessageDeflate, checkText, inflate, inflateSent = perMessageDeflate && !ownDeflate)
+    return WebSocketHandshake(allowedRsv, perMessageDeflate, checkText, inflate, sentCompression(installed, perMessageDeflate))
 }
 
 /** RFC 6455 section 4.1 step 6 and section 11.3.4: at most one subprotocol in the answer, and one the client offered. */

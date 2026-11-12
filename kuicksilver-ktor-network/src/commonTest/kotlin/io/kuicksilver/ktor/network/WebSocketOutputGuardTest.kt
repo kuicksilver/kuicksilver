@@ -14,6 +14,8 @@ import io.kuicksilver.ktor.network.WsTestFrames.bytes
 import io.kuicksilver.ktor.network.WsTestFrames.close
 import io.kuicksilver.ktor.network.WsTestFrames.frame
 import io.kuicksilver.ktor.network.WsTestFrames.frames
+import io.kuicksilver.ktor.network.websocket.MessageDeflater
+import io.kuicksilver.ktor.network.websocket.MessageInflater
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -40,11 +42,11 @@ class WebSocketOutputGuardTest {
     private suspend fun CoroutineScope.sent(
         masking: Boolean,
         checkText: Boolean = true,
-        inflateSent: Boolean = false,
+        compression: SentCompression = SentCompression.Checked,
         write: suspend (io.ktor.utils.io.ByteWriteChannel) -> Unit,
     ): List<Wire> {
         val wire = ByteChannel()
-        val guarded = guardWebSocketOutput(wire, masking, checkText, inflateSent)
+        val guarded = guardWebSocketOutput(wire, masking, checkText, compression)
         launch {
             write(guarded)
             guarded.flushAndClose()
@@ -198,13 +200,13 @@ class WebSocketOutputGuardTest {
             // a stored block, then the 0x00 a sync flush leaves once its 0x00 0x00 0xff 0xff is removed (RFC 7692 section 7.2.1)
             val stored = { data: ByteArray -> bytes(0x00, data.size, 0, data.size.inv() and 0xff, 0xff) + data + bytes(0x00) }
             val ok =
-                sent(masking = true, inflateSent = true) { w ->
+                sent(masking = true, compression = SentCompression.PerMessage) { w ->
                     w.writeFully(frame(0xC1, stored("caf".encodeToByteArray())))
                     w.writeFully(frame(0xC1, stored(bytes(0xC3, 0xA9))))
                 }
             assertEquals(2, ok.size, "valid compressed text passes")
             val wire = ByteChannel()
-            val guarded = guardWebSocketOutput(wire, masking = true, inflateSent = true)
+            val guarded = guardWebSocketOutput(wire, masking = true, compression = SentCompression.PerFrame)
             guarded.writeFully(frame(0xC1, stored(bytes(0xC0, 0xAF))))
             assertFails { guarded.flush() }
             assertNotNull(wire.closedCause)
@@ -228,5 +230,106 @@ class WebSocketOutputGuardTest {
             assertEquals("a\u20ac", (out[0].payload + out[2].payload).decodeToString())
             assertContentEquals(ByteArray(300) { it.toByte() }, out[3].payload)
             assertEquals(1000, out[4].closeCode)
+        }
+
+    /** Data compressed as Ktor's `WebSocketDeflateExtension` does: each part on its own, sync-flushed, tail removed. */
+    private fun ktorStyle(parts: List<ByteArray>): List<ByteArray> {
+        val d = MessageDeflater(6, 15, noContextTakeover = false)
+        return parts.map { d.compress(it, fin = true) }.also { d.close() }
+    }
+
+    /** What [payload] (a whole message's compressed data, its tail removed) inflates to. */
+    private fun inflate(payload: ByteArray): ByteArray {
+        val i = MessageInflater(noContextTakeover = false, maxMessageSize = 1L shl 20)
+        val o = ByteArray(1 shl 16)
+        var out = ByteArray(0)
+        i.input(payload, 0, payload.size)
+        while (true) {
+            val n = i.read(o, 0, o.size)
+            if (n == 0) break
+            out += o.copyOf(n)
+        }
+        i.endOfMessage()
+        while (true) {
+            val n = i.read(o, 0, o.size)
+            if (n == 0) break
+            out += o.copyOf(n)
+        }
+        i.close()
+        return out
+    }
+
+    /**
+     * RFC 7692 section 6.1 with Ktor's extension, which sets RSV1 on every fragment and compresses each on its own: the
+     * message goes out as an RFC 7692 one, RSV1 on the first frame only, the non-final frames with their 0x00 0x00 0xff
+     * 0xff back, and the payloads together inflate to the message.
+     */
+    @Test fun negative_ktorStyleFragmentedMessageIsMadeRfc7692() =
+        runTest {
+            val parts = listOf("caf".encodeToByteArray(), byteArrayOf(0xC3.toByte()), byteArrayOf(0xA9.toByte(), 0x21))
+            val data = ktorStyle(parts)
+            val out =
+                sent(masking = true, compression = SentCompression.PerFrame) { w ->
+                    w.writeFully(frame(0x41, data[0]))
+                    w.writeFully(frame(0x89, bytes(1)))
+                    w.writeFully(frame(0x40, data[1]))
+                    w.writeFully(frame(0xC0, data[2]))
+                }
+            assertEquals(listOf(0x41, 0x89, 0x00, 0x80), out.map { it.b0 })
+            val message = out.filter { it.opcode != 9 }.fold(ByteArray(0)) { a, f -> a + f.payload }
+            assertEquals("caf\u00e9!", inflate(message).decodeToString())
+        }
+
+    /** A fragment Ktor's extension left uncompressed inside a compressed message cannot be sent as RFC 7692 wants. */
+    @Test fun negative_uncompressedFragmentInsideAKtorStyleMessageIsRefused() =
+        runTest {
+            val data = ktorStyle(listOf("ab".encodeToByteArray()))
+            val wire = ByteChannel()
+            val guarded = guardWebSocketOutput(wire, masking = true, compression = SentCompression.PerFrame)
+            guarded.writeFully(frame(0x41, data[0]) + frame(0x80, "cd".encodeToByteArray()))
+            assertFails { guarded.flush() }
+            assertNotNull(wire.closedCause)
+        }
+
+    /** RFC 7692 section 6.1: an RFC 7692 sender's RSV1 on a continuation is refused before that frame goes out. */
+    @Test fun negative_rsv1OnAContinuationIsRefused() =
+        runTest {
+            val wire = ByteChannel()
+            val guarded = guardWebSocketOutput(wire, masking = false, compression = SentCompression.PerMessage)
+            guarded.writeFully(frame(0x42, bytes(0x00)) + frame(0xC0, bytes(0x00)))
+            assertFails { guarded.flush() }
+            assertNotNull(wire.closedCause)
+        }
+
+    /**
+     * An RFC 7692 sender's fragmented message (RSV1 on the first frame, one stream): its compressed continuations are
+     * inflated with the message, not read as plain text; a character split across fragments passes, invalid text not.
+     */
+    @Test fun rfc7692FragmentedMessageIsInflatedAsOneStream() =
+        runTest {
+            val d = MessageDeflater(6, 15, noContextTakeover = false)
+            val first = d.compress("caf".encodeToByteArray() + byteArrayOf(0xC3.toByte()), fin = false)
+            val last = d.compress(byteArrayOf(0xA9.toByte()), fin = true)
+            val bad = d.compress(byteArrayOf(0xC0.toByte(), 0xAF.toByte()), fin = true)
+            d.close()
+            val out =
+                sent(masking = false, compression = SentCompression.PerMessage) { w ->
+                    w.writeFully(frame(0x41, first) + frame(0x80, last))
+                }
+            assertEquals(listOf(0x41, 0x80), out.map { it.b0 }, "passes unchanged")
+            assertEquals("caf\u00e9", inflate(out[0].payload + out[1].payload).decodeToString())
+            val wire = ByteChannel()
+            val guarded = guardWebSocketOutput(wire, masking = false, compression = SentCompression.PerMessage)
+            guarded.writeFully(frame(0x41, first) + frame(0x80, last) + frame(0xC1, bad))
+            assertFails { guarded.flush() }
+        }
+
+    /** This library's PerMessageDeflate checks before it compresses: its compressed continuations pass untouched. */
+    @Test fun ownDeflateMessagesPassAsTheyAre() =
+        runTest {
+            val first = bytes(0x12, 0x34)
+            val out = sent(masking = false) { w -> w.writeFully(frame(0x41, first) + frame(0x80, bytes(0xC0, 0xAF))) }
+            assertEquals(listOf(0x41, 0x80), out.map { it.b0 })
+            assertContentEquals(bytes(0xC0, 0xAF), out[1].payload)
         }
 }
