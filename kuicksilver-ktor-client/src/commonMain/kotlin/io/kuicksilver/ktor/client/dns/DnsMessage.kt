@@ -7,9 +7,12 @@ package io.kuicksilver.ktor.client.dns
  *
  * @property records the RRset of the name asked for, after CNAMEs (empty: none).
  * @property negativeTtl how long "none" may be cached (RFC 2308 section 5), null when the response gives no SOA.
- * @property related other HTTPS RRsets of the response, by owner (an alias target's, for example).
+ * @property related other HTTPS RRsets of the response, by TargetName (an alias target's, for example): the RRset of
+ *   that name after its CNAMEs, as a query for it would answer.
  * @property addresses A and AAAA addresses of the response by owner, 4 or 16 bytes each, with their smallest TTL: only
- *   owners with both an A and an AAAA RRset in the response, which can stand in for an address lookup.
+ *   owners with both an A and an AAAA RRset in the response, which can stand in for an address lookup; also by a
+ *   TargetName that is a CNAME to such an owner.
+ * @property cnames the CNAMEs a TargetName of [related] or [addresses] went through, by TargetName (none: not a CNAME).
  * @property chain the name asked and its CNAMEs: [related] and [addresses] of names at or under one of these may be cached
  *   beyond this resolution, the others serve it only (they are another zone's data).
  */
@@ -19,9 +22,15 @@ internal class DnsAnswer(
     val related: Map<String, List<SvcbRecord>> = emptyMap(),
     val addresses: Map<String, Pair<List<ByteArray>, Long>> = emptyMap(),
     val chain: Set<String> = emptySet(),
+    val cnames: Map<String, List<String>> = emptyMap(),
 ) {
-    /** Whether [owner] is at or under a name of [chain]: in the bailiwick of the query (RFC 2181 section 5.4.1). */
-    fun inBailiwick(owner: String): Boolean = chain.any { owner == it || owner.endsWith(".$it") }
+    /**
+     * Whether what this answer files under [owner] is in the bailiwick of the query (RFC 2181 section 5.4.1): [owner] and
+     * every name of its [cnames] are at or under a name of [chain].
+     */
+    fun inBailiwick(owner: String): Boolean = under(owner) && cnames[owner].orEmpty().all(::under)
+
+    private fun under(name: String): Boolean = chain.any { name == it || name.endsWith(".$it") }
 }
 
 /**
@@ -215,20 +224,25 @@ internal object DnsMessage {
             chain += name
         }
 
-        // the records of [owner], each TTL no longer than the CNAMEs that led to the name asked
-        fun rrset(owner: String): List<SvcbRecord> {
-            val cap = if (owner == name) chainTtl else Long.MAX_VALUE
-            return found[owner].orEmpty().mapNotNull { (ttl, rd) ->
+        // the records of [owner], each TTL no longer than [cap]: the smallest TTL of the CNAMEs that led there
+        fun rrset(
+            owner: String,
+            cap: Long,
+        ): List<SvcbRecord> =
+            found[owner].orEmpty().mapNotNull { (ttl, rd) ->
                 tick()
                 SvcbCodec.parseRdata(msg, rd.first, rd.last - rd.first + 1, owner, minOf(ttl, cap))
             }
-        }
-        val records = if (ends && rcode != RCODE_NXDOMAIN) rrset(name) else emptyList()
+        val records = if (ends && rcode != RCODE_NXDOMAIN) rrset(name, chainTtl) else emptyList()
         // RFC 2181 section 5.4.1: of the other records only those the answer leads to are kept, the CNAME chain and the
         // TargetNames (and theirs, in turn); anything else in the sections could plant records for unrelated names. Each
-        // name is looked at once (a work list), and at most MAX_RELATED RRsets are followed
+        // TargetName is looked at once (a work list), and at most MAX_RELATED RRsets are followed. A TargetName that is a
+        // CNAME has the records at the end of its chain, as a query for it would ("after following CNAMEs as normal", RFC
+        // 9460 section 3, step 3): they are filed under the TargetName, which is the name SVCB resolution asks for next
         val allowed = HashSet<String>(chain)
         val work = ArrayDeque<String>()
+        val chainEnd = HashMap<String, Pair<String, Long>>() // TargetName -> the end of its CNAME chain and the chain's TTL
+        val via = HashMap<String, List<String>>() // TargetName -> the names its CNAME chain went to
 
         fun admit(rs: List<SvcbRecord>) {
             for (rec in rs) {
@@ -236,23 +250,32 @@ internal object DnsMessage {
                 if (target == "." || !allowed.add(target)) continue
                 work += target
                 var n = target
+                var ttl = Long.MAX_VALUE
+                val path = ArrayList<String>()
                 for (i in 1..MAX_CNAMES) {
                     tick()
-                    n = cnames[n]?.first ?: break
-                    if (allowed.add(n)) work += n
+                    if (n in found) break
+                    val next = cnames[n] ?: break
+                    ttl = minOf(ttl, next.second)
+                    n = next.first
+                    allowed += n
+                    path += n
                 }
+                chainEnd[target] = n to ttl
+                if (path.isNotEmpty()) via[target] = path
             }
         }
         admit(records)
         val related = LinkedHashMap<String, List<SvcbRecord>>()
         var followed = 0
         while (work.isNotEmpty() && followed < MAX_RELATED) {
-            val owner = work.removeFirst()
+            val target = work.removeFirst()
+            val (owner, ttl) = chainEnd.getValue(target)
             if (owner == name || owner !in found) continue
             followed++
             try {
-                rrset(owner).also {
-                    related[owner] = it
+                rrset(owner, ttl).also {
+                    related[target] = it
                     admit(it)
                 }
             } catch (_: SvcbMalformedException) {
@@ -260,12 +283,19 @@ internal object DnsMessage {
             }
         }
         // an owner's addresses only when both families came: one alone may be an answer cut short (RFC 9460 section 5.2:
-        // a resolver may omit RRsets), so the lookup that asks for both is not skipped (section 3: AAAA "and/or" A)
-        val addrs =
-            addresses
-                .filter { (owner, l) -> owner in allowed && l.any { it.first.size == 4 } && l.any { it.first.size == 16 } }
-                .mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
-        return DnsAnswer(records, negativeTtl?.let { minOf(it, chainTtl) }, related, addrs, chain)
+        // a resolver may omit RRsets), so the lookup that asks for both is not skipped (section 3: AAAA "and/or" A); a
+        // TargetName that is a CNAME gets those at the end of its chain, no longer than the chain's TTL
+        val addrs = LinkedHashMap<String, Pair<List<ByteArray>, Long>>()
+        for ((owner, l) in addresses) {
+            if (owner in allowed && l.any { it.first.size == 4 } && l.any { it.first.size == 16 }) {
+                addrs[owner] = l.map { it.first } to l.minOf { it.second }
+            }
+        }
+        for ((target, end) in chainEnd) {
+            val (owner, ttl) = end
+            if (owner != target) addrs[owner]?.let { (list, t) -> addrs.getOrPut(target) { list to minOf(t, ttl) } }
+        }
+        return DnsAnswer(records, negativeTtl?.let { minOf(it, chainTtl) }, related, addrs, chain, via)
     }
 
     /**

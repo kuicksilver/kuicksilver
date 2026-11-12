@@ -180,6 +180,39 @@ class DnsMessageTest {
         assertEquals(30, ttl)
     }
 
+    @Test fun relatedRrsetOfACnameTargetIsFiledUnderTheTargetName() { // RFC 9460 section 3, step 3: "after following CNAMEs"
+        val alias = SvcbTestEncoder.encode(SvcbRecord(0, "svc.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response(
+                "a.example",
+                listOf(rr("a.example", 65, 300, alias), rr("svc.example", 5, 30, SvcbTestEncoder.name("cdn.example"))),
+            ).let { it.copyOf().also { m -> m[11] = 3 } } +
+                rr("cdn.example", 65, 300, h3Here) + rr("cdn.example", 1, 200, hex("c0000201")) +
+                rr("cdn.example", 28, 200, hex("20010db8000000000000000000000001"))
+        val a = DnsMessage.read(msg, "a.example")
+        // the target's RRset is the one at the end of its chain, no longer than the CNAME that led there
+        val rs = assertNotNull(a.related["svc.example"])
+        assertEquals("cdn.example", rs.single().owner)
+        assertEquals(30, rs.single().ttlSeconds)
+        assertEquals(30, a.addresses["svc.example"]?.second)
+        assertEquals(200, a.addresses["cdn.example"]?.second)
+    }
+
+    @Test fun negative_cnameTargetLeavingTheZoneIsNotInBailiwick() { // RFC 2181 section 5.4.1
+        // svc.a.example is in the query's bailiwick, but its records come from cdn.other through a CNAME: they serve this
+        // resolution, and are not cached beyond it
+        val alias = SvcbTestEncoder.encode(SvcbRecord(0, "svc.a.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response(
+                "a.example",
+                listOf(rr("a.example", 65, 300, alias), rr("svc.a.example", 5, 30, SvcbTestEncoder.name("cdn.other"))),
+            ).let { it.copyOf().also { m -> m[11] = 1 } } + rr("cdn.other", 65, 300, h3Here)
+        val a = DnsMessage.read(msg, "a.example")
+        assertEquals("cdn.other", a.related["svc.a.example"]?.single()?.owner)
+        assertTrue(!a.inBailiwick("svc.a.example"))
+        assertTrue(a.inBailiwick("www.a.example"))
+    }
+
     @Test fun negative_recordsOfUnrelatedNamesAreNotKept() { // RFC 2181 section 5.4.1: only what the answer leads to
         val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
         val msg =

@@ -174,6 +174,36 @@ class SvcbResolutionTest {
             assertEquals(emptyList(), prefetched) // its addresses came with the answer
         }
 
+    @Test fun aliasTargetThatIsACnameIsUsedWithoutAQuery() =
+        runTest {
+            // section 5: the alias target svc.example is a CNAME to cdn.example, whose RRset and addresses the answer
+            // carried; the target's records are those at the end of its chain ("after following CNAMEs as normal", step 3)
+            val alias = SvcbTestEncoder.encode(SvcbRecord(0, "svc.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+            val dot = SvcbTestEncoder.encode(SvcbRecord(1, ".", listOf("h3"), false, null, emptyList(), emptyList(), 0, "x"))
+            val msg =
+                SvcbTestEncoder
+                    .response(
+                        "a.example",
+                        listOf(
+                            SvcbTestEncoder.rr("a.example", 65, 300, alias),
+                            SvcbTestEncoder.rr("svc.example", 5, 30, SvcbTestEncoder.name("cdn.example")),
+                        ),
+                    ).let { it.copyOf().also { m -> m[11] = 3 } } +
+                    SvcbTestEncoder.rr("cdn.example", 65, 300, dot) +
+                    SvcbTestEncoder.rr("cdn.example", 1, 200, hex("c0000201")) +
+                    SvcbTestEncoder.rr("cdn.example", 28, 200, hex("20010db8000000000000000000000001"))
+            val asked = ArrayList<String>()
+            val rs =
+                HttpsRecords({ name ->
+                    asked += name
+                    if (name == "a.example") DnsMessage.read(msg, name) else DnsAnswer(emptyList())
+                }, backgroundScope, 10.seconds, { 0L })
+            val r = assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 443, all))
+            assertEquals(listOf("a.example"), asked)
+            assertEquals("cdn.example", r.endpoints.first().host)
+            assertEquals(listOf(4, 16), r.addresses["cdn.example"]?.map { it.size })
+        }
+
     @Test fun negative_outOfZoneRecordsAreNotCachedBeyondTheResolution() =
         runTest {
             // a TargetName in another zone: its records from this answer serve this resolution only
