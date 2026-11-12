@@ -440,8 +440,8 @@ internal class KuicksilverEngine(
     internal suspend fun closeHttp3Connections() = h3.goAwayAll(engineScope)
 
     /**
-     * A new network (`networkId`) forgets broken marks, QUIC confirmation, the HTTPS records, the NAT64 prefixes ([Nat64])
-     * and, if asked, non-persistent alternatives.
+     * A new network (`networkId`) forgets broken marks, QUIC confirmation, the HTTPS records, the NAT64 prefixes ([Nat64]),
+     * the kept name lookups and, if asked, non-persistent alternatives.
      */
     private suspend fun checkNetwork(): String? {
         var changed = false
@@ -462,6 +462,9 @@ internal class KuicksilverEngine(
         if (changed) {
             httpsRecords?.onNetworkChanged()
             Nat64.system.reset() // RFC 7050 section 3: the new network's Pref64::/n is discovered when needed
+            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+            io.kuicksilver.ktor.network
+                .clearLookupCache() // the old network's resolver answered those
         }
         return network
     }

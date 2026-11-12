@@ -19,6 +19,9 @@ import io.kuicksilver.quic.wildcardLocal
  * reset on the same changes, set `networkId = { connectivity.activeNetwork?.toString() }` too. The engine also takes the
  * network's NAT64 prefix from [connectivity] (`LinkProperties.getNat64Prefix`, API 30), for Happy Eyeballs on an IPv6-only
  * network without 464XLAT.
+ * Get the manager from the application's context
+ * (`context.applicationContext.getSystemService(ConnectivityManager::class.java)`), not an Activity's, which the engine
+ * would keep alive.
  */
 @ExperimentalKuicksilverApi
 public fun Http3ConnectionMigration.Companion.followDefaultNetwork(connectivity: ConnectivityManager): Http3ConnectionMigration {

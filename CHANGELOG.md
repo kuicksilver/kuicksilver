@@ -360,7 +360,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (*experimental*, 250 ms; 100 ms to 2 s, or `Duration.INFINITE` for one address after another) or at once when an
   attempt failed, never within 10 ms of the last one; the first connection wins and the others are cancelled or
   closed. HTTP/3 races its QUIC handshakes over the same addresses, so a family that drops UDP costs one attempt
-  delay, `H3Only` included; a server's CONNECTION_REFUSED at one address now moves on to the next, and counts as a
+  delay, `H3Only` included (with `earlyData` and a session ticket the first address sends 0-RTT at once and the others
+  are not tried for that setup; a failed handshake there falls back as before); a server's CONNECTION_REFUSED at one address now moves on to the next, and counts as a
   refusal (no broken mark) only when every address refused. On an IPv6-only network without 464XLAT, IPv4 addresses
   the host has no route to (IPv4 literals, IPv4-only names) are reached through the network's NAT64 (RFC 6052): Apple's
   own synthesis, Android's `LinkProperties.getNat64Prefix` (API 30) when the application gave the engine a

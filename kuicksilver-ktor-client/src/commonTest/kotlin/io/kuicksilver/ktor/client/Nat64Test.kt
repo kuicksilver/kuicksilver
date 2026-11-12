@@ -339,6 +339,23 @@ class Nat64Test {
             assertEquals(1, asked)
         }
 
+    @Test fun negative_thePlatformsWellKnownPrefixNeverCarriesANonGlobalAddress() =
+        runTest {
+            // RFC 6052 section 3.1 holds for what the platform synthesizes too
+            val private4 = byteArrayOf(192.toByte(), 168.toByte(), 1, 9)
+            val n =
+                Nat64(
+                    ExpiryClock { 0L },
+                    sourceFor = { d -> if (d.isIpv6) globalV6 else null },
+                    query = { error("not asked") },
+                    platformSynthesize = { v4 -> listOf(Pref64.WELL_KNOWN.synthesize(v4)) },
+                    platformPrefixes = { null },
+                    scope = backgroundScope,
+                )
+            assertEquals(listOf("192.168.1.9:80"), n.synthesize(private4, 80).map { it.toString() })
+            assertEquals(listOf("[64:ff9b::5db8:d822]:80"), n.synthesize(global4, 80).map { it.toString() })
+        }
+
     @Test fun addressRecordsAfterCnameAndNegativeTtl() {
         // ipv4only.arpa AAAA through a CNAME, and a NODATA answer with its SOA
         val msg =

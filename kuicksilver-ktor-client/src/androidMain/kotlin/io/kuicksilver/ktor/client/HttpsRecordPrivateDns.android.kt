@@ -14,6 +14,9 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * may fall back to plain DNS when DNS over TLS is blocked, so it counts as unprotected, as does any network below API 28.
  * The engine also takes the network's NAT64 prefix from [connectivity] (`LinkProperties.getNat64Prefix`, API 30), for
  * Happy Eyeballs on an IPv6-only network without 464XLAT (docs/guide/ktor.md, "Happy Eyeballs").
+ * Get the manager from the application's context
+ * (`context.applicationContext.getSystemService(ConnectivityManager::class.java)`), not an Activity's, which the engine
+ * would keep alive.
  */
 @ExperimentalKuicksilverApi
 public fun HttpsRecordSource.Companion.followingPrivateDns(connectivity: ConnectivityManager): HttpsRecordSource {

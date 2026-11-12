@@ -213,8 +213,14 @@ private val lookupCache = LinkedHashMap<Pair<String, Boolean>, Cached>()
 
 internal const val MAX_CACHED: Int = 1000
 
+/** Forgets the kept answers: a new network, whose resolver may answer otherwise. */
+@InternalKuicksilverApi
+public suspend fun clearLookupCache() {
+    lookupLock.withLock { lookupCache.clear() }
+}
+
 /** Forgets the kept answers (tests). */
-internal suspend fun clearLookupCacheForTest() = lookupLock.withLock { lookupCache.clear() }
+internal suspend fun clearLookupCacheForTest() = clearLookupCache()
 
 /**
  * The addresses of one family of [name] (port 0): a kept answer, else the lookup in flight for it, else a new one on the

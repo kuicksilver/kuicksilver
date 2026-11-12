@@ -5,6 +5,7 @@ package io.kuicksilver.ktor.client
 import android.annotation.TargetApi
 import android.net.ConnectivityManager
 import android.os.Build
+import java.lang.ref.WeakReference
 import kotlin.concurrent.Volatile
 
 /**
@@ -13,8 +14,15 @@ import kotlin.concurrent.Volatile
  * of its own to get one.
  */
 internal object AndroidConnectivity {
+    // weak: a manager from an Activity's Context must not keep the Activity alive
     @Volatile
-    var manager: ConnectivityManager? = null
+    private var ref: WeakReference<ConnectivityManager>? = null
+
+    var manager: ConnectivityManager?
+        get() = ref?.get()
+        set(value) {
+            ref = value?.let { WeakReference(it) }
+        }
 }
 
 /**

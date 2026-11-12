@@ -59,6 +59,9 @@ internal class Pref64(
         return out
     }
 
+    /** Whether the IPv6 address [a] lies under this prefix. */
+    fun covers(a: ByteArray): Boolean = a.size == 16 && (0 until length / 8).all { a[it] == bytes[it] }
+
     /** The IPv4 address [a] embeds at this prefix's length (RFC 6052 section 2.3, extraction), or null when "u" is not zero. */
     fun extract(a: ByteArray): ByteArray? = extractAt(a, length)
 
@@ -349,8 +352,12 @@ internal class Nat64(
     ): List<TcpAddress> {
         val native = listOf(TcpAddress(v4, port))
         if (!ipv6OnlyNetwork() || !synthesizable(v4) || sourceFor(TcpAddress(v4, 9)) != null) return native
-        platformSynthesize(v4)?.let { own -> return own.map { TcpAddress(it, port) }.ifEmpty { native } }
         val global = isGlobalV4(v4)
+        platformSynthesize(v4)?.let { own ->
+            // the platform's own synthesis obeys RFC 6052 section 3.1 too: no non-global address under 64:ff9b::/96
+            val allowed = own.filter { global || !Pref64.WELL_KNOWN.covers(it) }
+            return allowed.map { TcpAddress(it, port) }.ifEmpty { native }
+        }
         val known = platformPrefixes()?.filter { it.plausible() }?.takeIf { it.isNotEmpty() } ?: prefixes()
         val usable = known.filter { global || it != Pref64.WELL_KNOWN }
         return usable.map { TcpAddress(it.synthesize(v4), port) }.ifEmpty { native }

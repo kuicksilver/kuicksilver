@@ -458,14 +458,18 @@ private fun raceFailure(
     return IOException("$host resolved to no address")
 }
 
-/** [shared] failures as one throwable without changing any of them: the only one, or a fresh [IOException] with them. */
+/**
+ * [shared] failures (a lookup's, kept for its negative TTL and handed to every caller) as a fresh [IOException] of this
+ * caller's, the last as its cause and the others suppressed in it: whatever the caller adds to it (a protocol race its
+ * other failure) never reaches the shared ones.
+ */
 internal fun sharedFailures(
     host: String,
     shared: List<Throwable>,
-): Throwable {
-    if (shared.size == 1) return shared.single()
-    return IOException("$host could not be resolved", shared.last()).also { e -> shared.dropLast(1).forEach { e.addSuppressed(it) } }
-}
+): Throwable =
+    IOException("$host could not be resolved: ${shared.last().message}", shared.last()).also { e ->
+        shared.dropLast(1).forEach { e.addSuppressed(it) }
+    }
 
 private fun Byte.u(): Int = toInt() and 0xff
 

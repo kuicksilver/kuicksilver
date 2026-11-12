@@ -210,11 +210,24 @@ class HappyEyeballsResolutionTest {
                 r.aaaa.completeExceptionally(aaaaFailed)
                 r.a.completeExceptionally(aFailed)
                 val e = assertFailsWith<IOException> { fail(r) }
-                assertEquals("example.test could not be resolved", e.message)
-                assertTrue(e.suppressedExceptions.isNotEmpty() || e.cause != null)
+                assertEquals("example.test could not be resolved: a failed", e.message)
+                e.addSuppressed(IOException("what a protocol race adds")) // the caller's own: the shared ones stay as they are
             }
             assertEquals(emptyList(), aaaaFailed.suppressedExceptions)
             assertEquals(emptyList(), aFailed.suppressedExceptions)
+            // one failure alone (a cached negative answer, say) is not handed out as it is either
+            val cached = IOException("NXDOMAIN, kept 10 s")
+            val seen = HashSet<Throwable>()
+            repeat(2) {
+                val r = Fake()
+                r.aaaa.complete(emptyList())
+                r.a.completeExceptionally(cached)
+                val e = assertFailsWith<IOException> { fail(r) }
+                e.addSuppressed(IOException("what a protocol race adds"))
+                seen += e
+            }
+            assertEquals(2, seen.size)
+            assertEquals(emptyList(), cached.suppressedExceptions)
             val r2 = Fake()
             r2.aaaa.complete(emptyList())
             r2.a.complete(emptyList())
