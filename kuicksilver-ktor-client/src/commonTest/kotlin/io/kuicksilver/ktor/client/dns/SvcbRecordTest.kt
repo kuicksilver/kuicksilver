@@ -10,6 +10,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /** Bytes from a hex string; spaces are ignored. */
 internal fun hex(s: String): ByteArray {
@@ -173,5 +175,45 @@ class SvcbRecordTest {
         val r = parsed("0010 $FOO_EXAMPLE_ORG 0000 0004 0001 0004 0001 0009 02 6832 05 68332d3139 0004 0004 c0000201")
         val back = SvcbTestEncoder.encode(r)
         assertEquals(r, SvcbCodec.parseRdata(back, 0, back.size, r.owner, r.ttlSeconds))
+    }
+
+    /** RDATA of a ServiceMode record whose `mandatory` lists [listed] and which has the (empty, unknown) keys [present]. */
+    private fun manyKeys(
+        listed: List<Int>,
+        present: List<Int>,
+    ): ByteArray {
+        val out = ArrayList<Byte>()
+
+        fun u16(v: Int) {
+            out += (v shr 8).toByte()
+            out += v.toByte()
+        }
+        u16(1)
+        out += 0 // TargetName "."
+        u16(0)
+        u16(listed.size * 2)
+        listed.forEach(::u16)
+        for (k in present) {
+            u16(k)
+            u16(0)
+        }
+        return out.toByteArray()
+    }
+
+    @Test fun negative_tenThousandMandatoryKeysAreCheckedInLinearTime() { // section 8, over an untrusted channel (9.2.2)
+        val keys = (7 until 10_007).toList()
+        val all = manyKeys(keys, keys)
+        assertTrue(all.size <= 65_535, "${all.size} bytes")
+        val start = TimeSource.Monotonic.markNow()
+        // every listed key is present; they are keys this client does not support, so the record is skipped (section 8)
+        assertNull(SvcbCodec.parseRdata(all, 0, all.size, "example.com", 300))
+        // the last listed key missing: the merge still finds it (section 8: the RR is malformed)
+        val missing = manyKeys(keys, keys.dropLast(1))
+        assertFailsWith<DnsFormatException> { SvcbCodec.parseRdata(missing, 0, missing.size, "example.com", 300) }
+        val gap = manyKeys(keys, keys.filter { it != 5_000 })
+        assertFailsWith<DnsFormatException> { SvcbCodec.parseRdata(gap, 0, gap.size, "example.com", 300) }
+        val took = start.elapsedNow()
+        // a merge of the two increasing lists: milliseconds; a search of the keys for every listed key is 10^8 steps
+        assertTrue(took < 2.seconds, "took $took")
     }
 }

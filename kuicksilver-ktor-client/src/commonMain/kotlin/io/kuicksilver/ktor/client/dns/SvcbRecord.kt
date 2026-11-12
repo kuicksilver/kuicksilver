@@ -173,8 +173,13 @@ internal object SvcbCodec {
                 else -> {} // ech and the keys this client does not know: ignored unless mandatory (below)
             }
         }
-        // every key the mandatory list names must be in the record (section 8)
-        for (k in mandatory) if (k !in keys) throw DnsFormatException("mandatory key $k missing")
+        // every key the mandatory list names must be in the record (section 8): both lists are strictly increasing, so one
+        // merge pass checks them, linear in the RDATA however many keys there are
+        var j = 0
+        for (k in mandatory) {
+            while (j < keys.size && keys[j] < k) j++
+            if (j == keys.size || keys[j] != k) throw DnsFormatException("mandatory key $k missing")
+        }
         if (mandatory.any { it !in SUPPORTED }) return null
         if (noDefaultAlpn && alpn.isEmpty()) return null
         return SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4, ipv6, ttl, owner)
