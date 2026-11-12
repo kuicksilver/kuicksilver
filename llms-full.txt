@@ -2517,9 +2517,10 @@ the request reaches Ktor's pipeline as the HTTP/1.1 upgrade request the `WebSock
 with `:status 200` (no `Sec-WebSocket-Accept`, RFC 8441 section 5). The frames travel as DATA on the stream, within the
 client's flow-control windows (a client that takes none for the send-stall deadline has its stream reset), and the
 session's frames are checked against the negotiated extensions as over HTTP/1.1. The session's end is the stream's
-END_STREAM; a call cancelled or failed meanwhile resets the stream with CANCEL (RFC 8441 section 5), and a client's
-RST_STREAM ends the session. The request must carry `sec-websocket-version: 13` (RFC 6455 section 4.2.1): without it the
-answer is 400, with another version 426 with `sec-websocket-version: 13`. A route that is not a WebSocket one answering
+END_STREAM, after which the server waits up to 5 s for the client's (an orderly close has no RST_STREAM); a call
+cancelled or failed meanwhile resets the stream with CANCEL (RFC 8441 section 5), and a client's RST_STREAM ends the
+session. The request must carry one `sec-websocket-version: 13` (RFC 6455 section 4.2.1): otherwise the answer is 400
+with `sec-websocket-version: 13` (not 426, which needs an Upgrade field that HTTP/2 does not have). A route that is not a WebSocket one answering
 the CONNECT with a 2xx gets 501 instead (no session was accepted), an Extended CONNECT for another protocol 501, and
 a HEADERS frame on the stream after its request (RFC 9113 section 8.5) a stream error PROTOCOL_ERROR. A WebSocket stream
 counts toward `Http2Settings.maxConcurrentStreams` while it is open, and keeps its connection from being idle. With
@@ -2900,15 +2901,17 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   (opened by an earlier request, as in Chromium) whose server enabled Extended CONNECT (SETTINGS_ENABLE_CONNECT_PROTOCOL
   = 1, section 3): an Extended CONNECT with `:protocol = websocket` on a new stream, without `Sec-WebSocket-Key`,
   `Connection` and `Upgrade` (section 5); the session's `call.response.version` is `HTTP_2_0`. A connection whose
-  server's SETTINGS have not arrived yet is waited for, within the connect timeout, before the WebSocket decides (section
-  3: the client "MUST NOT" use `:protocol` before the setting arrives). Otherwise (no HTTP/2 connection, a server without
+  server's SETTINGS have not arrived yet is waited for, at most 1 s (within the connect timeout), before the WebSocket
+  decides (section 3: the client "MUST NOT" use `:protocol` before the setting arrives); without them by then it goes
+  over HTTP/1.1. Otherwise (no HTTP/2 connection, a server without
   the setting, a connection without a free stream, HTTP_1_1_REQUIRED) the WebSocket opens a connection of its own that
   offers `http/1.1` only and upgrades as in 0.2; a WebSocket never opens an HTTP/2 connection. A 2xx answer opens the
   session after its `Sec-WebSocket-Extensions` and `Sec-WebSocket-Protocol` were checked against the offer (an extension
   or a subprotocol not offered fails the handshake with `WebSocketException`, RFC 6455 section 4.1); any other answer
   fails it as an HTTP/1.1 answer without 101 does. The frames go within the server's flow-control windows (a send stall
   is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order ends the
-  stream with END_STREAM and waits up to 5 s for the server's; a handshake refused here, or a call that failed or was
+  stream with END_STREAM and waits up to 5 s, in all, for its last frames to go out and for the server's END_STREAM, then
+  resets the stream with CANCEL if either is missing; a handshake refused here, or a call that failed or was
   cancelled before the session closed, resets the stream with CANCEL. As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
 

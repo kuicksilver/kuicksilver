@@ -451,7 +451,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   requests closed after the idle timeout, and every close bounded on progress (`closeWithin`). A malformed request (RFC
   9113 §8.1.1) is reset before a handler runs; a request field section above `maxHeaderListSize` gets 431 without
   reaching the application; `:protocol` is refused unless `webSocketsOverHttp2` advertised it, and then only `websocket`
-  reaches a handler (any other protocol and a classic CONNECT get 501, a version other than 13 gets 400 or 426 before the
+  reaches a handler (any other protocol and a classic CONNECT get 501, a version other than 13 gets 400 before the
   application sees it). One stream's failure never reaches the
   connection (the handlers run under a supervisor and everything a call throws is caught and logged), and no RST_STREAM
   answers the client's. A client's RST_STREAM, NO_ERROR included, cancels its handler,
@@ -485,14 +485,24 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   deadline on the server and the socket timeout on the client), and its frames pass the same guard as over HTTP/1.1
   and HTTP/3 (§3.20.1). The server takes `:protocol` only when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL
   (`webSocketsOverHttp2`), serves only `websocket` (another protocol or a classic CONNECT: 501; no tunnel to the
-  `:authority` is ever made, RFC 8441 §4), checks the version before the application sees the request (400, 426), never
+  `:authority` is ever made, RFC 8441 §4), checks the version before the application sees the request (400), never
   lets a non-WebSocket route answer the CONNECT with a 2xx (501: the client would take a body for frames), treats a
   HEADERS frame after the request as a stream error (RFC 9113 §8.5), and resets a session whose call was cancelled with
   CANCEL. The client uses `:protocol` only after the server's SETTINGS allowed it (RFC 8441 §3; a server that takes the
   setting back ends the connection with PROTOCOL_ERROR), never opens an HTTP/2 connection for a WebSocket, holds the
   remote host's CONNECTING key during the handshake as over HTTP/1.1 (RFC 6455 §4.1), ignores a content-length on the
   2xx (RFC 9110 §9.3.6), treats a HEADERS frame on the tunnel as a stream error, and fails the handshake on an
-  extension or a subprotocol it did not offer. What remains: the frame and message size limits of a session are Ktor's
+  extension or a subprotocol it did not offer; a server whose SETTINGS do not come holds a WebSocket for 1 s at most, and
+  an orderly close's wait for the last frames and the server's END_STREAM is bounded (5 s) as a whole, so a server that
+  never opens its window again cannot keep the stream or its slot. Sessions per client: a WebSocket costs a client one
+  stream, not one TCP connection, so the bound on one address is `maxTcpConnectionsPerIp` (off by default) x
+  SETTINGS_MAX_CONCURRENT_STREAMS (100) sessions, and `maxTcpConnections` (10,000) x 100 per connector, where HTTP/1.1
+  allows one session per connection; each session's memory stays within its stream window (512 KiB, at most 6 MiB) and
+  all of a connection's within the connection window (15 MiB at most) for what the server has not read, and what it
+  sends waits for the client's window, bounded by the send-stall deadline. No separate cap on WebSocket sessions per
+  connection: SETTINGS_MAX_CONCURRENT_STREAMS is that cap (sessions and requests share it, as a handler per stream
+  does), and a deployment that expects many idle sessions per client lowers `http2Settings.maxConcurrentStreams` or
+  turns `webSocketsOverHttp2` off (decided 2026-11-12). What remains: the frame and message size limits of a session are Ktor's
   (§3.20.1), as over HTTP/1.1 and HTTP/3, and a WebSocket that never closes holds its stream, and so its connection,
   until the application or the peer ends it, as over HTTP/1.1. Verification: `core.SettingsTest.negative_serverWithdrawingExtendedConnectIsAProtocolError`,
   `runtime.H2ExtendedConnectTest.negative_headersOnAConnectedStreamAreAStreamError`, `.negative_noTrailersOnAConnectStream`,

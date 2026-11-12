@@ -32,10 +32,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   engines. Server: with `http2 = true`, the new experimental `webSocketsOverHttp2` (`EngineMain` key
   `kuicksilver.webSocketsOverHttp2`; on by default, as `webSocketsOverHttp3`) advertises SETTINGS_ENABLE_CONNECT_PROTOCOL
   and serves `webSocket {}` routes over an Extended CONNECT with `:protocol = websocket`, answered `:status 200`; another
-  protocol or a classic CONNECT gets 501, a Sec-WebSocket-Version other than 13 gets 400 or 426 (RFC 6455 section
-  4.2), and a route that is not a WebSocket one cannot answer the CONNECT with a 2xx (501). Client: a `wss://`
+  protocol or a classic CONNECT gets 501, a Sec-WebSocket-Version other than one 13 gets 400 with `sec-websocket-version: 13` (RFC 6455 section
+  4.2.1; no 426, which needs Upgrade), and a route that is not a WebSocket one cannot answer the CONNECT with a 2xx (501). Client: a `wss://`
   WebSocket goes over an HTTP/2 connection to its origin that is there already and whose server allows Extended CONNECT,
-  once that server's SETTINGS arrived (RFC 8441 section 3); otherwise it opens a connection of its own with `http/1.1`
+  once that server's SETTINGS arrived (RFC 8441 section 3, waited for at most 1 s); otherwise it opens a connection of its own with `http/1.1`
   only, as before. Its handshake answer's extensions and subprotocol are checked against the offer (RFC 6455 section
   4.1); the session's frames go within the stream's flow-control windows and through the same frame guard as over
   HTTP/1.1 and HTTP/3; an orderly close is the stream's END_STREAM, anything else a RST_STREAM CANCEL. In
