@@ -240,7 +240,7 @@ class ClientWebSocketConnectingTest {
                         releaseA.complete(Unit)
                         withTimeout(10.seconds) { connecting.waitsForTest.first { it >= 1 } }
                         assertEquals(1, handshakes.value, "the second handshake went out while the address was held")
-                        assertEquals(2, accepted.value)
+                        withTimeout(10.seconds) { accepted.first { it >= 2 } }
                         decided.complete(Unit)
                     }
                     assertEquals(2, handshakes.value)

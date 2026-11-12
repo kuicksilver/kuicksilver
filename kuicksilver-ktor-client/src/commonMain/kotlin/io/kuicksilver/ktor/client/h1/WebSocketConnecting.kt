@@ -155,12 +155,14 @@ internal class WebSocketConnecting {
         /**
          * The key of the remote host at [address]. An IPv4-mapped IPv6 address (`::ffff:0:0/96`, RFC 4291 section
          * 2.5.5.2) is that IPv4 host: Kotlin/Native's `getaddrinfo` keeps the AF_INET6 form of `[::ffff:127.0.0.1]`
-         * where the JVM gives an `Inet4Address`, and a resolver may return mapped AAAA records.
+         * where the JVM gives an `Inet4Address`, and a resolver may return mapped AAAA records. A link-local address's
+         * zone is left out: a connected socket's peer address may come without one, and one key for an address on every
+         * interface only serializes more than needed.
          */
         fun addressKey(address: TcpAddress): String {
             val b = address.bytes
             val mapped = b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } && b[10] == FF && b[11] == FF
-            if (!mapped) return "address ${address.hostText}"
+            if (!mapped) return "address ${address.hostText.substringBefore('%')}"
             return "address ${b[12].toUByte()}.${b[13].toUByte()}.${b[14].toUByte()}.${b[15].toUByte()}"
         }
 
@@ -218,7 +220,7 @@ internal class WebSocketConnecting {
             if ((halves.size == 1 && n != 8) || (halves.size == 2 && n > 7)) return null
             val out = ByteArray(16)
             for ((i, g) in (head + List(8 - n) { "0" } + tail).withIndex()) {
-                if (g.isEmpty() || g.length > 4) return null
+                if (g.isEmpty() || g.length > 4 || !g.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return null
                 val v = g.toIntOrNull(16) ?: return null
                 out[2 * i] = (v shr 8).toByte()
                 out[2 * i + 1] = v.toByte()

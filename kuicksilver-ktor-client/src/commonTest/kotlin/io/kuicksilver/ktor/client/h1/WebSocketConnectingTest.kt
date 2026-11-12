@@ -112,5 +112,14 @@ class WebSocketConnectingTest {
         assertEquals(null, key("1::2::3"))
         assertEquals(null, key("1:2:3:4:5:6:7"))
         assertEquals(null, key("12345::1"))
+        assertEquals(null, key("-1::")) // a sign is no hex digit
+        assertEquals(null, key("+1::"))
+    }
+
+    /** A link-local address's key leaves its zone out, so a resolved address and a connected peer's (zone-less) match. */
+    @Test fun addressKeysLeaveTheZoneOut() {
+        val ll = byteArrayOf(0xfe.toByte(), 0x80.toByte()) + ByteArray(13) + byteArrayOf(1)
+        assertEquals("address fe80::1", WebSocketConnecting.addressKey(TcpAddress(ll, 80, scopeId = 4)))
+        assertEquals(WebSocketConnecting.addressKey(TcpAddress(ll, 80, scopeId = 4)), WebSocketConnecting.ipKey(ll))
     }
 }
