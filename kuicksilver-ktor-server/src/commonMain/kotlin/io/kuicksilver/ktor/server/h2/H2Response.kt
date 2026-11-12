@@ -176,7 +176,8 @@ internal open class H2Response(
             }
             if (sent + n > declaredLength) mismatch("more content than its content-length $declaredLength")
             sent += n
-            h2.sendBody(ByteReadChannel(buf.copyOf(n)), end = false, stallMillis = sendStallMillis, stallError = stall)
+            // sendBody reads its source to the end before it returns: the buffer is free again then
+            h2.sendBody(ByteReadChannel(buf, 0, n), end = false, stallMillis = sendStallMillis, stallError = stall)
         }
         if (sent != declaredLength) mismatch("$sent bytes of content, content-length $declaredLength")
         h2.sendBody(ByteReadChannel.Empty, end = true, stallMillis = sendStallMillis, stallError = stall)
@@ -191,7 +192,32 @@ internal open class H2Response(
         if (hasNoContent()) return sendHead(endStream = true)
         if (bytes.isEmpty() && declaredLengthOf() <= 0L) return sendHead(endStream = true)
         sendHead(endStream = false)
-        send(ByteReadChannel(bytes))
+        sendBytes(bytes)
+    }
+
+    /**
+     * [send] for content in hand: it goes out in pieces of [SEND_CHUNK] straight from [bytes], never copied whole (a
+     * `ByteReadChannel` over the array copies it, so a response of 32 MiB took 64 MiB and ran a 48 MiB Android 10 heap
+     * out of memory). A content-length that does not match is caught before anything is sent (RFC 9113 section 8.1.1).
+     */
+    private suspend fun sendBytes(bytes: ByteArray) {
+        val stall = { IOException("the client took no response content for $sendStallMillis ms") }
+        if (declaredLength >= 0 && bytes.size.toLong() != declaredLength) {
+            mismatch(
+                if (bytes.size > declaredLength) {
+                    "more content than its content-length $declaredLength"
+                } else {
+                    "${bytes.size} bytes of content, content-length $declaredLength"
+                },
+            )
+        }
+        var off = 0
+        while (off < bytes.size) {
+            val n = minOf(SEND_CHUNK, bytes.size - off)
+            h2.sendBody(ByteReadChannel(bytes, off, n), end = false, stallMillis = sendStallMillis, stallError = stall)
+            off += n
+        }
+        h2.sendBody(ByteReadChannel.Empty, end = true, stallMillis = sendStallMillis, stallError = stall)
     }
 
     private fun declaredLengthOf(): Long = headersBuilder[HttpHeaders.ContentLength]?.toLongOrNull() ?: -1L
