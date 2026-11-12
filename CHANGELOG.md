@@ -425,6 +425,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC: a QUIC TLS config with a cipher suite other than TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384 or
+  TLS_CHACHA20_POLY1305_SHA256 is refused with `TlsException.Config`. TLS_AES_128_CCM_SHA256 passed the check before and
+  the handshake failed once it was chosen (QUIC packet protection has no AES-CCM).
+- QUIC, DPLPMTUD: a probe fails only when its PROBE_TIMER (16 s, or 3 x PTO when longer) expires unacknowledged, however
+  early loss detection declared it lost (RFC 8899 section 5.1.1: "MUST NOT be smaller than 1 second and SHOULD be larger
+  than 15 seconds"). A size above the path's MTU is now given up after about 48 s instead of a few round trips; a size a
+  Packet Too Big or EMSGSIZE settles is still given up at once.
+- Native UDP sockets: every IPv6 socket asks the kernel for flow labels (`IPV6_AUTOFLOWLABEL`, RFC 9000 section 9.7), so a
+  Linux host that labels only on request (`net.ipv6.auto_flowlabels` = 2) or a Darwin host with
+  `net.inet6.ip6.auto_flowlabel` = 0 labels QUIC datagrams too. Linux labels per path, Darwin per socket.
+- Docs: RFC 9000 rows for section 9.7 and sections 21.6, 21.8, 21.10 and 21.11, the section 21.6 row relabelled 21.9; an
+  RFC 9406 (HyStart++) row.
 - HTTP/2 client: the first request on a new connection no longer waits for the server's SETTINGS (RFC 9113 §3.4), which
   saves one round trip per new connection. Only that request goes out before them: the other requests for the route wait
   for the SETTINGS (and their SETTINGS_MAX_CONCURRENT_STREAMS) rather than open streams under the initial "unlimited" of
@@ -637,6 +649,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC, CUBIC: HyStart++ ran in every slow start, the one after persistent congestion included, with the round state of the
+  initial slow start; a rising RTT there entered Conservative Slow Start and could end slow start far below the ssthresh the
+  loss had set (RFC 9406 section 4.3: "SHOULD use HyStart++ only for the initial slow start"). It now runs only while
+  ssthresh is unset, and its exit sets cwnd_prior (RFC 9438 section 4.10).
+- QUIC, BBR: the window grew on ACKs that came while the sender was application-limited (draft-ietf-ccwg-bbr-06 SetCwnd
+  adds every ACK's delivered bytes). It now grows only on ACKs of a sender that used its window, as for NewReno and CUBIC
+  (RFC 9002 section 7.8).
+- QUIC: the NewReno and CUBIC pacing rate overflowed above a window of about 7.4 GB, and the pacer then held the next
+  datagram for hours; the rate now saturates.
+- QUIC: at the AEAD confidentiality limit with no key update possible, the CONNECTION_CLOSE and its repetitions were sealed
+  with the exhausted key (RFC 9001 section 6.6: "MUST stop using those keys"). The connection now closes with
+  AEAD_LIMIT_REACHED while 16 packets are left under the key, and nothing is sealed with it past the limit.
+- QUIC: a Stateless Reset was looked for only among connections whose active path leads to the datagram's source; one from
+  the server's preferred address under validation, or from an old address being revalidated, was dropped and the
+  connection waited for its timeout (RFC 9000 section 10.3.1). Every path's peer address is a candidate now.
 - HTTP/3 client: `Http3Response.cancel(code)` and a client `Http3Stream`'s `reset`/`stopSending` sent H3_REQUEST_REJECTED
   when the application passed it, a code clients MUST NOT use (RFC 9114 section 4.1.1: it tells that the server did not
   process the request). It now goes out as H3_REQUEST_CANCELLED.
