@@ -4,6 +4,8 @@
 
 package io.kuicksilver.ktor.client
 
+import io.kuicksilver.ktor.network.DestinationSort
+import io.kuicksilver.ktor.network.SourceInfo
 import io.kuicksilver.ktor.network.TcpAddress
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -12,29 +14,49 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** One request's name resolution: each name once, names independent of each other. */
+/** One request's name resolution: each name and family once, names and families independent of each other. */
 class RequestDnsTest {
     private fun addr(last: Int) = TcpAddress(byteArrayOf(192.toByte(), 0, 2, last.toByte()), 0)
+
+    private fun v6(last: Int) =
+        TcpAddress(
+            ByteArray(16).also {
+                it[0] = 0x20
+                it[1] = 0x01
+                it[2] = 0x0d
+                it[3] = 0xb8.toByte()
+                it[15] = last.toByte()
+            },
+            0,
+        )
+
+    /** A dual-stack host: each destination is its own source (RFC 6724 then orders by precedence, IPv6 first). */
+    private val dual: () -> DestinationSort = { DestinationSort(sourceFor = { it }, sourceInfo = { SourceInfo(it) }) }
+
+    /** An IPv4-only host: an IPv6 destination has no source (RFC 6724 Rule 1). */
+    private val v4Only: () -> DestinationSort =
+        { DestinationSort(sourceFor = { if (it.isIpv6) null else it }, sourceInfo = { SourceInfo(it) }) }
+
+    private fun dns(
+        sort: () -> DestinationSort = dual,
+        resolve: suspend (String, Boolean) -> List<TcpAddress>,
+    ) = RequestDns(Nat64.offForTest(), sort, resolve)
+
+    private suspend fun RequestDns.texts(host: String) = lookup(host, 443).map { it.toString() }
 
     @Test fun namesResolveInParallel() =
         runTest {
             // a name that hangs does not hold up another (RFC 9460 section 5 relies on parallel queries)
             val slow = CompletableDeferred<Unit>()
             val dns =
-                RequestDns { name, _ ->
+                dns { name, v6 ->
+                    if (v6) return@dns emptyList()
                     if (name == "slow.example") slow.await()
                     listOf(addr(if (name == "slow.example") 1 else 2))
                 }
             val a = async { dns.lookup("slow.example", 443) }
             testScheduler.runCurrent()
-            assertEquals(
-                2,
-                dns
-                    .lookup("fast.example", 443)
-                    .single()
-                    .bytes[3]
-                    .toInt(),
-            ) // while slow.example is pending
+            assertEquals(listOf("192.0.2.2:443"), dns.texts("fast.example")) // while slow.example is pending
             slow.complete(Unit)
             assertEquals(
                 1,
@@ -46,12 +68,37 @@ class RequestDnsTest {
             )
         }
 
-    @Test fun oneLookupPerNameAndCancelledCallerLeavesNoAnswer() =
+    @Test fun familiesAreSeparateQueries() =
+        runTest {
+            // RFC 8305 section 3: AAAA and A asked separately; one that hangs does not hold up the other's answer
+            val asked = mutableListOf<Boolean>()
+            val aaaa = CompletableDeferred<Unit>()
+            val dns =
+                dns { _, v6 ->
+                    asked += v6
+                    if (v6) {
+                        aaaa.await()
+                        listOf(v6(1))
+                    } else {
+                        listOf(addr(1))
+                    }
+                }
+            val r = dns.resolution("a.example", 443)
+            assertEquals(listOf("192.0.2.1:443"), r.addresses(false).map { it.toString() })
+            val six = async { r.addresses(true) }
+            testScheduler.runCurrent()
+            assertEquals(listOf(false, true), asked)
+            aaaa.complete(Unit)
+            assertEquals(listOf("[2001:db8::1]:443"), six.await().map { it.toString() })
+        }
+
+    @Test fun oneLookupPerNameAndFamilyAndCancelledCallerLeavesNoAnswer() =
         runTest {
             var calls = 0
             val gate = CompletableDeferred<Unit>()
             val dns =
-                RequestDns { _, _ ->
+                dns { _, v6 ->
+                    if (v6) return@dns emptyList()
                     calls++
                     gate.await()
                     listOf(addr(1))
@@ -75,7 +122,8 @@ class RequestDnsTest {
             val gate = CompletableDeferred<Unit>()
             var calls = 0
             val dns =
-                RequestDns { _, _ ->
+                dns { _, v6 ->
+                    if (v6) return@dns emptyList()
                     calls++
                     if (calls == 1) gate.await()
                     listOf(addr(1))
@@ -90,142 +138,149 @@ class RequestDnsTest {
             assertEquals(1, again?.size, "the name was left with an answer that never comes")
         }
 
-    // ---- addresses an HTTPS answer carried (RFC 9460 section 5): one family alone is used, the other still looked up
-
-    private fun v6(last: Int) =
-        TcpAddress(
-            ByteArray(16).also {
-                it[0] = 0x20
-                it[1] = 0x01
-                it[15] = last.toByte()
-            },
-            0,
-        )
-
-    /** A family order whose probe finds an IPv6 and an IPv4 source, or only what [v6Source] and [v4Source] say. */
-    private fun order(
-        v6Source: Boolean = true,
-        v4Source: Boolean = true,
-    ) = AddressFamilyOrder(ExpiryClock { 0L }) { d ->
-        when {
-            d.isIpv6 && v6Source -> {
-                TcpAddress(
-                    ByteArray(16).also {
-                        it[0] = 0x20
-                        it[1] = 0x01
-                        it[2] = 0x0d
-                        it[3] = 0xb8.toByte()
-                        it[15] =
-                            100
-                    },
-                    0,
-                )
-            }
-
-            // 2001:db8::100
-            !d.isIpv6 && v4Source -> {
-                addr(100)
-            }
-
-            else -> {
-                null
-            }
+    @Test fun lookupSortsByRfc6724() =
+        runTest {
+            // RFC 8305 section 4: "the client MUST sort the addresses received up to this point using Destination Address
+            // Selection": on a dual-stack host IPv6 first, on an IPv4-only one IPv4 first, whatever order the answers came in
+            val answer: suspend (String, Boolean) -> List<TcpAddress> = { _, v6 -> if (v6) listOf(v6(1)) else listOf(addr(9)) }
+            assertEquals(listOf("[2001:db8::1]:443", "192.0.2.9:443"), dns(dual, answer).texts("a.example"))
+            assertEquals(listOf("192.0.2.9:443", "[2001:db8::1]:443"), dns(v4Only, answer).texts("a.example"))
         }
-    }
 
-    private suspend fun RequestDns.texts(host: String) = lookup(host, 443).map { it.toString() }
+    @Test fun literalsAreNeverLookedUp() =
+        runTest {
+            val dns = dns { name, _ -> error("looked up: $name") }
+            assertEquals(listOf("192.0.2.7:443"), dns.texts("192.0.2.7"))
+            assertEquals(listOf("[2001:db8::7]:443"), dns.texts("[2001:db8::7]"))
+            val r = dns.resolution("[2001:db8::7]", 8443)
+            assertEquals(listOf("[2001:db8::7]:8443"), r.addresses(true).map { it.toString() })
+            assertEquals(emptyList(), r.addresses(false))
+        }
+
+    // ---- addresses an HTTPS answer carried (RFC 9460 section 5): one family alone is used, the other still looked up
 
     @Test fun seededIpv4IsUsedAndIpv6StillLookedUp() =
         runTest {
-            // section 5: the A records of the answer are used without waiting for a query; the lookup still runs, and its
-            // AAAA records join when it answers within the resolution delay, in the order the platform resolver sorted
-            // (RFC 8305 section 4: "the client MUST sort the addresses received up to this point using Destination Address
-            // Selection"): IPv6 first here
-            var asked = 0
+            // section 5: the A records of the answer are the A answer, no query for them; the AAAA query still runs
+            val asked = mutableListOf<Boolean>()
             val dns =
-                RequestDns(order()) { _, _ ->
-                    asked++
-                    listOf(v6(1), addr(9))
+                dns { _, v6 ->
+                    asked += v6
+                    if (v6) listOf(v6(1)) else listOf(addr(9))
                 }
             dns.seed("a.example", listOf(addr(1).bytes))
-            assertEquals(listOf("[2001::1]:443", "192.0.2.1:443"), dns.texts("a.example"))
-            assertEquals(1, asked)
-        }
-
-    @Test fun seededIpv4KeepsTheResolversIpv4FirstOrder() =
-        runTest {
-            // a host whose resolver sorts IPv4 first (its IPv6 is not usable for this destination): that order is kept
-            val dns = RequestDns(order()) { _, _ -> listOf(addr(9), v6(1)) }
-            dns.seed("a.example", listOf(addr(1).bytes))
-            assertEquals(listOf("192.0.2.1:443", "[2001::1]:443"), dns.texts("a.example"))
+            assertEquals(listOf("[2001:db8::1]:443", "192.0.2.1:443"), dns.texts("a.example"))
+            assertEquals(listOf(true), asked)
         }
 
     @Test fun negative_seededIpv6OnAnIpv4OnlyHostPutsIpv4First() =
         runTest {
-            // an IPv4-only host: getaddrinfo answers A only, so its addresses lead and the AAAA of the answer comes last
-            // (QUIC takes the first address; an IPv6 one would fail there)
-            val dns = RequestDns(order(v6Source = false)) { _, _ -> listOf(addr(9)) }
+            // an IPv4-only host: the AAAA of the answer has no source (RFC 6724 Rule 1) and goes last
+            val dns = dns(v4Only) { _, v6 -> if (v6) emptyList() else listOf(addr(9)) }
             dns.seed("a.example", listOf(v6(7).bytes))
-            assertEquals(listOf("192.0.2.9:443", "[2001::7]:443"), dns.texts("a.example"))
+            assertEquals(listOf("192.0.2.9:443", "[2001:db8::7]:443"), dns.texts("a.example"))
         }
 
-    @Test fun negative_seededIpv4DoesNotWaitForAStalledIpv6Lookup() =
+    @Test fun negative_seededIpv4DoesNotWaitForAStalledIpv6LookupInARace() =
         runTest {
-            // an IPv4-only target (A only in the Additional section): the lookup of the other family stalls, and the
-            // seeded A is used after the resolution delay, not after the lookup
+            // the race takes the seeded A at once and the stalled AAAA lookup never holds it past the resolution delay
             val never = CompletableDeferred<Unit>()
-            var asked = 0
             val dns =
-                RequestDns(order()) { _, _ ->
-                    asked++
-                    never.await()
-                    listOf(v6(1))
+                dns { _, v6 ->
+                    if (v6) never.await()
+                    error("A was seeded")
                 }
             dns.seed("a.example", listOf(addr(1).bytes))
-            assertEquals(listOf("192.0.2.1:443"), dns.texts("a.example"))
-            assertEquals(1, asked) // the AAAA lookup was made
-            assertTrue(testScheduler.currentTime <= RequestDns.RESOLUTION_DELAY.inWholeMilliseconds, "${testScheduler.currentTime} ms")
+            val r = dns.resolution("a.example", 443)
+            val won =
+                io.kuicksilver.ktor.network.raceAddresses(
+                    "a.example",
+                    r,
+                    kotlin.time.Duration.parse("250ms"),
+                    dns.order(),
+                    connect = { it },
+                    close = {},
+                )
+            assertEquals("192.0.2.1:443", won.toString())
+            assertEquals(50L, testScheduler.currentTime) // the Resolution Delay of RFC 8305 section 3
         }
 
     @Test fun seededIpv6AloneIsUsedOnADns64Network() =
         runTest {
             // DNS64 (RFC 9460 section 4.2.1: the resolver "MAY omit the A records"): the AAAA records the answer carried
-            // are used; the lookup of the other family finds none, and a failure of it changes nothing
+            // are used; the lookup of the other family fails, which changes nothing
             var asked = 0
             val dns =
-                RequestDns(order(v4Source = false)) { _, _ ->
+                dns { _, _ ->
                     asked++
                     throw kotlinx.io.IOException("no A records")
                 }
             dns.seed("a.example", listOf(v6(7).bytes))
-            assertEquals(listOf("[2001::7]:443"), dns.texts("a.example"))
+            assertEquals(listOf("[2001:db8::7]:443"), dns.texts("a.example"))
             assertEquals(1, asked)
         }
 
-    @Test fun seededBothFamiliesNeedNoLookup() =
+    @Test fun seededBothFamiliesNeedNoLookupAndAreSorted() =
         runTest {
-            var asked = 0
-            val dns =
-                RequestDns(order()) { _, _ ->
-                    asked++
-                    listOf(addr(9))
-                }
-            dns.seed("a.example", listOf(addr(1).bytes, v6(1).bytes))
-            assertEquals(2, dns.lookup("a.example", 443).size)
-            assertEquals(0, asked)
+            val dns = dns(v4Only) { _, _ -> error("not looked up") }
+            dns.seed("a.example", listOf(v6(1).bytes, addr(1).bytes, v6(2).bytes, addr(2).bytes))
+            assertEquals(listOf("192.0.2.1:443", "192.0.2.2:443", "[2001:db8::1]:443", "[2001:db8::2]:443"), dns.texts("a.example"))
+            val other = dns(dual) { _, _ -> error("not looked up") }
+            other.seed("a.example", listOf(addr(1).bytes, v6(1).bytes))
+            assertEquals(listOf("[2001:db8::1]:443", "192.0.2.1:443"), other.texts("a.example"))
         }
 
-    @Test fun seededBothFamiliesFollowTheSystemsFamilyOrder() =
+    // ---- NAT64 (RFC 8305 section 7)
+
+    private fun nat64() =
+        Nat64(
+            ExpiryClock { 0L },
+            sourceFor = { d -> if (d.isIpv6) v6(9) else null },
+            query = {
+                AddressRecords(
+                    listOf(
+                        byteArrayOf(
+                            0,
+                            0x64,
+                            0xff.toByte(),
+                            0x9b.toByte(),
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            192.toByte(),
+                            0,
+                            0,
+                            170.toByte(),
+                        ) to 600L,
+                    ),
+                )
+            },
+        )
+
+    @Test fun nat64SynthesizesIpv4LiteralsAndAnswers() =
         runTest {
-            // no lookup to take the order from: the family order of the system decides, observed from the last platform
-            // lookup or probed (an IPv4-only host: IPv4 first), each family in the answer's order
-            val v4Only = order(v6Source = false)
-            val dns = RequestDns(v4Only) { _, _ -> error("not looked up") }
-            dns.seed("a.example", listOf(v6(1).bytes, addr(1).bytes, v6(2).bytes, addr(2).bytes))
-            assertEquals(listOf("192.0.2.1:443", "192.0.2.2:443", "[2001::1]:443", "[2001::2]:443"), dns.texts("a.example"))
-            val dual = order()
-            val other = RequestDns(dual) { _, _ -> error("not looked up") }
-            other.seed("a.example", listOf(addr(1).bytes, v6(1).bytes))
-            assertEquals(listOf("[2001::1]:443", "192.0.2.1:443"), other.texts("a.example"))
+            val dns = RequestDns(nat64(), dual) { _, v6 -> if (v6) emptyList() else listOf(addr(5)) }
+            // section 7.1: an IPv4 literal becomes the IPv6 answer
+            val lit = dns.resolution("192.0.2.33", 443)
+            assertTrue(lit.ipv6Only)
+            assertEquals(listOf("[64:ff9b::c000:221]:443"), lit.addresses(true).map { it.toString() })
+            assertEquals(emptyList(), lit.addresses(false))
+            // an A answer of a name comes back synthesized
+            val name = dns.resolution("a.example", 443)
+            assertEquals(listOf("[64:ff9b::c000:205]:443"), name.addresses(false).map { it.toString() })
+        }
+
+    @Test fun negative_noSynthesisOnADualStackNetwork() =
+        runTest {
+            val n = Nat64(ExpiryClock { 0L }, sourceFor = { d -> if (d.isIpv6) v6(9) else addr(100) }, query = { error("not asked") })
+            val dns = RequestDns(n, dual) { _, _ -> error("not looked up") }
+            val lit = dns.resolution("192.0.2.33", 443)
+            assertEquals(false, lit.ipv6Only)
+            assertEquals(listOf("192.0.2.33:443"), lit.addresses(false).map { it.toString() })
         }
 }

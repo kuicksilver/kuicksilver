@@ -49,6 +49,34 @@ internal actual fun platformResolveTcp(
     }
 }
 
+internal actual fun platformResolveFamily(
+    name: String,
+    ipv6: Boolean,
+): List<TcpAddress> {
+    // the JDK opens IPv4 sockets only: an IPv6 address could not be connected to
+    if (ipv6 && System.getProperty("java.net.preferIPv4Stack").toBoolean()) return emptyList()
+    if (!jdkResolverReplaced) kslResolveFamily(name, ipv6)?.let { return it }
+    // the application's resolver (or no native library): one lookup answers both families, filtered here
+    return platformResolveTcp(name, 0, numericHost = false).filter { it.isIpv6 == ipv6 }
+}
+
+/**
+ * Whether the application replaced the JDK's resolver: a hosts file of its own (`jdk.net.hosts.file`) or an
+ * `InetAddressResolverProvider` (JDK 18+). Name lookups then go through `InetAddress`, as the application expects.
+ */
+private val jdkResolverReplaced: Boolean by lazy {
+    System.getProperty("jdk.net.hosts.file") != null ||
+        try {
+            val spi = Class.forName("java.net.spi.InetAddressResolverProvider")
+            java.util.ServiceLoader
+                .load(spi, ClassLoader.getSystemClassLoader())
+                .iterator()
+                .hasNext()
+        } catch (_: Throwable) {
+            false // no such SPI (before JDK 18, Android), or a provider that cannot be loaded: the JDK ignores it too
+        }
+}
+
 @InternalKuicksilverApi
 public actual suspend fun bindTcp(
     selector: SelectorManager,

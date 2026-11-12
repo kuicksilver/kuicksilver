@@ -263,6 +263,11 @@ internal actual fun platformResolveTcp(
     return tcpResolve(name, port, numericHost).map { it.toTcpAddress() }
 }
 
+internal actual fun platformResolveFamily(
+    name: String,
+    ipv6: Boolean,
+): List<TcpAddress> = kslResolveFamily(name, ipv6) ?: throw IOException("Failed to resolve $name: the native library is not usable")
+
 @InternalKuicksilverApi
 public actual suspend fun bindTcp(
     selector: SelectorManager,

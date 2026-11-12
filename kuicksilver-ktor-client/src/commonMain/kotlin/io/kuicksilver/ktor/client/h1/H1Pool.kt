@@ -190,9 +190,9 @@ internal class H1Pool(
         ) { "http2.pingInterval must be at least 100 ms or Duration.INFINITE, was $ping" }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val delay = config.connectionAttemptDelay
-        // RFC 8305 section 8: at least 10 ms (100 ms recommended as the floor), at most 2 s
+        // RFC 8305 section 8: the Minimum Connection Attempt Delay (100 ms) to the Maximum (2 s)
         require(delay.isInfinite() || delay in MIN_ATTEMPT_DELAY..MAX_ATTEMPT_DELAY) {
-            "connectionAttemptDelay must be 10 ms..2 s or Duration.INFINITE (RFC 8305 section 8), was $delay"
+            "connectionAttemptDelay must be 100 ms..2 s or Duration.INFINITE (RFC 8305 section 8), was $delay"
         }
     }
 
@@ -977,10 +977,11 @@ internal class H1Pool(
         val socksTargets =
             if (proxy?.kind == ResolvedProxy.Kind.Socks5) socks5Targets(url.host, proxy.remoteDns, dns) else listOf(null)
         for ((attempt, socksTarget) in socksTargets.withIndex()) {
-            // every address of the host, IPv6 and IPv4 alternating (RFC 8305); this module's connects on Kotlin/Native, not
-            // ktor-network's (Ktor issue KTOR-10017, security, under coordinated disclosure)
+            // every address of the host as its two families arrive, sorted by RFC 6724 and alternating (RFC 8305); this
+            // module's connects on Kotlin/Native, not ktor-network's (Ktor issue KTOR-10017, security, under coordinated
+            // disclosure)
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns::lookup)
+            val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns.resolution(host, port), dns.order())
             try {
                 val rawIn = tcp.openDeliveringReadChannel()
                 val rawOut = tcp.openWriteChannel(autoFlush = true)
@@ -1090,7 +1091,7 @@ internal class H1Pool(
         val literal = ':' in name || parseIpv4(name) != null
         if (!literal && remoteDns) return listOf(Socks5Target.Domain(name))
         return dns
-            .lookup(name, 0)
+            .lookup(name, 0, sorted = false)
             .map { it.bytes }
             .distinctBy { it.toList() }
             .map { Socks5Target.Address(it) }
@@ -1139,8 +1140,12 @@ private fun OutgoingContent.isStreamed(): Boolean =
         else -> false
     }
 
-/** RFC 8305 section 8: the connection attempt delay is at least 10 ms and at most 2 s. */
-private val MIN_ATTEMPT_DELAY = 10.milliseconds
+/**
+ * RFC 8305 section 8, the Minimum Connection Attempt Delay: "Recommended to be 100 milliseconds. MUST NOT be less than 10
+ * milliseconds." (section 5: "This minimum value is required to avoid congestion collapse in the presence of high
+ * packet-loss rates."); the Maximum, [MAX_ATTEMPT_DELAY]: "Recommended to be 2 seconds."
+ */
+private val MIN_ATTEMPT_DELAY = 100.milliseconds
 
 /** OkHttp has no floor; below 100 ms a PING timer would end connections on any ordinary delay. */
 private val MIN_PING_INTERVAL = 100.milliseconds

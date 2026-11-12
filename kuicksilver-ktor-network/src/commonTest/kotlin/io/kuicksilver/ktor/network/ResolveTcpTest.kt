@@ -40,7 +40,7 @@ class ResolveTcpTest {
     /** An invalid IPv6 literal fails at once instead of being handed to the system resolver as a name. */
     @Test fun negative_invalidIpv6LiteralIsNotLookedUp() =
         runBlocking<Unit> {
-            blockingLookupForTest = { error("looked up: $it") }
+            blockingLookupForTest = { name, _ -> error("looked up: $name") }
             try {
                 assertFailsWith<IOException> { resolveTcp("[::zz]", 80) }
                 assertFailsWith<IOException> { resolveTcp("g::1", 80) }
@@ -51,8 +51,8 @@ class ResolveTcpTest {
 
     /**
      * A resolver that stalls holds at most [MAX_CONCURRENT_LOOKUPS] threads however many requests wait for it, the other
-     * threads of `Dispatchers.IO` (the socket loops') keep running, and one lookup per name is in flight: 40 callers of
-     * 20 stalled names make 20 lookups, 8 of them running.
+     * threads of `Dispatchers.IO` (the socket loops') keep running, and one lookup per name and family is in flight: 40
+     * callers of 20 stalled names make 40 lookups (AAAA and A), 8 of them running.
      */
     @Test fun negative_stalledResolverHoldsBoundedThreads() =
         runBlocking<Unit> {
@@ -61,7 +61,7 @@ class ResolveTcpTest {
             val inside = AtomicInt(0)
             val maxInside = AtomicInt(0)
             val calls = AtomicInt(0)
-            blockingLookupForTest = { _ ->
+            blockingLookupForTest = { _, ipv6 ->
                 calls.addAndFetch(1)
                 val now = inside.addAndFetch(1)
                 while (true) {
@@ -71,7 +71,7 @@ class ResolveTcpTest {
                 if (now == MAX_CONCURRENT_LOOKUPS) boundReached.complete(Unit)
                 runBlocking { gate.await() } // a blocked system call: the thread is held until the gate opens
                 inside.addAndFetch(-1)
-                listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), 0))
+                if (ipv6) emptyList() else listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), 0))
             }
             try {
                 // undispatched: each caller has joined its name's lookup when async returns
@@ -79,7 +79,7 @@ class ResolveTcpTest {
                     (0 until 40).map { i ->
                         async(start = CoroutineStart.UNDISPATCHED) { resolveTcp("stalled-${i % 20}.test", 443) }
                     }
-                assertEquals(20, lookupsInFlightForTest())
+                assertEquals(40, lookupsInFlightForTest()) // a lookup per name and family
                 withTimeout(10.seconds) { boundReached.await() }
                 // the socket loops' dispatcher still has threads
                 assertEquals(42, withTimeout(5.seconds) { withContext(Dispatchers.IO) { 42 } })
@@ -87,7 +87,7 @@ class ResolveTcpTest {
                 gate.complete(Unit)
                 val results = withTimeout(10.seconds) { callers.awaitAll() }
                 results.forEach { assertEquals(listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), 443)), it) }
-                assertEquals(20, calls.load(), "one lookup per name")
+                assertEquals(40, calls.load(), "one lookup per name and family")
                 assertEquals(MAX_CONCURRENT_LOOKUPS, maxInside.load())
                 assertEquals(0, lookupsInFlightForTest())
             } finally {

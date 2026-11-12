@@ -678,19 +678,23 @@ class ClientH1Test {
                     assertEquals(200, r.status.value)
                     assertEquals("second", r.bodyAsText())
                 }
-                assertEquals(listOf("origin.test" to port), asked)
+                assertEquals(listOf("origin.test"), asked.map { it.first }) // one lookup, both families from it
                 assertEquals(1, acquired)
             } finally {
                 server.stop(100, 500)
             }
         }
 
-    /** RFC 8305 section 8: the connection attempt delay is 10 ms..2 s, or infinite for one address after another. */
+    /**
+     * RFC 8305 section 8: the connection attempt delay is at least the Minimum Connection Attempt Delay ("Recommended to be
+     * 100 milliseconds. MUST NOT be less than 10 milliseconds.") and at most the Maximum ("Recommended to be 2 seconds."),
+     * or infinite for one address after another.
+     */
     @Test fun negative_connectionAttemptDelayOutOfRangeRefused() {
-        for (bad in listOf(kotlin.time.Duration.ZERO, 9.milliseconds, 2001.milliseconds)) {
+        for (bad in listOf(kotlin.time.Duration.ZERO, 9.milliseconds, 10.milliseconds, 99.milliseconds, 2001.milliseconds)) {
             assertFailsWith<IllegalArgumentException>("$bad") { testClient(engine = { connectionAttemptDelay = bad }).close() }
         }
-        for (good in listOf(10.milliseconds, 2.seconds, kotlin.time.Duration.INFINITE)) {
+        for (good in listOf(100.milliseconds, 2.seconds, kotlin.time.Duration.INFINITE)) {
             testClient(engine = { connectionAttemptDelay = good }).close()
         }
     }

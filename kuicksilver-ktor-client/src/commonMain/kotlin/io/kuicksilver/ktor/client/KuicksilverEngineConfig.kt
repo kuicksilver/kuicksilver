@@ -321,14 +321,14 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var connectTimeout: Duration = 10.seconds
 
     /**
-     * Happy Eyeballs (RFC 8305) for HTTP/1.1's TCP connects, to the origin and to a proxy: the addresses a name resolves to
-     * are tried with the IPv6 and IPv4 families alternating, starting the next attempt when this delay has passed or the
-     * previous attempt failed, and the first connection wins (the others are cancelled or closed). 250 ms by default, as
-     * RFC 8305 section 8 recommends; 10 ms to 2 s is allowed, or [Duration.INFINITE] to try one address after another as
-     * in 0.2. Any other value fails the engine's creation with [IllegalArgumentException]. [connectTimeout] bounds all
-     * attempts together. HTTP/3 connects to the first address of the same resolution (no race between addresses): a
-     * broken first family loses the h3/h1 race, but with `Http3DiscoveryMode.H3Only` there is no race and such a request
-     * fails at the connect timeout.
+     * Happy Eyeballs (RFC 8305) for the engine's connects, TCP and QUIC (docs/guide/ktor.md, "Happy Eyeballs"): a host
+     * name's IPv6 and IPv4 addresses are asked for separately and raced as they arrive, sorted by RFC 6724 with the two
+     * families alternating; the next address is tried when this delay has passed since the last attempt started or as soon
+     * as an attempt failed (never within 10 ms of the last start), and the first connection wins (the others are cancelled
+     * or closed). The same delay staggers HTTP/3's QUIC handshakes over the addresses. 250 ms by default, as RFC 8305
+     * section 8 recommends; 100 ms (the Minimum Connection Attempt Delay) to 2 s (the Maximum) is allowed, or
+     * [Duration.INFINITE] to try one address after another. Any other value fails the engine's creation with
+     * [IllegalArgumentException]. [connectTimeout] bounds all attempts together.
      */
     @ExperimentalKuicksilverApi
     public var connectionAttemptDelay: Duration = 250.milliseconds
@@ -358,9 +358,16 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     @ExperimentalKuicksilverApi
     public var proxyResolver: ProxyResolver = ProxyResolvers.System
 
-    /** Replaces the system resolver for both pools (tests: names and addresses the test owns). */
+    /** Replaces the system resolver for both pools (tests: names and addresses the test owns), both families at once. */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     internal var resolverForTest: (suspend (String, Int) -> List<io.kuicksilver.ktor.network.TcpAddress>)? = null
+
+    /** Replaces the system resolver one family at a time (tests: AAAA and A answers that come when the test says). */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal var familyResolverForTest: (suspend (name: String, ipv6: Boolean) -> List<io.kuicksilver.ktor.network.TcpAddress>)? = null
+
+    /** The NAT64 state for tests with a resolver of their own (default: never an IPv6-only network). */
+    internal var nat64ForTest: Nat64? = null
 
     /** HTTP/3 discovery, racing and connection settings; change it with [http3]. */
     public val http3: Http3ClientConfig = Http3ClientConfig()

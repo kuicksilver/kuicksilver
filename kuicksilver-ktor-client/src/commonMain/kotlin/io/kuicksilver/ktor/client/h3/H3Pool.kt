@@ -51,6 +51,7 @@ import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.ktor.network.raceAddresses
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MigrationEvent
@@ -380,39 +381,47 @@ internal class H3Pool(
                     enableConnectProtocol = true
                     webTransport = true
                 }.build()
-        val start =
-            kotlin.time.TimeSource.Monotonic
-                .markNow()
         val tls = config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3))
-        var last: Throwable? = null
-        // set inside the timeouts: a handshake that completes as a timeout fires still lands here, never orphaned
+        val q = quicWithin(connectTimeoutMillis).let { if (it.resetStreamAt) it else it.toBuilder().apply { resetStreamAt = true }.build() }
+        // set inside the timeout: a handshake that completes as the timeout fires still lands here, never orphaned
         var made: Http3Connection? = null
         try {
             withTimeout(connectTimeoutMillis) {
-                val addresses = config.newRequestDns().lookup(originHost, port)
-                for ((i, a) in addresses.withIndex()) {
-                    val left = connectTimeoutMillis - start.elapsedNow().inWholeMilliseconds
-                    if (left <= 0) break
-                    val share = maxOf(1L, left / (addresses.size - i))
-                    val q = quicWithin(share).let { if (it.resetStreamAt) it else it.toBuilder().apply { resetStreamAt = true }.build() }
-                    try {
-                        withTimeoutOrNull(share) { made = ep.connect(InetSocketAddress(a.hostText, a.port), tls, q, settings) }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        last = e // this address failed: the next one gets the rest of the time
-                    }
-                    if (made != null) return@withTimeout
-                }
+                made = raceQuic(originHost, port, config.newRequestDns()) { remote -> ep.connect(remote, tls, q, settings) }
             }
         } catch (e: TimeoutCancellationException) {
-            if (made == null) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, last ?: e)
+            if (made == null) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, e)
         } catch (e: Throwable) {
             made?.let { withContext(NonCancellable) { runCatching { it.close(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, "") } } }
             throw e
         }
-        // every address failed or ran out of its share: the last failure, or the connect timeout
-        return made ?: throw (last ?: ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null))
+        return made ?: throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
+    }
+
+    /**
+     * Happy Eyeballs over QUIC (RFC 8305, [raceAddresses]): the handshakes to [host]'s addresses, as [dns] resolves them
+     * one family at a time, sorted by RFC 6724 with the families alternating, one `connectionAttemptDelay` apart or as soon
+     * as one failed; the first handshake to complete wins, the others are cancelled (a cancelled QUIC connect closes the
+     * connection it started) or, when they completed too, closed. With `earlyData` an attempt returns as soon as it can
+     * send 0-RTT (a resumed session), so the first address that can wins at once; its handshake failing later fails the
+     * requests sent on it, which then fall back as before.
+     */
+    private suspend fun raceQuic(
+        host: String,
+        port: Int,
+        dns: RequestDns,
+        connect: suspend (InetSocketAddress) -> Http3Connection,
+    ): Http3Connection {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val delay = config.connectionAttemptDelay
+        return raceAddresses(
+            host,
+            dns.resolution(host, port),
+            delay,
+            dns.order(),
+            connect = { a -> connect(InetSocketAddress(a.hostText, a.port)) },
+            close = { it.close() },
+        )
     }
 
     /**
@@ -607,27 +616,28 @@ internal class H3Pool(
             try {
                 beforeSetupForTest?.invoke()
                 withTimeout(data.connectTimeoutMillis(config)) {
-                    // the first address of the request's resolution (the h3/h1 race covers a broken family; no
-                    // race between addresses over QUIC), as a literal the endpoint does not look up again
-                    val remote = dns.lookup(t.host, t.port).first().let { InetSocketAddress(it.hostText, it.port) }
+                    // every address of the request's resolution, raced (RFC 8305), each as a literal the endpoint does not
+                    // look up again
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     made =
-                        if (config.http3.earlyData) {
-                            // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
-                            // the handshake timer (a request sent early then fails, and falls back, at that time)
-                            ep.connectEarly(
-                                remote,
-                                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                quicWithin(data.connectTimeoutMillis(config)),
-                                config.http3.settings,
-                            )
-                        } else {
-                            ep.connect(
-                                remote,
-                                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                quic,
-                                config.http3.settings,
-                            )
+                        raceQuic(t.host, t.port, dns) { remote ->
+                            if (config.http3.earlyData) {
+                                // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
+                                // the handshake timer (a request sent early then fails, and falls back, at that time)
+                                ep.connectEarly(
+                                    remote,
+                                    config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                                    quicWithin(data.connectTimeoutMillis(config)),
+                                    config.http3.settings,
+                                )
+                            } else {
+                                ep.connect(
+                                    remote,
+                                    config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                                    quic,
+                                    config.http3.settings,
+                                )
+                            }
                         }
                 }
                 val c = made!!
