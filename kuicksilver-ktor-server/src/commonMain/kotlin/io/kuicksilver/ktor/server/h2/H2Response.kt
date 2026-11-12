@@ -36,8 +36,9 @@ private val CONNECTION_SPECIFIC = setOf("connection", "keep-alive", "proxy-conne
  * The response of an [H2Call]: the head goes out as HEADERS (lowercase names, connection-specific fields dropped, RFC 9113
  * section 8.2), the content as DATA within the client's windows, each wait for window bounded by [sendStallMillis]. A
  * response without content (to HEAD, a 204 or a 304, RFC 9110 sections 9.3.2, 15.3.5, 15.4.5) ends with its HEADERS and
- * the application's content is not sent. The engine's `Alt-Svc` goes out as an ALTSVC frame ahead of a response that has no
- * `Alt-Svc` field of its own ([H2AltSvc]: once per origin and value on the connection), not as a field.
+ * the application's content is not sent. The engine's `Alt-Svc` goes on a response that has no `Alt-Svc` field of its own,
+ * a 421 excepted, as a field (as on HTTP/1.1) and, once per origin and value on the connection, as an ALTSVC frame ahead of
+ * it ([H2AltSvc]).
  */
 internal class H2Response(
     call: PipelineCall,
@@ -102,10 +103,13 @@ internal class H2Response(
             headersBuilder.clear()
             interimReplaced = true
         }
-        // RFC 7838 section 3: "When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame (Section 4)": the
-        // engine's value goes out as one ahead of this head, unless the application set its own field; a 421 carries none,
-        // as on HTTP/1.1 (an alternative is authoritative for its origin and may clear it, section 2.2)
-        if (headersBuilder["Alt-Svc"] == null && statusCode.value != 421) altSvc.advertise(h2)
+        // RFC 7838 section 3: "servers SHOULD instead send an ALTSVC frame (Section 4)", and "despite this recommendation,
+        // Alt-Svc header fields remain valid in responses delivered over HTTP/2": the frame (once per origin and value)
+        // ahead of this head, and the field, one reading of the value for both; unless the application set its own field,
+        // and a 421 carries none, as on HTTP/1.1 (an alternative is authoritative for its origin and may clear it, section 2.2)
+        if (headersBuilder["Alt-Svc"] == null && statusCode.value != 421) {
+            altSvc.advertise(h2.authority) { h2.altSvc(it) }?.let { headersBuilder.append("Alt-Svc", it) }
+        }
         // RFC 9110 section 6.6.1: an origin server with a clock MUST send Date (2xx to 4xx; MAY in 5xx)
         if (!headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
         dropFramingFieldsOfAResponseWithoutContent()

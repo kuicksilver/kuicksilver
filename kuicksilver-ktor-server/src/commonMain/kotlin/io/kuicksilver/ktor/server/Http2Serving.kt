@@ -114,7 +114,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
     draining: Job,
 ) {
     val local = sock.localAddress as? InetSocketAddress
-    val connAltSvc = H2AltSvc(altSvc) // RFC 7838 section 3: one ALTSVC frame per origin of the connection
+    val connAltSvc = H2AltSvc(altSvc) // RFC 7838 sections 3, 4: the field on every response, a frame per origin and value
     var conn: H2ServerConnection? = null
     try {
         coroutineScope {

@@ -231,10 +231,11 @@ class ServerH2Test {
 
     /**
      * RFC 7838 section 3: "When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame (Section 4). A single
-     * ALTSVC frame can be sent for a connection; a new frame is not needed for every request." The engine's value goes out
+     * ALTSVC frame can be sent for a connection; a new frame is not needed for every request. Note that, despite this
+     * recommendation, Alt-Svc header fields remain valid in responses delivered over HTTP/2." The engine's value goes out
      * as an ALTSVC frame on the first request stream of each origin (an empty Origin: the stream's origin), ahead of the
-     * response's HEADERS, and not as a field; an application's own `Alt-Svc` field stays as it set it. Before, every HTTP/2
-     * response carried the field and no frame was ever sent.
+     * response's HEADERS, and stays a field on every response for clients that read only the header; an application's own
+     * `Alt-Svc` field stays as it set it. Before, no frame was ever sent.
      */
     @Test fun negative_altSvcGoesOutAsAnAltSvcFrameOnH2() =
         h3ServerTest {
@@ -252,7 +253,7 @@ class ServerH2Test {
                 client().use { c ->
                     val r = withTimeout(10.seconds) { c.get("https://127.0.0.1:$port/") }
                     assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
-                    assertEquals(null, r.headers["Alt-Svc"], "the engine's value is no field on HTTP/2")
+                    assertEquals("h3=\":$port\"; ma=86400", r.headers["Alt-Svc"], "the field stays for header-only clients")
                     assertEquals("h3=\":1\"", withTimeout(10.seconds) { c.get("https://127.0.0.1:$port/own") }.headers["Alt-Svc"])
                 }
                 RawH2Client.connect(port).use { raw ->

@@ -165,8 +165,9 @@ public class KuicksilverApplicationEngine(
         internal var identityReadTextForTest: ((String) -> String)? = null
 
         /**
-         * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 responses,
-         * an ALTSVC frame once per origin on each HTTP/2 connection (RFC 7838 sections 3 and 4).
+         * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 and HTTP/2
+         * responses, and on HTTP/2 also an ALTSVC frame per origin and value on each connection, refreshed every 12 hours
+         * (RFC 7838 sections 3 and 4).
          */
         public var altSvc: Boolean = true
 
