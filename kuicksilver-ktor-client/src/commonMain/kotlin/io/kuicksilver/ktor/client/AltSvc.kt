@@ -193,7 +193,7 @@ internal object AltSvcParser {
         h: String,
         bracketed: Boolean,
     ): Boolean {
-        if (h.isEmpty()) return false
+        if (h.isEmpty() || h.length > 255) return false
         if (':' in h || h.startsWith('[')) return isUriHost(if (bracketed) h else "[$h]") && (!bracketed || h.startsWith('['))
         return isUriHost(h) && isConnectionTarget(h)
     }
@@ -228,7 +228,8 @@ internal object AltSvcParser {
             // space, a control character, a bare IPv6 address) makes the alternative malformed. The host reaches
             // connection targets and the engine's diagnostics log line, so it is checked here, not trusted
             val rawHost = authority.substring(0, colon)
-            if (!isUriHost(rawHost) || !isConnectionTarget(rawHost)) continue
+            // a DNS name has at most 253 characters (RFC 1035), a bracketed IPv6 address fewer: longer is no connection target
+            if (rawHost.length > 255 || !isUriHost(rawHost) || !isConnectionTarget(rawHost)) continue
             val host =
                 rawHost
                     .removePrefix("[")

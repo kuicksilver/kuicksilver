@@ -87,6 +87,13 @@ class AltSvcTest {
      * RFC 7838 section 3: alt-authority is `[ uri-host ] ":" port`, and RFC 3986's `port = *DIGIT`; a sign is no digit, so
      * `h3=":+443"` is malformed (before, `toIntOrNull` read it as 443).
      */
+
+    /** A host longer than any DNS name (253 characters) is no connection target: skipped, as a stored one would be. */
+    @Test fun negative_altSvcHostLongerThanADnsNameIsSkipped() {
+        assertEquals(emptyList(), AltSvcParser.parse("h3=\"${"a".repeat(256)}:443\"", now))
+        assertEquals(1, AltSvcParser.parse("h3=\"${"a".repeat(253)}:443\"", now)!!.size)
+    }
+
     @Test fun negative_altSvcPortWithSignIsSkipped() {
         for (port in listOf("+443", "-443", " 443", "443 ", "0x1bb", "")) {
             assertEquals(emptyList(), AltSvcParser.parse("h3=\":$port\"", now), port)

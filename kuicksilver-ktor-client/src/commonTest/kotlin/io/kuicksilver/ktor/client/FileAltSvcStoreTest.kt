@@ -198,15 +198,45 @@ class FileAltSvcStoreTest {
         assertEquals("https://[2001:db8::1]:443", originKeyOf(Url("https://[2001:db8::1]/")), "the form the engine writes")
     }
 
-    /** A store file far larger than 1000 origins of 8 records can be is not read into memory: the store starts empty. */
-    @Test fun negative_oversizedAltSvcStoreFileIsNotLoaded() {
+    /**
+     * A store file is read up to 8 MiB, which a full store never reaches (8000 records of bounded fields): the records before
+     * the limit are kept, the rest of a larger file, and the line the limit cuts, are not read. Before, a file over the limit
+     * was dropped whole.
+     */
+    @Test fun negative_oversizedAltSvcStoreFileIsReadUpToTheLimit() {
         val p = tmp()
         SystemFileSystem.sink(p).buffered().use { sink ->
             sink.writeString("https://a:443\th3\t\t443\t${now + 60_000}\t0\n")
             val junk = "x".repeat(1 shl 20)
-            repeat(FileAltSvcStore.MAX_FILE_BYTES / (1 shl 20) + 1) { sink.writeString(junk) }
+            repeat(FileAltSvcStore.MAX_FILE_BYTES / (1 shl 20)) { sink.writeString(junk) }
+            sink.writeString("\nhttps://b:443\th3\t\t443\t${now + 60_000}\t0\n")
+        }
+        val s = FileAltSvcStore(p) { now }
+        assertEquals(1, s.get("https://a:443").size, "the records before the limit")
+        assertTrue(s.get("https://b:443").isEmpty(), "past the limit")
+    }
+
+    /**
+     * Fields are bounded (a DNS name has at most 253 characters, an ALPN id 255 bytes), so a full store of the engine's
+     * records stays within the read limit; a longer host or protocol is no record, and a full store reloads whole.
+     */
+    @Test fun negative_altSvcStoreFieldsAreBoundedAndAFullStoreFits() {
+        val p = tmp()
+        val longHost = "a".repeat(256)
+        SystemFileSystem.sink(p).buffered().use {
+            it.writeString("https://a:443\th3\t$longHost\t443\t${now + 60_000}\t0\nhttps://$longHost:443\th3\t\t443\t${now + 60_000}\t0\n")
         }
         assertTrue(FileAltSvcStore(p) { now }.get("https://a:443").isEmpty())
+        val full = tmp()
+        val s = FileAltSvcStore(full) { now }
+        val host = "h".repeat(63) + "." + "h".repeat(63) + "." + "h".repeat(63) + "." + "h".repeat(61) // 253 characters
+        for (i in 0 until AltSvcCache.MAX_ORIGINS) {
+            s.put("https://$i$host".take(8 + 253) + ":65535", (1..8).map { entry(443 + it, host = host, persist = true) })
+        }
+        assertTrue(SystemFileSystem.metadataOrNull(full)!!.size < FileAltSvcStore.MAX_FILE_BYTES)
+        val again = FileAltSvcStore(full) { now }
+        assertEquals(8, again.get("https://0$host".take(8 + 253) + ":65535").size)
+        assertEquals(8, again.get("https://999$host".take(8 + 253) + ":65535").size)
     }
 
     /** `clear()` (RFC 7838 section 9.4: alternative service information removed with origin-specific data) reaches the disk. */

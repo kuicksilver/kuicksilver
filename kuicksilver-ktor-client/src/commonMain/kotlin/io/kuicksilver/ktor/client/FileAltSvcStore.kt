@@ -8,7 +8,6 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.readLine
 import kotlinx.io.writeString
 import kotlin.random.Random
 
@@ -18,7 +17,8 @@ import kotlin.random.Random
  * port, expiry in epoch milliseconds, `1` when `persist=1`. The file is read once at construction: it is input like a
  * header, so every field is checked again (the origin's `https://host:port` form, the protocol token, the host as the
  * `Alt-Svc` parser takes it, the ports, the expiry, the persist flag) and a record failing a check is dropped, as is an
- * expired one; at most 1000 origins of 8 alternatives are kept, and a file over 8 MiB is not read (an empty store). The
+ * expired one; at most 1000 origins of 8 alternatives are kept, and of a file over 8 MiB only the records in its first
+ * 8 MiB are read (a full store takes less than that). The
  * engine also checks each entry it uses as it checks a header's. The file is rewritten after every change
  * through a uniquely named temporary file and an atomic move, so a crash leaves either the old or the new content
  * (on Android API 24-25, which lacks `java.nio.file`, the move is a `java.io.File.renameTo`, atomic on one filesystem).
@@ -149,19 +149,26 @@ public class FileAltSvcStore(
     private fun load() {
         if (!SystemFileSystem.exists(path)) return
         val now = clock()
-        val lines = ArrayList<String>()
         val maxLines = AltSvcCache.MAX_ORIGINS * AltSvcCache.MAX_ENTRIES_PER_ORIGIN
-        try {
-            SystemFileSystem.source(path).buffered().use { src ->
-                // a file far larger than the store can hold is no store this engine wrote: it is not read into memory
-                if (src.request(MAX_FILE_BYTES + 1L)) return
-                while (lines.size < maxLines) {
-                    lines += src.readLine() ?: break
+        val lines =
+            try {
+                SystemFileSystem.source(path).buffered().use { src ->
+                    // at most MAX_FILE_BYTES, which a full store (8000 records of bounded fields) never reaches: the records
+                    // of a longer file up to that point are read, the rest (and the line cut by the limit) is not
+                    val buf = ByteArray(MAX_FILE_BYTES)
+                    var n = 0
+                    while (n < buf.size) {
+                        val r = src.readAtMostTo(buf, n, buf.size)
+                        if (r < 0) break
+                        n += r
+                    }
+                    val cut = n == buf.size && !src.exhausted()
+                    val all = buf.decodeToString(0, n).split('\n')
+                    (if (cut) all.dropLast(1) else all).take(maxLines).map { it.removeSuffix("\r") }
                 }
-            }
-        } catch (_: Exception) {
-            return
-        } // an unreadable file is an empty store
+            } catch (_: Exception) {
+                return
+            } // an unreadable file is an empty store
         lines.firstOrNull()?.let { first ->
             val f = first.split('\t')
             if (f.size == 2 && f[0] == NETWORK_RECORD) networkId = networkOf(f[1])
@@ -216,6 +223,8 @@ public class FileAltSvcStore(
         internal fun recordOf(line: String): Pair<String, AltSvcEntry>? {
             val f = line.split('\t')
             if (f.size != 6) return null
+            // bounded fields (a DNS name has at most 253 characters, an ALPN id 255 bytes) keep a full store within the cap
+            if (f[0].length > 8 + MAX_FIELD + 6 || f[1].length > MAX_FIELD || f[2].length > MAX_FIELD) return null
             val origin = f[0]
             if (!origin.startsWith("https://")) return null
             val authority = origin.removePrefix("https://")
@@ -251,7 +260,10 @@ public class FileAltSvcStore(
             return runCatching { hex.hexToByteArray().decodeToString(throwOnInvalidSequence = true) }.getOrNull()
         }
 
-        /** The largest store file that is read. */
+        /** The longest protocol id and host a record may have (RFC 7301: 255 bytes; RFC 1035: a name of at most 253). */
+        private const val MAX_FIELD = 255
+
+        /** The most of a store file that is read: twice what 8000 records of bounded fields can take. */
         internal const val MAX_FILE_BYTES: Int = 8 shl 20
     }
 }
