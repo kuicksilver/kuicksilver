@@ -39,6 +39,7 @@ import io.kuicksilver.ktor.client.h2.H2RefusedRoutes
 import io.kuicksilver.ktor.client.h2.h2Exchange
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.newRequestDns
+import io.kuicksilver.ktor.client.newWebSocketKey
 import io.kuicksilver.ktor.client.platformCleartextPermitted
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
@@ -725,12 +726,15 @@ internal class H1Pool(
 
                 suspend fun exchangeOnce(): HttpResponseData =
                     withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterExpiry() }) {
+                        // a new key for every connection a WebSocket handshake is sent on (RFC 6455 section 4.1)
+                        val webSocketKey = if (webSocketKeys != null) newWebSocketKey() else null
                         writeHeaders(
                             data,
                             output,
                             overProxy = proxy != null && !tunneled,
                             tunneled = tunneled,
                             proxyAuthorization = proxy?.takeIf { !tunneled }?.basicAuthorization,
+                            webSocketKey = webSocketKey,
                         )
 
                         suspend fun sendBody() {
@@ -758,6 +762,8 @@ internal class H1Pool(
                             conn.input,
                             continueBody,
                             requestBodySent = { bodyJob?.sent },
+                            webSocketKey = webSocketKey,
+                            webSocketMaxMessageSize = config.webSocketMaxMessageSize,
                         ) { after ->
                             fun released(kept: Boolean) =
                                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }

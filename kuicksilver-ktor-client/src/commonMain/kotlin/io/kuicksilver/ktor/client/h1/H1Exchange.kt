@@ -44,10 +44,13 @@ import io.ktor.utils.io.writePacket
 import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http3.message.PriorityField
+import io.kuicksilver.ktor.client.checkWebSocketUpgrade
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
+import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.ktor.network.guardWebSocketOutput
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -62,7 +65,9 @@ import kotlin.time.Duration.Companion.seconds
  * Request line and headers (absolute-form through an HTTP proxy, RFC 9112 section 3.2.2). Inside a [tunneled] connection
  * (HTTP CONNECT or SOCKS5) the proxy's fields stay out: Proxy-Authorization applies only to the proxy that asked for it
  * (RFC 9110 section 11.7.2) and went on the CONNECT ([startTunnel]); the origin must not receive the proxy's credentials.
- * In the absolute form [proxyAuthorization] (the configured credentials) is sent unless the request has its own.
+ * In the absolute form [proxyAuthorization] (the configured credentials) is sent unless the request has its own. A
+ * WebSocket handshake goes out with [webSocketKey] as its one `Sec-WebSocket-Key`, in place of the key of Ktor's
+ * request body ([io.kuicksilver.ktor.client.newWebSocketKey]).
  */
 @OptIn(InternalAPI::class)
 internal suspend fun writeHeaders(
@@ -71,6 +76,7 @@ internal suspend fun writeHeaders(
     overProxy: Boolean,
     tunneled: Boolean = false,
     proxyAuthorization: String? = null,
+    webSocketKey: String? = null,
 ) {
     val builder = RequestResponseBuilder()
     val method = request.method
@@ -110,8 +116,10 @@ internal suspend fun writeHeaders(
             if (key.equals(HttpHeaders.TransferEncoding, true)) return@mergeHeaders // the framing below
             if (ownPriority != null && key.equals("Priority", true)) return@mergeHeaders
             if (tunneled && (key.equals(HttpHeaders.ProxyAuthorization, true) || key.equals("Proxy-Connection", true))) return@mergeHeaders
+            if (webSocketKey != null && key.equals(HttpHeaders.SecWebSocketKey, true)) return@mergeHeaders
             builder.headerLine(key, value)
         }
+        webSocketKey?.let { builder.headerLine(HttpHeaders.SecWebSocketKey, it) }
 
         ownPriority?.let { p -> PriorityField.format(p)?.let { builder.headerLine("Priority", it) } }
 
@@ -353,6 +361,8 @@ internal suspend fun readResponse(
     head: HeadLimitedInput? = null,
     continueBody: (suspend () -> Unit)? = null,
     requestBodySent: () -> Deferred<Boolean>? = { null },
+    webSocketKey: String? = null,
+    webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     onBodyDone: (AfterResponse) -> Unit,
 ): HttpResponseData =
     withContext(callContext) {
@@ -413,9 +423,17 @@ internal suspend fun readResponse(
                     unsentBody == null
 
             if (status == HttpStatusCode.SwitchingProtocols) {
-                // an extension the client did not offer fails the handshake before the connection is handed over
-                val extensions = headers.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty()
-                val handshake = webSocketAfterHandshake(request, extensions, callContext)
+                // RFC 9110 section 15.2.2: a server switches only to a protocol the request's Upgrade asked for
+                val key = webSocketKey ?: throw ParserException("A 101 (Switching Protocols) response to a request without an upgrade")
+                // the server's answer is checked (RFC 6455 section 4.1) before the connection is handed over
+                checkWebSocketUpgrade(key, headers)
+                val handshake =
+                    webSocketAfterHandshake(
+                        request,
+                        headers.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty(),
+                        headers.getAll(HttpHeaders.SecWebSocketProtocol).orEmpty(),
+                        callContext,
+                    )
                 onBodyDone(AfterResponse.HandOver)
                 val wsConfig = request.attributes[WEBSOCKETS_KEY]
                 val guarded =
@@ -426,12 +444,16 @@ internal suspend fun readResponse(
                         peerMasks = false,
                         context = callContext,
                         inflate = handshake.inflate,
+                        perMessageDeflate = handshake.perMessageDeflate,
+                        maxMessageSize = webSocketMaxMessageSize,
+                        checkText = handshake.checkText,
                     )
+                // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
                 val session =
                     RawWebSocket(
                         input = guarded,
-                        output = output,
-                        masking = true,
+                        output = guardWebSocketOutput(output, masking = true),
+                        masking = false,
                         coroutineContext = callContext,
                         channelsConfig = wsConfig.channelsConfig,
                     )

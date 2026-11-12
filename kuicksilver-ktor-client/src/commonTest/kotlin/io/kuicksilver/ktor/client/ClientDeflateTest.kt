@@ -14,10 +14,8 @@ import io.ktor.server.routing.routing
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
-import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
-import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
@@ -347,11 +345,8 @@ class ClientDeflateTest {
                         listener.accept().use { s ->
                             val input = s.openReadChannel()
                             val output = s.openWriteChannel(autoFlush = true)
-                            while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
-                            output.writeStringUtf8(
-                                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-                                    "Sec-WebSocket-Accept: unchecked\r\nSec-WebSocket-Extensions: $extensions\r\n\r\n",
-                            )
+                            val key = input.readWebSocketKey()
+                            output.writeStringUtf8(switchingProtocols(key, "Sec-WebSocket-Extensions: $extensions\r\n"))
                             serve(input, output)
                         }
                     }

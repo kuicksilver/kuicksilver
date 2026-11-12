@@ -84,6 +84,9 @@ internal class KuicksilverEngine(
         require(extraWait >= MIN_HTTPS_RECORD_EXTRA_WAIT && extraWait <= MAX_HTTPS_RECORD_EXTRA_WAIT) {
             "httpsRecordExtraWait must be 50 ms..1 s, was $extraWait"
         }
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val wsLimit = config.webSocketMaxMessageSize
+        require(wsLimit >= 1) { "webSocketMaxMessageSize must be at least 1, was $wsLimit" }
     }
 
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)

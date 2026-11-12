@@ -51,6 +51,7 @@ import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MigrationEvent
@@ -1035,13 +1036,16 @@ internal class H3Pool(
             if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
         }
-        // an extension the client did not offer fails the handshake (RFC 6455 section 4.1, RFC 9220 section 3); the
-        // call's failure resets the stream (above)
-        val extensions =
+
+        // an extension or a subprotocol the client did not offer fails the handshake (RFC 6455 section 4.1, kept by RFC 8441
+        // section 5 and RFC 9220 section 3); the call's failure resets the stream (above)
+        fun values(name: String) =
             stream.headers.fields
-                .filter { it.first == "sec-websocket-extensions" }
+                .filter { it.first == name }
                 .map { it.second }
-        val handshake = webSocketAfterHandshake(data, extensions, callContext)
+        val handshake =
+            webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), callContext)
+        // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
         val session =
             RawWebSocket(
                 guardWebSocketInput(
@@ -1051,9 +1055,12 @@ internal class H3Pool(
                     peerMasks = false,
                     context = callContext,
                     inflate = handshake.inflate,
+                    perMessageDeflate = handshake.perMessageDeflate,
+                    maxMessageSize = config.webSocketMaxMessageSize,
+                    checkText = handshake.checkText,
                 ),
-                stream.output,
-                masking = true,
+                guardWebSocketOutput(stream.output, masking = true),
+                masking = false,
                 coroutineContext = callContext,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
             )
