@@ -18,7 +18,7 @@ import kotlin.test.fail
  * runs on the device). The server's array takes 32 MiB and the engine as it is sends it a 16 KiB slice at a time; a
  * respondFromBytes that copies it whole (a `ByteReadChannel` over the array, as before 3cd5db6e5) needs a second 32 MiB.
  * With the flags below (measured on the JVM 21 host): the engine as it is needs more than 48 MiB of heap and passes from
- * 52 MiB; the whole-array copy fails up to 72 MiB and passes from 80 MiB. [HEAP] is 64 MiB, between the two.
+ * 52 MiB; the whole-array copy fails up to 72 MiB. [HEAP] is 64 MiB, between the two.
  *
  * The forked JVM is the same on every host, whatever its ergonomics would pick: Parallel GC with an 8 MiB young
  * generation (the 32 MiB arrays live in the old generation, whose size is then the heap less 8 MiB), its GC overhead
@@ -35,7 +35,8 @@ class RespondBytesHeapJvmTest {
         val output = File.createTempFile("respond-bytes-heap", ".log", dir)
         try {
             val cp = System.getProperty("java.class.path").replace("\\", "\\\\").replace("\"", "\\\"")
-            argFile.writeText("-cp\n\"$cp\"\n")
+            // the launcher reads an @argfile in the platform's encoding (the ANSI code page on Windows), not UTF-8
+            argFile.writeText("-cp\n\"$cp\"\n", nativeCharset())
             // the native library is found as in this JVM (its kuicksilver.* and ksl.* properties), and the test JVM's
             // module and native-access flags (-Pkuicksilver.test.jvmArgs) hold there too; never its heap, agents or debugger
             val props =
@@ -44,10 +45,7 @@ class RespondBytesHeapJvmTest {
                     .stringPropertyNames()
                     .filter { it.startsWith("ksl.") || it.startsWith("kuicksilver.") }
                     .map { "-D$it=${System.getProperty(it)}" }
-            val flags =
-                ManagementFactory.getRuntimeMXBean().inputArguments.filter { a ->
-                    FORWARDED.any { a.startsWith(it) }
-                }
+            val flags = forwardedFlags(ManagementFactory.getRuntimeMXBean().inputArguments)
             val cmd =
                 listOf(java, "-Xmx$HEAP", "-Xmn8m", "-XX:+UseParallelGC", "-XX:+UseGCOverheadLimit", "-XX:+ExitOnOutOfMemoryError") +
                     flags + props + "@${argFile.path}" + RespondBytesHeapMain::class.java.name
@@ -59,10 +57,37 @@ class RespondBytesHeapJvmTest {
             }
             assertEquals(0, p.exitValue(), "32 MiB through respondBytes with a $HEAP heap:\n${output.readText()}")
         } finally {
-            argFile.delete()
-            output.delete()
+            // a forked JVM that was destroyed and has not exited yet may still hold them open (Windows locks them)
+            for (f in listOf(argFile, output)) if (!f.delete()) f.deleteOnExit()
         }
     }
+
+    /**
+     * The flags of [args] the forked JVM takes over, each with its value: `--add-opens=...` is one argument, `--add-opens
+     * ...` two.
+     */
+    private fun forwardedFlags(args: List<String>): List<String> {
+        val out = ArrayList<String>()
+        var i = 0
+        while (i < args.size) {
+            val a = args[i++]
+            val flag = FORWARDED.firstOrNull { a == it || a.startsWith("$it=") } ?: continue
+            out += a
+            if (a == flag && i < args.size) out += args[i++]
+        }
+        return out
+    }
+
+    /** The platform's encoding (`native.encoding`, JDK 17 and later), or the JVM's default when it is absent or unknown. */
+    private fun nativeCharset(): java.nio.charset.Charset =
+        System.getProperty("native.encoding")?.let {
+            runCatching {
+                java.nio.charset.Charset
+                    .forName(it)
+            }.getOrNull()
+        }
+            ?: java.nio.charset.Charset
+                .defaultCharset()
 
     private companion object {
         /** One copy of the 32 MiB content and the engine fit (from 52 MiB); a second copy does not (up to 72 MiB). */
