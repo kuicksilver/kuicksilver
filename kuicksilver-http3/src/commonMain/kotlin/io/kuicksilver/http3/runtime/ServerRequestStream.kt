@@ -32,7 +32,7 @@ import io.kuicksilver.http3.message.priorityFieldValue
 import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
-import io.kuicksilver.http3.webtransport.wtTransportGap
+import io.kuicksilver.http3.webtransport.wtSelect
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -440,14 +440,14 @@ internal class ServerRequestImpl(
         // the client's SETTINGS arrived, so none was before. The client's own WebTransport setting is required too: "For
         // draft versions of WebTransport only, clients MUST also send SETTINGS_WT_ENABLED with the draft-specific codepoint"
         // (draft-14: SETTINGS_WT_MAX_SESSIONS above 0, draft-02: SETTINGS_ENABLE_WEBTRANSPORT=1, as Chrome and Firefox send)
-        val version = session.peerWtVersion()
+        // A client that announces a newer draft without its transport parameters but also draft-02 gets draft-02 ([wtSelect]).
         val missing =
             when {
                 ps == null -> {
                     "no SETTINGS from the client within ${session.wtDeadline}"
                 }
 
-                version == null -> {
+                session.peerWtVersion() == null -> {
                     "the client sent no WebTransport setting (SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS or " +
                         "draft-02 SETTINGS_ENABLE_WEBTRANSPORT), which WebTransport needs"
                 }
@@ -457,7 +457,7 @@ internal class ServerRequestImpl(
                 }
 
                 else -> {
-                    wtTransportGap(session, version)
+                    wtSelect(session).second
                 }
             }
         if (missing != null) {

@@ -32,13 +32,27 @@ internal enum class WtVersion {
 
     companion object {
         /** The highest version the peer's [settings] announce, or null when they announce none. */
-        fun of(settings: Map<Long, Long>): WtVersion? =
-            when {
-                settings[SettingsId.WT_ENABLED] == 1L -> Draft16
-                (settings[SettingsId.WT_MAX_SESSIONS_DRAFT14] ?: 0L) > 0L -> Draft14
-                (settings[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) != 0L -> Draft02
-                else -> null
+        fun of(settings: Map<Long, Long>): WtVersion? = offeredIn(settings).maxOrNull()
+
+        /** Every version the peer's [settings] announce. */
+        fun offeredIn(settings: Map<Long, Long>): Set<WtVersion> =
+            buildSet {
+                if (settings[SettingsId.WT_ENABLED] == 1L) add(Draft16)
+                if ((settings[SettingsId.WT_MAX_SESSIONS_DRAFT14] ?: 0L) > 0L) add(Draft14)
+                if ((settings[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) != 0L) add(Draft02)
             }
+
+        /** The versions we announce ([WtSettings.ours]): a server every one, a client draft-16 and draft-02. */
+        fun ours(isServer: Boolean): Set<WtVersion> = if (isServer) entries.toSet() else setOf(Draft16, Draft02)
+
+        /**
+         * The versions both sides announce, highest first: draft-16 section 7.1, "The highest version supported by both
+         * endpoints is selected". A version only the peer announces is never chosen.
+         */
+        fun common(
+            peer: Map<Long, Long>,
+            isServer: Boolean,
+        ): List<WtVersion> = (offeredIn(peer) intersect ours(isServer)).sortedDescending()
     }
 }
 
@@ -66,6 +80,22 @@ internal fun wtTransportGap(
             null
         }
     }
+
+/**
+ * The version a session on [h3] runs: the highest that both sides announce ([WtVersion.common]) and that the connection's
+ * transport parameters can carry ([wtTransportGap]); null with the reason when none can. A peer that announces a newer
+ * draft without its section 3.1 transport parameters (draft-14 and draft-16 need `reset_stream_at`) but also draft-02
+ * gets draft-02, the highest version both sides can actually run; one that announces only the newer draft is refused.
+ */
+internal fun wtSelect(h3: io.kuicksilver.http3.runtime.H3Session): Pair<WtVersion?, String?> {
+    val common = h3.wtCommonVersions
+    common.firstOrNull { wtTransportGap(h3, it) == null }?.let { return it to null }
+    val reason =
+        common.firstOrNull()?.let { wtTransportGap(h3, it) }
+            ?: "the peer announces no WebTransport draft we speak (SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS " +
+            "or draft-02 SETTINGS_ENABLE_WEBTRANSPORT)"
+    return null to reason
+}
 
 /** The WebTransport settings we interpret and advertise (draft-ietf-webtrans-http3-16 section 3.1); identifiers in [SettingsId]. */
 internal object WtSettings {

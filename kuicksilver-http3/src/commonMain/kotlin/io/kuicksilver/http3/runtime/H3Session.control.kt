@@ -249,7 +249,7 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
         quic.rememberWithTickets(SettingsCodec.encode(StoredSettings.kept(m)))
     }
     qpack.onPeerSettings(ps.qpackMaxTableCapacity, ps.qpackBlockedStreams)
-    peerWtVersion = WtVersion.of(m)
+    wtCommonVersions = WtVersion.common(m, isServer)
     peerSettings.value = ps
     peerSettingsArrived.complete(ps)
 }

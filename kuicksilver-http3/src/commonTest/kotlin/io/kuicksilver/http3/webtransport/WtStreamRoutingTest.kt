@@ -4,6 +4,7 @@ package io.kuicksilver.http3.webtransport
 
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.H3Fixtures
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.QuicPair
@@ -103,8 +104,8 @@ class WtStreamRoutingTest {
 
     @Test fun uniStreamRoutedToSession() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -120,8 +121,8 @@ class WtStreamRoutingTest {
     /** Section 4.3: `41 00 ping` is the signal and Session ID 0, not a frame of type 0x41 whose length is 0. */
     @Test fun bidiSignalNotParsedAsFrame() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 RawPeer(c).openControl(wtClientSettings)
                 val sink = QueueSink()
@@ -138,8 +139,8 @@ class WtStreamRoutingTest {
 
     @Test fun serverInitiatedBidiAcceptedByWtClient() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val raw = RawPeer(s)
                 raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
                 val client = Http3Connection.client(c, wtOn)
@@ -155,8 +156,8 @@ class WtStreamRoutingTest {
     /** Without the signal a server-initiated bidirectional stream stays H3_STREAM_CREATION_ERROR, WebTransport or not. */
     @Test fun negative_serverBidiWithoutSignalIsStreamCreationError() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val raw = RawPeer(s)
                 raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
                 Http3Connection.client(c, wtOn)
@@ -172,8 +173,8 @@ class WtStreamRoutingTest {
     /** Section 4.3: the signal anywhere but the first bytes of a bidirectional stream is H3_FRAME_ERROR. */
     @Test fun negative_wtSignalMidRequestIsFrameError() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -188,8 +189,8 @@ class WtStreamRoutingTest {
 
     @Test fun negative_wtSessionIdNotClientBidiIsIdError() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -204,8 +205,8 @@ class WtStreamRoutingTest {
      * The buffer's clock stands still here: how long they may wait is [datagramKeptPastItsHoldIsDropped]'s concern.
      */
     private suspend fun datagramsBeforeConnect(count: Int): List<String> =
-        QuicPair.open().useScoped { q ->
-            val (c, s) = q.connect()
+        QuicPair.open(H3Fixtures.quic).useScoped { q ->
+            val (c, s) = q.connect(H3Fixtures.quic)
             val server = Http3Connection.server(s, wtOn)
             withContext(server.session.dispatcher) { server.session.datagrams.clock = TestTimeSource() }
             val raw = RawPeer(c)
@@ -236,8 +237,8 @@ class WtStreamRoutingTest {
      */
     @Test fun datagramKeptPastItsHoldIsDropped() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val clock = TestTimeSource()
                 withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
@@ -271,8 +272,8 @@ class WtStreamRoutingTest {
     /** One within its hold is kept: the clock moves to just before the end of it. */
     @Test fun datagramWithinItsHoldIsKept() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val clock = TestTimeSource()
                 withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
@@ -322,8 +323,8 @@ class WtStreamRoutingTest {
      */
     @Test fun datagramsForAnOpenGetLeaveTheSlotsToASession() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 // the buffer's clock stands still: this is about which streams keep datagrams, not how long
                 withContext(server.session.dispatcher) { server.session.datagrams.clock = TestTimeSource() }
@@ -361,8 +362,8 @@ class WtStreamRoutingTest {
     /** A datagram kept for a stream whose HEADERS then turn out to be a GET: the GET is aborted with H3_DATAGRAM_ERROR. */
     @Test fun datagramKeptForWhatBecomesAGetAbortsIt() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 // the buffer's clock stands still: this is about which streams keep datagrams, not how long
                 withContext(server.session.dispatcher) { server.session.datagrams.clock = TestTimeSource() }
@@ -393,8 +394,8 @@ class WtStreamRoutingTest {
      */
     @Test fun aShortHoldBehindALongOneEndsOnTime() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val clock = TestTimeSource()
                 withContext(server.session.dispatcher) {
@@ -429,8 +430,8 @@ class WtStreamRoutingTest {
      */
     @Test fun aDatagramForAStreamWhoseHeadersAreOnTheWayWaitsLonger() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val clock = TestTimeSource()
                 withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
@@ -463,8 +464,8 @@ class WtStreamRoutingTest {
      */
     @Test fun aGetAfterItsDatagramsHoldIsNotAborted() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val clock = TestTimeSource()
                 withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
@@ -502,7 +503,7 @@ class WtStreamRoutingTest {
                             resetStreamAt = true
                         },
                 ).useScoped { q ->
-                    val (c, s) = q.connect()
+                    val (c, s) = q.connect(H3Fixtures.quic)
                     val server = Http3Connection.server(s, wtOn)
                     val raw = RawPeer(c)
                     raw.openControl(wtClientSettings)
@@ -516,8 +517,8 @@ class WtStreamRoutingTest {
     /** Without WebTransport a `0x54` stream is an unknown type, stopped as before (RFC 9114 section 6.2). */
     @Test fun wtUniIgnoredWithoutWebTransport() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s)
                 val raw = RawPeer(c)
                 raw.openControl()
@@ -530,8 +531,8 @@ class WtStreamRoutingTest {
     /** Section 4.6: at most 16 streams wait for a session per connection; the next is rejected with WT_BUFFERED_STREAM_REJECTED. */
     @Test fun negative_bufferedStreamsCapped() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 RawPeer(c).openControl(wtClientSettings)
                 val waiting = (1..WtStreamRouter.MAX_BUFFERED_STREAMS).map { c.wtBidi(4, fin = false) }
@@ -549,8 +550,8 @@ class WtStreamRoutingTest {
 
     @Test fun bufferedStreamDeliveredOnRegister() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -573,8 +574,8 @@ class WtStreamRoutingTest {
     /** The buffer's deadline ends on the router's timer; the test ends the wait itself instead of letting five seconds pass. */
     @Test fun bufferedStreamRejectedAfterTimeout() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val asked = CompletableDeferred<Duration>()
                 val expire = CompletableDeferred<Unit>()
@@ -595,8 +596,8 @@ class WtStreamRoutingTest {
 
     @Test fun streamsOfClosedSessionRejected() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 RawPeer(c).openControl(wtClientSettings)
                 val early = c.wtBidi(4, fin = false)

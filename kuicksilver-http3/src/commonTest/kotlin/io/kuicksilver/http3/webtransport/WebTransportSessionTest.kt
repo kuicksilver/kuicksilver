@@ -5,6 +5,7 @@
 package io.kuicksilver.http3.webtransport
 
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.H3Fixtures
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
@@ -32,8 +33,12 @@ import io.kuicksilver.http3.runtime.readControlFrame
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QlogSink
+import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -80,6 +85,29 @@ internal fun RawPeer.wtConnect(
 
 private val connectOnly = http3Settings { enableConnectProtocol = true }
 
+/** The frame types the client's qlog shows it sent. */
+internal class SentFrameTypes : QlogSink {
+    /** Written on the endpoint loop only, read by the test. */
+    @kotlin.concurrent.Volatile var types: Set<String> = emptySet()
+
+    override fun open(
+        odcidHex: String,
+        role: TlsRole,
+    ): QlogTrace? =
+        if (role != TlsRole.Client) {
+            null
+        } else {
+            object : QlogTrace {
+                override fun write(record: String) {
+                    if ("packet_sent" !in record) return
+                    types = types + Regex("\"frame_type\":\"([a-z_]+)\"").findAll(record).map { it.groupValues[1] }
+                }
+
+                override fun close() {}
+            }
+        }
+}
+
 /** The server stopped our side of [st] with H3_MESSAGE_ERROR (a malformed request, RFC 9114 section 4.1.2): writes fail with it. */
 private suspend fun assertMessageErrorStop(st: QuicStream) =
     peerStopped(Http3ErrorCode.MESSAGE_ERROR) {
@@ -116,8 +144,8 @@ class WebTransportSessionTest {
     /** Browsers send draft-02's token and field; the server answers 200 with the field Chrome checks. */
     @Test fun establishLegacyTokenAccepted() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -137,8 +165,8 @@ class WebTransportSessionTest {
 
     @Test fun clientUsesLegacyTokenForDraft02Server() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val raw = RawPeer(s)
                 raw.openControl(
                     listOf(
@@ -162,8 +190,8 @@ class WebTransportSessionTest {
     /** Section 5.1: without flow control a connection has one session; a second CONNECT is refused before the application. */
     @Test fun negative_secondSessionRejected() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -207,8 +235,8 @@ class WebTransportSessionTest {
     /** A session whose CONNECT stream ended frees the connection's slot, and its late streams are rejected. */
     @Test fun endedSessionFreesTheSlot() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -240,8 +268,8 @@ class WebTransportSessionTest {
      */
     @Test fun exchangeEndBeforeTheReaderSawFinIsACleanClose() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -291,8 +319,8 @@ class WebTransportSessionTest {
     /** Section 3.3: a `WT-Protocol` the client did not offer closes the session with WT_ALPN_ERROR. */
     @Test fun negative_wtProtocolOutsideOfferIsAlpnError() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val raw = RawPeer(s)
                 raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
                 val client = Http3Connection.client(c, wtOn)
@@ -311,8 +339,8 @@ class WebTransportSessionTest {
     /** The client sends no CONNECT before the server's SETTINGS: it must know which draft the server speaks. */
     @Test fun wtBeforeServerSettingsWaits() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val client = Http3Connection.client(c, wtOn)
                 val waiting = CompletableDeferred<Unit>()
                 client.session.wtTimer = {
@@ -349,8 +377,8 @@ class WebTransportSessionTest {
     /** Sections 3.1, 7.1: the server waits for the client's SETTINGS, and not forever; without them the request is malformed. */
     @Test fun negative_acceptWithoutClientSettingsFails() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val asked = CompletableDeferred<Duration>()
                 server.session.wtTimer = { asked.complete(it) } // the deadline passes at once
@@ -367,8 +395,8 @@ class WebTransportSessionTest {
 
     @Test fun negative_acceptWithoutClientDatagramsIs400() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(listOf(SettingsId.WT_ENABLED to 1L))
@@ -387,9 +415,64 @@ class WebTransportSessionTest {
      */
     @Test fun negative_wtWithoutServerResetStreamAtFails() =
         h3Test {
-            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = QuicConfig.Default).useScoped { p ->
-                val e = assertFailsWith<Http3Exception.Settings> { p.client.webTransport(wtReq()) }
+            QuicPair.open(QuicConfig.Default).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                // a draft-16 server only: no draft-02 to fall back to
+                RawPeer(s).openControl(
+                    listOf(
+                        SettingsId.ENABLE_CONNECT_PROTOCOL to 1L,
+                        SettingsId.H3_DATAGRAM to 1L,
+                        SettingsId.WT_ENABLED to 1L,
+                    ),
+                )
+                val client = Http3Connection.client(c, wtOn)
+                val e = assertFailsWith<Http3Exception.Settings> { client.webTransport(wtReq()) }
                 assertTrue("reset_stream_at" in e.message.orEmpty(), e.message)
+            }
+        }
+
+    /**
+     * Both sides announce draft-16 and draft-02, and neither has `reset_stream_at`: draft-16 cannot run (section 3.1), so
+     * the session is draft-02, the highest version both can run, and its streams are reset with RESET_STREAM (draft-02
+     * predates RESET_STREAM_AT; section 4.4 binds draft-14 and later).
+     */
+    @Test fun withoutResetStreamAtBothSidesFallBackToDraft02() =
+        h3Test {
+            val frames = SentFrameTypes()
+            H3Pair
+                .open(
+                    clientSettings = wtOn,
+                    serverSettings = wtOn,
+                    serverQuic = QuicConfig.Default,
+                    clientQuic = quicConfig { qlog = frames },
+                ).useScoped { p ->
+                    val (client, server) = sessions(p)
+                    assertEquals("1", server.headers[WtTokens.DRAFT02_REQUEST_FIELD])
+                    val out = client.openUni()
+                    out.output.writeFully("x".encodeToByteArray())
+                    out.output.flush()
+                    val st = withTimeout(5.seconds) { server.acceptUni() }
+                    out.reset(5)
+                    assertEquals(5L, causeOf<WebTransportException.StreamReset> { withTimeout(5.seconds) { st.input.readAllBytes() } }.code)
+                    assertTrue("reset_stream" in frames.types, "${frames.types}")
+                    assertFalse("reset_stream_at" in frames.types, "${frames.types}")
+                }
+        }
+
+    /** The same fallback seen from the server: a client of draft-16 and draft-02 without `reset_stream_at` gets draft-02. */
+    @Test fun draft16And02ClientWithoutResetStreamAtIsAcceptedAsDraft02() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(QuicConfig.Default)
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                launch { server.acceptRequest().acceptWebTransport() }
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st, WtTokens.LEGACY, WtTokens.DRAFT02_REQUEST_FIELD to "1"))
+                st.output.flush()
+                assertEquals("200", readHeaders(st)[":status"])
+                assertEquals(WtVersion.Draft16, server.session.peerWtVersion()) // announced, but not runnable here
             }
         }
 
@@ -401,7 +484,7 @@ class WebTransportSessionTest {
     @Test fun negative_acceptWithoutClientResetStreamAtIsMalformed() =
         h3Test {
             for (version in listOf(SettingsId.WT_ENABLED, SettingsId.WT_MAX_SESSIONS_DRAFT14)) {
-                QuicPair.open().useScoped { q ->
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
                     val (c, s) = q.connect(QuicConfig.Default)
                     val server = Http3Connection.server(s, wtOn)
                     val raw = RawPeer(c)
@@ -424,7 +507,7 @@ class WebTransportSessionTest {
      */
     @Test fun draft02ClientWithoutResetStreamAtIsAccepted() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val (c, s) = q.connect(QuicConfig.Default)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
@@ -443,8 +526,8 @@ class WebTransportSessionTest {
      */
     @Test fun negative_acceptWithoutClientWtSettingIsMalformed() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
@@ -462,8 +545,8 @@ class WebTransportSessionTest {
     /** The answer to the CONNECT has a deadline too: an unanswered CONNECT is reset and the call fails. */
     @Test fun negative_unansweredConnectTimesOut() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val raw = RawPeer(s)
                 raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
                 val client = Http3Connection.client(c, wtOn)
@@ -484,8 +567,8 @@ class WebTransportSessionTest {
     /** Section 3.3: a `WT-Protocol` that is no Structured Field String is ignored, as if absent. */
     @Test fun malformedWtProtocolIsIgnored() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val raw = RawPeer(s)
                 raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
                 val client = Http3Connection.client(c, wtOn)
@@ -502,8 +585,8 @@ class WebTransportSessionTest {
     /** The WebTransport token without our setting is an ordinary Extended CONNECT, left to the application. */
     @Test fun tokenWithoutSettingIsPlainConnect() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, connectOnly)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -524,8 +607,8 @@ class WebTransportSessionTest {
     @Test fun tokenMatchedCaseInsensitively() =
         h3Test {
             for (token in listOf("WebTransport-H3", "WEBTRANSPORT")) {
-                QuicPair.open().useScoped { q ->
-                    val (c, s) = q.connect()
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
                     val server = Http3Connection.server(s, wtOn)
                     val raw = RawPeer(c)
                     raw.openControl(wtClientSettings)
@@ -541,8 +624,8 @@ class WebTransportSessionTest {
     /** A stream that came before its session's CONNECT was accepted waits, then reaches the session (section 4.6). */
     @Test fun bufferedStreamDeliveredOnAccept() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
@@ -567,8 +650,8 @@ private suspend fun kotlinx.coroutines.flow.StateFlow<Int>.awaitValue(n: Int) {
     /** RFC 9297 section 3.2: a CONNECT with content-type rules out capsules: 400, never 200 and then a reset. */
     @Test fun negative_capsuleIncompatibleRequestIs400() =
         h3Test {
-            QuicPair.open().useScoped { q ->
-                val (c, s) = q.connect()
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)

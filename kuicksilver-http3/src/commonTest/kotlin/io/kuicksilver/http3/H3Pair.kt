@@ -118,10 +118,7 @@ internal class MemoryIo(
 internal object H3Fixtures {
     val testCa = Certificate(TestCerts.testCa)
 
-    /**
-     * The transport of the test pairs: `reset_stream_at` on, as WebTransport needs it on both sides (draft-ietf-webtrans-http3-16
-     * section 3.1); it changes nothing for a connection that never resets a stream with RESET_STREAM_AT.
-     */
+    /** The transport of WebTransport tests: `reset_stream_at` on, as draft-14 and later need it on both sides (draft-16 section 3.1). */
     val quic: QuicConfig = io.kuicksilver.quic.quicConfig { resetStreamAt = true }
 
     fun client(alpn: String = "h3"): TlsConfig =
@@ -152,7 +149,7 @@ internal class QuicPair private constructor(
         server.close()
     }
 
-    suspend fun connect(clientQuic: QuicConfig = H3Fixtures.quic): Pair<QuicConnection, QuicConnection> =
+    suspend fun connect(clientQuic: QuicConfig = QuicConfig.Default): Pair<QuicConnection, QuicConnection> =
         coroutineScope {
             val accepted = async { server.accept() }
             val c = client.connect(server.localAddress, QuicClientConfig.Builder(H3Fixtures.client()).apply { quic = clientQuic }.build())
@@ -160,7 +157,7 @@ internal class QuicPair private constructor(
         }
 
     companion object {
-        suspend fun open(serverQuic: QuicConfig = H3Fixtures.quic): QuicPair {
+        suspend fun open(serverQuic: QuicConfig = QuicConfig.Default): QuicPair {
             val net = MemoryNet()
             val a = net.open(InetSocketAddress("10.0.0.1", 1111))
             val b = net.open(InetSocketAddress("10.0.0.2", 443))
@@ -207,8 +204,9 @@ internal class H3Pair(
         suspend fun open(
             clientSettings: Http3Settings = Http3Settings.Default,
             serverSettings: Http3Settings = Http3Settings.Default,
-            serverQuic: QuicConfig = H3Fixtures.quic,
-            clientQuic: QuicConfig = H3Fixtures.quic,
+            // WebTransport needs reset_stream_at; every other pair keeps the default transport
+            serverQuic: QuicConfig = if (serverSettings.webTransport) H3Fixtures.quic else QuicConfig.Default,
+            clientQuic: QuicConfig = if (clientSettings.webTransport) H3Fixtures.quic else QuicConfig.Default,
         ): H3Pair {
             val q = QuicPair.open(serverQuic)
             val (c, s) = q.connect(clientQuic)
