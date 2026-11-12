@@ -9,6 +9,9 @@ import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.writeFully
 import io.ktor.websocket.ProtocolViolationException
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.ktor.network.websocket.DeflateDataException
+import io.kuicksilver.ktor.network.websocket.INFLATE_CHUNK
+import io.kuicksilver.ktor.network.websocket.MessageInflater
 import io.kuicksilver.tls.KslCrypto
 import kotlinx.io.Buffer
 import kotlinx.io.Sink
@@ -27,43 +30,64 @@ import kotlinx.io.readTo
  * - a Close frame whose code an endpoint may not send ([isValidCloseCode]: 1005, 1006 and 1015 "MUST NOT be set as a
  *   status code in a Close control frame", section 7.4.1) goes out without a body, which means no status code; a reason
  *   that is not UTF-8 (section 5.5.1) is dropped and the code kept.
- * - a text message that no extension transformed (no RSV bit on its first frame) must be UTF-8 as a whole (section
- *   5.6: "the whole message MUST contain valid UTF-8"): Ktor's `Frame.Text(String)` always is, but `Frame.Text(fin,
- *   ByteArray)` carries the application's bytes. At the first byte that cannot be UTF-8, or a message that ends inside a
- *   character, nothing more is sent: [output] is cancelled (the connection is reset, as when the transport fails) and
- *   the write fails with Ktor's `ProtocolViolationException`, so the peer never receives the message whole.
+ * - with [checkText] (`webSocketTextCheckable`: no extension but permessage-deflate), a text message must be UTF-8 as a
+ *   whole (section 5.6: "the whole message MUST contain valid UTF-8"): Ktor's `Frame.Text(String)` always is, but
+ *   `Frame.Text(fin, ByteArray)` carries the application's bytes. An uncompressed message is checked as it passes; with
+ *   [inflateSent] (permessage-deflate negotiated through an extension that does not check its input itself, Ktor's
+ *   `WebSocketDeflateExtension`) each compressed frame is inflated on the side and its text checked (RFC 7692 section 6:
+ *   after decompression the payload is "subject to the constraints for the original data type again"); this library's
+ *   `PerMessageDeflate` checks before it compresses. At the first byte that cannot be UTF-8, or a message that ends
+ *   inside a character, nothing more is sent: [output] is cancelled (the connection is reset, as when the transport
+ *   fails) and the write fails with Ktor's `ProtocolViolationException`, so the peer never receives the message whole.
  *
  * The frames are rewritten as they pass, in the writer's own coroutine: what Ktor's writer flushed is on [output] when
  * its flush returns, so closing or resetting [output] after the session ended loses nothing. Only a frame header (at
- * most 14 bytes) and a Close frame (at most 139) wait for their last byte here.
+ * most 14 bytes) and a Close frame (at most 139) wait for their last byte here. The side inflater's zlib state is freed
+ * when the writer closes the channel ([ByteWriteChannel.flushAndClose], which Ktor's writers always call last).
  */
 @InternalKuicksilverApi
 public fun guardWebSocketOutput(
     output: ByteWriteChannel,
     masking: Boolean,
-): ByteWriteChannel = OutputGuard(output, masking)
+    checkText: Boolean = true,
+    inflateSent: Boolean = false,
+): ByteWriteChannel = OutputGuard(output, masking, checkText, inflateSent)
 
 private class OutputGuard(
     private val output: ByteWriteChannel,
     private val masking: Boolean,
+    private val checkText: Boolean,
+    inflateSent: Boolean,
 ) : ByteWriteChannel {
     private val staged = Buffer()
     private val chunk = ByteArray(CHUNK)
     private val header = ByteArray(MAX_HEADER)
+    private val wireHeader = ByteArray(MAX_HEADER)
     private var headerLength = 0
-    private var close: ByteArray? = null
+    private val closeBuffer = ByteArray(MAX_CONTROL.toInt())
+    private var closeSize = -1 // -1: no Close being collected
     private var closeLength = 0
 
     // the frame being handed on
     private var payloadLeft = -1L // -1: reading a header
     private var position = 0L
-    private var ktorMask: ByteArray? = null
+    private val ktorMask = ByteArray(4)
+    private var ktorMasked = false
     private val wireMask = ByteArray(4)
+    private var dataFrame = false
+    private var fin = false
+    private var inflating = false // this frame is compressed and inflated on the side
+
+    // the message being handed on
     private var inMessage = false
     private val text = Utf8Validator()
     private var checkingText = false
-    private var failure: Throwable? = null
 
+    // side inflation of compressed text (inflateSent): a window kept across messages reads a sender that keeps it or not
+    private val sideInflater: MessageInflater? = if (inflateSent) MessageInflater(noContextTakeover = false, Long.MAX_VALUE) else null
+    private var inflated: ByteArray? = null
+
+    private var failure: Throwable? = null
     private var keys = ByteArray(0)
     private var keyAt = 0
 
@@ -80,9 +104,13 @@ private class OutputGuard(
     }
 
     override suspend fun flushAndClose() {
-        if (failure != null) return // the output was cancelled
-        process()
-        output.flushAndClose()
+        try {
+            if (failure != null) return // the output was cancelled
+            process()
+            output.flushAndClose()
+        } finally {
+            sideInflater?.close()
+        }
     }
 
     override fun cancel(cause: Throwable?) {
@@ -92,7 +120,7 @@ private class OutputGuard(
     private suspend fun process() {
         while (!staged.exhausted()) {
             when {
-                close != null -> closeBody()
+                closeSize >= 0 -> closeBody()
                 payloadLeft < 0 -> headerByte()
                 else -> payload()
             }
@@ -117,12 +145,13 @@ private class OutputGuard(
             length = 0
             for (i in 2 until 2 + lengthBytes) length = (length shl 8) or (header[i].toLong() and 0xff)
         }
-        ktorMask = if (maskBytes > 0) header.copyOfRange(2 + lengthBytes, 2 + lengthBytes + 4) else null
+        ktorMasked = maskBytes > 0
+        if (ktorMasked) header.copyInto(ktorMask, 0, 2 + lengthBytes, 2 + lengthBytes + 4)
         headerLength = 0
         val b0 = header[0].toInt() and 0xff
         val opcode = b0 and 0x0f
         if (opcode == OPCODE_CLOSE && length <= MAX_CONTROL) { // Ktor's Frame.Close holds at most 125 bytes
-            close = ByteArray(length.toInt())
+            closeSize = length.toInt()
             closeLength = 0
             if (length == 0L) closeBody()
             return
@@ -133,34 +162,21 @@ private class OutputGuard(
             if (inMessage) {
                 first = first and 0x0f.inv()
             } else {
-                checkingText = opcode == OPCODE_TEXT && b0 and WS_RSV_ALL == 0
+                // an RSV bit other than permessage-deflate's: an extension's payload, not text to check
+                checkingText = checkText && opcode == OPCODE_TEXT && b0 and (WS_RSV2 or WS_RSV3) == 0 &&
+                    (b0 and WS_RSV1 == 0 || sideInflater != null)
                 text.reset()
             }
             inMessage = b0 and 0x80 == 0
             fin = !inMessage
             dataFrame = true
+            inflating = checkingText && b0 and WS_RSV1 != 0 && sideInflater != null
         } else {
             dataFrame = false
+            inflating = false
         }
         start(first, length)
         if (payloadLeft < 0) endOfPayload()
-    }
-
-    // the frame being handed on is a data frame, and the last of its message
-    private var dataFrame = false
-    private var fin = false
-
-    /** The end of a frame's payload: a text message must end between characters (RFC 6455 section 5.6). */
-    private fun endOfPayload() {
-        if (dataFrame && fin && checkingText && !text.complete) throw notUtf8()
-    }
-
-    private fun notUtf8(): Throwable {
-        val e = ProtocolViolationException("a text message that is not UTF-8 (RFC 6455 section 5.6) was not sent")
-        failure = e
-        staged.clear()
-        output.cancel(e)
-        return e
     }
 
     /** Sends the header of a frame of [length] payload bytes whose first byte is [b0], with a fresh key when masking. */
@@ -168,7 +184,7 @@ private class OutputGuard(
         b0: Int,
         length: Long,
     ) {
-        val h = ByteArray(MAX_HEADER)
+        val h = wireHeader
         var n = 0
         h[n++] = b0.toByte()
         val m = if (masking) 0x80 else 0
@@ -199,12 +215,18 @@ private class OutputGuard(
         if (length == 0L) payloadLeft = -1
     }
 
-    /** Payload bytes of the current frame: Ktor's mask removed, ours applied. */
+    /** Payload bytes of the current frame: Ktor's mask removed, the text checked, ours applied. */
     private suspend fun payload() {
         val n = minOf(payloadLeft, staged.size, chunk.size.toLong()).toInt()
         staged.readTo(chunk, 0, n)
-        ktorMask?.let { unmask(chunk, n, it, position) }
-        if (dataFrame && checkingText && !text.feed(chunk, 0, n)) throw notUtf8()
+        if (ktorMasked) unmask(chunk, n, ktorMask, position)
+        if (dataFrame && checkingText) {
+            if (inflating) {
+                inflateSide(chunk, n)
+            } else if (!text.feed(chunk, 0, n)) {
+                throw notUtf8()
+            }
+        }
         if (masking) unmask(chunk, n, wireMask, position)
         output.writeFully(chunk, 0, n)
         position += n
@@ -215,25 +237,78 @@ private class OutputGuard(
         }
     }
 
+    /** The end of a frame's payload: a compressed frame's data ends; a text message must end between characters. */
+    private fun endOfPayload() {
+        if (inflating) {
+            val i = sideInflater!!
+            guardSide {
+                i.endOfMessage()
+                drainSide(i)
+                i.messageDone()
+            }
+        }
+        if (dataFrame && fin && checkingText && !text.complete) throw notUtf8()
+    }
+
+    /** [length] compressed bytes of the frame: inflated on the side and their text checked; nothing of it is kept. */
+    private fun inflateSide(
+        bytes: ByteArray,
+        length: Int,
+    ) {
+        val i = sideInflater!!
+        guardSide {
+            i.input(bytes, 0, length)
+            drainSide(i)
+        }
+    }
+
+    private fun drainSide(i: MessageInflater) {
+        val o = inflated ?: ByteArray(INFLATE_CHUNK).also { inflated = it }
+        while (true) {
+            val n = i.read(o, 0, o.size)
+            if (n == 0) return
+            if (!text.feed(o, 0, n)) throw notUtf8()
+        }
+    }
+
+    /** Data the extension compressed that does not inflate is the extension's matter: such a message is not checked. */
+    private inline fun guardSide(block: () -> Unit) {
+        try {
+            block()
+        } catch (_: DeflateDataException) {
+            checkingText = false
+            inflating = false
+        }
+    }
+
+    private fun notUtf8(): Throwable {
+        val e = ProtocolViolationException("a text message that is not UTF-8 (RFC 6455 section 5.6) was not sent")
+        failure = e
+        staged.clear()
+        output.cancel(e)
+        return e
+    }
+
     /** Collects a Close frame's body; once whole, sends the Close with what of it an endpoint may send. */
     private suspend fun closeBody() {
-        val body = close!!
-        val n = minOf((body.size - closeLength).toLong(), staged.size).toInt()
+        val body = closeBuffer
+        val n = minOf((closeSize - closeLength).toLong(), staged.size).toInt()
         staged.readTo(body, closeLength, closeLength + n)
         closeLength += n
-        if (closeLength < body.size) return
-        close = null
-        ktorMask?.let { unmask(body, body.size, it, 0) }
+        if (closeLength < closeSize) return
+        val size = closeSize
+        closeSize = -1
+        if (ktorMasked) unmask(body, size, ktorMask, 0)
         val sent =
             when {
-                body.size < 2 -> ByteArray(0)
-                !isValidCloseCode(((body[0].toInt() and 0xff) shl 8) or (body[1].toInt() and 0xff)) -> ByteArray(0)
-                !isUtf8(body, 2, body.size) -> body.copyOf(2)
-                else -> body
+                size < 2 -> 0
+                !isValidCloseCode(((body[0].toInt() and 0xff) shl 8) or (body[1].toInt() and 0xff)) -> 0
+                !isUtf8(body, 2, size) -> 2
+                else -> size
             }
-        start(0x80 or OPCODE_CLOSE, sent.size.toLong())
-        if (masking) unmask(sent, sent.size, wireMask, 0)
-        if (sent.isNotEmpty()) output.writeFully(sent)
+        start(0x80 or OPCODE_CLOSE, sent.toLong())
+        if (masking) unmask(body, sent, wireMask, 0)
+        if (sent > 0) output.writeFully(body, 0, sent)
         payloadLeft = -1
     }
 

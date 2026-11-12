@@ -18,8 +18,22 @@ internal class Utf8Validator {
         offset: Int,
         length: Int,
     ): Boolean {
-        for (i in offset until offset + length) {
-            val c = bytes[i].toInt() and 0xff
+        val end = offset + length
+        var i = offset
+        while (i < end) {
+            if (need == 0) {
+                // ASCII runs, eight bytes at a time
+                while (i + 8 <= end &&
+                    (
+                        bytes[i].toInt() or bytes[i + 1].toInt() or bytes[i + 2].toInt() or bytes[i + 3].toInt() or
+                            bytes[i + 4].toInt() or bytes[i + 5].toInt() or bytes[i + 6].toInt() or bytes[i + 7].toInt()
+                    ) and 0x80 == 0
+                ) {
+                    i += 8
+                }
+                if (i == end) break
+            }
+            val c = bytes[i++].toInt() and 0xff
             if (need == 0) {
                 if (c < 0x80) continue
                 when (c) {

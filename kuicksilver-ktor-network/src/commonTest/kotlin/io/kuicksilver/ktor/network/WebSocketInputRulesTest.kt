@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.network
 
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.writeByte
 import io.ktor.utils.io.writeFully
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketExtension
@@ -18,6 +19,7 @@ import io.kuicksilver.ktor.network.WsTestFrames.header
 import io.kuicksilver.ktor.network.websocket.WebSocketInflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -208,6 +210,76 @@ class WebSocketInputRulesTest {
             assertEquals(0x88, out.last().b0)
             assertEquals(1002, out.last().closeCode)
         }
+
+    // ---------------------------------------------------------------- RFC 6455 section 5.2: minimal length encoding
+
+    /** "the minimal number of bytes MUST be used to encode the length" (section 5.2; section 10.7 lets the receiver fail). */
+    @Test fun negative_nonMinimalLengthClosesWith1002() {
+        val sixteenBitFor5 = bytes(0x82, 126, 0, 5) + ByteArray(5)
+        val sixtyFourBitFor65535 = bytes(0x82, 127, 0, 0, 0, 0, 0, 0, 0xff, 0xff)
+        for (bad in listOf(sixteenBitFor5, sixtyFourBitFor65535)) {
+            guarded(bad, maxMessageSize = 1L shl 20) { out -> assertEquals(1002, out.single().closeCode) }
+        }
+        guarded(header(0x82, 126) + ByteArray(126) + header(0x82, 65536) + ByteArray(65536), maxMessageSize = 1L shl 20) { out ->
+            assertEquals(listOf(126, 65536), out.map { it.payload.size }, "minimal encodings pass")
+        }
+    }
+
+    // ---------------------------------------------------------------- compressed frames: the compressed bound from the header
+
+    /**
+     * A compressed frame whose header claims more than the message's compressed bound (8 times the limit plus 64 KiB) is
+     * refused with 1009 from its header: nothing of it is read (here nothing of it is even sent).
+     */
+    @Test fun negative_compressedFrameOverTheCompressedBoundClosesWith1009FromItsHeader() =
+        guarded(
+            header(0xC2, 8 * 100 + 65536 + 1L),
+            maxMessageSize = 1L shl 20,
+            allowedRsv = WS_RSV1,
+            perMessageDeflate = true,
+            inflate = WebSocketInflate(noContextTakeover = false, maxMessageSize = 100),
+        ) { out ->
+            assertEquals(1009, out.single().closeCode)
+        }
+
+    // ---------------------------------------------------------------- input in any pieces; text re-framing
+
+    /** The same frames fed one byte at a time (split headers, masks and payloads) come out as fed whole. */
+    @Test fun inputFedByteByByte() =
+        runTest {
+            val input =
+                frame(0x01, "a\u20ac".encodeToByteArray().copyOf(3), mask) + frame(0x89, bytes(7), mask) +
+                    frame(0x80, "a\u20ac".encodeToByteArray().copyOfRange(3, 4), mask) + frame(0x82, ByteArray(300) { it.toByte() }, mask) +
+                    close(1000, "ok".encodeToByteArray(), mask)
+            val raw = ByteChannel()
+            launch {
+                for (b in input) {
+                    raw.writeByte(b)
+                    raw.flush()
+                    yield()
+                }
+                raw.flushAndClose()
+            }
+            val out = frames(guardWebSocketInput(raw, 0, untilClose = false, peerMasks = true, context = coroutineContext))
+            assertEquals("a\u20ac", out.filter { it.opcode <= 1 }.fold(ByteArray(0)) { a, f -> a + f.payload }.decodeToString())
+            assertContentEquals(ByteArray(300) { it.toByte() }, out.single { it.opcode == 2 }.payload)
+            assertEquals(1, out.count { it.opcode == 9 })
+            assertEquals(1000, out.last().closeCode)
+        }
+
+    /**
+     * A checked text frame is handed on in frames of at most 64 KiB, the first with its opcode and the rest continuations;
+     * a character split where the guard's 16 KiB reads split the payload passes.
+     */
+    @Test fun checkedTextIsReframedInPiecesOf64KiB() {
+        val text = ByteArray(2 * 65536 + 100) { 'x'.code.toByte() }
+        "\u20ac".encodeToByteArray().copyInto(text, 16 * 1024 - 1) // the read boundary falls inside it
+        guarded(frame(0x81, text, mask), peerMasks = true, maxMessageSize = 1L shl 20) { out ->
+            assertEquals(listOf(65536, 65536, 100), out.map { it.payload.size })
+            assertEquals(listOf(0x01, 0x00, 0x80), out.map { it.b0 })
+            assertContentEquals(text, out.fold(ByteArray(0)) { a, f -> a + f.payload })
+        }
+    }
 
     // ---------------------------------------------------------------- RFC 7692 section 6.1 beside another extension
 

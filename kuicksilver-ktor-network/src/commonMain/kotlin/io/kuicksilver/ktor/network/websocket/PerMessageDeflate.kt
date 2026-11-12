@@ -380,6 +380,38 @@ public class WebSocketInflate(
 )
 
 /**
+ * What the `permessage-deflate` element of a handshake's answer ([responseValues], the `Sec-WebSocket-Extensions` values
+ * of the 101 or of the RFC 9220 2xx) means for the frames that arrive, whichever implementation negotiated it (this
+ * library's [PerMessageDeflate] or Ktor's own `WebSocketDeflateExtension`), so that Kuicksilver's engines decompress
+ * every permessage-deflate message themselves (RFC 7692 section 6: "the payload data portion after decompression is
+ * subject to the constraints for the original data type again"). The peer's `*_no_context_takeover` ([client]: the
+ * server's) decides whether its messages share a window; any window size is read with a 32 KiB one. Null when the
+ * answer has no `permessage-deflate`; one that is repeated or has a malformed or unknown parameter fails with
+ * [ProtocolViolationException] (RFC 7692 section 7: such an answer fails the connection).
+ */
+@InternalKuicksilverApi
+public fun negotiatedWebSocketInflate(
+    responseValues: List<String>,
+    client: Boolean,
+    maxMessageSize: Long,
+): WebSocketInflate? {
+    val accepted =
+        responseValues
+            .flatMap { parseWebSocketExtensions(it) }
+            .filter { it.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true) }
+    if (accepted.isEmpty()) return null
+    if (accepted.size >
+        1
+    ) {
+        throw ProtocolViolationException("Invalid permessage-deflate response: the extension was accepted ${accepted.size} times")
+    }
+    val p =
+        parseParameters(accepted.single(), response = true)
+            ?: throw ProtocolViolationException("Invalid permessage-deflate response: an unknown, repeated or malformed parameter")
+    return WebSocketInflate(if (client) p.serverNoContextTakeover else p.clientNoContextTakeover, maxMessageSize)
+}
+
+/**
  * The WebSocket extensions in [Attributes]: the ones Ktor's client plugin installed for a request, or the ones Ktor's server
  * plugin negotiated for a call. Ktor keeps them under an attribute of its own; this looks for them by type, not by Ktor's
  * key.

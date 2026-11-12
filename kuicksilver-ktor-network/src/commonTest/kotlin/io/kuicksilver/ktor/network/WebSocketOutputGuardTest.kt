@@ -39,10 +39,12 @@ class WebSocketOutputGuardTest {
     /** What [write] wrote through the guard, as frames on the wire. */
     private suspend fun CoroutineScope.sent(
         masking: Boolean,
+        checkText: Boolean = true,
+        inflateSent: Boolean = false,
         write: suspend (io.ktor.utils.io.ByteWriteChannel) -> Unit,
     ): List<Wire> {
         val wire = ByteChannel()
-        val guarded = guardWebSocketOutput(wire, masking)
+        val guarded = guardWebSocketOutput(wire, masking, checkText, inflateSent)
         launch {
             write(guarded)
             guarded.flushAndClose()
@@ -174,5 +176,57 @@ class WebSocketOutputGuardTest {
                     }
                 }
             assertContentEquals(ByteArray(70_000) { it.toByte() }, out.single().payload)
+        }
+
+    /**
+     * An application's own extension (no RSV bit, `checkText` false from the handshake) may carry any payload in a text
+     * frame: the guard does not check it, as the input guard does not.
+     */
+    @Test fun textOfAnApplicationExtensionIsNotChecked() =
+        runTest {
+            val out = sent(masking = true, checkText = false) { w -> w.writeFully(frame(0x81, bytes(0xC0, 0xAF))) }
+            assertContentEquals(bytes(0xC0, 0xAF), out.single().payload)
+        }
+
+    /**
+     * RFC 7692 section 6 with an extension that does not check what it compresses (Ktor's `WebSocketDeflateExtension`,
+     * which sets RSV1 on every frame it compresses): each compressed frame is inflated on the side, the window kept
+     * across messages, and a message that is not UTF-8 is not sent whole.
+     */
+    @Test fun negative_compressedTextOfAnotherExtensionIsChecked() =
+        runTest {
+            // a stored block, then the 0x00 a sync flush leaves once its 0x00 0x00 0xff 0xff is removed (RFC 7692 section 7.2.1)
+            val stored = { data: ByteArray -> bytes(0x00, data.size, 0, data.size.inv() and 0xff, 0xff) + data + bytes(0x00) }
+            val ok =
+                sent(masking = true, inflateSent = true) { w ->
+                    w.writeFully(frame(0xC1, stored("caf".encodeToByteArray())))
+                    w.writeFully(frame(0xC1, stored(bytes(0xC3, 0xA9))))
+                }
+            assertEquals(2, ok.size, "valid compressed text passes")
+            val wire = ByteChannel()
+            val guarded = guardWebSocketOutput(wire, masking = true, inflateSent = true)
+            guarded.writeFully(frame(0xC1, stored(bytes(0xC0, 0xAF))))
+            assertFails { guarded.flush() }
+            assertNotNull(wire.closedCause)
+            guarded.flushAndClose()
+        }
+
+    /** Frames written one byte per flush (headers, keys and payloads split anywhere) come out as written whole. */
+    @Test fun outputWrittenByteByByte() =
+        runTest {
+            val input =
+                frame(0x01, bytes(0x61, 0xE2), bytes(1, 2, 3, 4)) + frame(0x89, bytes(9)) + frame(0x81, bytes(0x82, 0xAC)) +
+                    frame(0x82, ByteArray(300) { it.toByte() }) + close(1000, "ok".encodeToByteArray())
+            val out =
+                sent(masking = true) { w ->
+                    for (b in input) {
+                        w.writeFully(byteArrayOf(b))
+                        w.flush()
+                    }
+                }
+            assertEquals(listOf(0x01, 0x89, 0x80, 0x82, 0x88), out.map { it.b0 })
+            assertEquals("a\u20ac", (out[0].payload + out[2].payload).decodeToString())
+            assertContentEquals(ByteArray(300) { it.toByte() }, out[3].payload)
+            assertEquals(1000, out[4].closeCode)
         }
 }

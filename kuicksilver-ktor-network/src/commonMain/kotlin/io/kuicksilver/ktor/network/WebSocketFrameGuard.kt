@@ -136,16 +136,17 @@ public fun negotiatedPerMessageDeflate(
 ): Boolean = PERMESSAGE_DEFLATE in offered && PERMESSAGE_DEFLATE in accepted
 
 /**
- * Whether the payload of the peer's text messages is the text its application sent, which the frame guard can check is
- * UTF-8 (RFC 6455 section 8.1): no extension was agreed, or only `permessage-deflate` that the guard decompresses itself
- * ([inflating]). Any other extension may transform the payload in a way the engine does not know.
+ * Whether the payload of text messages, once the engines have decompressed a `permessage-deflate` message themselves
+ * (`negotiatedWebSocketInflate`), is the text an application sent, which the guards check is UTF-8 (RFC 6455 sections
+ * 5.6 and 8.1): no extension was agreed, or only `permessage-deflate`, whichever implementation. Another extension is
+ * the application's own: its specification, not RFC 6455, defines what its payload is, and a payload it transforms
+ * without an RSV bit is not touched.
  */
 @InternalKuicksilverApi
 public fun webSocketTextCheckable(
     offered: List<String>,
     accepted: List<String>,
-    inflating: Boolean,
-): Boolean = accepted.filter { it in offered }.all { it == PERMESSAGE_DEFLATE && inflating }
+): Boolean = accepted.filter { it in offered }.all { it == PERMESSAGE_DEFLATE }
 
 private fun WebSocketExtensionFactory<*, *>.rsvBits(): Int =
     (if (rsv1) WS_RSV1 else 0) or (if (rsv2) WS_RSV2 else 0) or (if (rsv3) WS_RSV3 else 0)
@@ -171,14 +172,16 @@ public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
  * 1002 (protocol error): an opcode that is not defined (3-7, 11-15); an RSV bit outside [allowedRsv]; with
  * [perMessageDeflate], RSV1 on a continuation or control frame (RFC 7692 section 6.1); a mask bit that does not match
  * [peerMasks] (section 5.1: a client masks every frame, a server none); a 64-bit payload length whose most significant
- * bit is set (section 5.2); a control frame with FIN clear or a payload over 125 bytes (section 5.5); a continuation
+ * bit is set, or a length not in its minimal encoding (section 5.2: "the minimal number of bytes MUST be used to encode
+ * the length", section 10.7); a control frame with FIN clear or a payload over 125 bytes (section 5.5); a continuation
  * frame outside a fragmented message or a new message inside one (section 5.4); a Close frame whose body is 1 byte or
  * whose code an endpoint may not send ([isValidCloseCode], sections 5.5.1 and 7.4).
  *
- * 1009 (message too big, section 10.4): a frame whose header claims more payload than [maxMessageSize], or one that
- * takes its message past it, is refused from its header, before any of its payload is read: Ktor's JVM reader allocates
- * a frame's whole claimed length at once. A compressed message is held to the smaller of [maxMessageSize] and
- * [WebSocketInflate.maxMessageSize], counted inflated.
+ * 1009 (message too big, section 10.4): an uncompressed frame whose header claims more payload than [maxMessageSize], or
+ * one that takes its message past it, is refused from its header, before any of its payload is read: Ktor's JVM reader
+ * allocates a frame's whole claimed length at once. A compressed message is held to the smaller of [maxMessageSize] and
+ * [WebSocketInflate.maxMessageSize], counted as it inflates, and its compressed frames to 8 times that limit plus 64 KiB
+ * in all, from their headers.
  *
  * 1007 (invalid data, sections 5.6 and 8.1): with [checkText] ([webSocketTextCheckable]), a text message that is not
  * UTF-8 as a whole, a sequence split across fragments included; and always a Close reason that is not UTF-8. A text
@@ -194,7 +197,8 @@ public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
  * at the Close frame; its common (Native) reader reads to the end of the stream, so without this a Native session would
  * wait for the peer's FIN, which may trail the Close frame or not come at all.
  *
- * With [inflate] (Kuicksilver's engines with [PerMessageDeflate] negotiated, RFC 7692 section 7.2.2), each message whose
+ * With [inflate] (Kuicksilver's engines with permessage-deflate negotiated, by [PerMessageDeflate] or by Ktor's own
+ * extension, RFC 7692 section 7.2.2), each message whose
  * first frame has RSV1 is decompressed as its frames arrive and handed on as plain frames (no RSV1) of at most 64 KiB
  * each, the first with the message's opcode and the rest continuations, so Ktor's session and the extension see it
  * uncompressed; uncompressed messages and control frames between the fragments pass as they are. A message that inflates
@@ -275,6 +279,9 @@ private class InputGuard(
     private val inflater =
         inflate?.let { MessageInflater(it.noContextTakeover, minOf(it.maxMessageSize, rules.maxMessageSize)) }
     private val header = ByteArray(MAX_HEADER)
+    private val mask = ByteArray(4)
+    private val control = ByteArray(MAX_CONTROL_PAYLOAD.toInt())
+    private val closeBody = ByteArray(MAX_CONTROL_PAYLOAD.toInt())
     private val utf8 = Utf8Validator()
     private var inMessage = false
     private var messageOpcode = 0
@@ -324,14 +331,24 @@ private class InputGuard(
                 length = (length shl 8) or (b.toLong() and 0xff)
             }
         }
-        val maskAt = n
-        if (b1 and 0x80 != 0) repeat(4) { header[n++] = input.readByte() } // masking key
+        val masked = b1 and 0x80 != 0
+        if (masked) {
+            repeat(4) {
+                val b = input.readByte()
+                mask[it] = b
+                header[n++] = b
+            }
+        }
         if (length < 0) throw protocolError("a 64-bit length with its most significant bit set")
-        val mask = if (n > maskAt) header.copyOfRange(maskAt, n) else null
+        // RFC 6455 section 5.2: "the minimal number of bytes MUST be used to encode the length"
+        if ((extended == 2 && length < 126) || (extended == 8 && length <= 0xffff)) {
+            throw protocolError("a payload length of $length not in its minimal encoding")
+        }
+        val frameMask = if (masked) mask else null
         val opcode = b0 and 0x0f
         val fin = b0 and 0x80 != 0
-        if (opcode >= OPCODE_CLOSE) return control(opcode, fin, length, n, mask)
-        data(opcode, fin, b0 and WS_RSV1 != 0, length, n, mask)
+        if (opcode >= OPCODE_CLOSE) return control(opcode, fin, length, n, frameMask)
+        data(opcode, fin, b0 and WS_RSV1 != 0, length, n, frameMask)
         return true
     }
 
@@ -345,26 +362,29 @@ private class InputGuard(
     ): Boolean {
         if (!fin) throw protocolError("a fragmented control frame")
         if (length > MAX_CONTROL_PAYLOAD) throw protocolError("a control frame of $length bytes")
-        val payload = ByteArray(length.toInt())
-        input.readFully(payload, 0, payload.size)
+        val size = length.toInt()
+        input.readFully(control, 0, size)
         if (opcode == OPCODE_CLOSE) {
-            val body = payload.copyOf()
-            if (mask != null) unmask(body, body.size, mask, 0)
-            checkCloseBody(body)
+            control.copyInto(closeBody, 0, 0, size)
+            if (mask != null) unmask(closeBody, size, mask, 0)
+            checkCloseBody(closeBody, size)
         }
         out.writeFully(header, 0, headerLength)
-        out.writeFully(payload)
+        out.writeFully(control, 0, size)
         out.flush()
         return !(rules.untilClose && opcode == OPCODE_CLOSE)
     }
 
     /** RFC 6455 sections 5.5.1, 7.4 and 8.1: no body, or a code an endpoint may send and an optional UTF-8 reason. */
-    private fun checkCloseBody(body: ByteArray) {
-        if (body.isEmpty()) return
-        if (body.size == 1) throw protocolError("a Close frame with a 1-byte body")
+    private fun checkCloseBody(
+        body: ByteArray,
+        size: Int,
+    ) {
+        if (size == 0) return
+        if (size == 1) throw protocolError("a Close frame with a 1-byte body")
         val code = ((body[0].toInt() and 0xff) shl 8) or (body[1].toInt() and 0xff)
         if (!isValidCloseCode(code)) throw protocolError("Close code $code, which an endpoint may not send")
-        if (!isUtf8(body, 2, body.size)) throw FrameRuleException(CLOSE_INVALID_DATA, "Invalid UTF-8 in a Close reason")
+        if (!isUtf8(body, 2, size)) throw FrameRuleException(CLOSE_INVALID_DATA, "Invalid UTF-8 in a Close reason")
     }
 
     private suspend fun data(
@@ -387,7 +407,14 @@ private class InputGuard(
             utf8.reset()
         }
         inMessage = !fin
-        if (compressed) return inflateFrame(length, mask, fin)
+        if (compressed) {
+            // the compressed bytes of a message are bounded too (MessageInflater): a frame past that is refused from its header
+            val room = inflater!!.compressedRoom
+            if (length > room) {
+                throw FrameRuleException(CLOSE_MESSAGE_TOO_BIG, "Message is too big: more than ${inflater.maxCompressed} compressed bytes")
+            }
+            return inflateFrame(length, mask, fin)
+        }
         // RFC 6455 section 10.4, from the header alone: nothing of the payload is read or handed on
         if (length > rules.maxMessageSize - messageBytes) {
             throw FrameRuleException(CLOSE_MESSAGE_TOO_BIG, "Message is too big: more than ${rules.maxMessageSize} bytes")
@@ -530,14 +557,33 @@ private class InputGuard(
     private fun output(): ByteArray = output ?: ByteArray(INFLATE_CHUNK).also { output = it }
 }
 
-/** Unmasks (or masks) the first [length] bytes of [bytes], which start at [position] of the payload, with [mask]. */
+/**
+ * Unmasks (or masks) the first [length] bytes of [bytes], which start at [position] of the payload, with [mask]: four
+ * bytes per step with the key turned to [position].
+ */
 internal fun unmask(
     bytes: ByteArray,
     length: Int,
     mask: ByteArray,
     position: Long,
 ) {
-    for (i in 0 until length) bytes[i] = (bytes[i].toInt() xor mask[((position + i) and 3).toInt()].toInt()).toByte()
+    val at = (position and 3).toInt()
+    val m0 = mask[at].toInt()
+    val m1 = mask[(at + 1) and 3].toInt()
+    val m2 = mask[(at + 2) and 3].toInt()
+    val m3 = mask[(at + 3) and 3].toInt()
+    var i = 0
+    val words = length and 3.inv()
+    while (i < words) {
+        bytes[i] = (bytes[i].toInt() xor m0).toByte()
+        bytes[i + 1] = (bytes[i + 1].toInt() xor m1).toByte()
+        bytes[i + 2] = (bytes[i + 2].toInt() xor m2).toByte()
+        bytes[i + 3] = (bytes[i + 3].toInt() xor m3).toByte()
+        i += 4
+    }
+    if (i < length) bytes[i] = (bytes[i].toInt() xor m0).toByte()
+    if (i + 1 < length) bytes[i + 1] = (bytes[i + 1].toInt() xor m1).toByte()
+    if (i + 2 < length) bytes[i + 2] = (bytes[i + 2].toInt() xor m2).toByte()
 }
 
 /**
