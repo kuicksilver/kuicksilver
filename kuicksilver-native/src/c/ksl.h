@@ -295,8 +295,8 @@ int ksl_chain_level(const uint8_t *chain, size_t chain_len, int built);
 #define KSL_OCSP_STALE 5    /* outside its validity interval at `at` */
 /* Checks one DER OCSPResponse for the first certificate of `chain` (framed as for ksl_ctx_set_roots) issued by the second, as RFC
    6960 section 3.2 says: the certID (under the response's hash) names that certificate and issuer, the signature verifies, the
-   signer is the issuer's key or a delegated responder the issuer signed with id-kp-OCSPSigning and valid at `at` (section
-   4.2.2.2), thisUpdate is at most 5 minutes after `at`, and nextUpdate (thisUpdate + 1 day without one) at most 5 minutes
+   signer is the issuer's key or a delegated responder the issuer signed with id-kp-OCSPSigning, valid at `at`, without an
+   unknown critical extension and at OpenSSL's security level (section 4.2.2.2), thisUpdate is at most 5 minutes after `at`, and nextUpdate (thisUpdate + 1 day without one) at most 5 minutes
    before. `at`: epoch seconds, 0 for now. Returns a KSL_OCSP_* (the certificate's status only when the response passes; then
    *valid_until is nextUpdate + 5 minutes, else 0), or KSL_ERROR when the chain holds fewer than two certificates or does not
    parse. Touches no context: safe from any thread. */
@@ -306,7 +306,10 @@ int ksl_ocsp_check(const uint8_t *resp, size_t resp_len, const uint8_t *chain, s
    after ksl_ctx_set_roots with certificates (KSL_E_BAD_ARG on the system store). Every certificate on a verified path is then
    checked against the CRL of its issuer (X509_V_FLAG_CRL_CHECK_ALL), in handshakes and in ksl_ctx_verify_chain alike: revoked
    fails (X509_V_ERR_CERT_REVOKED), so does a CRL that is expired, not yet valid or does not verify; a certificate whose issuer
-   has no configured CRL is not checked. A list that does not parse is refused whole (KSL_E_BAD_ARG). */
+   has no configured CRL is not checked, while one whose issuer has a configured CRL that does not cover it fails (a distribution
+   point it does not name: X509_V_ERR_DIFFERENT_CRL_SCOPE; a CRL OpenSSL cannot use for it: X509_V_ERR_UNABLE_TO_GET_CRL). A list that does not parse, or holds a delta, indirect or
+   reason-limited CRL or an issuingDistributionPoint that does not decode, is refused whole (KSL_E_BAD_ARG). On a client the
+   CRLs also apply to a delegated OCSP responder (ksl_ocsp_check rules). */
 int ksl_ctx_set_crls(ksl_ctx *, const uint8_t *crls, size_t crls_len);
 
 /* --- session (QUIC or TCP) --- */

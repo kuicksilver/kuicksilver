@@ -18,16 +18,19 @@ kt="$root/kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/RevocationCer
 O="${OPENSSL:-$(command -v openssl)}"; "$O" version | grep -q '^OpenSSL 3' || { echo "need an OpenSSL 3.x CLI (set OPENSSL)"; exit 2; }
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT INT TERM HUP; cd "$work"; mkdir -p "$der"; rm -f "$der"/*.der
 DAYS=36500
-key() { "$O" ecparam -name prime256v1 -genkey -noout -out "$1.key"; }
+key() { # name [rsa1024]
+  if [ "${2:-}" = rsa1024 ]; then "$O" genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:1024 -out "$1.key" 2>/dev/null
+  else "$O" ecparam -name prime256v1 -genkey -noout -out "$1.key"; fi
+}
 ca_root() { # name
   key "$1"
   "$O" req -x509 -new -key "$1.key" -out "$1.pem" -days $DAYS -sha256 -subj "/CN=Kuicksilver Revocation Test $1" \
     -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
   "$O" x509 -in "$1.pem" -outform DER -out "$der/$1.der"
 }
-issue() { # name issuer kind(ca|server|client|ocsp|ocsp-noeku) [extra extension line]
+issue() { # name issuer kind(ca|server|client|ocsp|ocsp-noeku) [extra extension line] [rsa1024]
   local name=$1 issuer=$2 kind=$3 extra=${4:-}
-  key "$name"
+  key "$name" "${5:-}"
   "$O" req -new -key "$name.key" -out "$name.csr" -subj "/CN=$name" 2>/dev/null
   case "$kind" in
     ca) printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n' > "$name.ext" ;;
@@ -55,10 +58,14 @@ issue rv-client-revoked rv-mid client                        # revoked on the CR
 issue rv-responder rv-mid ocsp
 issue rv-responder-root rv-root ocsp
 issue rv-responder-noeku rv-mid ocsp-noeku
+issue rv-responder-weak rv-mid ocsp "" rsa1024                # an RSA-1024 key, below security level 2
+issue rv-responder-critical rv-mid ocsp "1.3.6.1.4.1.55555.1=critical,ASN1:NULL"  # an unknown critical extension
+issue rv-responder-revoked rv-mid ocsp                       # revoked on rv-mid's CRL
 # the CA database of rv-mid (index.txt: status, expiry, revocation time, serial, file, subject)
 row() { printf '%s\t491231235959Z\t%s\t%s\tunknown\t%s\n' "$1" "$2" "$(serial "$3")" "$(subject "$3")"; }
 { row V "" rv-leaf; row R "251101000000Z,keyCompromise" rv-leaf-revoked; row V "" rv-leaf-must-staple; row V "" rv-client
-  row R "251101000000Z,keyCompromise" rv-client-revoked; row V "" rv-responder; row V "" rv-responder-noeku; } > index.txt
+  row R "251101000000Z,keyCompromise" rv-client-revoked; row V "" rv-responder; row V "" rv-responder-noeku
+  row R "251101000000Z,keyCompromise" rv-responder-revoked; } > index.txt
 ocsp() { # out cert signer [validity args...]: the response rv-mid's index gives for cert, signed by signer
   local out=$1 cert=$2 signer=$3; shift 3
   "$O" ocsp -issuer rv-mid.pem -cert "$cert.pem" -no_nonce -reqout "$out.req" 2>/dev/null
@@ -73,6 +80,9 @@ ocsp ocsp-stale rv-leaf rv-mid -nmin 1
 ocsp ocsp-nonext rv-leaf rv-mid
 ocsp ocsp-unauthorized rv-leaf rv-responder-root -ndays $DAYS
 ocsp ocsp-noeku rv-leaf rv-responder-noeku -ndays $DAYS
+ocsp ocsp-weak-responder rv-leaf rv-responder-weak -ndays $DAYS
+ocsp ocsp-critical-responder rv-leaf rv-responder-critical -ndays $DAYS
+ocsp ocsp-revoked-responder rv-leaf rv-responder-revoked -ndays $DAYS
 # CRLs of rv-mid: current (100 years) and stale (2020); a CRL of rv-root that revokes nothing
 cat > ca.cnf <<EOF
 [ ca ]
@@ -81,12 +91,33 @@ default_ca = mid
 database = index.txt
 default_md = sha256
 crlnumber = crlnumber
+[ delta ]
+2.5.29.27 = critical,ASN1:INTEGER:1
+[ indirect ]
+issuingDistributionPoint = critical, @idp_indirect
+[ idp_indirect ]
+indirectCRL = TRUE
+[ partitioned ]
+issuingDistributionPoint = critical, @idp_dp
+[ idp_dp ]
+fullname = URI:http://crl.test/mid.crl
 EOF
 echo 01 > crlnumber
 "$O" ca -config ca.cnf -gencrl -keyfile rv-mid.key -cert rv-mid.pem -crldays $DAYS -out mid.crl 2>/dev/null
 "$O" crl -in mid.crl -outform DER -out "$der/crl-mid.der"
 "$O" ca -config ca.cnf -gencrl -keyfile rv-mid.key -cert rv-mid.pem -crl_lastupdate 20200101000000Z -crl_nextupdate 20200102000000Z -out mid-stale.crl 2>/dev/null
 "$O" crl -in mid-stale.crl -outform DER -out "$der/crl-mid-stale.der"
+# CRLs ksl refuses (delta, indirect) and one that covers only certificates naming its distribution point (rv-leaf names none)
+for kind in delta indirect partitioned; do
+  "$O" ca -config ca.cnf -gencrl -keyfile rv-mid.key -cert rv-mid.pem -crldays $DAYS -crlexts "$kind" -out "mid-$kind.crl"
+  "$O" crl -in "mid-$kind.crl" -outform DER -out "$der/crl-mid-$kind.der"
+done
+# a CRL under rv-mid's name signed by another key
+key impostor
+"$O" req -x509 -new -key impostor.key -out impostor.pem -days $DAYS -sha256 -subj "/CN=rv-mid" \
+  -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+"$O" ca -config ca.cnf -gencrl -keyfile impostor.key -cert impostor.pem -crldays $DAYS -out mid-impostor.crl 2>/dev/null
+"$O" crl -in mid-impostor.crl -outform DER -out "$der/crl-mid-impostor.der"
 : > index-root.txt; sed 's/index.txt/index-root.txt/' ca.cnf > ca-root.cnf
 "$O" ca -config ca-root.cnf -gencrl -keyfile rv-root.key -cert rv-root.pem -crldays $DAYS -out root.crl 2>/dev/null
 "$O" crl -in root.crl -outform DER -out "$der/crl-root.der"

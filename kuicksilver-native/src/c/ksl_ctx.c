@@ -469,6 +469,8 @@ ksl_ctx *ksl_ctx_new(int role) {
        given (KSL_SET_OCSP_RESPONSE) */
 #ifndef OPENSSL_NO_OCSP
     SSL_CTX_set_tlsext_status_cb(c->ctx, ksl_ocsp_status_cb);
+    if (role == KSL_SERVER)
+        c->ocsp_lock = CRYPTO_THREAD_lock_new(); /* NULL: no verdict cache, every handshake checks the response */
 #endif
     if (role == KSL_CLIENT &&
         SSL_CTX_add_client_custom_ext(c->ctx, KSL_ABORT_EXT_TYPE, abort_ext_add_cb, NULL, NULL, NULL, NULL) != 1) {
@@ -484,6 +486,7 @@ void ksl_ctx_free(ksl_ctx *c) {
         return;
     ksl_live_add(KSL_LIVE_CTX, -1);
     SSL_CTX_free(c->ctx);
+    CRYPTO_THREAD_lock_free(c->ocsp_lock);
     if (c->ticket_keys) {
         OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * 80);
         free(c->ticket_keys);
@@ -952,10 +955,12 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         }
         return KSL_OK;
 #else
+        if (SSL_CTX_set_tlsext_status_type(c->ctx, value == KSL_REVOCATION_OFF ? -1 : TLSEXT_STATUSTYPE_ocsp) != 1) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: status_request type refused");
+            return KSL_ERROR;
+        }
         c->revocation = value;
-        return SSL_CTX_set_tlsext_status_type(c->ctx, value == KSL_REVOCATION_OFF ? -1 : TLSEXT_STATUSTYPE_ocsp) == 1
-                   ? KSL_OK
-                   : KSL_ERROR;
+        return KSL_OK;
 #endif
     case KSL_OPT_SNI_PAUSE:
         if (c->role != KSL_SERVER) {

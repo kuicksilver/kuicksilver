@@ -29,13 +29,37 @@ static int asn1_epoch(const ASN1_TIME *t, int64_t *out) {
     return 1;
 }
 
+/* Whether one of the CRLs configured in `crls` (the client context's store, NULL for none) from `issuer` - same name, signature
+   verifying under its key - lists `cert`. No time check: the CRL is the application's word on that certificate. */
+static int crl_lists(X509_STORE *crls, X509 *issuer, X509 *cert) {
+    if (crls == NULL)
+        return 0;
+    int listed = 0;
+    if (!X509_STORE_lock(crls))
+        return 0;
+    STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(crls);
+    for (int i = 0; objs && i < sk_X509_OBJECT_num(objs) && !listed; i++) {
+        X509_CRL *crl = X509_OBJECT_get0_X509_CRL(sk_X509_OBJECT_value(objs, i));
+        X509_REVOKED *rev = NULL;
+        if (crl && X509_NAME_cmp(X509_CRL_get_issuer(crl), X509_get_subject_name(issuer)) == 0 &&
+            X509_CRL_verify(crl, X509_get0_pubkey(issuer)) == 1 && X509_CRL_get0_by_cert(crl, &rev, cert) == 1)
+            listed = 1;
+    }
+    X509_STORE_unlock(crls);
+    ERR_clear_error();
+    return listed;
+}
+
 /* RFC 6960 section 4.2.2.2: the response is signed by the CA that issued the certificate (its key), or by a delegated responder
    that carries id-kp-OCSPSigning and that CA issued: "Systems relying on OCSP responses MUST recognize a delegation certificate
    as being issued by the CA that issued the certificate in question only if the delegation certificate and the certificate
    being checked for revocation were signed by the same key" - so the responder's certificate must verify under the issuer's
-   key, and be valid at `at`. No locally configured responders (the MAY of that section). The responder's own revocation status
-   is not checked (section 4.2.2.2.1 leaves it to local policy). */
-static int responder_authorized(X509 *signer, X509 *issuer, int64_t at) {
+   key, and be valid at `at`. No locally configured responders (the MAY of that section). A delegated responder's certificate is
+   held to what a certificate on a verified path is: no unknown critical extension and nothing OpenSSL found invalid
+   (EXFLAG_CRITICAL, EXFLAG_INVALID), OpenSSL's security level on its key and signature (ksl_chain_security over [responder,
+   issuer]), and not listed on a configured CRL of the issuer (section 4.2.2.2.1 leaves the responder's revocation to local
+   policy: the CRLs the application gave are that policy; no other check is made). */
+static int responder_authorized(X509 *signer, X509 *issuer, int64_t at, X509_STORE *crls) {
     EVP_PKEY *ik = X509_get0_pubkey(issuer);
     if (ik == NULL)
         return 0;
@@ -43,13 +67,21 @@ static int responder_authorized(X509 *signer, X509 *issuer, int64_t at) {
         return 1;
     uint32_t xku =
         X509_get_extended_key_usage(signer); /* caches the extensions; UINT32_MAX when the certificate has none */
-    if ((X509_get_extension_flags(signer) & EXFLAG_XKUSAGE) == 0 || (xku & XKU_OCSP_SIGN) == 0)
+    uint32_t flags = X509_get_extension_flags(signer);
+    if ((flags & (EXFLAG_CRITICAL | EXFLAG_INVALID)) != 0 || (flags & EXFLAG_XKUSAGE) == 0 ||
+        (xku & XKU_OCSP_SIGN) == 0)
         return 0;
     if (X509_check_issued(issuer, signer) != X509_V_OK || X509_verify(signer, ik) != 1)
         return 0;
     time_t when = (time_t)at;
-    return X509_cmp_time(X509_get0_notBefore(signer), &when) <= 0 &&
-           X509_cmp_time(X509_get0_notAfter(signer), &when) >= 0;
+    if (X509_cmp_time(X509_get0_notBefore(signer), &when) > 0 || X509_cmp_time(X509_get0_notAfter(signer), &when) < 0)
+        return 0;
+    STACK_OF(X509) *path = sk_X509_new_null();
+    int weak = path == NULL || !sk_X509_push(path, signer) || !sk_X509_push(path, issuer) ||
+               ksl_chain_security(OPENSSL_TLS_SECURITY_LEVEL, path) != X509_V_OK;
+    sk_X509_free(path);
+    ERR_clear_error();
+    return !weak && !crl_lists(crls, issuer, signer);
 }
 
 /* Clock skew allowed on thisUpdate and nextUpdate, and how long a response without nextUpdate counts as fresh (RFC 6960 section
@@ -57,10 +89,15 @@ static int responder_authorized(X509 *signer, X509 *issuer, int64_t at) {
 #define OCSP_SKEW 300
 #define OCSP_NO_NEXT_UPDATE_TTL 86400
 
-static int ksl_ocsp_check_x509(const uint8_t *der, size_t len, X509 *leaf, X509 *issuer, int64_t at,
-                               int64_t *valid_until) {
+/* The RFC 6960 section 3.2 checks of one DER response for `leaf` issued by `issuer` at `at` (ksl_ocsp_check); `crls`: the store
+   whose configured CRLs a delegated responder must not be listed on, or NULL. On a status, *valid_from and *valid_until bound
+   the time the response passes in (thisUpdate - 5 min, nextUpdate + 5 min). */
+static int ksl_ocsp_check_x509(const uint8_t *der, size_t len, X509 *leaf, X509 *issuer, int64_t at, X509_STORE *crls,
+                               int64_t *valid_from, int64_t *valid_until) {
     if (valid_until)
         *valid_until = 0;
+    if (valid_from)
+        *valid_from = 0;
     if (der == NULL || len == 0 || len > LONG_MAX || leaf == NULL || issuer == NULL)
         return KSL_OCSP_INVALID;
     const unsigned char *p = der;
@@ -100,7 +137,7 @@ static int ksl_ocsp_check_x509(const uint8_t *der, size_t len, X509 *leaf, X509 
         goto done;
     /* OCSP_NOVERIFY: only the signature (the signer's chain and authority are checked by responder_authorized, against the issuer
        the handshake verified, instead of OpenSSL's own trust lookup); OCSP_NOEXPLICIT is implied by NOVERIFY */
-    if (OCSP_basic_verify(bs, extra, unused, OCSP_NOVERIFY) != 1 || !responder_authorized(signer, issuer, at))
+    if (OCSP_basic_verify(bs, extra, unused, OCSP_NOVERIFY) != 1 || !responder_authorized(signer, issuer, at, crls))
         goto done;
     /* 5, 6: thisUpdate recent, nextUpdate not passed (section 4.2.2.1: either otherwise "SHOULD be considered unreliable") */
     int status = -1, reason = 0;
@@ -117,13 +154,19 @@ static int ksl_ocsp_check_x509(const uint8_t *der, size_t len, X509 *leaf, X509 
     }
     if (valid_until)
         *valid_until = t_next + OCSP_SKEW;
+    if (valid_from)
+        *valid_from = t_this - OCSP_SKEW;
     r = status == V_OCSP_CERTSTATUS_GOOD      ? KSL_OCSP_GOOD
         : status == V_OCSP_CERTSTATUS_REVOKED ? KSL_OCSP_REVOKED
         : status == V_OCSP_CERTSTATUS_UNKNOWN ? KSL_OCSP_UNKNOWN
                                               : KSL_OCSP_INVALID;
 done:
-    if (r != KSL_OCSP_GOOD && r != KSL_OCSP_REVOKED && r != KSL_OCSP_UNKNOWN && valid_until)
-        *valid_until = 0;
+    if (r != KSL_OCSP_GOOD && r != KSL_OCSP_REVOKED && r != KSL_OCSP_UNKNOWN) {
+        if (valid_until)
+            *valid_until = 0;
+        if (valid_from)
+            *valid_from = 0;
+    }
     sk_X509_free(extra);
     X509_STORE_free(unused);
     OCSP_BASICRESP_free(bs);
@@ -144,7 +187,7 @@ int ksl_ocsp_check(const uint8_t *resp, size_t resp_len, const uint8_t *chain, s
         return KSL_ERROR;
     }
     int r = ksl_ocsp_check_x509(resp, resp_len, sk_X509_value(sk, 0), sk_X509_value(sk, 1),
-                                at > 0 ? at : (int64_t)time(NULL), valid_until);
+                                at > 0 ? at : (int64_t)time(NULL), NULL, NULL, valid_until);
     sk_X509_pop_free(sk, X509_free);
     return r;
 }
@@ -167,17 +210,26 @@ static int must_staple(X509 *leaf) {
    handshake if the response is not satisfactory with bad_certificate_status_response(113) alert" - returning 0 does that (OpenSSL
    sends 113; generic alerts do not apply to it). Only where ksl's own verifier ran (KSL_VERIFY_OPENSSL): the issuer is the one
    that verifier trusted. A leaf that is itself a trust anchor has no issuer here, and its trust is configuration: nothing is
-   checked. The verdict: revoked fails (CERT_REVOKED); a response that does not verify, names another certificate or is outside
+   checked, unless a stapled response is required (KSL_REVOCATION_REQUIRE_STAPLED, a must-staple leaf), which then fails
+   (OCSP_VERIFY_NEEDED: no response can be checked without an issuer). A delegated responder listed on a configured CRL of the
+   issuer is not authorized (responder_authorized). The verdict: revoked fails (CERT_REVOKED); a response that does not verify, names another certificate or is outside
    its validity interval fails (OCSP_VERIFY_FAILED); no response, or "unknown", fails only under KSL_REVOCATION_REQUIRE_STAPLED or
    for a must-staple leaf (OCSP_VERIFY_NEEDED, OCSP_CERT_UNKNOWN) and passes otherwise. */
 static int client_status(SSL *ssl, ksl_ssl *s) {
     s->ocsp_status = -1;
     s->ocsp_until = 0;
     if (s->owner->revocation == KSL_REVOCATION_OFF || s->verify_mode != KSL_VERIFY_OPENSSL ||
-        s->validated_chain == NULL || sk_X509_num(s->validated_chain) < 2)
+        s->validated_chain == NULL || sk_X509_num(s->validated_chain) < 1)
         return 1;
-    X509 *leaf = sk_X509_value(s->validated_chain, 0), *issuer = sk_X509_value(s->validated_chain, 1);
+    X509 *leaf = sk_X509_value(s->validated_chain, 0);
     int required = s->owner->revocation == KSL_REVOCATION_REQUIRE_STAPLED || must_staple(leaf);
+    if (sk_X509_num(s->validated_chain) < 2) {
+        if (!required)
+            return 1;
+        s->verify_err = X509_V_ERR_OCSP_VERIFY_NEEDED;
+        return 0;
+    }
+    X509 *issuer = sk_X509_value(s->validated_chain, 1);
     const unsigned char *resp = NULL;
     long len = SSL_get_tlsext_status_ocsp_resp(ssl, &resp);
     if (resp == NULL || len <= 0) {
@@ -187,7 +239,8 @@ static int client_status(SSL *ssl, ksl_ssl *s) {
         return 0;
     }
     int64_t until = 0;
-    int r = ksl_ocsp_check_x509(resp, (size_t)len, leaf, issuer, (int64_t)time(NULL), &until);
+    X509_STORE *crls = s->owner->has_crls ? SSL_CTX_get_cert_store(s->owner->ctx) : NULL;
+    int r = ksl_ocsp_check_x509(resp, (size_t)len, leaf, issuer, (int64_t)time(NULL), crls, NULL, &until);
     switch (r) {
     case KSL_OCSP_GOOD:
         s->ocsp_status = r;
@@ -214,7 +267,51 @@ static int client_status(SSL *ssl, ksl_ssl *s) {
    an SNI override's included). The response KSL_SET_OCSP_RESPONSE gave is stapled only when it is for the leaf being sent (its
    issuer the next certificate of the configured chain that issued it), verifies, and is inside its validity interval now: a
    stale or foreign response is never sent (RFC 6066 section 8: a server "MAY return a suitable certificate status response").
-   RFC 9846 section 4.5.1.1 puts it into the leaf's CertificateEntry in TLS 1.3; OpenSSL does that. */
+   RFC 9846 section 4.5.1.1 puts it into the leaf's CertificateEntry in TLS 1.3; OpenSSL does that. The verdict is kept in the
+   context (shared by its sessions, under its lock) for the last response and leaf it was asked about: the SHA-256 of the
+   response, the leaf, and the interval it passes in; a hit within that interval staples without parsing the response again. An
+   SNI override's identity is another context with its own leaf: a response for the default leaf is not stapled for it. */
+static int staple_cached(ksl_ctx *c, const uint8_t hash[32], X509 *leaf, int64_t now) {
+    int hit = 0;
+    if (c->ocsp_lock && CRYPTO_THREAD_read_lock(c->ocsp_lock)) {
+        hit =
+            c->ocsp_leaf == leaf && memcmp(c->ocsp_hash, hash, 32) == 0 && now >= c->ocsp_from && now <= c->ocsp_until;
+        CRYPTO_THREAD_unlock(c->ocsp_lock);
+    }
+    return hit;
+}
+static void staple_remember(ksl_ctx *c, const uint8_t hash[32], X509 *leaf, int64_t from, int64_t until) {
+    if (c->ocsp_lock && CRYPTO_THREAD_write_lock(c->ocsp_lock)) {
+        memcpy(c->ocsp_hash, hash, 32);
+        c->ocsp_leaf = leaf;
+        c->ocsp_from = from;
+        c->ocsp_until = until;
+        CRYPTO_THREAD_unlock(c->ocsp_lock);
+    }
+}
+/* RFC 6066 section 8: a server "SHOULD use the information contained in the extension when selecting an OCSP responder". The
+   response is fetched before the handshake, so no responder is selected per client; when the client named responders
+   (responder_id_list), the response is stapled only if one of them signed it. An empty list leaves the responder to the server. */
+static int responder_wanted(SSL *ssl, const uint8_t *der, size_t len, X509 *issuer) {
+    STACK_OF(OCSP_RESPID) *ids = NULL;
+    SSL_get_tlsext_status_ids(ssl, &ids);
+    if (ids == NULL || sk_OCSP_RESPID_num(ids) == 0)
+        return 1;
+    const unsigned char *p = der;
+    OCSP_RESPONSE *resp = d2i_OCSP_RESPONSE(NULL, &p, (long)len);
+    OCSP_BASICRESP *bs = resp ? OCSP_response_get1_basic(resp) : NULL;
+    STACK_OF(X509) *extra = sk_X509_new_null();
+    X509 *signer = NULL;
+    int wanted = 0;
+    if (bs && extra && sk_X509_push(extra, issuer) && OCSP_resp_get0_signer(bs, &signer, extra) == 1 && signer)
+        for (int i = 0; i < sk_OCSP_RESPID_num(ids) && !wanted; i++)
+            wanted = OCSP_RESPID_match(sk_OCSP_RESPID_value(ids, i), signer) == 1;
+    sk_X509_free(extra);
+    OCSP_BASICRESP_free(bs);
+    OCSP_RESPONSE_free(resp);
+    ERR_clear_error();
+    return wanted;
+}
 static int server_status(SSL *ssl, ksl_ssl *s) {
     if (s->ocsp_staple == NULL)
         return SSL_TLSEXT_ERR_NOACK;
@@ -228,8 +325,17 @@ static int server_status(SSL *ssl, ksl_ssl *s) {
     ERR_clear_error();
     if (issuer == NULL)
         return SSL_TLSEXT_ERR_NOACK;
-    int r = ksl_ocsp_check_x509(s->ocsp_staple, s->ocsp_staple_len, leaf, issuer, (int64_t)time(NULL), NULL);
-    if (r != KSL_OCSP_GOOD && r != KSL_OCSP_REVOKED && r != KSL_OCSP_UNKNOWN)
+    uint8_t hash[32];
+    int64_t now = (int64_t)time(NULL), from = 0, until = 0;
+    int hashed = ksl_sha2(256, s->ocsp_staple, s->ocsp_staple_len, hash) == KSL_OK;
+    if (!hashed || !staple_cached(s->owner, hash, leaf, now)) {
+        int r = ksl_ocsp_check_x509(s->ocsp_staple, s->ocsp_staple_len, leaf, issuer, now, NULL, &from, &until);
+        if (r != KSL_OCSP_GOOD && r != KSL_OCSP_REVOKED && r != KSL_OCSP_UNKNOWN)
+            return SSL_TLSEXT_ERR_NOACK;
+        if (hashed)
+            staple_remember(s->owner, hash, leaf, from, until);
+    }
+    if (!responder_wanted(ssl, s->ocsp_staple, s->ocsp_staple_len, issuer))
         return SSL_TLSEXT_ERR_NOACK;
     unsigned char *copy = OPENSSL_memdup(s->ocsp_staple, s->ocsp_staple_len);
     if (copy == NULL || SSL_set_tlsext_status_ocsp_resp(ssl, copy, (long)s->ocsp_staple_len) != 1) {
@@ -262,15 +368,41 @@ int ksl_ocsp_check(const uint8_t *resp, size_t resp_len, const uint8_t *chain, s
 }
 #endif
 
-/* With CRLs configured every certificate on the path is checked against the CRL of its issuer (X509_V_FLAG_CRL_CHECK_ALL); a
-   certificate whose issuer has no CRL among the configured ones is not checked (a CRL the application configured is the
-   strategy for that CA, RFC 9325 section 7.5), so OpenSSL's "unable to get certificate CRL" is passed. A revoked certificate,
-   and a CRL that is expired, not yet valid or does not verify, still fail. */
+/* With CRLs configured every certificate on the path is checked against the CRL of its issuer (X509_V_FLAG_CRL_CHECK_ALL). OpenSSL's
+   "unable to get certificate CRL" passes only when no configured CRL names the certificate's issuer: then the application gave
+   no CRL for that CA, and that CA is not checked. When one does (a CRL OpenSSL does not take for this certificate: a distribution
+   point the certificate does not name, a scope it is outside of) the error stands: the status is unknown, and the handshake
+   fails (fail closed). A revoked certificate, and a CRL that is expired, not yet valid or does not verify, fail as well. */
 static int crl_verify_cb(int ok, X509_STORE_CTX *x) {
-    if (!ok && X509_STORE_CTX_get_error(x) == X509_V_ERR_UNABLE_TO_GET_CRL) {
-        X509_STORE_CTX_set_error(x, X509_V_OK);
-        return 1;
-    }
+    if (ok || X509_STORE_CTX_get_error(x) != X509_V_ERR_UNABLE_TO_GET_CRL)
+        return ok;
+    X509 *cur = X509_STORE_CTX_get_current_cert(x);
+    STACK_OF(X509_CRL) *named = cur ? X509_STORE_CTX_get1_crls(x, X509_get_issuer_name(cur)) : NULL;
+    int any = named != NULL && sk_X509_CRL_num(named) > 0;
+    sk_X509_CRL_pop_free(named, X509_CRL_free);
+    ERR_clear_error();
+    if (any || cur == NULL)
+        return 0;
+    X509_STORE_CTX_set_error(x, X509_V_OK);
+    return 1;
+}
+
+/* RFC 5280 section 5: only complete, direct CRLs that cover every reason are taken. A delta CRL (section 5.2.4), an indirect CRL,
+   one limited to some reasons or to attribute certificates (section 5.2.5, issuingDistributionPoint), and an
+   issuingDistributionPoint that does not decode or claims both user and CA certificates only, are refused: OpenSSL would score
+   them as covering no certificate (x509_vfy.c get_crl_score), which the callback above would then report as unknown. */
+static int crl_supported(X509_CRL *crl) {
+    int crit = 0;
+    if (X509_CRL_get_ext_by_NID(crl, NID_delta_crl, -1) >= 0)
+        return 0;
+    ISSUING_DIST_POINT *idp = X509_CRL_get_ext_d2i(crl, NID_issuing_distribution_point, &crit, NULL);
+    int ok = 1;
+    if (idp == NULL)
+        ok = crit == -1; /* -1: no such extension; -2: more than one; else it did not decode */
+    else
+        ok = !idp->indirectCRL && idp->onlysomereasons == NULL && !idp->onlyattr && !(idp->onlyuser && idp->onlyCA);
+    ISSUING_DIST_POINT_free(idp);
+    ERR_clear_error();
     return ok;
 }
 
@@ -305,7 +437,7 @@ int ksl_ctx_set_crls(ksl_ctx *c, const uint8_t *crls, size_t crls_len) {
             break;
         const unsigned char *p = crls + off;
         X509_CRL *crl = d2i_X509_CRL(NULL, &p, (long)l);
-        ok = crl != NULL && p == crls + off + l && sk_X509_CRL_push(sk, crl) > 0;
+        ok = crl != NULL && p == crls + off + l && crl_supported(crl) && sk_X509_CRL_push(sk, crl) > 0;
         if (!ok)
             X509_CRL_free(crl);
         off += l;
@@ -317,10 +449,14 @@ int ksl_ctx_set_crls(ksl_ctx *c, const uint8_t *crls, size_t crls_len) {
     sk_X509_CRL_pop_free(sk, X509_CRL_free);
     if (st == NULL) {
         ERR_clear_error();
-        ksl_ctx_set_error(c, KSL_E_BAD_ARG, ok ? "ksl: CRL rejected by the store" : "ksl: bad CRL framing or DER");
+        ksl_ctx_set_error(
+            c, KSL_E_BAD_ARG,
+            ok ? "ksl: CRL rejected by the store"
+               : "ksl: bad CRL framing or DER, or a delta, indirect or reason-partitioned CRL (not supported)");
         return KSL_ERROR;
     }
     X509_STORE_set_verify_cb(st, crl_verify_cb);
+    c->has_crls = 1;
     if (X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(c->ctx), X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) !=
         1) {
         ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: CRL flags rejected");

@@ -106,6 +106,12 @@ static void test_ocsp_check(void) {
           "negative_unauthorized: a responder another CA issued (RFC 6960 4.2.2.2)");
     CHECK(check_file("ocsp-noeku", "rv-leaf", "rv-mid", 0, NULL) == KSL_OCSP_INVALID,
           "negative_no_ocsp_signing: a responder without id-kp-OCSPSigning");
+    CHECK(check_file("ocsp-weak-responder", "rv-leaf", "rv-mid", 0, NULL) == KSL_OCSP_INVALID,
+          "negative_weak_responder: an RSA-1024 responder key, below security level 2");
+    CHECK(check_file("ocsp-critical-responder", "rv-leaf", "rv-mid", 0, NULL) == KSL_OCSP_INVALID,
+          "negative_critical_responder: a responder certificate with an unknown critical extension");
+    CHECK(check_file("ocsp-revoked-responder", "rv-leaf", "rv-mid", 0, NULL) == KSL_OCSP_GOOD,
+          "a delegated responder is not checked for revocation without configured CRLs");
     blob g = file_of("ocsp-good"), ch = framed(2, "rv-leaf", "rv-mid");
     size_t sig_at = signature_end(g);
     CHECK(sig_at > 0, "the signature located");
@@ -193,12 +199,13 @@ static int tcp_pump(ksl_ssl *c, ksl_ssl *s) {
     }
     return KSL_WANT_READ;
 }
+static int server_leaf_only; /* the server sends its leaf without rv-mid */
 static ksl_ctx *rv_server(const char *leaf, int tls12) {
     ksl_ctx *c = ksl_ctx_new(KSL_SERVER);
     ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
     char name[128];
     snprintf(name, sizeof name, "%s", leaf);
-    blob ch = framed(2, name, "rv-mid");
+    blob ch = server_leaf_only ? framed(1, name) : framed(2, name, "rv-mid");
     char kp[128];
     snprintf(kp, sizeof kp, RV "%s", leaf);
     size_t kl;
@@ -211,10 +218,11 @@ static ksl_ctx *rv_server(const char *leaf, int tls12) {
         ksl_ctx_set_option(c, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
     return c;
 }
+static const char *client_root = "rv-root"; /* the client's AnchoredCa */
 static ksl_ctx *rv_client(int revocation, int verify_mode, int tls12, const char *crl) {
     ksl_ctx *c = ksl_ctx_new(KSL_CLIENT);
     ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
-    blob r = framed(1, "rv-root");
+    blob r = framed(1, client_root);
     ksl_ctx_set_roots(c, r.buf, r.len);
     free(r.buf);
     if (crl) {
@@ -335,6 +343,50 @@ static void stapling_over(int mode, int tls12, const char *what) {
     hs paused = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
                  KSL_VERIFY_PAUSE};
     EXPECT_PASS(paused, 0xff, "the pause path (an application verifier) is not checked by ksl");
+    /* a leaf that is itself the trust anchor, sent alone: nothing to check against, so a required staple fails */
+    client_root = "rv-leaf";
+    server_leaf_only = 1;
+    hs anchor = {"rv-leaf", "ocsp-good", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
+    EXPECT_PASS(anchor, 0xff, "an anchored leaf: not checked when no staple is required");
+    hs anchor_req = {"rv-leaf", "ocsp-good", NULL, KSL_REVOCATION_REQUIRE_STAPLED, mode, tls12, 0};
+    EXPECT_FAIL(anchor_req, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_required_without_issuer: an anchored leaf");
+    client_root = "rv-leaf-must-staple";
+    hs anchor_must = {
+        "rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
+    EXPECT_FAIL(anchor_must, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_must_staple_without_issuer");
+    client_root = "rv-root";
+    server_leaf_only = 0;
+    /* a delegated responder the configured CRL lists is not authorized */
+    hs rresp = {"rv-leaf", "ocsp-revoked-responder", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
+    hs_out o = handshake_with(&rresp, "crl-mid");
+    CHECK(o.rc == KSL_ERROR && o.alert == 113 && o.x509 == X509_V_ERR_OCSP_VERIFY_FAILED,
+          "negative_revoked_responder: a responder on the configured CRL");
+    EXPECT_PASS(rresp, KSL_OCSP_GOOD, "the same responder without CRLs");
+}
+
+/* RFC 6066 section 8: a client's responder_id_list; the server staples only a response one of the named responders signed */
+static int staple_with_responder_ids(const char *named) {
+    ksl_ctx *cc = rv_client(KSL_REVOCATION_REQUIRE_STAPLED, 0, 0, NULL), *sc = rv_server("rv-leaf", 0);
+    ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_TCP), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+    blob cert = file_of(named), b = file_of("ocsp-good");
+    const unsigned char *p = cert.buf;
+    X509 *x = d2i_X509(NULL, &p, (long)cert.len);
+    OCSP_RESPID *id = OCSP_RESPID_new();
+    STACK_OF(OCSP_RESPID) *ids = sk_OCSP_RESPID_new_null();
+    OCSP_RESPID_set_by_name(id, x);
+    sk_OCSP_RESPID_push(ids, id);
+    SSL_set_tlsext_status_ids(c->ssl, ids); /* the SSL takes the list */
+    ksl_ssl_set(s, KSL_SET_OCSP_RESPONSE, b.buf, b.len);
+    int rc = tcp_pump(c, s);
+    X509_free(x);
+    free(cert.buf);
+    free(b.buf);
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    return rc;
 }
 
 static void test_stapling(void) {
@@ -342,6 +394,9 @@ static void test_stapling(void) {
     stapling_over(KSL_MODE_QUIC, 0, "QUIC");
     stapling_over(KSL_MODE_TCP, 0, "TLS 1.3 over TCP");
     stapling_over(KSL_MODE_TCP, 1, "TLS 1.2 over TCP");
+    CHECK(staple_with_responder_ids("rv-mid") == KSL_OK, "the client named the responder that signed the response");
+    CHECK(staple_with_responder_ids("rv-responder-root") == KSL_ERROR,
+          "negative_responder_not_named: the client named another responder, nothing is stapled");
     /* the setter's rules */
     ksl_ctx *cc = rv_client(0, 0, 0, NULL), *sc = rv_server("rv-leaf", 0);
     ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_TCP), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
@@ -407,6 +462,35 @@ static void test_crls(void) {
     CHECK(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_CRL_HAS_EXPIRED, "negative_crl_stale: an expired CRL fails");
     if (!(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_CRL_HAS_EXPIRED))
         printf("  got rc=%d done=%d alert=%d x509=%d\n", o.rc, o.done, o.alert, o.x509);
+    o = handshake_with(&good, "crl-mid-partitioned");
+    CHECK(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_DIFFERENT_CRL_SCOPE,
+          "negative_crl_not_covering: the issuer's configured CRL does not cover the leaf (fail closed)");
+    if (!(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_DIFFERENT_CRL_SCOPE))
+        printf("  got rc=%d done=%d alert=%d x509=%d\n", o.rc, o.done, o.alert, o.x509);
+    o = handshake_with(&good, "crl-mid-impostor");
+    CHECK(o.rc == KSL_ERROR && (o.x509 == X509_V_ERR_CRL_SIGNATURE_FAILURE || o.x509 == X509_V_ERR_UNABLE_TO_GET_CRL),
+          "negative_crl_other_key: a CRL under the issuer's name signed by another key");
+    if (o.rc != KSL_ERROR)
+        printf("  got rc=%d done=%d alert=%d x509=%d\n", o.rc, o.done, o.alert, o.x509);
+    {
+        ksl_ctx *cc = rv_client(0, 0, 0, NULL), *sc = rv_server("rv-leaf", 0);
+        blob t = framed(1, "crl-mid");
+        t.buf[t.len - 1] ^= 0x01; /* the last byte of the CRL's signature */
+        CHECK(ksl_ctx_set_crls(cc, t.buf, t.len) == KSL_OK,
+              "a CRL with a damaged signature is stored (it is verified in use)");
+        ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_TCP), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+        int a = 0;
+        int rc = tcp_pump(c, s);
+        ksl_ssl_last_error(c, NULL, &a, NULL, 0);
+        CHECK(rc == KSL_ERROR && (a >> 16) == X509_V_ERR_CRL_SIGNATURE_FAILURE,
+              "negative_crl_tampered_signature: CRL_SIGNATURE_FAILURE");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+        free(t.buf);
+    }
     /* resumption's re-verification sees the CRL too */
     ksl_ctx *cc = rv_client(0, 0, 0, "crl-mid");
     blob bad = framed(3, "rv-leaf-revoked", "rv-mid", "rv-root"), ok = framed(2, "rv-leaf", "rv-mid");
@@ -460,6 +544,15 @@ static void test_crls(void) {
     l.buf[l.len - 1] ^= 0xff;
     uint8_t junk[] = {0, 0, 0, 3, 1, 2, 3};
     CHECK(ksl_ctx_set_crls(own, junk, sizeof junk) == KSL_ERROR, "negative: not a CRL");
+    const char *unsupported[] = {"crl-mid-delta", "crl-mid-indirect"};
+    for (int i = 0; i < 2; i++) {
+        blob u = framed(1, unsupported[i]);
+        uint32_t code = 0;
+        CHECK(ksl_ctx_set_crls(own, u.buf, u.len) == KSL_ERROR &&
+                  (ksl_ctx_last_error(own, &code, NULL, 0), code == KSL_E_BAD_ARG),
+              i == 0 ? "negative_delta_crl: refused" : "negative_indirect_crl: refused");
+        free(u.buf);
+    }
     CHECK(ksl_ctx_set_crls(own, l.buf, l.len - 1) == KSL_ERROR, "negative: bad framing");
     ksl_ctx_free(own);
     free(r.buf);
