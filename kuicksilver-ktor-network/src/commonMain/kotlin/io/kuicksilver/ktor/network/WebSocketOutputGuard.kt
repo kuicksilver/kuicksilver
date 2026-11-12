@@ -40,10 +40,12 @@ import kotlinx.io.readTo
  *   compressed one is inflated on the side and its text checked (RFC 7692 section 6: after decompression the payload is
  *   "subject to the constraints for the original data type again"), unless this library's `PerMessageDeflate`
  *   compressed it, which checks before it compresses.
- * - a message that breaks these rules is not sent whole: at the first byte that cannot be UTF-8, a message that ends
- *   inside a character, or a continuation that cannot be sent as RFC 7692 wants, nothing more is sent: [output] is
- *   cancelled (the connection is reset, as when the transport fails) and the write fails with Ktor's
- *   `ProtocolViolationException`.
+ * - a message that breaks these rules is refused and nothing more is sent; the write fails with Ktor's
+ *   `ProtocolViolationException`. At a frame boundary (a continuation that cannot be sent as RFC 7692 wants, refused
+ *   before its header; a text message whose last frame ends inside a character) the connection is failed as RFC 6455
+ *   section 7.1.7 asks: a Close with 1011, then the end of [output]. A byte that cannot be UTF-8 inside a frame whose
+ *   header is already out leaves no frame boundary to put a Close at: [output] is cancelled (the connection is reset, as
+ *   when the transport fails), so the peer never receives the message whole.
  *
  * The frames are rewritten as they pass, in the writer's own coroutine: what Ktor's writer flushed is on [output] when
  * its flush returns, so closing or resetting [output] after the session ended loses nothing. Only a frame header (at
@@ -80,7 +82,8 @@ public enum class SentCompression {
      * 0x00 0x00 0xff 0xff back (the blocks of the next frame continue the same stream), and the continuations lose RSV1. A
      * fragment Ktor left uncompressed inside a compressed message (its `compressCondition` said no to that frame), or a
      * compressed fragment after an uncompressed first one, cannot be made right without compressing again: such a
-     * message is refused.
+     * message is refused. This follows Ktor 3.6.x's extension (the engines check the Ktor version they run with);
+     * `ClientDeflateKtorTest` is the canary for a change in it.
      */
     PerFrame,
 }
@@ -153,12 +156,16 @@ private class OutputGuard(
     }
 
     private suspend fun process() {
-        while (!staged.exhausted()) {
-            when {
-                closeSize >= 0 -> closeBody()
-                payloadLeft < 0 -> headerByte()
-                else -> payload()
+        try {
+            while (!staged.exhausted()) {
+                when {
+                    closeSize >= 0 -> closeBody()
+                    payloadLeft < 0 -> headerByte()
+                    else -> payload()
+                }
             }
+        } catch (r: Refusal) {
+            throw fail(r)
         }
     }
 
@@ -200,10 +207,10 @@ private class OutputGuard(
                 first = first and 0x0f.inv()
                 // RFC 7692 section 6.1: no RSV1 on a continuation
                 if (rsv1) {
-                    if (!(perFrame && messageCompressed)) throw refuse("RSV1 on a continuation frame (RFC 7692 section 6.1)")
+                    if (!(perFrame && messageCompressed)) throw Refusal("RSV1 on a continuation frame (RFC 7692 section 6.1)")
                     first = first and WS_RSV1.inv()
                 } else if (perFrame && messageCompressed) {
-                    throw refuse("an uncompressed fragment inside a compressed message (RFC 7692 section 6.1)")
+                    throw Refusal("an uncompressed fragment inside a compressed message (RFC 7692 section 6.1)")
                 }
             } else {
                 messageCompressed = rsv1
@@ -272,10 +279,14 @@ private class OutputGuard(
         staged.readTo(chunk, 0, n)
         if (ktorMasked) unmask(chunk, n, ktorMask, position)
         if (dataFrame && checkingText) {
-            if (inflating) {
-                inflateSide(chunk, n)
-            } else if (!text.feed(chunk, 0, n)) {
-                throw notUtf8()
+            try {
+                if (inflating) {
+                    inflateSide(chunk, n)
+                } else if (!text.feed(chunk, 0, n)) {
+                    throw notUtf8()
+                }
+            } catch (r: Refusal) {
+                throw Refusal(r.what, atBoundary = false) // the frame's header is out: only a reset ends it
             }
         }
         if (masking) unmask(chunk, n, wireMask, position)
@@ -294,6 +305,12 @@ private class OutputGuard(
      * characters.
      */
     private suspend fun endOfPayload() {
+        // the frame is whole on the wire first: a refusal below comes at a frame boundary
+        if (appendTail) {
+            val tail = TAIL.copyOf()
+            if (masking) unmask(tail, tail.size, wireMask, position)
+            output.writeFully(tail)
+        }
         if (inflating && (fin || compression == SentCompression.PerFrame)) {
             val i = sideInflater!!
             guardSide {
@@ -301,11 +318,6 @@ private class OutputGuard(
                 drainSide(i)
                 i.messageDone()
             }
-        }
-        if (appendTail) {
-            val tail = TAIL.copyOf()
-            if (masking) unmask(tail, tail.size, wireMask, position)
-            output.writeFully(tail)
         }
         if (dataFrame && fin && checkingText && !text.complete) throw notUtf8()
     }
@@ -341,16 +353,46 @@ private class OutputGuard(
         }
     }
 
-    private fun notUtf8(): Throwable = refuse("a text message that is not UTF-8 (RFC 6455 section 5.6)")
+    private fun notUtf8(): Refusal = Refusal("a text message that is not UTF-8 (RFC 6455 section 5.6)")
 
-    /** Nothing more is sent: the output is cancelled and the write fails with [what]. */
-    private fun refuse(what: String): Throwable {
-        val e = ProtocolViolationException("$what was not sent")
+    /**
+     * Nothing more is sent, and the write fails with Ktor's `ProtocolViolationException`. At a frame boundary the
+     * connection is failed as RFC 6455 section 7.1.7 asks: a Close with 1011 (masked on the client), then the end of the
+     * output (FIN), and nothing after it (section 5.5.1). Inside a frame whose header is out, a Close cannot follow: the
+     * output is cancelled (a reset).
+     */
+    private suspend fun fail(r: Refusal): Throwable {
+        val e = ProtocolViolationException("${r.what} was not sent")
         failure = e
         staged.clear()
-        output.cancel(e)
+        if (r.atBoundary) {
+            try {
+                output.writeFully(closeFrame())
+                output.flushAndClose()
+            } catch (c: Throwable) {
+                output.cancel(e)
+                if (c is kotlinx.coroutines.CancellationException) throw c
+            }
+        } else {
+            output.cancel(e)
+        }
         return e
     }
+
+    /** A Close frame with 1011 (RFC 6455 section 7.4.1: an unexpected condition), masked with a new key on the client. */
+    private fun closeFrame(): ByteArray {
+        val body = byteArrayOf(0x03, 0xF3.toByte())
+        if (!masking) return byteArrayOf(0x88.toByte(), 0x02) + body
+        nextKey(wireMask)
+        unmask(body, body.size, wireMask, 0)
+        return byteArrayOf(0x88.toByte(), 0x82.toByte()) + wireMask + body
+    }
+
+    /** Why the message cannot go out; [atBoundary] when no frame is half sent. */
+    private class Refusal(
+        val what: String,
+        val atBoundary: Boolean = true,
+    ) : Exception(what)
 
     /** Collects a Close frame's body; once whole, sends the Close with what of it an endpoint may send. */
     private suspend fun closeBody() {

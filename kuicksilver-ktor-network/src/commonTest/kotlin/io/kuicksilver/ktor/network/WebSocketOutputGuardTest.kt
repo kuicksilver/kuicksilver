@@ -280,25 +280,55 @@ class WebSocketOutputGuardTest {
             assertEquals("caf\u00e9!", inflate(message).decodeToString())
         }
 
+    /**
+     * The frames [input] makes through a guard that refuses them at a frame boundary: the write fails, and the
+     * connection is failed as RFC 6455 section 7.1.7 asks, a Close with 1011 and the end of the output (no reset), and
+     * nothing after the Close (section 5.5.1).
+     */
+    private suspend fun refusedAtABoundary(
+        input: ByteArray,
+        masking: Boolean,
+        compression: SentCompression,
+    ): List<Wire> {
+        val wire = ByteChannel()
+        val guarded = guardWebSocketOutput(wire, masking, compression = compression)
+        guarded.writeFully(input)
+        val e = assertFails { guarded.flush() }
+        assertTrue(e is io.ktor.websocket.ProtocolViolationException, e.toString())
+        assertFails { guarded.writeFully(frame(0x81, bytes(0x61))).also { guarded.flush() } }
+        guarded.flushAndClose()
+        val out = frames(wire)
+        assertNull(wire.closedCause, "the output ends with a FIN, not a reset")
+        assertEquals(0x88, out.last().b0)
+        assertEquals(1011, out.last().closeCode)
+        assertEquals(masking, out.last().mask != null, "masked on the client only")
+        return out
+    }
+
     /** A fragment Ktor's extension left uncompressed inside a compressed message cannot be sent as RFC 7692 wants. */
     @Test fun negative_uncompressedFragmentInsideAKtorStyleMessageIsRefused() =
         runTest {
             val data = ktorStyle(listOf("ab".encodeToByteArray()))
-            val wire = ByteChannel()
-            val guarded = guardWebSocketOutput(wire, masking = true, compression = SentCompression.PerFrame)
-            guarded.writeFully(frame(0x41, data[0]) + frame(0x80, "cd".encodeToByteArray()))
-            assertFails { guarded.flush() }
-            assertNotNull(wire.closedCause)
+            val out = refusedAtABoundary(frame(0x41, data[0]) + frame(0x80, "cd".encodeToByteArray()), true, SentCompression.PerFrame)
+            assertEquals(listOf(0x41, 0x88), out.map { it.b0 }, "the refused fragment never goes out")
         }
 
     /** RFC 7692 section 6.1: an RFC 7692 sender's RSV1 on a continuation is refused before that frame goes out. */
     @Test fun negative_rsv1OnAContinuationIsRefused() =
         runTest {
-            val wire = ByteChannel()
-            val guarded = guardWebSocketOutput(wire, masking = false, compression = SentCompression.PerMessage)
-            guarded.writeFully(frame(0x42, bytes(0x00)) + frame(0xC0, bytes(0x00)))
-            assertFails { guarded.flush() }
-            assertNotNull(wire.closedCause)
+            val out = refusedAtABoundary(frame(0x42, bytes(0x00)) + frame(0xC0, bytes(0x00)), false, SentCompression.PerMessage)
+            assertEquals(listOf(0x42, 0x88), out.map { it.b0 })
+        }
+
+    /**
+     * A text message whose last frame ends inside a character is whole on the wire when that shows: the connection is
+     * failed with a Close 1011 after it (a frame boundary), not reset. A byte that cannot be UTF-8 inside a frame whose
+     * header is out leaves no boundary: that one resets (negative_textThatIsNotUtf8IsNotSent).
+     */
+    @Test fun negative_textEndingInsideACharacterClosesWith1011() =
+        runTest {
+            val out = refusedAtABoundary(frame(0x81, bytes(0x61, 0xE2)), true, SentCompression.Checked)
+            assertEquals(listOf(0x81, 0x88), out.map { it.b0 })
         }
 
     /**
