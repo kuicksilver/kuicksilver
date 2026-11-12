@@ -20,3 +20,11 @@ internal actual suspend fun platformHttpsQuery(
     val context = currentCoroutineContext()
     return httpsRecordsOf(answer, name) { context.ensureActive() } // a timeout or cancellation stops the read
 }
+
+/** RFC 7050 discovery through the OS resolver (`ksl_dns_query`), with the records' TTLs. */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+internal actual suspend fun platformAddressQuery(
+    name: String,
+    type: Int,
+    timeout: Duration,
+): AddressRecords? = KslDns.query(name, type, timeout)?.let { addressRecordsOf(it, name, type) }

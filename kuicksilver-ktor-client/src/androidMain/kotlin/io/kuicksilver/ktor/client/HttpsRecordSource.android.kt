@@ -34,7 +34,7 @@ internal actual suspend fun platformHttpsQuery(
         null
     } else {
         withTimeoutOrNull(timeout) {
-            val answer = rawQuery(name) ?: return@withTimeoutOrNull null
+            val answer = rawQuery(name, DnsMessage.TYPE_HTTPS) ?: return@withTimeoutOrNull null
             // read here, not in the callback: the read checks this coroutine, so the timeout stops it however long the answer
             val context = currentCoroutineContext()
             httpsRecordsOf(KslDnsAnswer.Message(answer), name) { context.ensureActive() }
@@ -48,9 +48,34 @@ internal actual suspend fun platformHttpsQuery(
  */
 private val callbackExecutor: Executor = Dispatchers.IO.asExecutor()
 
-/** The response message of the system resolver to [name]'s HTTPS query, or null when the lookup failed. */
+/**
+ * RFC 7050 discovery through `DnsResolver.rawQuery` (API 29 and up), with the records' TTLs and a negative answer's SOA.
+ * Below API 29 there is none (the platform runs 464XLAT itself on IPv6-only networks).
+ */
+internal actual suspend fun platformAddressQuery(
+    name: String,
+    type: Int,
+    timeout: Duration,
+): AddressRecords? =
+    if (Build.VERSION.SDK_INT < 29) {
+        null
+    } else {
+        withTimeoutOrNull(timeout) {
+            val answer = rawQuery(name, type) ?: return@withTimeoutOrNull null
+            try {
+                addressRecordsOf(answer, name, type)
+            } catch (_: io.kuicksilver.ktor.client.dns.DnsException) {
+                null
+            }
+        }
+    }
+
+/** The response message of the system resolver to [name]'s query of [type], or null when the lookup failed. */
 @TargetApi(29)
-private suspend fun rawQuery(name: String): ByteArray? =
+private suspend fun rawQuery(
+    name: String,
+    type: Int,
+): ByteArray? =
     suspendCancellableCoroutine { cont ->
         val cancel = CancellationSignal()
         cont.invokeOnCancellation { cancel.cancel() }
@@ -58,7 +83,7 @@ private suspend fun rawQuery(name: String): ByteArray? =
             null, // the default network
             name,
             DnsResolver.CLASS_IN,
-            DnsMessage.TYPE_HTTPS,
+            type,
             DnsResolver.FLAG_EMPTY,
             callbackExecutor,
             cancel,
