@@ -26,3 +26,5 @@ case "$target:$(uname -s)" in
   mingw-x64:*) if command -v wine64 >/dev/null 2>&1 || command -v wine >/dev/null 2>&1; then "$(command -v wine64 || command -v wine)" "$out/$exe"; else echo "built $out/$exe (no Windows host, no wine: not run)"; fi ;;
   *) "$out/$exe" ;;
 esac
+# Apple's resolver fallback (no mDNSResponder): ksl_resolve still answers from the hosts file (macOS host runs only)
+case "$target:$(uname -s):${KSL_TSAN:-0}" in macos-*:Darwin:0) bash "$root/tools/check/ksl-resolve-fallback.sh" ;; esac
