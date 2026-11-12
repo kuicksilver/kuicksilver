@@ -22,7 +22,7 @@ internal actual object ProcessResources {
         return out
     }
 
-    /** VmRSS from /proc on Linux; `ps` elsewhere (macOS has no /proc and the JDK exposes no resident size). */
+    /** VmRSS from /proc on Linux; `/bin/ps` elsewhere (macOS has no /proc and the JDK exposes no resident size), by absolute path, not looked up in PATH. */
     private fun rssKiB(): Long {
         val status = File("/proc/self/status")
         if (status.exists()) {
@@ -34,7 +34,14 @@ internal actual object ProcessResources {
                 ?.toLongOrNull() ?: -1L
         }
         return try {
-            val p = ProcessBuilder("ps", "-o", "rss=", "-p", ProcessHandle.current().pid().toString()).redirectErrorStream(true).start()
+            val p =
+                ProcessBuilder(
+                    "/bin/ps",
+                    "-o",
+                    "rss=",
+                    "-p",
+                    ProcessHandle.current().pid().toString(),
+                ).redirectErrorStream(true).start()
             val text =
                 p.inputStream
                     .bufferedReader()

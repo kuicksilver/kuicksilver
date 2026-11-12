@@ -168,7 +168,13 @@ Kubernetes node), not in the image.
   `noexec` `/tmp` the load fails ("... if the work directory is mounted noexec set -Dkuicksilver.native.workdir"). Set
   `-Dkuicksilver.native.workdir` to a directory on a writable volume that allows executables, such as an `emptyDir`.
   Name a directory *below* the volume's mount point: the loader creates it with owner-only permissions and refuses a
-  directory that another user owns or can write to, as the root of a volume often is.
+  directory that another user owns or can write to, as the root of a volume often is. The loader does not check the
+  directories above a `-Dkuicksilver.native.workdir` (the volume root among them): whoever else can
+  write to one of them could rename the work directory, so keep processes of other users off that volume.
+  An `emptyDir` mounted at `/tmp` instead is world-writable without the sticky bit: the library then goes to the user's
+  cache directory when it is writable, else it stays in `/tmp` and every start logs the warning "native
+  library work directory … is writable by others without the sticky bit". Setting `-Dkuicksilver.native.workdir` to a
+  directory below the mount point, as above, avoids both.
 - **Port 443 without root.** On Linux, binding a port below 1024, TCP and UDP alike, needs `CAP_NET_BIND_SERVICE`, or a
   network namespace whose `net.ipv4.ip_unprivileged_port_start` is at or below the port. In Kubernetes that sysctl is a
   "safe" one since 1.22, so a pod may set it without node changes (not together with `hostNetwork`;

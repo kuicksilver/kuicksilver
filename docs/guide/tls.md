@@ -77,9 +77,18 @@ if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is 
 
 On the JVM the library is extracted once into `<java.io.tmpdir>/kuicksilver-native-<user>` (or
 `-Dkuicksilver.native.workdir=<dir>`, for a `noexec` temp directory) and verified against the jar's SHA-256 manifest on
-every start. The directory must be a real directory that you own and that nobody else can write (the loader applies
-`rwx------`); a symbolic link, another owner or permissions that cannot be removed give `IntegrityMismatch`. The file is
-kept between runs and shared between JVMs of the same user: its name carries the `ksl` ABI version.
+every start. The loader creates the directory, and any missing parent, owner-only (`rwx------`, or on Windows an ACL with
+one entry for you) and checks it: it must be a real directory that you own and that nobody else can write. A
+`-Dkuicksilver.native.workdir` that fails the check gives `IntegrityMismatch`; when the default directory fails it
+(another user created it first, or it is a link), the process uses a new private directory next to it and prints a
+warning. An elevated Windows process uses `kuicksilver-native-<user>-admin`. When a directory above the default one lets
+another user rename it (writable by others without the sticky bit `/tmp` has, or owned by another user), the library
+goes to `$XDG_RUNTIME_DIR/kuicksilver-native` or the user's cache directory instead, and when neither can be used it
+stays in the temporary directory with a warning ([troubleshooting](troubleshooting.md#kslexceptionnativeload-or-kslloaderavailability-is-unavailable)).
+The library is written owner-only (`rw-------`) through a new file and an atomic rename; a copy that another user owns or
+may write is replaced, not reused, and one that cannot be replaced (Windows, another process has it loaded) is written
+next to it under a name with its hash. The file is kept between runs and shared between JVMs of the same user: its name
+carries the `ksl` ABI version.
 
 ## Configuration
 

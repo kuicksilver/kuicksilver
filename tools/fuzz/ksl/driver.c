@@ -7,7 +7,11 @@
    input to <artifact_prefix>crash-<hash>, a hang past -timeout to timeout-<hash>.
    Flags (libFuzzer's names): -max_total_time=S -runs=N -timeout=S -artifact_prefix=P -merge=1 -seed=N; others ignored.
    With libFuzzer (clang -fsanitize=fuzzer on Linux) build.sh links the harness without this file. */
+#define _POSIX_C_SOURCE 200809L /* open, fdopen, O_NOFOLLOW, O_CLOEXEC under -std=c11 with glibc */
+#define _DARWIN_C_SOURCE        /* O_NOFOLLOW, which _POSIX_C_SOURCE hides on macOS */
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,7 +52,12 @@ static void save(const char *dir_or_prefix, const char *kind, const uint8_t *d, 
     char path[4400];
     if (is_dir) snprintf(path, sizeof path, "%s/%016llx", dir_or_prefix, (unsigned long long)fnv(d, n));
     else snprintf(path, sizeof path, "%s%s-%016llx", dir_or_prefix, kind, (unsigned long long)fnv(d, n));
-    FILE *f = fopen(path, "wb"); if (!f) return; fwrite(d, 1, n, f); fclose(f);
+    /* 0600, a new file only (the name is the content's hash: an existing one already holds it), never through a link */
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) { if (errno == EEXIST && !is_dir) fprintf(stderr, "==ksl_fuzz== %s already in %s\n", kind, path); return; }
+    size_t off = 0;
+    while (off < n) { ssize_t w = write(fd, d + off, n - off); if (w <= 0) break; off += (size_t)w; }
+    if (close(fd) != 0 || off < n) { unlink(path); fprintf(stderr, "==ksl_fuzz== %s not written to %s\n", kind, path); return; }   /* no truncated file under a hash name */
     if (!is_dir) fprintf(stderr, "==ksl_fuzz== %s written to %s\n", kind, path);
 }
 static void on_death(void) { if (cur) save(prefix, "crash", cur, curlen, 0); }
@@ -75,8 +84,10 @@ static void load_dir(const char *dir, int keep_all, int write_new) {
     while ((e = readdir(dd))) {
         if (e->d_name[0] == '.') continue;
         char path[4400]; snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
-        struct stat st; if (stat(path, &st) || !S_ISREG(st.st_mode) || st.st_size > MAX_LEN) continue;
-        FILE *f = fopen(path, "rb"); if (!f) continue;
+        /* checked on the open descriptor, not the name: what is read is what was checked (O_NONBLOCK: a FIFO does not hang) */
+        int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC); if (fd < 0) continue;
+        struct stat st; if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > MAX_LEN) { close(fd); continue; }
+        FILE *f = fdopen(fd, "rb"); if (!f) { close(fd); continue; }
         uint8_t *b = malloc((size_t)st.st_size + 1); size_t n = fread(b, 1, (size_t)st.st_size, f); fclose(f);
         int fresh = run(b, n);
         if (keep_all || fresh) { add(b, n); if (write_new && fresh) save(outdir, "", b, n, 1); }
@@ -128,9 +139,12 @@ int main(int argc, char **argv) {
     }
     __sanitizer_set_death_callback(on_death);
     signal(SIGALRM, on_alarm);
-    if (ndirs == 1) { struct stat st; if (!stat(dirs[0], &st) && S_ISREG(st.st_mode)) {   /* reproduce one input */
-        FILE *f = fopen(dirs[0], "rb"); uint8_t *b = malloc((size_t)st.st_size + 1); size_t n = fread(b, 1, (size_t)st.st_size, f); fclose(f);
-        run(b, n); printf("Executed %s: no finding\n", dirs[0]); return 0; } }
+    if (ndirs == 1) {   /* a regular file: reproduce that one input (checked on the descriptor, as in load_dir) */
+        int fd = open(dirs[0], O_RDONLY | O_NONBLOCK | O_CLOEXEC); struct stat st;
+        FILE *f = fd >= 0 && !fstat(fd, &st) && S_ISREG(st.st_mode) ? fdopen(fd, "rb") : NULL;
+        if (f) { uint8_t *b = malloc((size_t)st.st_size + 1); size_t n = fread(b, 1, (size_t)st.st_size, f); fclose(f);
+                 run(b, n); printf("Executed %s: no finding\n", dirs[0]); return 0; }
+        if (fd >= 0) close(fd); }
     if (ndirs) snprintf(outdir, sizeof outdir, "%s", dirs[0]);
     if (merge) {   /* -merge=1 A B C...: inputs of B, C... that add coverage beyond A go into A */
         load_dir(dirs[0], 1, 0);

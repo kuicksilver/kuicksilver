@@ -1281,6 +1281,37 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   UTF-8; RFC 9110 §5.5 has a recipient treat obs-text as opaque data. Such a value now arrives byte for byte, each byte
   as the char of the same code (ISO-8859-1); a value that is valid UTF-8 is decoded as UTF-8 as before.
 
+### Security
+
+- JVM: the native library extraction (`KslLoader`) no longer creates anything under the umask or an inherited ACL
+  (CodeQL `java/local-temp-file-or-directory-information-disclosure`). The library was written through
+  `File.createTempFile` (mode `0644` under the usual umask) and missing parents of `-Dkuicksilver.native.workdir` were
+  created the same way; every file and directory is now owner-only in the creating call (`rw-------` for the library,
+  `rwx------` for directories), and the library goes through a new `O_CREAT | O_EXCL` temp file and an atomic rename.
+  A library is reused only when the process user owns it and nobody else may write it. No setup that loaded before is
+  refused now; risks are mitigated or logged as warnings (`System.Logger` `io.kuicksilver.native`, by default
+  `java.util.logging` on standard error)
+  ([troubleshooting](docs/guide/troubleshooting.md#kslexceptionnativeload-or-kslloaderavailability-is-unavailable)):
+  - Windows checked nothing beyond "is a directory": in a temp directory where other users may create files (a
+    service's `C:\Windows\Temp`) another user could plant the library and change it between the hash check and
+    `System.load`. The work directory now gets an ACL with one entry for the process user. A default directory with
+    another owner, a junction or an ACL still granting others is replaced by a new private directory for the process;
+    for `-Dkuicksilver.native.workdir` that is a warning. An elevated process uses `kuicksilver-native-<user>-admin`, so
+    elevated and normal runs no longer share a directory whose files belong to the Administrators group. A library that
+    cannot be replaced because another process has it loaded is written under a name with its hash.
+  - When a directory above `<java.io.tmpdir>/kuicksilver-native-<user>` lets another user rename it (writable by others
+    without the sticky bit, as an `emptyDir` at `/tmp` is, or owned by another user), the library goes to
+    `$XDG_RUNTIME_DIR` or the user's cache directory instead, else stays in the temporary directory with a warning.
+  - A default directory created first by another user, or a link there, gives a new private directory for the process
+    instead of the `IntegrityMismatch` of 0.2; an explicit `-Dkuicksilver.native.workdir` is still refused. Such a
+    directory is removed at exit, or on Windows (a loaded library cannot be deleted) by a later start.
+  - The process user is now the owner of a file it creates, so a uid without a passwd entry (a container's
+    `runAsUser`) no longer fails with "the user of this process cannot be determined" when `java.io.tmpdir` is
+    read-only.
+- C tests and the `ksl` fuzz harness write their files with mode `0600` and `O_NOFOLLOW`, and the fuzz driver checks
+  a corpus file on its open descriptor instead of by name (CodeQL `cpp/world-writable-file-creation`,
+  `cpp/toctou-race-condition`).
+
 ## [0.2.1] - 2026-11-04
 
 ### Added

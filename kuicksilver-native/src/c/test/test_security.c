@@ -2,7 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0 */
 /* Findings of the 0.2.0 security review: framing bounds, keylog buffer growth, native session ticket keys. */
 #define _POSIX_C_SOURCE 200809L /* setenv, unsetenv, strdup under -std=c11 with glibc */
+#define _DARWIN_C_SOURCE        /* O_NOFOLLOW (test_files.h), which _POSIX_C_SOURCE hides on macOS */
 #include "test_common.h"
+#include "test_files.h"
 #include "ksl_internal.h"
 #include <limits.h>
 void ksl_secret_move(void *dst, void *old, size_t used, size_t old_cap); /* ksl_ctx.c */
@@ -450,7 +452,7 @@ static void test_shared_context_concurrent_handshakes(void) {
 void ksl_trust_paths_for_test(const char *const *files, const char *const *dirs);
 X509_STORE *ksl_system_store_for_test(void);
 static int write_pem(const char *path, const char *const *names, int n) {
-    FILE *f = fopen(path, "w");
+    FILE *f = fopen_private(path);
     if (!f)
         return 0;
     for (int i = 0; i < n; i++) {

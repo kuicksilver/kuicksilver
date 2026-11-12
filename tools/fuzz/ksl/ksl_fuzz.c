@@ -16,10 +16,14 @@
         keys came from ksl_ctx_set_ticket_keys (0), a registered set (1) or the generated keys (2): ticket decryption and
         the 0-RTT verdict on a fuzzed ticket
    Every session is driven until it wants more input; every event is drained and every key freed. */
+#define _POSIX_C_SOURCE 200809L /* open, fdopen, O_NOFOLLOW under -std=c11 with glibc */
+#define _DARWIN_C_SOURCE        /* O_NOFOLLOW, which _POSIX_C_SOURCE hides on macOS */
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "ksl.h"
 
 #ifndef KSL_FUZZ_TESTDATA
@@ -238,11 +242,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     return 0;
 }
 
+/* A seed file, mode 0600 and never through a symbolic link; an existing seed is rewritten. */
+static FILE *seed_file(const char *path) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+    FILE *f = fd < 0 ? NULL : fdopen(fd, "wb");
+    if (fd >= 0 && !f) close(fd);
+    return f;
+}
+
 /* Seeds (tools/fuzz/ksl/build.sh --seeds <dir>): one input per mode from a real handshake and the test data. */
 int ksl_fuzz_write_seeds(const char *dir) {
     init();
     char path[1024]; size_t l, hl;
-#define PUT(name, mode, bytes, len) do { snprintf(path, sizeof path, "%s/seed-%s", dir, name); FILE *f = fopen(path, "wb"); if (!f) return 1; \
+#define PUT(name, mode, bytes, len) do { snprintf(path, sizeof path, "%s/seed-%s", dir, name); FILE *f = seed_file(path); if (!f) return 1; \
         uint8_t m = (uint8_t)(mode); fwrite(&m, 1, 1, f); fwrite(bytes, 1, len, f); fclose(f); } while (0)
     PUT("client-tp", 0, CLIENT_TP, sizeof CLIENT_TP);
     PUT("server-tp-as-client-tp", 0, SERVER_TP, sizeof SERVER_TP);
