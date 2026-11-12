@@ -112,6 +112,18 @@ internal class KuicksilverEngine(
     /** Completed by the first value of [followedNetworks], or by its end: requests wait a moment for it ([checkNetwork]). */
     private val firstFollowedNetwork = kotlinx.coroutines.CompletableDeferred<Unit>()
 
+    /**
+     * Until when requests wait for [firstFollowedNetwork]: [FIRST_NETWORK_WAIT] after the engine was created, one deadline
+     * for all of them (a source that says nothing, offline or without replay, delays no request past it). Internal for tests.
+     */
+    internal var firstNetworkDeadline: kotlin.time.TimeMark =
+        kotlin.time.TimeSource.Monotonic
+            .markNow() + FIRST_NETWORK_WAIT
+
+    /** Requests that waited for [firstFollowedNetwork]; internal for tests. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val firstNetworkWaits = kotlin.concurrent.atomics.AtomicInt(0)
+
     /** How many values of [followedNetworks] the engine has processed; internal for tests. */
     internal val followedNetworkUpdates = kotlinx.coroutines.flow.MutableStateFlow(0)
 
@@ -172,7 +184,7 @@ internal class KuicksilverEngine(
     internal val altSvcWriteLock = Mutex()
 
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
-    internal val brokenAltSvc = BrokenAltSvc(monotonicMillis()) // in memory only: immune to wall-clock steps
+    internal val brokenAltSvc = BrokenAltSvc(monotonicMillis(), ::getTimeMillis) // ends on either: wall steps, deep sleep
     private val race = ProtocolRace(config.http3.hardDelay)
     private val srtt = LinkedHashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection; LRU-bounded
     private var lastNetwork: String? = null
@@ -517,7 +529,7 @@ internal class KuicksilverEngine(
      * `HttpClient.clearAlternativeServices(origin)` (RFC 7838 section 9.4): the cached alternatives, broken marks and RTT of
      * the origin of [origin], or of every origin; the store's file is written before this returns.
      */
-    internal suspend fun clearAlternativeServices(origin: io.ktor.http.Url?) {
+    internal suspend fun clearAlternativeServices(origin: io.ktor.http.Url?): Boolean {
         val key = origin?.let(::originKey)
         val complete =
             altSvcUpdate {
@@ -537,6 +549,7 @@ internal class KuicksilverEngine(
                 }
             }
         }
+        return complete
     }
 
     /**
@@ -546,16 +559,19 @@ internal class KuicksilverEngine(
      * [FileAltSvcStore]) when it comes from `networkId`. A network of the followed source has no identity that is stable
      * across restarts (an Android network handle is a number the system reuses, an Apple path key an interface), so it is
      * never stored: at its first value the engine takes the network as changed, as it does for what it learned before that
-     * value came (requests wait up to [FIRST_NETWORK_WAIT] for it). Without either source the engine knows no network: null,
+     * value came (requests wait for it until [firstNetworkDeadline], one deadline for all). Without either source the engine knows no network: null,
      * and nothing is compared.
      */
     private suspend fun checkNetwork(): String? {
         if (!config.http3.networkIdSet) {
             if (followedNetworks == null) return null
-            if (!followedNetworkKnown &&
-                !firstFollowedNetwork.isCompleted
-            ) {
-                withTimeoutOrNull(FIRST_NETWORK_WAIT) { firstFollowedNetwork.await() }
+            if (!followedNetworkKnown && !firstFollowedNetwork.isCompleted) {
+                val left = -firstNetworkDeadline.elapsedNow()
+                if (left.isPositive()) {
+                    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                    firstNetworkWaits.addAndFetch(1)
+                    withTimeoutOrNull(left) { firstFollowedNetwork.await() }
+                }
             }
             if (!followedNetworkKnown) return null
         }
@@ -648,17 +664,44 @@ internal class KuicksilverEngine(
     /** The one learner of [pendingAltSvcFrames]: takes them all, learns them in order of arrival, until none waits. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     private suspend fun learnAltSvcFrames() {
-        while (true) {
-            val batch = pendingAltSvcFrames.exchange(emptyMap())
-            if (batch.isEmpty()) {
-                altSvcFrameLearner.store(false)
-                // a frame that came after the exchange and found the learner still marked running is taken here
-                if (pendingAltSvcFrames.load().isEmpty() || !altSvcFrameLearner.compareAndSet(false, true)) return
-                continue
+        var done = false
+        try {
+            while (true) {
+                val batch = pendingAltSvcFrames.exchange(emptyMap())
+                if (batch.isEmpty()) {
+                    altSvcFrameLearner.store(false)
+                    done = true
+                    // a frame that came after the exchange and found the learner still marked running is taken here
+                    if (pendingAltSvcFrames.load().isEmpty() || !altSvcFrameLearner.compareAndSet(false, true)) return
+                    done = false
+                    continue
+                }
+                val frames = batch.values.sortedBy { it.seq }
+                val failures = ArrayList<Exception>()
+                altSvcUpdate {
+                    for (f in frames) {
+                        // a store that throws (an application's own) loses this frame, not the ones after it
+                        try {
+                            altSvc.onAltSvcFrame(f.url, f.value)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            failures += e
+                        }
+                    }
+                }
+                failures.firstOrNull()?.let { e ->
+                    runCatching {
+                        if (events.logger.isEnabled(LogLevel.Warn)) {
+                            events.logger.log(LogLevel.Warn, "${failures.size} ALTSVC frame(s) could not be stored", e)
+                        }
+                    }
+                }
+                altSvcFramesApplied.value = maxOf(altSvcFramesApplied.value, frames.last().seq)
             }
-            val frames = batch.values.sortedBy { it.seq }
-            altSvcUpdate { for (f in frames) altSvc.onAltSvcFrame(f.url, f.value) }
-            altSvcFramesApplied.value = maxOf(altSvcFramesApplied.value, frames.last().seq)
+        } finally {
+            // cancelled or failed: the next frame starts a learner again
+            if (!done) altSvcFrameLearner.store(false)
         }
     }
 
@@ -1464,8 +1507,9 @@ internal val MAX_HTTPS_RECORD_EXTRA_WAIT = 1.seconds
 internal val MAX_HTTPS_RECORD_QUERY = 30.seconds
 
 /**
- * How long a request waits for the first value of the networks `connectionMigration` follows (the system answers at once:
- * Android's default-network callback, Apple's path monitor); past it the request goes on without a known network.
+ * How long after the engine's creation requests wait for the first value of the networks `connectionMigration` follows
+ * (the system answers at once: Android's default-network callback when a network is up, Apple's path monitor); past it
+ * they go on without a known network and without waiting.
  */
 internal val FIRST_NETWORK_WAIT = kotlin.time.Duration.parse("200ms")
 

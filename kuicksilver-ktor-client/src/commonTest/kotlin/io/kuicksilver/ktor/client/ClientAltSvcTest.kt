@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.request.get
@@ -16,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -322,7 +325,7 @@ class ClientAltSvcTest {
                     engine.rememberSrtt(origin, 10.milliseconds)
                     engine.rememberSrtt(other, 10.milliseconds)
 
-                    c.clearAlternativeServices(io.ktor.http.Url("$origin/"))
+                    assertTrue(c.clearAlternativeServices(io.ktor.http.Url("$origin/")))
                     assertTrue(engine.altSvcSnapshot(io.ktor.http.Url("$origin/")).isEmpty())
                     assertTrue(FileAltSvcStore(path).get(origin).isEmpty(), "removed on disk too")
                     assertEquals(1, FileAltSvcStore(path).get(other).size, "another origin is kept")
@@ -330,7 +333,7 @@ class ClientAltSvcTest {
                     assertTrue(engine.brokenAltSvc.brokenReason(other, "other.example:443") != null)
                     assertEquals(1, engine.srttOrigins)
 
-                    c.clearAlternativeServices()
+                    assertTrue(c.clearAlternativeServices(), "complete with a FileAltSvcStore")
                     assertTrue(FileAltSvcStore(path).get(other).isEmpty(), "everything removed on disk")
                     assertTrue(store.get(other).isEmpty())
                     assertEquals(0, engine.brokenAltSvc.size)
@@ -571,6 +574,89 @@ class ClientAltSvcTest {
             testClient(Http3DiscoveryMode.Auto).use { c ->
                 val clock = (c.engine as KuicksilverEngine).brokenAltSvc.clock
                 assertTrue(clock() < 3_600_000, "a monotonic clock from the engine's start, not epoch time: ${clock()}")
+            }
+        }
+
+    /**
+     * A followed source that says nothing (an Android device that starts offline, a flow without replay) delays requests
+     * only until one deadline after the client was created, not each of them by the full wait: once it has passed, no
+     * request waits.
+     */
+    @Test fun negative_silentNetworkSourceDelaysNoRequestPastTheDeadline() =
+        clientTest {
+            val (server, port) = advertisingOnce()
+            try {
+                val url = io.ktor.http.Url("https://127.0.0.1:$port/")
+                testClient(Http3DiscoveryMode.Auto, engine = {
+                    http3 { connectionMigration = following(kotlinx.coroutines.flow.flow { kotlinx.coroutines.awaitCancellation() }) }
+                }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    c.get(url).bodyAsText()
+                    assertTrue(engine.firstNetworkWaits.load() <= 1)
+                    engine.firstNetworkDeadline =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow() // passed
+                    val before = engine.firstNetworkWaits.load()
+                    repeat(3) { c.get(url).bodyAsText() }
+                    assertEquals(before, engine.firstNetworkWaits.load(), "no request waits after the deadline")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A store that throws while an ALTSVC frame is learned (an application's own `AltSvcStore`) loses that frame only: the
+     * other frames of the batch and later ones are still learned. Before, the exception ended the one learner and left it
+     * marked running, so no ALTSVC frame was learned again.
+     */
+    @Test fun negative_failingStoreDoesNotSilenceAltSvcFrames() =
+        clientTest {
+            val inner = InMemoryAltSvcStore()
+            val store =
+                object : AltSvcStore by inner {
+                    override fun put(
+                        origin: String,
+                        entries: List<AltSvcEntry>,
+                    ) {
+                        if ("bad" in origin) throw IllegalStateException("database locked")
+                        inner.put(origin, entries)
+                    }
+                }
+            testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                val engine = c.engine as KuicksilverEngine
+                engine.onAltSvcFrame(io.ktor.http.Url("https://bad.example/"), "h3=\":443\"")
+                engine.altSvcFramesApplied.first { it >= engine.altSvcFramesReceived }
+                val good = io.ktor.http.Url("https://good.example/")
+                engine.onAltSvcFrame(good, "h3=\":443\"")
+                engine.altSvcFramesApplied.first { it >= engine.altSvcFramesReceived }
+                assertEquals(listOf(443), engine.altSvcSnapshot(good).map { it.port })
+            }
+        }
+
+    /**
+     * `clearAlternativeServices()` says when it could not do everything: a store without `clear()` (written before 0.3.0)
+     * gets the origins seen during this run removed, and the call answers false so the application can clear the rest.
+     */
+    @Test fun negative_clearAlternativeServicesReportsAnIncompleteClear() =
+        clientTest {
+            val inner = InMemoryAltSvcStore()
+            val legacy =
+                object : AltSvcStore {
+                    override fun get(origin: String) = inner.get(origin)
+
+                    override fun put(
+                        origin: String,
+                        entries: List<AltSvcEntry>,
+                    ) = inner.put(origin, entries)
+
+                    override fun remove(origin: String) = inner.remove(origin)
+
+                    override fun clearNonPersistent() = inner.clearNonPersistent()
+                }
+            testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = legacy } }).use { c ->
+                assertFalse(c.clearAlternativeServices())
+                assertTrue(c.clearAlternativeServices(io.ktor.http.Url("https://example.com/")), "one origin is always complete")
             }
         }
 }
