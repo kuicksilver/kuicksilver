@@ -1321,14 +1321,18 @@ if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is 
 
 On the JVM the library is extracted once into `<java.io.tmpdir>/kuicksilver-native-<user>` (or
 `-Dkuicksilver.native.workdir=<dir>`, for a `noexec` temp directory) and verified against the jar's SHA-256 manifest on
-every start. The directory must be a real directory that you own and that nobody else can write (the loader creates it,
-and any missing parent, owner-only and applies `rwx------`, or on Windows an ACL with one entry for you); a symbolic link,
-another owner or permissions that cannot be removed give `IntegrityMismatch`. Under `java.io.tmpdir` the directories
-above it must belong to you or root and be writable by nobody else unless they have the sticky bit (as `/tmp` has),
-since anyone who may write there could rename the directory and put another in its place; for
-`-Dkuicksilver.native.workdir` that choice is yours. The library is written owner-only (`rw-------`) through a new file
-and an atomic rename, and a copy that another user owns or may write is replaced, not reused. The file is kept between
-runs and shared between JVMs of the same user: its name carries the `ksl` ABI version.
+every start. The loader creates the directory, and any missing parent, owner-only (`rwx------`, or on Windows an ACL with
+one entry for you) and checks it: it must be a real directory that you own and that nobody else can write. A
+`-Dkuicksilver.native.workdir` that fails the check gives `IntegrityMismatch`; when the default directory fails it
+(another user created it first, or it is a link), the process uses a new private directory next to it and prints a
+warning. An elevated Windows process uses `kuicksilver-native-<user>-admin`. When a directory above the default one lets
+another user rename it (writable by others without the sticky bit `/tmp` has, or owned by another user), the library
+goes to `$XDG_RUNTIME_DIR/kuicksilver-native` or the user's cache directory instead, and when neither can be used it
+stays in the temporary directory with a warning ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#kslexceptionnativeload-or-kslloaderavailability-is-unavailable)).
+The library is written owner-only (`rw-------`) through a new file and an atomic rename; a copy that another user owns or
+may write is replaced, not reused, and one that cannot be replaced (Windows, another process has it loaded) is written
+next to it under a name with its hash. The file is kept between runs and shared between JVMs of the same user: its name
+carries the `ksl` ABI version.
 
 ### Configuration
 
@@ -3973,6 +3977,10 @@ Kubernetes node), not in the image.
   directory that another user owns or can write to, as the root of a volume often is. The loader does not check the
   directories above a `-Dkuicksilver.native.workdir` (the volume root among them): whoever else can
   write to one of them could rename the work directory, so keep processes of other users off that volume.
+  An `emptyDir` mounted at `/tmp` instead is world-writable without the sticky bit: the library then goes to the user's
+  cache directory when it is writable, else it stays in `/tmp` and every start prints "kuicksilver: warning: native
+  library work directory … is writable by others without the sticky bit". Setting `-Dkuicksilver.native.workdir` to a
+  directory below the mount point, as above, avoids both.
 - **Port 443 without root.** On Linux, binding a port below 1024, TCP and UDP alike, needs `CAP_NET_BIND_SERVICE`, or a
   network namespace whose `net.ipv4.ip_unprivileged_port_start` is at or below the port. In Kubernetes that sysctl is a
   "safe" one since 1.22, so a pod may set it without node changes (not together with `hostNetwork`;
@@ -5366,13 +5374,28 @@ exception from the first connection. `NativeUnavailableReason`:
 |---|---|---|
 | `NoLibraryForPlatform` | "resource META-INF/native/<name> not on the classpath" | the JVM jar has no library for this OS and CPU (see [stability: Platforms](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md#platforms)); musl (Alpine) is not supported |
 | `LoadFailed` | the `UnsatisfiedLinkError` text "…; if the work directory is mounted noexec set -Dkuicksilver.native.workdir" | the extraction directory (`<java.io.tmpdir>/kuicksilver-native-<user>`) is `noexec`: point `-Dkuicksilver.native.workdir` at an executable directory you own |
-| `IntegrityMismatch` | "work directory <dir> is a symbolic link / is not a directory / is owned by <owner>, not by this user / keeps group/other permissions … / lies in <parent>, owned by <owner>, not by this user or root / lies in <parent>, writable by group or others without the sticky bit; set -Dkuicksilver.native.workdir to a directory only you own", or "sha256 mismatch for <file>: resource was tampered with or corrupted", "duplicate native resources with different content on the classpath" | use a private directory, below directories that only you or root can write to (or that have the sticky bit, as `/tmp`); remove the second, different copy of `kuicksilver-native` from the classpath (two Kuicksilver versions) |
+| `IntegrityMismatch` | "work directory <dir> is a symbolic link / is not a directory / is owned by <owner>, not by this user / keeps group/other permissions … / cannot be read: …; set -Dkuicksilver.native.workdir to a directory only you own" (a `-Dkuicksilver.native.workdir`; the default directory is replaced by a new private one instead, with a warning), or "sha256 mismatch for <file>: resource was tampered with or corrupted", "duplicate native resources with different content on the classpath" | use a private directory; remove the second, different copy of `kuicksilver-native` from the classpath (two Kuicksilver versions) |
 | `AbiMismatch` | `KslException.AbiMismatch` "ksl ABI <n> in the native library, <m> expected" | the native library belongs to another Kuicksilver release, usually through `-Dkuicksilver.native.path` or `-Dkuicksilver.native.system=true`; use the library of the same version ([stability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md#the-native-library-abi-ksl)) |
 
 `KslException.Version` ("OpenSSL <found> found, OpenSSL 3.5+ (not 4.x) required") and `KslException.MissingSymbol`
 appear only with a library built against a system OpenSSL, as does `KslException.NativeLoad` "SSLKEYLOGFILE is set and
 the system libssl may honour it; unset it (keylog)": such a library refuses to load while `SSLKEYLOGFILE` is set. The outcome of the first load attempt is cached for the
 process: fix the cause and restart.
+
+The loader also prints warnings on standard error, "kuicksilver: warning: …", and loads anyway:
+
+- "native library work directory <dir>: <parent> is writable by others without the sticky bit / is writable by its
+  group without the sticky bit / belongs to <owner>, not to this user or root, so another user could replace the library
+  before it is loaded": a directory above `<java.io.tmpdir>/kuicksilver-native-<user>` lets another user rename the work
+  directory, and neither `$XDG_RUNTIME_DIR` nor the user's cache directory could be used instead (a Kubernetes `emptyDir`
+  mounted at `/tmp` is world-writable without the sticky bit). Set `-Dkuicksilver.native.workdir` to a directory below
+  ones only you or root can write to; on a volume no other user's process can reach the warning is harmless.
+- "work directory <dir> is a symbolic link … ; this process uses the new private directory <dir> instead": the default
+  directory exists but is not usable (another user created it, or it is a link); a new private directory for this
+  process is used and removed at exit. Remove the old directory if you created it yourself.
+- "work directory <dir> is owned by <owner>, not by this user; another user may be able to replace the library" (or "is a
+  junction", "keeps group/other permissions for <names>"): Windows, a `-Dkuicksilver.native.workdir` that is not private
+  to this user. Point it at a directory of your own.
 
 ### Ktor engines
 

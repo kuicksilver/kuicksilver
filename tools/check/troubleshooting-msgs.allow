@@ -2,13 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Quotes of docs/guide/troubleshooting.md that tools/check/troubleshooting-msgs.sh cannot match to one string of the
 # source (one text per line, exactly as quoted); the reason is on the line above each group.
-# KslLoader.jvm.kt:102 appends "set -D$WORKDIR", a constant holding the property name.
+# KslLoader.jvm.kt (load) appends "set -D$WORKDIR", a constant holding the property name.
 …; if the work directory is mounted noexec set -Dkuicksilver.native.workdir
-# KslLoader.jvm.kt:213-289 builds "work directory <dir> " + one of several refusals ("is a symbolic link", "is not a
-# directory", "is owned by <owner>, not by this user", "lies in <parent>, ...", ...) + "; set -D$WORKDIR to a directory
-# only you own" (refuseWorkDir).
-work directory <dir> is a symbolic link / is not a directory / is owned by <owner>, not by this user / keeps group/other permissions … / lies in <parent>, owned by <owner>, not by this user or root / lies in <parent>, writable by group or others without the sticky bit; set -Dkuicksilver.native.workdir to a directory only you own
-# KslLoader.jvm.kt:121 passes "OpenSSL 3.5+ (not 4.x)" as the required version of KslException.Version("OpenSSL <found> found, ... required").
+# KslLoader.jvm.kt (checkWorkDir, refuseWorkDir) builds "work directory <dir> " + one of several refusals ("is a symbolic
+# link", "is not a directory", "is owned by <owner>, not by this user", "cannot be read: ...") + "; set -D$WORKDIR to a
+# directory only you own".
+work directory <dir> is a symbolic link / is not a directory / is owned by <owner>, not by this user / keeps group/other permissions … / cannot be read: …; set -Dkuicksilver.native.workdir to a directory only you own
+# KslLoader.jvm.kt (workDirs, ancestorRisk) warns "native library work directory $primary: $risk, so another user could
+# replace the library before it is loaded", $risk being one of three texts of ancestorRisk.
+native library work directory <dir>: <parent> is writable by others without the sticky bit / is writable by its group without the sticky bit / belongs to <owner>, not to this user or root, so another user could replace the library before it is loaded
+# KslLoader.jvm.kt (prepareDefault) appends "; this process uses the new private directory $fresh instead" to the refusal.
+work directory <dir> is a symbolic link … ; this process uses the new private directory <dir> instead
+# KslLoader.jvm.kt (checkWorkDir, explicit directory on Windows) warns "work directory $dir $why; another user may ...".
+work directory <dir> is owned by <owner>, not by this user; another user may be able to replace the library
+# KslLoader.jvm.kt (checkInit) passes "OpenSSL 3.5+ (not 4.x)" as the required version of KslException.Version("OpenSSL <found> found, ... required").
 OpenSSL <found> found, OpenSSL 3.5+ (not 4.x) required
 # Http3Endpoint.kt:122 interpolates the constant: "the server chose ALPN \"$alpn\", not \"$H3\"".
 the server chose ALPN \"<alpn>\", not \"h3\"

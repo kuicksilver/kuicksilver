@@ -111,27 +111,114 @@ class KslLoaderTest {
     }
 
     /**
-     * The default work directory lies in `java.io.tmpdir`: a directory there can be renamed and replaced by any user who may
-     * write to a directory above it, unless that one has the sticky bit. Such an ancestor, or one owned by another user, is
-     * refused; a sticky world-writable one (`/tmp`) passes.
+     * A temporary directory others may write to without the sticky bit (an `emptyDir` mounted at /tmp) is no reason to
+     * refuse: the library goes to a private location of the user (here its cache directory) instead, without a warning.
      */
-    @Test fun negative_workdirUnderWritableNonStickyParentRefused() {
+    @Test fun workdirUnderWritableNonStickyTmpUsesTheUserCache() {
         if (!unix) return
-        val shared = Files.createTempDirectory("ksl-shared-parent").toFile().apply { deleteOnExit() }
-        val dir = File(shared, "kuicksilver-native-test").toPath()
-        JvmLoader.createWorkDir(dir)
-        dir.toFile().deleteOnExit()
+        val shared = Files.createTempDirectory("ksl-shared-tmp").toFile().apply { deleteOnExit() }
         chmod("777", shared)
-        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkAncestors(dir) }
-        assertTrue(e.reason.contains("without the sticky bit"), e.reason)
-        assertEquals(NativeUnavailableReason.IntegrityMismatch, e.kind)
-        chmod("1777", shared)
-        JvmLoader.checkAncestors(dir)
-        chmod("700", shared)
-        JvmLoader.checkAncestors(dir)
-        if (Files.getAttribute(shared.toPath(), "unix:uid") == 0) return // running as root: a root-owned ancestor is trusted anyway
-        val owner = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkAncestors(dir, foreignUser(shared.toPath())) }
-        assertTrue(owner.reason.contains("owned by"), owner.reason)
+        val home = Files.createTempDirectory("ksl-home").toFile().apply { deleteOnExit() }
+        val warnings = mutableListOf<String>()
+        val dir = JvmLoader.privateWorkDir(mapOf("java.io.tmpdir" to shared.path, "user.home" to home.path), emptyMap(), warnings::add)
+        dir.deleteOnExit()
+        assertTrue(dir.canonicalPath.startsWith(home.canonicalPath), "$dir")
+        assertEquals(emptyList(), warnings)
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.toPath())))
+    }
+
+    /** With no private location to use, the temporary directory is still used (it loaded in 0.2), with a warning that says why. */
+    @Test fun workdirUnderWritableNonStickyTmpWithoutAlternativeWarns() {
+        if (!unix) return
+        val shared = Files.createTempDirectory("ksl-shared-tmp").toFile().apply { deleteOnExit() }
+        chmod("777", shared)
+        val warnings = mutableListOf<String>()
+        val props = mapOf("java.io.tmpdir" to shared.path, "user.home" to noHome().path, "user.name" to "t")
+        val dir = JvmLoader.privateWorkDir(props, emptyMap(), warnings::add)
+        dir.deleteOnExit()
+        assertEquals(File(shared.canonicalFile, "kuicksilver-native-t"), dir)
+        assertTrue(warnings.single().contains("writable by others without the sticky bit"), warnings.toString())
+    }
+
+    /** A child JVM whose `java.io.tmpdir` is world-writable without the sticky bit, and that has no home, still loads. */
+    @Test fun childLoadsUnderWritableNonStickyTmp() {
+        if (!unix) return
+        val shared = Files.createTempDirectory("ksl-shared-tmp").toFile().apply { deleteOnExit() }
+        chmod("777", shared)
+        val out = runChild("-Djava.io.tmpdir=" + shared.path, "-Duser.home=" + noHome().path)
+        assertTrue(out.contains("loaded abi $KSL_ABI_VERSION"), out)
+        assertTrue(out.contains("kuicksilver: warning:") && out.contains("without the sticky bit"), out)
+    }
+
+    /** A default directory planted by someone else (here a symbolic link) gives a new private directory for the process, not a failure. */
+    @Test fun negative_plantedDefaultWorkdirIsNotUsed() {
+        val tmp = Files.createTempDirectory("ksl-planted-tmp").toFile().apply { deleteOnExit() }
+        val elsewhere = Files.createTempDirectory("ksl-planted-target").toFile().apply { deleteOnExit() }
+        val primary = File(tmp, "kuicksilver-native-t").apply { deleteOnExit() }
+        Files.createSymbolicLink(primary.toPath(), elsewhere.toPath())
+        val warnings = mutableListOf<String>()
+        val dir = JvmLoader.privateWorkDir(mapOf("java.io.tmpdir" to tmp.path, "user.name" to "t"), emptyMap(), warnings::add)
+        dir.deleteOnExit()
+        assertTrue(dir.name.startsWith("kuicksilver-native-t-") && dir.parentFile == tmp.canonicalFile, "$dir")
+        assertTrue(Files.isDirectory(dir.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS), "$dir")
+        assertTrue(warnings.single().contains("symbolic link") && warnings.single().contains("new private directory"), warnings.toString())
+        if (posix) assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.toPath())))
+        val out = runChild("-Djava.io.tmpdir=" + tmp.path, "-Duser.name=t")
+        assertTrue(out.contains("loaded abi $KSL_ABI_VERSION"), out)
+        assertTrue(elsewhere.list()!!.isEmpty(), "nothing written through the planted link: ${elsewhere.list()!!.toList()}")
+    }
+
+    /** The rule for a directory above the default work directory, on the setups it must accept and the ones it must report. */
+    @Test fun negative_ancestorRiskRule() {
+        fun risk(
+            uid: Int = 0,
+            mine: Boolean = false,
+            gid: Int = 0,
+            myGroup: Boolean = false,
+            mode: Int,
+        ) = JvmLoader.ancestorRisk("/d", uid, "o", mine, gid, myGroup, mode)
+        assertEquals(null, risk(mode = "1777".toInt(8)), "/tmp")
+        assertEquals(null, risk(mode = "755".toInt(8)), "/var")
+        assertEquals(null, risk(uid = 501, mine = true, gid = 501, myGroup = true, mode = "775".toInt(8)), "umask 002, user private group")
+        assertEquals(null, risk(uid = 0, gid = 0, mode = "775".toInt(8)), "group-writable by root's group (OpenShift gid 0)")
+        assertEquals(null, risk(uid = 501, mine = true, gid = 0, mode = "770".toInt(8)), "own directory, root's group")
+        assertTrue(risk(mode = "777".toInt(8))!!.contains("writable by others without the sticky bit"))
+        assertTrue(risk(gid = 20, mode = "775".toInt(8))!!.contains("writable by its group"))
+        assertTrue(risk(uid = 1001, mode = "755".toInt(8))!!.contains("belongs to o"))
+        assertTrue(
+            risk(uid = 1001, mode = "1777".toInt(8))!!.contains("belongs to o"),
+            "a sticky directory of another user: its owner may rename",
+        )
+    }
+
+    /** An elevated Windows process creates files owned by the Administrators group: it gets a directory of its own. */
+    @Test fun elevatedProcessGetsItsOwnDefaultDirectory() {
+        assertEquals("kuicksilver-native-u", JvmLoader.defaultDirName("u", FakePrincipal("u")))
+        val admins =
+            object : java.nio.file.attribute.GroupPrincipal {
+                override fun getName() = "BUILTIN\\Administrators"
+            }
+        assertEquals("kuicksilver-native-u-admin", JvmLoader.defaultDirName("u", admins))
+        assertEquals(false, JvmLoader.isTrustedWindowsPrincipal(FakePrincipal("S-1-5-18")))
+    }
+
+    /** A home directory path that is a regular file: nothing can be created below it, not even by root (the Docker JVM steps). */
+    private fun noHome(): File = Files.createTempFile("ksl-no-home", null).toFile().apply { deleteOnExit() }
+
+    private fun runChild(vararg jvmArgs: String): String {
+        val javaBin =
+            ProcessHandle
+                .current()
+                .info()
+                .command()
+                .orElseThrow()
+        val p =
+            ProcessBuilder(
+                listOf(javaBin, "-cp", System.getProperty("java.class.path")) + jvmArgs + "io.kuicksilver.native.ChildLoadMain",
+            ).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText()
+        assertTrue(p.waitFor(60, TimeUnit.SECONDS) && p.exitValue() == 0, "child JVM loaded the library: $out")
+        return out
     }
 
     /** The ACL check of a work directory without a POSIX view: only the owner may be allowed anything. */
@@ -173,6 +260,9 @@ class KslLoaderTest {
         assertEquals(listOf(view.owner), view.acl.filter { it.type() == AclEntryType.ALLOW }.map { it.principal() })
         val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir, FakePrincipal("other")) }
         assertTrue(e.reason.contains("owned by"), e.reason)
+        val warnings = mutableListOf<String>()
+        JvmLoader.checkWorkDir(dir, FakePrincipal("other"), strictAcl = false, warn = warnings::add) // an explicit workdir: 0.2 accepted it
+        assertTrue(warnings.single().contains("owned by"), warnings.toString())
         val n = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir, null) }
         assertTrue(n.reason.contains("cannot be determined"), n.reason)
     }
@@ -334,5 +424,22 @@ class LoaderInstallTest {
             java.nio.file.attribute.PosixFilePermissions
                 .toString(Files.getPosixFilePermissions(out.toPath())),
         )
+    }
+
+    /** When the library cannot be replaced (Windows: another process has it loaded) it goes under a name with its hash. */
+    @Test fun negative_unreplaceableLibraryGoesUnderItsHashedName() {
+        val resourceDir = File(System.getProperty("ksl.native.resources")!!)
+        val lib = File(resourceDir, "META-INF/native/" + JvmNativeNames.libraryFileName())
+        val manifest = File(resourceDir, "META-INF/native/manifest.sha256").readText()
+        val dir = Files.createTempDirectory("ksl-install-busy").toFile().apply { deleteOnExit() }
+        val out = File(dir, lib.name).apply { deleteOnExit() }
+        // a non-empty directory at the library's name: a rename cannot replace it
+        File(out, "busy").apply { parentFile.mkdirs() }.apply { writeText("x") }.deleteOnExit()
+        val installed = JvmLoader.installLibrary(out, lib.readBytes(), manifest).apply { deleteOnExit() }
+        kotlin.test.assertEquals(JvmLoader.hashedName(lib.name, lib.readBytes()), installed.name)
+        JvmLoader.verifyAgainstManifest(installed, manifest, lib.name)
+        val again = JvmLoader.installLibrary(out, lib.readBytes(), manifest)
+        kotlin.test.assertEquals(installed, again, "the hashed copy is reused")
+        kotlin.test.assertTrue(dir.listFiles()!!.none { it.name.endsWith(".tmp") }, "no temp files left")
     }
 }

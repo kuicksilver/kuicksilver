@@ -462,13 +462,28 @@ exception from the first connection. `NativeUnavailableReason`:
 |---|---|---|
 | `NoLibraryForPlatform` | "resource META-INF/native/<name> not on the classpath" | the JVM jar has no library for this OS and CPU (see [stability: Platforms](../stability.md#platforms)); musl (Alpine) is not supported |
 | `LoadFailed` | the `UnsatisfiedLinkError` text "…; if the work directory is mounted noexec set -Dkuicksilver.native.workdir" | the extraction directory (`<java.io.tmpdir>/kuicksilver-native-<user>`) is `noexec`: point `-Dkuicksilver.native.workdir` at an executable directory you own |
-| `IntegrityMismatch` | "work directory <dir> is a symbolic link / is not a directory / is owned by <owner>, not by this user / keeps group/other permissions … / lies in <parent>, owned by <owner>, not by this user or root / lies in <parent>, writable by group or others without the sticky bit; set -Dkuicksilver.native.workdir to a directory only you own", or "sha256 mismatch for <file>: resource was tampered with or corrupted", "duplicate native resources with different content on the classpath" | use a private directory, below directories that only you or root can write to (or that have the sticky bit, as `/tmp`); remove the second, different copy of `kuicksilver-native` from the classpath (two Kuicksilver versions) |
+| `IntegrityMismatch` | "work directory <dir> is a symbolic link / is not a directory / is owned by <owner>, not by this user / keeps group/other permissions … / cannot be read: …; set -Dkuicksilver.native.workdir to a directory only you own" (a `-Dkuicksilver.native.workdir`; the default directory is replaced by a new private one instead, with a warning), or "sha256 mismatch for <file>: resource was tampered with or corrupted", "duplicate native resources with different content on the classpath" | use a private directory; remove the second, different copy of `kuicksilver-native` from the classpath (two Kuicksilver versions) |
 | `AbiMismatch` | `KslException.AbiMismatch` "ksl ABI <n> in the native library, <m> expected" | the native library belongs to another Kuicksilver release, usually through `-Dkuicksilver.native.path` or `-Dkuicksilver.native.system=true`; use the library of the same version ([stability](../stability.md#the-native-library-abi-ksl)) |
 
 `KslException.Version` ("OpenSSL <found> found, OpenSSL 3.5+ (not 4.x) required") and `KslException.MissingSymbol`
 appear only with a library built against a system OpenSSL, as does `KslException.NativeLoad` "SSLKEYLOGFILE is set and
 the system libssl may honour it; unset it (keylog)": such a library refuses to load while `SSLKEYLOGFILE` is set. The outcome of the first load attempt is cached for the
 process: fix the cause and restart.
+
+The loader also prints warnings on standard error, "kuicksilver: warning: …", and loads anyway:
+
+- "native library work directory <dir>: <parent> is writable by others without the sticky bit / is writable by its
+  group without the sticky bit / belongs to <owner>, not to this user or root, so another user could replace the library
+  before it is loaded": a directory above `<java.io.tmpdir>/kuicksilver-native-<user>` lets another user rename the work
+  directory, and neither `$XDG_RUNTIME_DIR` nor the user's cache directory could be used instead (a Kubernetes `emptyDir`
+  mounted at `/tmp` is world-writable without the sticky bit). Set `-Dkuicksilver.native.workdir` to a directory below
+  ones only you or root can write to; on a volume no other user's process can reach the warning is harmless.
+- "work directory <dir> is a symbolic link … ; this process uses the new private directory <dir> instead": the default
+  directory exists but is not usable (another user created it, or it is a link); a new private directory for this
+  process is used and removed at exit. Remove the old directory if you created it yourself.
+- "work directory <dir> is owned by <owner>, not by this user; another user may be able to replace the library" (or "is a
+  junction", "keeps group/other permissions for <names>"): Windows, a `-Dkuicksilver.native.workdir` that is not private
+  to this user. Point it at a directory of your own.
 
 ## Ktor engines
 
