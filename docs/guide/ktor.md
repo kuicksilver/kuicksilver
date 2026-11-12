@@ -464,10 +464,13 @@ with the checks RFC 6455 asks of a server that Ktor leaves out:
   bytes in base64, and on both protocols exactly one `Sec-WebSocket-Version: 13`. Otherwise the route's answer becomes
   `400 Bad Request`, or for another version `426 Upgrade Required` over HTTP/1.1 (400 over HTTP/3), with
   `Sec-WebSocket-Version: 13`; the handler does not run.
-- A client's frame or message larger than the engine's `webSocketMaxMessageSize` (16 MiB by default, *experimental*)
-  closes the connection with 1009 from the frame's header, before its payload is read (section 10.4); Ktor's own
-  `maxFrameSize` (unlimited on the server by default) applies on top. A text message or a Close reason that is not
-  UTF-8 closes it with 1007 (section 8.1), and a malformed control frame, fragment or Close frame with 1002.
+- A client's uncompressed frame or message larger than the engine's `webSocketMaxMessageSize` (16 MiB by default,
+  *experimental*) closes the connection with 1009 from the frame's header, before its payload is read (section 10.4);
+  a compressed one closes it as it inflates past the limit (and a compressed frame claiming more than 8 times the limit
+  plus 64 KiB, from its header). Ktor's own `maxFrameSize` (unlimited on the server by default) applies on top. The
+  engine decompresses permessage-deflate itself, whichever extension negotiated it (`PerMessageDeflate` or Ktor's
+  `WebSocketDeflateExtension`). A text message or a Close reason that is not UTF-8 closes it with 1007 (section 8.1),
+  and a malformed control frame, fragment, length or Close frame with 1002.
 - The server's frames are never masked (section 5.1), whatever `WebSockets { masking }` says, and a Close the
   application sends with a code no endpoint may send (1005, 1006, 1015, below 1000, …) goes out without a code.
 
@@ -746,15 +749,18 @@ val client = HttpClient(Kuicksilver) {
   new key from the same source. A frame with an RSV bit that no negotiated extension defines (RSV1 for
   permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a reserved opcode, a mask bit in the
   wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a client's always are), a malformed
-  control frame, fragment or Close frame fails the connection with code 1002; a text message or a Close reason that is
-  not UTF-8 with 1007; a frame or message over the engine's `webSocketMaxMessageSize` (16 MiB by default,
-  *experimental*) with 1009, from the frame's header, before its payload is read. The engine hands the session a Close
+  control frame, fragment, length or Close frame fails the connection with code 1002; a text message or a Close reason
+  that is not UTF-8 with 1007, after permessage-deflate, which the engine decompresses itself whichever extension
+  negotiated it; an uncompressed frame or message over the engine's `webSocketMaxMessageSize` (16 MiB by default,
+  *experimental*) with 1009, from the frame's header, before its payload is read, and a compressed one as it inflates
+  past the limit. The engine hands the session a Close
   frame with that code in place of the bad frame, Ktor's session answers it, so the code goes on the wire and is the
   session's `closeReason`, and `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in
   `incoming` and answers it itself). An extension the engine does not know (the application's own) may use every RSV
   bit; one implemented by an installed Ktor extension the bits its factory declares. A text message the application
-  builds from bytes (`Frame.Text(fin, ByteArray)`) that is not UTF-8 is not sent: the session fails with
-  `ProtocolViolationException`.
+  builds from bytes (`Frame.Text(fin, ByteArray)`) that is not UTF-8 is not sent (also when Ktor's
+  `WebSocketDeflateExtension` compresses it): the session fails with `ProtocolViolationException`. An extension the
+  application brings with its own specification defines its payload: with one agreed, text is not checked.
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
   and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
 

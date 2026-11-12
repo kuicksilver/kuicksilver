@@ -1283,14 +1283,22 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - Ktor engines, WebSockets (RFC 6455 sections 5.6 and 8.1): text messages and Close reasons were never checked as UTF-8,
   and 1007 was never sent; a Close reason of 123 invalid bytes failed Ktor's `CloseReason` check inside its session,
   which then ended with 1006 and sent no Close. A text message that is not UTF-8 as a whole (across fragments, after
-  decompression) and a Close reason that is not now close the connection with 1007. Text messages are handed to Ktor's
-  session in frames of at most 64 KiB. A text message the application builds from bytes that is not UTF-8 is no longer
-  sent: the session fails with `ProtocolViolationException` (by the engines, and by `PerMessageDeflate` on any engine for
-  a message it compresses).
+  decompression) and a Close reason that is not now close the connection with 1007. The engines now decompress
+  permessage-deflate themselves whichever extension negotiated it: with Ktor's `WebSocketDeflateExtension` too (by the
+  parameters of the answer; Ktor's extension passes the plain frames on), so its messages are checked and limited as
+  well (RFC 7692 section 6). A text message the application builds from bytes that is not UTF-8 is no longer sent: the
+  session fails with `ProtocolViolationException` (by the engines, also for text Ktor's extension compressed, which they
+  inflate on the side, and by `PerMessageDeflate` on any engine for a message it compresses). With an extension the
+  application brings itself, text is not checked: its specification defines its payload. Migration: text messages
+  reach Ktor's session in frames of at most 64 KiB, so a raw session (`webSocketRaw`) gets an uncompressed text message
+  over 64 KiB as several fragments (`Frame.Text` with `fin = false`, then continuations), as it already did for
+  compressed messages; Ktor's default sessions reassemble them.
 - Ktor engines, WebSockets (RFC 6455 sections 5.5.1 and 7.4): a Close with 1005, 1015, a code below 1000, 1004 or one
   no specification defines was echoed with the same code, which no endpoint may send, and a Close with 1006 was not
   answered at all; a Close with a 1-byte body was answered with 1000. Each now closes the connection with 1002. A Close
   the application sends with such a code goes out without a code, and one whose reason is not UTF-8 without the reason.
+- Ktor engines, WebSockets (RFC 6455 section 5.2): a payload length not in its minimal encoding (126 with a 16-bit length
+  below 126, 127 with a 64-bit length up to 65 535) was accepted; it now closes the connection with 1002.
 - Ktor engines, WebSockets (RFC 6455 sections 5.4 and 5.5): a fragmented or oversized control frame and a data frame out
   of sequence were left to Ktor's readers, whose Kotlin/Native reader closes the session's `incoming` before it queues its
   1002, so an application closing at that moment sent 1000 first. The engines' guard now closes with 1002 itself.
@@ -1321,7 +1329,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   frame header claims: a few 14-byte headers claiming 2 GiB each could exhaust a JVM or Android server's heap. Both
   engines now refuse a frame whose header claims more than `webSocketMaxMessageSize` (new, *experimental*, 16 MiB by
   default), or that takes its message past it, with 1009 from the header, before any of its payload is read; a
-  compressed message is held to the smaller of that and `PerMessageDeflate`'s `maxInflatedMessageSize`.
+  compressed message is held to the smaller of that and `PerMessageDeflate`'s `maxInflatedMessageSize` as it inflates,
+  and a compressed frame whose header claims more than 8 times that plus 64 KiB is refused from its header too.
+  Migration: an application that exchanges messages over 16 MiB must raise `webSocketMaxMessageSize` (client engine and
+  server engine configuration).
 - Ktor client, WebSockets (RFC 6455 section 5.3): the masking keys came from `kotlin.random.Random` (Ktor's writers), which
   is not a CSPRNG on any platform, so an observer could predict the keys of later frames. Every frame the client sends is
   now masked with a new key from OpenSSL's CSPRNG.
