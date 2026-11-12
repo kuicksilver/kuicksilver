@@ -853,12 +853,14 @@ internal class StreamManager(
         if (s.schedQueue >= 0) scheduler.reschedule(s)
     }
 
-    /** Writes one STREAM frame for the next scheduled stream into [w]; records it in [frames]. False when nothing can be sent. */
-
     /** RFC 9218 urgency of [s] for comparing with a datagram's: the critical streams (control, QPACK) come before urgency 0. */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private fun urgencyOf(s: SendStream): Int = if (s.priority === StreamPriority.Critical) -1 else s.priority.urgency
 
+    /**
+     * Writes one STREAM frame for the next scheduled stream into [w]; records it in [frames]. False when nothing can be sent,
+     * or when the next stream is not more urgent than [below] (a datagram's urgency: [urgencyOf] below it).
+     */
     fun writeStreamFrame(
         w: WireWriter,
         frames: SentFrames,

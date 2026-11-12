@@ -56,6 +56,43 @@ class DatagramSendQueueTest {
         }
     }
 
+    /**
+     * One FIFO per urgency: a u=0 datagram queued behind a u=7 one does not wait for it (nor for the u=1..6 streams the u=7
+     * one lets go first); order within an urgency is kept, and one transmit writes a single urgency.
+     */
+    @Test fun negative_urgentDatagramDoesNotWaitBehindALessUrgentOne() {
+        val q = DatagramSendQueue(32, 1_048_576)
+        q.offer(byteArrayOf(7), DatagramPolicy.DropOldest, 7)
+        q.offer(byteArrayOf(0, 1), DatagramPolicy.DropOldest, 0)
+        q.offer(byteArrayOf(0, 2), DatagramPolicy.DropOldest, 0)
+        q.applyCommands()
+        assertEquals(0, q.nextUrgency())
+        val first = Sink(1000)
+        q.onTransmit(first)
+        assertEquals(listOf(listOf<Byte>(0, 1), listOf<Byte>(0, 2)), first.out.map { it.toList() })
+        assertEquals(7, q.nextUrgency())
+        val second = Sink(1000)
+        q.onTransmit(second)
+        assertEquals(listOf(listOf<Byte>(7)), second.out.map { it.toList() })
+        assertEquals(-1, q.nextUrgency())
+        assertFalse(q.hasPending())
+    }
+
+    /** Eviction under DropOldest drops the oldest datagram of all urgencies, not the head of the most urgent queue. */
+    @Test fun evictionDropsTheOldestOfAllUrgencies() {
+        val q = DatagramSendQueue(2, 1_048_576)
+        q.offer(byteArrayOf(5), DatagramPolicy.DropOldest, 5)
+        q.offer(byteArrayOf(1), DatagramPolicy.DropOldest, 1)
+        q.applyCommands()
+        q.offer(byteArrayOf(9), DatagramPolicy.DropOldest, 1)
+        q.applyCommands()
+        q.evictForPending()
+        val out = Sink(1000)
+        q.onTransmit(out)
+        assertEquals(listOf(listOf<Byte>(1), listOf<Byte>(9)), out.out.map { it.toList() })
+        assertFalse(q.hasPending(), "the u=5 datagram, the oldest, was evicted")
+    }
+
     @Test fun negative_datagramQueueCap() {
         val q = DatagramSendQueue(32, 1_048_576)
         fill(q, 1000)

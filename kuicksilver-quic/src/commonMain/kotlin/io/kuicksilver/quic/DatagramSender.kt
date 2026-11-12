@@ -25,6 +25,7 @@ public interface DatagramSender {
      * [onTransmit] in a packet, so such a datagram never preempts them, while stream data of the same or a lower urgency
      * still waits behind it. With -1 datagrams go first, ahead of every stream (RFC 9221 leaves the order to the sender).
      */
+    @ExperimentalKuicksilverApi
     public fun nextUrgency(): Int = -1
 
     /** The packet carrying datagram [id] was acknowledged, so the peer received it (RFC 9221 section 5.2); called on the endpoint loop. */

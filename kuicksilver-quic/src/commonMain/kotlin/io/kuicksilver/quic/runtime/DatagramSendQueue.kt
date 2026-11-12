@@ -19,6 +19,10 @@ import kotlin.concurrent.atomics.incrementAndFetch
  * channel and atomic counters (so `trySendDatagram` never enters the loop); the loop applies the policies, keeps the queue
  * within [maxCount] / [maxBytes], and feeds the core as its [DatagramSender]. Nothing here is retransmitted (RFC 9221).
  *
+ * The queue is one FIFO per urgency ([Cmd.urgency], -1 and RFC 9218's 0..7): the most urgent non-empty one goes first, so a
+ * datagram never waits behind a less urgent one, and order is kept within an urgency, which is all RFC 9221 asks. One
+ * [onTransmit] writes datagrams of one urgency only, the one [nextUrgency] announced to the packet builder.
+ *
  * The channel holds at most [maxCount] commands and drops its oldest when a caller outruns the loop, so the commands, the
  * one command waiting for room and the queue together never exceed `2 × maxCount + 1` datagrams.
  * [DatagramPolicy.Reject] callers checked [hasRoom] (fewer than [maxCount] buffered in all), so they alone never overflow
@@ -34,7 +38,10 @@ internal class DatagramSendQueue(
         val policy: DatagramPolicy,
         /** RFC 9218 urgency for scheduling against stream data ([DatagramSender.nextUrgency]); -1: ahead of every stream. */
         val urgency: Int = -1,
-    )
+    ) {
+        /** Arrival order across the urgencies (loop only): eviction drops the oldest of all. */
+        var seq = 0L
+    }
 
     /** Commands from the application, applied on the loop; an overflow drops (and un-counts) the oldest. */
     val commands = Channel<Cmd>(maxCount, BufferOverflow.DROP_OLDEST) { release(it) }
@@ -45,7 +52,32 @@ internal class DatagramSendQueue(
     /** Datagrams queued and not yet sent, as seen from any thread (for Reject); the loop keeps them exact. */
     val count = AtomicInt(0)
     val bytes = AtomicLong(0)
-    private val queue = ArrayDeque<Cmd>()
+
+    /** One FIFO per urgency, index urgency + 1; [nonEmpty] has bit i set while queue i holds a datagram. */
+    private val queues = Array(URGENCIES) { ArrayDeque<Cmd>() }
+    private var nonEmpty = 0
+    private var queued = 0
+    private var nextSeq = 0L
+
+    private fun addLast(c: Cmd) {
+        val i = c.urgency + 1
+        c.seq = nextSeq++
+        queues[i].addLast(c)
+        nonEmpty = nonEmpty or (1 shl i)
+        queued++
+        queuedBytes += c.data.size
+    }
+
+    private fun removeFirst(i: Int): Cmd {
+        val c = queues[i].removeFirst()
+        if (queues[i].isEmpty()) nonEmpty = nonEmpty and (1 shl i).inv()
+        queued--
+        queuedBytes -= c.data.size
+        return c
+    }
+
+    /** The FIFO of the most urgent queued datagram, -1 when none. */
+    private fun first(): Int = if (nonEmpty == 0) -1 else nonEmpty.countTrailingZeroBits()
 
     /** Any thread: true when a datagram under [DatagramPolicy.Reject] has room. */
     fun hasRoom(size: Int): Boolean = count.load() < maxCount && bytes.load() + size <= maxBytes
@@ -74,24 +106,23 @@ internal class DatagramSendQueue(
             val policy = cmd.policy
             var replaced = false
             if (policy is DatagramPolicy.LatestWins) {
-                val i =
-                    queue.indexOfFirst {
-                        (it.policy as? DatagramPolicy.LatestWins)?.key ==
-                            policy.key
-                    }
-                ; if (i >= 0) {
-                    val old = queue.removeAt(i)
+                for ((qi, q) in queues.withIndex()) {
+                    val i = q.indexOfFirst { (it.policy as? DatagramPolicy.LatestWins)?.key == policy.key }
+                    if (i < 0) continue
+                    val old = q.removeAt(i)
+                    if (q.isEmpty()) nonEmpty = nonEmpty and (1 shl qi).inv()
+                    queued--
                     queuedBytes -= old.data.size
                     release(old)
                     replaced = true
+                    break
                 }
             }
-            if (!replaced && (queue.size >= maxCount || queuedBytes + cmd.data.size > maxBytes)) {
+            if (!replaced && (queued >= maxCount || queuedBytes + cmd.data.size > maxBytes)) {
                 pending = cmd
                 break
             } // full: the loop sends first, evicts only if that did not help
-            queue.addLast(cmd)
-            queuedBytes += cmd.data.size
+            addLast(cmd)
             any = true
         }
         return any
@@ -105,19 +136,20 @@ internal class DatagramSendQueue(
     fun evictForPending() {
         val cmd = pending ?: return
         pending = null
-        while (queue.isNotEmpty() &&
-            (queue.size >= maxCount || queuedBytes + cmd.data.size > maxBytes)
+        while (queued > 0 &&
+            (queued >= maxCount || queuedBytes + cmd.data.size > maxBytes)
         ) {
-            val old = queue.removeFirst()
-            queuedBytes -=
-                old.data.size
-            release(old)
+            // the oldest of all, whatever its urgency (DropOldest semantics): the smallest arrival among the heads
+            var oldest = -1
+            for (i in 0 until URGENCIES) {
+                if (nonEmpty and (1 shl i) != 0 && (oldest < 0 || queues[i].first().seq < queues[oldest].first().seq)) oldest = i
+            }
+            release(removeFirst(oldest))
         }
-        queue.addLast(cmd)
-        queuedBytes += cmd.data.size
+        addLast(cmd)
     }
 
-    val isFull: Boolean get() = queue.size >= maxCount || queuedBytes >= maxBytes
+    val isFull: Boolean get() = queued >= maxCount || queuedBytes >= maxBytes
 
     /** Datagrams dropped because they outgrew the path MTU. */
     var dropped: Long = 0
@@ -128,20 +160,25 @@ internal class DatagramSendQueue(
         bytes.addAndFetch(-c.data.size.toLong())
     }
 
-    val isEmpty: Boolean get() = queue.isEmpty()
+    val isEmpty: Boolean get() = queued == 0
 
-    override fun hasPending(): Boolean = queue.isNotEmpty()
+    override fun hasPending(): Boolean = queued > 0
 
-    /** The urgency of the head of the queue: datagrams leave in order, so it decides for the ones behind it. */
-    override fun nextUrgency(): Int = queue.firstOrNull()?.urgency ?: -1
+    /** The urgency of the most urgent queued datagram. */
+    override fun nextUrgency(): Int = first().let { if (it < 0) -1 else it - 1 }
 
+    /**
+     * Writes datagrams of the most urgent queue only: the packet builder let more urgent stream data go first for that
+     * urgency ([nextUrgency]), so a less urgent datagram waits for a packet of its own turn.
+     */
     override fun onTransmit(packet: DatagramPacketWriter) {
+        val i = first()
+        if (i < 0) return
+        val q = queues[i]
         while (true) {
-            val c = queue.firstOrNull() ?: break
+            val c = q.firstOrNull() ?: break
             if (c.data.size > packet.maxPayload) {
-                queue.removeFirst()
-                queuedBytes -= c.data.size
-                release(c)
+                release(removeFirst(i))
                 dropped++
                 continue
             } // the path MTU shrank under it: it can never be sent (RFC 8899 black hole)
@@ -151,17 +188,22 @@ internal class DatagramSendQueue(
                 break
             }
             if (!packet.write(c.data, 0, c.data.size)) break
-            queue.removeFirst()
-            queuedBytes -= c.data.size
-            release(c)
+            release(removeFirst(i))
         }
     }
 
     fun close() {
         commands.close()
         signal.close()
-        queue.clear()
+        queues.forEach { it.clear() }
+        nonEmpty = 0
+        queued = 0
         queuedBytes = 0
         pending = null
+    }
+
+    private companion object {
+        /** -1 (no urgency) and RFC 9218's eight urgencies. */
+        const val URGENCIES = 9
     }
 }
