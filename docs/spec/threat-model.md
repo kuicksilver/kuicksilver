@@ -386,10 +386,13 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   with one warning); when an abandoned run ends its thread and contexts are released and scripts run again. A script is
   at most 1 MiB: a larger Content-Length is refused before the body, a body without one is read only up to the cap, a
   file only up to it. Scripts are fetched directly (never through a proxy) with the engine's TLS and the platform trust,
-  one download per URL at a time; scripts are cached 30 min, failures and timed-out downloads 1 min. WPAD runs only when
+  one download per URL at a time; scripts are cached 30 min, failures and timed-out downloads 1 min (a lookup cancelled
+  for another reason records nothing and does not disturb the others waiting for the download). WPAD runs only when
   the system settings say "auto discover": a DHCP option 252 URL only if `http` or `https` (never `file`), then
-  `wpad.<domain>` for each configured DNS search domain exactly (no walk up the tree, so no `wpad.<public suffix>`),
-  then `http://wpad/wpad.dat` for the system resolver to complete; each candidate gets a share of the 5 s. An answer
+  `wpad.<domain>` for each configured DNS search domain exactly (the engine never walks up to a parent domain, so
+  `corp.example.co.uk` never leads to `wpad.co.uk`; but a search domain from DHCP or the settings is used as given, so
+  one that is itself a public suffix gives `wpad.<that suffix>`, and a rogue DHCP server could hand out option 252
+  anyway), then `http://wpad/wpad.dat` for the system resolver to complete; each candidate gets a share of the 5 s. An answer
   can pick only `DIRECT`, HTTP and SOCKS5; one naming only proxies the engine cannot use (`HTTPS`, `SOCKS4`) fails
   closed (the next setting, else the request fails), never a silent direct connection. The origin's TLS and host-name
   verification apply through any proxy (a PAC script cannot read or alter HTTPS traffic). What a script learns is the
