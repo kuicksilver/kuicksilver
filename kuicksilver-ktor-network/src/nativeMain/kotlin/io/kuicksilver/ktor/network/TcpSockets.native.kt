@@ -758,3 +758,8 @@ internal actual fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?) {
 internal actual fun Socket.tcpReadDelivery(): ReadDelivery? = (this as? NativeTcpSocket)?.readDelivery
 
 internal actual fun Socket.sendFailuresForTest(): SendFailures? = (this as? NativeTcpSocket)?.sendFailures
+
+internal actual fun platformSourceAddress(destination: TcpAddress): TcpAddress? {
+    tcpStartup()
+    return udpSourceAddress(Sockaddr.of(destination))?.toTcpAddress()?.let { TcpAddress(it.bytes, 0, it.scopeId) }
+}

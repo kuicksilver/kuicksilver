@@ -78,3 +78,11 @@ internal actual fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?) {
 internal actual fun Socket.tcpReadDelivery(): ReadDelivery? = (this as? KslNioSocket)?.readDelivery
 
 internal actual fun Socket.sendFailuresForTest(): SendFailures? = (this as? KslNioSocket)?.sendFailures
+
+internal actual fun platformSourceAddress(destination: TcpAddress): TcpAddress? =
+    java.net.DatagramSocket(null as java.net.SocketAddress?).use { s ->
+        // connect only selects the route and the source address (no packet); without one it throws, or stays unconnected
+        s.connect(java.net.InetSocketAddress(java.net.InetAddress.getByAddress(destination.bytes), destination.port))
+        val local = s.localAddress
+        if (!s.isConnected || local == null || local.isAnyLocalAddress) null else TcpAddress(local.address, 0)
+    }

@@ -41,6 +41,7 @@ import platform.posix.F_SETFD
 import platform.posix.F_SETFL
 import platform.posix.IPPROTO_TCP
 import platform.posix.O_NONBLOCK
+import platform.posix.SOCK_DGRAM
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_ERROR
@@ -325,3 +326,14 @@ internal expect fun tcpAcceptFd(
 
 /** The flags of every `send`: MSG_NOSIGNAL on Linux, 0 on Apple. */
 internal expect val tcpSendFlags: Int
+
+internal actual fun udpSourceAddress(to: Sockaddr): Sockaddr? {
+    val fd = socket(to.family, SOCK_DGRAM, 0)
+    if (fd < 0) return null
+    try {
+        val connected = to.bytes.usePinned { connect(fd, it.addressOf(0).reinterpret(), to.bytes.size.convert()) == 0 }
+        return if (connected) tcpAddressOf(fd, peer = false) else null
+    } finally {
+        close(fd)
+    }
+}
