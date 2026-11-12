@@ -1193,7 +1193,7 @@ Where a request's proxy comes from:
 | JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings | as the JDK does |
 | Android | the same: the active network's proxy, PAC through the system | yes (by the system) |
 | macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | run by CFNetwork (`CFNetworkExecuteProxyAutoConfigurationURL`); a script that fails within 5 s: the next setting, else direct, and one warning |
-| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL); a script that fails: the fixed proxy next to it, else direct, and one warning |
+| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same with a warning of its own, and detection again after 5 minutes |
 | Linux | `ProxyResolvers.Environment` (there is no system API; desktop settings are not read) | — |
 
 `ProxyResolvers.Environment` reads the variables as curl does: `https_proxy`/`HTTPS_PROXY` for `https` and `wss`,

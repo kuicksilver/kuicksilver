@@ -16,6 +16,8 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import platform.windows.GetLastError
 import platform.windows.GlobalFree
+import platform.winhttp.ERROR_WINHTTP_AUTODETECTION_FAILED
+import platform.winhttp.ERROR_WINHTTP_LOGIN_FAILURE
 import platform.winhttp.ERROR_WINHTTP_UNRECOGNIZED_SCHEME
 import platform.winhttp.WINHTTP_ACCESS_TYPE_NAMED_PROXY
 import platform.winhttp.WINHTTP_ACCESS_TYPE_NO_PROXY
@@ -36,32 +38,38 @@ internal actual val platformSystemProxyResolver: ProxyResolver = WindowsSystemPr
 
 /**
  * `WinHttpGetIEProxyConfigForCurrentUser`, applied as WinHTTP and Internet Explorer apply it ([windowsProxyFor]):
- * automatic detection (WPAD) and a configuration script (PAC) are run by `WinHttpGetProxyForUrl` ([winHttpPac]); when
- * neither is set, or the script fails (a warning), the fixed proxy list and its bypass list. The calls run on
- * [Dispatchers.IO].
+ * automatic detection (WPAD) and a configuration script (PAC) are run by `WinHttpGetProxyForUrl` ([winHttpPac]), and a
+ * lookup waits for them at most [PAC_TIMEOUT_MILLIS] ([BoundedPac]); when neither is set, detection found no script, or
+ * the script failed (a warning), the fixed proxy list and its bypass list. The calls run on [Dispatchers.IO].
  */
 internal object WindowsSystemProxyResolver : WarningProxyResolver {
+    private val wpad = WpadFailures()
+    private val bounded = BoundedPac(PAC_TIMEOUT_MILLIS)
+
     override suspend fun proxyFor(
         url: Url,
         warn: (String) -> Unit,
     ): ResolvedProxy? {
         if (isLoopback(socketHost(url.host))) return null
-        return withContext(Dispatchers.IO) {
-            val s = ieProxySettings() ?: return@withContext null
-            windowsProxyFor(s, url, { winHttpPac(s, url) }, warn)
-        }
+        val s = withContext(Dispatchers.IO) { ieProxySettings() } ?: return null
+        // windowsProxyFor asks for the answer only when detection or a script URL is set
+        val answer = if (s.autoDetect || s.autoConfigUrl != null) bounded.run { winHttpPac(s, url, wpad) } else null
+        return windowsProxyFor(s, url, { answer ?: WinPacAnswer.Failed }, warn)
     }
 }
 
 /**
  * Runs the automatic detection (DHCP, then DNS) and the PAC URL of [s] for [url] with `WinHttpGetProxyForUrl`, WinHTTP's
- * own PAC engine, on a session of its own whose timeouts are [PAC_TIMEOUT_MILLIS] (the script's download). The URI given
- * to the script is [pacTarget]'s; WinHTTP knows only `http` and `https`, so a WebSocket's `ws://`/`wss://` URI it refuses
- * as an unknown scheme goes again as `http://`/`https://` with the same host, port and resource name.
+ * own PAC engine, in [runWinPac]'s order, on a session of its own whose timeouts are [PAC_TIMEOUT_MILLIS] (they bound
+ * each step of the script's download; detection and the script's run have none of WinHTTP's, the caller's [BoundedPac]
+ * bounds the wait). The URI given to the script is [pacTarget]'s; WinHTTP knows only `http` and `https`, so a
+ * WebSocket's `ws://`/`wss://` URI it refuses as an unknown scheme goes again as `http://`/`https://` with the same
+ * host, port and resource name.
  */
 internal fun winHttpPac(
     s: IeProxySettings,
     url: Url,
+    wpad: WpadFailures,
 ): WinPacAnswer {
     val session =
         WinHttpOpen("Kuicksilver", WINHTTP_ACCESS_TYPE_NO_PROXY.toUInt(), null, null, 0u) ?: return WinPacAnswer.Failed
@@ -69,31 +77,49 @@ internal fun winHttpPac(
         val t = PAC_TIMEOUT_MILLIS.toInt()
         WinHttpSetTimeouts(session, t, t, t, t)
         val target = pacTarget(url)
-        val (answer, error) = winHttpProxyForUrl(session, s, target)
-        if (error == ERROR_WINHTTP_UNRECOGNIZED_SCHEME.toUInt() && (target.startsWith("ws://") || target.startsWith("wss://"))) {
-            return winHttpProxyForUrl(session, s, "http" + target.removePrefix("ws")).first
+        return runWinPac(s, wpad) { detect, configUrl, autoLogon ->
+            val (answer, error) = winHttpProxyForUrl(session, detect, configUrl, autoLogon, target)
+            if (error == ERROR_WINHTTP_UNRECOGNIZED_SCHEME.toUInt() && (target.startsWith("ws://") || target.startsWith("wss://"))) {
+                val (again, againError) = winHttpProxyForUrl(session, detect, configUrl, autoLogon, "http" + target.removePrefix("ws"))
+                winPacCall(again, againError)
+            } else {
+                winPacCall(answer, error)
+            }
         }
-        return answer
     } finally {
         WinHttpCloseHandle(session)
     }
 }
 
-/** One `WinHttpGetProxyForUrl` call for [target]: the answer, and the error code when it failed (0 otherwise). */
+/** One call's [answer] and [error] code as [runWinPac] tells them apart. */
+private fun winPacCall(
+    answer: WinPacAnswer,
+    error: UInt,
+): WinPacCall =
+    when (error) {
+        0u -> WinPacCall.Answer(answer)
+        ERROR_WINHTTP_AUTODETECTION_FAILED.toUInt() -> WinPacCall.NoWpad
+        ERROR_WINHTTP_LOGIN_FAILURE.toUInt() -> WinPacCall.LoginFailure
+        else -> WinPacCall.Failed
+    }
+
+/**
+ * One `WinHttpGetProxyForUrl` call for [target]: with automatic detection when [detect], else with the script at
+ * [configUrl]; [autoLogon] is `fAutoLogonIfChallenged`. The answer, and the error code when it failed (0 otherwise).
+ */
 private fun winHttpProxyForUrl(
     session: COpaquePointer,
-    s: IeProxySettings,
+    detect: Boolean,
+    configUrl: String?,
+    autoLogon: Boolean,
     target: String,
 ): Pair<WinPacAnswer, UInt> =
     memScoped {
         val options = alloc<WINHTTP_AUTOPROXY_OPTIONS>()
-        var flags = 0
-        if (s.autoDetect) flags = flags or WINHTTP_AUTOPROXY_AUTO_DETECT
-        if (s.autoConfigUrl != null) flags = flags or WINHTTP_AUTOPROXY_CONFIG_URL
-        options.dwFlags = flags.toUInt()
-        options.dwAutoDetectFlags = if (s.autoDetect) (WINHTTP_AUTO_DETECT_TYPE_DHCP or WINHTTP_AUTO_DETECT_TYPE_DNS_A).toUInt() else 0u
-        options.lpszAutoConfigUrl = s.autoConfigUrl?.wcstr?.ptr
-        options.fAutoLogonIfChallenged = 1
+        options.dwFlags = (if (detect) WINHTTP_AUTOPROXY_AUTO_DETECT else WINHTTP_AUTOPROXY_CONFIG_URL).toUInt()
+        options.dwAutoDetectFlags = if (detect) (WINHTTP_AUTO_DETECT_TYPE_DHCP or WINHTTP_AUTO_DETECT_TYPE_DNS_A).toUInt() else 0u
+        options.lpszAutoConfigUrl = if (detect) null else configUrl?.wcstr?.ptr
+        options.fAutoLogonIfChallenged = if (autoLogon) 1 else 0
         val info = alloc<WINHTTP_PROXY_INFO>()
         if (WinHttpGetProxyForUrl(session, target, options.ptr, info.ptr) == 0) {
             return@memScoped WinPacAnswer.Failed to GetLastError()

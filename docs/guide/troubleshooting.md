@@ -566,10 +566,13 @@ Since 0.3.0 the Ktor client follows the platform's proxy settings by default (`p
 request may go through a proxy you did not configure in code, over HTTP/1.1 (`protocolSelected` reports
 `ProtocolReason.Proxy`). Set `proxyResolver = ProxyResolvers.None` to connect directly, exempt the host in the
 settings (`no_proxy`, the OS bypass list), or set `proxy` explicitly. On macOS, iOS and Windows a proxy
-auto-configuration (PAC script or WPAD) is run as the system runs it; one that cannot be fetched or run within 5 seconds
-makes the engine log one warning ("proxy auto-configuration (PAC or WPAD) script that could not be fetched or run") and
-those requests use the next setting (on Windows the fixed proxy), else connect directly; set `proxy` or a
-`proxyResolver` of your own to decide the route yourself.
+auto-configuration (a PAC URL or script; on Windows also WPAD) is run as the system runs it, and a lookup waits for it at
+most 5 seconds; one that cannot be fetched or run in that time makes the engine log one warning ("proxy
+auto-configuration (PAC or WPAD) script that could not be fetched or run") and those requests use the next
+setting (on Windows the fixed proxy), else connect directly. On Windows, when automatic detection finds no script, the
+warning says so instead ("detect the proxy automatically (WPAD), and no proxy auto-configuration script was found"):
+those requests use the fixed proxy setting, if any, else connect directly, and detection runs again after 5 minutes.
+Set `proxy` or a `proxyResolver` of your own to decide the route yourself.
 A request that fails with `UnsupportedOperationException` naming a proxy scheme (`socks4://`, `https://`) has a proxy
 setting the engine cannot use; it is never bypassed.
 

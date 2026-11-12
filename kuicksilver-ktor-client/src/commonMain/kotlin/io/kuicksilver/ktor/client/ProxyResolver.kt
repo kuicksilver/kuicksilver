@@ -58,11 +58,13 @@ public object ProxyResolvers {
      * (`CFNetworkCopyProxiesForURL`, with its exceptions list); on Windows the user's Internet settings
      * (`WinHttpGetIEProxyConfigForCurrentUser`, with its bypass list); on Linux, which has no system API, [Environment].
      * A proxy auto-configuration on Apple platforms (a PAC URL or script, `CFNetworkExecuteProxyAutoConfigurationURL`)
-     * and Windows (automatic detection, WPAD, or a PAC URL, `WinHttpGetProxyForUrl`) is run as the system runs it, within
-     * 5 seconds; for a WebSocket the engine passes the `ws://` or `wss://` URI with the resource name (RFC 6455 section
-     * 4.1; CFNetwork drops the path and query before the script runs), for anything else `http://` or `https://`, host
-     * and port. A script that cannot be fetched or run means the next setting (on Windows the fixed proxy, if any) or a
-     * direct connection, and the engine logs one warning.
+     * and Windows (automatic detection, WPAD, or a PAC URL, `WinHttpGetProxyForUrl`) is run as the system runs it, and a
+     * lookup waits for it at most 5 seconds (on Windows a WinHTTP call still running then is left to end on its own, and
+     * its answer is dropped); for a WebSocket the engine passes the `ws://` or `wss://` URI with the resource name (RFC
+     * 6455 section 4.1; CFNetwork drops the path and query before the script runs), for anything else `http://` or
+     * `https://`, host and port. A script that cannot be fetched or run in that time means the next setting (on Windows
+     * the fixed proxy, if any) or a direct connection, and the engine logs one warning. On Windows a WPAD detection that
+     * found no script is remembered for 5 minutes (detection is not run again in that time), and its warning says so.
      */
     public val System: ProxyResolver get() = platformSystemProxyResolver
 }
@@ -486,8 +488,9 @@ internal const val PAC_FAILED: String =
         "time: requests use the next setting, else connect directly; set engine { proxy = ... } or proxyResolver to choose"
 
 /**
- * How long a PAC script (its download, WPAD's discovery and its run) may take for one lookup: half the default connect
- * timeout, so a script that hangs falls back to the next setting before the request's own timeout.
+ * How long a lookup waits for a PAC script (WPAD's discovery, the script's download and its run): half the default
+ * connect timeout, so a script that hangs falls back to the next setting before the request's own timeout. On Windows
+ * it bounds the wait for WinHTTP's call ([BoundedPac]), which cannot be cancelled and ends on its own thread.
  */
 internal const val PAC_TIMEOUT_MILLIS: Long = 5_000
 
@@ -514,6 +517,10 @@ internal sealed interface WinPacAnswer {
 
     object Direct : WinPacAnswer
 
+    /** Automatic detection (WPAD) found no script, and no script URL is set. */
+    object NoWpad : WinPacAnswer
+
+    /** A script could not be fetched or run in time. */
     object Failed : WinPacAnswer
 }
 
@@ -527,8 +534,8 @@ internal class IeProxySettings(
 
 /**
  * The proxy Windows' settings [s] give for [url], as WinHTTP and Internet Explorer apply them: automatic detection (WPAD)
- * and a configuration script (PAC) first, run by [runPac]; when neither is set, or the script failed (a [warn]ing), the
- * fixed proxy and its bypass list.
+ * and a configuration script (PAC) first, run by [runPac]; when neither is set, detection found no script, or the
+ * script failed (a [warn]ing for each of the last two), the fixed proxy and its bypass list.
  */
 internal fun windowsProxyFor(
     s: IeProxySettings,
@@ -540,11 +547,16 @@ internal fun windowsProxyFor(
         when (val a = runPac()) {
             is WinPacAnswer.Proxies -> return parseWinInetProxy(a.proxy, a.bypass, url)
             WinPacAnswer.Direct -> return null
+            WinPacAnswer.NoWpad -> warn(WPAD_NOT_FOUND)
             WinPacAnswer.Failed -> warn(PAC_FAILED)
         }
     }
     return parseWinInetProxy(s.proxy, s.bypass, url)
 }
+
+internal const val WPAD_NOT_FOUND: String =
+    "the system proxy settings detect the proxy automatically (WPAD), and no proxy auto-configuration script was found: " +
+        "requests use the fixed proxy setting, if any, else connect directly; detection runs again after 5 minutes"
 
 internal const val PAC_WARNING: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script, which the Kuicksilver engine does not " +

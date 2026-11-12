@@ -25,6 +25,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -36,6 +38,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** The built-in proxy resolvers' parsing (environment, Windows strings, CFNetwork answers) and the engine's use of them. */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 class ProxyResolverTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -283,6 +286,9 @@ class ProxyResolverTest {
         assertEquals(emptyList(), warnings)
         assertEquals(ResolvedProxy.http("fixed", 1), windowsProxyFor(both, url, { WinPacAnswer.Failed }) { warnings += it })
         assertEquals(listOf(PAC_FAILED), warnings)
+        // no WPAD script found is not a script that failed: its own warning
+        assertEquals(ResolvedProxy.http("fixed", 1), windowsProxyFor(both, url, { WinPacAnswer.NoWpad }) { warnings += it })
+        assertEquals(listOf(PAC_FAILED, WPAD_NOT_FOUND), warnings)
         var ran = false
         val fixedOnly = IeProxySettings(autoDetect = false, autoConfigUrl = null, proxy = "fixed:1", bypass = null)
         assertEquals(
@@ -294,6 +300,87 @@ class ProxyResolverTest {
         )
         assertFalse(ran)
     }
+
+    /**
+     * Windows: detection, then the script URL, each call first without the user's credentials and again with them only
+     * when the script's server asked (ERROR_WINHTTP_LOGIN_FAILURE). Before, every call sent them to any script server.
+     */
+    @Test fun windowsPacSendsCredentialsOnlyWhenAsked() {
+        val both = IeProxySettings(autoDetect = true, autoConfigUrl = "http://cfg/proxy.pac", proxy = null, bypass = null)
+        val calls = ArrayList<String>()
+        val answer =
+            runWinPac(both, WpadFailures { 0 }) { detect, configUrl, autoLogon ->
+                calls += "${if (detect) "wpad" else configUrl} logon=$autoLogon"
+                when {
+                    detect -> WinPacCall.NoWpad
+                    !autoLogon -> WinPacCall.LoginFailure
+                    else -> WinPacCall.Answer(WinPacAnswer.Direct)
+                }
+            }
+        assertEquals(WinPacAnswer.Direct, answer)
+        assertEquals(listOf("wpad logon=false", "http://cfg/proxy.pac logon=false", "http://cfg/proxy.pac logon=true"), calls)
+    }
+
+    /**
+     * Windows: a WPAD detection that found no script is remembered for [WPAD_RETRY_MILLIS], so the lookups in that time
+     * do not run DHCP and DNS detection again; it is told apart from a script that failed. Before, every lookup the
+     * engine's cache missed ran detection again.
+     */
+    @Test fun windowsRemembersThatWpadFoundNothing() {
+        var now = 0L
+        val wpad = WpadFailures { now }
+        val detectOnly = IeProxySettings(autoDetect = true, autoConfigUrl = null, proxy = "fixed:1", bypass = null)
+        var detections = 0
+        val run = {
+            runWinPac(detectOnly, wpad) { detect, _, _ ->
+                if (detect) detections++
+                WinPacCall.NoWpad
+            }
+        }
+        assertEquals(WinPacAnswer.NoWpad, run())
+        now += WPAD_RETRY_MILLIS - 1
+        assertEquals(WinPacAnswer.NoWpad, run())
+        assertEquals(1, detections)
+        now += 1
+        assertEquals(WinPacAnswer.NoWpad, run())
+        assertEquals(2, detections)
+        // a script detection found that could not be fetched or run is a failure, not "no WPAD", and is not remembered
+        val failing = runWinPac(detectOnly, WpadFailures { 0 }) { _, _, _ -> WinPacCall.Failed }
+        assertEquals(WinPacAnswer.Failed, failing)
+        // with a script URL as well, the URL runs after a detection that found nothing
+        val both = IeProxySettings(autoDetect = true, autoConfigUrl = "http://cfg/proxy.pac", proxy = null, bypass = null)
+        assertEquals(
+            WinPacAnswer.Direct,
+            runWinPac(both, wpad) { detect, _, _ -> if (detect) WinPacCall.NoWpad else WinPacCall.Answer(WinPacAnswer.Direct) },
+        )
+    }
+
+    /**
+     * Windows: a lookup waits for WinHTTP's PAC call at most its bound, also when detection or the script's run hang
+     * (WinHTTP's own timeouts bound only the download), and while that call still runs no second one starts. Before, the
+     * lookup waited for the call however long it took.
+     */
+    @Test fun negative_windowsPacCallThatHangsIsBounded() =
+        runBlocking {
+            val bounded = BoundedPac(timeoutMillis = 100)
+            val release = CompletableDeferred<Unit>()
+            val started = AtomicInt(0)
+            val hanging = {
+                started.incrementAndFetch()
+                runBlocking { release.await() }
+                WinPacAnswer.Direct
+            }
+            withTimeout(10.seconds) {
+                assertEquals(WinPacAnswer.Failed, bounded.run(hanging))
+                assertEquals(WinPacAnswer.Failed, bounded.run(hanging), "no second call while the first still runs")
+                assertEquals(1, started.load())
+                release.complete(Unit)
+                // the late call ends on its own, its answer dropped; then calls run again
+                bounded.lateCall!!.await()
+                assertEquals(WinPacAnswer.Direct, bounded.run { WinPacAnswer.Direct })
+            }
+            assertEquals(1, started.load())
+        }
 
     /**
      * RFC 6455 section 4.1: "For the purpose of proxy autoconfiguration scripts, the URI to pass the function MUST be
