@@ -13,6 +13,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.close
+import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByteArray
@@ -347,17 +348,33 @@ internal suspend fun tlsH2WithSilentUdp(
     h1: suspend CoroutineScope.(index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit = { _, _, _ -> },
     onConnection: suspend (index: Int, connection: io.kuicksilver.http2.runtime.H2ServerConnection) -> Unit = { _, _ -> },
     onRequest: suspend CoroutineScope.(connection: Int, request: io.kuicksilver.http2.runtime.H2ServerStream) -> Unit,
+    // RFC 8441 section 3: SETTINGS_ENABLE_CONNECT_PROTOCOL = 1, and Extended CONNECT requests are taken
+    enableConnectProtocol: Boolean = false,
+    // the server's frames (its SETTINGS first) reach the client only once this completes
+    holdOutputUntil: kotlinx.coroutines.Deferred<Unit>? = null,
     block: suspend (port: Int, log: H2ServerLog) -> Unit,
 ) {
     val log = H2ServerLog()
     tlsWithSilentUdp(alpn, silentUdp, handler = { index, negotiated, input, output ->
         log.accept(negotiated)
         if (negotiated != "h2") return@tlsWithSilentUdp h1(index, input, output)
+        val out =
+            if (holdOutputUntil == null) {
+                output
+            } else {
+                io.ktor.utils.io.ByteChannel().also { gate ->
+                    launch {
+                        holdOutputUntil.await()
+                        runCatching { gate.copyTo(output) }
+                        output.flushAndClose()
+                    }
+                }
+            }
         val conn =
-            io.kuicksilver.http2.runtime.H2ServerConnection.start(input, output, settings, this, closeTransport = {
+            io.kuicksilver.http2.runtime.H2ServerConnection.start(input, out, settings, this, closeTransport = {
                 // a clean close (the last frames are flushed, then close_notify), as a server ends a connection
-                output.close(null)
-            })
+                out.close(null)
+            }, enableConnectProtocol = enableConnectProtocol)
         onConnection(index, conn)
         val requests =
             launch {

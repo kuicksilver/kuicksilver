@@ -162,6 +162,13 @@ internal class H2Pool(
         return null
     }
 
+    /** The usable connections of [route] within their lifetime, with or without a free stream. */
+    fun usable(route: String): List<H2Conn> {
+        val now = clock()
+        val list = lock.withLock { routes[route]?.conns?.toList() } ?: return emptyList()
+        return list.filter { it.client.isUsable && !pastLifetime(it, now) }
+    }
+
     /** Whether [route] has an HTTP/2 connection (usable or not). */
     fun has(route: String): Boolean = lock.withLock { routes[route]?.conns?.isNotEmpty() == true }
 

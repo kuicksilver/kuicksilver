@@ -218,8 +218,10 @@ public class Http3ClientConfig {
 /**
  * HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): every `https://` connection over TCP offers `h2` and
  * `http/1.1` in ALPN, and a server that picks `h2` gets one multiplexed connection per route instead of up to
- * `maxConnectionsPerRoute` HTTP/1.1 connections. Never for `http://` (no cleartext HTTP/2, h2c) and never for WebSockets
- * (RFC 8441 is not supported yet: they offer `http/1.1` only). HTTP/3 is unaffected, and so is its kill switch
+ * `maxConnectionsPerRoute` HTTP/1.1 connections. Never for `http://` (no cleartext HTTP/2, h2c). A `wss://` WebSocket goes
+ * over HTTP/2 (RFC 8441, Extended CONNECT) on a connection to its origin that is there already and whose server allows it
+ * (SETTINGS_ENABLE_CONNECT_PROTOCOL); otherwise it opens a connection of its own that offers `http/1.1` only, as in 0.2
+ * (docs/guide/ktor.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch
  * (`http3 { http3Allowed }` turns HTTP/3 off, not HTTP/2). A `tls` block that allows TLS 1.2 (`versions =
  * TlsVersions.Tls12And13`) offers `h2` as well (RFC 9113 section 9.2): over TLS 1.2 renegotiation stays refused, and a server
  * that asks for one (a HelloRequest) ends the connection with a connection error of type PROTOCOL_ERROR (section 9.2.1);

@@ -1038,7 +1038,10 @@ internal class KuicksilverEngine(
         }
     }
 
-    /** The ALPN ids this request may use, for the SVCB ALPN sets (RFC 9460 section 7.1.2); a WebSocket over TCP is HTTP/1.1. */
+    /**
+     * The ALPN ids this request may use, for the SVCB ALPN sets (RFC 9460 section 7.1.2): a WebSocket's own TCP connection
+     * is HTTP/1.1 (it takes HTTP/2 only on a connection that is there already, RFC 8441).
+     */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun supportedAlpn(webSocket: Boolean): Set<String> =
         buildSet {
