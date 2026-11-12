@@ -1826,7 +1826,10 @@ waits for the server's SETTINGS and fails with `Http3Exception.Settings` if the 
 or capsules, see [Capsules](#capsules-experimental)) plus HTTP datagrams bound to the stream (RFC 9297). `Http3Stream.headers` holds the peer's fields: the CONNECT request's on
 the server, the 2xx response's on the client (for example `sec-websocket-protocol`, RFC 9220 section 3). Each
 direction ends on its own: closing `output` sends FIN and leaves `input` readable until the peer's FIN (a TCP-style
-half-close, RFC 9114 section 4.4); the stream is released once both directions ended or the stream was reset. Datagrams
+half-close, RFC 9114 section 4.4); the stream is released once both directions ended or the stream was reset. Once the
+CONNECT completed only DATA travels on the stream (RFC 9114 section 4.4): `finish(trailers)` on a 2xx to CONNECT throws
+`IllegalArgumentException` and sends nothing, and a CONNECT request with `trailers` is refused before it goes out.
+`:protocol` must be a token (RFC 8441 section 4) and is matched in any case (`websocket`, `WebSocket`). Datagrams
 follow the stream's state (RFC 9297 section 2.1): the `datagrams` flow ends when the receive side closes and later
 datagrams for the stream are dropped; once our send side is closed (`output` closed, or `reset`) `trySendDatagram`
 answers `Closed` and `sendDatagram` throws `IllegalStateException`.
@@ -1854,7 +1857,9 @@ closes the connection with `H3_DATAGRAM_ERROR`. Each stream keeps the newest 32 
 
 Protocols such as WebTransport and CONNECT-UDP frame the stream's data as capsules (RFC 9297 section 3): a type, a
 length and a value. `Http3Stream.useCapsuleProtocol(config)` turns a stream into a `CapsuleStream`; from then on the
-stream's `input`, `output` and `datagrams` belong to it. `capsules` delivers the capsule types listed in
+stream's `input`, `output` and `datagrams` belong to it. Only an Extended CONNECT whose protocol has datagram semantics
+speaks capsules: the Capsule Protocol "only applies to definitions of new HTTP upgrade tokens" (RFC 9297 section 3.2), so
+on a `websocket` stream or a classic CONNECT `useCapsuleProtocol` throws `IllegalStateException`. `capsules` delivers the capsule types listed in
 `CapsuleConfig.knownTypes` (64 KiB each at most by default) and skips every other type as its bytes arrive; `send`
 writes one capsule whole, never interleaved with another; `close()` writes what is queued and then sends FIN, while
 `capsules` keeps reading the peer's side.
@@ -1876,7 +1881,11 @@ val echoed = capsules.capsules.toList()                     // ends at the serve
 
 The stream is checked against RFC 9297 section 3.2 first: a peer message with `content-length`, `content-type` or
 `transfer-encoding`, or a 204, 205 or 206 response, is malformed, so the stream is reset with `H3_MESSAGE_ERROR` and
-`useCapsuleProtocol` throws `Http3Exception.MessageError`. The same happens later when the peer's FIN cuts a capsule in
+`useCapsuleProtocol` throws `Http3Exception.MessageError`. A message that announces capsules with `Capsule-Protocol: ?1`
+is checked earlier: `acceptConnect` answers such a request that breaks section 3.2 with 400 (and STOP_SENDING
+`H3_MESSAGE_ERROR`) instead of 200 and throws `MessageError`, `connect` fails the same way on such a 2xx, and our own
+messages are refused with `IllegalArgumentException` before they are sent, `capsule-protocol` in a response outside 2xx
+included (section 3.4). The same happens later when the peer's FIN cuts a capsule in
 two or a known capsule is longer than `maxCapsuleLength`: `capsules` fails with `MessageError` instead of ending, so a cut
 stream is never mistaken for a clean end. A protocol whose last capsule closes the stream (WebTransport's
 WT_CLOSE_SESSION) lists it in `terminalTypes`: the capsule is delivered, and anything after it is malformed the same way.
@@ -2300,7 +2309,7 @@ a client on HTTP/2 learns HTTP/3 too. Requests are checked against RFC 9113 sect
 a malformed one (an uppercase or invalid field name, a connection-specific field, `te` other than `trailers`, a missing,
 repeated or unknown pseudo-header field, `host` that differs from `:authority`, content that does not match
 `content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
-answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441) are not offered:
+answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441, planned for 0.3.0) are not offered yet:
 the engine never sends SETTINGS_ENABLE_CONNECT_PROTOCOL, so a request with `:protocol` is malformed. A request with
 `Expect: 100-continue` gets an interim 100 as the handler starts (RFC 9110 §10.1.1: immediate), unless the request has no
 content; another expectation is answered 417 when the handler reads the body. Content that does not match the
@@ -2424,8 +2433,12 @@ With `webSocketsOverHttp3 = true` (the default) the HTTP/3 listener advertises `
 accepts Extended CONNECT with `:protocol = websocket` (RFC 9220). Such a request reaches Ktor's pipeline as the HTTP/1.1
 upgrade request the `WebSockets` plugin knows — `GET` with `Connection: Upgrade`, `Upgrade: websocket` and a
 `Sec-WebSocket-Key` — so ordinary `webSocket("/path") {}` routes serve it unchanged; the upgrade is answered with
-`:status 200` and the frames travel on the request stream. Extended CONNECT with any other protocol is answered 501 (WebTransport aside when it is on, below). A
-plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114 section 4.5) and gets 501 too.
+`:status 200` and the frames travel on the request stream. The protocol name matches in any case (RFC 9110 section 7.8).
+Extended CONNECT with any other protocol is answered 501 (WebTransport aside when it is on, below), and so is a WebSocket
+with `webSocketsOverHttp3 = false`, also when `webTransport = true` advertises Extended CONNECT. A route other than
+`webSocket` that answers the WebSocket CONNECT with a 2xx (a `get` on the same path) gets 501 instead: a 2xx would open a
+tunnel nobody accepted (RFC 9110 section 9.3.6). A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
+section 4.5) and gets 501 too.
 
 #### WebTransport over HTTP/3 (experimental)
 
@@ -4828,7 +4841,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | 0.2.0 | Retry policy |
 | `quicLoadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | 0.3.0 | QUIC-LB connection IDs of every HTTP/3 listener (`QuicEndpointConfig.loadBalancer`; its length must equal `quic.connectionIdLength`); `engine.updateLoadBalancer(next)` changes it on the running engine ([Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)) |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings |
-| `webSocketsOverHttp3` | `Boolean` | `true` | 0.2.0 | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on) |
+| `webSocketsOverHttp3` | `Boolean` | `true` | 0.2.0 | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on); with `false` a WebSocket CONNECT gets 501 |
 | `webTransport` (*experimental*) | `Boolean` | `false` | 0.3.0 | serve WebTransport to `webTransport(path) { }` routes (turns `http3Settings.webTransport` and `enableConnectProtocol` on; needs QUIC datagrams) ([WebTransport](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#webtransport-over-http3-experimental)) |
 | `quicEarlyData` (*experimental*) | `Boolean` | `false` | 0.2.0 | accept 0-RTT; requests are handled by `http3Settings.earlyData` |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (the endpoint default, `KuicksilverLogger.Stderr`) | 0.2.0 | the HTTP/3 endpoints' diagnostics |

@@ -337,7 +337,7 @@ a client on HTTP/2 learns HTTP/3 too. Requests are checked against RFC 9113 sect
 a malformed one (an uppercase or invalid field name, a connection-specific field, `te` other than `trailers`, a missing,
 repeated or unknown pseudo-header field, `host` that differs from `:authority`, content that does not match
 `content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
-answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441) are not offered:
+answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441, planned for 0.3.0) are not offered yet:
 the engine never sends SETTINGS_ENABLE_CONNECT_PROTOCOL, so a request with `:protocol` is malformed. A request with
 `Expect: 100-continue` gets an interim 100 as the handler starts (RFC 9110 §10.1.1: immediate), unless the request has no
 content; another expectation is answered 417 when the handler reads the body. Content that does not match the
@@ -461,8 +461,12 @@ With `webSocketsOverHttp3 = true` (the default) the HTTP/3 listener advertises `
 accepts Extended CONNECT with `:protocol = websocket` (RFC 9220). Such a request reaches Ktor's pipeline as the HTTP/1.1
 upgrade request the `WebSockets` plugin knows — `GET` with `Connection: Upgrade`, `Upgrade: websocket` and a
 `Sec-WebSocket-Key` — so ordinary `webSocket("/path") {}` routes serve it unchanged; the upgrade is answered with
-`:status 200` and the frames travel on the request stream. Extended CONNECT with any other protocol is answered 501 (WebTransport aside when it is on, below). A
-plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114 section 4.5) and gets 501 too.
+`:status 200` and the frames travel on the request stream. The protocol name matches in any case (RFC 9110 section 7.8).
+Extended CONNECT with any other protocol is answered 501 (WebTransport aside when it is on, below), and so is a WebSocket
+with `webSocketsOverHttp3 = false`, also when `webTransport = true` advertises Extended CONNECT. A route other than
+`webSocket` that answers the WebSocket CONNECT with a 2xx (a `get` on the same path) gets 501 instead: a 2xx would open a
+tunnel nobody accepted (RFC 9110 section 9.3.6). A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
+section 4.5) and gets 501 too.
 
 ### WebTransport over HTTP/3 (experimental)
 

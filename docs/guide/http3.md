@@ -262,7 +262,10 @@ waits for the server's SETTINGS and fails with `Http3Exception.Settings` if the 
 or capsules, see [Capsules](#capsules-experimental)) plus HTTP datagrams bound to the stream (RFC 9297). `Http3Stream.headers` holds the peer's fields: the CONNECT request's on
 the server, the 2xx response's on the client (for example `sec-websocket-protocol`, RFC 9220 section 3). Each
 direction ends on its own: closing `output` sends FIN and leaves `input` readable until the peer's FIN (a TCP-style
-half-close, RFC 9114 section 4.4); the stream is released once both directions ended or the stream was reset. Datagrams
+half-close, RFC 9114 section 4.4); the stream is released once both directions ended or the stream was reset. Once the
+CONNECT completed only DATA travels on the stream (RFC 9114 section 4.4): `finish(trailers)` on a 2xx to CONNECT throws
+`IllegalArgumentException` and sends nothing, and a CONNECT request with `trailers` is refused before it goes out.
+`:protocol` must be a token (RFC 8441 section 4) and is matched in any case (`websocket`, `WebSocket`). Datagrams
 follow the stream's state (RFC 9297 section 2.1): the `datagrams` flow ends when the receive side closes and later
 datagrams for the stream are dropped; once our send side is closed (`output` closed, or `reset`) `trySendDatagram`
 answers `Closed` and `sendDatagram` throws `IllegalStateException`.
@@ -290,7 +293,9 @@ closes the connection with `H3_DATAGRAM_ERROR`. Each stream keeps the newest 32 
 
 Protocols such as WebTransport and CONNECT-UDP frame the stream's data as capsules (RFC 9297 section 3): a type, a
 length and a value. `Http3Stream.useCapsuleProtocol(config)` turns a stream into a `CapsuleStream`; from then on the
-stream's `input`, `output` and `datagrams` belong to it. `capsules` delivers the capsule types listed in
+stream's `input`, `output` and `datagrams` belong to it. Only an Extended CONNECT whose protocol has datagram semantics
+speaks capsules: the Capsule Protocol "only applies to definitions of new HTTP upgrade tokens" (RFC 9297 section 3.2), so
+on a `websocket` stream or a classic CONNECT `useCapsuleProtocol` throws `IllegalStateException`. `capsules` delivers the capsule types listed in
 `CapsuleConfig.knownTypes` (64 KiB each at most by default) and skips every other type as its bytes arrive; `send`
 writes one capsule whole, never interleaved with another; `close()` writes what is queued and then sends FIN, while
 `capsules` keeps reading the peer's side.
@@ -312,7 +317,11 @@ val echoed = capsules.capsules.toList()                     // ends at the serve
 
 The stream is checked against RFC 9297 section 3.2 first: a peer message with `content-length`, `content-type` or
 `transfer-encoding`, or a 204, 205 or 206 response, is malformed, so the stream is reset with `H3_MESSAGE_ERROR` and
-`useCapsuleProtocol` throws `Http3Exception.MessageError`. The same happens later when the peer's FIN cuts a capsule in
+`useCapsuleProtocol` throws `Http3Exception.MessageError`. A message that announces capsules with `Capsule-Protocol: ?1`
+is checked earlier: `acceptConnect` answers such a request that breaks section 3.2 with 400 (and STOP_SENDING
+`H3_MESSAGE_ERROR`) instead of 200 and throws `MessageError`, `connect` fails the same way on such a 2xx, and our own
+messages are refused with `IllegalArgumentException` before they are sent, `capsule-protocol` in a response outside 2xx
+included (section 3.4). The same happens later when the peer's FIN cuts a capsule in
 two or a known capsule is longer than `maxCapsuleLength`: `capsules` fails with `MessageError` instead of ending, so a cut
 stream is never mistaken for a clean end. A protocol whose last capsule closes the stream (WebTransport's
 WT_CLOSE_SESSION) lists it in `terminalTypes`: the capsule is delivered, and anything after it is malformed the same way.

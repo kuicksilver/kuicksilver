@@ -313,7 +313,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `QuicClientConfig.tokenStore`, off by default because a token links the connections that use it; `QuicTokenStore`,
   `MemoryTokenStore`). Tokens are keyed by server name and port, used once, replaced by a Retry token when a Retry comes,
   and bounded per connection (eight of at most 1024 bytes; more NEW_TOKEN frames spend glitch tokens).
-- HTTP/3 (*experimental*): the Capsule Protocol of RFC 9297 section 3 on Extended CONNECT streams.
+- HTTP/3 (*experimental*): the Capsule Protocol of RFC 9297 section 3 on Extended CONNECT streams whose protocol has
+  datagram semantics (every one but `websocket`; on a WebSocket stream or a classic CONNECT it throws
+  `IllegalStateException`, since section 3.2 has the protocol "only" for new upgrade tokens that use it).
   `Http3Stream.useCapsuleProtocol(CapsuleConfig)` returns a `CapsuleStream`: `capsules` delivers the declared
   `knownTypes` (64 KiB each at most by default) and skips other types without buffering them, `send` writes whole
   capsules, `close()` writes what is queued and then FIN. A FIN inside a capsule, a known capsule above the limit, or a
@@ -322,7 +324,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `terminalTypes` (for WebTransport's WT_CLOSE_SESSION); the connection lives on. DATAGRAM
   capsules are received together with QUIC datagrams, dropped unread above `maxDatagramLength`, and sent instead of QUIC
   datagrams when HTTP/3 datagrams are unsupported (`datagramFallback`). `CapsuleProtocol` reads and writes the
-  `Capsule-Protocol` header field. See `docs/guide/http3.md`, "Capsules".
+  `Capsule-Protocol` header field. A message that announces the protocol with `Capsule-Protocol: ?1` is checked against
+  section 3.2 before any tunnel exists: `acceptConnect` answers such a request that breaks it with 400 and STOP_SENDING
+  `H3_MESSAGE_ERROR`, `connect` fails on such a 2xx with `MessageError`, and our own such CONNECT or 2xx is refused with
+  `IllegalArgumentException` before it is sent. See `docs/guide/http3.md`, "Capsules".
 - WebTransport over HTTP/3, first part (experimental, `docs/guide/http3.md`, "WebTransport"): `Http3Settings.webTransport`
   advertises the SETTINGS of draft-ietf-webtrans-http3-16 and of the draft-02 and draft-14 codepoints browsers still
   use; WebTransport streams (`0x54` uni, `0x41` bidi) are routed to their session, those that arrive before it wait in
@@ -709,9 +714,30 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section that opens a stream is a request now; such trailers are dropped.
 - Ktor server, WebSockets over HTTP/3 (RFC 9220): a call cancelled while its upgrade ran skipped the end of the CONNECT
   stream: the flush of our side threw the cancellation before the client's direction was stopped, so that direction
-  stayed open and the exchange counted as running until the connection ended. The client's direction is now stopped
-  first, and a cancelled call resets the stream with `H3_REQUEST_CANCELLED` (RFC 9114 section 4.1.1) instead of ending
-  it with a FIN.
+  stayed open and the exchange counted as running until the connection ended. A cancelled call now aborts both
+  directions with `H3_REQUEST_CANCELLED`, STOP_SENDING first and then RESET_STREAM (RFC 9220 section 3: "RST exceptions
+  are represented with a stream error ... of type H3_REQUEST_CANCELLED"; RFC 9114 section 4.1.1), instead of ending the
+  stream with a FIN; an orderly end still stops an unread client direction with `H3_NO_ERROR`.
+- HTTP/3: trailers could be sent on an established CONNECT tunnel, by a server through `finish(trailers)` after a 2xx to
+  CONNECT and by a client through `request()` with a CONNECT and `trailers`; RFC 9114 section 4.4 allows only DATA once
+  the CONNECT completed, and the peer closed the whole connection with `H3_FRAME_UNEXPECTED`. `finish(trailers)` on a
+  tunnel now throws IllegalArgumentException before anything is sent (`finish()` still ends it), and a CONNECT with
+  `trailers` is refused before a stream is opened.
+- HTTP/3: `:protocol` was neither checked as a token nor matched in one way: an empty or non-token value went out from
+  the client and was accepted by the server (RFC 8441 section 4: a name from the HTTP Upgrade Token Registry), and
+  `WebSocket` or `WebTransport-H3` were refused by the Ktor engine (501) or not taken for WebTransport, while the
+  library took `WebSocket` for a WebSocket. Such a value is now malformed on receipt (`H3_MESSAGE_ERROR`; HTTP/2's codec
+  checks it the same way) and refused with IllegalArgumentException before it is sent, and protocol names match in any
+  case (RFC 9110 section 7.8, SHOULD).
+- HTTP/3 server: a `capsule-protocol` field went out in any response; RFC 9297 section 3.4 keeps it out of responses
+  other than 2xx (and 101). `respond` and `sendInformational` now refuse it there with IllegalArgumentException, as any
+  other invalid response field.
+- Ktor server, WebSockets over HTTP/3: a route other than `webSocket` (a `get` on the same path) that answered the
+  WebSocket CONNECT with a 2xx opened a tunnel nobody accepted (RFC 9110 section 9.3.6): a streamed response reached the
+  client as an open WebSocket, one with `content-length` reset the stream. Such a 2xx is now answered 501, as an
+  unsupported protocol is (RFC 9220 section 3), the way a WebTransport CONNECT already was.
+- Ktor server: `webSocketsOverHttp3 = false` did not turn WebSockets over HTTP/3 off when `webTransport = true`
+  advertised Extended CONNECT: a WebSocket CONNECT still reached the `webSocket {}` routes. It is now answered 501.
 - HTTP/3: a reserved (GREASE) frame type on the peer's control stream spent a glitch token, while on a request stream it
   costs nothing. RFC 9114 sections 7.2.8 and 9 have reserved types ignored, and peers are meant to send them; a peer
   that greased its control stream often could have its connection closed with H3_EXCESSIVE_LOAD. They are now free on
