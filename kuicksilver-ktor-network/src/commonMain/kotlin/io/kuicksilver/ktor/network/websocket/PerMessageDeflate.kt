@@ -413,6 +413,12 @@ public fun negotiatedWebSocketInflate(
 }
 
 /**
+ * Whether [extension] is Ktor's own `WebSocketDeflateExtension` (JVM and Android only; a final class, so an `is` check
+ * that survives R8's renaming in a release build). False on Kotlin/Native, where Ktor has none.
+ */
+internal expect fun isKtorDeflateExtension(extension: WebSocketExtension<*>): Boolean
+
+/**
  * How the messages this side sends are compressed, for the output guard ([SentCompression]): by this library's
  * [PerMessageDeflate] (or not at all), by Ktor's `WebSocketDeflateExtension` (a frame at a time), or by another
  * implementation of the agreed `permessage-deflate` among the [installed] extensions, taken to send RFC 7692 messages.
@@ -426,7 +432,7 @@ public fun sentCompression(
     val deflate = installed.firstOrNull { e -> e.protocols.any { it.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true) } }
     return when {
         deflate is PerMessageDeflate -> SentCompression.Checked
-        deflate != null && deflate::class.simpleName == "WebSocketDeflateExtension" -> SentCompression.PerFrame
+        deflate != null && isKtorDeflateExtension(deflate) -> SentCompression.PerFrame
         else -> SentCompression.PerMessage
     }
 }
