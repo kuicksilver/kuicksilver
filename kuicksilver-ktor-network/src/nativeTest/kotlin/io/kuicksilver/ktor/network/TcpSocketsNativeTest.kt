@@ -18,6 +18,7 @@ import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -514,11 +515,40 @@ class TcpSocketsNativeTest {
             }
         }
 
+    /**
+     * A connect whose SYN is never answered, cancelled while it waits (a connect timeout, a Happy Eyeballs loser): the
+     * cancellation goes out as such, not as an IOException, and the socket is closed with it. The stall is made here, not
+     * found on the network: the connect is left pending without a SYN and the selector never reports it, so no route, VPN
+     * or firewall decides the outcome (an address assumed to drop SYNs answers where a VPN routes it).
+     */
+    @Test fun negative_aStalledConnectIsCancelledAndItsSocketClosed() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.IO)
+            val deaf = NoConnectWakeUpSelector(selector)
+            try {
+                withTimeout(30.seconds) {
+                    assertFailsWith<TimeoutCancellationException> {
+                        withTimeout(200.milliseconds) {
+                            connectTcpAddressWith(deaf, TcpAddress(byteArrayOf(127, 0, 0, 1), 9), recheck = null, start = { _, _ -> false })
+                        }
+                    }
+                    val socket = assertIs<NativeTcpSocket>(deaf.connecting, "the connect did not wait for its completion")
+                    // closed: its job completes once the descriptor is handed back (event, no polling)
+                    socket.socketContext.join()
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
     /** [delegate], whose waits for a connect never end (as on Windows for an FD_CONNECT it lost). */
     private class NoConnectWakeUpSelector(
         private val delegate: SelectorManager,
     ) : SelectorManager by delegate {
         @kotlin.concurrent.Volatile var connectSelects = 0
+
+        /** The socket of the last connect that waited here. */
+        @kotlin.concurrent.Volatile var connecting: Selectable? = null
 
         override suspend fun select(
             selectable: Selectable,
@@ -526,6 +556,7 @@ class TcpSocketsNativeTest {
         ) {
             if (interest == SelectInterest.CONNECT) {
                 connectSelects++
+                connecting = selectable
                 awaitCancellation()
             }
             delegate.select(selectable, interest)

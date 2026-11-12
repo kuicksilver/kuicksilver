@@ -27,12 +27,14 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -40,6 +42,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -501,10 +504,21 @@ class ServerH3Test {
     /**
      * The UDP-first pair loses its TCP twin: the first pair's UDP twin is taken (TCP first), then the hook binds the
      * UDP-first endpoint and holds a TCP listener on the number the OS gave it, so the engine's TCP bind there fails. The
-     * engine closes that endpoint and waits until its socket is released (its UDP port can be bound again as soon as the start
-     * returns) and the third pair, TCP first again, serves h3.
+     * engine closes that endpoint and waits until its socket is released before the next attempt, and a later pair serves
+     * h3. Until a UDP-first pair is held, the UDP twin of every TCP-first pair is taken: a UDP-first number whose TCP port
+     * is in use elsewhere already (TCP numbers are handed out in sequence, UDP ones at random) fails that pair before the
+     * test holds it, and the engine's next TCP-first pair must not end the start before the case ran.
+     *
+     * The release is read from the endpoint itself when the next pair is tried: its `closeAndJoin` returns without
+     * suspending only when the engine already closed it and its loops released their sockets. The port is then bound once
+     * at that same moment, as the end-to-end proof that the OS freed it: only the engine's TCP bind of that attempt ran
+     * since the release. Bound after the start (before), the port stayed free through the HTTP/1.1 and HTTP/3 requests,
+     * and as macOS hands out ephemeral UDP ports at random, any other bind meanwhile (this test's own HTTP/3 client,
+     * another test process) could take it, failing the check with the engine not involved.
      */
-    @Test fun ephemeralPortUdpFirstPairWhoseTcpTwinIsTakenIsReleased() =
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun ephemeralPortUdpFirstPairWhoseTcpTwinIsTakenIsReleased() =
         h3ServerTest {
             val taken = ArrayList<DatagramIo>()
             val tried = ArrayList<Int>()
@@ -512,46 +526,79 @@ class ServerH3Test {
             var heldPort = -1
             val selector = SelectorManager(Dispatchers.IO)
             var heldTcp: io.ktor.network.sockets.ServerSocket? = null
+            var udpFirst: Http3Endpoint? = null
+            var releasedBeforeNextPair: Boolean? = null
+            var rebound: Result<Unit>? = null
             val log = CapturedLog()
-            val (server, port) =
-                tlsServer(configure = {
-                    logger = log.quic
-                    http3Bind = { a, c, s ->
-                        tried += a.port
-                        if (a.port != 0 && tried.size == 1) {
-                            // the first pair's UDP twin: already held, the bind below fails all the same
-                            runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", a.port)) }.getOrNull()?.let { taken += it }
-                        }
-                        Http3Endpoint.bind(a, c, s).also { e ->
-                            bound += e.localAddress.port
-                            if (a.port == 0 && heldTcp == null) {
-                                heldPort = e.localAddress.port
-                                heldTcp = bindTcp(selector, "127.0.0.1", heldPort)
+            var server: Server? = null
+            try {
+                val (started, port) =
+                    tlsServer(configure = {
+                        logger = log.quic
+                        http3Bind = { a, c, s ->
+                            tried += a.port
+                            if (a.port != 0 && heldTcp == null) {
+                                // a TCP-first pair before the UDP-first one is held: its UDP twin is taken (or already held
+                                // elsewhere), the bind below fails all the same
+                                runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", a.port)) }
+                                    .getOrNull()
+                                    ?.let { taken += it }
+                            }
+                            val failed = udpFirst
+                            if (failed != null && releasedBeforeNextPair == null) {
+                                // the attempt after the failed UDP-first pair: the engine must have closed and joined its
+                                // endpoint by now, so joining it again completes at once; one that is still open or still
+                                // closing suspends here (and this test then closes it)
+                                coroutineScope {
+                                    val join = launch(start = CoroutineStart.UNDISPATCHED) { failed.closeAndJoin() }
+                                    releasedBeforeNextPair = join.isCompleted
+                                }
+                                // and the OS agrees: the port binds at once. Only the engine's TCP bind of this attempt ran
+                                // since the release, so no other bind (this test's HTTP/3 client comes later) had time to
+                                // take it
+                                rebound = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", heldPort)).close() }
+                            }
+                            Http3Endpoint.bind(a, c, s).also { e ->
+                                bound += e.localAddress.port
+                                if (a.port == 0 && heldTcp == null) {
+                                    // a TCP port of that number already in use elsewhere: this pair fails as a taken one
+                                    // does, its endpoint closed here, and a later UDP-first pair is the one held
+                                    heldTcp =
+                                        try {
+                                            bindTcp(selector, "127.0.0.1", e.localAddress.port)
+                                        } catch (x: Throwable) {
+                                            e.closeAndJoin()
+                                            throw x
+                                        }
+                                    heldPort = e.localAddress.port
+                                    udpFirst = e
+                                }
                             }
                         }
-                    }
-                }, log = log) { routing { get("/") { call.respondText("ok") } } }
-            try {
+                    }, log = log) { routing { get("/") { call.respondText("ok") } } }
+                server = started
                 val why = "tried $tried, bound $bound, held TCP $heldPort, serving $port"
-                assertTrue(tried.size >= 3 && tried[1] == 0 && tried[2] != 0, why)
+                assertTrue(tried.size >= 3 && tried[1] == 0, why)
                 assertTrue(heldPort > 0 && port != heldPort, why)
                 assertEquals(port, bound.lastOrNull(), why)
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
                 h3(port) { c -> assertEquals(200, c.request(get()).status) }
-                // the endpoint of the failed UDP-first pair was closed and joined before the start returned: its port can be
-                // bound at once (one try, no waiting; the engine owns no socket on it any more)
                 val warnings = log.lines.filter { it.level == "WARN" }.map { it.message }
                 assertTrue(warnings.none { "was not released" in it }, "the release of UDP $heldPort timed out: $warnings")
-                val again = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", heldPort)) }
-                again.getOrNull()?.close()
-                // a failure here with no warning above: the engine joined the endpoint, so another process may have taken the port
+                assertEquals(
+                    true,
+                    releasedBeforeNextPair,
+                    "UDP $heldPort not released when the next pair was tried ($why, warnings $warnings)",
+                )
+                val again = assertNotNull(rebound, why)
                 assertTrue(
                     again.isSuccess,
-                    "UDP $heldPort still bound after the start returned ($why, warnings $warnings): ${again.exceptionOrNull()}",
+                    "UDP $heldPort not bindable when the next pair was tried ($why): ${again.exceptionOrNull()}",
                 )
             } finally {
-                server.stop(100, 500)
+                server?.stop(100, 500)
+                udpFirst?.close() // closed by the engine already, unless the start failed before it
                 heldTcp?.close()
                 selector.close()
                 taken.forEach { it.close() }

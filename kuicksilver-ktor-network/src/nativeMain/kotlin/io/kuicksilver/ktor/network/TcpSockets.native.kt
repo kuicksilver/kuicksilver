@@ -215,13 +215,18 @@ public actual suspend fun connectTcpAddress(
     address: TcpAddress,
 ): Socket = connectTcpAddressWith(selector, address, tcpConnectRecheck)
 
-/** [connectTcpAddress] with the bounds of [awaitConnected] given (tests use short ones). */
+/**
+ * [connectTcpAddress] with the bounds of [awaitConnected] given (tests use short ones). [start] begins the connect and
+ * says whether it completed at once ([tcpConnect]); tests leave it pending without sending a SYN, a stall no network
+ * decides.
+ */
 internal suspend fun connectTcpAddressWith(
     selector: SelectorManager,
     address: TcpAddress,
     recheck: Duration?,
     undecidedLimit: Duration = CONNECT_UNDECIDED_LIMIT,
     receiveBufferSize: Int = 0,
+    start: (fd: Int, to: Sockaddr) -> Boolean = ::tcpConnect,
     rechecks: (() -> Unit)? = null,
 ): Socket {
     tcpStartup()
@@ -243,7 +248,7 @@ internal suspend fun connectTcpAddressWith(
         }
     val socket = NativeTcpSocket(selector, fd, to.toInet(), null)
     try {
-        if (!tcpConnect(fd, to)) awaitConnected(selector, socket, fd, recheck, undecidedLimit, rechecks)
+        if (!start(fd, to)) awaitConnected(selector, socket, fd, recheck, undecidedLimit, rechecks)
         return socket
     } catch (e: PosixException) {
         socket.close()

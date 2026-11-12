@@ -55,6 +55,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -67,6 +68,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import io.ktor.server.sse.SSE as ServerSSE
 import io.ktor.server.sse.sse as serverSse
 import io.ktor.server.websocket.WebSockets as ServerWebSockets
@@ -315,10 +317,37 @@ class ClientH1Test {
             }
         }
 
+    /**
+     * A connection that is not made within the request's connect timeout (`HttpTimeout`, shorter than the engine's) fails
+     * the call with Ktor's [ConnectTimeoutException]. The connect step that never completes is the TCP connect's address
+     * lookup, held by the test, not an address assumed to drop SYNs: such an address (10.255.255.1 before) answers where a
+     * VPN or another route reaches it, and the call then got no timeout at all.
+     */
     @Test fun connectTimeoutMapsToKtor() =
         clientTest {
-            testClient(block = { install(HttpTimeout) { connectTimeoutMillis = 300 } }).use { c ->
-                assertFailsWith<ConnectTimeoutException> { c.get("https://10.255.255.1:443/") }
+            val entered = CompletableDeferred<Unit>()
+            val cancelled = CompletableDeferred<Unit>()
+            testClient(
+                engine = {
+                    connectTimeout = 60.seconds
+                    resolverForTest = { _, _ ->
+                        entered.complete(Unit)
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            cancelled.complete(Unit)
+                        }
+                    }
+                },
+                block = { install(HttpTimeout) { connectTimeoutMillis = 300 } },
+            ).use { c ->
+                val started = TimeSource.Monotonic.markNow()
+                assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:443/") }
+                val took = started.elapsedNow()
+                assertTrue(entered.isCompleted, "the call failed before it started connecting")
+                assertTrue(cancelled.isCompleted, "the timed-out connect step was not cancelled")
+                // the request's 300 ms, not the engine's 60 s
+                assertTrue(took >= 250.milliseconds && took < 10.seconds, "failed after $took")
             }
         }
 
