@@ -15,7 +15,7 @@ scheme) of the URL to `FindProxyForURL`. Result decides the RFC 6455 §4.1 row (
    `set KSL_WIN_PAC_URL=http://127.0.0.1:8999/win-pac-echo.pac`
    `gradlew --offline -Pkuicksilver.openssl.prebuilt=true :kuicksilver-ktor-client:mingwX64Test --tests "*WinPacUrlCheckTest*"`
    (or build `linkDebugTestMingwX64` on macOS and run `test.exe --ktest_filter=*WinPacUrlCheckTest*` on the VM).
-3. Read the `WINPAC` lines (stdout, or `kuicksilver-ktor-client/build/test-results/mingwX64Test/*.xml`):
+3. Read the `WINPAC` lines (stdout, or the mingwX64Test test-results XML under the module's build directory):
    - `wss://h.test:8443/chat?room=1 -> wss---h-test-8443-chat-room-1.h.test:1`: WinHTTP passes the WebSocket URI whole,
      the MUST is met on Windows.
    - `… -> https---h-test-8443-chat-room-1…`: it refused `wss` and the retry as `https` passed the path and query
