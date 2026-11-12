@@ -314,8 +314,20 @@ internal class H2ConnectionCore(
             is Frame.Ping -> onPing(f, now)
             is Frame.GoAway -> onGoAway(f)
             is Frame.WindowUpdate -> onWindowUpdate(f, now)
-            is Frame.Unknown -> glitch(now, "unknown frame type ${f.type}") // section 5.5: ignored, but not for free
+            is Frame.Unknown -> onUnknown(f, now)
         }
+    }
+
+    private fun onUnknown(
+        f: Frame.Unknown,
+        now: Long,
+    ) {
+        // RFC 9218 section 7.1: "If a client receives a PRIORITY_UPDATE frame, it MUST respond with a connection error of
+        // type PROTOCOL_ERROR"; a server does not implement the frame and ignores it like any other
+        if (client && f.type == FrameType.PRIORITY_UPDATE) {
+            throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE from the server")
+        }
+        glitch(now, "unknown frame type ${f.type}") // section 5.5: ignored, but not for free
     }
 
     internal fun peerInitiated(id: Int): Boolean = (id and 1 == 1) == !client

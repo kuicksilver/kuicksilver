@@ -640,6 +640,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 client: a PRIORITY_UPDATE frame (type 0x10) from the server was ignored as an unknown frame; RFC 9218 section
+  7.1 says "If a client receives a PRIORITY_UPDATE frame, it MUST respond with a connection error of type
+  PROTOCOL_ERROR", and the connection now ends that way. A server still ignores the frame, which it does not implement.
 - HTTP/2 (RFC 9218 section 10): the connection sent the DATA of its streams round-robin, whatever their priority, so a
   u=0 response got no precedence over a u=7 one and two default responses were interleaved instead of sent in stream
   order. DATA now goes by priority as on HTTP/3: urgency first, non-incremental streams of one urgency in ascending

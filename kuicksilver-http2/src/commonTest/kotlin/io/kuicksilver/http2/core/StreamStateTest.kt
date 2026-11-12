@@ -361,6 +361,27 @@ class StreamStateTest {
         assertEquals(listOf(1, 3), peer.events().filterIsInstance<H2Event.HeadersReceived>().map { it.streamId })
     }
 
+    /**
+     * RFC 9218 section 7.1: "Servers MUST NOT send PRIORITY_UPDATE frames. If a client receives a PRIORITY_UPDATE frame,
+     * it MUST respond with a connection error of type PROTOCOL_ERROR." A server ignores it as a frame type it does not
+     * implement (RFC 9113 section 5.5).
+     */
+    @Test
+    fun negative_clientRejectsPriorityUpdate() {
+        val update = byteArrayOf(0, 0, 7, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 1, 'u'.code.toByte(), '='.code.toByte(), '1'.code.toByte())
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        c.core.openStream(GET, endStream = true)
+        c.read()
+        c.send(update)
+        c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake()
+        s.send(s.headers(1), update)
+        s.read()
+        assertTrue(!s.core.isClosed && s.goAway() == null)
+    }
+
     @Test
     fun negative_frameInsideFieldBlockIsProtocolError() {
         val peer = RawH2Peer(Role.SERVER)

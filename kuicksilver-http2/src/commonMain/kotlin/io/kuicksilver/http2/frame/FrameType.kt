@@ -14,6 +14,9 @@ internal object FrameType {
     const val GOAWAY: Int = 0x7
     const val WINDOW_UPDATE: Int = 0x8
     const val CONTINUATION: Int = 0x9
+
+    /** RFC 9218 section 7.1; not implemented, except that a client refuses it. */
+    const val PRIORITY_UPDATE: Int = 0x10
 }
 
 /** Frame flags (RFC 9113 section 6); a flag without meaning for a type is ignored on receipt and never set (section 4.1). */
