@@ -13,46 +13,103 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.client.CfProxy
 import io.kuicksilver.ktor.client.PAC_FAILED
+import io.kuicksilver.ktor.client.PAC_UNSUPPORTED
+import io.kuicksilver.ktor.client.PacOutcome
+import io.kuicksilver.ktor.client.ProxyException
 import io.kuicksilver.ktor.client.ResolvedProxy
 import io.kuicksilver.ktor.client.pacTarget
 import io.kuicksilver.ktor.client.pickCfProxyWithPac
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import platform.Foundation.NSTemporaryDirectory
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fputs
 import platform.posix.remove
+import platform.posix.usleep
+import kotlin.concurrent.AtomicInt
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /** The engine's own PAC engine on Apple platforms: scripts from files and plain-http URLs, the URI the script gets, limits. */
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 class PacEngineAppleTest {
+    /** What the scripts' native calls get: blocking ones wait for [release]. */
+    private class FakeHost : PacHost {
+        val release = CompletableDeferred<Unit>()
+        val resolveCalls = AtomicInt(0)
+
+        override fun resolve(
+            name: String,
+            ipv4Only: Boolean,
+        ): List<String> {
+            resolveCalls.incrementAndGet()
+            return when (name) {
+                "slow.test" -> {
+                    runBlocking { release.await() }
+                    listOf("10.0.0.9")
+                }
+
+                "pause.test" -> {
+                    usleep(150_000u) // a resolver that answers, slowly
+                    listOf("10.0.0.8")
+                }
+
+                else -> {
+                    listOf("10.0.0.1")
+                }
+            }
+        }
+
+        /** A script calling `myIpAddress()` blocks until [release]: a run that overruns, and ends when released. */
+        override fun myAddresses(ipv4Only: Boolean): List<String> {
+            runBlocking { release.await() }
+            return listOf("192.168.1.2")
+        }
+    }
+
+    private val host = FakeHost()
+
     @BeforeTest fun load() =
         runBlocking {
             KslLoader.ensureLoaded()
             PacScripts.clearForTest()
-            PacRunner.resetForTest()
+            PacHost.setForTest(host)
         }
 
     @AfterTest fun reset() =
         runBlocking {
+            host.release.complete(Unit) // no thread is left blocked
+            withTimeout(10.seconds) { PacRunner.awaitNoneAbandoned() }
+            PacHost.setForTest(null)
             PacScripts.nowForTest = null
-            PacRunner.resetForTest()
+            PacRunner.nowForTest = null
         }
 
     /** Echoes what the script gets: the URL and host, made a host name. */
     private val echo =
         "function FindProxyForURL(url, host) { return 'PROXY ' + url.replace(/[^a-z0-9]/g, '-') + '.' + host + ':3128; DIRECT'; }"
+
+    private val blocking = "function FindProxyForURL(url, host) { myIpAddress(); return 'DIRECT'; }"
+    private val ok = "function FindProxyForURL(url, host) { return 'PROXY ok.test:1'; }"
 
     /**
      * RFC 6455 section 4.1: "the URI to pass the function MUST be constructed from /host/, /port/, /resource name/, and
@@ -63,10 +120,13 @@ class PacEngineAppleTest {
         runBlocking {
             val target = pacTarget(Url("wss://h.test:8443/chat?room=1"))
             assertEquals("wss://h.test:8443/chat?room=1", target)
-            val answer = evaluatePac(CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = echo), target, "h.test")!!
-            assertEquals("wss---h-test-8443-chat-room-1.h.test", answer[0].host)
-            assertEquals(3128, answer[0].port)
-            assertEquals(CfProxy.Type.None, answer[1].type)
+            val answer =
+                assertIs<PacOutcome.Answer>(
+                    evaluatePac(CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = echo), target, "h.test"),
+                )
+            assertEquals("wss---h-test-8443-chat-room-1.h.test", answer.proxies[0].host)
+            assertEquals(3128, answer.proxies[0].port)
+            assertEquals(CfProxy.Type.None, answer.proxies[1].type)
         }
 
     @Test fun pacFileIsReadAndRun() =
@@ -103,7 +163,7 @@ class PacEngineAppleTest {
             assertEquals(listOf("GET /proxy.pac HTTP/1.1"), requests)
         }
 
-    /** A script that cannot be had (404) or runs into an error: no answer, the next entry counts, one warning. */
+    /** A script that cannot be had (404) or runs into an error: no answer, the next entry counts, one warning each. */
     @Test fun negative_failedScriptFallsToTheNextEntry() =
         runBlocking {
             servePac(ArrayList(), "404 Not Found", ByteArray(0)) { port ->
@@ -121,7 +181,24 @@ class PacEngineAppleTest {
             }
         }
 
-    /** A script larger than the cap is refused. */
+    /** An answer with only proxies the engine cannot use fails closed: never a direct connection. */
+    @Test fun negative_unsupportedOnlyAnswerFailsClosed() =
+        runBlocking {
+            val entry =
+                CfProxy(
+                    CfProxy.Type.AutoConfiguration,
+                    null,
+                    null,
+                    pacScript = "function FindProxyForURL(url, host) { return 'HTTPS tls.test:443; SOCKS4 s4.test:1080'; }",
+                )
+            val warnings = ArrayList<String>()
+            assertFailsWith<ProxyException> {
+                pickCfProxyWithPac(listOf(entry), { evaluatePac(it, "https://x.test:443/", "x.test") }) { warnings += it }
+            }
+            assertEquals(listOf(PAC_UNSUPPORTED), warnings)
+        }
+
+    /** A Content-Length above the cap is refused before the body is read. */
     @Test fun negative_oversizedScriptIsRefused() =
         runBlocking {
             val big =
@@ -137,8 +214,86 @@ class PacEngineAppleTest {
         }
 
     /**
+     * A body without a length that never ends: the download stops at the cap instead of holding the whole body (before,
+     * the body was read whole and only then measured), and fails quickly.
+     */
+    @Test fun negative_endlessScriptStopsAtTheCap() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.IO)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
+            val sent = AtomicInt(0)
+            try {
+                coroutineScope {
+                    val server =
+                        launch {
+                            listener.accept().use { s ->
+                                val input = s.openReadChannel()
+                                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                                val output = s.openWriteChannel(autoFlush = false)
+                                output.writeStringUtf8("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+                                val chunk = ByteArray(64 * 1024) { 'x'.code.toByte() }
+                                runCatching {
+                                    while (true) {
+                                        output.writeFully(chunk)
+                                        output.flush()
+                                        sent.addAndGet(chunk.size)
+                                    }
+                                }
+                            }
+                        }
+                    val mark = TimeSource.Monotonic.markNow()
+                    assertNull(
+                        PacScripts.script("http://127.0.0.1:${(listener.localAddress as InetSocketAddress).port}/endless.pac", 5_000),
+                    )
+                    assertTrue(mark.elapsedNow() < 4.seconds, "took ${mark.elapsedNow()}")
+                    server.cancel()
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+            assertTrue(sent.value < 64 * PAC_MAX_SCRIPT_BYTES, "${sent.value} bytes sent before the client stopped")
+        }
+
+    /**
+     * A PAC URL that never answers: no answer within the bound, and the failure is remembered, so later lookups do not
+     * pay the bound again (also when the caller gives up first).
+     */
+    @Test fun negative_pacUrlThatHangsTimesOut() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.IO)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
+            val accepted = launch { listener.accept() } // accepts, never answers
+            try {
+                val url = "http://127.0.0.1:${(listener.localAddress as InetSocketAddress).port}/proxy.pac"
+                assertNull(withTimeoutOrNull(300) { PacScripts.script(url, 5_000) }, "the caller gave up first")
+                val mark = TimeSource.Monotonic.markNow()
+                assertNull(PacScripts.script(url, 5_000))
+                assertTrue(mark.elapsedNow() < 1.seconds, "the failure was remembered: ${mark.elapsedNow()}")
+                assertEquals(1, PacScripts.downloads)
+            } finally {
+                accepted.cancel()
+                listener.close()
+                selector.close()
+            }
+        }
+
+    /** Lookups of one URL while its download is under way share it: one download. */
+    @Test fun downloadsAreSingleFlight() =
+        runBlocking {
+            val requests = ArrayList<String>()
+            servePac(requests, "200 OK", ok.encodeToByteArray()) { port ->
+                val url = "http://127.0.0.1:$port/p.pac"
+                val scripts = (1..5).map { async { PacScripts.script(url, 5_000) } }.awaitAll()
+                assertTrue(scripts.all { it == ok }, "$scripts")
+            }
+            assertEquals(1, PacScripts.downloads)
+            assertEquals(1, requests.size)
+        }
+
+    /**
      * The sandbox: ECMAScript and the PAC functions only; nothing to reach the network, files, timers or modules, and
-     * the natives cannot be replaced.
+     * the natives cannot be replaced; an overlong argument to a native gives nothing.
      */
     @Test fun negative_theScriptHasNoHostAccess() {
         val ctx = PacContext("function FindProxyForURL(url, host) { return 'DIRECT'; }")
@@ -158,25 +313,84 @@ class PacEngineAppleTest {
             assertEquals("function", ctx.typeOf("dnsResolve"))
             ctx.eval("dnsResolve = function() { return '6.6.6.6'; }") // read-only: ignored outside strict mode
             assertEquals("function", ctx.typeOf("dnsResolve"))
+            val before = host.resolveCalls.value
+            assertEquals(null, ctx.eval("dnsResolve(new Array(2000).join('a'))"))
+            assertEquals(before, host.resolveCalls.value, "an overlong name never reaches the resolver")
         } finally {
             ctx.close()
         }
     }
 
     /**
-     * A script that never returns: no answer once its time is up, its thread is given up to it, and the next script runs
-     * on a new thread; after [PacRunner.MAX_ABANDONED] such scripts no script runs any more.
+     * A resolver that never answers costs the script its DNS budget, not its run: the lookup gives nothing and the run
+     * ends in time, so it is no runaway. Before, `getaddrinfo` held the run past its limit.
      */
-    @Test fun negative_runawayScriptIsAbandoned() =
+    @Test fun negative_slowDnsIsNotARunaway() =
         runBlocking {
-            val loop = "function FindProxyForURL(url, host) { while (true) {} }"
-            val ok = "function FindProxyForURL(url, host) { return 'PROXY ok.test:1'; }"
-            assertNull(PacRunner.findProxy("loop1", loop, "https://x.test:443/", "x.test", 200))
-            assertEquals(1, PacRunner.abandonedThreads)
+            val script =
+                "function FindProxyForURL(url, host) { " +
+                    "return dnsResolve('slow.test') === null ? 'PROXY nodns.test:1' : 'DIRECT'; }"
+            assertEquals("PROXY nodns.test:1", PacRunner.findProxy("slow", script, "https://x.test:443/", "x.test", 800))
+            assertEquals(0, PacRunner.abandonedThreads.value)
+        }
+
+    /**
+     * Lookups queued behind each other: each run's limit counts from its own start, so slow but finishing runs are no
+     * runaways however many wait. Before, the limit counted from the queueing and the later ones were abandoned.
+     */
+    @Test fun negative_queuedRunsAreNotRunaways() =
+        runBlocking {
+            val script = "function FindProxyForURL(url, host) { return 'PROXY ' + dnsResolve('pause.test') + ':1'; }"
+            val answers =
+                withTimeout(20.seconds) {
+                    (1..6)
+                        .map { i ->
+                            async(Dispatchers.Default) { PacRunner.findProxy("pause$i", script, "https://x$i.test:443/", "x.test", 500) }
+                        }.awaitAll()
+                }
+            assertTrue(answers.all { it == "PROXY 10.0.0.8:1" }, "$answers")
+            assertEquals(0, PacRunner.abandonedThreads.value)
+        }
+
+    /**
+     * A run that overruns gives no answer and its thread is abandoned; while [PacRunner.MAX_ABANDONED] are, no script
+     * runs; once they end, their threads go and scripts run again.
+     */
+    @Test fun negative_runawayScriptIsAbandonedAndPacRecovers() =
+        runBlocking {
+            assertNull(PacRunner.findProxy("block1", blocking, "https://x.test:443/", "x.test", 200))
+            assertEquals(1, PacRunner.abandonedThreads.value)
             assertEquals("PROXY ok.test:1", PacRunner.findProxy("ok", ok, "https://x.test:443/", "x.test", 2_000))
-            assertNull(PacRunner.findProxy("loop2", loop, "https://x.test:443/", "x.test", 200))
-            assertEquals(PacRunner.MAX_ABANDONED, PacRunner.abandonedThreads)
-            assertNull(PacRunner.findProxy("ok", ok, "https://x.test:443/", "x.test", 2_000), "no script runs any more")
+            assertNull(PacRunner.findProxy("block2", blocking, "https://x.test:443/", "x.test", 200))
+            assertEquals(PacRunner.MAX_ABANDONED, PacRunner.abandonedThreads.value)
+            assertNull(
+                withTimeout(10.seconds) {
+                    PacRunner.findProxy("ok", ok, "https://x.test:443/", "x.test", 2_000)
+                },
+                "no script runs while two hang",
+            )
+            host.release.complete(Unit)
+            withTimeout(10.seconds) { PacRunner.awaitNoneAbandoned() }
+            assertEquals("PROXY ok.test:1", PacRunner.findProxy("ok", ok, "https://x.test:443/", "x.test", 2_000))
+        }
+
+    /**
+     * The caller's own timeout firing first (the lookup's 5 s, say) skips nothing: the next run finds the worker busy past
+     * the limit and abandons it, instead of queueing behind it and failing too.
+     */
+    @Test fun negative_overrunAfterTheCallerGaveUpIsFoundByTheNextRun() =
+        runBlocking {
+            val base = TimeSource.Monotonic.markNow()
+            var offset = 0L
+            PacRunner.nowForTest = { base.elapsedNow().inWholeMilliseconds + offset }
+            assertNull(withTimeoutOrNull(100) { PacRunner.findProxy("block", blocking, "https://x.test:443/", "x.test", 1_000) })
+            assertEquals(0, PacRunner.abandonedThreads.value, "not overrun yet when the caller gave up")
+            offset += 2_000 // the run is now past its limit
+            assertEquals(
+                "PROXY ok.test:1",
+                withTimeout(10.seconds) { PacRunner.findProxy("ok", ok, "https://x.test:443/", "x.test", 1_000) },
+            )
+            assertEquals(1, PacRunner.abandonedThreads.value)
         }
 
     @Test fun answersAreParsed() {
@@ -185,33 +399,63 @@ class PacEngineAppleTest {
                 "PROXY a.test:8080; SOCKS b.test:1081;SOCKS5 [2001:db8::1]:1082; HTTPS c.test:443; SOCKS4 d:1; DIRECT; HTTP e.test",
             )
         assertEquals(
-            listOf(CfProxy.Type.Http, CfProxy.Type.Socks, CfProxy.Type.Socks, CfProxy.Type.None, CfProxy.Type.Http),
+            listOf(
+                CfProxy.Type.Http,
+                CfProxy.Type.Socks,
+                CfProxy.Type.Socks,
+                CfProxy.Type.Unsupported,
+                CfProxy.Type.Unsupported,
+                CfProxy.Type.None,
+                CfProxy.Type.Http,
+            ),
             list.map { it.type },
         )
-        assertEquals(listOf("a.test", "b.test", "2001:db8::1", null, "e.test"), list.map { it.host })
-        assertEquals(listOf(8080, 1081, 1082, null, 80), list.map { it.port })
+        assertEquals(listOf("a.test", "b.test", "2001:db8::1", "c.test", "d", null, "e.test"), list.map { it.host })
+        assertEquals(listOf(8080, 1081, 1082, 443, 1, null, 80), list.map { it.port })
         assertEquals(emptyList(), parsePacResult("PROXY a.test:99999"))
     }
 
-    @Test fun wpadCandidatesWalkToTwoLabels() {
+    @Test fun wpadCandidatesAreTheSearchDomainsExactly() {
         assertEquals(
             listOf(
                 "http://cfg.test/proxy.pac",
                 "http://wpad.a.corp.example.com/wpad.dat",
-                "http://wpad.corp.example.com/wpad.dat",
                 "http://wpad.example.com/wpad.dat",
+                "http://wpad/wpad.dat",
             ),
             wpadCandidates("http://cfg.test/proxy.pac\u0000", listOf("a.corp.example.com.", "example.com", "mac.local", "com")),
         )
-        assertEquals(emptyList(), wpadCandidates(null, listOf("com", "local")))
     }
+
+    /** No parent of a search domain is tried: `x.corp.example.co.uk` never leads to `wpad.co.uk` or `wpad.example.co.uk`. */
+    @Test fun negative_wpadNeverTriesAPublicSuffix() {
+        val candidates = wpadCandidates(null, listOf("x.corp.example.co.uk"))
+        assertEquals(listOf("http://wpad.x.corp.example.co.uk/wpad.dat", "http://wpad/wpad.dat"), candidates)
+        for (parent in listOf("corp.example.co.uk", "example.co.uk", "co.uk", "uk")) {
+            assertTrue(candidates.none { it.contains("//wpad.$parent/") }, parent)
+        }
+    }
+
+    /** A discovered PAC URL (DHCP option 252) is `http` or `https` only: never a local file or another scheme. */
+    @Test fun negative_discoveredUrlIsHttpOnly() =
+        runBlocking {
+            assertEquals(listOf("http://wpad/wpad.dat"), wpadCandidates("file:///etc/evil.pac", emptyList()))
+            assertEquals(listOf("http://wpad/wpad.dat"), wpadCandidates("ftp://x.test/p.pac", emptyList()))
+            assertEquals(listOf("https://cfg.test/p.pac", "http://wpad/wpad.dat"), wpadCandidates("https://cfg.test/p.pac", emptyList()))
+            assertNull(PacScripts.script("file:///etc/hosts", 1_000, allowFile = false))
+            assertEquals(0, PacScripts.downloads)
+        }
 
     @Test fun scriptsAreKeptUntilTheyExpire() =
         runBlocking {
             var now = 0L
             PacScripts.nowForTest = { now }
-            val requests = ArrayList<String>()
-            servePac(requests, "200 OK", "function FindProxyForURL() { return 'DIRECT'; }".encodeToByteArray(), connections = 2) { port ->
+            servePac(
+                ArrayList(),
+                "200 OK",
+                "function FindProxyForURL() { return 'DIRECT'; }".encodeToByteArray(),
+                connections = 2,
+            ) { port ->
                 val url = "http://127.0.0.1:$port/p.pac"
                 PacScripts.script(url, 5_000)
                 PacScripts.script(url, 5_000)
@@ -244,7 +488,7 @@ class PacEngineAppleTest {
                                 while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                                 val output = s.openWriteChannel(autoFlush = true)
                                 output.writeStringUtf8("HTTP/1.1 $status\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n")
-                                output.writeFully(body)
+                                runCatching { output.writeFully(body) }
                                 output.flushAndClose()
                             }
                         }

@@ -61,6 +61,40 @@ class SystemProxyJvmTest {
             }
         }
 
+    /**
+     * RFC 6455 section 4.1, the PAC URI rule: a WebSocket's lookup gives the selector (a PAC-running one included, such as
+     * Android's `PacProxySelector`, which keeps the path of an `http` URI) its resource name; `ws` and `wss` map to
+     * `http` and `https`, which the selectors know. Before, the selector got `http(s)://host:port/` only.
+     */
+    @Test fun selectorGetsAWebSocketsResourceName() {
+        assertEquals(URI("http://h.test:8080/chat?room=1"), selectorUri(io.ktor.http.Url("ws://h.test:8080/chat?room=1")))
+        assertEquals(URI("https://h.test:443/a%20b/c?x=%2F"), selectorUri(io.ktor.http.Url("wss://h.test/a%20b/c?x=%2F")))
+        assertEquals(URI("https://[2001:db8::1]:8443/"), selectorUri(io.ktor.http.Url("wss://[2001:db8::1]:8443")))
+        assertEquals(URI("https://h.test:443/"), selectorUri(io.ktor.http.Url("https://h.test/private/path?token=1")))
+        val previous = ProxySelector.getDefault()
+        val asked = ArrayList<URI>()
+        try {
+            ProxySelector.setDefault(
+                object : ProxySelector() {
+                    override fun select(uri: URI): List<Proxy> {
+                        asked += uri
+                        return listOf(Proxy.NO_PROXY)
+                    }
+
+                    override fun connectFailed(
+                        uri: URI?,
+                        sa: SocketAddress?,
+                        ioe: IOException?,
+                    ) {}
+                },
+            )
+            kotlinx.coroutines.runBlocking { JvmSystemProxyResolver.proxyFor(io.ktor.http.Url("wss://server.test:8443/chat?room=1")) }
+            assertEquals(listOf(URI("https://server.test:8443/chat?room=1")), asked)
+        } finally {
+            ProxySelector.setDefault(previous)
+        }
+    }
+
     /** A `ProxySelector` that blocks (waiting on the network) fails the request at the connect timeout. */
     @Test fun negative_blockingSelectorFailsAtConnectTimeout() =
         clientTest {

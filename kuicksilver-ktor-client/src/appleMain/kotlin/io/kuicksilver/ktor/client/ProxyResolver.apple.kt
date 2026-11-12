@@ -23,6 +23,7 @@ import platform.CFNetwork.kCFProxyTypeHTTPS
 import platform.CFNetwork.kCFProxyTypeKey
 import platform.CFNetwork.kCFProxyTypeNone
 import platform.CFNetwork.kCFProxyTypeSOCKS
+import platform.CoreFoundation.CFDictionaryRef
 import platform.CoreFoundation.CFRelease
 import platform.CoreFoundation.CFRetain
 import platform.CoreFoundation.CFStringRef
@@ -68,28 +69,29 @@ internal fun systemProxySettings(urlString: String): Pair<Boolean, List<CfProxy>
     try {
         val dict = CFBridgingRelease(CFRetain(settings)) as? Map<*, *>
         val auto = (dict?.get("ProxyAutoDiscoveryEnable") as? Number)?.toInt() == 1
-        return auto to systemProxies(urlString)
+        return auto to proxiesFor(urlString, settings)
     } finally {
         CFRelease(settings)
     }
 }
 
 /** What CFNetwork says for [urlString], in its order. */
-internal fun systemProxies(urlString: String): List<CfProxy> {
-    val settings = CFNetworkCopySystemProxySettings() ?: return emptyList()
-    try {
-        val nsUrl = NSURL.URLWithString(urlString) ?: return emptyList()
+internal fun systemProxies(urlString: String): List<CfProxy> = systemProxySettings(urlString).second
 
-        @Suppress("UNCHECKED_CAST")
-        val cfUrl = CFBridgingRetain(nsUrl) as CFURLRef
-        try {
-            val proxies = CFNetworkCopyProxiesForURL(cfUrl, settings) ?: return emptyList()
-            return cfProxiesFrom(CFBridgingRelease(proxies) as? List<*> ?: return emptyList())
-        } finally {
-            CFRelease(cfUrl)
-        }
+/** `CFNetworkCopyProxiesForURL` of [urlString] under [settings] (read once per lookup). */
+private fun proxiesFor(
+    urlString: String,
+    settings: CFDictionaryRef,
+): List<CfProxy> {
+    val nsUrl = NSURL.URLWithString(urlString) ?: return emptyList()
+
+    @Suppress("UNCHECKED_CAST")
+    val cfUrl = CFBridgingRetain(nsUrl) as CFURLRef
+    try {
+        val proxies = CFNetworkCopyProxiesForURL(cfUrl, settings) ?: return emptyList()
+        return cfProxiesFrom(CFBridgingRelease(proxies) as? List<*> ?: return emptyList())
     } finally {
-        CFRelease(settings)
+        CFRelease(cfUrl)
     }
 }
 

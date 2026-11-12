@@ -34,20 +34,17 @@ internal actual fun dhcpWpadUrl(): String? {
     }
 }
 
-/** `State:/Network/Global/DNS`: its DomainName, then its SearchDomains; then the host name's domain. */
-internal actual fun dnsDomains(): List<String> {
+/** `State:/Network/Global/DNS`: its SearchDomains, then its DomainName. */
+internal actual fun dnsSearchDomains(): List<String> {
     val out = ArrayList<String>()
-    val key = SCDynamicStoreKeyCreateNetworkGlobalEntity(null, kSCDynamicStoreDomainState, kSCEntNetDNS)
-    if (key != null) {
-        try {
-            val value = SCDynamicStoreCopyValue(null, key)
-            val dict = value?.let { CFBridgingRelease(it) } as? Map<*, *>
-            (dict?.get("DomainName") as? String)?.let { out += it }
-            (dict?.get("SearchDomains") as? List<*>)?.forEach { (it as? String)?.let { d -> out += d } }
-        } finally {
-            CFRelease(key)
-        }
+    val key = SCDynamicStoreKeyCreateNetworkGlobalEntity(null, kSCDynamicStoreDomainState, kSCEntNetDNS) ?: return out
+    try {
+        val value = SCDynamicStoreCopyValue(null, key)
+        val dict = value?.let { CFBridgingRelease(it) } as? Map<*, *>
+        (dict?.get("SearchDomains") as? List<*>)?.forEach { (it as? String)?.let { d -> out += d } }
+        (dict?.get("DomainName") as? String)?.let { out += it }
+    } finally {
+        CFRelease(key)
     }
-    hostNameDomain()?.let { out += it }
     return out.distinct()
 }

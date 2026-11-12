@@ -74,7 +74,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9218 | priorities (transport part: the scheduler) | ✅ | 0.2.0 | The stream scheduler orders streams by urgency and the incremental flag. | [details](rfc/9218.md#priorities-transport-part-the-scheduler) |
 | draft-ietf-quic-qlog | qlog | ✅ | 0.2.0 | The endpoint writes qlog version 0.3 as JSON-SEQ. | [details](rfc/draft-ietf-quic-qlog.md#qlog) |
 | RFC 9368/9369 | compatible version negotiation, QUIC v2 | ✅ | 0.2.0 | QUIC v2 is opt-in on the wire, with compatible version negotiation and a downgrade check. | [details](rfc/9368-9369.md#compatible-version-negotiation-quic-v2) |
-| draft-ietf-quic-multipath | multipath | ⬜ | — | Multipath QUIC is planned after 0.3.x. | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
+| draft-ietf-quic-multipath | multipath | ⬜ | — | Multipath QUIC is not scheduled (roadmap: Later). | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
 | draft-ietf-quic-load-balancers | QUIC-LB, draft-21 §3, §5 | ✅ | 0.3.0 | Experimental server connection IDs encode a configured server ID with config rotation, self-encoded length, plaintext, single-pass or four-pass encryption and unroutable IDs. | [details](rfc/draft-ietf-quic-load-balancers.md#quic-lb) |
 
 ## TLS
@@ -204,7 +204,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 1928/1929 | §3–§6 (client) — SOCKS5 client | ✅ | 0.3.0 | The client speaks SOCKS5 CONNECT (no BIND, no UDP ASSOCIATE) with no authentication or username/password. | [details](rfc/1928-1929.md#s3-socks5-client) |
 | RFC 1928 | §3 — GSSAPI method | ❌ | — | The GSSAPI method is not offered, so a proxy that requires it is refused. | [details](rfc/1928-1929.md#s3-gssapi) |
 | RFC 1928/1929 | RFC 1929 — username/password | ✅ | 0.3.0 | Username/password authentication is offered only with credentials and checked by the RFC's rules. | [details](rfc/1928-1929.md#username-password) |
-| RFC 6455 | §4.1 (client: connecting, through a proxy) — connecting, through a proxy | 🔶 | 0.3.0 | At most one WebSocket per remote host is in the CONNECTING state, and a configured proxy is used, PAC and WPAD included, though on the JVM and Android a PAC script does not see the WebSocket URI. | [details](rfc/6455.md#s4-1-connecting-through-a-proxy) |
+| RFC 6455 | §4.1 (client: connecting, through a proxy) — connecting, through a proxy | 🔶 | 0.3.0 | At most one WebSocket per remote host is in the CONNECTING state and a configured proxy is used, with PAC and WPAD run by the engine itself on Apple (WPAD from DHCP and DNS on macOS, from the host domain on iOS), by WinHTTP on Windows (not verified at runtime) and by the platform selector on the JVM and Android, which strips the URI the script sees. | [details](rfc/6455.md#s4-1-connecting-through-a-proxy) |
 | RFC 9110 | §9.3.6, §11.7.2; RFC 9931 §8 — client CONNECT tunnel | ✅ | 0.2.1 | HTTPS through an HTTP proxy uses a CONNECT tunnel. | [details](rfc/9110.md#s9-3-6-client-connect-tunnel) |
 | RFC 9112 | §6.1, §6.3, §7.1, §8, §9.6 — client response framing | ✅ | 0.2.1 | The client frames a response as RFC 9112 §6.3 orders. | [details](rfc/9112.md#s6-1-client-response-framing) |
 | RFC 9110 | §5.5, §6.2, §15; RFC 9112 §2.2, §4, §5.2 — client response head | ✅ | 0.2.1 | The response head is checked by the engine before Ktor's parser reads it. | [details](rfc/9110.md#s5-5-client-response-head) |

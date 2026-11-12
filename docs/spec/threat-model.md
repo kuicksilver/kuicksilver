@@ -387,9 +387,15 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   SOCKS4 are skipped, and the origin's TLS and host-name verification apply through any proxy (a PAC script cannot read
   or alter HTTPS traffic). What a script learns is the URL it is passed (for `https` the scheme, host and port; for a
   WebSocket its URI with the resource name, as RFC 6455 §4.1 requires) and what it resolves through `dnsResolve`.
-- **Residual:** the memory a script allocates is not capped beyond what JavaScriptCore allows; an abandoned thread keeps
-  spinning until the process ends; a script served by a WPAD hijacker can send plain `http` and WebSocket `ws` traffic
-  through a proxy of its choice, as on every platform that runs WPAD.
+- **Residual (accepted):** the engine uses JavaScriptCore's public API only; the execution time limit of
+  `JSContextGroupSetExecutionTimeLimit` is declared in a private header and was left out for App Review. So a hostile
+  script (a PAC URL an attacker controls, or, on a LAN, whoever answers WPAD's DHCP option or `wpad.<domain>`, which
+  needs no access to the device) can keep up to two threads busy at full CPU until the process exits; after that no PAC
+  script runs in the process and lookups use the next setting or a direct connection. The memory a script allocates is
+  bounded only by JavaScriptCore itself, not by the engine: a script that allocates without end can grow the process
+  until the system stops it. A script served by a WPAD hijacker can send plain `http` and WebSocket `ws` traffic
+  through a proxy of its choice, as on every platform that runs WPAD; `https` and `wss` stay protected by TLS to the
+  origin.
 - **Verification:** `pac.PacEngineAppleTest.negative_theScriptHasNoHostAccess`, `.negative_runawayScriptIsAbandoned`,
   `.negative_oversizedScriptIsRefused`, `.negative_failedScriptFallsToTheNextEntry`, `.wpadCandidatesWalkToTwoLabels`,
   `.answersAreParsed` (macOS).

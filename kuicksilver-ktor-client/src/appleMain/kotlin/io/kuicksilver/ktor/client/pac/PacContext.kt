@@ -28,6 +28,7 @@ import platform.JavaScriptCore.JSObjectMakeFunctionWithCallback
 import platform.JavaScriptCore.JSObjectRef
 import platform.JavaScriptCore.JSObjectSetProperty
 import platform.JavaScriptCore.JSStringCreateWithUTF8CString
+import platform.JavaScriptCore.JSStringGetLength
 import platform.JavaScriptCore.JSStringGetMaximumUTF8CStringSize
 import platform.JavaScriptCore.JSStringGetUTF8CString
 import platform.JavaScriptCore.JSStringRef
@@ -38,10 +39,12 @@ import platform.JavaScriptCore.JSValueIsString
 import platform.JavaScriptCore.JSValueIsUndefined
 import platform.JavaScriptCore.JSValueMakeNull
 import platform.JavaScriptCore.JSValueMakeString
+import platform.JavaScriptCore.JSValueProtect
 import platform.JavaScriptCore.JSValueRef
 import platform.JavaScriptCore.JSValueRefVar
 import platform.JavaScriptCore.JSValueToObject
 import platform.JavaScriptCore.JSValueToStringCopy
+import platform.JavaScriptCore.JSValueUnprotect
 import platform.JavaScriptCore.kJSPropertyAttributeDontDelete
 import platform.JavaScriptCore.kJSPropertyAttributeReadOnly
 
@@ -84,13 +87,23 @@ internal class PacContext(
         host: String,
     ): String {
         val fn = function("FindProxyForURLEx") ?: function("FindProxyForURL") ?: throw PacScriptException("no FindProxyForURL")
-        return memScoped {
-            val args = allocArrayOf(stringValue(url), stringValue(host))
-            val exception = alloc<JSValueRefVar>()
-            val result = JSObjectCallAsFunction(ctx, fn, null, 2u, args, exception.ptr)
-            exception.value?.let { throw PacScriptException("FindProxyForURL threw: ${toText(it)}") }
-            if (result == null || !JSValueIsString(ctx, result)) throw PacScriptException("FindProxyForURL returned no string")
-            toText(result)
+        val u = stringValue(url)
+        val h = stringValue(host)
+        // kept from the garbage collector while the call holds them only through a C array
+        JSValueProtect(ctx, u)
+        JSValueProtect(ctx, h)
+        try {
+            return memScoped {
+                val args = allocArrayOf(u, h)
+                val exception = alloc<JSValueRefVar>()
+                val result = JSObjectCallAsFunction(ctx, fn, null, 2u, args, exception.ptr)
+                exception.value?.let { throw PacScriptException("FindProxyForURL threw: ${toText(it)}") }
+                if (result == null || !JSValueIsString(ctx, result)) throw PacScriptException("FindProxyForURL returned no string")
+                toText(result)
+            }
+        } finally {
+            JSValueUnprotect(ctx, u)
+            JSValueUnprotect(ctx, h)
         }
     }
 
@@ -194,12 +207,24 @@ private fun jsText(
     }
 }
 
-/** The first argument as a string, or null without one. */
+/** The longest argument a native function takes (a host name has at most 253 characters). */
+private const val MAX_NATIVE_ARGUMENT = 1024
+
+/** The first argument as a string, or null without one or when it is longer than [MAX_NATIVE_ARGUMENT]. */
 private fun firstArgument(
     ctx: JSContextRef?,
     count: ULong,
     args: CPointer<JSValueRefVar>?,
-): String? = if (count == 0uL || args == null) null else jsText(ctx, args[0])
+): String? {
+    if (count == 0uL || args == null) return null
+    val js = JSValueToStringCopy(ctx, args[0], null) ?: return null
+    try {
+        if (JSStringGetLength(js) > MAX_NATIVE_ARGUMENT.toULong()) return null
+    } finally {
+        JSStringRelease(js)
+    }
+    return jsText(ctx, args[0])
+}
 
 private fun answer(
     ctx: JSContextRef?,
@@ -217,7 +242,7 @@ private val NATIVES: List<Pair<String, JSCallback>> =
                 a: CPointer<JSValueRefVar>?,
                 _: CPointer<JSValueRefVar>?,
                 ->
-                answer(ctx, firstArgument(ctx, n, a)?.let { PacHost.current.resolve(it, ipv4Only = true).firstOrNull() })
+                answer(ctx, firstArgument(ctx, n, a)?.let { PacDns.resolve(it, ipv4Only = true).firstOrNull() })
             },
         "dnsResolveEx" to
             staticCFunction {
@@ -228,7 +253,7 @@ private val NATIVES: List<Pair<String, JSCallback>> =
                 a: CPointer<JSValueRefVar>?,
                 _: CPointer<JSValueRefVar>?,
                 ->
-                answer(ctx, firstArgument(ctx, n, a)?.let { PacHost.current.resolve(it, ipv4Only = false).joinToString(";") } ?: "")
+                answer(ctx, firstArgument(ctx, n, a)?.let { PacDns.resolve(it, ipv4Only = false).joinToString(";") } ?: "")
             },
         "myIpAddress" to
             staticCFunction {

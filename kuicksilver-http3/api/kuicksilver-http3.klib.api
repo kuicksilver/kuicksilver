@@ -272,13 +272,12 @@ final class io.kuicksilver.http3/Http3Headers { // io.kuicksilver.http3/Http3Hea
 
     final val fields // io.kuicksilver.http3/Http3Headers.fields|{}fields[0]
         final fun <get-fields>(): kotlin.collections/List<kotlin/Pair<kotlin/String, kotlin/String>> // io.kuicksilver.http3/Http3Headers.fields.<get-fields>|<get-fields>(){}[0]
+    final val neverIndexNames // io.kuicksilver.http3/Http3Headers.neverIndexNames|{}neverIndexNames[0]
+        final fun <get-neverIndexNames>(): kotlin.collections/Set<kotlin/String> // io.kuicksilver.http3/Http3Headers.neverIndexNames.<get-neverIndexNames>|<get-neverIndexNames>(){}[0]
+    final val neverIndexed // io.kuicksilver.http3/Http3Headers.neverIndexed|{}neverIndexed[0]
+        final fun <get-neverIndexed>(): kotlin.collections/List<kotlin/Pair<kotlin/String, kotlin/String>> // io.kuicksilver.http3/Http3Headers.neverIndexed.<get-neverIndexed>|<get-neverIndexed>(){}[0]
     final val size // io.kuicksilver.http3/Http3Headers.size|{}size[0]
         final fun <get-size>(): kotlin/Int // io.kuicksilver.http3/Http3Headers.size.<get-size>|<get-size>(){}[0]
-
-    final var neverIndexNames // io.kuicksilver.http3/Http3Headers.neverIndexNames|{}neverIndexNames[0]
-        final fun <get-neverIndexNames>(): kotlin.collections/Set<kotlin/String> // io.kuicksilver.http3/Http3Headers.neverIndexNames.<get-neverIndexNames>|<get-neverIndexNames>(){}[0]
-    final var neverIndexed // io.kuicksilver.http3/Http3Headers.neverIndexed|{}neverIndexed[0]
-        final fun <get-neverIndexed>(): kotlin.collections/List<kotlin/Pair<kotlin/String, kotlin/String>> // io.kuicksilver.http3/Http3Headers.neverIndexed.<get-neverIndexed>|<get-neverIndexed>(){}[0]
 
     final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.http3/Http3Headers.equals|equals(kotlin.Any?){}[0]
     final fun get(kotlin/String): kotlin/String? // io.kuicksilver.http3/Http3Headers.get|get(kotlin.String){}[0]

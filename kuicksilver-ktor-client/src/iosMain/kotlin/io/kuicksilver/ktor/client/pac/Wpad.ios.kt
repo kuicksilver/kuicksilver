@@ -5,5 +5,8 @@ package io.kuicksilver.ktor.client.pac
 /** iOS has no public API for the DHCP options a network gave. */
 internal actual fun dhcpWpadUrl(): String? = null
 
-/** iOS has no public API for the DNS search domains: the host name's domain only. */
-internal actual fun dnsDomains(): List<String> = listOfNotNull(hostNameDomain())
+/**
+ * None: iOS's public SDK has libresolv's `res_ninit` (whose state lists the search domains), but Kotlin/Native ships no
+ * binding for it; WPAD there tries `http://wpad/wpad.dat`, which the system resolver completes with its search domains.
+ */
+internal actual fun dnsSearchDomains(): List<String> = emptyList()

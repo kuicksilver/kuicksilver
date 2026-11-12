@@ -16,6 +16,12 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import platform.darwin.inet_ntop
 import platform.darwin.inet_pton
 import platform.posix.AF_INET
@@ -163,4 +169,31 @@ internal object SystemPacHost : PacHost {
             } ?: return null
             buf.toKString().takeUnless { it == "0.0.0.0" || it == "::" }
         }
+}
+
+/**
+ * Name resolution for a script's `dnsResolve` and `dnsResolveEx`: during a run of [PacRunner] each lookup runs on a
+ * thread of [Dispatchers.IO] and is waited for at most what remains of the run's DNS budget ([PacRun.remaining]); a
+ * lookup that does not answer in time resolves to nothing (its thread ends with `getaddrinfo`, its answer dropped), so a
+ * slow resolver cannot make a script overrun its limit. Answers are kept for the rest of the run. Outside a run (tests
+ * of the utility functions) the lookup is made directly.
+ */
+@OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+internal object PacDns {
+    fun resolve(
+        name: String,
+        ipv4Only: Boolean,
+    ): List<String> {
+        if (PacRun.deadline == 0L) return PacHost.current.resolve(name, ipv4Only)
+        PacRun.answers[name to ipv4Only]?.let { return it }
+        val remaining = PacRun.remaining()
+        if (remaining <= 0) return emptyList()
+        val host = PacHost.current
+        val lookup = GlobalScope.async(Dispatchers.IO) { host.resolve(name, ipv4Only) }
+        val answer =
+            runBlocking { withTimeoutOrNull(remaining) { lookup.await() } }
+                ?: emptyList<String>().also { lookup.cancel() }
+        PacRun.answers[name to ipv4Only] = answer
+        return answer
+    }
 }

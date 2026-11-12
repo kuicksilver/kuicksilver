@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client.pac
 
 import io.kuicksilver.ktor.client.CfProxy
 import io.kuicksilver.ktor.client.PAC_TIMEOUT_MILLIS
+import io.kuicksilver.ktor.client.PacOutcome
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** How long one run of `FindProxyForURL` may take. */
@@ -12,14 +13,16 @@ internal const val PAC_EVAL_TIMEOUT_MILLIS: Long = 2_000
 /**
  * The engine's own PAC engine on Apple platforms: the script of a system setting's PAC entry ([CfProxy.pacUrl], a script
  * given inline, or WPAD's discovery when [CfProxy.wpad]) run on JavaScriptCore by [PacRunner] with the URI [target] and
- * [host], within [PAC_TIMEOUT_MILLIS] in all; the answer as [CfProxy] entries, or null when there is none.
+ * [host], within [PAC_TIMEOUT_MILLIS] in all. [PacOutcome.NoWpad] when WPAD found no script; [PacOutcome.Failed] when the
+ * script could not be had or run, or its answer could not be read.
  */
 internal suspend fun evaluatePac(
     entry: CfProxy,
     target: String,
     host: String,
-): List<CfProxy>? =
+): PacOutcome =
     withTimeoutOrNull(PAC_TIMEOUT_MILLIS) {
+        val deadline = PacRunner.now() + PAC_TIMEOUT_MILLIS
         val (key, script) =
             when {
                 entry.pacScript != null -> {
@@ -27,25 +30,33 @@ internal suspend fun evaluatePac(
                 }
 
                 entry.wpad -> {
-                    wpadScript() ?: return@withTimeoutOrNull null
+                    wpadScript(deadline) ?: return@withTimeoutOrNull PacOutcome.NoWpad
                 }
 
                 entry.pacUrl != null -> {
-                    entry.pacUrl to
-                        (PacScripts.script(entry.pacUrl, PAC_TIMEOUT_MILLIS) ?: return@withTimeoutOrNull null)
+                    entry.pacUrl to (PacScripts.script(entry.pacUrl, PAC_TIMEOUT_MILLIS) ?: return@withTimeoutOrNull PacOutcome.Failed)
                 }
 
                 else -> {
-                    return@withTimeoutOrNull null
+                    return@withTimeoutOrNull PacOutcome.Failed
                 }
             }
-        PacRunner.findProxy(key, script, target, host, PAC_EVAL_TIMEOUT_MILLIS)?.let { parsePacResult(it) }
-    }
+        val answer = PacRunner.findProxy(key, script, target, host, PAC_EVAL_TIMEOUT_MILLIS) ?: return@withTimeoutOrNull PacOutcome.Failed
+        val proxies = parsePacResult(answer)
+        if (proxies.isEmpty()) PacOutcome.Failed else PacOutcome.Answer(proxies)
+    } ?: PacOutcome.Failed
 
-/** The first WPAD candidate whose script downloads ([wpadCandidates]), with its URL as the key. */
-private suspend fun wpadScript(): Pair<String, String>? {
-    for (url in wpadCandidates(dhcpWpadUrl(), dnsDomains())) {
-        PacScripts.script(url, PAC_TIMEOUT_MILLIS)?.let { return url to it }
+/**
+ * The first WPAD candidate whose script downloads ([wpadCandidates]), with its URL as the key. Each candidate gets an
+ * equal share of what remains before [deadline] (a candidate that hangs cannot take the others' time), and a failed or
+ * timed-out one is remembered by [PacScripts] for a minute. Discovered URLs are `http` or `https` only.
+ */
+private suspend fun wpadScript(deadline: Long): Pair<String, String>? {
+    val candidates = wpadCandidates(dhcpWpadUrl(), dnsSearchDomains())
+    for ((i, url) in candidates.withIndex()) {
+        val share = (deadline - PacRunner.now()) / (candidates.size - i)
+        if (share <= 0) return null
+        PacScripts.script(url, share, allowFile = false)?.let { return url to it }
     }
     return null
 }
@@ -53,7 +64,8 @@ private suspend fun wpadScript(): Pair<String, String>? {
 /**
  * A `FindProxyForURL` answer as [CfProxy] entries, in order: `DIRECT`, `PROXY`/`HTTP host:port` (an HTTP proxy), `SOCKS`
  * and `SOCKS5 host:port` (SOCKS5, as CFNetwork reads `SOCKS`). `HTTPS` (TLS to the proxy) and `SOCKS4`, which the engine
- * does not speak, and anything it cannot read, are skipped.
+ * does not speak, are [CfProxy.Type.Unsupported] (they fail closed, `pickCfProxyWithPac`); anything it cannot read is
+ * skipped.
  */
 internal fun parsePacResult(answer: String): List<CfProxy> =
     answer.split(';').mapNotNull { raw ->
@@ -65,6 +77,8 @@ internal fun parsePacResult(answer: String): List<CfProxy> =
         when (kind) {
             "PROXY", "HTTP" -> CfProxy(CfProxy.Type.Http, h, p ?: 80)
             "SOCKS", "SOCKS5" -> CfProxy(CfProxy.Type.Socks, h, p ?: 1080)
+            "HTTPS" -> CfProxy(CfProxy.Type.Unsupported, h, p ?: 443)
+            "SOCKS4" -> CfProxy(CfProxy.Type.Unsupported, h, p ?: 1080)
             else -> null
         }
     }

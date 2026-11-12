@@ -21,6 +21,10 @@ internal fun HttpRequestData.connectTimeoutMillis(config: KuicksilverEngineConfi
     getCapabilityOrNull(HttpTimeoutCapability)?.connectTimeoutMillis?.takeIf { it != HttpTimeoutConfig.INFINITE_TIMEOUT_MS }
         ?: config.connectTimeout.inWholeMilliseconds
 
+/** Request timeout of a request (`HttpTimeout`'s, which the plugin enforces itself), null for none. */
+internal fun HttpRequestData.requestTimeoutMillis(): Long? =
+    getCapabilityOrNull(HttpTimeoutCapability)?.requestTimeoutMillis?.takeIf { it != HttpTimeoutConfig.INFINITE_TIMEOUT_MS }
+
 /** Socket (inactivity) timeout of a request, null for none. The request timeout itself belongs to the `HttpTimeout` plugin. */
 internal fun HttpRequestData.socketTimeoutMillis(): Long? =
     getCapabilityOrNull(HttpTimeoutCapability)?.socketTimeoutMillis?.takeIf { it != HttpTimeoutConfig.INFINITE_TIMEOUT_MS }

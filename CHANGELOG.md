@@ -485,22 +485,33 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Changed
 
 - Ktor client, proxy auto-configuration (RFC 6455 section 4.1 step 3): `ProxyResolvers.System` runs a PAC script or
-  WPAD: on Windows with WinHTTP's PAC engine (`WinHttpGetProxyForUrl`, automatic detection by DHCP and DNS, then the PAC URL). A
-  WebSocket's lookup passes its `ws://`/`wss://` URI with the resource name (RFC 6455 section 4.1). On Apple platforms
-  the engine runs PAC itself, as CFNetwork's engine drops the path and query before the script runs: the script of the
-  settings' PAC URL (downloaded directly, `http`, `https` or `file`, at most 1 MiB, kept 30 minutes) or given inline,
-  or WPAD's when the settings say "auto discover" (DHCP option 252 on macOS, then `wpad.<domain>` down to two labels),
-  run on JavaScriptCore with the PAC utility functions (`…Ex` included) in a context without network, file or timer
-  APIs, each run limited to 2 seconds (threat model 3.20.3). A script that cannot be fetched or run within 5 seconds
-  gives the next setting (on Windows the fixed proxy), else a direct connection, with one warning. Before, those
-  requests connected directly.
+  WPAD. On Windows with WinHTTP's PAC engine (`WinHttpGetProxyForUrl`: automatic detection, WPAD, by DHCP and DNS,
+  then the PAC URL; each call goes without the user's credentials first, and with them only when the script's server
+  asks). On Apple platforms the engine runs PAC itself, as CFNetwork's engine drops the path and query before the
+  script runs: the script of the settings' PAC URL (downloaded directly, `http`, `https` or `file`, at most 1 MiB read,
+  one download per URL at a time, kept 30 minutes, a failure 1 minute) or given inline, or WPAD's when the settings say "auto discover" (DHCP option 252, `http` or `https`
+  only, on macOS; then `wpad.<domain>` for each configured DNS search domain exactly, never a parent domain; then
+  `http://wpad/wpad.dat` for the system resolver to complete), run on JavaScriptCore with the PAC utility functions
+  (`…Ex` included) in a context without network, file or timer APIs, each run limited to 2 seconds from its start and
+  its DNS lookups within that (threat model 3.20.3). An answer naming only proxies the engine cannot use (`HTTPS`,
+  `SOCKS4`) fails closed: the next setting, else the request fails, never a direct connection. A WPAD discovery that
+  finds no script is logged once at Info. A WebSocket's lookup passes its `ws://`/`wss://` URI with the resource name (RFC 6455 section
+  4.1); on the JVM and Android `ProxySelector.select` gets it too (`ws` as `http`, `wss` as `https`, the schemes
+  selectors know), though Android's PAC selector keeps it for `http` URIs only and the JDK's passes only the scheme and
+  host to the OS. A lookup waits for the script at most 5 seconds (on Windows a WinHTTP call still running then, which
+  cannot be cancelled, ends on its own thread and its answer is dropped); a script that cannot be fetched or run in
+  that time gives the next setting (on Windows the fixed proxy), else a direct connection, with one warning. On
+  Windows a WPAD detection that finds no script is logged once at Info (automatic detection is on by default there)
+  and is not run again for 5 minutes; at most 4 WinHTTP calls run at once, and none while one that overran still
+  runs. Before, those requests connected directly.
 - Ktor client, HTTP/1.1 request framing (RFC 9112 section 6.1 MUST NOT): Transfer-Encoding (a body of unknown length,
   or a transfer coding the application applied) goes only to a server known to handle HTTP/1.1: an HTTP/1.1 response
   on the route, or ALPN `http/1.1`. On first contact without that knowledge (cleartext, or TLS without ALPN) the engine
   first sends an `OPTIONS` for the request's target on the same connection and reads the version of its answer. A
   server that answers with HTTP/1.0 gets a body of unknown length framed by Content-Length from a buffer of at most
-  1 MiB; a longer body, or a transfer coding of the application, fails that request with IllegalStateException before
-  anything of it is sent. `http11Hints` (servers known to handle HTTP/1.1) and `assumeHttp11` (every server) are the
+  1 MiB, sent once the body ended; a longer body, one that does not end within the connect timeout (or the request
+  timeout when that is shorter: a slow or duplex body), or a transfer coding of the application, fails that request
+  with IllegalStateException before anything of it is sent. `http11Hints` (servers known to handle HTTP/1.1) and `assumeHttp11` (every server) are the
   RFC's "specific user configuration": requests to them go chunked at once, without the probe (experimental).
 
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates

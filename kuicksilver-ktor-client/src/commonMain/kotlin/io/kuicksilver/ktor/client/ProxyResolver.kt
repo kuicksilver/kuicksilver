@@ -59,10 +59,13 @@ public object ProxyResolvers {
      * (`WinHttpGetIEProxyConfigForCurrentUser`, with its bypass list); on Linux, which has no system API, [Environment].
      * A proxy auto-configuration is run on Apple platforms by the engine itself (a PAC URL or script of the settings, or
      * WPAD when they say "auto discover"; the script downloaded by the engine and run on JavaScriptCore, sandboxed and
-     * time-limited) and on Windows by WinHTTP (automatic detection, WPAD, or a PAC URL, `WinHttpGetProxyForUrl`), within
-     * 5 seconds; for a WebSocket the script gets the `ws://` or `wss://` URI with the resource name (RFC 6455 section
-     * 4.1), for anything else `http://` or `https://`, host and port. A script that cannot be fetched or run means the next setting (on Windows the fixed proxy, if any) or a
-     * direct connection, and the engine logs one warning.
+     * time-limited) and on Windows by WinHTTP (automatic detection, WPAD, or a PAC URL, `WinHttpGetProxyForUrl`); a
+     * lookup waits for it at most 5 seconds (on Windows a WinHTTP call still running then is left to end on its own, and
+     * its answer is dropped). For a WebSocket the script gets the `ws://` or `wss://` URI with the resource name (RFC
+     * 6455 section 4.1), for anything else `http://` or `https://`, host and port. A script that cannot be fetched or run
+     * in that time means the next setting (on Windows the fixed proxy, if any) or a direct connection, and the engine
+     * logs one warning. On Windows a WPAD detection that found no script is remembered for 5 minutes (detection is not
+     * run again in that time).
      */
     public val System: ProxyResolver get() = platformSystemProxyResolver
 }
@@ -429,18 +432,37 @@ internal class CfProxy(
     /** For [Type.AutoConfiguration]: the script is found by WPAD's discovery (the system's "auto discover" setting). */
     val wpad: Boolean = false,
 ) {
-    enum class Type { None, Http, Https, Socks, AutoConfiguration, Other }
+    /** [Unsupported]: a proxy a PAC script named that the engine cannot use (`HTTPS`, `SOCKS4`). */
+    enum class Type { None, Http, Https, Socks, AutoConfiguration, Unsupported, Other }
+}
+
+/** What running a PAC entry gave. */
+internal sealed interface PacOutcome {
+    /** The script's answer, in its order. */
+    class Answer(
+        val proxies: List<CfProxy>,
+    ) : PacOutcome
+
+    /** The script could not be fetched or run, or gave no answer in time. */
+    data object Failed : PacOutcome
+
+    /** WPAD's discovery found no script. */
+    data object NoWpad : PacOutcome
 }
 
 /**
- * [pickCfProxy] where a PAC entry is run by [runPac] and its answer picked the same way; a script that could not be
- * fetched or run ([runPac] gives null) is skipped with a [warn]ing, so the next entry counts, as in CFNetwork's own list.
+ * [pickCfProxy] where a PAC entry is run by [runPac] and its answer picked the same way, in the order of CFNetwork's
+ * list. A script that could not be fetched or run is skipped with a [warn]ing ([PAC_FAILED]), and WPAD that found no
+ * script with [WPAD_NOT_FOUND]; the next entry then counts. An answer that names only proxies the engine cannot use
+ * (`HTTPS`, `SOCKS4`) is skipped with [PAC_UNSUPPORTED] too, and fails closed: when no later entry decides, the lookup
+ * fails with [ProxyException] instead of connecting directly, as the script asked for a proxy.
  */
 internal inline fun pickCfProxyWithPac(
     proxies: List<CfProxy>,
-    runPac: (CfProxy) -> List<CfProxy>?,
+    runPac: (CfProxy) -> PacOutcome,
     noinline warn: (String) -> Unit,
 ): ResolvedProxy? {
+    var unsupported: CfProxy? = null
     for ((i, p) in proxies.withIndex()) {
         if (p.type != CfProxy.Type.AutoConfiguration) {
             val fixed = proxies.subList(i, proxies.size).takeWhile { it.type != CfProxy.Type.AutoConfiguration }
@@ -448,12 +470,31 @@ internal inline fun pickCfProxyWithPac(
             pickFixed(fixed)?.let { return it.proxy }
             continue
         }
-        val answer = runPac(p)
-        if (answer != null) return pickCfProxy(answer.filter { it.type != CfProxy.Type.AutoConfiguration }, warn)
-        warn(PAC_FAILED)
+        when (val outcome = runPac(p)) {
+            is PacOutcome.Answer -> {
+                pickFixed(outcome.proxies)?.let { return it.proxy }
+                outcome.proxies.firstOrNull { it.type == CfProxy.Type.Unsupported }?.let {
+                    unsupported = it
+                    warn(PAC_UNSUPPORTED)
+                }
+            }
+
+            PacOutcome.Failed -> {
+                warn(PAC_FAILED)
+            }
+
+            PacOutcome.NoWpad -> {
+                warn(WPAD_NOT_FOUND)
+            }
+        }
     }
+    unsupported?.let { throw ProxyException("$PAC_UNSUPPORTED (${it.host}:${it.port})", null) }
     return null
 }
+
+internal const val PAC_UNSUPPORTED: String =
+    "the proxy auto-configuration script answered only with proxies the engine cannot use (HTTPS, SOCKS4): requests " +
+        "use the next proxy setting, and fail when there is none rather than connect directly"
 
 /** What a run of fixed entries decides: a proxy, or a direct connection ("none"); null when no entry decides. */
 internal class FixedPick(
@@ -508,7 +549,7 @@ internal fun pickCfProxy(
                 return null
             }
 
-            CfProxy.Type.Other -> {}
+            CfProxy.Type.Unsupported, CfProxy.Type.Other -> {}
         }
     }
     return null
@@ -529,8 +570,9 @@ internal const val PAC_FAILED: String =
         "time: requests use the next setting, else connect directly; set engine { proxy = ... } or proxyResolver to choose"
 
 /**
- * How long a PAC script (its download, WPAD's discovery and its run) may take for one lookup: half the default connect
- * timeout, so a script that hangs falls back to the next setting before the request's own timeout.
+ * How long a lookup waits for a PAC script (WPAD's discovery, the script's download and its run): half the default
+ * connect timeout, so a script that hangs falls back to the next setting before the request's own timeout. On Windows
+ * it bounds the wait for WinHTTP's call ([BoundedPac]), which cannot be cancelled and ends on its own thread.
  */
 internal const val PAC_TIMEOUT_MILLIS: Long = 5_000
 
@@ -557,6 +599,10 @@ internal sealed interface WinPacAnswer {
 
     object Direct : WinPacAnswer
 
+    /** Automatic detection (WPAD) found no script, and no script URL is set. */
+    object NoWpad : WinPacAnswer
+
+    /** A script could not be fetched or run in time. */
     object Failed : WinPacAnswer
 }
 
@@ -570,8 +616,8 @@ internal class IeProxySettings(
 
 /**
  * The proxy Windows' settings [s] give for [url], as WinHTTP and Internet Explorer apply them: automatic detection (WPAD)
- * and a configuration script (PAC) first, run by [runPac]; when neither is set, or the script failed (a [warn]ing), the
- * fixed proxy and its bypass list.
+ * and a configuration script (PAC) first, run by [runPac]; when neither is set, detection found no script, or the
+ * script failed (a [warn]ing for each of the last two), the fixed proxy and its bypass list.
  */
 internal fun windowsProxyFor(
     s: IeProxySettings,
@@ -583,11 +629,16 @@ internal fun windowsProxyFor(
         when (val a = runPac()) {
             is WinPacAnswer.Proxies -> return parseWinInetProxy(a.proxy, a.bypass, url)
             WinPacAnswer.Direct -> return null
+            WinPacAnswer.NoWpad -> warn(WPAD_NOT_FOUND)
             WinPacAnswer.Failed -> warn(PAC_FAILED)
         }
     }
     return parseWinInetProxy(s.proxy, s.bypass, url)
 }
+
+internal const val WPAD_NOT_FOUND: String =
+    "the system proxy settings detect the proxy automatically (WPAD), and no proxy auto-configuration script was found: " +
+        "requests use the fixed proxy setting, if any, else connect directly; detection runs again after 5 minutes"
 
 internal const val PAC_WARNING: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script, which the Kuicksilver engine does not " +
@@ -607,6 +658,7 @@ internal class ProxyRouting(
     private val inFlight = HashMap<String, kotlinx.coroutines.Deferred<ResolvedProxy?>>()
     private val slots = kotlinx.coroutines.sync.Semaphore(MAX_ROUTES)
     private val warned = AtomicInt(0)
+    private val noted = AtomicInt(0)
 
     init {
         // a SOCKS5 `proxy` whose credentials RFC 1929 cannot carry fails the engine's creation, not each request
@@ -709,7 +761,15 @@ internal class ProxyRouting(
     /** Calls in flight or completed and not cleaned up yet (tests). */
     internal suspend fun inFlightSize(): Int = lock.withLock { inFlight.size }
 
+    /**
+     * Logs the first warning a built-in resolver gives, once per engine; [WPAD_NOT_FOUND] at Info instead, once too (on
+     * Windows automatic detection is on by default, so a network without WPAD is the common case, not a fault).
+     */
     private fun warnOnce(message: String) {
+        if (message == WPAD_NOT_FOUND) {
+            if (noted.compareAndSet(0, 1) && logger.isEnabled(LogLevel.Info)) logger.log(LogLevel.Info, message, null)
+            return
+        }
         if (warned.compareAndSet(0, 1) && logger.isEnabled(LogLevel.Warn)) logger.log(LogLevel.Warn, message, null)
     }
 

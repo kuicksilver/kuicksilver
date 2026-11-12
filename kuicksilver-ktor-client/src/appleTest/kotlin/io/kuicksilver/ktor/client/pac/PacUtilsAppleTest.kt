@@ -108,12 +108,40 @@ class PacUtilsAppleTest {
         assertEquals("false", js("dateRange('JAN', 1)")) // mixed kinds in a pair
     }
 
+    /**
+     * Mozilla's semantics: two hours exclude the end hour; with minutes the whole end minute is included; no wrap past
+     * midnight. Before, two hours included the end hour.
+     */
     @Test fun timeRange() {
-        assertEquals("true", js("timeRange(0, 23)"))
         assertEquals("true", js("timeRange(new Date().getUTCHours(), 'GMT')"))
         assertEquals("false", js("timeRange((new Date().getUTCHours() + 12) % 24, 'GMT')"))
         assertEquals("true", js("timeRange(0, 0, 0, 23, 59, 59)"))
         assertEquals("true", js("timeRange(0, 0, 23, 59)"))
+        // (h1, h2): h1 <= hour < h2
+        assertEquals("false", js("var h = new Date().getUTCHours(); timeRange(h, h, 'GMT')"))
+        assertEquals("true", js("var h = new Date().getUTCHours(); h == 23 || timeRange(h, h + 1, 'GMT')"))
+        assertEquals("false", js("var h = new Date().getUTCHours(); h == 0 || timeRange(h - 1, h, 'GMT')"))
+        // (h1, m1, h2, m2): the end minute is whole
+        assertEquals(
+            "true",
+            js("var d = new Date(); timeRange(d.getUTCHours(), d.getUTCMinutes(), d.getUTCHours(), d.getUTCMinutes(), 'GMT')"),
+        )
+        assertEquals("false", js("timeRange(23, 0, 1, 0)")) // no wrap past midnight
+    }
+
+    /**
+     * `*` and `?` are the only wildcards; every other character is literal, `[`, `]`, `+`, `(`, `)`, `^`, `$` and `|`
+     * included.
+     */
+    @Test fun shExpMatchTakesOtherCharactersLiterally() {
+        assertEquals("true", js("shExpMatch('a[b]c', 'a[b]c')"))
+        assertEquals("false", js("shExpMatch('abc', 'a[b]c')"))
+        assertEquals("true", js("shExpMatch('a+b', 'a+b')"))
+        assertEquals("false", js("shExpMatch('aab', 'a+b')"))
+        assertEquals("true", js("shExpMatch('(x)|y', '(x)|y')"))
+        assertEquals("false", js("shExpMatch('x', '(x)|y')"))
+        assertEquals("true", js("shExpMatch('^a$', '^a$')"))
+        assertEquals("true", js("shExpMatch('http://x.test/a?b', 'http://*.test/a?b')"))
     }
 
     @Test fun ipv6Extensions() {

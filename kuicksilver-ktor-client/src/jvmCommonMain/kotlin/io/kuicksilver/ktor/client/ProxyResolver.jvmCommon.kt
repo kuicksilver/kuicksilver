@@ -13,6 +13,24 @@ import java.net.Proxy
 import java.net.ProxySelector
 import java.net.URI
 
+/**
+ * The URI `ProxySelector.select` gets for [url]: `http` or `https`, the host and port, and for a WebSocket its resource
+ * name (path and query). RFC 6455 section 4.1: "the URI to pass the function MUST be constructed from /host/, /port/,
+ * /resource name/, and the /secure/ flag"; the selectors know only `http` and `https` (the JDK's gives `ws` and `wss` no
+ * proxy at all), so `ws` maps to `http` and `wss` to `https`, the secure flag kept. Other requests give the
+ * path `/` (the answers are kept per scheme, host and port).
+ */
+internal fun selectorUri(url: Url): URI {
+    val host = socketHost(url.host)
+    val scheme = if (url.protocol.isSecure()) "https" else "http"
+    if (url.protocol.name == "ws" || url.protocol.name == "wss") {
+        runCatching { URI("$scheme://${uriHost(host)}:${url.port}${url.encodedPathAndQuery.ifEmpty { "/" }}") }
+            .getOrNull()
+            ?.let { return it }
+    }
+    return URI(scheme, null, host, url.port, "/", null, null)
+}
+
 internal actual fun platformGetenv(name: String): String? = System.getenv(name)
 
 internal actual val platformSystemProxyResolver: ProxyResolver = JvmSystemProxyResolver
@@ -27,7 +45,7 @@ internal object JvmSystemProxyResolver : ProxyResolver {
     override suspend fun proxyFor(url: Url): ResolvedProxy? {
         val host = socketHost(url.host)
         if (isLoopback(host)) return null
-        val uri = URI(if (url.protocol.isSecure()) "https" else "http", null, host, url.port, "/", null, null)
+        val uri = selectorUri(url)
         val proxy = withContext(Dispatchers.IO) { ProxySelector.getDefault()?.select(uri)?.firstOrNull() } ?: return null
         if (proxy.type() == Proxy.Type.DIRECT) return null
         val address =

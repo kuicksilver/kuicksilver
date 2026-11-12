@@ -6,7 +6,10 @@ package io.kuicksilver.ktor.client.pac
  * The PAC utility functions written in JavaScript, as Netscape's "Navigator Proxy Auto-Config File Format" (1996) and
  * Microsoft's IPv6 extensions (`…Ex`, "WinINet: IPv6 Extensions to Navigator Auto-Config File Format") define them.
  * `dnsResolve`, `dnsResolveEx`, `myIpAddress` and `myIpAddressEx` are native functions of [PacContext]; everything else is
- * here. Times are local time unless the last argument is "GMT".
+ * here. Times are local time unless the last argument is "GMT". `shExpMatch` takes `*` and `?` as its only wildcards and
+ * every other character literally (`.`, `[`, `]`, `+`, `(` …); Mozilla's and Chromium's versions escape only `.` and
+ * so read other regular-expression characters as such (from their pac_utils sources as remembered, not checked here:
+ * no copy is at hand).
  */
 internal const val PAC_UTILS_JS: String = """
 function isPlainHostName(host) { return String(host).indexOf('.') < 0; }
@@ -177,14 +180,14 @@ function timeRange() {
   for (var i = 0; i < a.length; i++) { a[i] = parseInt(a[i], 10); if (isNaN(a[i])) return false; }
   var h = p.gmt ? n.getUTCHours() : n.getHours(), m = p.gmt ? n.getUTCMinutes() : n.getMinutes(),
       s = p.gmt ? n.getUTCSeconds() : n.getSeconds();
+  // as Mozilla's pac_utils: one hour; two hours, the end hour excluded; with minutes, the whole end minute included
   if (a.length === 1) return h === a[0];
-  var r;
-  if (a.length === 2) r = [a[0], 0, 0, a[1], 0, 0];
-  else if (a.length === 4) r = [a[0], a[1], 0, a[2], a[3], 0];
-  else if (a.length === 6) r = a;
+  if (a.length === 2) return a[0] <= h && h < a[1];
+  var c = h * 3600 + m * 60 + s, lo, hi;
+  if (a.length === 4) { lo = a[0] * 3600 + a[1] * 60; hi = a[2] * 3600 + a[3] * 60 + 59; }
+  else if (a.length === 6) { lo = a[0] * 3600 + a[1] * 60 + a[2]; hi = a[3] * 3600 + a[4] * 60 + a[5]; }
   else return false;
-  var c = h * 3600 + m * 60 + s, lo = r[0] * 3600 + r[1] * 60 + r[2], hi = r[3] * 3600 + r[4] * 60 + r[5];
-  return lo <= hi ? (c >= lo && c <= hi) : (c >= lo || c <= hi);
+  return lo <= c && c <= hi;
 }
 
 function alert(message) {}

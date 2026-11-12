@@ -210,7 +210,8 @@ class ClientH1Test {
     /**
      * ALPN `http/1.1` is knowledge that the server handles HTTP/1.1 (RFC 9112 section 6.1): over TLS the first request with a
      * body of unknown length goes out chunked at once, without the OPTIONS probe a route without that knowledge gets
-     * (ClientH1FramingTest).
+     * (ClientH1FramingTest). A regression guard: it passed before the first-contact rule too, and fails if ALPN stops
+     * counting as that knowledge.
      */
     @Test fun alpnHttp11AllowsChunkedOnFirstContact() =
         clientTest {

@@ -816,8 +816,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   the call with `Http2Exception` (`StreamReset`, `ConnectionClosed`, `MalformedMessage`, `FieldSectionTooLarge`); there
   is no silent repeat over HTTP/1.1.
 - **Never-indexed fields** (RFC 7541 sections 6.2.3 and 7.1.3, experimental): `neverIndex("x-api-key")` in the request
-  builder sends the named fields as literals never indexed (the engine does so on its own for `authorization`,
-  `proxy-authorization` and `cookie` values under 20 bytes), and `response.neverIndexedHeaders` lists the response fields
+  builder sends the named fields as literals never indexed (the engine does so on its own for every `authorization`
+  and `proxy-authorization` value, and for `cookie` values under 20 bytes), and `response.neverIndexedHeaders` lists the response fields
   the server sent so. A proxy built on both engines keeps the representation by passing those names to `neverIndex` on
   the message it forwards. Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the
   list is empty and `neverIndex` changes nothing.
@@ -1192,8 +1192,8 @@ Where a request's proxy comes from:
 |---|---|---|
 | JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings | as the JDK does |
 | Android | the same: the active network's proxy, PAC through the system | yes (by the system) |
-| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, then `wpad.<domain>`); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning |
-| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL); a script that fails: the fixed proxy next to it, else direct, and one warning |
+| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 and the DNS search domains on macOS, then `wpad.<domain>`; on iOS only the host name's domain, as iOS has no public API for either); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning |
+| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
 | Linux | `ProxyResolvers.Environment` (there is no system API; desktop settings are not read) | — |
 
 `ProxyResolvers.Environment` reads the variables as curl does: `https_proxy`/`HTTPS_PROXY` for `https` and `wss`,

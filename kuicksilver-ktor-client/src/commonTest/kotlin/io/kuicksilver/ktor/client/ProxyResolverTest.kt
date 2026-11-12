@@ -21,10 +21,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -36,6 +40,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** The built-in proxy resolvers' parsing (environment, Windows strings, CFNetwork answers) and the engine's use of them. */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 class ProxyResolverTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -245,19 +250,22 @@ class ProxyResolverTest {
         val viaPac =
             pickCfProxyWithPac(listOf(pac), {
                 ran += it.pacUrl
-                listOf(CfProxy(CfProxy.Type.Http, "pac.test", 3128))
+                PacOutcome.Answer(listOf(CfProxy(CfProxy.Type.Http, "pac.test", 3128)))
             }) { warnings += it }
         assertEquals(ResolvedProxy.http("pac.test", 3128), viaPac)
         assertEquals(listOf<String?>("http://wpad/wpad.dat"), ran)
         assertEquals(emptyList(), warnings)
         // "DIRECT"
         assertNull(
-            pickCfProxyWithPac(listOf(pac, CfProxy(CfProxy.Type.Http, "p", 1)), { listOf(CfProxy(CfProxy.Type.None, null, null)) }) {},
+            pickCfProxyWithPac(
+                listOf(pac, CfProxy(CfProxy.Type.Http, "p", 1)),
+                { PacOutcome.Answer(listOf(CfProxy(CfProxy.Type.None, null, null))) },
+            ) {},
         )
         // SOCKS from the script
         assertEquals(
             ResolvedProxy.socks5("s.test", 1080),
-            pickCfProxyWithPac(listOf(pac), { listOf(CfProxy(CfProxy.Type.Socks, "s.test", 1080)) }) {},
+            pickCfProxyWithPac(listOf(pac), { PacOutcome.Answer(listOf(CfProxy(CfProxy.Type.Socks, "s.test", 1080))) }) {},
         )
     }
 
@@ -266,10 +274,37 @@ class ProxyResolverTest {
         val warnings = ArrayList<String>()
         assertEquals(
             ResolvedProxy.http("next", 8080),
-            pickCfProxyWithPac(listOf(pac, CfProxy(CfProxy.Type.Http, "next", 8080)), { null }) { warnings += it },
+            pickCfProxyWithPac(listOf(pac, CfProxy(CfProxy.Type.Http, "next", 8080)), { PacOutcome.Failed }) { warnings += it },
         )
         assertEquals(listOf(PAC_FAILED), warnings)
-        assertNull(pickCfProxyWithPac(listOf(pac), { null }) {}, "nothing after the failed script: direct")
+        assertNull(pickCfProxyWithPac(listOf(pac), { PacOutcome.Failed }) {}, "nothing after the failed script: direct")
+        val noted = ArrayList<String>()
+        assertNull(pickCfProxyWithPac(listOf(pac), { PacOutcome.NoWpad }) { noted += it })
+        assertEquals(listOf(WPAD_NOT_FOUND), noted)
+    }
+
+    /**
+     * A script that answers only with proxies the engine cannot use (TLS to the proxy, SOCKS4) asked for a proxy: the
+     * next setting is used with a warning, and with none the lookup fails, never a direct connection. Before, such an
+     * answer meant a direct connection.
+     */
+    @Test fun negative_unsupportedOnlyPacAnswerFailsClosed() {
+        val pac = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = "x")
+        val only = PacOutcome.Answer(listOf(CfProxy(CfProxy.Type.Unsupported, "tls.test", 443)))
+        val warnings = ArrayList<String>()
+        assertEquals(
+            ResolvedProxy.http("next", 8080),
+            pickCfProxyWithPac(listOf(pac, CfProxy(CfProxy.Type.Http, "next", 8080)), { only }) { warnings += it },
+        )
+        assertEquals(listOf(PAC_UNSUPPORTED), warnings)
+        assertFailsWith<ProxyException> { pickCfProxyWithPac(listOf(pac), { only }) {} }
+        // a DIRECT the script itself gives as a fallback stays its choice
+        assertNull(
+            pickCfProxyWithPac(
+                listOf(pac),
+                { PacOutcome.Answer(listOf(CfProxy(CfProxy.Type.Unsupported, "tls.test", 443), CfProxy(CfProxy.Type.None, null, null))) },
+            ) {},
+        )
     }
 
     /** Windows: WPAD and the PAC URL first (WinHTTP's order), the fixed proxy when neither is set or the script failed. */
@@ -285,6 +320,9 @@ class ProxyResolverTest {
         assertEquals(emptyList(), warnings)
         assertEquals(ResolvedProxy.http("fixed", 1), windowsProxyFor(both, url, { WinPacAnswer.Failed }) { warnings += it })
         assertEquals(listOf(PAC_FAILED), warnings)
+        // no WPAD script found is not a script that failed: its own warning
+        assertEquals(ResolvedProxy.http("fixed", 1), windowsProxyFor(both, url, { WinPacAnswer.NoWpad }) { warnings += it })
+        assertEquals(listOf(PAC_FAILED, WPAD_NOT_FOUND), warnings)
         var ran = false
         val fixedOnly = IeProxySettings(autoDetect = false, autoConfigUrl = null, proxy = "fixed:1", bypass = null)
         assertEquals(
@@ -296,6 +334,90 @@ class ProxyResolverTest {
         )
         assertFalse(ran)
     }
+
+    /**
+     * Windows: detection, then the script URL, each call first without the user's credentials and again with them only
+     * when the script's server asked (ERROR_WINHTTP_LOGIN_FAILURE). Before, every call sent them to any script server.
+     */
+    @Test fun windowsPacSendsCredentialsOnlyWhenAsked() {
+        val both = IeProxySettings(autoDetect = true, autoConfigUrl = "http://cfg/proxy.pac", proxy = null, bypass = null)
+        val calls = ArrayList<String>()
+        val answer =
+            runWinPac(both, WpadFailures { 0 }) { detect, configUrl, autoLogon ->
+                calls += "${if (detect) "wpad" else configUrl} logon=$autoLogon"
+                when {
+                    detect -> WinPacCall.NoWpad
+                    !autoLogon -> WinPacCall.LoginFailure
+                    else -> WinPacCall.Answer(WinPacAnswer.Direct)
+                }
+            }
+        assertEquals(WinPacAnswer.Direct, answer)
+        assertEquals(listOf("wpad logon=false", "http://cfg/proxy.pac logon=false", "http://cfg/proxy.pac logon=true"), calls)
+    }
+
+    /**
+     * Windows: a WPAD detection that found no script is remembered for [WPAD_RETRY_MILLIS], so the lookups in that time
+     * do not run DHCP and DNS detection again; it is told apart from a script that failed. Before, every lookup the
+     * engine's cache missed ran detection again.
+     */
+    @Test fun windowsRemembersThatWpadFoundNothing() {
+        var now = 0L
+        val wpad = WpadFailures { now }
+        val detectOnly = IeProxySettings(autoDetect = true, autoConfigUrl = null, proxy = "fixed:1", bypass = null)
+        var detections = 0
+        val run = {
+            runWinPac(detectOnly, wpad) { detect, _, _ ->
+                if (detect) detections++
+                WinPacCall.NoWpad
+            }
+        }
+        assertEquals(WinPacAnswer.NoWpad, run())
+        now += WPAD_RETRY_MILLIS - 1
+        assertEquals(WinPacAnswer.NoWpad, run())
+        assertEquals(1, detections)
+        now += 1
+        assertEquals(WinPacAnswer.NoWpad, run())
+        assertEquals(2, detections)
+        // a script detection found that could not be fetched or run is a failure, not "no WPAD", and is not remembered
+        val failing = runWinPac(detectOnly, WpadFailures { 0 }) { _, _, _ -> WinPacCall.Failed }
+        assertEquals(WinPacAnswer.Failed, failing)
+        // with a script URL as well, the URL runs after a detection that found nothing
+        val both = IeProxySettings(autoDetect = true, autoConfigUrl = "http://cfg/proxy.pac", proxy = null, bypass = null)
+        assertEquals(
+            WinPacAnswer.Direct,
+            runWinPac(both, wpad) { detect, _, _ -> if (detect) WinPacCall.NoWpad else WinPacCall.Answer(WinPacAnswer.Direct) },
+        )
+    }
+
+    /**
+     * Windows: a lookup waits for WinHTTP's PAC call at most its bound, also when detection or the script's run hang
+     * (WinHTTP's own timeouts bound only the download), and while that call still runs no other starts, also when many
+     * lookups race: the counts are taken before a call starts. Before, two lookups could both pass the check and each
+     * leave a hanging call behind.
+     */
+    @Test fun negative_windowsPacCallThatHangsIsBounded() =
+        runBlocking {
+            val bounded = BoundedPac(timeoutMillis = 200)
+            val release = CompletableDeferred<Unit>()
+            val started = AtomicInt(0)
+            val hanging = {
+                started.incrementAndFetch()
+                runBlocking { release.await() }
+                WinPacAnswer.Direct
+            }
+            withTimeout(10.seconds) {
+                val answers = (1..16).map { async(Dispatchers.Default) { bounded.run(hanging) } }.awaitAll()
+                assertTrue(answers.all { it == WinPacAnswer.Failed }, "$answers")
+                assertTrue(started.load() in 1..BoundedPac.MAX_IN_FLIGHT, "${started.load()} calls started")
+                val before = started.load()
+                assertEquals(WinPacAnswer.Failed, bounded.run(hanging), "no call while one that overran still runs")
+                assertEquals(before, started.load())
+                release.complete(Unit)
+                // the late calls end on their own, their answers dropped; then calls run again
+                bounded.unfinished.first { it == 0 }
+                assertEquals(WinPacAnswer.Direct, bounded.run { WinPacAnswer.Direct })
+            }
+        }
 
     /**
      * RFC 6455 section 4.1: "For the purpose of proxy autoconfiguration scripts, the URI to pass the function MUST be
@@ -343,6 +465,44 @@ class ProxyResolverTest {
     }
 
     /** One resolver call per route for 30 s, a new one after; at most 256 routes kept; the PAC warning once per engine. */
+
+    /**
+     * Windows' "no WPAD script found" is the common case where automatic detection is on by default: logged once at Info,
+     * and it does not use up the one warning a failing script gets.
+     */
+    @Test fun negative_wpadNotFoundIsInfoNotWarn() =
+        runBlocking {
+            val lines = ArrayList<Pair<LogLevel, String>>()
+            val resolver =
+                object : WarningProxyResolver {
+                    override suspend fun proxyFor(
+                        url: Url,
+                        warn: (String) -> Unit,
+                    ): ResolvedProxy? {
+                        warn(WPAD_NOT_FOUND)
+                        if (url.host == "fail.test") warn(PAC_FAILED)
+                        return null
+                    }
+                }
+            val logger =
+                object : KuicksilverLogger {
+                    override fun isEnabled(level: LogLevel) = true
+
+                    override fun log(
+                        level: LogLevel,
+                        message: String,
+                        cause: Throwable?,
+                    ) {
+                        lines += level to message
+                    }
+                }
+            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, logger)
+            routing.lookup(Url("https://a.test/"))
+            routing.lookup(Url("https://b.test/"))
+            routing.lookup(Url("https://fail.test/"))
+            assertEquals(listOf(LogLevel.Info to WPAD_NOT_FOUND, LogLevel.Warn to PAC_FAILED), lines)
+        }
+
     @Test fun routingCachesAndWarnsOnce() =
         runBlocking {
             var now = 0L
