@@ -1297,6 +1297,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   no specification defines was echoed with the same code, which no endpoint may send, and a Close with 1006 was not
   answered at all; a Close with a 1-byte body was answered with 1000. Each now closes the connection with 1002. A Close
   the application sends with such a code goes out without a code, and one whose reason is not UTF-8 without the reason.
+- Ktor client, WebSockets over HTTP/3 (RFC 6455 section 4.1 step 2: "There MUST be no more than one connection in a
+  CONNECTING state"): the per-host lock HTTP/1.1 WebSockets take was not taken over HTTP/3, so two Extended CONNECT
+  handshakes to one host ran at once. A WebSocket over HTTP/3 now holds the lock (shared with HTTP/1.1, keyed by the
+  addresses the host resolves to) from before its CONNECT until the server answered it or the attempt failed.
 - Ktor engines, WebSockets (RFC 6455 section 5.2): a payload length not in its minimal encoding (126 with a 16-bit length
   below 126, 127 with a 64-bit length up to 65 535) was accepted; it now closes the connection with 1002.
 - Ktor engines, WebSockets (RFC 6455 sections 5.4 and 5.5): a fragmented or oversized control frame and a data frame out

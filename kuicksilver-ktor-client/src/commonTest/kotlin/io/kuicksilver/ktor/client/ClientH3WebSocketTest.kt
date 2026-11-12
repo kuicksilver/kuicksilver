@@ -19,6 +19,8 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
@@ -154,6 +156,79 @@ class ClientH3WebSocketTest {
                     val keys = withTimeout(5.seconds) { served.await() }
                     assertEquals(3, keys.toSet().size, "a new key for every frame: $keys")
                     assertEquals(false, sessionMasking, "Ktor's session does not mask")
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * RFC 6455 section 4.1 step 2 over HTTP/3: "There MUST be no more than one connection in a CONNECTING state." While
+     * the server holds back its answer to a first WebSocket's Extended CONNECT, a second WebSocket to the same host waits
+     * (the engine's per-host lock, shared with HTTP/1.1) and its CONNECT reaches the server only after the first was
+     * answered. Before, both handshakes were in flight at once over HTTP/3.
+     */
+    @Test fun negative_secondHandshakeToTheSameHostWaitsForTheFirstH3() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply { this.server = QuicServerConfig.Builder(serverTls).build() }
+                        .build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            val firstArrived = CompletableDeferred<Unit>()
+            val answerFirst = CompletableDeferred<Unit>()
+            var firstAnswered = false
+            var secondArrivedAfterFirstAnswer: Boolean? = null
+            val close = byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte())
+            coroutineScope {
+                val served =
+                    async {
+                        val conn = ep.accept()
+                        val first = conn.acceptRequest()
+                        firstArrived.complete(Unit)
+                        answerFirst.await()
+                        val s1 = first.acceptConnect()
+                        firstAnswered = true
+                        val second = conn.acceptRequest()
+                        secondArrivedAfterFirstAnswer = firstAnswered
+                        val s2 = second.acceptConnect()
+                        for (s in listOf(s1, s2)) {
+                            s.output.writeFully(close)
+                            s.output.flush()
+                        }
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        val url = "wss://127.0.0.1:${ep.localAddress.port}/ws"
+                        coroutineScope {
+                            launch { withTimeout(10.seconds) { c.webSocket(url) { for (f in incoming) continue } } }
+                            firstArrived.await()
+                            launch { withTimeout(10.seconds) { c.webSocket(url) { for (f in incoming) continue } } }
+                            // the second WebSocket waits for the host: an event, not a window of real time
+                            withTimeout(10.seconds) {
+                                engine.h1.webSocketConnecting.waitsForTest
+                                    .first { it >= 1 }
+                            }
+                            answerFirst.complete(Unit)
+                        }
+                    }
+                    withTimeout(5.seconds) { served.await() }
+                    assertEquals(
+                        true,
+                        secondArrivedAfterFirstAnswer,
+                        "the second CONNECT reached the server only after the first was answered",
+                    )
                 } finally {
                     served.cancel()
                     ep.close()
