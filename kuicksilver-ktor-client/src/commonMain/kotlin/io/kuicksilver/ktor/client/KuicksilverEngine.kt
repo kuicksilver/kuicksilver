@@ -108,6 +108,9 @@ internal class KuicksilverEngine(
     @kotlin.concurrent.Volatile
     private var followedNetworkKnown = false
 
+    /** Completed by the first value of [followedNetworks], or by its end: requests wait a moment for it ([checkNetwork]). */
+    private val firstFollowedNetwork = kotlinx.coroutines.CompletableDeferred<Unit>()
+
     /** How many values of [followedNetworks] the engine has processed; internal for tests. */
     internal val followedNetworkUpdates = kotlinx.coroutines.flow.MutableStateFlow(0)
 
@@ -188,7 +191,19 @@ internal class KuicksilverEngine(
                     networks.collect { n ->
                         followedNetwork = n?.toString()
                         followedNetworkKnown = true
-                        checkNetwork()
+                        try {
+                            checkNetwork()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // the store failed (an application's own AltSvcStore): this change is lost, the next is followed
+                            runCatching {
+                                if (events.logger.isEnabled(LogLevel.Warn)) {
+                                    events.logger.log(LogLevel.Warn, "a network change could not be applied to the Alt-Svc store", e)
+                                }
+                            }
+                        }
+                        firstFollowedNetwork.complete(Unit)
                         followedNetworkUpdates.value++
                     }
                 } catch (e: CancellationException) {
@@ -199,6 +214,7 @@ internal class KuicksilverEngine(
                 // the source failed (on Android, no more network callbacks) or ended: the engine no longer sees network
                 // changes, so it keeps no HTTPS records of its own any more (RFC 9460 section 12)
                 followedNetworkKnown = false
+                firstFollowedNetwork.complete(Unit)
                 httpsRecords?.stopCaching()
                 runCatching {
                     if (events.logger.isEnabled(LogLevel.Info)) {
@@ -513,28 +529,43 @@ internal class KuicksilverEngine(
      * A new network (`networkId`, else the networks `connectionMigration` follows) forgets broken marks, QUIC confirmation,
      * the HTTPS records and, if asked, non-persistent alternatives (RFC 7838 section 2.2). The first network the engine sees
      * is compared with the one the store's entries were learned on ([AltSvcStore.networkId], kept across restarts by
-     * [FileAltSvcStore]). Without either source the engine knows no network: null, and nothing is compared.
+     * [FileAltSvcStore]) when it comes from `networkId`. A network of the followed source has no identity that is stable
+     * across restarts (an Android network handle is a number the system reuses, an Apple path key an interface), so it is
+     * never stored: at its first value the engine takes the network as changed, as it does for what it learned before that
+     * value came (requests wait up to [FIRST_NETWORK_WAIT] for it). Without either source the engine knows no network: null,
+     * and nothing is compared.
      */
     private suspend fun checkNetwork(): String? {
-        if (!config.http3.networkIdSet && !followedNetworkKnown) return null
+        if (!config.http3.networkIdSet) {
+            if (followedNetworks == null) return null
+            if (!followedNetworkKnown &&
+                !firstFollowedNetwork.isCompleted
+            ) {
+                withTimeoutOrNull(FIRST_NETWORK_WAIT) { firstFollowedNetwork.await() }
+            }
+            if (!followedNetworkKnown) return null
+        }
         var changed = false
         val network =
             altSvcUpdate {
-                val id = if (config.http3.networkIdSet) config.http3.networkId() else followedNetwork
+                val fromNetworkId = config.http3.networkIdSet
+                val id = if (fromNetworkId) config.http3.networkId() else followedNetwork
                 if (networkSeen) {
                     if (id != lastNetwork) {
                         brokenAltSvc.onNetworkChanged()
                         altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
                         changed = true
                     }
-                } else if (id != altSvc.network) {
-                    // learned on another network, or on one nobody recorded (RFC 7838 section 3.1: "cached alternative
-                    // services will be cleared when the client detects a network change")
+                } else if (!fromNetworkId || id != altSvc.network) {
+                    // learned on another network, on one nobody recorded, or before the followed source said which one
+                    // (RFC 7838 section 3.1: "cached alternative services will be cleared when the client detects a network
+                    // change"); the HTTPS records kept meanwhile go too
                     altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
+                    changed = !fromNetworkId
                 }
                 networkSeen = true
                 lastNetwork = id
-                altSvc.network = id
+                if (fromNetworkId) altSvc.network = id
                 id
             }
         if (changed) httpsRecords?.onNetworkChanged()
@@ -1417,6 +1448,12 @@ internal val MAX_HTTPS_RECORD_EXTRA_WAIT = 1.seconds
 
 /** The longest an HTTPS record lookup runs, whatever the connect timeout. */
 internal val MAX_HTTPS_RECORD_QUERY = 30.seconds
+
+/**
+ * How long a request waits for the first value of the networks `connectionMigration` follows (the system answers at once:
+ * Android's default-network callback, Apple's path monitor); past it the request goes on without a known network.
+ */
+internal val FIRST_NETWORK_WAIT = kotlin.time.Duration.parse("200ms")
 
 /** Whether [host] (a URL host) is an IP address, which has no HTTPS records: an IPv6 literal or a dotted IPv4 address. */
 internal fun isIpLiteral(host: String): Boolean =

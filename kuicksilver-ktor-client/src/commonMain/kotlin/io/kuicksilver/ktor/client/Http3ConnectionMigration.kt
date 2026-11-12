@@ -56,6 +56,15 @@ public fun interface Http3ConnectionMigration {
      * (`followDefaultNetwork`) return their system source; null (the default, for a hook of your own) leaves the engine
      * without network information unless `networkId` is set. A source that fails or ends is logged at `Info` and no longer
      * followed: the engine then sees no network change, and drops and stops keeping HTTPS records (RFC 9460 section 12).
+     *
+     * A value is only as good as the platform's handle, and none is a stable identity of the network: on Android a
+     * `Network` is a number the system gives each new connection (a switch is seen, but the number is reused after a
+     * reboot); on iOS and macOS an [io.kuicksilver.quic.NwPathKey] names the interface and its kind, so a move from one
+     * Wi-Fi network to another on the same interface is not seen. So a followed value is never stored with the
+     * alternatives ([AltSvcStore.networkId]): at its first value after a start the engine takes the network as changed,
+     * and what it learned before that value came (requests wait up to 200 ms for it) is treated the same way. Give
+     * `networkId` an identity of your own (from what your app knows about the network) for detection across restarts and
+     * between networks on one interface.
      */
     public val networks: Flow<Any?>? get() = null
 

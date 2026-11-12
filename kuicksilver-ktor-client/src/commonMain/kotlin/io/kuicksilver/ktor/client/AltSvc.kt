@@ -73,7 +73,8 @@ public interface AltSvcStore {
      * SHOULD remove from cache all alternative services that lack the "persist" flag with the value "1" when they detect
      * such a change"). The default keeps nothing and answers null, which never matches a network the engine knows: an
      * application's store that does not implement it loses its non-persistent entries at each start where the engine knows
-     * the network. Used only while the engine knows the network (`networkId` set, or a `connectionMigration` that follows one).
+     * the network. Used with [Http3ClientConfig.networkId] only: the networks `connectionMigration` follows have no identity
+     * that survives a restart ([Http3ConnectionMigration.networks]) and are never stored.
      */
     @ExperimentalKuicksilverApi
     public var networkId: String?

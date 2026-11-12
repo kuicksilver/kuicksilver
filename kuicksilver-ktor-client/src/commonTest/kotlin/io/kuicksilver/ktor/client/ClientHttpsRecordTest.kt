@@ -363,6 +363,43 @@ class ClientHttpsRecordTest {
             }
         }
 
+    /**
+     * Before the followed source's first value the network is unknown: a request waits a moment for it, then goes on, and
+     * the HTTPS records it kept meanwhile are flushed when the value comes, since nothing says they belong to that network
+     * (RFC 9460 section 12). Before, they were kept.
+     */
+    @Test fun negative_recordsKeptBeforeTheFirstNetworkAreFlushed() =
+        clientTest {
+            val (server, port) =
+                testServer(configure = {
+                    http3 = false
+                    altSvc = false
+                }) { routing { get("/") { call.respondText("h1") } } }
+            try {
+                val name = "_$port._https.server.test"
+                val records = Records(mapOf(name to listOf(record(name, 1, ".", "h2"))))
+                val gate = CompletableDeferred<Unit>()
+                val networks =
+                    kotlinx.coroutines.flow.flow<Any?> {
+                        gate.await()
+                        emit("wifi")
+                        awaitCancellation()
+                    }
+                client(records.source, more = { http3 { connectionMigration = following(networks) } }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    c.get("https://server.test:$port/")
+                    c.get("https://server.test:$port/")
+                    assertEquals(1, records.asked.size, "cached: ${records.asked}")
+                    gate.complete(Unit)
+                    engine.followedNetworkUpdates.first { it >= 1 }
+                    c.get("https://server.test:$port/")
+                    assertEquals(2, records.asked.size, "flushed at the first network: ${records.asked}")
+                }
+            } finally {
+                server.stopSuspend(0, 0)
+            }
+        }
+
     /** A network source that fails leaves the engine blind to network changes: the cache is dropped and no longer kept. */
     @Test fun negative_failedNetworkSourceStopsCaching() =
         clientTest {

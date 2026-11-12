@@ -101,8 +101,9 @@ public class Http3ClientConfig {
     /**
      * Forget alternatives without `persist=1` when the network changes, as RFC 7838 section 2.2 says a client SHOULD; true by
      * default (before 0.2.1, false). False keeps them across networks. The network is [networkId], or the networks
-     * [connectionMigration] follows while [networkId] is not set; a change is also seen across restarts, against the network
-     * the store's entries were learned on ([AltSvcStore.networkId]). Without either source the engine sees no change.
+     * [connectionMigration] follows while [networkId] is not set. With [networkId] a change is also seen across restarts,
+     * against the network the store's entries were learned on ([AltSvcStore.networkId]); with the followed networks a start
+     * counts as a change ([Http3ConnectionMigration.networks]). Without either source the engine sees no change.
      */
     public var clearOnNetworkChange: Boolean = true
 

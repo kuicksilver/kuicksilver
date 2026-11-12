@@ -485,4 +485,80 @@ class ClientAltSvcTest {
                 engine.altSvcFramesApplied.first { it >= engine.altSvcFramesReceived }
             }
         }
+
+    /** A hook whose [networks] are the engine's network (no `networkId`); it never migrates (no HTTP/3 here). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun following(networks: kotlinx.coroutines.flow.Flow<Any?>) =
+        object : Http3ConnectionMigration {
+            override fun start(
+                connection: io.kuicksilver.quic.QuicConnection,
+                scope: kotlinx.coroutines.CoroutineScope,
+            ) = error("no HTTP/3 connection in this test")
+
+            override val networks = networks
+        }
+
+    /**
+     * A followed network has no identity that survives a restart (an Android network handle is a number the system reuses
+     * after a reboot, an Apple path key names an interface, not the network behind it): it is never stored, and at its
+     * first value the engine takes the network as changed (RFC 7838 section 2.2), so alternatives without `persist=1`
+     * reloaded from a store are dropped even when the source reports the same text as before.
+     */
+    @Test fun negative_followedNetworkIsNotTrustedAcrossRestarts() =
+        clientTest {
+            val path = kotlinx.io.files.Path(kotlinx.io.files.SystemTemporaryDirectory, "altsvc-${kotlin.random.Random.nextLong()}.tsv")
+            try {
+                val origin = "https://example.com:443"
+                val far =
+                    io.ktor.util.date
+                        .getTimeMillis() + 3_600_000
+                FileAltSvcStore(path).put(origin, listOf(AltSvcEntry("h3", null, 443, far, false), AltSvcEntry("h3", null, 444, far, true)))
+                val store = FileAltSvcStore(path)
+                testClient(Http3DiscoveryMode.Auto, engine = {
+                    http3 {
+                        altSvcStore = store
+                        connectionMigration = following(kotlinx.coroutines.flow.MutableStateFlow<Any?>("100"))
+                    }
+                }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.followedNetworkUpdates.first { it >= 1 }
+                    assertEquals(listOf(444), engine.altSvcSnapshot(io.ktor.http.Url("$origin/")).map { it.port })
+                }
+                assertEquals(null, FileAltSvcStore(path).networkId, "a followed network is not stored")
+            } finally {
+                kotlinx.io.files.SystemFileSystem
+                    .delete(path, mustExist = false)
+            }
+        }
+
+    /**
+     * A store that throws while a network change is applied (an application's own `AltSvcStore`) loses that change, not the
+     * following of the network: the next change still reaches the store. Before, the exception ended the follower for good.
+     */
+    @Test fun negative_failingStoreDoesNotStopNetworkFollowing() =
+        clientTest {
+            var calls = 0
+            val inner = InMemoryAltSvcStore()
+            val store =
+                object : AltSvcStore by inner {
+                    override fun clearNonPersistent() {
+                        if (++calls == 1) throw IllegalStateException("database locked")
+                        inner.clearNonPersistent()
+                    }
+                }
+            val networks = kotlinx.coroutines.flow.MutableStateFlow<Any?>("wifi")
+            testClient(Http3DiscoveryMode.Auto, engine = {
+                http3 {
+                    altSvcStore = store
+                    connectionMigration = following(networks)
+                }
+            }).use { c ->
+                val engine = c.engine as KuicksilverEngine
+                engine.followedNetworkUpdates.first { it >= 1 }
+                assertEquals(1, calls)
+                networks.value = "cellular"
+                engine.followedNetworkUpdates.first { it >= 2 }
+                assertEquals(2, calls, "the next change was applied")
+            }
+        }
 }
