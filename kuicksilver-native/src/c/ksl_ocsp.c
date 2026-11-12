@@ -41,13 +41,15 @@ static int responder_authorized(X509 *signer, X509 *issuer, int64_t at) {
         return 0;
     if (X509_cmp(signer, issuer) == 0 || EVP_PKEY_eq(X509_get0_pubkey(signer), ik) == 1)
         return 1;
-    uint32_t xku = X509_get_extended_key_usage(signer); /* caches the extensions; UINT32_MAX when the certificate has none */
+    uint32_t xku =
+        X509_get_extended_key_usage(signer); /* caches the extensions; UINT32_MAX when the certificate has none */
     if ((X509_get_extension_flags(signer) & EXFLAG_XKUSAGE) == 0 || (xku & XKU_OCSP_SIGN) == 0)
         return 0;
     if (X509_check_issued(issuer, signer) != X509_V_OK || X509_verify(signer, ik) != 1)
         return 0;
     time_t when = (time_t)at;
-    return X509_cmp_time(X509_get0_notBefore(signer), &when) <= 0 && X509_cmp_time(X509_get0_notAfter(signer), &when) >= 0;
+    return X509_cmp_time(X509_get0_notBefore(signer), &when) <= 0 &&
+           X509_cmp_time(X509_get0_notAfter(signer), &when) >= 0;
 }
 
 /* Clock skew allowed on thisUpdate and nextUpdate, and how long a response without nextUpdate counts as fresh (RFC 6960 section
@@ -55,7 +57,8 @@ static int responder_authorized(X509 *signer, X509 *issuer, int64_t at) {
 #define OCSP_SKEW 300
 #define OCSP_NO_NEXT_UPDATE_TTL 86400
 
-static int ksl_ocsp_check_x509(const uint8_t *der, size_t len, X509 *leaf, X509 *issuer, int64_t at, int64_t *valid_until) {
+static int ksl_ocsp_check_x509(const uint8_t *der, size_t len, X509 *leaf, X509 *issuer, int64_t at,
+                               int64_t *valid_until) {
     if (valid_until)
         *valid_until = 0;
     if (der == NULL || len == 0 || len > LONG_MAX || leaf == NULL || issuer == NULL)
@@ -92,8 +95,8 @@ static int ksl_ocsp_check_x509(const uint8_t *der, size_t len, X509 *leaf, X509 
     X509 *signer = NULL;
     extra = sk_X509_new_null();
     unused = X509_STORE_new();
-    if (extra == NULL || unused == NULL || !sk_X509_push(extra, issuer) || OCSP_resp_get0_signer(bs, &signer, extra) != 1 ||
-        signer == NULL)
+    if (extra == NULL || unused == NULL || !sk_X509_push(extra, issuer) ||
+        OCSP_resp_get0_signer(bs, &signer, extra) != 1 || signer == NULL)
         goto done;
     /* OCSP_NOVERIFY: only the signature (the signer's chain and authority are checked by responder_authorized, against the issuer
        the handshake verified, instead of OpenSSL's own trust lookup); OCSP_NOEXPLICIT is implied by NOVERIFY */
@@ -170,8 +173,8 @@ static int must_staple(X509 *leaf) {
 static int client_status(SSL *ssl, ksl_ssl *s) {
     s->ocsp_status = -1;
     s->ocsp_until = 0;
-    if (s->owner->revocation == KSL_REVOCATION_OFF || s->verify_mode != KSL_VERIFY_OPENSSL || s->validated_chain == NULL ||
-        sk_X509_num(s->validated_chain) < 2)
+    if (s->owner->revocation == KSL_REVOCATION_OFF || s->verify_mode != KSL_VERIFY_OPENSSL ||
+        s->validated_chain == NULL || sk_X509_num(s->validated_chain) < 2)
         return 1;
     X509 *leaf = sk_X509_value(s->validated_chain, 0), *issuer = sk_X509_value(s->validated_chain, 1);
     int required = s->owner->revocation == KSL_REVOCATION_REQUIRE_STAPLED || must_staple(leaf);
@@ -278,7 +281,8 @@ int ksl_ctx_set_crls(ksl_ctx *c, const uint8_t *crls, size_t crls_len) {
     }
     ERR_clear_error();
     if (!c->own_roots || c->shared_roots) {
-        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: CRLs need the context's own roots (ksl_ctx_set_roots with certificates)");
+        ksl_ctx_set_error(c, KSL_E_BAD_ARG,
+                          "ksl: CRLs need the context's own roots (ksl_ctx_set_roots with certificates)");
         return KSL_ERROR;
     }
     if (crls == NULL || crls_len == 0) {
@@ -293,7 +297,8 @@ int ksl_ctx_set_crls(ksl_ctx *c, const uint8_t *crls, size_t crls_len) {
         ok = ksl_span_fits(off, 4, crls_len);
         if (!ok)
             break;
-        size_t l = ((size_t)crls[off] << 24) | ((size_t)crls[off + 1] << 16) | ((size_t)crls[off + 2] << 8) | crls[off + 3];
+        size_t l =
+            ((size_t)crls[off] << 24) | ((size_t)crls[off + 1] << 16) | ((size_t)crls[off + 2] << 8) | crls[off + 3];
         off += 4;
         ok = l > 0 && l <= LONG_MAX && ksl_span_fits(off, l, crls_len);
         if (!ok)
@@ -316,7 +321,8 @@ int ksl_ctx_set_crls(ksl_ctx *c, const uint8_t *crls, size_t crls_len) {
         return KSL_ERROR;
     }
     X509_STORE_set_verify_cb(st, crl_verify_cb);
-    if (X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(c->ctx), X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) != 1) {
+    if (X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(c->ctx), X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) !=
+        1) {
         ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: CRL flags rejected");
         return KSL_ERROR;
     }

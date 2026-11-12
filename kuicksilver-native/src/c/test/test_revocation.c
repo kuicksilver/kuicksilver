@@ -284,9 +284,10 @@ static hs_out handshake(hs *x) {
 #define EXPECT_PASS(x, st, msg)                                                                                        \
     do {                                                                                                               \
         hs_out o_ = handshake(&(x));                                                                                   \
-        CHECK(o_.done && o_.rc != KSL_ERROR && o_.status[0] == (st), msg);                                             \
+        CHECK(o_.done &&o_.rc != KSL_ERROR && o_.status[0] == (st), msg);                                              \
         if (!(o_.done && o_.rc != KSL_ERROR && o_.status[0] == (st)))                                                  \
-            printf("  got rc=%d done=%d alert=%d x509=%d status=%d\n", o_.rc, o_.done, o_.alert, o_.x509, o_.status[0]); \
+            printf("  got rc=%d done=%d alert=%d x509=%d status=%d\n", o_.rc, o_.done, o_.alert, o_.x509,              \
+                   o_.status[0]);                                                                                      \
     } while (0)
 #define EXPECT_FAIL(x, err, msg)                                                                                       \
     do {                                                                                                               \
@@ -331,7 +332,8 @@ static void stapling_over(int mode, int tls12, const char *what) {
     EXPECT_FAIL(unauth, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_client_unauthorized_responder");
     hs off = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_OFF, mode, tls12, 0};
     EXPECT_PASS(off, 0xff, "off: nothing requested, nothing checked");
-    hs paused = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    hs paused = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                 KSL_VERIFY_PAUSE};
     EXPECT_PASS(paused, 0xff, "the pause path (an application verifier) is not checked by ksl");
 }
 
@@ -351,8 +353,8 @@ static void test_stapling(void) {
     ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
     CHECK(tcp_pump(c, s) == KSL_OK, "handshake");
     uint32_t code = 0;
-    CHECK(ksl_ssl_set(s, KSL_SET_OCSP_RESPONSE, b.buf, b.len) == KSL_ERROR && (ksl_ssl_last_error(s, &code, NULL, NULL, 0),
-                                                                              code == KSL_E_TOO_LATE),
+    CHECK(ksl_ssl_set(s, KSL_SET_OCSP_RESPONSE, b.buf, b.len) == KSL_ERROR &&
+              (ksl_ssl_last_error(s, &code, NULL, NULL, 0), code == KSL_E_TOO_LATE),
           "negative: too late after the handshake");
     free(b.buf);
     ksl_ssl_free(c);
