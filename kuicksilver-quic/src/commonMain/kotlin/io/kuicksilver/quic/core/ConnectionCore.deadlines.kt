@@ -129,7 +129,10 @@ internal fun ConnectionCore.runDueTimers(now: TimeMark) {
     handshakeFallback?.let { if (it.deadline <= now) revertHandshakeMove(it) }
     cids.expireRetired(now)
     if (zeroRttReadDiscardAt <= now) discardZeroRttKeys()
-    for (i in 0 until paths.all.size) paths.all[i].pmtud?.onTimeout(now)
+    for (i in 0 until paths.all.size) {
+        val p = paths.all[i]
+        p.pmtud?.let { m -> if (m.onTimeout(now)) setMtu(p, m.current) } // a Packet Too Big confirmed by unacknowledged probes
+    }
     for (i in paths.all.size - 1 downTo 0) paths.all.getOrNull(i)?.let { if (it.revalidateAt <= now) onRevalidateDue(it) }
     var pi = paths.all.size - 1
     while (pi >=

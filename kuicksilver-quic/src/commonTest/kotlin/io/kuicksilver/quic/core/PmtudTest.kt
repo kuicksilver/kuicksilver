@@ -166,10 +166,11 @@ class PmtudTest {
     }
 
     @Test fun searchStopsBelowLinkMtu() {
-        val (p, c) = pair(linkMtu = 1400)
+        // each size above the link is given up after three probes of 16 s each (the PROBE_TIMER of RFC 8899 section 5.1.1)
+        val (p, c) = pair(linkMtu = 1400, clientQuic = noIdle, serverQuic = noIdle)
         try {
             transfer(p, c)
-            assertTrue(p.runUntil(30.seconds) { c.pmtudSearchDoneForTest }, "search done: mtu ${c.stats.pathMtu}")
+            assertTrue(p.runUntil(300.seconds) { c.pmtudSearchDoneForTest }, "search done: mtu ${c.stats.pathMtu}")
             assertTrue(c.stats.pathMtu in 1380..1400, "mtu ${c.stats.pathMtu}")
         } finally {
             p.close()
@@ -177,13 +178,36 @@ class PmtudTest {
     }
 
     @Test fun atMostThreeLostProbesPerSize() {
-        val (p, c) = pair(linkMtu = 1200)
+        val (p, c) = pair(linkMtu = 1200, clientQuic = noIdle, serverQuic = noIdle)
         try {
             transfer(p, c)
-            assertTrue(p.runUntil(60.seconds) { c.pmtudSearchDoneForTest }, "search gives up: mtu ${c.stats.pathMtu}")
+            assertTrue(p.runUntil(400.seconds) { c.pmtudSearchDoneForTest }, "search gives up: mtu ${c.stats.pathMtu}")
             val perSize = probesTo(p).groupingBy { it }.eachCount()
             assertTrue(perSize.isNotEmpty() && perSize.values.all { it <= 3 }, "probes per size: $perSize")
             assertEquals(1200, c.stats.pathMtu)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_aLostProbeCountsOnlyWhenItsProbeTimerExpires() {
+        // RFC 8899 section 5.1.1: the PROBE_TIMER "MUST NOT be smaller than 1 second and SHOULD be larger than 15 seconds", and a probe
+        // fails only when it is "sent and not acknowledged within the period of the PROBE_TIMER" (section 5.2). On a 1400-byte link the
+        // probes above it are lost; QUIC's loss detection declared each lost within a few RTTs and the next went out at once, so a
+        // size was given up after about 100 ms
+        val (p, c) = pair(linkMtu = 1400, clientQuic = noIdle, serverQuic = noIdle)
+        try {
+            val lost = ArrayList<Pair<io.kuicksilver.quic.TimeMark, Int>>()
+            p.filterToServer = { _, b ->
+                if (b.size > 1400) lost += p.now to b.size
+                true
+            }
+            transfer(p, c)
+            assertTrue(p.runUntil(120.seconds) { lost.size >= 3 }, "lost probes: $lost")
+            for (i in 1 until lost.size) {
+                val gap = lost[i].first - lost[i - 1].first
+                assertTrue(gap > 15.seconds, "probe ${i + 1} (${lost[i].second} bytes) followed a lost one after $gap: $lost")
+            }
         } finally {
             p.close()
         }
@@ -193,10 +217,10 @@ class PmtudTest {
         // RFC 9000 section 14.4 and RFC 8899 section 3 item 7: a lost probe is not a congestion signal. The probes go out during a
         // transfer on a link that drops everything above 1200 bytes and nothing else, so every loss is a probe's: the controller
         // never left slow start. 0.3.0 cross-review: this test compared lostPackets with itself and ran with no traffic at all
-        val (p, c) = pair(linkMtu = 1200)
+        val (p, c) = pair(linkMtu = 1200, clientQuic = noIdle, serverQuic = noIdle)
         try {
             transfer(p, c)
-            assertTrue(p.runUntil(60.seconds) { c.pmtudSearchDoneForTest })
+            assertTrue(p.runUntil(400.seconds) { c.pmtudSearchDoneForTest })
             assertTrue(probesTo(p).size >= 3, "probes were lost: ${probesTo(p)}")
             val ssthresh =
                 when (val cc = c.path.cc) {
@@ -279,7 +303,7 @@ class PmtudTest {
         val (p, c) = pair(linkMtu = 1300, clientQuic = noIdle, serverQuic = noIdle)
         try {
             transfer(p, c)
-            assertTrue(p.runUntil(30.seconds) { c.pmtudSearchDoneForTest })
+            assertTrue(p.runUntil(300.seconds) { c.pmtudSearchDoneForTest })
             val mtu = c.stats.pathMtu
             val n = c.pmtudProbesSentForTest
             p.linkMtuToServer = 1500
@@ -693,8 +717,8 @@ class PmtudTest {
             p.linkMtuToClient = 1320
             val before = p.events[c]!!.filterIsInstance<ConnectionEvent.MtuUpdated>().size
             ptb(p, c, 1328)
-            // a trickle of small packets, as an application keeps sending: their ACKs show each confirmation probe lost within an
-            // RTT (RFC 9002 section 6.1), before the PTOs or full-size losses that would call it a black hole
+            // a trickle of small packets, as an application keeps sending, never a full-size one that could call it a black hole; each
+            // confirmation probe fails when its 16 s PROBE_TIMER expires (RFC 8899 section 5.1.1), the third after about 48 s
             val id = c.openStream(true)
 
             fun changes() =
@@ -703,7 +727,7 @@ class PmtudTest {
                     .drop(before)
                     .map { it.mtu }
             val ok =
-                p.runUntil(10.seconds) {
+                p.runUntil(60.seconds) {
                     c.writeStream(id, ByteArray(100), 0, 100, false)
                     1300 in changes()
                 }

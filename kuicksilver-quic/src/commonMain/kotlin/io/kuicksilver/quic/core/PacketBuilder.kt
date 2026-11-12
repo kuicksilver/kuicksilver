@@ -183,7 +183,7 @@ internal class PacketBuilder(
         ) {
             c.path.pmtud?.let { m ->
                 // no PMTU probes to an address under validation
-                val size = m.nextProbeSize(now)
+                val size = m.nextProbeSize(now, c.pto())
                 val held =
                     if (size <= 0 || size > out.segmentSize) {
                         false

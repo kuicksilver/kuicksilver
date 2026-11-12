@@ -302,16 +302,9 @@ internal class ConnectionLossListener(
             }
         }
         core.paths.byId(PathId(p.pathId))?.let { path ->
-            path.pmtud?.let { m ->
-                if (p.frames.flags and SentFrames.PMTU_PROBE !=
-                    0
-                ) {
-                    if (m.onProbeLost(p.size, core.now)) core.setMtu(path, m.current) // a Packet Too Big confirmed by lost probes
-                } else {
-                    m.onPacketLost(p.size, p.pn)
-                }
-            }
-        } // RFC 8899: a lost probe is not congestion; the black-hole verdict waits for the end of the ACK (checkPmtuBlackHoles)
+            path.pmtud?.let { m -> if (p.frames.flags and SentFrames.PMTU_PROBE == 0) m.onPacketLost(p.size, p.pn) }
+        } // RFC 8899: a lost probe is not congestion, and fails only when its PROBE_TIMER expires (Pmtud.onTimeout); the black-hole
+        // verdict waits for the end of the ACK (checkPmtuBlackHoles)
         val f = p.frames
         for (i in 0 until f.cryptoCount) core.cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
         if (f.streamCount > 0 || f.idCount > 0 || f.flags and SentFrames.STREAM_CONTROL != 0) core.streams.onFramesLost(f)
