@@ -240,6 +240,27 @@ if sp "$L" ok "on main" finish 1.1.0-rc1 "$S1"; then
     && sp_pass "$L" || sp_fail "$L" "requirement or URL wrong"
 fi
 
+# the local-gate check itself (local-release.sh from the marker line to the toolchain check) on fixture records: only a
+# full run's passing stamp is a gate; a run of some steps (local-matrix.sh --only/--from) never is, whatever its file says
+gate_block=$(awk -v m="$marker" '$0 ~ m {on = 1} /^# toolchains pinned/ {on = 0} on' "$root/tools/release/local-release.sh")
+grep -q 'refuse' <<< "$gate_block" || { echo "FAIL: no local-gate check found after the marker line"; exit 2; }
+gate_t() { # <label> <ok|refuse>[:<pattern>] <stamp lines...>: the check against build/ci/gate/<head>.stamp holding those lines
+  local label="$1" exp="${2%%:*}" pat="" d out got verdict; [ "$2" = "${2#*:}" ] || pat="${2#*:}"; shift 2
+  d="$tmp/gate-$pass-$fail"; mkdir -p "$d/build/ci/gate"; printf '%s\n' "$@" > "$d/build/ci/gate/c0ffee.stamp"
+  out=$(cd "$d" && head=c0ffee short=c0ffee bash -c 'refuse() { echo "REFUSED: $*"; }; '"$gate_block" 2>&1)
+  got=$(grep -q REFUSED <<< "$out" && echo refuse || echo ok)
+  verdict=FAIL; if [ "$got" = "$exp" ] && { [ -z "$pat" ] || grep -qE -- "$pat" <<< "$out"; }; then verdict=ok; fi
+  [ $verdict = ok ] && pass=$((pass+1)) || fail=$((fail+1))
+  printf '%-4s %-58s exp=%-6s got=%-6s | %s\n' "$verdict" "$label" "$exp" "$got" "$(grep REFUSED <<< "$out" | tr '\n' ' ' | cut -c1-230)"
+}
+full=(commit=c0ffee tree=clean skip_android=0 skip_docker=0 with_interop=1 with_windows=1 steps=72 failed=0)
+gate_t "gate: a full run's passing stamp"                     ok                               result=pass selection=all "${full[@]}"
+gate_t "negative_gateFailedStamp"                             "refuse:did not pass"            result=fail selection=all "${full[@]}"
+gate_t "negative_gatePartialRecordAsStamp"                    "refuse:did not pass"            result=partial-pass selection=only=25 "${full[@]}"
+gate_t "negative_gatePassWithSelection"                       "refuse:only some steps"         result=pass selection=from=3 "${full[@]}"
+gate_t "negative_gateNoSelectionLine"                         "refuse:only some steps"         result=pass "${full[@]}"
+gate_t "negative_gateWithoutWindows"                          "refuse:without --with-windows"  result=pass selection=all "${full[@]/with_windows=1/with_windows=0}"
+
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
 # version of its fallbacks, except that before the release commit the README's status line names the last published
 # version ("X.Y.Z is on Maven Central") while its dependency blocks and the iOS guide already name the line's version

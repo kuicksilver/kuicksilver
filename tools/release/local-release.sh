@@ -11,7 +11,7 @@
 #      version is not on Maven Central yet (release mode); every version fallback of the tree is <X.Y.Z>-SNAPSHOT of the version
 #      and, for a final version, the README and the iOS guide name it; the Swift package repository clones, has no tag
 #      <version> yet and its rendered manifest reads back (swift-package.sh prepare); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
-#      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version
+#      says the full matrix (every step, selection=all: Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version
 #      with its date; the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
 #   2. OpenSSL: fetch and verify the pinned tarball; rebuild all twelve targets from it, never from build/openssl or the build
 #      cache (KSL_OPENSSL_FRESH=1): linux-x64, linux-arm64 and mingw-x64 in Docker (one container at a time, under nice;
@@ -192,6 +192,9 @@ if [ ! -f "$stamp" ]; then
   refuse "no local gate for $short: run tools/ci/local-matrix.sh --with-interop --with-windows on this commit ($stamp)"
 else
   [ "$(gate result)" = pass ] || refuse "the local gate of $short did not pass ($(gate failed) failed step(s), tree $(gate tree); $stamp)"
+  # a run of some steps (--only, --from) writes <commit>.partial, never the stamp; a stamp that does not say it ran every
+  # step (selection=all, written by every full run) is refused all the same: a copied or older record is no gate
+  [ "$(gate selection)" = all ] || refuse "the local gate record of $short does not say it ran every step (selection=$(gate selection); a run with --only or --from ran only some steps and is no gate)"
   for o in skip_android skip_docker; do [ "$(gate "$o")" = 0 ] || refuse "the local gate of $short ran with --${o//_/-}"; done
   for o in with_interop with_windows; do [ "$(gate "$o")" = 1 ] || refuse "the local gate of $short ran without --${o//_/-}"; done
   echo "  local gate: $(gate steps) steps passed on $short ($(gate finished))"

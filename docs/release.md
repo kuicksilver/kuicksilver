@@ -86,7 +86,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    Hours: the steps of `build.yml`'s matrix on this Mac (Docker for Linux and mingw, the Android emulator running, the
    interop images, the Windows VM). Its last act is the gate record `build/ci/gate/<commit>.stamp`: the commit, the
    options, every step's result, and `result=pass` only when every step passed with the tree clean and on the same
-   commit from start to end. Any later commit needs a new run.
+   commit from start to end. Any later commit needs a new run, and only a run of every step counts: one with `--only`
+   or `--from` (re-running some steps after a fix) writes `build/ci/gate/<commit>.partial`, never the stamp.
 2. The release commit. `CHANGELOG.md`: move `[Unreleased]` (or the branch's `## [<version>] - unreleased`) under
    `## [<version>] - <date>`; `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
    do. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
