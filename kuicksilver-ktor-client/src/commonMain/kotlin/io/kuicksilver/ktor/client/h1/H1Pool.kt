@@ -188,6 +188,30 @@ internal class H1Pool(
     /** Routes known to handle HTTP/1.1 (RFC 9112 section 6.1); internal for tests. */
     internal val http11Routes = Http11Routes()
 
+    /**
+     * The user's configuration says the server [data] goes to handles HTTP/1.1 (RFC 9112 section 6.1): `assumeHttp11`, or
+     * that server in `http11Hints` (the origin, or the proxy for plain `http` in the absolute form).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun configuredHttp11(
+        data: HttpRequestData,
+        proxy: ResolvedProxy?,
+        tunneled: Boolean,
+    ): Boolean {
+        if (config.assumeHttp11) return true
+        val hints = config.http11Hints
+        if (hints.isEmpty()) return false
+        val server =
+            if (proxy != null && !tunneled) {
+                io.kuicksilver.ktor.client
+                    .HostPort(proxy.host, proxy.port)
+            } else {
+                io.kuicksilver.ktor.client
+                    .HostPort(data.url.host, data.url.port)
+            }
+        return server in hints
+    }
+
     /** Tests: [data]'s route is known to handle HTTP/1.1, as after an earlier HTTP/1.1 response on it. */
     internal fun knowsHttp11ForTest(
         data: HttpRequestData,
@@ -700,7 +724,8 @@ internal class H1Pool(
             var held = obtained.held
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             // RFC 9112 section 6.1: no Transfer-Encoding until the route is known to handle HTTP/1.1
-            val probeFirst = needsTransferEncoding(data) && !http11Routes.isKnown(key) && !http11Routes.wasProbed(key)
+            val configured = configuredHttp11(data, proxy, tunneled)
+            val probeFirst = needsTransferEncoding(data) && !configured && !http11Routes.isKnown(key) && !http11Routes.wasProbed(key)
             var bodyJob: BodySender? = null
             // the whole request went out (headers and a body written in this call); a streamed body says so itself
             val requestOut = CompletableDeferred<Unit>()
@@ -745,7 +770,7 @@ internal class H1Pool(
                             probeVersion(data, key, conn, output, input, proxy, tunneled, callContext)
                         }
                         // a server that answered the probe with another version: the body framed by Content-Length
-                        if (!http11Routes.isKnown(key)) prepareFirstContact(data)
+                        if (!configured && !http11Routes.isKnown(key)) prepareFirstContact(data)
                         writeHeaders(
                             data,
                             output,

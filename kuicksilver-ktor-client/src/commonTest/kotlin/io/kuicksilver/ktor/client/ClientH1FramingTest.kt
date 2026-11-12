@@ -522,6 +522,64 @@ class ClientH1FramingTest {
         }
 
     /**
+     * RFC 9112 section 6.1, "specific user configuration": a server in `http11Hints`, or any server with `assumeHttp11`,
+     * gets a body of unknown length chunked at once, without the first-contact OPTIONS.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_configuredHttp11ServerGetsNoProbe() =
+        clientTest {
+            for (configure in listOf<KuicksilverEngineConfig.(Int) -> Unit>(
+                { port -> http11Hints = setOf(HostPort("127.0.0.1", port)) },
+                { _ -> assumeHttp11 = true },
+            )) {
+                val heads = ArrayList<List<String>>()
+                rawServerPerConnection({ _, input, output ->
+                    val (head, _) = readRequest(input)
+                    if (head.isEmpty()) return@rawServerPerConnection
+                    heads += head
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                }) { port ->
+                    testClient(engine = { configure(port) }).use { c ->
+                        assertEquals("ok", c.post("http://127.0.0.1:$port/up") { setBody(streamed("hello")) }.bodyAsText())
+                    }
+                }
+                assertEquals(listOf("POST /up HTTP/1.1"), heads.map { it[0] })
+                assertTrue("Transfer-Encoding: chunked" in heads[0], "${heads[0]}")
+            }
+        }
+
+    /** A hint for another port is no knowledge of this server: the probe still goes first. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun hintForAnotherServerStillProbes() =
+        clientTest {
+            val heads = ArrayList<String>()
+            rawServerPerConnection({ _, input, output ->
+                repeat(2) {
+                    val (head, _) = readRequest(input)
+                    if (head.isEmpty()) return@rawServerPerConnection
+                    heads += head[0]
+                    output.writeStringUtf8(
+                        if (head[0].startsWith(
+                                "OPTIONS ",
+                            )
+                        ) {
+                            "HTTP/1.1 204 No Content\r\n\r\n"
+                        } else {
+                            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                        },
+                    )
+                }
+            }) { port ->
+                testClient(engine = { http11Hints = setOf(HostPort("127.0.0.1", port + 1)) }).use { c ->
+                    assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText())
+                }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1", "POST / HTTP/1.1"), heads)
+        }
+
+    /**
      * An HTTP/1.0 answer is no knowledge of HTTP/1.1 (RFC 9112 section 6.1): the body is framed by Content-Length from a
      * buffer, on a new connection as the HTTP/1.0 server closed the probe's, and the route is not probed again.
      */

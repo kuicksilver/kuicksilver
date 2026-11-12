@@ -40,10 +40,10 @@ public enum class Http3DiscoveryMode {
 }
 
 /**
- * A host and port, for [Http3ClientConfig.quicHints].
+ * A host and port, for [Http3ClientConfig.quicHints] and [KuicksilverEngineConfig.http11Hints].
  *
  * @property host the host exactly as in request URLs (compared as is, no case folding or resolution).
- * @property port the port of the `https` origin, 443 for URLs without one.
+ * @property port the port, the scheme's default (443 for `https`, 80 for `http`) for URLs without one.
  */
 public class HostPort(
     public val host: String,
@@ -276,6 +276,20 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * connections, [maxConnectionsPerRoute] and [maxConnectionsCount] do. 0 keeps none.
      */
     public var maxIdleConnectionsPerRoute: Int = 4
+
+    /**
+     * Servers known to handle HTTP/1.1 (RFC 9112 section 6.1: "such knowledge might be in the form of specific user
+     * configuration"): a request with Transfer-Encoding (a body of unknown length, or a transfer coding the application
+     * applied) goes to them chunked at once, without the `OPTIONS` the engine otherwise sends first to a server it has not
+     * seen answer with HTTP/1.1 nor pick ALPN `http/1.1`. The host and port of the server the request goes to: the origin,
+     * or, for plain `http` through an HTTP proxy (absolute form), the proxy. Compared as [HostPort] does.
+     */
+    @ExperimentalKuicksilverApi
+    public var http11Hints: Set<HostPort> = emptySet()
+
+    /** Every server is known to handle HTTP/1.1, as [http11Hints] for all; false by default. */
+    @ExperimentalKuicksilverApi
+    public var assumeHttp11: Boolean = false
 
     /**
      * TCP connections (HTTP/1.1 and HTTP/2) open at once across all routes, idle ones included (CIO's `maxConnectionsCount`, the same
