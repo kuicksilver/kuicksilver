@@ -318,6 +318,40 @@ class H2RuntimeTest {
             s.release()
         }
 
+    /**
+     * RFC 9113 section 5.4.2: one RST_STREAM per stream. A malformed response (content-length 3, 5 bytes) fails the stream
+     * and resets it with PROTOCOL_ERROR; the application's reset that lands between the two (its call ended meanwhile)
+     * sends nothing more. Before, the reset checked nothing and its CANCEL went out first, in place of the PROTOCOL_ERROR.
+     */
+    @Test fun negative_aResetBetweenAMalformedFailureAndItsRstSendsNothing() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            val s = client.get()
+            runCurrent()
+            srv.read()
+            var raced = 0
+            client.rt.afterMalformedFailForTest = {
+                client.rt.afterMalformedFailForTest = null
+                raced++
+                s.cancel()
+            }
+            srv.write(
+                srv.headers(s.id, listOf(":status" to "200", "content-length" to "3"), endStream = false),
+                FrameEncoder.data(s.id, "short".encodeToByteArray(), 0, 5, false),
+            )
+            runCurrent()
+            assertEquals(1, raced, "the malformed message was seen")
+            assertFailsWith<Http2Exception.MalformedMessage> { s.body.readAll() }
+            runCurrent()
+            val resets = srv.read().filterIsInstance<Frame.RstStream>().filter { it.streamId == s.id }
+            assertEquals(listOf(Http2ErrorCode.PROTOCOL_ERROR.code), resets.map { it.errorCode })
+            s.release()
+            runCurrent()
+            assertTrue(srv.read().none { it is Frame.RstStream }, "no second RST_STREAM at the release")
+        }
+
     @Test fun negative_resetFailsTheBodyNotEndsIt() =
         runTest {
             val (client, server, _) = pair()

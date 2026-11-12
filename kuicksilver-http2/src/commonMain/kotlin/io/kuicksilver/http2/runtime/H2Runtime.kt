@@ -306,6 +306,9 @@ internal class H2Runtime(
     /** Runs right before a body's END_STREAM is queued (tests: the peer's reset arrives in that gap). */
     internal var beforeEndStreamForTest: (() -> Unit)? = null
 
+    /** Runs between a malformed message's failure and its RST_STREAM (tests: another reset arrives in that gap). */
+    internal var afterMalformedFailForTest: (() -> Unit)? = null
+
     /** Tests: another thread is dispatching events, so this thread's events wait for it ([releaseDispatchForTest]). */
     internal fun holdDispatchForTest() {
         lock.withLock { dispatching = true }
@@ -615,6 +618,7 @@ internal class H2Runtime(
         reason: String,
     ) {
         fail(s, Http2Exception.MalformedMessage("malformed message on stream ${s.id}: $reason"))
+        afterMalformedFailForTest?.invoke()
         withCore { reset(s.id, Http2ErrorCode.PROTOCOL_ERROR, clock()) }
     }
 
