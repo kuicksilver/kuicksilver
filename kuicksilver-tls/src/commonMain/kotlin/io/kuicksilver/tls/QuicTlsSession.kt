@@ -470,7 +470,7 @@ public interface LoadBalancerKey : AutoCloseable {
 public interface QuicCrypto {
     /**
      * A new handshake for one QUIC connection; the caller closes it. Throws [TlsException.Config] unless [config] suits QUIC:
-     * TLS 1.3 only, a non-empty ALPN list, no CCM_8 suite and no `sniSelector` in v1 (RFC 9001 sections 4.2, 5.3, 8.1).
+     * TLS 1.3 only, a non-empty ALPN list, only the AES-GCM and ChaCha20-Poly1305 suites and no `sniSelector` in v1 (RFC 9001 sections 4.2, 5.3, 8.1).
      */
     public fun newSession(config: TlsConfig): QuicTlsSession
 

@@ -48,7 +48,10 @@ public enum class ClientAuth {
     Required,
 }
 
-/** TLS 1.3 cipher suites in preference order. CCM_8 is refused for QUIC (RFC 9001 section 5.3). */
+/**
+ * TLS 1.3 cipher suites in preference order. QUIC takes only the three of [Default]: CCM_8 is forbidden there (RFC 9001 section
+ * 5.3) and QUIC packet protection here has no AES-CCM.
+ */
 public class CipherSuites(
     suites: List<String>,
 ) {
@@ -208,6 +211,11 @@ public class TlsConfig private constructor(
             ) {
                 throw TlsException.Config("TLS_AES_128_CCM_8_SHA256 is not allowed in QUIC")
             }
+            // RFC 9001 section 5.3 also allows TLS_AES_128_CCM_SHA256, but QUIC packet protection here has AES-GCM and
+            // ChaCha20-Poly1305 only (and the section 6.6 limits of those): a handshake that chose CCM could not install its keys
+            cipherSuites.suites.firstOrNull { it !in CipherSuites.Default.suites }?.let {
+                throw TlsException.Config("$it is not supported in QUIC (AES-128-GCM, AES-256-GCM and ChaCha20-Poly1305 are)")
+            }
             if (sniSelector !=
                 null
             ) {
@@ -218,7 +226,7 @@ public class TlsConfig private constructor(
         }
     }
 
-    /** Throws [TlsException.Config] unless this config can drive a QUIC handshake: TLS 1.3 only, a non-empty ALPN list, no CCM_8, no `sniSelector` in v1 (RFC 9001 sections 4.2, 5.3, 8.1). */
+    /** Throws [TlsException.Config] unless this config can drive a QUIC handshake: TLS 1.3 only, a non-empty ALPN list, only the AES-GCM and ChaCha20-Poly1305 suites (no CCM_8, RFC 9001 section 5.3; no CCM), no `sniSelector` in v1 (RFC 9001 sections 4.2, 5.3, 8.1). */
     @InternalKuicksilverApi
     public fun checkQuicCompatible(): Unit = validateFor(quic = true)
 
@@ -249,7 +257,7 @@ public class TlsConfig private constructor(
         /** The versions offered; default [TlsVersions.Tls13]. [TlsVersions.Tls12And13] is for TCP peers without TLS 1.3 only. */
         public var versions: TlsVersions = TlsVersions.Tls13
 
-        /** The TLS 1.3 cipher suites in preference order; default [CipherSuites.Default]. QUIC refuses CCM_8 suites. */
+        /** The TLS 1.3 cipher suites in preference order; default [CipherSuites.Default]. QUIC takes only the suites of [CipherSuites.Default]. */
         public var cipherSuites: CipherSuites = CipherSuites.Default
 
         /**
