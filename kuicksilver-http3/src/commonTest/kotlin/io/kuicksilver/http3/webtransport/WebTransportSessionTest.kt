@@ -27,10 +27,12 @@ import io.kuicksilver.http3.runtime.RawPeer
 import io.kuicksilver.http3.runtime.acceptBidi
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.runtime.peerMayHaveClosed
+import io.kuicksilver.http3.runtime.peerStopped
 import io.kuicksilver.http3.runtime.readControlFrame
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -77,6 +79,17 @@ internal fun RawPeer.wtConnect(
     )
 
 private val connectOnly = http3Settings { enableConnectProtocol = true }
+
+/** The server stopped our side of [st] with H3_MESSAGE_ERROR (a malformed request, RFC 9114 section 4.1.2): writes fail with it. */
+private suspend fun assertMessageErrorStop(st: QuicStream) =
+    peerStopped(Http3ErrorCode.MESSAGE_ERROR) {
+        withTimeout(5.seconds) {
+            while (true) {
+                st.output.writeFully(ByteArray(1024))
+                st.output.flush()
+            }
+        }
+    }
 
 class WebTransportSessionTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -365,6 +378,84 @@ class WebTransportSessionTest {
                 val r = withTimeout(5.seconds) { server.acceptRequest() }
                 assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
                 assertEquals("400", readHeaders(st)[":status"])
+            }
+        }
+
+    /**
+     * Section 3.1: "A client MUST NOT establish WebTransport sessions if ... the server's transport parameters do not have
+     * correct values for every required transport parameter": a draft-16 server without `reset_stream_at` gets no CONNECT.
+     */
+    @Test fun negative_wtWithoutServerResetStreamAtFails() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = QuicConfig.Default).useScoped { p ->
+                val e = assertFailsWith<Http3Exception.Settings> { p.client.webTransport(wtReq()) }
+                assertTrue("reset_stream_at" in e.message.orEmpty(), e.message)
+            }
+        }
+
+    /**
+     * Section 3.1: a client of draft-14 or draft-16 without `reset_stream_at` makes every session malformed ("the server
+     * MUST treat all established and newly incoming WebTransport sessions as malformed"): 400 and STOP_SENDING
+     * H3_MESSAGE_ERROR (RFC 9114 section 4.1.2).
+     */
+    @Test fun negative_acceptWithoutClientResetStreamAtIsMalformed() =
+        h3Test {
+            for (version in listOf(SettingsId.WT_ENABLED, SettingsId.WT_MAX_SESSIONS_DRAFT14)) {
+                QuicPair.open().useScoped { q ->
+                    val (c, s) = q.connect(QuicConfig.Default)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, version to 1L))
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, if (version == SettingsId.WT_ENABLED) WtTokens.H3 else WtTokens.LEGACY))
+                    st.output.flush()
+                    val r = withTimeout(5.seconds) { server.acceptRequest() }
+                    val e = assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
+                    assertTrue("reset_stream_at" in e.message.orEmpty(), e.message)
+                    assertEquals("400", readHeaders(st)[":status"])
+                    assertMessageErrorStop(st)
+                }
+            }
+        }
+
+    /**
+     * Browsers speak draft-02 (Chrome, Firefox), which predates RESET_STREAM_AT and requires no `reset_stream_at`: such a
+     * client is served without it.
+     */
+    @Test fun draft02ClientWithoutResetStreamAtIsAccepted() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect(QuicConfig.Default)
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to 1L))
+                launch { server.acceptRequest().acceptWebTransport() }
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st, WtTokens.LEGACY, WtTokens.DRAFT02_REQUEST_FIELD to "1"))
+                st.output.flush()
+                assertEquals("200", readHeaders(st)[":status"])
+            }
+        }
+
+    /**
+     * Sections 3.1, 7.1 (and draft-02 section 3.1, draft-14 section 3.1): a client must announce its WebTransport version
+     * with its own setting; a client that sent none makes the session malformed.
+     */
+    @Test fun negative_acceptWithoutClientWtSettingIsMalformed() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st))
+                st.output.flush()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                val e = assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
+                assertTrue("SETTINGS_WT_ENABLED" in e.message.orEmpty(), e.message)
+                assertEquals("400", readHeaders(st)[":status"])
+                assertMessageErrorStop(st)
             }
         }
 

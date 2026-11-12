@@ -231,6 +231,11 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
     ) {
         throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "H3_DATAGRAM without QUIC datagram support")
     }
+    // draft-ietf-webtrans-http3-02 section 3.1: "an endpoint that receives a value other than "0" or "1" MUST close the
+    // connection with the H3_SETTINGS_ERROR error code" (SETTINGS_WT_ENABLED is checked by the codec for every draft)
+    if (settings.webTransport && (m[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) > 1L) {
+        throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "SETTINGS_ENABLE_WEBTRANSPORT (draft-02) must be 0 or 1")
+    }
     if (!isServer) {
         // RFC 9114 section 7.2.4.2: after an accepted 0-RTT, SETTINGS that lower or omit what the client relied on are
         // H3_SETTINGS_ERROR (whether 0-RTT was accepted is known once the handshake is: SETTINGS are 1-RTT data)

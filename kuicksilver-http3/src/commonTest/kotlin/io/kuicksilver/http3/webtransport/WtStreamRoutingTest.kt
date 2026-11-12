@@ -494,16 +494,23 @@ class WtStreamRoutingTest {
      */
     @Test fun sessionIdBeyondStreamLimitIsIdError() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { maxBidiStreams = 10 }).useScoped { q ->
-                val (c, s) = q.connect()
-                val server = Http3Connection.server(s, wtOn)
-                val raw = RawPeer(c)
-                raw.openControl(wtClientSettings)
-                raw.uni(StreamType.WT_UNI, VarInt.encode(36)) // the tenth stream: within the limit, waits
-                server.awaitBuffered(1)
-                peerMayHaveClosed { raw.uni(StreamType.WT_UNI, VarInt.encode(40)) } // the eleventh
-                assertEquals(Http3ErrorCode.ID_ERROR, withTimeout(3.seconds) { peerSawClose(c) })
-            }
+            QuicPair
+                .open(
+                    serverQuic =
+                        quicConfig {
+                            maxBidiStreams = 10
+                            resetStreamAt = true
+                        },
+                ).useScoped { q ->
+                    val (c, s) = q.connect()
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(wtClientSettings)
+                    raw.uni(StreamType.WT_UNI, VarInt.encode(36)) // the tenth stream: within the limit, waits
+                    server.awaitBuffered(1)
+                    peerMayHaveClosed { raw.uni(StreamType.WT_UNI, VarInt.encode(40)) } // the eleventh
+                    assertEquals(Http3ErrorCode.ID_ERROR, withTimeout(3.seconds) { peerSawClose(c) })
+                }
         }
 
     /** Without WebTransport a `0x54` stream is an unknown type, stopped as before (RFC 9114 section 6.2). */

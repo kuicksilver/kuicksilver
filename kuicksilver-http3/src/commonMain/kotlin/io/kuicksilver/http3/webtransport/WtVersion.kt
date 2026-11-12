@@ -20,6 +20,13 @@ internal enum class WtVersion {
     Draft16,
     ;
 
+    /**
+     * This version needs `reset_stream_at` on both sides. draft-14 and draft-16 section 3.1: "both the client and the server
+     * enable the extension by sending an empty reset_stream_at transport parameter"; draft-02 predates RESET_STREAM_AT
+     * (Chrome and Firefox speak it, and need not send the parameter).
+     */
+    val needsResetStreamAt: Boolean get() = this != Draft02
+
     /** The `:protocol` token a client sends to a peer of this version (draft-16 section 3.2; `webtransport` before -15). */
     val protocolToken: String get() = if (this == Draft16) WtTokens.H3 else WtTokens.LEGACY
 
@@ -34,6 +41,31 @@ internal enum class WtVersion {
             }
     }
 }
+
+/**
+ * Why the peer of [h3] cannot carry a WebTransport session of [version] by its transport parameters (draft-16 and draft-14
+ * section 3.1: `max_datagram_frame_size` above 0 and, from draft-14 on, `reset_stream_at`, both on both sides), or null
+ * when it can. The peer's SETTINGS are checked by the callers.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun wtTransportGap(
+    h3: io.kuicksilver.http3.runtime.H3Session,
+    version: WtVersion,
+): String? =
+    when {
+        !h3.quic.peerSupportsDatagrams -> {
+            "the peer did not send max_datagram_frame_size above 0, which WebTransport needs (section 3.1)"
+        }
+
+        version.needsResetStreamAt && !h3.quic.resetStreamAtEnabled -> {
+            "reset_stream_at is not on both sides (QuicConfig.resetStreamAt and the peer's transport parameter), which " +
+                "WebTransport $version needs (section 3.1)"
+        }
+
+        else -> {
+            null
+        }
+    }
 
 /** The WebTransport settings we interpret and advertise (draft-ietf-webtrans-http3-16 section 3.1); identifiers in [SettingsId]. */
 internal object WtSettings {

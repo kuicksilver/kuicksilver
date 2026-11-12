@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.DelicateKuicksilverApi::class)
 
 package io.kuicksilver.http3.webtransport
 
@@ -10,7 +10,9 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.http3.MemoryNet
 import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsCodec
 import io.kuicksilver.http3.frame.SettingsId
@@ -22,14 +24,20 @@ import io.kuicksilver.http3.runtime.peerSawClose
 import io.kuicksilver.http3.runtime.readControlFrame
 import io.kuicksilver.http3.runtime.readVarInt
 import io.kuicksilver.http3.useScoped
+import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -121,6 +129,18 @@ class WebTransportSettingsTest {
             }
         }
 
+    /** draft-02 section 3.1: "an endpoint that receives a value other than "0" or "1" MUST close the connection with the H3_SETTINGS_ERROR". */
+    @Test fun negative_draft02SettingAboveOneIsSettingsError() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to 2L))
+                runCatching { Http3Connection.client(c, wtOn) } // may already fail with the error it sent
+                assertEquals(Http3ErrorCode.SETTINGS_ERROR, withTimeout(5.seconds) { peerSawClose(s) })
+            }
+        }
+
     @Test fun peerVersionPicksHighest() =
         h3Test {
             QuicPair.open().useScoped { q ->
@@ -173,6 +193,57 @@ class WebTransportSettingsTest {
                     }.build()
             val e = assertFailsWith<IllegalArgumentException> { Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0), config, wtOn) }
             assertTrue("maxDatagramFrameSize" in e.message.orEmpty(), e.message)
+        }
+
+    /**
+     * Section 3.1: WebTransport needs `reset_stream_at` on both sides, so `Http3Endpoint` turns `QuicConfig.resetStreamAt`
+     * on with `webTransport` (as the Ktor engines do): a session between two endpoints left at the defaults works.
+     */
+    @Test fun endpointTurnsResetStreamAtOnForWebTransport(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNet()
+                val serverIo = net.open(InetSocketAddress("10.0.0.2", 443))
+                val clientIo = net.open(InetSocketAddress("10.0.0.1", 1111))
+                val server =
+                    Http3Endpoint.bind(
+                        serverIo.localAddress,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(H3Fixtures.server()).build()
+                                crypto = NullCryptoProvider
+                                io = { serverIo }
+                            }.build(),
+                        wtOn,
+                    )
+                val client =
+                    Http3Endpoint.bind(
+                        clientIo.localAddress,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                crypto = NullCryptoProvider
+                                io = { clientIo }
+                            }.build(),
+                    )
+                try {
+                    coroutineScope {
+                        val accepted = async { server.accept() }
+                        val conn = client.connect(server.localAddress, H3Fixtures.client(), settings = wtOn)
+                        val serverConn = accepted.await()
+                        launch { serverConn.acceptRequest().acceptWebTransport() }
+                        val session = conn.webTransport(wtReq())
+                        assertTrue(conn.quic.resetStreamAtEnabled)
+                        assertTrue(serverConn.quic.resetStreamAtEnabled)
+                        session.close()
+                        conn.close()
+                    }
+                } finally {
+                    client.close()
+                    server.close()
+                }
+            }
         }
 
     /** Section 3.2: a ticket issued without WebTransport gives no 0-RTT to a server that now has it, and back. */

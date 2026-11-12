@@ -218,12 +218,21 @@ class WebTransportStreamsTest {
     /** Waiting for the peer's stream credit ends with the session. */
     @Test fun openWaitingForCreditEndsWithSession() =
         h3Test {
-            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = quicConfig { maxBidiStreams = 1 }).useScoped { p ->
-                val (client, _) = sessions(p) // the CONNECT took the only bidirectional stream
-                val opening = async { runCatching { client.openBidi() } }
-                client.close()
-                assertIs<WebTransportException.SessionClosed>(withTimeout(5.seconds) { opening.await() }.exceptionOrNull())
-            }
+            H3Pair
+                .open(
+                    clientSettings = wtOn,
+                    serverSettings = wtOn,
+                    serverQuic =
+                        quicConfig {
+                            maxBidiStreams = 1
+                            resetStreamAt = true
+                        },
+                ).useScoped { p ->
+                    val (client, _) = sessions(p) // the CONNECT took the only bidirectional stream
+                    val opening = async { runCatching { client.openBidi() } }
+                    client.close()
+                    assertIs<WebTransportException.SessionClosed>(withTimeout(5.seconds) { opening.await() }.exceptionOrNull())
+                }
         }
 
     /**

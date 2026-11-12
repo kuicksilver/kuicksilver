@@ -178,13 +178,17 @@ internal class WtStreamImpl(
     }
 
     /**
-     * Resets our sending side with [code]. A stream we opened keeps its header (draft-16 section 4.4: RESET_STREAM_AT with
-     * the header as the reliable size), so the peer can still tell which session the reset belongs to; without
-     * `reset_stream_at` on both sides it is a plain RESET_STREAM.
+     * Resets our sending side with [code] by RESET_STREAM_AT keeping the header we wrote as the reliable size (draft-16
+     * section 4.4: "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] with a Reliable Size
+     * set to at least the size of the WebTransport header when resetting a WebTransport data stream"), so the peer can
+     * still tell which session the reset belongs to; on a stream the peer opened our side carries no header (size 0). A
+     * session of draft-14 or later exists only with `reset_stream_at` on both sides (section 3.1, [wtTransportGap]), so
+     * the frame always goes; only a draft-02 session (browsers), whose draft predates the frame, may lack it, and the
+     * transport then sends the RESET_STREAM that draft-02 uses.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun abandon(code: Long) {
-        runCatching { if (headerLength > 0) st.resetAt(code, headerLength.toLong()) else st.reset(code) }
+        runCatching { st.resetAt(code, headerLength.toLong()) }
     }
 
     private companion object {

@@ -328,7 +328,8 @@ internal class WtSessionImpl(
             st.output.writeFully(header)
             st.output.flush()
         } catch (e: Throwable) {
-            runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
+            // section 4.4: the header stays deliverable (RESET_STREAM_AT with it as the reliable size)
+            runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, header.size.toLong()) }
             throw if (e is CancellationException) e else h3.map(e)
         }
         return track(st, readable = bidi, writable = true, headerLength = header.size)
@@ -407,6 +408,10 @@ internal suspend fun H3Session.webTransport(
     val version =
         peerWtVersion() ?: throw Http3Exception.Settings("the server does not offer WebTransport in its SETTINGS")
     if (!ps.h3Datagram) throw Http3Exception.Settings("the server did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs")
+    // section 3.1: "A client MUST NOT establish WebTransport sessions if the server's SETTINGS do not have correct values for
+    // every required setting or if the server's transport parameters do not have correct values for every required
+    // transport parameter"
+    wtTransportGap(this, version)?.let { throw Http3Exception.Settings(it) }
     withContext(dispatcher) {
         check(!wtClientBusy) {
             "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one"

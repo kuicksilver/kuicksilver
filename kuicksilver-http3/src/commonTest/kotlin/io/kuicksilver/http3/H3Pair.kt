@@ -118,6 +118,12 @@ internal class MemoryIo(
 internal object H3Fixtures {
     val testCa = Certificate(TestCerts.testCa)
 
+    /**
+     * The transport of the test pairs: `reset_stream_at` on, as WebTransport needs it on both sides (draft-ietf-webtrans-http3-16
+     * section 3.1); it changes nothing for a connection that never resets a stream with RESET_STREAM_AT.
+     */
+    val quic: QuicConfig = io.kuicksilver.quic.quicConfig { resetStreamAt = true }
+
     fun client(alpn: String = "h3"): TlsConfig =
         tlsConfig(TlsRole.Client) {
             this.alpn = listOf(alpn)
@@ -146,7 +152,7 @@ internal class QuicPair private constructor(
         server.close()
     }
 
-    suspend fun connect(clientQuic: QuicConfig = QuicConfig.Default): Pair<QuicConnection, QuicConnection> =
+    suspend fun connect(clientQuic: QuicConfig = H3Fixtures.quic): Pair<QuicConnection, QuicConnection> =
         coroutineScope {
             val accepted = async { server.accept() }
             val c = client.connect(server.localAddress, QuicClientConfig.Builder(H3Fixtures.client()).apply { quic = clientQuic }.build())
@@ -154,7 +160,7 @@ internal class QuicPair private constructor(
         }
 
     companion object {
-        suspend fun open(serverQuic: QuicConfig = QuicConfig.Default): QuicPair {
+        suspend fun open(serverQuic: QuicConfig = H3Fixtures.quic): QuicPair {
             val net = MemoryNet()
             val a = net.open(InetSocketAddress("10.0.0.1", 1111))
             val b = net.open(InetSocketAddress("10.0.0.2", 443))
@@ -201,8 +207,8 @@ internal class H3Pair(
         suspend fun open(
             clientSettings: Http3Settings = Http3Settings.Default,
             serverSettings: Http3Settings = Http3Settings.Default,
-            serverQuic: QuicConfig = QuicConfig.Default,
-            clientQuic: QuicConfig = QuicConfig.Default,
+            serverQuic: QuicConfig = H3Fixtures.quic,
+            clientQuic: QuicConfig = H3Fixtures.quic,
         ): H3Pair {
             val q = QuicPair.open(serverQuic)
             val (c, s) = q.connect(clientQuic)
