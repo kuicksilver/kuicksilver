@@ -8,7 +8,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCallPipeline
@@ -20,6 +22,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
@@ -133,6 +136,15 @@ class ServerH2ResponseTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * A 32 MiB `respondBytes` goes out whole over HTTP/2, every byte in order. The size is the point: this runs in the
+     * Android device step too, where an Android 10 image has a 48 MiB heap growth limit, and 3cd5db6e5 fixed a
+     * respondFromBytes that wrapped the whole array in a `ByteReadChannel` (which copies it), so a 32 MiB response took
+     * 64 MiB and ran out of memory after its head went out (the stream was reset with CANCEL). `RespondBytesHeapJvmTest`
+     * runs the same with a 48 MiB heap on the JVM.
+     */
+    @Test fun largeBytesResponseGoesOutWhole() = serverTest { respondBytesOverH2(32 shl 20) }
 
     /** A call that ends without a response leaves no stream waiting: it is reset with INTERNAL_ERROR (RFC 9113 section 8.1). */
     @Test fun negative_callWithoutAResponseResetsItsStream() =
@@ -314,4 +326,46 @@ class ServerH2ResponseTest {
                 server.stop(100, 500)
             }
         }
+}
+
+/** The byte at [i] of [respondBytesOverH2]'s content. */
+private fun pattern(i: Int): Byte = (i % 251).toByte()
+
+/**
+ * Serves a `respondBytes` of [size] bytes over HTTP/2 and reads it with the Kuicksilver client as it streams (nothing kept),
+ * checking its length and every byte. Only the server's array is ever whole in memory.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal suspend fun respondBytesOverH2(size: Int) {
+    val (server, port) =
+        h2TlsServer {
+            routing { get("/big") { call.respondBytes(ByteArray(size) { pattern(it) }) } }
+        }
+    try {
+        HttpClient(KuicksilverClient) {
+            engine {
+                trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
+                http3 { discovery = Http3DiscoveryMode.H1Only }
+            }
+        }.use { c ->
+            withTimeout(60.seconds) {
+                c.prepareGet("https://127.0.0.1:$port/big").execute { r ->
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                    assertEquals(size.toLong(), r.headers[io.ktor.http.HttpHeaders.ContentLength]?.toLong())
+                    val body = r.bodyAsChannel()
+                    val buf = ByteArray(65_536)
+                    var n = 0
+                    while (true) {
+                        val k = body.readAvailable(buf, 0, buf.size)
+                        if (k < 0) break
+                        for (j in 0 until k) if (buf[j] != pattern(n + j)) throw AssertionError("byte ${n + j} differs")
+                        n += k
+                    }
+                    assertEquals(size, n, "the whole content")
+                }
+            }
+        }
+    } finally {
+        server.stop(100, 500)
+    }
 }
