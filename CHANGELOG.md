@@ -350,14 +350,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
   drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and
   a manual check for Firefox and Safari in `docs/spec/interop.md`, "Interop WebTransport".
-- Ktor client: Happy Eyeballs for HTTP/1.1's TCP connects, to the origin and to an HTTP proxy (RFC 8305 sections 4 to 6;
-  `docs/guide/ktor.md`, "IPv6 over TCP on Kotlin/Native"). Every address of a host name is tried, IPv6 and IPv4
-  alternating, a new attempt every `connectionAttemptDelay` (*experimental*, 250 ms; 10 ms to 2 s, or
-  `Duration.INFINITE` for one address after another) or at once when the previous one failed; the first connection
-  wins and the others are cancelled or closed. An address that drops connection attempts now costs 250 ms instead of
-  the request's connect timeout, and the JVM and Android no longer connect only to the first address of a name. The
-  name is resolved once per request for both sides of the h3/h1 race (HTTP/3 takes the first address), off the
-  caller's thread and within the connect timeout.
+- Ktor client: Happy Eyeballs version 2 (RFC 8305) for every connect to a host name, HTTP/1.1 and HTTP/2 over TCP to the
+  origin and to an HTTP proxy, and HTTP/3 over QUIC (`docs/guide/ktor.md`, "Happy Eyeballs"; `docs/spec/rfc/8305.md`).
+  A name's IPv6 and IPv4 addresses are asked for separately (one `getaddrinfo` per family; on the JVM and Android
+  through the native library, as `InetAddress` asks for both at once), the first IPv6 answer starts a connection at
+  once and an IPv4 answer that comes first waits at most 50 ms for it; answers that come later join the attempts in
+  progress. The addresses are sorted by RFC 6724 destination address selection of the engine's own on every platform
+  (also those of HTTPS records), with the families alternating, and tried one `connectionAttemptDelay` apart
+  (*experimental*, 250 ms; 100 ms to 2 s, or `Duration.INFINITE` for one address after another) or at once when an
+  attempt failed, never within 10 ms of the last one; the first connection wins and the others are cancelled or
+  closed. HTTP/3 races its QUIC handshakes over the same addresses, so a family that drops UDP costs one attempt
+  delay, `H3Only` included. On an IPv6-only network without 464XLAT the engine discovers the NAT64 prefix (RFC 7050)
+  and reaches IPv4 literals and IPv4-only names through it (RFC 6052), asking for IPv4 only when needed. The name is
+  resolved once per request for both sides of the h3/h1 race, off the caller's thread and within the connect timeout.
+  On the JVM an application's own resolver (`InetAddressResolverProvider`, `jdk.net.hosts.file`) is still used, and
+  `java.net.preferIPv6Addresses` no longer orders the addresses. Native: `ksl_resolve` and `ksl_addr_info`, additive
+  under ABI 7.
 - Ktor engines: WebSocket extension negotiation and frame checks (RFC 6455 sections 4.1, 5.2 and 9.1; RFC 7692
   section 6.1; `docs/guide/ktor.md`, "Client"). The client engine declares `WebSocketExtensionsCapability`, so Ktor's
   `WebSockets` plugin offers and negotiates the installed extensions over HTTP/1.1 and HTTP/3 (Ktor's JVM
@@ -630,9 +638,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   before, both engines took such frames.
 - Ktor client on the JVM and Android: an HTTP/1.1 connection to a host name now tries every address the name resolves
   to (Happy Eyeballs), not only the first; on Kotlin/Native the addresses are tried 250 ms apart instead of one after the
-  other. `connectionAttemptDelay = Duration.INFINITE` restores one address after another.
-- Ktor client: name lookups run at most 8 at a time on their own share of `Dispatchers.IO`, one per name however many
-  requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
+  other. `connectionAttemptDelay = Duration.INFINITE` restores one address after another. HTTP/3 no longer connects to
+  the first address only.
+- Ktor client: name lookups run at most 8 at a time on their own share of `Dispatchers.IO`, one per name and address
+  family however many requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
   is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
 
 ### Fixed
@@ -1283,10 +1292,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - Ktor client, HTTPS records (new in this release): the A or AAAA records of one family alone in an answer no longer
   stand in for the whole address lookup of that name, which a resolver that omitted the other family's RRset (RFC 9460
   section 5.2) left without it, IPv6 on an IPv6-only network say. That family is still used at once (section 5), and
-  the name is looked up as well: the other family's addresses join when they come within the 50 ms resolution delay of
-  Happy Eyeballs, in the family order the platform resolver gave (RFC 8305 section 4: "the client MUST sort the
-  addresses received up to this point using Destination Address Selection"); with no platform answer to go by, the
-  family order of the system's last lookup, or a probe for a source address of each family, decides. "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it was kept for the
+  the other family is looked up as well: its addresses join the Happy Eyeballs race whenever they come (RFC 8305
+  section 3), all of them sorted by RFC 6724 (section 4: "the client MUST sort the addresses received up to this point
+  using Destination Address Selection"). "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it was kept for the
   SOA's negative TTL, RFC 2308 section 5, although the negative answer is about "the data field of the last CNAME", RFC
   2308 section 1, and a CNAME "may be cached" only for its TTL, RFC 1035 section 3.2.1). The record cache counts a TTL
   on both the monotonic and the wall clock and expires an entry once either has seen it pass: a wall clock stepped back

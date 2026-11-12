@@ -2949,6 +2949,41 @@ those repeated over `https` too. An AliasMode record whose target is no host nam
 nothing is remembered for the origin beyond the records' TTL. An origin that publishes HTTPS records but serves
 different content on `http://` cannot be reached over `http://` by such a client.
 
+#### Happy Eyeballs
+
+Every connection the engine makes to a host name, HTTP/1.1 and HTTP/2 over TCP, HTTP/3 over QUIC, to the origin, to an
+alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; details and the RFC text in
+[RFC 8305](https://github.com/kuicksilver/kuicksilver/blob/main/docs/spec/rfc/8305.md)):
+
+- **Resolution.** The name's IPv6 (AAAA) and IPv4 (A) addresses are asked for separately, IPv6 first: one `getaddrinfo`
+  per family on two threads, on the JVM and Android through Kuicksilver's native library, since `InetAddress` asks for
+  both at once. The first IPv6 answer starts a connection at once; an IPv4 answer that comes first waits up to 50 ms for
+  the IPv6 one (the Resolution Delay), and goes ahead at once when the IPv6 answer is empty or failed. An answer that
+  comes while connections are being tried joins them. On the JVM, an application that installed its own resolver
+  (`InetAddressResolverProvider`, `jdk.net.hosts.file`) keeps it: lookups go through `InetAddress` then, both families in
+  one call. `java.net.preferIPv4Stack=true` leaves IPv6 out.
+- **Order.** The addresses are sorted by RFC 6724's destination address selection, the engine's own on every platform
+  (also for the addresses of an [HTTPS record](#https-records-experimental)): an address without a usable source
+  address (no IPv6 route, say) goes last, then matching scope and label, the policy table's precedence (native IPv6
+  before IPv4 before 6to4 and Teredo), native transport before a tunnel, and the longest prefix shared with the source.
+  The two families then alternate, starting with the first one in the sorted list. `java.net.preferIPv6Addresses` no
+  longer decides the order.
+- **Attempts.** One attempt at a time: the next one starts when `connectionAttemptDelay` (250 ms) has passed since the
+  last one started, or as soon as an attempt failed, but never within 10 ms of the last start. The first connection
+  wins; the other attempts are cancelled, and one that connected anyway is closed. So an address that drops connection
+  attempts silently costs 250 ms, not the request's connect timeout, which bounds all attempts together.
+  `connectionAttemptDelay` takes 100 ms to 2 s, or `Duration.INFINITE` to try one address after another.
+- **HTTP/3.** QUIC handshakes race over the addresses in the same way, so a family that drops UDP costs one attempt
+  delay, also with `Http3DiscoveryMode.H3Only`; a cancelled handshake closes its connection. With `earlyData`, a QUIC
+  attempt that can send 0-RTT (a resumed session) wins at once. The [h3/h1 race](#racing-and-fallback) runs on top: each
+  side races the addresses of the request's one resolution. An `Alt-Svc` alternative's host and an HTTPS record's
+  endpoint are raced the same way, and [connection migration](#connection-migration) follows the connection that won.
+- **IPv6-only networks (NAT64).** When the host has a global IPv6 address and no IPv4 route, the engine looks for the
+  network's NAT64 prefix (an AAAA query for `ipv4only.arpa`, RFC 7050, cached for its TTL and again on a new
+  `networkId`) and connects to IPv4 literals and IPv4-only names through it. It then asks for a name's IPv4 addresses
+  only when the IPv6 answer is empty, or 2 s after the last IPv6 attempt started without a connection (a broken AAAA
+  record). Platforms that translate IPv4 themselves (464XLAT: Android, iOS) have an IPv4 route and are left alone.
+
 #### Racing and fallback
 
 When HTTP/3 is an option (`Preferred`, a QUIC hint, or a live Alt-Svc alternative) and no HTTP/3 connection to it is
@@ -3788,19 +3823,11 @@ that binds and connects the address `getaddrinfo` returned. So on every platform
   `0.0.0.0` stay the wildcards;
 - the client's HTTP/1.1 connection (and its connection to an HTTP proxy) goes to the address in the URL; an
   IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the JVM does. A host name is resolved to all its
-  addresses (`InetAddress.getAllByName` on the JVM and Android, `getaddrinfo` on Kotlin/Native, off the caller's thread
-  and within the connect timeout) and connected with Happy Eyeballs (RFC 8305): IPv6 and IPv4 addresses alternate,
-  starting with the family the resolver listed first (on the JVM `java.net.preferIPv6Addresses` decides, IPv4 first by
-  default); a new attempt starts every `connectionAttemptDelay` (250 ms) or as soon as the previous one failed, the first
-  connection wins and the other attempts are cancelled or closed. So an address that drops connection attempts silently
-  costs 250 ms, not the request's connect timeout, which bounds all attempts together. `connectionAttemptDelay =
-  Duration.INFINITE` tries one address after another, as 0.2 did on Kotlin/Native.
-- HTTP/3 connects to the first address of the same resolution (one lookup per request for both sides of the h3/h1
-  race); it does not race addresses: a family that drops UDP loses the h3/h1 race instead. With `H3Only` there is no
-  race, so when the first address's family is broken (UDP dropped on it) the request fails at the connect timeout.
-- Name lookups block a thread (`getaddrinfo`, `getAllByName`): at most 8 run at once, on their own share of
-  `Dispatchers.IO`, and a name has one lookup in flight however many requests wait for it, so a stalled resolver cannot
-  take the threads the sockets run on (threat model 3.21). An address literal is never looked up.
+  addresses and connected with Happy Eyeballs ([Happy Eyeballs](#happy-eyeballs)); HTTP/3 races the same addresses over
+  QUIC.
+- Name lookups block a thread (`getaddrinfo`): at most 8 run at once, on their own share of `Dispatchers.IO`, and a name
+  has one lookup per address family in flight however many requests wait for it, so a stalled resolver cannot take the
+  threads the sockets run on (threat model 3.21). An address literal is never looked up.
 
 HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint
 is dual-stack, ADR-0006). The portable Kotlin/Native UDP socket (`IoPreference.Portable`, or a sandbox that refuses the
@@ -4766,7 +4793,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `idleTimeout` (*experimental*) | `Duration` | 5 min | positive | 0.2.0 | idle HTTP/1.1 connections, and HTTP/2 and HTTP/3 connections without requests, are closed after this |
 | `maxConnectionLifetime` (*experimental*) | `Duration` | infinite | positive | 0.2.0 | age after which a connection takes no new requests |
 | `connectTimeout` | `Duration` | 10 s |  | 0.2.0 | connect timeout (TCP + TLS, or the QUIC handshake) when `HttpTimeout` sets none; a WebSocket over HTTP/1.1 also waits at most this long for the answer to its opening handshake (`ConnectTimeoutException`) |
-| `connectionAttemptDelay` (*experimental*) | `Duration` | 250 ms | 10 ms..2 s, or `Duration.INFINITE`; anything else fails the engine's creation | 0.3.0 | Happy Eyeballs (RFC 8305) for HTTP/1.1's TCP connects: the delay before the next address is tried while earlier attempts are still pending; `INFINITE` tries one address after another ([Ktor: IPv6 over TCP](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#ipv6-over-tcp-on-kotlinnative)) |
+| `connectionAttemptDelay` (*experimental*) | `Duration` | 250 ms | 100 ms..2 s, or `Duration.INFINITE`; anything else fails the engine's creation | 0.3.0 | Happy Eyeballs (RFC 8305) for the TCP and QUIC connects: the delay before the next address is tried while earlier attempts are still pending (never less than 10 ms after the last start, also when it failed); `INFINITE` tries one address after another ([Ktor: Happy Eyeballs](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#happy-eyeballs)) |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (keeps `http3.endpoint.logger`) |  | 0.2.0 | the engine's and its QUIC endpoint's diagnostics |
 | `eventListener` (*experimental*) | `KuicksilverEventListener?` | `null` |  | 0.2.0 | call, protocol, race, Alt-Svc and pool events ([Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#observability-experimental)) |
 | `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP (`http://` only) and SOCKS5 proxies; others, an `https://` proxy URL included, fail each request with `UnsupportedOperationException` | 0.2.0 | TCP through the proxy (HTTP/1.1, or HTTP/2 inside the tunnel) (CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied |
