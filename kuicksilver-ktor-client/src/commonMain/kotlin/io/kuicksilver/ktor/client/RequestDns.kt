@@ -67,7 +67,7 @@ internal class RequestDns private constructor(
         val name = socketHost(host)
         lock.withLock {
             if (list.any { it.isIpv6 } && list.any { !it.isIpv6 }) {
-                answers.getOrPut(name) { CompletableDeferred(Result.success(list)) }
+                answers.getOrPut(name) { CompletableDeferred(Result.success(ipv6First(list))) }
             } else if (name !in answers) {
                 partial.getOrPut(name) { list }
             }
@@ -121,7 +121,7 @@ internal class RequestDns private constructor(
 
     /**
      * [seeded] (one family) and the other family's addresses from a lookup of [name], when they come within
-     * [RESOLUTION_DELAY]: the seeded family goes first. A lookup that fails, finds none of the other family or answers
+     * [RESOLUTION_DELAY]: IPv6 first ([ipv6First]). A lookup that fails, finds none of the other family or answers
      * later leaves [seeded] alone. The list is fixed once returned, so a later answer cannot join a race in progress
      * (RFC 8305 section 3 would add it; the resolvers here answer once, docs/spec/rfc/8305.md).
      */
@@ -144,8 +144,15 @@ internal class RequestDns private constructor(
                 }
             val joined = withTimeoutOrNull(RESOLUTION_DELAY) { other.await() }
             other.cancel()
-            seeded + joined.orEmpty()
+            ipv6First(seeded + joined.orEmpty())
         }
+
+    /**
+     * [list] with its IPv6 addresses first, each family in its order: the order of a resolver that sorts by RFC 6724
+     * (IPv6 preferred), and RFC 8305 section 3, whose resolution delay waits for the AAAA answer so that IPv6 is
+     * preferred.
+     */
+    private fun ipv6First(list: List<TcpAddress>): List<TcpAddress> = list.filter { it.isIpv6 } + list.filter { !it.isIpv6 }
 
     companion object {
         /**

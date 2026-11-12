@@ -115,8 +115,9 @@ class RequestDnsTest {
             dns.seed("a.example", listOf(addr(1).bytes))
             val got = dns.lookup("a.example", 443)
             assertEquals(1, asked)
-            // the seeded A first, then only the family the answer did not carry
-            assertEquals(listOf("192.0.2.1:443", "[2001::1]:443"), got.map { it.toString() })
+            // only the family the answer did not carry joins, and IPv6 goes first (RFC 8305 section 3: the resolution delay
+            // waits for the AAAA answer so that IPv6 is preferred)
+            assertEquals(listOf("[2001::1]:443", "192.0.2.1:443"), got.map { it.toString() })
         }
 
     @Test fun negative_seededIpv4DoesNotWaitForAStalledIpv6Lookup() =
@@ -164,5 +165,16 @@ class RequestDnsTest {
             dns.seed("a.example", listOf(addr(1).bytes, v6(1).bytes))
             assertEquals(2, dns.lookup("a.example", 443).size)
             assertEquals(0, asked)
+        }
+
+    @Test fun seededBothFamiliesPutIpv6First() =
+        runTest {
+            // the order a resolver gives (RFC 6724 prefers IPv6), whatever order the answer's sections had
+            val dns = RequestDns { _, _ -> error("not looked up") }
+            dns.seed("a.example", listOf(addr(1).bytes, addr(2).bytes, v6(1).bytes, v6(2).bytes))
+            assertEquals(
+                listOf("[2001::1]:443", "[2001::2]:443", "192.0.2.1:443", "192.0.2.2:443"),
+                dns.lookup("a.example", 443).map { it.toString() },
+            )
         }
 }

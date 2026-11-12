@@ -200,20 +200,43 @@ class SvcbRecordTest {
         return out.toByteArray()
     }
 
-    @Test fun negative_tenThousandMandatoryKeysAreCheckedInLinearTime() { // section 8, over an untrusted channel (9.2.2)
+    /** A list that counts its element reads, by `get` and by iteration. */
+    private class Counting(
+        private val items: List<Int>,
+    ) : AbstractList<Int>() {
+        var reads = 0
+
+        override val size: Int get() = items.size
+
+        override fun get(index: Int): Int {
+            reads++
+            return items[index]
+        }
+    }
+
+    @Test fun negative_mandatoryCheckReadsEachKeyAtMostOnce() { // section 8, over an untrusted channel (9.2.2)
+        val keys = Counting((7 until 10_007).toList())
+        val mandatory = Counting((7 until 10_007).toList())
+        assertTrue(SvcbCodec.hasAllMandatory(keys, mandatory))
+        // a merge of the two increasing lists; a search of the keys for each mandatory key reads about 5 * 10^7 of them
+        assertTrue(keys.reads + mandatory.reads <= keys.size + mandatory.size + 1, "${keys.reads} + ${mandatory.reads} reads")
+        // and its answers: a missing last key, a gap, a key past the end, none listed
+        val all = (7 until 10_007).toList()
+        assertFalse(SvcbCodec.hasAllMandatory(all.dropLast(1), all))
+        assertFalse(SvcbCodec.hasAllMandatory(all.filter { it != 5_000 }, all))
+        assertFalse(SvcbCodec.hasAllMandatory(all, listOf(20_000)))
+        assertTrue(SvcbCodec.hasAllMandatory(all, emptyList()))
+    }
+
+    @Test fun tenThousandMandatoryKeysParse() { // smoke check of the whole record: well under the bound
         val keys = (7 until 10_007).toList()
         val all = manyKeys(keys, keys)
         assertTrue(all.size <= 65_535, "${all.size} bytes")
         val start = TimeSource.Monotonic.markNow()
         // every listed key is present; they are keys this client does not support, so the record is skipped (section 8)
         assertNull(SvcbCodec.parseRdata(all, 0, all.size, "example.com", 300))
-        // the last listed key missing: the merge still finds it (section 8: the RR is malformed)
         val missing = manyKeys(keys, keys.dropLast(1))
         assertFailsWith<DnsFormatException> { SvcbCodec.parseRdata(missing, 0, missing.size, "example.com", 300) }
-        val gap = manyKeys(keys, keys.filter { it != 5_000 })
-        assertFailsWith<DnsFormatException> { SvcbCodec.parseRdata(gap, 0, gap.size, "example.com", 300) }
-        val took = start.elapsedNow()
-        // a merge of the two increasing lists: milliseconds; a search of the keys for every listed key is 10^8 steps
-        assertTrue(took < 2.seconds, "took $took")
+        assertTrue(start.elapsedNow() < 2.seconds)
     }
 }

@@ -173,16 +173,32 @@ internal object SvcbCodec {
                 else -> {} // ech and the keys this client does not know: ignored unless mandatory (below)
             }
         }
-        // every key the mandatory list names must be in the record (section 8): both lists are strictly increasing, so one
-        // merge pass checks them, linear in the RDATA however many keys there are
-        var j = 0
-        for (k in mandatory) {
-            while (j < keys.size && keys[j] < k) j++
-            if (j == keys.size || keys[j] != k) throw DnsFormatException("mandatory key $k missing")
-        }
+        // every key the mandatory list names must be in the record (section 8)
+        if (!hasAllMandatory(keys, mandatory)) throw DnsFormatException("a mandatory key is missing")
         if (mandatory.any { it !in SUPPORTED }) return null
         if (noDefaultAlpn && alpn.isEmpty()) return null
         return SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4, ipv6, ttl, owner)
+    }
+
+    /**
+     * Whether every key of [mandatory] is in [keys] (section 8). Both lists are strictly increasing (section 2.2 for the
+     * keys, section 8 for `mandatory`, both checked as they are read), so one merge pass answers, with at most
+     * `keys.size + mandatory.size` reads, however many keys there are.
+     */
+    internal fun hasAllMandatory(
+        keys: List<Int>,
+        mandatory: List<Int>,
+    ): Boolean {
+        var j = 0
+        for (k in mandatory) {
+            while (true) {
+                if (j == keys.size) return false
+                val key = keys[j++] // each key read once
+                if (key == k) break
+                if (key > k) return false
+            }
+        }
+        return true
     }
 
     /** `mandatory` (section 8): a non-empty list of keys in strictly increasing order, never naming itself. */
