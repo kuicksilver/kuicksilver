@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.HttpClient
 import io.ktor.http.Url
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 
 /**
  * One alternative service of an origin (RFC 7838 section 3): `protocol="host:port"`, valid until [expiresAtEpochMillis][AltSvcEntry.expiresAtEpochMillis].
@@ -10,7 +12,8 @@ import io.ktor.http.Url
  * @property protocol the ALPN protocol id of the alternative; the engine stores and uses only `h3`.
  * @property host the alternative's host; null when the header left it empty, meaning the origin's own host.
  * @property port the alternative's UDP port, 1..65535.
- * @property expiresAtEpochMillis the end of freshness in epoch milliseconds: receipt time plus `ma` (86400 s by default).
+ * @property expiresAtEpochMillis the end of freshness in epoch milliseconds: the time the response was generated plus `ma`
+ *   (86400 s by default), where the generation time is the receipt time minus the response's age (RFC 7838 section 3.1).
  * @property persist `persist=1`: the entry survives a network change even with [Http3ClientConfig.clearOnNetworkChange].
  *
  * Two entries are equal when they name the same alternative ([protocol], [host], [port], [persist]); the expiry is left
@@ -53,6 +56,36 @@ public interface AltSvcStore {
 
     /** Drops every entry without `persist=1` (a network change, RFC 7838 section 2.2). */
     public fun clearNonPersistent()
+
+    /**
+     * Forgets every entry of every origin, persistent ones included: the engine's
+     * [clearAlternativeServices][io.ktor.client.HttpClient.clearAlternativeServices] without an origin, so alternative
+     * service information goes when origin-specific data is cleared (RFC 7838 section 9.4: it "MUST be removed when
+     * origin-specific data is cleared"). A store kept across restarts removes them there too.
+     *
+     * The default throws [UnsupportedOperationException], so a store written before this member existed keeps working:
+     * the engine then removes, one by one, the origins it has seen during this run (at most the 1000 most recent) and logs a
+     * warning that entries of other origins the store kept from earlier may remain. Override it to meet section 9.4 fully.
+     */
+    @ExperimentalKuicksilverApi
+    public fun clear(): Unit = throw UnsupportedOperationException("this AltSvcStore does not implement clear()")
+
+    /**
+     * The network ([Http3ClientConfig.networkId]) the stored entries were learned on, as the engine last set it; null when
+     * not known. A store kept across restarts keeps it with the entries: at its first request the engine compares it with
+     * the current network and, when they differ, drops the entries without `persist=1` (RFC 7838 section 2.2: "clients
+     * SHOULD remove from cache all alternative services that lack the "persist" flag with the value "1" when they detect
+     * such a change"). The default keeps nothing and answers null, which never matches a network the engine knows: an
+     * application's store that does not implement it loses its non-persistent entries at each start where the engine knows
+     * the network. Used with [Http3ClientConfig.networkId] only: the networks `connectionMigration` follows have no identity
+     * that survives a restart ([Http3ConnectionMigration.networks]) and are never stored.
+     */
+    @ExperimentalKuicksilverApi
+    public var networkId: String?
+        get() = null
+        set(value) {
+            // not kept
+        }
 }
 
 /**
@@ -61,6 +94,9 @@ public interface AltSvcStore {
  */
 public class InMemoryAltSvcStore : AltSvcStore {
     private val map = LinkedHashMap<String, List<AltSvcEntry>>()
+
+    @ExperimentalKuicksilverApi
+    override var networkId: String? = null
 
     override fun get(origin: String): List<AltSvcEntry> = map.touch(origin).orEmpty()
 
@@ -77,6 +113,11 @@ public class InMemoryAltSvcStore : AltSvcStore {
 
     override fun remove(origin: String) {
         map.remove(origin)
+    }
+
+    @ExperimentalKuicksilverApi
+    override fun clear() {
+        map.clear()
     }
 
     override fun clearNonPersistent() {
@@ -143,16 +184,37 @@ internal object AltSvcParser {
     internal fun isConnectionTarget(h: String): Boolean =
         h.startsWith('[') || h.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' || it == '.' }
 
+    /**
+     * Whether [h] is a host an alternative may name, as the parser takes it ([isUriHost] and [isConnectionTarget]): a DNS
+     * name or IPv4 address of letters, digits, `-` and `.`, or an IPv6 address — in brackets when [bracketed] (an origin's
+     * host), without them otherwise (an entry's [AltSvcEntry.host]). Never empty.
+     */
+    internal fun isAltHost(
+        h: String,
+        bracketed: Boolean,
+    ): Boolean {
+        if (h.isEmpty() || h.length > 255) return false
+        if (':' in h || h.startsWith('[')) return isUriHost(if (bracketed) h else "[$h]") && (!bracketed || h.startsWith('['))
+        return isUriHost(h) && isConnectionTarget(h)
+    }
+
     private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
-    /** The `h3` entries of [value] (other protocols are ignored, malformed entries skipped); null for `clear`. */
+    /**
+     * The `h3` entries of [value] (other protocols are ignored, malformed entries skipped), fresh for `ma` seconds from
+     * [generatedAtMillis]; null when the value contains `clear`. RFC 7838 section 3: "A field value containing the special
+     * value "clear" indicates that the origin requests all alternatives for that origin to be invalidated (including those
+     * specified in the same response, in case of an invalid reply containing both "clear" and alternative services)": any
+     * list element that is exactly `clear` (case-sensitive) clears, whatever else the value lists.
+     */
     fun parse(
         value: String,
-        nowMillis: Long,
+        generatedAtMillis: Long,
     ): List<AltSvcEntry>? {
-        if (value.trim() == "clear") return null
+        val elements = splitTopLevel(value, ',')
+        if (elements.any { it.trim(' ', '\t') == "clear" }) return null
         val out = ArrayList<AltSvcEntry>()
-        for (alt in splitTopLevel(value, ',')) {
+        for (alt in elements) {
             val parts = splitTopLevel(alt, ';').map { it.trim() }
             val head = parts.firstOrNull() ?: continue
             val eq = head.indexOf('=')
@@ -161,12 +223,13 @@ internal object AltSvcParser {
             val authority = unquote(head.substring(eq + 1).trim()) ?: continue
             val colon = authority.lastIndexOf(':')
             if (colon < 0) continue
-            val port = authority.substring(colon + 1).toIntOrNull()?.takeIf { it in 1..65_535 } ?: continue
+            val port = portOf(authority.substring(colon + 1)) ?: continue
             // RFC 7838 section 3: alt-authority is uri-host ":" port, uri-host being RFC 3986's host; anything else (a
             // space, a control character, a bare IPv6 address) makes the alternative malformed. The host reaches
             // connection targets and the engine's diagnostics log line, so it is checked here, not trusted
             val rawHost = authority.substring(0, colon)
-            if (!isUriHost(rawHost) || !isConnectionTarget(rawHost)) continue
+            // RFC 1035 section 2.3.4, "names 255 octets or less" (a bracketed IPv6 address is shorter): longer is no connection target
+            if (rawHost.length > 255 || !isUriHost(rawHost) || !isConnectionTarget(rawHost)) continue
             val host =
                 rawHost
                     .removePrefix("[")
@@ -202,9 +265,29 @@ internal object AltSvcParser {
                 }
             }
             if (bad || protocol != "h3") continue
-            out += AltSvcEntry(protocol, host, port, nowMillis + minOf(ma, Long.MAX_VALUE / 2000) * 1000, persist)
+            out += AltSvcEntry(protocol, host, port, generatedAtMillis + minOf(ma, Long.MAX_VALUE / 2000) * 1000, persist)
         }
         return out
+    }
+
+    /**
+     * An alt-authority port (RFC 7838 section 3: RFC 3986's `port = *DIGIT`) that can be connected to, 1..65535, or null.
+     * Only digits: `toIntOrNull` alone would take a sign (`+443`).
+     */
+    internal fun portOf(s: String): Int? =
+        s.takeIf { it.isNotEmpty() && it.length <= 5 && it.all { c -> c in '0'..'9' } }?.toInt()?.takeIf { it in 1..65_535 }
+
+    /**
+     * The response's age in seconds from its `Age` field lines (RFC 9111 section 5.1, which RFC 7838 section 3.1 points to
+     * for "determining the response age"): "a cache encountering a message with a list-based Age field value SHOULD use the
+     * first member of the field value, discarding subsequent ones", and "If the field value ... is invalid (e.g., it
+     * contains something other than a non-negative integer), a cache SHOULD ignore the field" (0 then, as `age_value` is
+     * "0, if not available", section 4.2.3). A value too large to represent is 2147483648 (section 1.2.2).
+     */
+    fun ageSeconds(values: List<String>): Long {
+        val first = values.firstOrNull()?.substringBefore(',')?.trim(' ', '\t') ?: return 0
+        if (first.isEmpty() || first.any { it !in '0'..'9' }) return 0
+        return first.toLongOrNull()?.coerceAtMost(MA_OVERFLOW_SECONDS) ?: MA_OVERFLOW_SECONDS
     }
 
     /**
@@ -275,48 +358,98 @@ internal object AltSvcParser {
  * privileged origin port (as Chromium does), and expired entries are ignored. A 421 changes nothing here: it is not
  * authoritative for the origin (RFC 9110 section 15.5.20), so its `Alt-Svc` is not learned, and only a 421 from an
  * alternative removes that alternative (RFC 7838 section 6), which the engine does as it knows where the 421 came from.
+ *
+ * Freshness runs on the wall clock ([clock], epoch milliseconds), deliberately: an entry's expiry is
+ * [AltSvcEntry.expiresAtEpochMillis], which a store keeps across restarts ([FileAltSvcStore]), where only wall time
+ * means the same before and after; a monotonic clock starts over with each process. A step of the system clock therefore
+ * moves every entry's end of freshness by the step (a forward step expires entries early, the safe side; a backward one
+ * keeps them longer, by at most the step). Broken marks, which no store keeps, end on a monotonic clock or the wall clock,
+ * whichever passes first ([BrokenAltSvc]).
  */
+@OptIn(ExperimentalKuicksilverApi::class)
 internal class AltSvcCache(
     private val store: AltSvcStore,
     private val clock: () -> Long,
 ) {
-    fun originOf(url: Url): String = originKeyOf(url)
+    fun originOf(url: Url): String = originKeyOf(url).also(::saw)
 
+    /**
+     * Learns the `Alt-Svc` field lines [values] of a response to [url]. Freshness counts from the response's generation
+     * (RFC 7838 section 3.1): the receipt time minus `corrected_age_value = age_value + response_delay` (RFC 9111 section
+     * 4.2.3, which "MAY be used as the corrected_initial_age"), [ageValues] being its `Age` field lines and
+     * [responseDelayMillis] the time from sending the request to receiving the response.
+     */
     fun onResponse(
         url: Url,
         status: Int,
         values: List<String>,
         verifiedTls: Boolean,
+        ageValues: List<String> = emptyList(),
+        responseDelayMillis: Long = 0,
     ) {
         if (!verifiedTls) return // threat-model 3.18: never learn an alternative from an unauthenticated response
         val origin = originOf(url)
         if (status == 421 || values.isEmpty()) return
-        val now = clock()
+        val generatedAt = clock() - AltSvcParser.ageSeconds(ageValues) * 1000 - responseDelayMillis.coerceAtLeast(0)
         val entries = ArrayList<AltSvcEntry>()
+        // the field lines are one list (RFC 9110 section 5.3): a `clear` in any of them clears
         for (v in values) {
             val parsed =
-                AltSvcParser.parse(v, now) ?: run {
+                AltSvcParser.parse(v, generatedAt) ?: run {
                     store.remove(origin)
                     return
                 }
             entries += parsed
         }
-        // RFC 9000 section 21.5: no alternative on the client's own networks unless the origin is there (AltSvcDestination)
-        val usable =
-            entries
-                .filter { !(url.port < 1024 && it.port >= 1024) && AltSvcDestination.allowed(url.host, it.host) }
-                .take(MAX_ENTRIES_PER_ORIGIN)
+        val usable = entries.filter { admissible(url, it) }.take(MAX_ENTRIES_PER_ORIGIN)
         if (usable.isEmpty()) store.remove(origin) else store.put(origin, usable)
     }
 
-    /** A live `h3` alternative of the origin of [url], or null. */
-    fun h3For(url: Url): AltSvcEntry? {
+    /**
+     * The `h3` alternative of the origin of [url] to use, or null: the first fresh one (in the server's order of
+     * preference, RFC 7838 section 3) that [usable] accepts, else the first fresh one. The engine passes "not marked
+     * broken": RFC 7838 section 2.4 says a client "SHOULD use that alternative service for all requests to the associated
+     * origin as soon as it is available, provided the alternative service information is fresh", and after a failure "MAY
+     * fall back to using the origin or another alternative service"; when every fresh alternative is broken, the first one
+     * comes back and its broken mark sends the request to TCP.
+     */
+    fun h3For(
+        url: Url,
+        usable: (AltSvcEntry) -> Boolean = { true },
+    ): AltSvcEntry? {
         val now = clock()
-        return store.get(originOf(url)).firstOrNull {
-            it.protocol == "h3" &&
-                it.expiresAtEpochMillis > now
-        }
+        // a store kept elsewhere (a file, the application's own) is checked as the header was: what the parser and
+        // [admissible] refuse is never used, whoever wrote it
+        val fresh =
+            store.get(originOf(url)).filter {
+                it.protocol == "h3" &&
+                    it.expiresAtEpochMillis > now &&
+                    AltSvcParser.portOf(it.port.toString()) != null &&
+                    (it.host == null || AltSvcParser.isAltHost(it.host, bracketed = false)) &&
+                    admissible(url, it)
+            }
+        return fresh.firstOrNull(usable) ?: fresh.firstOrNull()
     }
+
+    /**
+     * Whether [entry] may serve the origin of [url]: an unprivileged alternative port is refused for a privileged origin
+     * port (as Chromium does), and no alternative is on the client's own networks unless the origin is there (RFC 9000
+     * section 21.5, [AltSvcDestination]).
+     */
+    private fun admissible(
+        url: Url,
+        entry: AltSvcEntry,
+    ): Boolean = !(url.port < 1024 && entry.port >= 1024) && AltSvcDestination.allowed(url.host, entry.host)
+
+    /**
+     * An ALTSVC frame (RFC 7838 section 4) for the origin of [url] on an HTTP/2 connection over verified TLS: "Receiving an
+     * ALTSVC frame is semantically equivalent to receiving an Alt-Svc header field", so [value] replaces the origin's
+     * alternatives or clears them as a header does; freshness counts from receipt (a frame has no age).
+     */
+    fun onAltSvcFrame(
+        url: Url,
+        value: String,
+    ) = onResponse(url, 200, listOf(value), verifiedTls = true)
 
     /** Forgets [entry] of the origin of [url] and keeps its other alternatives: a 421 from [entry] (RFC 7838 section 6). */
     fun removeAlternative(
@@ -330,6 +463,46 @@ internal class AltSvcCache(
 
     fun onNetworkChanged(clearNonPersistent: Boolean) {
         if (clearNonPersistent) store.clearNonPersistent()
+    }
+
+    /** The network the store's entries were learned on ([AltSvcStore.networkId]). */
+    var network: String?
+        get() = store.networkId
+        set(value) {
+            if (store.networkId != value) store.networkId = value
+        }
+
+    /** Forgets the alternatives of [origin] (an [originOf] key), or of every origin when null (RFC 7838 section 9.4). */
+
+    /**
+     * Forgets the alternatives of [origin] (an [originOf] key), or of every origin when null (RFC 7838 section 9.4); false
+     * when the store has no `clear()` of its own ([AltSvcStore.clear]) and only the origins seen during this run were removed.
+     */
+    fun clear(origin: String?): Boolean {
+        if (origin != null) {
+            store.remove(origin)
+            seen.remove(origin)
+            return true
+        }
+        val complete =
+            try {
+                store.clear()
+                true
+            } catch (_: UnsupportedOperationException) {
+                for (o in seen) store.remove(o)
+                false
+            }
+        seen.clear()
+        return complete
+    }
+
+    /** The origins this cache asked the store about during this run, most recent last: what [clear] can remove one by one. */
+    private val seen = LinkedHashSet<String>()
+
+    private fun saw(origin: String) {
+        seen.remove(origin)
+        seen += origin
+        while (seen.size > MAX_ORIGINS) seen.remove(seen.first())
     }
 
     init {
@@ -349,6 +522,41 @@ internal class AltSvcCache(
         /** Origins kept by the built-in stores and broken marks; the least recently used go first. */
         const val MAX_ORIGINS: Int = 1000
     }
+}
+
+/**
+ * Forgets what this client learned about the alternative services of [origin] (any URL of it: `https://host:port`), or of
+ * every origin when [origin] is null: the cached `Alt-Svc` alternatives in [Http3ClientConfig.altSvcStore] (persistent ones
+ * too, and from the store file of a [FileAltSvcStore] before this returns), the alternatives marked broken, and the RTTs
+ * kept for the HTTP/3 head start; without an origin also the networks where QUIC was seen working. RFC 7838 section 9.4:
+ * "In a user agent, any alternative service information MUST be removed when origin-specific data is cleared (typically,
+ * when cookies [RFC6265] are cleared)": call it wherever the application clears cookies or other site data. Open HTTP/3
+ * connections are not closed (`closeHttp3Connections()` does that); the next `Alt-Svc` the origin sends is learned again.
+ * Returns true when everything asked for was removed; false when the client's engine is not Kuicksilver (nothing was done),
+ * or when, without an origin, the [AltSvcStore] does not implement [AltSvcStore.clear]: then only the origins seen since the
+ * client started were removed from it (a warning is logged) and the application should clear the store's own backing data,
+ * or remove the origins it knows with [origin], to meet section 9.4.
+ */
+@ExperimentalKuicksilverApi
+public suspend fun HttpClient.clearAlternativeServices(origin: Url? = null): Boolean =
+    (engine as? KuicksilverEngine)?.clearAlternativeServices(origin) ?: false
+
+/**
+ * Whether [origin], the Origin field of an ALTSVC frame on stream 0 (the ASCII serialization of an origin, RFC 6454 section
+ * 6.2: the scheme, then "Append the string "://" to result", "Append the host part of the origin triple to result", and
+ * "If the port part of the origin triple is different from the default port for the protocol given by the scheme part of
+ * the origin triple", ":" and the port), names the origin of [url]: RFC 7838 section 4,
+ * "An association with an origin that the client does not consider authoritative for the current connection MUST be
+ * ignored". The client's HTTP/2 connections serve one origin each (no coalescing), so only that one is authoritative.
+ * Scheme and host compare case-insensitively; an explicit default port is taken too.
+ */
+internal fun isAltSvcFrameOrigin(
+    origin: String,
+    url: Url,
+): Boolean {
+    val base = "${url.protocol.name}://${url.host}".lowercase()
+    val o = origin.lowercase()
+    return o == "$base:${url.port}" || (url.port == url.protocol.defaultPort && o == base)
 }
 
 /** Moves [key] to the most recently used end of this insertion-ordered map and returns its value. */

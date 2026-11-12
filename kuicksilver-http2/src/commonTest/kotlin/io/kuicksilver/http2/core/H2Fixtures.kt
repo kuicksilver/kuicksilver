@@ -32,7 +32,7 @@ internal class RawH2Peer(
 ) {
     val core = H2ConnectionCore(role, settings, now, enableConnectProtocol)
     private val clientCore = role == Role.CLIENT
-    private val dec = FrameDecoder(H2.MAX_MAX_FRAME_SIZE)
+    private val dec = FrameDecoder(H2.MAX_MAX_FRAME_SIZE).also { it.altSvcFrames = !clientCore } // we are the client then
     private var prefaceLeft = if (clientCore) H2.PREFACE.size else 0
     val hpackOut = HpackEncoder()
     private val hpackIn = HpackDecoder(4096, 1 shl 20)

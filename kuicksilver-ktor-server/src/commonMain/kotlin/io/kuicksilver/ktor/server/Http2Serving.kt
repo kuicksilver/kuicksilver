@@ -18,6 +18,7 @@ import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.bytesSent
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.server.h1.httpDateNow
+import io.kuicksilver.ktor.server.h2.H2AltSvc
 import io.kuicksilver.ktor.server.h2.H2Call
 import io.kuicksilver.ktor.server.h2.WebSocketOverH2
 import io.kuicksilver.tls.Certificate
@@ -114,6 +115,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
     draining: Job,
 ) {
     val local = sock.localAddress as? InetSocketAddress
+    val connAltSvc = H2AltSvc(altSvc) // RFC 7838 sections 3, 4: the field on every response, a frame per origin and value
     var conn: H2ServerConnection? = null
     try {
         coroutineScope {
@@ -170,7 +172,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                 // a request's failure is its own (handleH2 catches it; the supervisor is the second line)
                 supervisorScope {
                     for (r in c.requests) {
-                        launch { handleH2(r, local, remote, peer, altSvc, idle, sendTimeout) }
+                        launch { handleH2(r, local, remote, peer, connAltSvc, idle, sendTimeout) }
                     }
                 }
             }
@@ -284,7 +286,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     local: InetSocketAddress?,
     remote: InetSocketAddress?,
     peer: List<Certificate>,
-    altSvc: () -> String?,
+    altSvc: H2AltSvc,
     bodyIdle: Duration,
     sendTimeout: Duration,
 ) {

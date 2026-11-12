@@ -180,7 +180,11 @@ public class KuicksilverApplicationEngine(
         /** The PEM file [clientTrust] was read from, set by `EngineMain`; watched with [identityReloadInterval]. */
         internal var clientCaFile: String? = null
 
-        /** Announce HTTP/3 with `Alt-Svc: h3=":<port>"; ma=86400` on HTTP/1.1 responses over TLS (on by default). */
+        /**
+         * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 and HTTP/2
+         * responses, and on HTTP/2 also an ALTSVC frame per origin and value on each connection, refreshed every 12 hours
+         * (RFC 7838 sections 3 and 4).
+         */
         public var altSvc: Boolean = true
 
         /** Serve HTTP/3 on UDP on the port of every TLS connector. */

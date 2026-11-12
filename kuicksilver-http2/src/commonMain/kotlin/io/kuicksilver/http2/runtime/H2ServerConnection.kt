@@ -235,6 +235,13 @@ public class H2ServerStream internal constructor(
     ): Unit = rt.sendBody(s, source, stallMillis, stallError, end)
 
     /**
+     * Sends an ALTSVC frame (RFC 7838 section 4) on this stream: [value], an `Alt-Svc` field value of visible ASCII, applies
+     * to the origin of the request. Before the response head it goes out ahead of it. Returns false, sending nothing, when
+     * the stream can no longer send; IllegalArgumentException for a value that is not visible ASCII or does not fit one frame.
+     */
+    public fun altSvc(value: String): Boolean = rt.altSvc(s, value)
+
+    /**
      * The stream carries a tunnel (a CONNECT, an RFC 8441 WebSocket among them): its DATA gets one frame in 16 whatever its
      * urgency (RFC 9218 section 10.1). False once the stream is gone.
      */

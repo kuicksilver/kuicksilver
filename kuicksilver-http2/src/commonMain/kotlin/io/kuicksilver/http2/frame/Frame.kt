@@ -103,6 +103,16 @@ internal sealed interface Frame {
         override val streamId: Int get() = 0
     }
 
+    /**
+     * ALTSVC (RFC 7838 section 4), decoded only where the decoder takes it (a client): [origin] is the Origin field (empty
+     * when its length is 0), [value] the Alt-Svc-Field-Value; both are octets, one character each (ISO 8859-1).
+     */
+    class AltSvc(
+        override val streamId: Int,
+        val origin: String,
+        val value: String,
+    ) : Frame
+
     /** A frame of an unknown type (section 5.5): its payload was skipped without being buffered. */
     class Unknown(
         override val streamId: Int,

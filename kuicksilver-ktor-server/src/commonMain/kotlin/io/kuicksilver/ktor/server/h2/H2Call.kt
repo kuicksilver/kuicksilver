@@ -46,7 +46,7 @@ internal class H2Call(
     override val coroutineContext: CoroutineContext,
     bodyIdle: Duration,
     sendStallMillis: Long,
-    altSvc: () -> String?,
+    altSvc: H2AltSvc,
     /** An Extended CONNECT for `websocket`: presented as Ktor's HTTP/1.1 upgrade request (RFC 8441, [WebSocketOverH2]). */
     webSocket: Boolean,
     engineDispatcher: CoroutineContext,

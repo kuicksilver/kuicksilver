@@ -133,6 +133,22 @@ internal object FrameEncoder {
             fragment.size,
         ).also { fragment.copyInto(it, 9) }
 
+    /**
+     * ALTSVC (RFC 7838 section 4): `Origin-Len (16)`, [origin], [value]; no flags ("The ALTSVC frame does not define any
+     * flags"). Each character is one octet (ISO 8859-1).
+     */
+    fun altSvc(
+        streamId: Int,
+        origin: String,
+        value: String,
+    ): ByteArray =
+        frame(FrameType.ALTSVC, 0, streamId, 2 + origin.length + value.length).also {
+            it[9] = (origin.length ushr 8).toByte()
+            it[10] = origin.length.toByte()
+            for (i in origin.indices) it[11 + i] = origin[i].code.toByte()
+            for (i in value.indices) it[11 + origin.length + i] = value[i].code.toByte()
+        }
+
     /** Any frame, for tests and extension types: [payload] as is. */
     fun raw(
         type: Int,

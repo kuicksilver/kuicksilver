@@ -92,7 +92,7 @@ internal class H2UpgradeResponse(
     private val userDispatcher: CoroutineContext,
     /** The engine's `webSocketMaxMessageSize`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
     private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
-) : H2Response(call, h2, sendStallMillis, altSvc = { null }) {
+) : H2Response(call, h2, sendStallMillis, altSvc = H2AltSvc({ null })) {
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
         // before anything is committed, so the refusal can still be an ordinary error response: a handshake without one
         // sec-websocket-version 13 gets 400 with `sec-websocket-version: 13` instead of the upgrade (RFC 8441 section 5,

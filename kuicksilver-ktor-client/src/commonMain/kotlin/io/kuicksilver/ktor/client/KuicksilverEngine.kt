@@ -27,6 +27,7 @@ import io.kuicksilver.ktor.client.dns.HttpsRecords
 import io.kuicksilver.ktor.client.dns.HttpsResolution
 import io.kuicksilver.ktor.client.dns.httpsQueryName
 import io.kuicksilver.ktor.client.h1.H1Pool
+import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
 import io.kuicksilver.ktor.client.h3.H3Pool
@@ -97,6 +98,39 @@ internal class KuicksilverEngine(
     private val engineScope = CoroutineScope(coroutineContext + engineJob)
 
     /**
+     * The networks `connectionMigration` follows ([Http3ConnectionMigration.networks]), the engine's network while `networkId`
+     * is not set; null when there is no such source.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val followedNetworks: kotlinx.coroutines.flow.Flow<Any?>? =
+        if (config.http3.networkIdSet) null else config.http3.connectionMigration?.networks
+
+    /** The last network [followedNetworks] reported (`toString()`), once it reported one ([followedNetworkKnown]). */
+    @kotlin.concurrent.Volatile
+    private var followedNetwork: String? = null
+
+    @kotlin.concurrent.Volatile
+    private var followedNetworkKnown = false
+
+    /** Completed by the first value of [followedNetworks], or by its end: requests wait a moment for it ([checkNetwork]). */
+    private val firstFollowedNetwork = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /**
+     * Until when requests wait for [firstFollowedNetwork]: [FIRST_NETWORK_WAIT] after the engine was created, one deadline
+     * for all of them (a source that says nothing, offline or without replay, delays no request past it). Internal for tests.
+     */
+    internal var firstNetworkDeadline: kotlin.time.TimeMark =
+        kotlin.time.TimeSource.Monotonic
+            .markNow() + FIRST_NETWORK_WAIT
+
+    /** Requests that waited for [firstFollowedNetwork]; internal for tests. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val firstNetworkWaits = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /** How many values of [followedNetworks] the engine has processed; internal for tests. */
+    internal val followedNetworkUpdates = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    /**
      * The HTTPS record lookups (`http3.httpsRecords`, RFC 9460), null when off; a lookup lives at most the connect timeout
      * (30 s when that is longer), so a resolver that never answers holds nothing for long. Internal for tests.
      */
@@ -105,8 +139,18 @@ internal class KuicksilverEngine(
         minOf(config.connectTimeout, MAX_HTTPS_RECORD_QUERY).let { timeout ->
             config.http3.httpsRecords
                 .lookup(timeout)
-                // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId)
-                ?.let { HttpsRecords(it, engineScope, timeout, ::getTimeMillis, caching = config.http3.networkIdSet) }
+                // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId, or the
+                // networks connectionMigration follows)
+                ?.let {
+                    HttpsRecords(
+                        it,
+                        engineScope,
+                        timeout,
+                        ::getTimeMillis,
+                        caching =
+                            followedNetworks != null || config.http3.networkIdSet,
+                    )
+                }
         }
     private val httpsRecords: HttpsRecords? get() = httpsRecordsForTest
 
@@ -134,7 +178,7 @@ internal class KuicksilverEngine(
 
     /** `proxyResolver`'s answers per route ([proxyFor]). */
     internal val proxies = ProxyRouting(config, events.logger)
-    internal val h1 = H1Pool(config, selector, events) // internal for tests (the engine's session cache)
+    internal val h1 = H1Pool(config, selector, events, altSvcFrame = ::onAltSvcFrame) // internal for tests (the engine's session cache)
 
     // internal for tests (0-RTT reconnects); one WebSocket CONNECTING per host over HTTP/1.1 and HTTP/3 together
     internal val h3 = H3Pool(config, events, migrationScope = migrationScope, webSocketConnecting = h1.webSocketConnecting)
@@ -145,7 +189,7 @@ internal class KuicksilverEngine(
     internal val altSvcWriteLock = Mutex()
 
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
-    internal val brokenAltSvc = BrokenAltSvc { getTimeMillis() }
+    internal val brokenAltSvc = BrokenAltSvc(monotonicMillis(), ::getTimeMillis) // ends on either: wall steps, deep sleep
     private val race = ProtocolRace(config.http3.hardDelay)
     private val srtt = LinkedHashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection; LRU-bounded
     private var lastNetwork: String? = null
@@ -158,6 +202,56 @@ internal class KuicksilverEngine(
     private val reaper: Job = engineScope.launch(CoroutineName("kuicksilver-pool-reaper")) { reapIdleConnections(h1, h3, config) }
 
     init {
+        followedNetworks?.let { networks ->
+            migrationScope.launch(CoroutineName("kuicksilver-network-follower")) {
+                var failure: Exception? = null
+                try {
+                    networks.collect { n ->
+                        followedNetwork = n?.toString()
+                        followedNetworkKnown = true
+                        try {
+                            checkNetwork()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // the store failed (an application's own AltSvcStore): this change is lost, the next is followed
+                            runCatching {
+                                if (events.logger.isEnabled(LogLevel.Warn)) {
+                                    events.logger.log(LogLevel.Warn, "a network change could not be applied to the Alt-Svc store", e)
+                                }
+                            }
+                        }
+                        // RFC 9460 section 12: "Clients MUST ensure that their DNS cache is partitioned for each local network,
+                        // or flushed on network changes": every update the source reports flushes it, also one whose value
+                        // equals the last (an update of the network that the value does not tell apart); the Alt-Svc rule
+                        // above (RFC 7838 section 2.2) looks at changed values only
+                        httpsRecords?.onNetworkChanged()
+                        firstFollowedNetwork.complete(Unit)
+                        followedNetworkUpdates.value++
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failure = e
+                }
+                // the source failed (on Android, no more network callbacks) or ended: the engine no longer sees network
+                // changes, so it keeps no HTTPS records of its own any more (RFC 9460 section 12)
+                followedNetworkKnown = false
+                firstFollowedNetwork.complete(Unit)
+                httpsRecords?.stopCaching()
+                runCatching {
+                    if (events.logger.isEnabled(LogLevel.Info)) {
+                        events.logger.log(
+                            LogLevel.Info,
+                            "the network source of connectionMigration ${if (failure != null) "failed" else "ended"}; " +
+                                "network changes are no longer seen",
+                            failure,
+                        )
+                    }
+                }
+                followedNetworkUpdates.value++
+            }
+        }
         val requests = coroutineContext[Job]!!
         cleanup =
             GlobalScope.launch(super.coroutineContext, start = CoroutineStart.ATOMIC) {
@@ -366,9 +460,7 @@ internal class KuicksilverEngine(
             val r = tcp(data, callContext, reason, d, dns = upgradeDns ?: config.newRequestDns(), proxy = proxy)
             // switched off, Auto keeps learning Alt-Svc, so switching back needs no warm-up
             if (disabled && proxy == null && config.http3.discovery == Http3DiscoveryMode.Auto) {
-                altSvcUpdate {
-                    altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
-                }
+                learnAltSvc(url, r, verifiedTls = true)
             }
             return r
         }
@@ -444,27 +536,202 @@ internal class KuicksilverEngine(
     internal suspend fun closeHttp3Connections() = h3.goAwayAll(engineScope)
 
     /**
-     * A new network (`networkId`) forgets broken marks, QUIC confirmation, the HTTPS records and, if asked, non-persistent
-     * alternatives.
+     * `HttpClient.clearAlternativeServices(origin)` (RFC 7838 section 9.4): the cached alternatives, broken marks and RTT of
+     * the origin of [origin], or of every origin; the store's file is written before this returns.
+     */
+    internal suspend fun clearAlternativeServices(origin: io.ktor.http.Url?): Boolean {
+        val key = origin?.let(::originKey)
+        val complete =
+            altSvcUpdate {
+                brokenAltSvc.clear(key)
+                if (key == null) srtt.clear() else srtt.remove(key)
+                altSvc.clear(key)
+            }
+        if (!complete) {
+            runCatching {
+                if (events.logger.isEnabled(LogLevel.Warn)) {
+                    events.logger.log(
+                        LogLevel.Warn,
+                        "clearAlternativeServices: the AltSvcStore does not implement clear(); the origins seen since the client " +
+                            "started were removed, entries of other origins it kept from earlier may remain (RFC 7838 section 9.4)",
+                        null,
+                    )
+                }
+            }
+        }
+        return complete
+    }
+
+    /**
+     * A new network (`networkId`, else the networks `connectionMigration` follows) forgets broken marks, QUIC confirmation,
+     * the HTTPS records and, if asked, non-persistent alternatives (RFC 7838 section 2.2). The first network the engine sees
+     * is compared with the one the store's entries were learned on ([AltSvcStore.networkId], kept across restarts by
+     * [FileAltSvcStore]) when it comes from `networkId`. A network of the followed source has no identity that is stable
+     * across restarts (an Android network handle is a number the system reuses, an Apple path key an interface), so it is
+     * never stored: at its first value the engine takes the network as changed, as it does for what it learned before that
+     * value came (requests wait for it until [firstNetworkDeadline], one deadline for all). Without either source the engine knows no network: null,
+     * and nothing is compared.
      */
     private suspend fun checkNetwork(): String? {
+        if (!config.http3.networkIdSet) {
+            if (followedNetworks == null) return null
+            if (!followedNetworkKnown && !firstFollowedNetwork.isCompleted) {
+                val left = -firstNetworkDeadline.elapsedNow()
+                if (left.isPositive()) {
+                    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                    firstNetworkWaits.addAndFetch(1)
+                    withTimeoutOrNull(left) { firstFollowedNetwork.await() }
+                }
+            }
+            if (!followedNetworkKnown) return null
+        }
         var changed = false
         val network =
             altSvcUpdate {
-                val id = config.http3.networkId()
-                if (networkSeen &&
-                    id != lastNetwork
-                ) {
-                    brokenAltSvc.onNetworkChanged()
+                val fromNetworkId = config.http3.networkIdSet
+                val id = if (fromNetworkId) config.http3.networkId() else followedNetwork
+                if (networkSeen) {
+                    if (id != lastNetwork) {
+                        brokenAltSvc.onNetworkChanged()
+                        altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
+                        changed = true
+                    }
+                } else if (!fromNetworkId || id != altSvc.network) {
+                    // learned on another network, on one nobody recorded, or before the followed source said which one
+                    // (RFC 7838 section 3.1: "cached alternative services will be cleared when the client detects a network
+                    // change"); the HTTPS records kept meanwhile go too
                     altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
-                    changed = true
+                    changed = !fromNetworkId
                 }
                 networkSeen = true
                 lastNetwork = id
+                if (fromNetworkId) altSvc.network = id
                 id
             }
         if (changed) httpsRecords?.onNetworkChanged()
         return network
+    }
+
+    /** One received ALTSVC frame waiting to be learned: [seq] orders it among all frames of this engine. */
+    private class PendingAltSvcFrame(
+        val url: io.ktor.http.Url,
+        val value: String,
+        val seq: Long,
+    )
+
+    /**
+     * The latest ALTSVC frame per origin not yet learned (at most [AltSvcCache.MAX_ORIGINS] origins, the eldest dropped):
+     * a newer frame for an origin replaces the one waiting, so a flood holds one value per origin, not one per frame.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val pendingAltSvcFrames = kotlin.concurrent.atomics.AtomicReference<Map<String, PendingAltSvcFrame>>(emptyMap())
+
+    /** Whether the one coroutine that learns [pendingAltSvcFrames] runs. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val altSvcFrameLearner = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val altSvcFrameSeq = kotlin.concurrent.atomics.AtomicLong(0)
+
+    /** The sequence number of the last ALTSVC frame received ([onAltSvcFrame]); internal for tests. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val altSvcFramesReceived: Long get() = altSvcFrameSeq.load()
+
+    /** The sequence number up to which ALTSVC frames are learned (or superseded by a later one); internal for tests. */
+    internal val altSvcFramesApplied = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** ALTSVC frames waiting to be learned; internal for tests. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val altSvcFramesWaiting: Int get() = pendingAltSvcFrames.load().size
+
+    /**
+     * An ALTSVC frame (RFC 7838 section 4) from an HTTP/2 connection to the origin of [url]: learned as an `Alt-Svc` header
+     * of a response is, in [Http3DiscoveryMode.Auto] (the mode that learns), and never through a proxy (the pool passes none).
+     * Called on the connection's reader without blocking: the frame waits in [pendingAltSvcFrames], replacing an older one
+     * of its origin, and one coroutine learns the waiting frames in order, so the last frame an origin sent is the one that
+     * holds (an `h3` then a `clear` ends cleared) and a flood costs no more than one value per origin. Internal for tests.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal fun onAltSvcFrame(
+        url: io.ktor.http.Url,
+        value: String,
+    ) {
+        if (config.http3.discovery != Http3DiscoveryMode.Auto) return
+        val origin = originKey(url)
+        while (true) {
+            val m = pendingAltSvcFrames.load()
+            val next = LinkedHashMap(m)
+            next.remove(origin)
+            next[origin] = PendingAltSvcFrame(url, value, altSvcFrameSeq.addAndFetch(1))
+            next.evictEldest(AltSvcCache.MAX_ORIGINS)
+            if (pendingAltSvcFrames.compareAndSet(m, next)) break
+        }
+        if (altSvcFrameLearner.compareAndSet(false, true)) {
+            engineScope.launch(CoroutineName("kuicksilver-altsvc-frames")) { learnAltSvcFrames() }
+        }
+    }
+
+    /** The one learner of [pendingAltSvcFrames]: takes them all, learns them in order of arrival, until none waits. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private suspend fun learnAltSvcFrames() {
+        var done = false
+        try {
+            while (true) {
+                val batch = pendingAltSvcFrames.exchange(emptyMap())
+                if (batch.isEmpty()) {
+                    altSvcFrameLearner.store(false)
+                    done = true
+                    // a frame that came after the exchange and found the learner still marked running is taken here
+                    if (pendingAltSvcFrames.load().isEmpty() || !altSvcFrameLearner.compareAndSet(false, true)) return
+                    done = false
+                    continue
+                }
+                val frames = batch.values.sortedBy { it.seq }
+                val failures = ArrayList<Exception>()
+                altSvcUpdate {
+                    for (f in frames) {
+                        // a store that throws (an application's own) loses this frame, not the ones after it
+                        try {
+                            altSvc.onAltSvcFrame(f.url, f.value)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            failures += e
+                        }
+                    }
+                }
+                failures.firstOrNull()?.let { e ->
+                    runCatching {
+                        if (events.logger.isEnabled(LogLevel.Warn)) {
+                            events.logger.log(LogLevel.Warn, "${failures.size} ALTSVC frame(s) could not be stored", e)
+                        }
+                    }
+                }
+                altSvcFramesApplied.value = maxOf(altSvcFramesApplied.value, frames.last().seq)
+            }
+        } finally {
+            // cancelled or failed: the next frame starts a learner again
+            if (!done) altSvcFrameLearner.store(false)
+        }
+    }
+
+    /**
+     * Learns the `Alt-Svc` of [r], the response to [url] (RFC 7838 section 3): freshness counts from the response's
+     * generation, its `Age` and the time it took (section 3.1, [AltSvcCache.onResponse]).
+     */
+    private suspend fun learnAltSvc(
+        url: io.ktor.http.Url,
+        r: HttpResponseData,
+        verifiedTls: Boolean,
+    ) = altSvcUpdate {
+        altSvc.onResponse(
+            url,
+            r.statusCode.value,
+            r.headers.getAll("Alt-Svc").orEmpty(),
+            verifiedTls,
+            ageValues = r.headers.getAll(HttpHeaders.Age).orEmpty(),
+            responseDelayMillis = getTimeMillis() - r.requestTime.timestamp,
+        )
     }
 
     /**
@@ -682,7 +949,9 @@ internal class KuicksilverEngine(
         d: ProtocolDiagnostics,
     ): HttpResponseData {
         val url = data.url
-        val alt = altSvcUpdate { altSvc.h3For(url) }
+        val originKey = originKey(url)
+        // a broken alternative is passed over for the next fresh one (RFC 7838 section 2.4)
+        val alt = altSvcUpdate { altSvc.h3For(url) { brokenAltSvc.brokenReason(originKey, "${it.host ?: url.host}:${it.port}") == null } }
         // the origin's HTTPS records (RFC 9460), when looked up: SVCB resolution decides where to connect (section 3)
         val records = httpsRecords
         if (records != null && !isIpLiteral(url.host)) return autoWithRecords(data, callContext, webSocket, network, d, records, alt)
@@ -697,14 +966,7 @@ internal class KuicksilverEngine(
                 // the origin's Alt-Svc on any answer, over HTTP/3 as over HTTP/1.1 (broken alternative, lost race, fallback): a
                 // new list or `clear` replaces the cached one (RFC 7838 section 3); a 421 is not authoritative and changes
                 // nothing (RFC 9110 section 15.5.20), except that one from the alternative removes it (below, RFC 7838 section 6)
-                altSvcUpdate {
-                    altSvc.onResponse(
-                        url,
-                        r.statusCode.value,
-                        r.headers.getAll("Alt-Svc").orEmpty(),
-                        verifiedTls = url.protocol.isSecure(),
-                    )
-                }
+                learnAltSvc(url, r, verifiedTls = url.protocol.isSecure())
                 if (r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
                 altSvcUpdate { altSvc.removeAlternative(url, alt) }
                 if (!data.body.isReplayable()) {
@@ -724,9 +986,7 @@ internal class KuicksilverEngine(
                 if (alt != null && webSocket && !misdirected) ProtocolReason.WebSocket else ProtocolReason.NoAlternative,
                 d,
             ) { if (misdirected && d.fallback != FallbackReason.H2Refused) d.fallback = FallbackReason.MisdirectedRequest }
-        altSvcUpdate {
-            altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
-        }
+        learnAltSvc(url, r, verifiedTls = url.protocol.isSecure())
         return r
     }
 
@@ -899,9 +1159,7 @@ internal class KuicksilverEngine(
             if (tcpDns != null) triedTcp += tcpKey!!
             try {
                 val r = attempt(a, h3t, tcpDns, data, callContext, network, d, dns, webSocket, altAuthority)
-                altSvcUpdate {
-                    altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
-                }
+                learnAltSvc(url, r, verifiedTls = true)
                 // a 421 from an Alt-Svc alternative removes it (RFC 7838 section 6); the request goes on without it
                 if (!a.altSvc || alt == null || r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
                 altSvcUpdate { altSvc.removeAlternative(url, alt) }
@@ -924,9 +1182,7 @@ internal class KuicksilverEngine(
                 d,
                 dns = dns,
             ) { if (misdirected && d.fallback != FallbackReason.H2Refused) d.fallback = FallbackReason.MisdirectedRequest }
-        altSvcUpdate {
-            altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
-        }
+        learnAltSvc(url, r, verifiedTls = true)
         return r
     }
 
@@ -1262,6 +1518,13 @@ internal val MAX_HTTPS_RECORD_EXTRA_WAIT = 1.seconds
 
 /** The longest an HTTPS record lookup runs, whatever the connect timeout. */
 internal val MAX_HTTPS_RECORD_QUERY = 30.seconds
+
+/**
+ * How long after the engine's creation requests wait for the first value of the networks `connectionMigration` follows
+ * (the system answers at once: Android's default-network callback when a network is up, Apple's path monitor); past it
+ * they go on without a known network and without waiting.
+ */
+internal val FIRST_NETWORK_WAIT = kotlin.time.Duration.parse("200ms")
 
 /** Whether [host] (a URL host) is an IP address, which has no HTTPS records: an IPv6 literal or a dotted IPv4 address. */
 internal fun isIpLiteral(host: String): Boolean =

@@ -58,7 +58,7 @@ internal class H2ConnectionCore(
     val enableConnectProtocol: Boolean = false,
 ) {
     internal val client = role == Role.CLIENT
-    private val decoder = FrameDecoder(settings.maxFrameSize, rejectPriorityUpdate = client)
+    private val decoder = FrameDecoder(settings.maxFrameSize, rejectPriorityUpdate = client).also { it.altSvcFrames = client }
 
     // section 4.3.1: both tables start at 4096; our own value holds once the peer acknowledged it
     internal val hpackIn =
@@ -335,6 +335,7 @@ internal class H2ConnectionCore(
             is Frame.GoAway -> onGoAway(f)
             is Frame.WindowUpdate -> onWindowUpdate(f, now)
             is Frame.PriorityUpdate -> onPriorityUpdate(f, now)
+            is Frame.AltSvc -> onAltSvc(f, now)
             is Frame.Unknown -> glitch(now, "unknown frame type ${f.type}") // section 5.5: ignored, but not for free
         }
     }
@@ -407,6 +408,25 @@ internal class H2ConnectionCore(
         checkListSize(fields)
         enqueue(s, OutItem.Fields(fields, endStream))
         if (endStream) localEnded(s)
+    }
+
+    /**
+     * A server's ALTSVC frame (RFC 7838 section 4) on [streamId], a request stream it can still send on: [value] (an
+     * `Alt-Svc` field value of ASCII characters) applies to the origin of that stream, so the Origin field is empty. Section
+     * 3: "When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame". It is queued with the control frames,
+     * ahead of the stream's next field block. Throws IllegalStateException on a client or a stream that cannot send, and
+     * IllegalArgumentException for a value that is not ASCII or does not fit one frame of the peer's size.
+     */
+    fun sendAltSvc(
+        streamId: Int,
+        value: String,
+    ) {
+        check(!client) { "ALTSVC is sent by servers only (RFC 7838 section 4)" }
+        val s = streams[streamId] ?: throw IllegalStateException("stream $streamId is closed")
+        check(canSend(s)) { "stream $streamId cannot send" }
+        require(value.all { it.code in 0x20..0x7e }) { "an Alt-Svc value is visible ASCII" }
+        require(2 + value.length <= peerMaxFrameSize) { "an ALTSVC frame of ${2 + value.length} bytes exceeds the peer's frame size" }
+        queueControl(FrameEncoder.altSvc(streamId, "", value))
     }
 
     /**

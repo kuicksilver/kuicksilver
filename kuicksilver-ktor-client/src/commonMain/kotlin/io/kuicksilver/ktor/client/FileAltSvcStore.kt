@@ -4,18 +4,24 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.util.date.getTimeMillis
 import io.ktor.util.logging.KtorSimpleLogger
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import kotlinx.io.Buffer
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.readLine
+import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlin.random.Random
 
 /**
  * An [AltSvcStore] kept in one text file (alternatives survive a restart, so the first request after a cold
  * start can already use HTTP/3). One record per line, tab-separated: origin, protocol, host (empty when the origin's),
- * port, expiry in epoch milliseconds, `1` when `persist=1`. The file is read once at construction (expired and
- * malformed records are dropped, at most 1000 origins of 8 alternatives are kept) and rewritten after every change
+ * port, expiry in epoch milliseconds, `1` when `persist=1`. The file is read once at construction: it is input like a
+ * header, so every field is checked again (the origin's `https://host:port` form, the protocol token, the host as the
+ * `Alt-Svc` parser takes it, the ports, the expiry, the persist flag) and a record failing a check is dropped, as is an
+ * expired one; at most 1000 origins of 8 alternatives are kept, and of a file over 8 MiB only the records in its first
+ * 8 MiB are read (a full store takes less than that). The
+ * engine also checks each entry it uses as it checks a header's. The file is rewritten after every change
  * through a uniquely named temporary file and an atomic move, so a crash leaves either the old or the new content
  * (on Android API 24-25, which lacks `java.nio.file`, the move is a `java.io.File.renameTo`, atomic on one filesystem).
  * A store that cannot be written keeps working in memory; the first failed write is logged as a warning.
@@ -28,6 +34,7 @@ import kotlin.random.Random
  * @param path the store file; it need not exist yet, and an unreadable file starts an empty store.
  * @param clock the current time in epoch milliseconds, used to drop expired records on load.
  */
+@OptIn(ExperimentalKuicksilverApi::class)
 public class FileAltSvcStore(
     private val path: Path,
     private val clock: () -> Long = { getTimeMillis() },
@@ -76,6 +83,25 @@ public class FileAltSvcStore(
         if (map.remove(origin) != null) changed()
     }
 
+    /**
+     * Kept in the file as its first line (`network`, a tab, the id's UTF-8 bytes in hex), when the id has at most 255 bytes; a
+     * file without that line, or with a damaged one, has none (and the network counts as unknown after a restart).
+     */
+    @ExperimentalKuicksilverApi
+    override var networkId: String? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            if (map.isNotEmpty() || persisted.isNotEmpty()) changed()
+        }
+
+    @ExperimentalKuicksilverApi
+    override fun clear() {
+        if (map.isEmpty() && persisted.isEmpty()) return
+        map.clear()
+        changed()
+    }
+
     override fun clearNonPersistent() {
         var changed = false
         for (k in map.keys.toList()) {
@@ -109,6 +135,8 @@ public class FileAltSvcStore(
         persisted = LinkedHashMap(map)
         val text =
             buildString {
+                // an id too long for its line's bound is not kept on disk: after a restart the network counts as unknown
+                networkId?.encodeToByteArray()?.takeIf { it.size <= MAX_FIELD }?.let { append("$NETWORK_RECORD\t${it.toHexString()}\n") }
                 for ((origin, entries) in map) {
                     for (e in entries) {
                         append(
@@ -124,26 +152,33 @@ public class FileAltSvcStore(
     private fun load() {
         if (!SystemFileSystem.exists(path)) return
         val now = clock()
-        val lines = ArrayList<String>()
         val maxLines = AltSvcCache.MAX_ORIGINS * AltSvcCache.MAX_ENTRIES_PER_ORIGIN
-        try {
-            SystemFileSystem.source(path).buffered().use { src ->
-                while (lines.size < maxLines) {
-                    lines += src.readLine() ?: break
+        val lines =
+            try {
+                SystemFileSystem.source(path).buffered().use { src ->
+                    // at most MAX_FILE_BYTES, as much as the file holds (no buffer of the limit's size up front), which a
+                    // full store never reaches: of a longer file the records up to the limit are read, not the line it cuts
+                    val b = Buffer()
+                    while (b.size < MAX_FILE_BYTES && src.readAtMostTo(b, MAX_FILE_BYTES - b.size) >= 0) {
+                        // reading
+                    }
+                    val cut = b.size == MAX_FILE_BYTES.toLong() && !src.exhausted()
+                    val all = b.readString().split('\n').map { it.removeSuffix("\r") }
+                    if (cut) all.dropLast(1) else all
                 }
-            }
-        } catch (_: Exception) {
-            return
-        } // an unreadable file is an empty store
-        for (line in lines) {
-            val f = line.split('\t')
-            if (f.size != 6 || f[0].isEmpty() || f[1].isEmpty()) continue
-            val port = f[3].toIntOrNull()?.takeIf { it in 1..65_535 } ?: continue
-            val expires = f[4].toLongOrNull() ?: continue
-            if (expires <= now) continue
-            val e = AltSvcEntry(f[1], f[2].ifEmpty { null }, port, expires, f[5] == "1")
-            val had = map.remove(f[0]).orEmpty()
-            map[f[0]] = if (had.size < AltSvcCache.MAX_ENTRIES_PER_ORIGIN) had + e else had
+            } catch (_: Exception) {
+                return
+            } // an unreadable file is an empty store
+        val records =
+            lines.firstOrNull()?.split('\t')?.takeIf { it.size == 2 && it[0] == NETWORK_RECORD }?.let { f ->
+                networkId = networkOf(f[1])
+                lines.drop(1) // the network line is no record: it does not cost the last one
+            } ?: lines
+        for (line in records.take(maxLines)) {
+            val (origin, e) = recordOf(line) ?: continue
+            if (e.expiresAtEpochMillis <= now) continue
+            val had = map.remove(origin).orEmpty()
+            map[origin] = if (had.size < AltSvcCache.MAX_ENTRIES_PER_ORIGIN) had + e else had
         }
         map.evictEldest(AltSvcCache.MAX_ORIGINS)
         persisted = LinkedHashMap(map)
@@ -174,8 +209,70 @@ public class FileAltSvcStore(
         }
     }
 
-    private companion object {
-        val LOG = KtorSimpleLogger("io.kuicksilver.ktor.client.FileAltSvcStore")
+    internal companion object {
+        private val LOG = KtorSimpleLogger("io.kuicksilver.ktor.client.FileAltSvcStore")
+
+        /**
+         * The origin and entry of one store record, or null when any field is not what the engine writes. The file is input
+         * like a header (threat-model 3.14, 3.18): written by an older version, edited by hand or by another program, it
+         * must not bring in what the `Alt-Svc` parser refuses. The origin is `https://host:port` (the engine's key,
+         * [originKeyOf]); the protocol an RFC 9110 token; the alternative's host empty (the origin's) or a connection
+         * target, an IPv6 address without its brackets; ports digits in 1..65535; the expiry digits; persist `0` or `1`.
+         * Where the engine may use an entry (the privileged-port and destination rules) is checked when it does
+         * ([AltSvcCache.h3For]), for every store.
+         */
+        internal fun recordOf(line: String): Pair<String, AltSvcEntry>? {
+            val f = line.split('\t')
+            if (f.size != 6) return null
+            // bounded fields (a DNS name has at most 253 characters, an ALPN id 255 bytes) keep a full store within the cap
+            if (f[0].length > 8 + MAX_FIELD + 6 || f[1].length > MAX_FIELD || f[2].length > MAX_FIELD) return null
+            val origin = f[0]
+            if (!origin.startsWith("https://")) return null
+            val authority = origin.removePrefix("https://")
+            val colon = authority.lastIndexOf(':')
+            if (colon <= 0) return null
+            AltSvcParser.portOf(authority.substring(colon + 1)) ?: return null
+            if (!AltSvcParser.isAltHost(authority.substring(0, colon), bracketed = true)) return null
+            val protocol = f[1]
+            if (protocol.isEmpty() || !protocol.all { it.isTchar() }) return null
+            val host = f[2]
+            if (host.isNotEmpty() && !AltSvcParser.isAltHost(host, bracketed = false)) return null
+            val port = AltSvcParser.portOf(f[3]) ?: return null
+            if (f[4].isEmpty() || f[4].length > 19 || f[4].any { it !in '0'..'9' }) return null
+            val expires = f[4].toLongOrNull() ?: return null
+            val persist =
+                when (f[5]) {
+                    "1" -> true
+                    "0" -> false
+                    else -> return null
+                }
+            return origin to AltSvcEntry(protocol, host.ifEmpty { null }, port, expires, persist)
+        }
+
+        /** RFC 9110 section 5.6.2 `tchar`. */
+        private fun Char.isTchar(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9' || this in "!#$%&'*+-.^_`|~"
+
+        /** The first field of the line that keeps [networkId]: no origin, so a version that does not know it skips it. */
+        private const val NETWORK_RECORD = "network"
+
+        /** The network id of its hex form, or null when [hex] is not one (lowercase digits, whole bytes, valid UTF-8). */
+        private fun networkOf(hex: String): String? {
+            if (hex.length % 2 != 0 || hex.any { it !in '0'..'9' && it !in 'a'..'f' }) return null
+            return runCatching { hex.hexToByteArray().decodeToString(throwOnInvalidSequence = true) }.getOrNull()
+        }
+
+        /**
+         * The longest protocol id and host a record may have: RFC 7301 section 3.1, `opaque ProtocolName<1..2^8-1>`; RFC 1035
+         * section 2.3.4, "names 255 octets or less" (the dotted text form of such a name is shorter).
+         */
+        private const val MAX_FIELD = 255
+
+        /**
+         * The most of a store file that is read. A full store takes less: 8000 records of at most 810 bytes (an origin of 269,
+         * a protocol and a host of 255 each, a port, an expiry of 19 digits, the flag, 5 tabs and the line end), 6 480 000
+         * bytes, plus a network line of at most 519.
+         */
+        internal const val MAX_FILE_BYTES: Int = 8 shl 20
     }
 }
 

@@ -36,6 +36,12 @@ internal class FrameDecoder(
     private var ready: Frame? = null
     private var pendingError: H2StreamError? = null
 
+    /**
+     * Decode ALTSVC frames (RFC 7838 section 4) into [Frame.AltSvc]; otherwise (a server: "A device acting as a server MUST
+     * ignore it") they are skipped as unknown. A malformed one (shorter than its Origin-Len says) is reported as unknown too.
+     */
+    var altSvcFrames: Boolean = false
+
     /** Payload bytes ever allocated by this decoder (a test hook: it grows only by frames that passed the length check). */
     var allocatedBytes: Long = 0
         private set
@@ -103,7 +109,8 @@ internal class FrameDecoder(
         }
         checkHeader()
         have = 0
-        skipping = type > FrameType.CONTINUATION && type != FrameType.PRIORITY_UPDATE
+        // PRIORITY_UPDATE is buffered on both roles (a client rejects it in checkHeader); ALTSVC only where taken (a client)
+        skipping = type > FrameType.CONTINUATION && type != FrameType.PRIORITY_UPDATE && !(type == FrameType.ALTSVC && altSvcFrames)
         if (!skipping && length > 0) {
             val first = minOf(length, H2.MIN_MAX_FRAME_SIZE)
             payload = ByteArray(first)
@@ -263,10 +270,33 @@ internal class FrameDecoder(
                 Frame.PriorityUpdate(readInt31(p, 0), p.decodeToString(4, n))
             }
 
+            FrameType.ALTSVC -> {
+                if (altSvcFrames) altSvc(id, flags, p, n) else Frame.Unknown(id, type, flags, n)
+            }
+
             else -> {
                 Frame.Unknown(id, type, flags, n)
             }
         }
+
+    /** RFC 7838 section 4: `Origin-Len (16)`, `Origin?`, then the Alt-Svc-Field-Value up to the end; malformed: unknown. */
+    private fun altSvc(
+        id: Int,
+        flags: Int,
+        p: ByteArray,
+        n: Int,
+    ): Frame {
+        if (n < 2) return Frame.Unknown(id, FrameType.ALTSVC, flags, n)
+        val originLen = ((p[0].toInt() and 0xff) shl 8) or (p[1].toInt() and 0xff)
+        if (originLen > n - 2) return Frame.Unknown(id, FrameType.ALTSVC, flags, n)
+        return Frame.AltSvc(id, latin1(p, 2, 2 + originLen), latin1(p, 2 + originLen, n))
+    }
+
+    private fun latin1(
+        p: ByteArray,
+        from: Int,
+        to: Int,
+    ): String = CharArray(to - from) { (p[from + it].toInt() and 0xff).toChar() }.concatToString()
 
     /**
      * The bounds of the content after the optional pad length byte and [fixed] more bytes (priority fields, promised

@@ -17,6 +17,9 @@ internal object FrameType {
 
     /** RFC 9218 section 7.1: a client's new priority for a request; on stream 0 only. */
     const val PRIORITY_UPDATE: Int = 0x10
+
+    /** ALTSVC (RFC 7838 section 4): "The ALTSVC frame type is 0xa (decimal 10)." */
+    const val ALTSVC: Int = 0xa
 }
 
 /** Frame flags (RFC 9113 section 6); a flag without meaning for a type is ignored on receipt and never set (section 4.1). */
