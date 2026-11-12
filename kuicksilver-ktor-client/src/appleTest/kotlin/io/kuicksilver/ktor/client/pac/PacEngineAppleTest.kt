@@ -300,6 +300,25 @@ class PacEngineAppleTest {
             }
         }
 
+    /**
+     * A download that throws is a failure like any other: null, no exception, and no download left behind as under way
+     * (the failure is cached, so the second lookup does not download again). Before, the exception reached the request
+     * and the URL stayed "under way" for good. (A `file:` URL with a malformed escape such as `%zz` does not get there:
+     * the URL parser encodes the `%`, so the file is just not found.)
+     */
+    @Test fun negative_downloadThatThrowsIsAFailure() =
+        runBlocking {
+            PacScripts.downloadForTest = { throw IllegalStateException("download failed oddly") }
+            try {
+                assertNull(PacScripts.script("http://throws.test/p.pac", 5_000))
+                assertNull(PacScripts.script("http://throws.test/p.pac", 5_000))
+                assertNull(PacScripts.script("file:///tmp/a%zz.pac", 5_000))
+                assertEquals(2, PacScripts.downloads)
+            } finally {
+                PacScripts.downloadForTest = null
+            }
+        }
+
     /** Lookups of one URL while its download is under way share it: one download. */
     @Test fun downloadsAreSingleFlight() =
         runBlocking {
@@ -367,9 +386,9 @@ class PacEngineAppleTest {
             withTimeout(30.seconds) {
                 val a = async(Dispatchers.Default) { PacRunner.findProxy("a", blocking, "https://a.test:443/", "a.test", 60_000) }
                 host.entered.await() // A runs
-                val b = async(Dispatchers.Default) { PacRunner.findProxy("b", ok, "https://b.test:443/", "b.test", 300) }
+                val b = async(Dispatchers.Default) { PacRunner.findProxy("b", ok, "https://b.test:443/", "b.test", 1_000) }
                 PacRunner.queuedForTest.first { it == 1 } // B waits for its turn
-                assertNull(withTimeoutOrNull(900) { b.await() }, "B cannot answer while A holds the thread")
+                assertNull(withTimeoutOrNull(1_500) { b.await() }, "B cannot answer while A holds the thread")
                 host.release.complete(Unit)
                 assertEquals("DIRECT", a.await())
                 assertEquals("PROXY ok.test:1", b.await())

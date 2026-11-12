@@ -128,18 +128,24 @@ internal object PacScripts {
             lock.withLock {
                 cache[url]?.takeIf { it.until > now() }?.let { return it.script }
                 (
-                    inFlight[url] ?: Flight().also { f ->
+                    inFlight[url]?.takeUnless { it.job.isCompleted } ?: Flight().also { f ->
                         f.job =
                             GlobalScope.async(Dispatchers.IO) {
-                                val script = withTimeoutOrNull(timeoutMillis) { download(url) }
-                                // a download given up (cancelled) records nothing; one that ended or timed out does
-                                withContext(NonCancellable) {
-                                    lock.withLock {
-                                        record(url, script)
-                                        if (inFlight[url] === f) inFlight.remove(url)
-                                    }
+                                try {
+                                    val script =
+                                        try {
+                                            withTimeoutOrNull(timeoutMillis) { download(url) }
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Throwable) {
+                                            null // a download that throws (a malformed URL, say) is a failure like any other
+                                        }
+                                    // a download given up (cancelled) records nothing; one that ended or timed out does
+                                    withContext(NonCancellable) { lock.withLock { record(url, script) } }
+                                    script
+                                } finally {
+                                    withContext(NonCancellable) { lock.withLock { if (inFlight[url] === f) inFlight.remove(url) } }
                                 }
-                                script
                             }
                         inFlight[url] = f
                         downloadCount.incrementAndFetch()
@@ -162,8 +168,11 @@ internal object PacScripts {
                     flight.waiters--
                     if (flight.waiters == 0 && !flight.job.isCompleted) {
                         flight.job.cancel()
-                        if (inFlight[url] === flight) inFlight.remove(url)
-                        if (timedOut) record(url, null)
+                        // only while this download is still current: one that just recorded its script keeps it
+                        if (inFlight[url] === flight) {
+                            inFlight.remove(url)
+                            if (timedOut) record(url, null)
+                        }
                     }
                 }
             }
@@ -188,7 +197,11 @@ internal object PacScripts {
         downloadCount.store(0)
     }
 
+    /** Tests: replaces the download of a URL. */
+    var downloadForTest: (suspend (String) -> String?)? = null
+
     private suspend fun download(url: String): String? {
+        downloadForTest?.let { return it(url) }
         val u = runCatching { Url(url) }.getOrNull() ?: return null
         return when (u.protocol.name) {
             "file" -> {
