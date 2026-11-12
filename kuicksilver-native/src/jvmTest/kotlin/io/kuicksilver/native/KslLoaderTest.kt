@@ -299,14 +299,21 @@ class KslLoaderTest {
                 .info()
                 .command()
                 .orElseThrow()
-        val p =
+        val pb =
             ProcessBuilder(
                 listOf(javaBin, "-cp", System.getProperty("java.class.path")) + jvmArgs + "io.kuicksilver.native.ChildLoadMain",
-            ).redirectErrorStream(true).start()
+            ).redirectErrorStream(true)
+        // The child sees only what the test sets: $XDG_RUNTIME_DIR or $XDG_CACHE_HOME of the machine (GitHub's Linux runners
+        // have a usable runtime directory) would be a private location the loader prefers, and JVM options from the
+        // environment could name a work directory.
+        pb.environment().keys.removeAll(childEnvRemoved)
+        val p = pb.start()
         val out = p.inputStream.bufferedReader().readText()
         assertTrue(p.waitFor(60, TimeUnit.SECONDS) && p.exitValue() == 0, "child JVM loaded the library: $out")
         return out
     }
+
+    private val childEnvRemoved = setOf("XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")
 
     /** The ACL check of a work directory without a POSIX view: only the owner may be allowed anything. */
     @Test fun negative_aclGrantingOthersIsRefused() {
@@ -359,22 +366,7 @@ class KslLoaderTest {
     /** A file in the work directory is not deleted when a JVM exits: another JVM may have just verified it and be about to load it. */
     @Test fun sharedLibrarySurvivesOtherJvmExit() {
         val dir = Files.createTempDirectory("ksl-workdir-shared").toFile().apply { deleteOnExit() }
-        val javaBin =
-            ProcessHandle
-                .current()
-                .info()
-                .command()
-                .orElseThrow()
-        val p =
-            ProcessBuilder(
-                javaBin,
-                "-cp",
-                System.getProperty("java.class.path"),
-                "-Dkuicksilver.native.workdir=" + dir.path,
-                "io.kuicksilver.native.ChildLoadMain",
-            ).redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().readText()
-        assertTrue(p.waitFor(60, TimeUnit.SECONDS) && p.exitValue() == 0, "child JVM loaded the library: $out")
+        val out = runChild("-Dkuicksilver.native.workdir=" + dir.path)
         assertTrue(out.contains("loaded abi $KSL_ABI_VERSION"), out)
         val lib = File(dir, JvmNativeNames.libraryFileName())
         assertTrue(lib.isFile, "the shared library is still there after the other JVM exited: ${dir.list()?.toList()}")
