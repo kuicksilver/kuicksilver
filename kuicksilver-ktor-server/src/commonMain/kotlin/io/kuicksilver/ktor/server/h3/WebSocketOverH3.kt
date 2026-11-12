@@ -6,10 +6,12 @@ package io.kuicksilver.ktor.server.h3
 
 import io.ktor.http.Headers
 import io.ktor.http.HeadersBuilder
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.server.application.PipelineCall
 import io.ktor.utils.io.cancel
 import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.server.ServerWebSocketInput
@@ -65,10 +67,31 @@ internal class H3UpgradeResponse(
         super.respondOutgoingContent(content)
     }
 
+    /**
+     * A 2xx that does not come from the upgrade (a route other than `webSocket` answered the CONNECT) would tell the client
+     * a WebSocket is open that nobody accepted (RFC 9110 section 9.3.6: "Any 2xx (Successful) response indicates that the
+     * sender ... will switch to tunnel mode"): it is answered 501 instead, as RFC 9220 section 3 has an unsupported
+     * `:protocol` answered. The upgrade's own 101 and errors pass as they are. Mapped in status(), not setStatus(), so
+     * that `call.response.status()` reports the 501 that goes out. An accepted upgrade keeps reporting 101: Ktor's model
+     * of the switch, which RFC 9220 carries as a 2xx.
+     */
+    override fun status(value: HttpStatusCode) {
+        super.status(if (value.value in 200..299) HttpStatusCode.NotImplemented else value)
+    }
+
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         beforeUpgradeForTest?.invoke()
         val headers = Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED })
-        val stream = h3.acceptConnect(headers)
+        val stream =
+            try {
+                h3.acceptConnect(headers)
+            } catch (_: Http3Exception.MessageError) {
+                // the client's fault, a request that announces capsules and breaks RFC 9297 section 3.2: acceptConnect
+                // answered it with 400 and stopped it with H3_MESSAGE_ERROR, which the engine's reset must not overtake
+                status(HttpStatusCode.BadRequest)
+                answered = true
+                return
+            }
         answered = true
         // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 9220 section 3); the
         // check ends with the upgrade
@@ -82,16 +105,20 @@ internal class H3UpgradeResponse(
         } finally {
             webSocket?.done()
             guard.cancel()
-            // the receive side first: it never suspends, so a cancelled call still stops the client's direction
-            stream.input.cancel()
-            // a call cancelled while the session ran (or while this flush waits) cannot end the stream in order: it is reset
-            // with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), never left with neither a FIN nor a reset
+            // a call cancelled while the session ran, or while the flush below waits, cannot end the stream in order: RFC
+            // 9220 section 3 has "RST exceptions" as a stream error of type H3_REQUEST_CANCELLED, so both directions are
+            // aborted with it, STOP_SENDING first (RFC 9114 section 4.1.1), never left with neither a FIN nor a reset. The
+            // receive side is let go last in every case: after an orderly end the client's unread rest is stopped with
+            // H3_NO_ERROR, after an abort the STOP_SENDING above already went out (the first one counts)
             try {
                 currentCoroutineContext().ensureActive()
                 stream.output.flushAndClose()
             } catch (e: CancellationException) {
+                runCatching { stream.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
                 runCatching { stream.reset(Http3ErrorCode.REQUEST_CANCELLED) }
                 throw e
+            } finally {
+                stream.input.cancel()
             }
         }
     }

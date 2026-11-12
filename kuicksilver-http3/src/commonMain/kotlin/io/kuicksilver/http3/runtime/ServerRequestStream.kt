@@ -403,6 +403,10 @@ internal class ServerRequestImpl(
 
     override suspend fun acceptConnect(headers: Http3Headers): Http3Stream {
         check(method == "CONNECT") { "acceptConnect() needs a CONNECT request" }
+        // RFC 9297 section 3.2: a request that enables the Capsule Protocol and carries content-length, content-type or
+        // transfer-encoding is malformed ("A receiver that observes a violation of these requirements MUST treat the HTTP
+        // message as malformed"): found here, before any 2xx, not when the application first speaks capsules
+        if (CapsuleRules.isEnabled(this.headers)) CapsuleRules.violation(this.headers, null)?.let { refuseMalformed(it) }
         val writer = respond(200, headers)
         return Http3StreamImpl(
             session,
@@ -442,10 +446,7 @@ internal class ServerRequestImpl(
         }
         // the session speaks capsules on this stream: a request that rules them out is malformed (RFC 9297 section 3.2),
         // answered with 400 before any 200
-        CapsuleRules.violation(this.headers, null)?.let { reason ->
-            runCatching { respond(400).finish() }
-            throw Http3Exception.MessageError(st.id, reason)
-        }
+        CapsuleRules.violation(this.headers, null)?.let { refuseMalformed(it) }
         val fields =
             buildList {
                 addAll(headers.fields)
@@ -467,6 +468,17 @@ internal class ServerRequestImpl(
             }
         }
         return s
+    }
+
+    /**
+     * A malformed request the application's accept found: a stream error H3_MESSAGE_ERROR (RFC 9114 section 4.1.2), the
+     * client's direction stopped with it, after the 400 that section allows "prior to closing or resetting the stream";
+     * throws [Http3Exception.MessageError].
+     */
+    private suspend fun refuseMalformed(reason: String): Nothing {
+        runCatching { st.stopSending(Http3ErrorCode.MESSAGE_ERROR) }
+        runCatching { respond(400).finish() }
+        throw Http3Exception.MessageError(st.id, reason)
     }
 
     /** A PRIORITY_UPDATE from the client; a priority the server chose in [respond] stays. */
@@ -557,7 +569,7 @@ internal class ServerRequestImpl(
             val discard = method == "HEAD" || status == 204 || status == 304
             // the content must match its content-length (RFC 9114 section 4.1.2); a tunnel's says nothing about its bytes
             val declared = if (discard || tunnel) null else headers["content-length"]?.toLong()
-            ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = discard, declaredLength = declared)
+            ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = discard, declaredLength = declared, tunnel = tunnel)
         }
     }
 
@@ -576,7 +588,9 @@ internal class ServerRequestImpl(
 
     /**
      * Response fields: no pseudo-headers, no connection-specific fields, and no `te` (a request-only field, RFC 9110 section
-     * 10.1.4); no `content-length` in a 1xx or 204 (RFC 9110 section 8.6) nor in a 2xx to CONNECT (section 9.3.6).
+     * 10.1.4); no `content-length` in a 1xx or 204 (RFC 9110 section 8.6) nor in a 2xx to CONNECT (section 9.3.6); no
+     * `capsule-protocol` outside 2xx (RFC 9297 section 3.4), and a 2xx to CONNECT that enables the Capsule Protocol follows
+     * section 3.2.
      */
     private fun validateFields(
         status: Int,
@@ -598,6 +612,16 @@ internal class ServerRequestImpl(
             require(
                 headers["content-length"] == null,
             ) { "content-length in a $status response${if (method == "CONNECT") " to CONNECT" else ""}" }
+        }
+        // RFC 9297 section 3.4: "The Capsule-Protocol header field MUST NOT be used on HTTP responses with a status code that
+        // is both different from 101 (Switching Protocols) and outside the 2xx (Successful) range" (HTTP/3 has no 101)
+        require(
+            headers[CapsuleRules.FIELD] == null || status in 200..299,
+        ) { "capsule-protocol in a $status response (RFC 9297 section 3.4)" }
+        // section 3.2: a message that uses the Capsule Protocol has no content-length, content-type or transfer-encoding, and
+        // no 204, 205 or 206 status
+        if (method == "CONNECT" && CapsuleRules.isEnabled(headers)) {
+            CapsuleRules.violation(headers, status)?.let { throw IllegalArgumentException("invalid response: $it") }
         }
     }
 
@@ -637,6 +661,8 @@ internal class ResponseWriterImpl(
     private val discardBody: Boolean = false,
     /** The response's content-length: content that does not match it is never sent as a complete response. */
     private val declaredLength: Long? = null,
+    /** The body of an established CONNECT tunnel (either side): only DATA follows the 2xx, never trailers. */
+    private val tunnel: Boolean = false,
 ) : Http3ResponseWriter {
     private val channel = ByteChannel()
     override val output: ByteWriteChannel get() = channel
@@ -690,6 +716,9 @@ internal class ResponseWriterImpl(
     }
 
     override suspend fun finish(trailers: Http3Headers?) {
+        // RFC 9114 section 4.4: "Once the CONNECT method has completed, only DATA frames are permitted to be sent on the
+        // stream": trailers (a HEADERS frame) are refused before anything changes, and the tunnel can still end with a FIN
+        require(trailers == null || !tunnel) { "trailers on a CONNECT tunnel: only DATA follows its 2xx (RFC 9114 section 4.4)" }
         finishing = true
         channel.flushAndClose()
         pump.join()

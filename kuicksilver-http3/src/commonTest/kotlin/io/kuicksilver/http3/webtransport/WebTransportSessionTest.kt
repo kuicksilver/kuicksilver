@@ -425,6 +425,28 @@ class WebTransportSessionTest {
             }
         }
 
+    /**
+     * RFC 9110 section 7.8: "recipients SHOULD use case-insensitive comparison when matching each protocol-name to
+     * supported protocols"; `:protocol` carries such a name (RFC 8441 section 4). Before, only the exact spelling was a
+     * WebTransport request.
+     */
+    @Test fun tokenMatchedCaseInsensitively() =
+        h3Test {
+            for (token in listOf("WebTransport-H3", "WEBTRANSPORT")) {
+                QuicPair.open().useScoped { q ->
+                    val (c, s) = q.connect()
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(wtClientSettings)
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, token))
+                    st.output.flush()
+                    val r = withTimeout(5.seconds) { server.acceptRequest() }
+                    assertTrue(r.isWebTransport, token)
+                }
+            }
+        }
+
     /** A stream that came before its session's CONNECT was accepted waits, then reaches the session (section 4.6). */
     @Test fun bufferedStreamDeliveredOnAccept() =
         h3Test {

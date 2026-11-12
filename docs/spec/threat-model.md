@@ -449,7 +449,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   idle timeout (408), each wait for its window within the send-stall deadline (the stream is reset), a connection without
   requests closed after the idle timeout, and every close bounded on progress (`closeWithin`). A malformed request (RFC
   9113 §8.1.1) is reset before a handler runs; a request field section above `maxHeaderListSize` gets 431 without
-  reaching the application; `:protocol` is refused (RFC 8441 is not offered). One stream's failure never reaches the
+  reaching the application; `:protocol` is refused (RFC 8441 is not offered yet). One stream's failure never reaches the
   connection (the handlers run under a supervisor and everything a call throws is caught and logged), and no RST_STREAM
   answers the client's. A client's RST_STREAM, NO_ERROR included, cancels its handler,
   and a stream it reset counts toward SETTINGS_MAX_CONCURRENT_STREAMS until that handler returns (the core); a released

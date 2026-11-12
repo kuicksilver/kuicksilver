@@ -72,9 +72,12 @@ public class Http3Connection private constructor(
     }
 
     /**
-     * Client: Extended CONNECT (RFC 9220) with `:protocol` = [protocol] (`websocket`, ...). Waits for the peer's SETTINGS
-     * and needs `SETTINGS_ENABLE_CONNECT_PROTOCOL` ([Http3Exception.Settings] otherwise); a non-2xx answer throws
-     * [Http3Exception.ConnectRejected]. The method of [request] is replaced by CONNECT.
+     * Client: Extended CONNECT (RFC 9220) with `:protocol` = [protocol] (`websocket`, ...; a token, RFC 8441 section 4).
+     * Waits for the peer's SETTINGS and needs `SETTINGS_ENABLE_CONNECT_PROTOCOL` ([Http3Exception.Settings] otherwise); a
+     * non-2xx answer throws [Http3Exception.ConnectRejected], and a 2xx that enables the Capsule Protocol against RFC 9297
+     * section 3.2 (with `content-length`, `content-type` or `transfer-encoding`, or a 204, 205 or 206) is malformed: the
+     * stream is aborted with H3_MESSAGE_ERROR and [Http3Exception.MessageError] is thrown. The method of [request] is
+     * replaced by CONNECT.
      */
     public suspend fun connect(
         request: Http3Request,
@@ -243,7 +246,10 @@ public interface Http3ServerRequest {
      * from the client no longer change the scheduling. A CONNECT without a signal from its client is scheduled
      * incremental (sections 10.1, 11), and a field such as `u=1` keeps it so.
      * A response to HEAD, and a 204 or 304, has no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what is written to
-     * its writer is dropped, while its `content-length` is sent as given.
+     * its writer is dropped, while its `content-length` is sent as given. Fields the client would have to treat as malformed
+     * throw IllegalArgumentException and reset the stream with H3_REQUEST_CANCELLED, among them `capsule-protocol` outside
+     * a 2xx (RFC 9297 section 3.4) and, for a CONNECT, a 2xx that enables the Capsule Protocol with `content-length`,
+     * `content-type` or `transfer-encoding`, or as a 204, 205 or 206 (section 3.2).
      */
     public suspend fun respond(
         status: Int,
@@ -251,7 +257,12 @@ public interface Http3ServerRequest {
         priority: StreamPriority? = null,
     ): Http3ResponseWriter
 
-    /** Accepts an Extended CONNECT (RFC 9220): `:status 200`, then the stream carries data both ways. Unknown protocols deserve 501 instead. */
+    /**
+     * Accepts an Extended CONNECT (RFC 9220): `:status 200`, then the stream carries data both ways. Unknown protocols
+     * deserve 501 instead. A request that enables the Capsule Protocol (`Capsule-Protocol: ?1`) with `content-length`,
+     * `content-type` or `transfer-encoding` is malformed (RFC 9297 section 3.2): it is answered 400 and stopped with
+     * H3_MESSAGE_ERROR instead (RFC 9114 section 4.1.2), and [Http3Exception.MessageError] is thrown.
+     */
     public suspend fun acceptConnect(headers: Http3Headers = Http3Headers.Empty): Http3Stream
 
     /** Aborts the request stream in both directions with [code]. */
@@ -270,8 +281,10 @@ public interface Http3ResponseWriter {
     /**
      * Flushes [output], sends [trailers] if any, then FIN. Closing [output] without calling this ends the response without trailers.
      * Trailers above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` throw [Http3Exception.FieldSectionTooLarge] and reset the
-     * stream with H3_INTERNAL_ERROR; trailers with a pseudo-header, a connection-specific field or `te` (RFC 9114 section
-     * 4.2) throw IllegalArgumentException and reset it the same way.
+     * stream with H3_REQUEST_CANCELLED; trailers with a pseudo-header, a connection-specific field or `te` (RFC 9114 section
+     * 4.2) throw IllegalArgumentException and reset it the same way. Trailers on a 2xx to CONNECT, a tunnel where only DATA
+     * may follow (RFC 9114 section 4.4), throw IllegalArgumentException before anything is sent: the stream stays as it
+     * was, and `finish()` without trailers still ends it.
      */
     public suspend fun finish(trailers: Http3Headers? = null)
 }

@@ -301,7 +301,10 @@ public class KuicksilverApplicationEngine(
         /** HTTP/3 settings (QPACK, limits). Extended CONNECT is turned on by [webSocketsOverHttp3]. */
         public var http3Settings: Http3Settings = Http3Settings.Default
 
-        /** Accept WebSockets over HTTP/3 (RFC 9220): advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL`. */
+        /**
+         * Accept WebSockets over HTTP/3 (RFC 9220): advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL`. When false, a WebSocket
+         * Extended CONNECT is answered 501 (RFC 9220 section 3), also while [webTransport] advertises Extended CONNECT.
+         */
         public var webSocketsOverHttp3: Boolean = true
 
         /**

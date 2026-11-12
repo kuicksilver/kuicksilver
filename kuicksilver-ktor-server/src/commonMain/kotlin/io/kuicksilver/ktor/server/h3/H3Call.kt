@@ -292,8 +292,9 @@ internal open class H3Response(
     }
 
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
-        // An HTTP/1.1 upgrade has no meaning in HTTP/3 (RFC 9114 section 4.5); WebSockets come through Extended CONNECT instead.
-        statusCode = HttpStatusCode.NotImplemented
+        // An HTTP/1.1 upgrade has no meaning in HTTP/3 (RFC 9114 section 4.5); WebSockets come through Extended CONNECT
+        // instead. Through status(), so that the call reports the 501 that goes out
+        status(HttpStatusCode.NotImplemented)
         start().finish()
     }
 
@@ -331,15 +332,20 @@ internal class H3WebTransportResponse(
         if (upgrade !is WebTransportUpgrade) return super.respondUpgrade(upgrade)
         beforeUpgradeForTest?.invoke()
         // answered once acceptWebTransport has answered (the session's 200, or its own 400): an exception before that
-        // leaves the stream to the engine's reset
-        upgrade.acceptAndRun(h3, Http3Headers(h3Headers().fields.filter { it.first != "content-length" })) { answered = true }
+        // leaves the stream to the engine's reset. The call keeps reporting the upgrade's 101 for an accepted session (Ktor's
+        // model of it, which RFC 9220 carries as a 2xx) and reports a 400 that went out instead
+        upgrade.acceptAndRun(h3, Http3Headers(h3Headers().fields.filter { it.first != "content-length" })) { sent ->
+            if (sent != 200) status(HttpStatusCode.fromValue(sent))
+            answered = true
+        }
     }
 
     /**
      * A 2xx that does not come from a `webTransport` route (another route on the path answered the CONNECT) would tell
-     * the client a session exists that nobody accepted: it is answered 501 instead. Errors pass as they are.
+     * the client a session exists that nobody accepted: it is answered 501 instead. Errors pass as they are. Mapped in
+     * status(), not setStatus(), so that `call.response.status()` reports the 501 that goes out.
      */
-    override fun setStatus(statusCode: HttpStatusCode) {
-        super.setStatus(if (statusCode.value in 200..299) HttpStatusCode.NotImplemented else statusCode)
+    override fun status(value: HttpStatusCode) {
+        super.status(if (value.value in 200..299) HttpStatusCode.NotImplemented else value)
     }
 }

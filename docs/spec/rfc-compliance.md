@@ -149,7 +149,8 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 7692 | decompression limit (RFC 6455 §7.4.1, §10.4) | ✅ | 0.3.0 | An incoming compressed message may inflate to 16 MiB by default, and the engines close with 1009 past the limit. | [details](rfc/7692.md#decompression-limit) |
 | RFC 7692 | §8 — compression side channels (CRIME) | ✅ | 0.3.0 | The application can keep messages out of compression or out of a shared window, and the guide says when to. | [details](rfc/7692.md#s8-security-considerations) |
 | RFC 9220 | Extended CONNECT / WebSocket over h3 | ✅ | 0.2.0 | Extended CONNECT and WebSocket over HTTP/3 work at the HTTP/3 level. | [details](rfc/9220.md#extended-connect-websocket-over-h3) |
-| RFC 9297 | HTTP datagrams | ✅ | 0.3.0 | HTTP/3 datagrams and the Capsule Protocol on Extended CONNECT streams are supported. | [details](rfc/9297.md#http-datagrams) |
+| RFC 8441 | WebSocket over HTTP/2 (Extended CONNECT) | ⬜ | 0.3.0 | WebSockets over HTTP/2 are planned for 0.3.0; until then neither engine offers Extended CONNECT on HTTP/2. | [details](rfc/8441.md#websocket-over-http-2) |
+| RFC 9297 | HTTP datagrams | ✅ | 0.3.0 | HTTP/3 datagrams and the Capsule Protocol are supported on Extended CONNECT streams other than WebSocket ones. | [details](rfc/9297.md#http-datagrams) |
 | RFC 7838 | Alt-Svc | ✅ | 0.2.0 | The client caches Alt-Svc alternatives and the server can announce h3. | [details](rfc/7838.md#alt-svc) |
 | RFC 7838 | §2.2, §3, §9.4 — cache bounds | ✅ | 0.2.0 | The Alt-Svc cache keeps at most 8 alternatives per origin and 1000 origins. | [details](rfc/7838.md#s2-2-cache-bounds) |
 | RFC 7838 | §2.4; RFC 8305 §5 — race and fallback | ✅ | 0.2.0 | The h3/h1 race makes exactly one HTTP/1.1 attempt. | [details](rfc/7838.md#s2-4-race-and-fallback) |

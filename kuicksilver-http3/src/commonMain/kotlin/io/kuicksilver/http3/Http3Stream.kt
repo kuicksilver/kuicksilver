@@ -66,7 +66,10 @@ public interface Http3Stream {
     /**
      * Speaks the Capsule Protocol (RFC 9297 section 3) on this stream from now on: [input], [output] and [datagrams] then
      * belong to the returned [CapsuleStream] and must not be used directly. Call it at most once per stream, before
-     * reading [input] or writing [output].
+     * reading [input] or writing [output]. Only an Extended CONNECT whose protocol has datagram semantics speaks it: the
+     * Capsule Protocol "only applies to definitions of new HTTP upgrade tokens" (section 3.2), which a classic CONNECT
+     * has not and `websocket` (RFC 9220) does not use, so on those streams IllegalStateException is thrown and the stream
+     * is left as it was.
      *
      * Checks RFC 9297 section 3.2 first. When the peer's message breaks it (a `content-length`, `content-type` or
      * `transfer-encoding` field, or a 204, 205 or 206 response), the stream is reset and stopped with H3_MESSAGE_ERROR and
@@ -76,7 +79,8 @@ public interface Http3Stream {
      * Implementations outside this library (test fakes) need not override it: the default throws
      * UnsupportedOperationException.
      *
-     * @throws IllegalStateException when called a second time, or when our own message breaks section 3.2.
+     * @throws IllegalStateException when called a second time, on a classic CONNECT or `websocket` stream, or when our own
+     *   message breaks section 3.2.
      */
     @ExperimentalKuicksilverApi
     public fun useCapsuleProtocol(config: CapsuleConfig = CapsuleConfig()): CapsuleStream =

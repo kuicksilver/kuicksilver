@@ -19,6 +19,7 @@ import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.message.CapsuleRules
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
@@ -81,16 +82,26 @@ private suspend fun H3Session.connectOnDispatcher(
                 onInformational = r.onInformational
             }
         val resp = request(req, keepOpen = true, caller = caller) as ResponseImpl
-        if (resp.status !in
-            200..299
-        ) {
-            resp.cancel(Http3ErrorCode.REQUEST_CANCELLED)
+
+        fun abandon(
+            code: Long,
+            failure: Throwable,
+        ): Nothing {
+            resp.cancel(code)
             datagrams.unregister(resp.streamId)
             clientRequestsWithoutDatagrams.remove(resp.streamId)
             exchangeEnded()
-            throw Http3Exception.ConnectRejected(resp.status, resp.headers)
+            throw failure
         }
-        val writer = ResponseWriterImpl(this@connectOnDispatcher, resp.stream, null)
+        if (resp.status !in 200..299) abandon(Http3ErrorCode.REQUEST_CANCELLED, Http3Exception.ConnectRejected(resp.status, resp.headers))
+        // RFC 9297 section 3.2: a 2xx that enables the Capsule Protocol and breaks its rules is malformed, a stream error
+        // H3_MESSAGE_ERROR (RFC 9114 section 4.1.2), found before the tunnel is handed out
+        if (CapsuleRules.isEnabled(resp.headers)) {
+            CapsuleRules.violation(resp.headers, resp.status)?.let {
+                abandon(Http3ErrorCode.MESSAGE_ERROR, Http3Exception.MessageError(resp.streamId, it))
+            }
+        }
+        val writer = ResponseWriterImpl(this@connectOnDispatcher, resp.stream, null, tunnel = true)
         scope.launch {
             try {
                 resp.pump.join()
@@ -196,6 +207,14 @@ private suspend fun H3Session.requestOnDispatcher(
         // RFC 9220 section 3 (RFC 8441 section 4): `:protocol` only once the server enabled Extended CONNECT in its SETTINGS
         val connectProtocolEnabled = r.protocol != null && awaitPeerSettings().enableConnectProtocol
         PseudoHeaders.requireValidRequest(fields, connectProtocolEnabled)
+        // RFC 9114 section 4.4: "Once the CONNECT method has completed, only DATA frames are permitted to be sent on the
+        // stream", and a CONNECT has no content of its own: it carries no trailers
+        require(r.trailers == null || r.method != "CONNECT") { "invalid request: trailers on a CONNECT (RFC 9114 section 4.4)" }
+        // RFC 9297 section 3.2: a CONNECT that enables the Capsule Protocol has no content-length, content-type or
+        // transfer-encoding
+        if (r.method == "CONNECT" && CapsuleRules.isEnabled(r.headers)) {
+            CapsuleRules.violation(r.headers, null)?.let { throw IllegalArgumentException("invalid request: $it") }
+        }
         // RFC 9114 section 4.1.2: a request without content cannot match a non-zero content-length (sendBody holds a body to it)
         if (r.body == null && r.method != "CONNECT") {
             val declared = r.headers["content-length"]?.toLongOrNull()

@@ -21,6 +21,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -329,8 +330,22 @@ class ServerH1ResponseFramingTest {
             assertEquals(2, log.lines.count { it.level == "WARN" && "CONNECT" in it.message }, "${log.lines}")
         }
 
+    /** The 501 that replaces a 2xx to CONNECT is the status the call reports, as listeners and logs read it. */
+    @Test fun negative_2xxToConnectReports501() =
+        serverTest {
+            lateinit var reported: Channel<HttpStatusCode?>
+            plainServer(module = {
+                reported = reportedStatuses()
+                routes()
+            }) { port ->
+                withTimeout(10.seconds) { rawHttp(port, "CONNECT a.example:443 HTTP/1.1\r\nHost: a.example:443\r\n\r\n", tls = null) }
+                assertEquals(HttpStatusCode.NotImplemented, withTimeout(5.seconds) { reported.receive() })
+            }
+        }
+
     private suspend fun plainServer(
         log: CapturedLog? = null,
+        module: Application.() -> Unit = routes,
         block: suspend (Int) -> Unit,
     ) {
         val server =
@@ -339,7 +354,7 @@ class ServerH1ResponseFramingTest {
                     host = "127.0.0.1"
                     port = 0
                 }
-            }, module = routes)
+            }, module = module)
         server.startSuspend(false)
         try {
             block(

@@ -218,7 +218,7 @@ internal class H2Response(
 
     /** An HTTP/1.1 upgrade has no meaning in HTTP/2 (RFC 9113 section 8.6); WebSockets over HTTP/2 (RFC 8441) are not offered. */
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
-        statusCode = HttpStatusCode.NotImplemented
+        status(HttpStatusCode.NotImplemented) // the call's status too: listeners and logs see what was sent
         sendHead(endStream = true)
     }
 

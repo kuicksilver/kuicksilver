@@ -237,8 +237,11 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     local: InetSocketAddress,
     peer: List<Certificate>,
 ) {
-    // Extended CONNECT (RFC 9220): WebSockets and WebTransport go through Ktor's pipeline; other protocols are not served here
-    val webSocket = req.method == "CONNECT" && req.protocol == WebSocketOverH3.PROTOCOL
+    // Extended CONNECT (RFC 9220): WebSockets (when webSocketsOverHttp3 is on, also with Extended CONNECT advertised for
+    // WebTransport) and WebTransport go through Ktor's pipeline; other protocols are not served here and get 501 (section 3).
+    // Upgrade tokens match in any case (RFC 9110 section 7.8)
+    val webSocket =
+        configuration.webSocketsOverHttp3 && req.method == "CONNECT" && req.protocol.equals(WebSocketOverH3.PROTOCOL, ignoreCase = true)
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     val webTransport = configuration.webTransport && req.isWebTransport

@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.application.install
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytesWriter
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
@@ -14,6 +17,7 @@ import io.ktor.server.websocket.webSocketRaw
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.writeFully
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.RawWebSocket
@@ -28,6 +32,7 @@ import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -36,6 +41,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
@@ -259,6 +265,187 @@ class ServerWebSocketH3Test {
                         }
                     assertIs<Http3Exception.Protocol>(failure)
                     assertEquals(Http3ErrorCode.REQUEST_CANCELLED, failure.h3Code)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9110 section 9.3.6: "Any 2xx (Successful) response indicates that the sender (and all inbound proxies) will
+     * switch to tunnel mode"; RFC 9220 section 3: a `:protocol` the server does not support SHOULD get 501. A route other
+     * than `webSocket` that answers the WebSocket CONNECT with a 2xx accepted no WebSocket, so the answer is 501. Before,
+     * a streamed 200 reached the client as an open WebSocket, and a 200 with content-length reset the stream.
+     */
+    @Test fun negative_plainRouteAnswering2xxIsNoWebSocket() =
+        h3ServerTest {
+            lateinit var reported: Channel<HttpStatusCode?>
+            val (server, port) =
+                tlsServer {
+                    reported = reportedStatuses()
+                    install(WebSockets)
+                    routing {
+                        get("/text") { call.respondText("not a websocket") }
+                        get("/stream") { call.respondBytesWriter { writeFully("not a websocket".encodeToByteArray()) } }
+                    }
+                }
+            try {
+                h3(port) { c ->
+                    for (path in listOf("/text", "/stream")) {
+                        val req = http3Request("CONNECT", "server.test", path) { headers = wsRequest.headers }
+                        val rejected =
+                            assertFailsWith<Http3Exception.ConnectRejected>(path) { withTimeout(5.seconds) { c.connect(req, "websocket") } }
+                        assertEquals(501, rejected.status, path)
+                        // the call reports the status that went out, not the route's 200
+                        assertEquals(HttpStatusCode.NotImplemented, withTimeout(5.seconds) { reported.receive() }, path)
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * `webSocketsOverHttp3 = false` turns WebSockets over HTTP/3 off even when WebTransport advertises Extended CONNECT:
+     * the WebSocket CONNECT is a protocol the server does not support (RFC 9220 section 3: 501). Before, it reached the
+     * `webSocket {}` route.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_webSocketsOffAre501EvenWithWebTransport() =
+        h3ServerTest {
+            val (server, port) =
+                tlsServer(configure = {
+                    webSocketsOverHttp3 = false
+                    webTransport = true
+                }) {
+                    install(WebSockets)
+                    routing { webSocket("/ws") { } }
+                }
+            try {
+                h3(port) { c ->
+                    val rejected =
+                        assertFailsWith<Http3Exception.ConnectRejected> { withTimeout(5.seconds) { c.connect(wsRequest, "websocket") } }
+                    assertEquals(501, rejected.status)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9110 section 7.8: "recipients SHOULD use case-insensitive comparison when matching each protocol-name to
+     * supported protocols"; `:protocol` carries an upgrade token (RFC 8441 section 4). Before, `WebSocket` got 501.
+     */
+    @Test fun protocolTokenMatchedCaseInsensitively() =
+        h3ServerTest {
+            val (server, port) =
+                tlsServer {
+                    install(WebSockets)
+                    routing {
+                        webSocket(
+                            "/ws",
+                        ) { for (frame in incoming) if (frame is Frame.Text) send(Frame.Text("echo:" + frame.readText())) }
+                    }
+                }
+            try {
+                h3(port) { c ->
+                    val stream = c.connect(wsRequest, "WebSocket")
+                    val ws = RawWebSocket(stream.input, stream.output, masking = true, coroutineContext = currentCoroutineContext())
+                    ws.send(Frame.Text("ping"))
+                    assertEquals("echo:ping", (ws.incoming.receive() as Frame.Text).readText())
+                    ws.send(Frame.Close())
+                    assertIs<Frame.Close>(ws.incoming.receive())
+                    ws.cancel()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9220 section 3: "RST exceptions are represented with a stream error (Section 8 of [HTTP/3]) of type
+     * H3_REQUEST_CANCELLED". A call cancelled while its upgrade runs aborts both directions with that code, the client's
+     * direction included. Before, STOP_SENDING went out first with H3_NO_ERROR, as for a server that merely read enough.
+     */
+    @Test fun negative_cancelledUpgradeStopsTheClientWithRequestCancelled() =
+        h3ServerTest {
+            val connected = CompletableDeferred<Unit>()
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        get("/ws") {
+                            val callJob = call.coroutineContext.job
+                            call.respond(
+                                object : OutgoingContent.ProtocolUpgrade() {
+                                    override suspend fun upgrade(
+                                        input: ByteReadChannel,
+                                        output: ByteWriteChannel,
+                                        engineContext: CoroutineContext,
+                                        userContext: CoroutineContext,
+                                    ): Job {
+                                        connected.await() // the client holds the stream: the abort cannot overtake its 200
+                                        callJob.cancel()
+                                        return Job()
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            try {
+                h3(port) { c ->
+                    val stream = c.connect(wsRequest, "websocket")
+                    connected.complete(Unit)
+                    val failure =
+                        withTimeout(5.seconds) {
+                            assertFailsWith<Throwable> {
+                                // masked Binary frames of 1020 zero bytes (key 0): valid input for the server's frame check
+                                val chunk = byteArrayOf(0x82.toByte(), 0xFE.toByte(), 0x03, 0xFC.toByte(), 0, 0, 0, 0) + ByteArray(1020)
+                                while (true) {
+                                    stream.output.writeFully(chunk)
+                                    stream.output.flush()
+                                }
+                            }
+                        }
+                    val code = generateSequence(failure) { it.cause }.filterIsInstance<Http3Exception.Protocol>().firstOrNull()?.h3Code
+                    assertEquals(Http3ErrorCode.REQUEST_CANCELLED, code, "the client's direction ended with $failure")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9297 section 3.2: a WebSocket CONNECT that announces capsules (`Capsule-Protocol: ?1`) with content-type is
+     * malformed. The library answers it 400 and stops it with H3_MESSAGE_ERROR (RFC 9114 section 4.1.2); the engine keeps
+     * that answer instead of resetting the stream with H3_REQUEST_CANCELLED as an unanswered call, logs no failure, and
+     * the call reports the 400.
+     */
+    @Test fun negative_capsuleRequestBreakingSection32Gets400() =
+        h3ServerTest {
+            val log = CapturedLog()
+            lateinit var reported: Channel<HttpStatusCode?>
+            val (server, port) =
+                tlsServer(log = log) {
+                    reported = reportedStatuses()
+                    install(WebSockets)
+                    routing { webSocket("/ws") { } }
+                }
+            try {
+                h3(port) { c ->
+                    c.peerSettings.filterNotNull().first()
+                    val extra = listOf("sec-websocket-version" to "13", "capsule-protocol" to "?1", "content-type" to "text/plain")
+                    val st = rawExtendedConnect(c.quic, "websocket", "/ws", extra)
+                    // the 400 and a FIN, not a reset: a reset could take the 400 away (RFC 9000 section 3.2)
+                    val frames = rawFrames(withTimeout(5.seconds) { st.input.readFullBody() })
+                    assertEquals(1L, frames.first().first, "the response starts with HEADERS")
+                    // Required Insert Count 0, Base 0, then the static entry 67 `:status: 400` (RFC 9204 appendix A)
+                    assertContentEquals(byteArrayOf(0, 0, 0xFF.toByte(), 0x04), frames.first().second.copyOfRange(0, 4))
+                    assertEquals(Http3ErrorCode.MESSAGE_ERROR, stopSendingCode(st))
+                    val status = withTimeout(5.seconds) { reported.receive() }
+                    assertTrue(log.lines.none { it.level == "ERROR" }, "${log.lines}")
+                    assertEquals(HttpStatusCode.BadRequest, status)
                 }
             } finally {
                 server.stop(100, 500)

@@ -48,6 +48,26 @@ class H2MessagesTest {
     }
 
     /**
+     * RFC 8441 section 4: `:protocol` "contains a value from the 'Hypertext Transfer Protocol (HTTP) Upgrade Token
+     * Registry'", whose names are tokens (RFC 9110 section 16.7); an empty or non-token value is malformed.
+     */
+    @Test fun negative_extendedConnectProtocolIsAToken() {
+        fun f(p: String) =
+            listOf(
+                ":method" to "CONNECT",
+                ":protocol" to p,
+                ":scheme" to "https",
+                ":authority" to "a.example",
+                ":path" to "/",
+            )
+        for (p in listOf("", "web socket", "a/b", "\"ws\"")) {
+            assertFailsWith<MalformedMessage>(p) { H2Messages.parseRequest(f(p), connectProtocolEnabled = true) }
+            assertFailsWith<IllegalArgumentException>(p) { H2Messages.requireValidRequest(f(p), connectProtocolEnabled = true) }
+        }
+        assertEquals("WebSocket", H2Messages.parseRequest(f("WebSocket"), connectProtocolEnabled = true).protocol)
+    }
+
+    /**
      * RFC 9113 section 8.3.1: `host` that identifies another entity than `:authority` is malformed. RFC 9110 section 4.2.3:
      * the host is case-insensitive and an empty or default port is the scheme's default, so these name the same entity.
      */
