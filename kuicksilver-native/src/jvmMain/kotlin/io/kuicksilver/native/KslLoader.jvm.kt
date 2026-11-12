@@ -205,17 +205,52 @@ internal object JvmLoader {
         tmp: Path,
         warn: (String) -> Unit,
     ): PreparedDir {
+        sweepStaleFreshDirs(primary, tmp)
         try {
             createWorkDir(primary)
             checkWorkDir(primary, currentUser(primary))
             return PreparedDir(primary, fresh = false)
         } catch (e: KslException.NativeLoad) {
-            val fresh = Files.createTempDirectory(tmp, "${primary.fileName}-", *ownerOnlyDirectory(tmp))
+            val fresh = Files.createTempDirectory(tmp, "${primary.fileName}-", *ownerOnlyDirectory(tmp.resolve("${primary.fileName}-")))
             checkWorkDir(fresh, currentUser(fresh))
             warn("${e.reason.substringBefore("; set -D")}; this process uses the new private directory $fresh instead")
             return PreparedDir(fresh, fresh = true)
         }
     }
+
+    /**
+     * Removes, best effort, the per-process directories `<primary>-*` an earlier process left in [tmp]: owned by this user,
+     * real directories, untouched for [STALE_AFTER_MS] (a process that has just created one may be about to load from it),
+     * holding only regular files. On Windows a library still loaded by a running process cannot be deleted: that directory
+     * stays until a later start. Every failure is ignored.
+     */
+    internal fun sweepStaleFreshDirs(
+        primary: Path,
+        tmp: Path,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        val me = currentUser(tmp) ?: return
+        runCatching {
+            Files.newDirectoryStream(tmp, "${primary.fileName}-*").use { entries ->
+                for (dir in entries) {
+                    runCatching {
+                        val attrs = Files.readAttributes(dir, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+                        if (!attrs.isDirectory || attrs.isOther) return@runCatching
+                        if (now - attrs.lastModifiedTime().toMillis() < STALE_AFTER_MS) return@runCatching
+                        if (Files.getOwner(dir, LinkOption.NOFOLLOW_LINKS) != me) return@runCatching
+                        Files.newDirectoryStream(dir).use { files ->
+                            for (f in files) {
+                                if (Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)) runCatching { Files.delete(f) }
+                            }
+                        }
+                        Files.delete(dir)
+                    }
+                }
+            }
+        }
+    }
+
+    private const val STALE_AFTER_MS = 10 * 60 * 1000L
 
     /** `$XDG_RUNTIME_DIR/kuicksilver-native` when that directory is this user's, private, and safe from above; else null. */
     private fun runtimeDir(
@@ -282,8 +317,9 @@ internal object JvmLoader {
         throw failure ?: IllegalStateException("no work directory")
     }
 
+    /** Warnings go to the `System.Logger` "io.kuicksilver.native" (java.util.logging by default, on standard error). */
     internal fun warnOnStderr(message: String) {
-        System.err.println("kuicksilver: warning: $message")
+        System.getLogger("io.kuicksilver.native").log(System.Logger.Level.WARNING, message)
     }
 
     /**
@@ -478,19 +514,23 @@ internal object JvmLoader {
     private val OWNER_ONLY_FILE = PosixFilePermissions.fromString("rw-------")
 
     /**
-     * The Windows principals every file on the machine already trusts: SYSTEM (S-1-5-18), Administrators (S-1-5-32-544) and
-     * TrustedInstaller. The JDK exposes a Windows principal's SID only through its hash code (`sidString.hashCode()`), so
-     * they are recognised by that; SIDs are assigned by the system, not chosen by a user.
+     * The Windows principals that already control every file of the machine: the owner of `%SystemRoot%\System32`
+     * (TrustedInstaller), and SYSTEM (S-1-5-18) and Administrators (S-1-5-32-544) as they appear in that directory's ACL.
+     * They are taken from that system directory, not looked up by name (the names are localized). The JDK exposes a
+     * principal's SID only through `equals` and its hash code (`sidString.hashCode()`): the hash code only picks the two
+     * candidates out of an ACL the system itself controls; membership is then `equals`, a comparison of the full SID.
+     * Empty where there is no such directory (not Windows) or it cannot be read.
      */
-    private val TRUSTED_WINDOWS_SIDS =
-        setOf(
-            "S-1-5-18",
-            "S-1-5-32-544",
-            "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
-        ).map { it.hashCode() }.toSet()
+    private val trustedWindowsPrincipals: Set<UserPrincipal> by lazy {
+        val dir = Paths.get(System.getenv("SystemRoot") ?: return@lazy emptySet(), "System32")
+        runCatching {
+            val view = Files.getFileAttributeView(dir, AclFileAttributeView::class.java) ?: return@runCatching emptySet()
+            val wellKnown = setOf("S-1-5-18".hashCode(), "S-1-5-32-544".hashCode())
+            setOf(view.owner) + view.acl.map { it.principal() }.filter { it.hashCode() in wellKnown }
+        }.getOrDefault(emptySet())
+    }
 
-    internal fun isTrustedWindowsPrincipal(p: UserPrincipal): Boolean =
-        p.javaClass.name.startsWith("sun.nio.fs.WindowsUserPrincipals") && p.hashCode() in TRUSTED_WINDOWS_SIDS
+    internal fun isTrustedWindowsPrincipal(p: UserPrincipal): Boolean = p in trustedWindowsPrincipals
 
     /** The names of the principals other than [owner] (and the trusted Windows ones) that [acl] allows anything. */
     internal fun foreignAccess(
@@ -590,6 +630,7 @@ internal object JvmLoader {
             try {
                 writeAndMove(hashed, content, manifest, out.name, posix)
             } catch (e2: IOException) {
+                if (reusable(hashed)) return hashed.toFile() // another JVM wrote and loaded the same copy meanwhile
                 e2.addSuppressed(e)
                 throw e2
             }
@@ -615,6 +656,7 @@ internal object JvmLoader {
                 while (buf.hasRemaining()) ch.write(buf)
             } // fully written and closed before loading
             verifyAgainstManifest(tmp.toFile(), manifest, entryName)
+            moveHookForTest?.invoke(tmp, target)
             try {
                 Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             } catch (_: AtomicMoveNotSupportedException) {
@@ -624,6 +666,13 @@ internal object JvmLoader {
             Files.deleteIfExists(tmp)
         }
     }
+
+    /**
+     * Called with (temp file, target) right before the rename in [installLibrary]; tests set it to act as another process
+     * (a JVM that wins the race, Windows refusing to replace a loaded library), which a POSIX rename cannot reproduce.
+     */
+    @Volatile
+    internal var moveHookForTest: ((Path, Path) -> Unit)? = null
 
     /** `libksl_7_windows_x86_64.dll` -> `libksl_7_windows_x86_64-<12 hex digits of the content's SHA-256>.dll`. */
     internal fun hashedName(

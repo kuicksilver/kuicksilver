@@ -470,7 +470,9 @@ appear only with a library built against a system OpenSSL, as does `KslException
 the system libssl may honour it; unset it (keylog)": such a library refuses to load while `SSLKEYLOGFILE` is set. The outcome of the first load attempt is cached for the
 process: fix the cause and restart.
 
-The loader also prints warnings on standard error, "kuicksilver: warning: …", and loads anyway:
+The loader also logs warnings, and loads anyway. They go to the `System.Logger` named `io.kuicksilver.native` at
+`WARNING`: with no logging setup that is `java.util.logging`, which prints them on standard error; an application whose
+logging framework provides a `System.LoggerFinder` (for example through an SLF4J or Log4j bridge) gets them there:
 
 - "native library work directory <dir>: <parent> is writable by others without the sticky bit / is writable by its
   group without the sticky bit / belongs to <owner>, not to this user or root, so another user could replace the library
@@ -480,7 +482,9 @@ The loader also prints warnings on standard error, "kuicksilver: warning: …", 
   ones only you or root can write to; on a volume no other user's process can reach the warning is harmless.
 - "work directory <dir> is a symbolic link … ; this process uses the new private directory <dir> instead": the default
   directory exists but is not usable (another user created it, or it is a link); a new private directory for this
-  process is used and removed at exit. Remove the old directory if you created it yourself.
+  process is used. It is removed at exit, or on Windows, where a loaded library cannot be deleted, by a later start
+  (directories `kuicksilver-native-<user>-*` of this user untouched for ten minutes). Remove the old directory if you
+  created it yourself.
 - "work directory <dir> is owned by <owner>, not by this user; another user may be able to replace the library" (or "is a
   junction", "keeps group/other permissions for <names>"): Windows, a `-Dkuicksilver.native.workdir` that is not private
   to this user. Point it at a directory of your own.

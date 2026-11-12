@@ -172,7 +172,7 @@ Kubernetes node), not in the image.
   directories above a `-Dkuicksilver.native.workdir` (the volume root among them): whoever else can
   write to one of them could rename the work directory, so keep processes of other users off that volume.
   An `emptyDir` mounted at `/tmp` instead is world-writable without the sticky bit: the library then goes to the user's
-  cache directory when it is writable, else it stays in `/tmp` and every start prints "kuicksilver: warning: native
+  cache directory when it is writable, else it stays in `/tmp` and every start logs the warning "native
   library work directory … is writable by others without the sticky bit". Setting `-Dkuicksilver.native.workdir` to a
   directory below the mount point, as above, avoids both.
 - **Port 443 without root.** On Linux, binding a port below 1024, TCP and UDP alike, needs `CAP_NET_BIND_SERVICE`, or a

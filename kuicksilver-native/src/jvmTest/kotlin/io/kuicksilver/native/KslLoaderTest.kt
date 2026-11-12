@@ -83,6 +83,10 @@ class KslLoaderTest {
     /** A directory owned by someone else is refused: its owner could swap the library between the hash check and System.load. */
     @Test fun negative_workdirForeignOwnerRefused() {
         val dir = Files.createTempDirectory("ksl-workdir-owner").toFile().apply { deleteOnExit() }
+        if (JvmLoader.isTrustedWindowsPrincipal(Files.getOwner(dir.toPath()))) {
+            // an elevated Windows process: its directories belong to Administrators, which every user already trusts
+            return JvmLoader.checkWorkDir(dir.toPath(), foreignUser(dir.toPath()))
+        }
         val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir.toPath(), foreignUser(dir.toPath())) }
         assertTrue(e.reason.contains("owned by"), e.reason)
         JvmLoader.checkWorkDir(dir.toPath()) // our own directory passes
@@ -147,19 +151,22 @@ class KslLoaderTest {
         chmod("777", shared)
         val out = runChild("-Djava.io.tmpdir=" + shared.path, "-Duser.home=" + noHome().path)
         assertTrue(out.contains("loaded abi $KSL_ABI_VERSION"), out)
-        assertTrue(out.contains("kuicksilver: warning:") && out.contains("without the sticky bit"), out)
+        assertTrue(out.contains("WARNING") && out.contains("without the sticky bit"), out) // System.Logger -> java.util.logging
     }
 
     /** A default directory planted by someone else (here a symbolic link) gives a new private directory for the process, not a failure. */
     @Test fun negative_plantedDefaultWorkdirIsNotUsed() {
         val tmp = Files.createTempDirectory("ksl-planted-tmp").toFile().apply { deleteOnExit() }
         val elsewhere = Files.createTempDirectory("ksl-planted-target").toFile().apply { deleteOnExit() }
-        val primary = File(tmp, "kuicksilver-native-t").apply { deleteOnExit() }
+        // the name the loader uses: an elevated Windows process (files owned by Administrators) gets "-admin"
+        val probe = Files.createTempFile(tmp.toPath(), "probe", null)
+        val me = Files.getOwner(probe).also { Files.delete(probe) }
+        val primary = File(tmp, JvmLoader.defaultDirName("t", me)).apply { deleteOnExit() }
         Files.createSymbolicLink(primary.toPath(), elsewhere.toPath())
         val warnings = mutableListOf<String>()
         val dir = JvmLoader.privateWorkDir(mapOf("java.io.tmpdir" to tmp.path, "user.name" to "t"), emptyMap(), warnings::add)
         dir.deleteOnExit()
-        assertTrue(dir.name.startsWith("kuicksilver-native-t-") && dir.parentFile == tmp.canonicalFile, "$dir")
+        assertTrue(dir.name.startsWith(primary.name + "-") && dir.parentFile == tmp.canonicalFile, "$dir")
         assertTrue(Files.isDirectory(dir.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS), "$dir")
         assertTrue(warnings.single().contains("symbolic link") && warnings.single().contains("new private directory"), warnings.toString())
         if (posix) assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.toPath())))
@@ -200,6 +207,49 @@ class KslLoaderTest {
             }
         assertEquals("kuicksilver-native-u-admin", JvmLoader.defaultDirName("u", admins))
         assertEquals(false, JvmLoader.isTrustedWindowsPrincipal(FakePrincipal("S-1-5-18")))
+    }
+
+    /** SYSTEM, Administrators and TrustedInstaller come from %SystemRoot%\\System32 itself; a user is never among them. */
+    @Test fun trustedWindowsPrincipalsComeFromSystem32() {
+        val root = System.getenv("SystemRoot") ?: return // not Windows
+        val system32 =
+            java.nio.file.Paths
+                .get(root, "System32")
+        assertTrue(JvmLoader.isTrustedWindowsPrincipal(Files.getOwner(system32)), "owner of $system32: ${Files.getOwner(system32)}")
+        val acl =
+            Files
+                .getFileAttributeView(system32, AclFileAttributeView::class.java)
+                .acl
+                .map { it.principal() }
+                .distinct()
+        assertTrue(acl.count { JvmLoader.isTrustedWindowsPrincipal(it) } >= 2, "SYSTEM and Administrators among $acl")
+        assertTrue(acl.any { !JvmLoader.isTrustedWindowsPrincipal(it) }, "Users and others are not trusted: $acl")
+        val f = Files.createTempFile("ksl-trust", null)
+        val owner = Files.getOwner(f).also { Files.delete(f) }
+        // an elevated process's files belong to Administrators, which is trusted; a normal one's to the user, which is not
+        assertEquals(owner is java.nio.file.attribute.GroupPrincipal, JvmLoader.isTrustedWindowsPrincipal(owner), "$owner")
+    }
+
+    /** Per-process directories an earlier process left are removed at a later start, unless recent, foreign or links. */
+    @Test fun staleFreshDirectoriesAreSwept() {
+        val tmp = Files.createTempDirectory("ksl-sweep").toFile().apply { deleteOnExit() }
+        val primary = File(tmp, "kuicksilver-native-t").toPath()
+        val old = File(tmp, "kuicksilver-native-t-1").apply { mkdir() }
+        File(old, "libksl.so").writeText("x")
+        val recent = File(tmp, "kuicksilver-native-t-2").apply { mkdir() }.apply { deleteOnExit() }
+        val other = File(tmp, "kuicksilver-native-u-1").apply { mkdir() }.apply { deleteOnExit() }
+        val target = Files.createTempDirectory("ksl-sweep-target").toFile().apply { deleteOnExit() }
+        File(target, "keep").apply { writeText("x") }.deleteOnExit()
+        val link = File(tmp, "kuicksilver-native-t-3").apply { deleteOnExit() }
+        Files.createSymbolicLink(link.toPath(), target.toPath())
+        val now = System.currentTimeMillis()
+        old.setLastModified(now - 3_600_000)
+        other.setLastModified(now - 3_600_000)
+        JvmLoader.sweepStaleFreshDirs(primary, tmp.toPath(), now)
+        assertTrue(!old.exists(), "a stale per-process directory is removed")
+        assertTrue(recent.isDirectory, "a recent one stays: its process may be about to load from it")
+        assertTrue(other.isDirectory, "another name's directory stays")
+        assertTrue(File(target, "keep").isFile, "nothing is deleted through a link")
     }
 
     /** A home directory path that is a regular file: nothing can be created below it, not even by root (the Docker JVM steps). */
@@ -258,13 +308,15 @@ class KslLoaderTest {
         JvmLoader.checkWorkDir(dir)
         val view = Files.getFileAttributeView(dir, AclFileAttributeView::class.java) ?: return // POSIX: covered above
         assertEquals(listOf(view.owner), view.acl.filter { it.type() == AclEntryType.ALLOW }.map { it.principal() })
-        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir, FakePrincipal("other")) }
-        assertTrue(e.reason.contains("owned by"), e.reason)
-        val warnings = mutableListOf<String>()
-        JvmLoader.checkWorkDir(dir, FakePrincipal("other"), strictAcl = false, warn = warnings::add) // an explicit workdir: 0.2 accepted it
-        assertTrue(warnings.single().contains("owned by"), warnings.toString())
         val n = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir, null) }
         assertTrue(n.reason.contains("cannot be determined"), n.reason)
+        if (JvmLoader.isTrustedWindowsPrincipal(view.owner)) return // elevated: a directory of Administrators is accepted for anyone
+        val other = foreignUser(dir)
+        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir, other) }
+        assertTrue(e.reason.contains("owned by"), e.reason)
+        val warnings = mutableListOf<String>()
+        JvmLoader.checkWorkDir(dir, other, strictAcl = false, warn = warnings::add) // an explicit workdir: 0.2 accepted it
+        assertTrue(warnings.single().contains("owned by"), warnings.toString())
     }
 
     /** A file in the work directory is not deleted when a JVM exits: another JVM may have just verified it and be about to load it. */
@@ -319,12 +371,24 @@ class KslLoaderTest {
  */
 internal fun foreignUser(path: java.nio.file.Path): java.nio.file.attribute.UserPrincipal {
     val owner = Files.getOwner(path)
-    if ("posix" !in path.fileSystem.supportedFileAttributeViews()) return FakePrincipal("not-${owner.name}")
+    if ("posix" !in path.fileSystem.supportedFileAttributeViews()) return untrustedWindowsPrincipal(owner)
     val lookup = path.fileSystem.userPrincipalLookupService
     return listOf("root", "nobody", "daemon")
         .firstNotNullOfOrNull { name ->
             runCatching { lookup.lookupPrincipalByName(name) }.getOrNull()?.takeIf { it != owner }
         } ?: error("no user other than ${owner.name} to own $path")
+}
+
+/** A real Windows principal that is neither [notThis] nor trusted by the loader: BUILTIN\\Users, from the ACL of System32. */
+internal fun untrustedWindowsPrincipal(notThis: java.nio.file.attribute.UserPrincipal): java.nio.file.attribute.UserPrincipal {
+    val system32 =
+        java.nio.file.Paths
+            .get(System.getenv("SystemRoot")!!, "System32")
+    return Files
+        .getFileAttributeView(system32, AclFileAttributeView::class.java)
+        .acl
+        .map { it.principal() }
+        .first { it != notThis && !JvmLoader.isTrustedWindowsPrincipal(it) }
 }
 
 /** A principal no file system knows: it owns nothing, so it stands for "another user" where no real one can be looked up (Windows). */
@@ -440,6 +504,29 @@ class LoaderInstallTest {
         JvmLoader.verifyAgainstManifest(installed, manifest, lib.name)
         val again = JvmLoader.installLibrary(out, lib.readBytes(), manifest)
         kotlin.test.assertEquals(installed, again, "the hashed copy is reused")
+        kotlin.test.assertTrue(dir.listFiles()!!.none { it.name.endsWith(".tmp") }, "no temp files left")
+    }
+
+    /** When writing the hashed copy fails because another JVM put the same copy there first, that copy is used. */
+    @Test fun negative_hashedCopyRaceUsesTheWinnersCopy() {
+        val resourceDir = File(System.getProperty("ksl.native.resources")!!)
+        val lib = File(resourceDir, "META-INF/native/" + JvmNativeNames.libraryFileName())
+        val manifest = File(resourceDir, "META-INF/native/manifest.sha256").readText()
+        val dir = Files.createTempDirectory("ksl-install-race").toFile().apply { deleteOnExit() }
+        val out = File(dir, lib.name).apply { deleteOnExit() }
+        File(out, "busy").apply { parentFile.mkdirs() }.apply { writeText("x") }.deleteOnExit() // the plain name cannot be replaced
+        val hashed = File(dir, JvmLoader.hashedName(lib.name, lib.readBytes())).apply { deleteOnExit() }
+        JvmLoader.moveHookForTest = { _, target ->
+            if (target.fileName.toString() == hashed.name) {
+                lib.copyTo(hashed) // the other JVM's copy, verified and in place
+                throw java.io.IOException("in use by another process")
+            }
+        }
+        try {
+            kotlin.test.assertEquals(hashed, JvmLoader.installLibrary(out, lib.readBytes(), manifest))
+        } finally {
+            JvmLoader.moveHookForTest = null
+        }
         kotlin.test.assertTrue(dir.listFiles()!!.none { it.name.endsWith(".tmp") }, "no temp files left")
     }
 }

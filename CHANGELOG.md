@@ -1289,7 +1289,8 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   created the same way; every file and directory is now owner-only in the creating call (`rw-------` for the library,
   `rwx------` for directories), and the library goes through a new `O_CREAT | O_EXCL` temp file and an atomic rename.
   A library is reused only when the process user owns it and nobody else may write it. No setup that loaded before is
-  refused now; risks are mitigated or reported as "kuicksilver: warning: …" on standard error
+  refused now; risks are mitigated or logged as warnings (`System.Logger` `io.kuicksilver.native`, by default
+  `java.util.logging` on standard error)
   ([troubleshooting](docs/guide/troubleshooting.md#kslexceptionnativeload-or-kslloaderavailability-is-unavailable)):
   - Windows checked nothing beyond "is a directory": in a temp directory where other users may create files (a
     service's `C:\Windows\Temp`) another user could plant the library and change it between the hash check and
@@ -1302,7 +1303,8 @@ QUIC loss recovery and congestion control (RFC 9002 review):
     without the sticky bit, as an `emptyDir` at `/tmp` is, or owned by another user), the library goes to
     `$XDG_RUNTIME_DIR` or the user's cache directory instead, else stays in the temporary directory with a warning.
   - A default directory created first by another user, or a link there, gives a new private directory for the process
-    instead of the `IntegrityMismatch` of 0.2; an explicit `-Dkuicksilver.native.workdir` is still refused.
+    instead of the `IntegrityMismatch` of 0.2; an explicit `-Dkuicksilver.native.workdir` is still refused. Such a
+    directory is removed at exit, or on Windows (a loaded library cannot be deleted) by a later start.
   - The process user is now the owner of a file it creates, so a uid without a passwd entry (a container's
     `runAsUser`) no longer fails with "the user of this process cannot be determined" when `java.io.tmpdir` is
     read-only.
