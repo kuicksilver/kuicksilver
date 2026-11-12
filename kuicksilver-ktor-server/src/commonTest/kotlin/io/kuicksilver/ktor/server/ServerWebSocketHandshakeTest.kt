@@ -179,6 +179,51 @@ class ServerWebSocketHandshakeTest {
             }
         }
 
+    /**
+     * An extension that answers to the name permessage-deflate with a parameter RFC 7692 does not define: the 101 is out
+     * before the engine reads it, and the session cannot be checked, so the client gets a Close with 1011 (RFC 6455
+     * section 7.4.1) instead of a connection that ends without a word.
+     */
+    @Test fun negative_unreadableOwnAnswerClosesWith1011() =
+        serverTest {
+            val (server, port) =
+                tlsServer {
+                    install(WebSockets) { extensions { install(OddDeflate) } }
+                    routing { webSocket("/ws") { for (frame in incoming) continue } }
+                }
+            try {
+                h1(port, "Sec-WebSocket-Extensions: permessage-deflate\r\n") { _, r ->
+                    upgraded(r)
+                    assertEquals(1011, closeCode(r))
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** Answers to the name permessage-deflate with `x-odd=1`, which RFC 7692 section 7 does not define. */
+    private object OddDeflate : io.ktor.websocket.WebSocketExtensionFactory<Unit, OddDeflateExtension> {
+        override val key = io.ktor.util.AttributeKey<OddDeflateExtension>("odd-deflate")
+        override val rsv1 = true
+        override val rsv2 = false
+        override val rsv3 = false
+
+        override fun install(config: Unit.() -> Unit) = OddDeflateExtension()
+    }
+
+    private class OddDeflateExtension : io.ktor.websocket.WebSocketExtension<Unit> {
+        override val factory = OddDeflate
+        override val protocols = listOf(io.ktor.websocket.WebSocketExtensionHeader("permessage-deflate", listOf("x-odd=1")))
+
+        override fun clientNegotiation(negotiatedProtocols: List<io.ktor.websocket.WebSocketExtensionHeader>) = true
+
+        override fun serverNegotiation(requestedProtocols: List<io.ktor.websocket.WebSocketExtensionHeader>) = protocols
+
+        override fun processOutgoingFrame(frame: Frame) = frame
+
+        override fun processIncomingFrame(frame: Frame) = frame
+    }
+
     /** RFC 6455 section 10.4: a 14-byte header claiming 2 GiB is refused with 1009 from its header. */
     @Test fun negative_frameOverTheLimitClosesWith1009() =
         frameFails(
@@ -224,6 +269,7 @@ class ServerWebSocketHandshakeTest {
     /** A TLS connection to the server that has sent a valid upgrade request; [block] reads the response. */
     private suspend fun h1(
         port: Int,
+        extra: String = "",
         block: suspend (io.ktor.utils.io.ByteWriteChannel, ByteReadChannel) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
@@ -232,7 +278,9 @@ class ServerWebSocketHandshakeTest {
             try {
                 val w = socket.openWriteChannel(autoFlush = true)
                 val r = socket.openReadChannel()
-                w.writeStringUtf8("GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n$key$version\r\n")
+                w.writeStringUtf8(
+                    "GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n$key$version$extra\r\n",
+                )
                 withTimeout(10.seconds) { block(w, r) }
             } finally {
                 socket.close()

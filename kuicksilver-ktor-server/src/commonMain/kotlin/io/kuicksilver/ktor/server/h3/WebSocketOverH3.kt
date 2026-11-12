@@ -15,6 +15,7 @@ import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
+import io.kuicksilver.ktor.server.startServerWebSocket
 import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -84,14 +85,17 @@ internal class H3UpgradeResponse(
         var webSocket: ServerWebSocket? = null
         try {
             val input =
-                ServerWebSocket(
+                startServerWebSocket(
                     stream.input,
                     call.request.headers,
                     headersBuilder,
                     call.attributes,
                     engineDispatcher + guard,
                     webSocketMaxMessageSize,
-                ).also { webSocket = it }
+                    stream.output,
+                    call.application.environment.log,
+                ) ?: return // a Close with 1011 went out instead
+            webSocket = input
             upgrade.upgrade(input.channel, input.output(stream.output), engineDispatcher, userDispatcher).join()
         } finally {
             webSocket?.done()

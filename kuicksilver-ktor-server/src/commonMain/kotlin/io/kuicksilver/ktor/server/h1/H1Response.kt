@@ -30,6 +30,7 @@ import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.copyContentFrom
+import io.kuicksilver.ktor.server.startServerWebSocket
 import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -95,15 +96,19 @@ internal class H1Response(
         try {
             val upgradedInput =
                 if (isWebSocket) {
-                    ServerWebSocket(
-                        input,
-                        call.request.headers,
-                        headersBuilder,
-                        call.attributes,
-                        engineDispatcher + guard,
-                        webSocketMaxMessageSize,
-                    ).also { webSocket = it }
-                        .channel
+                    val ws =
+                        startServerWebSocket(
+                            input,
+                            call.request.headers,
+                            headersBuilder,
+                            call.attributes,
+                            engineDispatcher + guard,
+                            webSocketMaxMessageSize,
+                            output,
+                            call.application.environment.log,
+                        ) ?: return // a Close with 1011 went out instead
+                    webSocket = ws
+                    ws.channel
                 } else {
                     input
                 }

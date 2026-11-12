@@ -16,6 +16,8 @@ import io.ktor.util.Attributes
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.charsets.Charsets
+import io.ktor.utils.io.writeFully
+import io.ktor.websocket.ProtocolViolationException
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.negotiatedPerMessageDeflate
@@ -79,12 +81,38 @@ internal class ServerWebSocket(
     }
 
     /** The upgrade's [output], as the frames must go out. */
-    fun output(output: ByteWriteChannel): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, inflateSent)
+    fun output(output: ByteWriteChannel): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression)
 
     fun done() {
         deflate?.dispose()
     }
 }
+
+/**
+ * [ServerWebSocket] for an upgrade whose 101 (or RFC 9220 2xx) already went out; null when the engine cannot read that
+ * answer's own `Sec-WebSocket-Extensions` (an extension's answer that is not RFC 7692's): the session cannot be checked,
+ * so it does not start. In its place the client gets a Close frame with 1011 (RFC 6455 section 7.4.1: "an unexpected
+ * condition that prevented it from fulfilling the request") on [output], and [log] a warning, instead of a connection
+ * that ends without a word.
+ */
+internal suspend fun startServerWebSocket(
+    input: ByteReadChannel,
+    request: Headers,
+    response: HeadersBuilder,
+    attributes: Attributes,
+    context: CoroutineContext,
+    maxMessageSize: Long,
+    output: ByteWriteChannel,
+    log: io.ktor.util.logging.Logger,
+): ServerWebSocket? =
+    try {
+        ServerWebSocket(input, request, response, attributes, context, maxMessageSize)
+    } catch (e: ProtocolViolationException) {
+        log.warn("WebSocket upgrade: the answer's Sec-WebSocket-Extensions cannot be read (${e.message}); closing with 1011")
+        output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xF3.toByte()))
+        output.flush()
+        null
+    }
 
 /**
  * Refuses a WebSocket upgrade whose negotiated extensions (in the call's [attributes]) claim the same RSV bit, before
