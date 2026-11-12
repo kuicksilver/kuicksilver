@@ -13,7 +13,7 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.request.httpVersion
 import io.ktor.server.response.respond
-import io.ktor.server.response.respondBytes
+import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -142,13 +142,19 @@ class ServerWebSocketH2Test {
     /**
      * RFC 9218 section 10.1 with RFC 8441: an HTTP/2 WebSocket is an Extended CONNECT stream (`:method` CONNECT, while Ktor
      * sees a GET), so the server schedules it as a tunnel: incremental by default (sections 10.1, 11) and with one frame in
-     * 16 even behind more urgent streams. Next to a u=0 response streaming megabytes on the same connection its answer
-     * comes while that response is still going.
+     * 16 even behind more urgent streams (the share itself: `PriorityTest.tunnelGetsShareBehindMoreUrgentResponse`). Next
+     * to a u=0 response that does not end by itself (it streams until the test has the WebSocket's answer) the answer
+     * comes while that response is still going, and the response then ends in order.
+     *
+     * Before, the response was 32 MiB and the answer had to come before half of it: a race between the WebSocket's round
+     * trip and the speed of the transfer, which a slow host lost (a linux/amd64 container on an arm64 Mac: both directions
+     * of the round trip took 20 to 60 ms, the client's ping included, which no server scheduling touches, while the
+     * response moved 10 MB).
      */
     @Test fun webSocketKeepsItsTunnelShareNextToAnUrgentResponse() =
         serverTest {
-            val total = 32L * 1024 * 1024 // within the client's windows: the response never waits for credit
             val scheduled = CompletableDeferred<Triple<Boolean, Int, Boolean>>()
+            val answered = CompletableDeferred<Unit>()
             val (server, port) =
                 h2TlsServer {
                     install(WebSockets)
@@ -165,8 +171,13 @@ class ServerWebSocketH2Test {
                                 }
                             }
                         }
-                        // the whole body at hand, so its writer always holds the next frame
-                        get("/big") { call.respondBytes(ByteArray(total.toInt())) }
+                        // streams until the WebSocket answered, a megabyte at a time
+                        get("/big") {
+                            val chunk = ByteArray(1 shl 20)
+                            call.respondBytesWriter {
+                                while (!answered.isCompleted) writeFully(chunk)
+                            }
+                        }
                     }
                 }
             try {
@@ -200,16 +211,16 @@ class ServerWebSocketH2Test {
                         withTimeout(20.seconds) { received.first { it >= 1L shl 20 } } // the response is streaming
                         session.outgoing.send(Frame.Text("ping"))
                         assertEquals("HTTP/2:ping", (withTimeout(20.seconds) { session.incoming.receive() } as Frame.Text).readText())
-                        val atAnswer = received.value
-                        assertTrue(atAnswer < total / 2, "$atAnswer of $total bytes of the u=0 response came before the WebSocket's answer")
+                        assertTrue(reader.isActive, "the u=0 response was still going when the WebSocket's answer came")
+                        answered.complete(Unit)
                         withTimeout(60.seconds) { reader.join() } // read to its end: the stream ends in order, no reset
-                        assertEquals(total, received.value)
                         big.release()
                         session.outgoing.send(Frame.Close(CloseReason(CloseReason.Codes.NORMAL, "bye")))
                     }
                     ws.release()
                 }
             } finally {
+                answered.complete(Unit)
                 server.stop(100, 500)
             }
         }
