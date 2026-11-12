@@ -204,6 +204,32 @@ class BbrTest {
         assertTrue(held >= 200.milliseconds && held < 200.milliseconds + rtt * 4, "held ProbeRTT for $held")
     }
 
+    @Test fun applicationLimitedAcksDoNotGrowTheWindow() {
+        // RFC 9002 section 7.8: "When bytes in flight is smaller than the congestion window and sending is not pacing limited, the
+        // congestion window is underutilized ... the congestion window SHOULD NOT be increased in either slow start or congestion
+        // avoidance." A trickle of one datagram per 100 ms, every ACK application-limited: draft-06's SetCwnd added each ACK's
+        // delivered bytes in Startup (cwnd < BBR.max_inflight or C.delivered < InitialCwnd)
+        val cc = bbr()
+        val initial = cc.cwnd
+        var now = TimeMark(1_000_000_000L)
+        for (i in 0 until 200) {
+            cc.onAppLimited()
+            val p = SentPacket()
+            p.pn = i.toLong()
+            p.timeSent = now
+            p.size = 1200
+            p.inFlight = true
+            cc.onPacketSent(now, p.size)
+            cc.onPacketStamped(p, now)
+            now += rtt
+            cc.onPacketAcked(p, now)
+            cc.onAck(now, p.timeSent, p.size, rtt, appLimited = true)
+            cc.onAckProcessed(now)
+            assertTrue(cc.cwnd <= initial, "ACK $i grew the window to ${cc.cwnd} from $initial while one datagram was in flight")
+            now += 60.milliseconds
+        }
+    }
+
     @Test fun appLimitedSamplesDoNotLowerTheBandwidthEstimate() {
         val b = Bottleneck(bbr(), rate, rtt)
         b.run(3.seconds)
