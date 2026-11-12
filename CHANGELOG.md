@@ -431,7 +431,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC, DPLPMTUD: a probe fails only when its PROBE_TIMER (16 s, or 3 x PTO when longer) expires unacknowledged, however
   early loss detection declared it lost (RFC 8899 section 5.1.1: "MUST NOT be smaller than 1 second and SHOULD be larger
   than 15 seconds"). A size above the path's MTU is now given up after about 48 s instead of a few round trips; a size a
-  Packet Too Big or EMSGSIZE settles is still given up at once.
+  Packet Too Big or EMSGSIZE settles is still given up at once, and a probe declared lost whose acknowledgment still comes
+  confirms its size.
 - Native UDP sockets: every IPv6 socket asks the kernel for flow labels (`IPV6_AUTOFLOWLABEL`, RFC 9000 section 9.7), so a
   Linux host that labels only on request (`net.ipv6.auto_flowlabels` = 2) or a Darwin host with
   `net.inet6.ip6.auto_flowlabel` = 0 labels QUIC datagrams too. Linux labels per path, Darwin per socket.
