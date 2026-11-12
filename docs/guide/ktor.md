@@ -937,7 +937,7 @@ experimental; `FileAltSvcStore` writes it to its file), so the first request aft
 them too. A followed network is compared in memory: on Android the `Network` (a number the system gives each new
 connection), on iOS and macOS the default path's interface, gateways and the interface's addresses, so a move between
 two Wi-Fi networks on one interface is a change as well (a path that tells neither gateways nor addresses counts as a
-change at each update). Neither survives a restart (the Android number is reused after a reboot; the Apple identity
+change at each update; every update of the path, changed or not, flushes the HTTPS record cache). Neither survives a restart (the Android number is reused after a reboot; the Apple identity
 holds local addresses and is never written), so it is never stored: at its first value after a start the engine takes
 the network as changed, as it does for what it learned before that value came; requests wait for that value until
 200 ms after the client was created, one deadline for all, then go on without it. Give `networkId` an identity of your

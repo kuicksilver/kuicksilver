@@ -32,8 +32,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   network: a change resets broken marks and QUIC confirmation, drops the `Alt-Svc` alternatives without `persist=1`
   (RFC 7838 section 2.2) and flushes the HTTPS record cache, which such an engine now keeps. `networkId` wins when set.
   On iOS and macOS the followed network is the default path's interface, gateways and the interface's addresses
-  (`nwPathIdentities()`, compared in memory only), so a move between Wi-Fi networks on one interface is a change too;
-  on Android the `Network`. Neither survives a restart, so a followed value is never stored, and its first value after
+  (`nwPathIdentities()`, compared in memory only; its `toString` is a hash, never the addresses), so a move between
+  Wi-Fi networks on one interface is a change too; on Android the `Network`. Every update the source reports, changed
+  or not, flushes the HTTPS record cache (RFC 9460 section 12). Neither survives a restart, so a followed value is never stored, and its first value after
   a start counts as a change, as for what was learned before it came (requests wait for it until 200 ms after the client
   was created, one deadline for all). A store that throws while a change is applied loses that change, not the following.
 - Ktor client: `AltSvcStore.networkId` (experimental): the network the stored alternatives were learned on.

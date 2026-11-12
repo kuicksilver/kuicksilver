@@ -216,6 +216,11 @@ internal class KuicksilverEngine(
                                 }
                             }
                         }
+                        // RFC 9460 section 12: "Clients MUST ensure that their DNS cache is partitioned for each local network,
+                        // or flushed on network changes": every update the source reports flushes it, also one whose value
+                        // equals the last (an update of the network that the value does not tell apart); the Alt-Svc rule
+                        // above (RFC 7838 section 2.2) looks at changed values only
+                        httpsRecords?.onNetworkChanged()
                         firstFollowedNetwork.complete(Unit)
                         followedNetworkUpdates.value++
                     }

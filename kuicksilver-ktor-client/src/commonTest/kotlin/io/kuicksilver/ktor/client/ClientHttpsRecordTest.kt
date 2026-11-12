@@ -400,6 +400,43 @@ class ClientHttpsRecordTest {
             }
         }
 
+    /**
+     * RFC 9460 section 12: the cache is flushed on every update the followed source reports, also one whose value equals the
+     * last (on iOS and macOS every raw update of the default path; two networks the identity cannot tell apart still
+     * flush). The Alt-Svc rule looks at changed values only.
+     */
+    @Test fun negative_everyNetworkUpdateFlushesTheCache() =
+        clientTest {
+            val (server, port) =
+                testServer(configure = {
+                    http3 = false
+                    altSvc = false
+                }) { routing { get("/") { call.respondText("h1") } } }
+            try {
+                val name = "_$port._https.server.test"
+                val records = Records(mapOf(name to listOf(record(name, 1, ".", "h2"))))
+                val networks = kotlinx.coroutines.flow.MutableSharedFlow<Any?>(replay = 1)
+                networks.emit("wifi")
+                client(records.source, more = { http3 { connectionMigration = following(networks) } }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.followedNetworkUpdates.first { it >= 1 }
+                    c.get("https://server.test:$port/")
+                    c.get("https://server.test:$port/")
+                    assertEquals(1, records.asked.size, "cached: ${records.asked}")
+                    networks.emit("wifi") // the same identity again
+                    engine.followedNetworkUpdates.first { it >= 2 }
+                    c.get("https://server.test:$port/")
+                    assertEquals(2, records.asked.size, "flushed by the update: ${records.asked}")
+                    networks.emit("wifi")
+                    engine.followedNetworkUpdates.first { it >= 3 }
+                    c.get("https://server.test:$port/")
+                    assertEquals(3, records.asked.size, "and by the next one: ${records.asked}")
+                }
+            } finally {
+                server.stopSuspend(0, 0)
+            }
+        }
+
     /** A network source that fails leaves the engine blind to network changes: the cache is dropped and no longer kept. */
     @Test fun negative_failedNetworkSourceStopsCaching() =
         clientTest {
