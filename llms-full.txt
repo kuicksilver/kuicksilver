@@ -2251,7 +2251,7 @@ picks the TCP port first, so its UDP twin may be taken: the pair is then bound a
 every other time with the UDP port picked first and TCP taking the same number, after which the connector serves
 HTTP/1.1 alone with a warning. A fixed port whose UDP side is taken fails the start. HTTP/1.1
 responses then carry `Alt-Svc: h3=":<port>"; ma=86400` so clients can switch (RFC 7838) — unless the application set
-its own `Alt-Svc`, or the response is a 421; on HTTP/2 the same value goes out as an ALTSVC frame instead (see
+its own `Alt-Svc`, or the response is a 421; HTTP/2 responses carry it too, with an ALTSVC frame besides (see
 [HTTP/2 on the server](#http2-on-the-server)); `altSvc = false` turns both off.
 
 In an HTTP/3 call `call.request.httpVersion` is `"HTTP/3"`, `call.request.local.scheme` is the request's `:scheme`
@@ -2296,12 +2296,14 @@ val server = embeddedServer(Kuicksilver, configure = {
 Each stream is a Ktor call: `call.request.httpVersion` is `"HTTP/2"`, `call.request.local.scheme` is `"https"` (the
 connection's, whatever the request's `:scheme`), `:authority` appears as the `Host` header and split `cookie` fields as one (RFC 9113 section 8.2.3). Responses
 go out without connection-specific headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade` are dropped), a
-response to HEAD, a 204 or a 304 without content. The engine's `Alt-Svc` value goes out as an ALTSVC frame (RFC 7838
-section 4) on the request stream, ahead of the response, once per origin and value on the connection, and not as a
-header: section 3 says "When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame (Section 4). A single
-ALTSVC frame can be sent for a connection". A client on HTTP/2 that reads the frame (the Kuicksilver client does) learns
-HTTP/3 from it; one that reads only the header learns it from an HTTP/1.1 response. An application's own `Alt-Svc`
-header, and a 421, are left as they are. Requests are checked against RFC 9113 section 8 before the application sees them:
+response to HEAD, a 204 or a 304 without content. The engine's `Alt-Svc` goes out both ways: as the field on every
+response, as on HTTP/1.1, and as an ALTSVC frame (RFC 7838 section 4) on the request stream ahead of the response, once
+per origin and value on the connection and again 12 hours (half the advertised `ma`) after the last one, so a client on a
+long-lived connection learns it again. Section 3 recommends the frame ("When using HTTP/2 ([RFC7540]), servers SHOULD
+instead send an ALTSVC frame") and keeps the field valid ("Note that, despite this recommendation, Alt-Svc header fields
+remain valid in responses delivered over HTTP/2"): the frame serves the clients that read it (the Kuicksilver client
+does), the field those that read only the header (curl, Kuicksilver clients before 0.3.0, other stacks), and both carry
+the same reading of the value. An application's own `Alt-Svc` header, and a 421, are left as they are. Requests are checked against RFC 9113 section 8 before the application sees them:
 a malformed one (an uppercase or invalid field name, a connection-specific field, `te` other than `trailers`, a missing,
 repeated or unknown pseudo-header field, `host` that differs from `:authority`, content that does not match
 `content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
@@ -2365,9 +2367,9 @@ server.engine.http3Advertising = Http3Advertising.On
 
 | Value | HTTP/1.1 responses | HTTP/2 connections | HTTP/3 responses | Live HTTP/3 connections | New QUIC connections |
 |---|---|---|---|---|---|
-| `On` (default) | `Alt-Svc: h3=":<port>"; ma=86400` | ALTSVC frame `h3=":<port>"; ma=86400` | no `Alt-Svc` | served | accepted |
-| `Clear` | `Alt-Svc: clear` | ALTSVC frame `clear` | `Alt-Svc: clear` | served | accepted |
-| `Drain` | `Alt-Svc: clear` | ALTSVC frame `clear` | `Alt-Svc: clear` | GOAWAY (RFC 9114 section 5.2): requests in flight finish, then the connection closes | refused at the first Initial with CONNECTION_REFUSED |
+| `On` (default) | `Alt-Svc: h3=":<port>"; ma=86400` | the same field, and an ALTSVC frame with it | no `Alt-Svc` | served | accepted |
+| `Clear` | `Alt-Svc: clear` | the same field, and an ALTSVC frame with it | `Alt-Svc: clear` | served | accepted |
+| `Drain` | `Alt-Svc: clear` | the same field, and an ALTSVC frame with it | `Alt-Svc: clear` | GOAWAY (RFC 9114 section 5.2): requests in flight finish, then the connection closes | refused at the first Initial with CONNECTION_REFUSED |
 
 RFC 7838 section 3: "A field value containing the special value "clear" indicates that the origin requests all
 alternatives for that origin to be invalidated". An HTTP/3 response may send it too, since section 2.2 says
@@ -2608,7 +2610,7 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.maxTcpConnections` | TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
-| `kuicksilver.altSvc` | announce HTTP/3: `Alt-Svc` on HTTP/1.1 responses, ALTSVC frames on HTTP/2 (`true`) |
+| `kuicksilver.altSvc` | announce HTTP/3: `Alt-Svc` on HTTP/1.1 and HTTP/2 responses, plus ALTSVC frames on HTTP/2 (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
@@ -2883,7 +2885,7 @@ with an `Alt-Used` header; SNI and certificate verification still use the origin
 The same checks apply to every entry a store hands back, so a store file written by an older version or edited by hand,
 or an application's own `AltSvcStore`, cannot bring in what the header path refuses; `FileAltSvcStore` also checks every
 field of every record again on load (origin form, protocol, host, ports, expiry, persist flag), drops what fails, and
-does not read a file over 8 MiB.
+reads at most the first 8 MiB of a file (a full store takes less).
 
 Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default. `FileAltSvcStore(path)` keeps them
 in one tab-separated text file (loaded once, rewritten atomically after every change, expired records dropped on load)
@@ -2893,15 +2895,22 @@ per origin (the first ones of the header) and 1000 origins, dropping the least r
 the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. Entries
 without `persist=1` are dropped when the network changes (RFC 7838 section 2.2): when `networkId()` reports a new network,
 or, while `networkId` is not set, when the networks `connectionMigration` follows do (the `followDefaultNetwork`
-factories). A store also keeps the network its entries were learned on (`AltSvcStore.networkId`, experimental;
-`FileAltSvcStore` writes it to its file), so the first request after a restart on another network drops them too;
-`clearOnNetworkChange = false` keeps them. Without either source the engine sees no network change.
+factories). With `networkId`, a store also keeps the network its entries were learned on (`AltSvcStore.networkId`,
+experimental; `FileAltSvcStore` writes it to its file), so the first request after a restart on another network drops
+them too. A followed network has no identity that survives a restart (an Android `Network` is a number reused after a
+reboot; an Apple path key names the interface, so a move between two Wi-Fi networks on one interface is not seen at
+all): it is never stored, and at its first value after a start the engine takes the network as changed, as it does for
+what it learned before that value came (a request waits up to 200 ms for it). Give `networkId` an identity of your own
+for detection across restarts and on one interface. `clearOnNetworkChange = false` keeps them. Without either source
+the engine sees no network change.
 
 RFC 7838 section 9.4: "In a user agent, any alternative service information MUST be removed when origin-specific data is
 cleared (typically, when cookies [RFC6265] are cleared)". Call `client.clearAlternativeServices(url)` (experimental) where
 the application clears an origin's cookies or other site data, or `client.clearAlternativeServices()` for all of them:
 the cached alternatives (persistent ones too, and from the store file before it returns), broken marks and RTTs go;
-open HTTP/3 connections stay (`closeHttp3Connections()` closes them). A store of your own implements `AltSvcStore.clear()`.
+open HTTP/3 connections stay (`closeHttp3Connections()` closes them). A store of your own overrides `AltSvcStore.clear()`;
+one that does not (written before 0.3.0) gets the origins seen since the client started removed one by one, and a
+warning that others it kept from earlier may remain.
 
 #### HTTPS records (experimental)
 
@@ -3093,7 +3102,8 @@ What the engine does:
 - a migration itself neither marks the alternative broken nor forgets marks, but while `networkId` is not set the
   network the factories follow (`Http3ConnectionMigration.networks`) is the engine's network: a new one gives
   alternatives marked broken on the old one a fresh chance, drops the alternatives without `persist=1` (RFC 7838 section
-  2.2) and flushes the HTTPS record cache, as a `networkId` change does. A `networkId` that is set wins.
+  2.2) and flushes the HTTPS record cache, as a `networkId` change does, within the limits of the platform's handle
+  ([Discovery and Alt-Svc](#discovery-and-alt-svc)). A `networkId` that is set wins.
 
 What does not survive a network change: HTTP/1.1 and HTTP/2 run over TCP, which cannot move, and so do WebSockets over
 HTTP/1.1; a call on such a connection fails and the application repeats it. The dedicated connections of WebTransport
@@ -4438,9 +4448,8 @@ capture answers the same question without code.
 From a machine outside your network:
 
 ```sh
-# 1. TCP side: the Alt-Svc header (h3 with the public port; "clear" under Clear or Drain); over HTTP/1.1, since on
-#    HTTP/2 the engine sends it as an ALTSVC frame (RFC 7838 section 4), which `curl -I` does not show
-curl --http1.1 -sI https://example.com/ | grep -i '^alt-svc'
+# 1. TCP side: the Alt-Svc header (h3 with the public port; "clear" under Clear or Drain)
+curl -sI https://example.com/ | grep -i '^alt-svc'
 
 # 2. UDP side: HTTP/3 only, no fallback (needs a curl built with HTTP/3: `curl -V` lists HTTP3)
 curl --http3-only -sI https://example.com/
@@ -4815,7 +4824,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `discovery` | `Http3DiscoveryMode` | `Auto` | 0.2.0 | `Auto` (TCP first, HTTP/3 after `Alt-Svc`), `Preferred` (HTTP/3 first, TCP fallback), `H3Only`, `H1Only` (no HTTP/3; TCP is HTTP/1.1 or HTTP/2) |
 | `quicHints` | `Set<HostPort>` | empty | 0.2.0 | origins treated as `Preferred` in `Auto` mode; `HostPort(host, port)` compares the host exactly as in URLs |
 | `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | 0.2.0 | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
-| `clearOnNetworkChange` | `Boolean` | `true` | 0.2.0 | drop alternatives without `persist=1` when the network changes (`networkId`, else the networks `connectionMigration` follows; also across restarts, RFC 7838 section 2.2); `false` keeps them |
+| `clearOnNetworkChange` | `Boolean` | `true` | 0.2.0 | drop alternatives without `persist=1` when the network changes (`networkId`, else the networks `connectionMigration` follows; with `networkId` also across restarts, RFC 7838 section 2.2); `false` keeps them |
 | `httpsRecords` (*experimental*) | `HttpsRecordSource` | `HttpsRecordSource.Off` | 0.3.0 | HTTPS resource records (RFC 9460) as a source of HTTP/3 in `Auto`: `System` (the OS resolver) or `Exchange { query -> response }` (your DNS-over-HTTPS client) ([HTTPS records](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#https-records-experimental)) |
 | `httpsRecordExtraWait` (*experimental*) | `Duration` | 50 ms | 0.3.0 | how long a request waits for the HTTPS records after the origin's addresses resolved; 50 ms (RFC 9460 section 5.1) to 1 s, else the engine's creation fails with `IllegalArgumentException` |
 | `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | 0.2.0 | head start of HTTP/3 over HTTP/1.1 in a race on a network where QUIC was confirmed (10 ms elsewhere); an explicit value must be 10 ms..2 s or `Duration.INFINITE` (RFC 8305 section 5; INFINITE starts HTTP/1.1 only after HTTP/3 failed, on every network), else the engine's creation fails with `IllegalArgumentException` |
@@ -4849,7 +4858,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3; no h2c on plain connectors) ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
 | `http2Settings` (*experimental*) | `Http2Settings` | `Http2Settings()` | 0.3.0 | windows, SETTINGS and flood limits of every HTTP/2 connection; its `maxHeaderBlockTime` is bounded by `requestHeaderTimeoutSeconds` |
 | `http2RepeatOffenderPenalty` (*experimental*) | `Duration` | `Duration.ZERO` (off) | 0.3.0 | not negative; an address whose HTTP/2 connections end in a flood limit three times within a minute has its TCP connections closed at accept for this long (IPv6 by its /56); only for a server that sees real client addresses, never behind a NAT or a source-rewriting load balancer ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
-| `altSvc` | `Boolean` | `true` | 0.2.0 | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS and send it as an ALTSVC frame on HTTP/2 connections (RFC 7838 section 4; not when the application set its own, not on 421); `engine.http3Advertising` changes it at run time ([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-on-the-server)) |
+| `altSvc` | `Boolean` | `true` | 0.2.0 | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 and HTTP/2 responses over TLS, and on HTTP/2 also send it as an ALTSVC frame per origin, refreshed every 12 hours (RFC 7838 sections 3, 4; not when the application set its own, not on 421); `engine.http3Advertising` changes it at run time ([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-on-the-server)) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | 0.2.0 | QUIC transport of the HTTP/3 listeners |
 | `quicMaxIdleTimeout` | `Duration?` | `null` | 0.2.0 | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | 0.2.0 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; every platform since 0.3.0) |
@@ -4867,7 +4876,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` | 0.2.0 | lifecycle of every QUIC connection |
 | `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | 0.2.0 | connection and request events over every protocol |
 | `engine.http3Stats` (*experimental*, on the running engine) | `List<EndpointStats>` | empty before the start | 0.3.0 | the QUIC endpoint counters of every HTTP/3 listener, one per connector serving HTTP/3: datagrams, drops, refusals by admission, limits and the accept queue, handshakes ([Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#observability)) |
-| `engine.http3Advertising` (*experimental*, on the running engine) | `Http3Advertising` | `On` | 0.3.0 | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1 and HTTP/3 responses and in HTTP/2 ALTSVC frames, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused with CONNECTION_REFUSED); read per response and per new client ([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-on-the-server)) |
+| `engine.http3Advertising` (*experimental*, on the running engine) | `Http3Advertising` | `On` | 0.3.0 | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1, HTTP/2 and HTTP/3 responses and in HTTP/2 ALTSVC frames, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused with CONNECTION_REFUSED); read per response and per new client ([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-on-the-server)) |
 | `shutdownGracePeriod`, `shutdownTimeout` (Ktor) |  | Ktor's | 0.2.0 | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#graceful-stop)) |
 
 The other `QuicEndpointConfig` limits of the HTTP/3 listener (`initialQueueCap`, `maxConnectionLifetime`, the stateless
