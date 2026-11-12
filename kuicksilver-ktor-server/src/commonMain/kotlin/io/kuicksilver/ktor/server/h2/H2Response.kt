@@ -19,6 +19,7 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
+import io.kuicksilver.ktor.server.NeverIndexKey
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -108,7 +109,7 @@ internal class H2Response(
         if (!headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
         dropFramingFieldsOfAResponseWithoutContent()
         declaredLength = if (endStream) -1 else declaredLengthOf()
-        h2.respond(statusCode.value, fields(), endStream)
+        h2.respond(statusCode.value, fields(), endStream, call.attributes.getOrNull(NeverIndexKey).orEmpty())
         answered = true
     }
 

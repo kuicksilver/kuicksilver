@@ -16,6 +16,7 @@ import io.ktor.server.response.respond
 import io.ktor.util.pipeline.PipelinePhase
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
+import io.kuicksilver.ktor.server.NeverIndexedReceivedKey
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.ReceivedEarlyKey
 import io.kuicksilver.ktor.server.RequestPriorityKey
@@ -48,6 +49,7 @@ internal class H2Call(
     init {
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
+        if (h2.neverIndexed.isNotEmpty()) attributes.put(NeverIndexedReceivedKey, h2.neverIndexed)
         // the Priority field (RFC 9218 section 5) is end to end: read as on HTTP/1.1 (PRIORITY_UPDATE is not used on HTTP/2)
         attributes.put(RequestPriorityKey, h1Priority(request.headers.getAll("Priority")))
         // a gateway forwarded it from early data (RFC 8470 section 5.1)

@@ -131,7 +131,7 @@ internal class H2Runtime(
     /** Capacity or usability changed: a stream was released, the peer's limits or a GOAWAY arrived, the connection ended. */
     private val onChange: () -> Unit,
     /** A server's new request stream, its request already validated. */
-    private val onRequest: ((StreamRt, io.kuicksilver.http2.message.H2Request) -> Unit)? = null,
+    private val onRequest: ((StreamRt, io.kuicksilver.http2.message.H2Request, List<Pair<String, String>>) -> Unit)? = null,
     /** A server's fields for the responses the runtime makes itself (the 431): the engine's `date`, say. */
     private val ownResponseFields: () -> List<Pair<String, String>> = { emptyList() },
     /**
@@ -416,7 +416,7 @@ internal class H2Runtime(
                 s.noContent = s.responseHasNoContent(r.status)
             }
             s.answered.complete(Unit)
-            s.head.complete(H2ResponseHead(r.status, r.fields))
+            s.head.complete(H2ResponseHead(r.status, r.fields, e.neverIndexed.regularOnly()))
             if (e.endStream) endOfMessage(s)
         } else {
             // trailers (RFC 9113 section 8.1): the core made sure they carry END_STREAM
@@ -476,7 +476,7 @@ internal class H2Runtime(
             s.headReceived = true
             s.contentLength = r.contentLength
         }
-        handler(s, r)
+        handler(s, r, e.neverIndexed.regularOnly())
         if (e.endStream) endOfMessage(s)
     }
 
@@ -832,11 +832,12 @@ internal class H2Runtime(
         fields: List<Pair<String, String>>,
         endStream: Boolean,
         headRequest: Boolean,
+        neverIndexed: Set<String> = emptySet(),
     ): StreamRt {
         var s: StreamRt? = null
         try {
             withCore {
-                val id = openStream(fields, endStream)
+                val id = openStream(fields, endStream, neverIndexed)
                 val rt = StreamRt(this@H2Runtime, id, headRequest, beforePeerSettings = !peerPrefaceReceived)
                 rt.localEnded = endStream
                 this@H2Runtime.streams[id] = rt
@@ -1073,9 +1074,10 @@ internal class H2Runtime(
         status: Int,
         fields: List<Pair<String, String>>,
         endStream: Boolean,
+        neverIndexed: Set<String> = emptySet(),
     ) {
         checkOwnSection(s, if (status in 100..599 && status != 101) null else "status $status", fields)
-        guarded(s) { sendHeaders(s.id, listOf(":status" to status.toString()) + fields, endStream) }
+        guarded(s) { sendHeaders(s.id, listOf(":status" to status.toString()) + fields, endStream, neverIndexed) }
         if (endStream) lock.withLock { s.localEnded = true }
     }
 
@@ -1083,9 +1085,10 @@ internal class H2Runtime(
     fun respondTrailers(
         s: StreamRt,
         fields: List<Pair<String, String>>,
+        neverIndexed: Set<String> = emptySet(),
     ) {
         checkOwnSection(s, null, fields)
-        guarded(s) { sendHeaders(s.id, fields, endStream = true) }
+        guarded(s) { sendHeaders(s.id, fields, endStream = true, neverIndexed = neverIndexed) }
         lock.withLock { s.localEnded = true }
     }
 
@@ -1218,4 +1221,13 @@ public class H2ResponseHead internal constructor(
     public val status: Int,
     /** The regular fields, lowercase names, in the order received. */
     public val fields: List<Pair<String, String>>,
+    /**
+     * The regular fields the server sent as literals never indexed (RFC 7541 section 6.2.3), in the order received: an
+     * intermediary that forwards one MUST keep that representation (section 7.1.3).
+     */
+    public val neverIndexed: List<Pair<String, String>> = emptyList(),
 )
+
+/** The regular fields of a decoded never-indexed list (pseudo-header fields are not forwarded as such). */
+internal fun List<Pair<String, String>>.regularOnly(): List<Pair<String, String>> =
+    if (none { it.first.startsWith(':') }) this else filterNot { it.first.startsWith(':') }

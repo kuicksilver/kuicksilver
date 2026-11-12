@@ -472,6 +472,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   handshake-timeout diagnosis procedure. `tools/check/guide-sync.sh` requires an import block to equal its test's imports
   (negative controls in `guide-sync-test.sh`), and `tools/release/local-release.sh` refuses a README that still calls the
   version it releases the release in preparation.
+- HTTP/2, never-indexed fields (RFC 7541 sections 6.2.3 and 7.1.3; experimental): the Ktor engines report the fields a
+  peer sent as literals never indexed (`ApplicationRequest.neverIndexedHeaders` on the server,
+  `HttpResponse.neverIndexedHeaders` on the client) and send the fields an application names as such
+  (`ApplicationResponse.neverIndex(...)`, `HttpRequestBuilder.neverIndex(...)`), so an application that proxies with
+  both engines keeps the representation an intermediary must keep. Before, the bit was dropped on decoding and only the
+  engine's own list of credentials went out never indexed.
 
 ### Changed
 

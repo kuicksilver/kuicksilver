@@ -11,6 +11,7 @@ internal sealed interface H2Event {
      * section passed our SETTINGS_MAX_HEADER_LIST_SIZE and [fields] stops at the limit (a server answers 431, a client
      * fails the request; RFC 9113 section 8.2). [opening]: the peer opened [streamId] with this section (a server's new
      * request); any other section belongs to a stream the driver already knows, or released (never a new request).
+     * [neverIndexed]: the fields of [fields] the peer sent as literals never indexed (RFC 7541 section 6.2.3), in order.
      */
     class HeadersReceived(
         val streamId: Int,
@@ -18,6 +19,7 @@ internal sealed interface H2Event {
         val endStream: Boolean,
         val tooLarge: Boolean,
         val opening: Boolean = false,
+        val neverIndexed: List<Pair<String, String>> = emptyList(),
     ) : H2Event
 
     /** Content of [streamId]; the driver calls [H2ConnectionCore.consumed] once the application has read it. */

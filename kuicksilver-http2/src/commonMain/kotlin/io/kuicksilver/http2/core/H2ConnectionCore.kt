@@ -334,10 +334,12 @@ internal class H2ConnectionCore(
      * Opens a client stream with [fields] (section 8.3.1 pseudo-header fields first, already validated by the caller) and
      * returns its identifier. Throws [H2StreamLimit] at the peer's SETTINGS_MAX_CONCURRENT_STREAMS, [H2ConnectionUnusable]
      * after a GOAWAY or the last identifier, [H2HeaderListTooLarge] above the peer's SETTINGS_MAX_HEADER_LIST_SIZE.
+     * Fields named in [neverIndexed] are encoded as literals never indexed (RFC 7541 section 6.2.3).
      */
     fun openStream(
         fields: List<Pair<String, String>>,
         endStream: Boolean,
+        neverIndexed: Set<String> = emptySet(),
     ): Int {
         check(client) { "only a client opens streams" }
         if (closed || goAwayReceived || goAwaySentLastId >= 0) throw H2ConnectionUnusable("the connection is going away")
@@ -356,20 +358,24 @@ internal class H2ConnectionCore(
             )
         streams[id] = s
         localOpen++
-        enqueue(s, OutItem.Fields(fields, endStream))
+        enqueue(s, OutItem.Fields(fields, endStream, neverIndexed))
         return id
     }
 
-    /** Sends a field section on [streamId]: a response, an interim response or trailers ([endStream] true for trailers). */
+    /**
+     * Sends a field section on [streamId]: a response, an interim response or trailers ([endStream] true for trailers).
+     * Fields named in [neverIndexed] are encoded as literals never indexed (RFC 7541 section 6.2.3).
+     */
     fun sendHeaders(
         streamId: Int,
         fields: List<Pair<String, String>>,
         endStream: Boolean,
+        neverIndexed: Set<String> = emptySet(),
     ) {
         val s = streams[streamId] ?: throw IllegalStateException("stream $streamId is closed")
         check(canSend(s)) { "stream $streamId cannot send" }
         checkListSize(fields)
-        enqueue(s, OutItem.Fields(fields, endStream))
+        enqueue(s, OutItem.Fields(fields, endStream, neverIndexed))
         if (endStream) localEnded(s)
     }
 
@@ -714,7 +720,7 @@ internal class H2ConnectionCore(
         id: Int,
         item: OutItem.Fields,
     ): ByteArray {
-        val encoded = hpackOut.encode(item.fields)
+        val encoded = hpackOut.encode(item.fields, item.neverIndexed)
         val max = minOf(peerMaxFrameSize, H2.MIN_MAX_FRAME_SIZE)
         var out = FrameEncoder.headers(id, encoded.copyOfRange(0, minOf(max, encoded.size)), item.endStream, encoded.size <= max)
         var at = max

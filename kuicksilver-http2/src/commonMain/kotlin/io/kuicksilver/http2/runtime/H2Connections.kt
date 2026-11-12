@@ -94,7 +94,8 @@ public class H2ClientConnection private constructor(
      * [fields] (lowercase, no connection-specific fields), checked as the server would check them
      * (IllegalArgumentException otherwise). [endStream]: there is no content. `head`: a HEAD request, whose response has no
      * content (RFC 9110 section 9.3.2). Throws [Http2Exception] with `notProcessed` when this connection can take no new
-     * stream; the slot is used up either way, and comes back with [H2ClientStream.release] or here on a failure.
+     * stream; the slot is used up either way, and comes back with [H2ClientStream.release] or here on a failure. Fields
+     * named in [neverIndexed] are sent as literals never indexed (RFC 7541 section 6.2.3).
      */
     public fun open(
         method: String,
@@ -103,11 +104,12 @@ public class H2ClientConnection private constructor(
         path: String,
         fields: List<Pair<String, String>>,
         endStream: Boolean,
+        neverIndexed: Set<String> = emptySet(),
     ): H2ClientStream {
         val all = H2Messages.buildRequest(method, scheme, authority, path, fields)
         try {
             H2Messages.requireValidRequest(all, connectProtocolEnabled = rt.lock.withLock { rt.core.peerEnableConnectProtocol })
-            return H2ClientStream(rt, rt.open(all, endStream, headRequest = method == "HEAD"))
+            return H2ClientStream(rt, rt.open(all, endStream, headRequest = method == "HEAD", neverIndexed = neverIndexed))
         } catch (e: Throwable) {
             rt.unreserve()
             throw e

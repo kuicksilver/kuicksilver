@@ -142,8 +142,20 @@ public class H2ServerConnection private constructor(
                         closeTransport()
                     },
                     onChange = {},
-                    onRequest = { s, r ->
-                        val stream = H2ServerStream(c, c.rt, s, r.method, r.scheme, r.path ?: "", r.authority, r.fields, r.contentLength)
+                    onRequest = { s, r, neverIndexed ->
+                        val stream =
+                            H2ServerStream(
+                                c,
+                                c.rt,
+                                s,
+                                r.method,
+                                r.scheme,
+                                r.path ?: "",
+                                r.authority,
+                                r.fields,
+                                r.contentLength,
+                                neverIndexed,
+                            )
                         c.open.update { it + 1 }
                         c.taken.update { it + 1 }
                         // a connection that ended meanwhile takes no request: the stream goes back at once
@@ -176,6 +188,11 @@ public class H2ServerStream internal constructor(
     public val fields: List<Pair<String, String>>,
     /** The request's `content-length`, -1 without one; the content is checked against it (RFC 9113 section 8.1.1). */
     public val contentLength: Long,
+    /**
+     * The regular fields the client sent as literals never indexed (RFC 7541 section 6.2.3), in the order received: an
+     * intermediary that forwards one MUST keep that representation (section 7.1.3).
+     */
+    public val neverIndexed: List<Pair<String, String>> = emptyList(),
 ) {
     /** The stream identifier. */
     public val id: Int get() = s.id
@@ -202,13 +219,15 @@ public class H2ServerStream internal constructor(
     /**
      * Sends a response head: [status] and the regular [fields] (lowercase, no connection-specific fields); [endStream]
      * when there is no content. A 1xx status is an interim response (RFC 9110 section 15.2) and never ends the stream.
-     * Throws [Http2Exception] when the stream already ended (the client reset it, the connection ended).
+     * Throws [Http2Exception] when the stream already ended (the client reset it, the connection ended). Fields named in
+     * [neverIndexed] are sent as literals never indexed (RFC 7541 section 6.2.3).
      */
     public fun respond(
         status: Int,
         fields: List<Pair<String, String>> = emptyList(),
         endStream: Boolean = false,
-    ): Unit = rt.respond(s, status, fields, endStream && status >= 200)
+        neverIndexed: Set<String> = emptySet(),
+    ): Unit = rt.respond(s, status, fields, endStream && status >= 200, neverIndexed)
 
     /**
      * Sends [source] as the response content within the client's flow-control windows, and ends the stream unless trailers
@@ -222,8 +241,11 @@ public class H2ServerStream internal constructor(
         stallError: () -> Throwable = { kotlinx.io.IOException("the client took no content for $stallMillis ms") },
     ): Unit = rt.sendBody(s, source, stallMillis, stallError, end)
 
-    /** Sends trailers, which end the stream. */
-    public fun trailers(fields: List<Pair<String, String>>): Unit = rt.respondTrailers(s, fields)
+    /** Sends trailers, which end the stream; fields named in [neverIndexed] as literals never indexed (RFC 7541 section 6.2.3). */
+    public fun trailers(
+        fields: List<Pair<String, String>>,
+        neverIndexed: Set<String> = emptySet(),
+    ): Unit = rt.respondTrailers(s, fields, neverIndexed)
 
     /** Resets the stream with [code]. */
     public fun reset(code: Http2ErrorCode): Unit = rt.reset(s, code)

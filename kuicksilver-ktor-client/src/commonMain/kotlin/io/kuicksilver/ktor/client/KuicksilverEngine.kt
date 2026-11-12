@@ -205,6 +205,7 @@ internal class KuicksilverEngine(
         // pools count their retries in it, and the response hands it out
         val diagnostics = ProtocolDiagnostics()
         data.attributes.put(KuicksilverDiagnosticsKey, diagnostics)
+        data.attributes.remove(NeverIndexedReceivedKey) // a redirect or a retry copies the previous response's
         val r =
             try {
                 AbandonableBody.guard(route(data, callContext, diagnostics), callContext)

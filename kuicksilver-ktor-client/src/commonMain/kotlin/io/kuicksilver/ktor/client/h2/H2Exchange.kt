@@ -26,6 +26,8 @@ import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
+import io.kuicksilver.ktor.client.NeverIndexKey
+import io.kuicksilver.ktor.client.NeverIndexedReceivedKey
 import io.kuicksilver.ktor.client.h1.CONTINUE_TIMEOUT
 import io.kuicksilver.ktor.client.h1.expectsContinue
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.authority
@@ -107,7 +109,15 @@ internal suspend fun h2Exchange(
     val hasBody = body !is io.ktor.http.content.OutgoingContent.NoContent && body !is io.ktor.http.content.OutgoingContent.ProtocolUpgrade
     val stream: H2ClientStream =
         try {
-            conn.client.open(data.method.value, url.protocol.name, url.authority(), url.h3Path(), h2Fields(data), endStream = !hasBody)
+            conn.client.open(
+                data.method.value,
+                url.protocol.name,
+                url.authority(),
+                url.h3Path(),
+                h2Fields(data),
+                endStream = !hasBody,
+                neverIndexed = data.attributes.getOrNull(NeverIndexKey).orEmpty(),
+            )
         } catch (e: Http2Exception) {
             onReleased(conn.client.isUsable)
             if (e.notProcessed) throw H2NotProcessed(e, bodyConsumed = false)
@@ -178,6 +188,7 @@ internal suspend fun h2Exchange(
             }
         val status = HttpStatusCode.fromValue(head.status)
         val headers = HeadersBuilder().apply { for ((n, v) in head.fields) append(n, v) }.build()
+        if (head.neverIndexed.isNotEmpty()) data.attributes.put(NeverIndexedReceivedKey, head.neverIndexed)
         val noBody = data.method == HttpMethod.Head || status == HttpStatusCode.NoContent || status == HttpStatusCode.NotModified
         val bodyChannel: ByteReadChannel = if (noBody) ByteReadChannel.Empty else stream.body.withSocketTimeout(data)
         val responseBody: Any =
