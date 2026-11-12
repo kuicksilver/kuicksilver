@@ -19,6 +19,14 @@ public interface DatagramSender {
     /** False when nothing waits: the core then builds no packet for datagrams alone (a sender that always answers true makes the core assemble, and discard, an empty packet per poll). */
     public fun hasPending(): Boolean = true
 
+    /**
+     * The RFC 9218 urgency (0..7) of the datagram the sender would write next, or -1 (the default) for none: the core then
+     * writes stream data of strictly more urgent streams (a lower urgency, and the critical streams) before calling
+     * [onTransmit] in a packet, so such a datagram never preempts them, while stream data of the same or a lower urgency
+     * still waits behind it. With -1 datagrams go first, ahead of every stream (RFC 9221 leaves the order to the sender).
+     */
+    public fun nextUrgency(): Int = -1
+
     /** The packet carrying datagram [id] was acknowledged, so the peer received it (RFC 9221 section 5.2); called on the endpoint loop. */
     public fun onAcked(id: Long) {}
 

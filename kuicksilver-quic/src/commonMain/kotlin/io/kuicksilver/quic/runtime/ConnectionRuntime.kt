@@ -426,12 +426,25 @@ internal class ConnectionRuntime(
     override fun trySendDatagram(
         data: ByteArray,
         policy: DatagramPolicy,
+    ): DatagramSendResult = trySendDatagram(data, policy, -1)
+
+    @ExperimentalKuicksilverApi
+    override fun trySendDatagram(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        priority: StreamPriority,
+    ): DatagramSendResult = trySendDatagram(data, policy, urgencyOf(priority))
+
+    private fun trySendDatagram(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        urgency: Int,
     ): DatagramSendResult {
         datagramPrecheck(data.size)?.let { return it }
         // not QueueFull: a caller retrying on that would spin; a try-method answers instead of throwing
         if (finished) return DatagramSendResult.Closed
         if (policy === DatagramPolicy.Reject && !sendQueue.hasRoom(data.size)) return DatagramSendResult.QueueFull
-        sendQueue.offer(data.copyOf(), policy)
+        sendQueue.offer(data.copyOf(), policy, urgency)
         startDatagramDrainer()
         return DatagramSendResult.Sent
     }
@@ -439,6 +452,23 @@ internal class ConnectionRuntime(
     override suspend fun sendDatagram(
         data: ByteArray,
         policy: DatagramPolicy,
+    ): Unit = sendDatagram(data, policy, -1)
+
+    @ExperimentalKuicksilverApi
+    override suspend fun sendDatagram(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        priority: StreamPriority,
+    ): Unit = sendDatagram(data, policy, urgencyOf(priority))
+
+    /** The urgency a datagram of [priority] is scheduled with ([DatagramSender.nextUrgency]); a critical one goes first. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    private fun urgencyOf(priority: StreamPriority): Int = if (priority === StreamPriority.Critical) -1 else priority.urgency
+
+    private suspend fun sendDatagram(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        urgency: Int,
     ) {
         when (val r = datagramPrecheck(data.size)) {
             is DatagramSendResult.TooLarge -> {
@@ -465,7 +495,7 @@ internal class ConnectionRuntime(
             } // every poll ticks: datagrams leave, room returns
         }
         if (finished) throw closedDeferred.await()
-        sendQueue.offer(data.copyOf(), policy)
+        sendQueue.offer(data.copyOf(), policy, urgency)
         startDatagramDrainer()
     }
 

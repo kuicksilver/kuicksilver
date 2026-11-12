@@ -80,6 +80,28 @@ public interface QuicConnection : AutoCloseable {
     ): DatagramSendResult
 
     /**
+     * [sendDatagram] scheduled by RFC 9218 urgency: the datagram does not go ahead of stream data of strictly more urgent
+     * streams ([priority]'s urgency is higher than theirs, or they are the HTTP/3 control and QPACK streams), while stream
+     * data of the same or a lower urgency waits behind it. Datagrams still leave in the order they were queued. Without a
+     * priority (the overloads above) a datagram goes ahead of every stream. Implementations outside this library need not
+     * override it: the default ignores [priority].
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun sendDatagram(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        priority: StreamPriority,
+    ): Unit = sendDatagram(data, policy)
+
+    /** [trySendDatagram] scheduled by [priority] as the [sendDatagram] overload with a priority describes. */
+    @ExperimentalKuicksilverApi
+    public fun trySendDatagram(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        priority: StreamPriority,
+    ): DatagramSendResult = trySendDatagram(data, policy)
+
+    /**
      * Received datagrams, newest-128 semantics: what nobody collected in time is dropped (counted in `stats.datagramsDropped`
      * beside the UDP datagrams the connection discarded unprocessed).
      * Pull-based over one queue, so two collectors split the datagrams between them. When the connection ends the flow

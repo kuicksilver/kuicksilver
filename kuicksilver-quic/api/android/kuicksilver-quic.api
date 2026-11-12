@@ -403,6 +403,7 @@ public final class io/kuicksilver/quic/DatagramSendResult$Unsupported : io/kuick
 
 public abstract interface class io/kuicksilver/quic/DatagramSender {
 	public fun hasPending ()Z
+	public fun nextUrgency ()I
 	public fun onAcked (J)V
 	public fun onLost (J)V
 	public abstract fun onTransmit (Lio/kuicksilver/quic/DatagramPacketWriter;)V
@@ -410,6 +411,7 @@ public abstract interface class io/kuicksilver/quic/DatagramSender {
 
 public final class io/kuicksilver/quic/DatagramSender$DefaultImpls {
 	public static fun hasPending (Lio/kuicksilver/quic/DatagramSender;)Z
+	public static fun nextUrgency (Lio/kuicksilver/quic/DatagramSender;)I
 	public static fun onAcked (Lio/kuicksilver/quic/DatagramSender;J)V
 	public static fun onLost (Lio/kuicksilver/quic/DatagramSender;J)V
 }
@@ -934,9 +936,11 @@ public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/A
 	public static synthetic fun openBidi$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun openUni (Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun openUni$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public fun sendDatagram ([BLio/kuicksilver/quic/DatagramPolicy;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun sendDatagram ([BLio/kuicksilver/quic/DatagramPolicy;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun sendDatagram$default (Lio/kuicksilver/quic/QuicConnection;[BLio/kuicksilver/quic/DatagramPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun trySendDatagram ([BLio/kuicksilver/quic/DatagramPolicy;)Lio/kuicksilver/quic/DatagramSendResult;
+	public fun trySendDatagram ([BLio/kuicksilver/quic/DatagramPolicy;Lio/kuicksilver/quic/StreamPriority;)Lio/kuicksilver/quic/DatagramSendResult;
 	public static synthetic fun trySendDatagram$default (Lio/kuicksilver/quic/QuicConnection;[BLio/kuicksilver/quic/DatagramPolicy;ILjava/lang/Object;)Lio/kuicksilver/quic/DatagramSendResult;
 }
 
@@ -948,7 +952,9 @@ public final class io/kuicksilver/quic/QuicConnection$DefaultImpls {
 	public static fun isHandshakeComplete (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static synthetic fun openBidi$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun openUni$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun sendDatagram (Lio/kuicksilver/quic/QuicConnection;[BLio/kuicksilver/quic/DatagramPolicy;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun sendDatagram$default (Lio/kuicksilver/quic/QuicConnection;[BLio/kuicksilver/quic/DatagramPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun trySendDatagram (Lio/kuicksilver/quic/QuicConnection;[BLio/kuicksilver/quic/DatagramPolicy;Lio/kuicksilver/quic/StreamPriority;)Lio/kuicksilver/quic/DatagramSendResult;
 	public static synthetic fun trySendDatagram$default (Lio/kuicksilver/quic/QuicConnection;[BLio/kuicksilver/quic/DatagramPolicy;ILjava/lang/Object;)Lio/kuicksilver/quic/DatagramSendResult;
 }
 

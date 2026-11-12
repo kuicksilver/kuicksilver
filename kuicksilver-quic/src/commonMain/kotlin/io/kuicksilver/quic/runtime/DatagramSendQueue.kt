@@ -32,6 +32,8 @@ internal class DatagramSendQueue(
     internal class Cmd(
         val data: ByteArray,
         val policy: DatagramPolicy,
+        /** RFC 9218 urgency for scheduling against stream data ([DatagramSender.nextUrgency]); -1: ahead of every stream. */
+        val urgency: Int = -1,
     )
 
     /** Commands from the application, applied on the loop; an overflow drops (and un-counts) the oldest. */
@@ -52,10 +54,11 @@ internal class DatagramSendQueue(
     fun offer(
         data: ByteArray,
         policy: DatagramPolicy,
+        urgency: Int = -1,
     ) {
         count.incrementAndFetch()
         bytes.addAndFetch(data.size.toLong())
-        commands.trySend(Cmd(data, policy))
+        commands.trySend(Cmd(data, policy, urgency))
         signal.trySend(Unit)
     }
 
@@ -128,6 +131,9 @@ internal class DatagramSendQueue(
     val isEmpty: Boolean get() = queue.isEmpty()
 
     override fun hasPending(): Boolean = queue.isNotEmpty()
+
+    /** The urgency of the head of the queue: datagrams leave in order, so it decides for the ones behind it. */
+    override fun nextUrgency(): Int = queue.firstOrNull()?.urgency ?: -1
 
     override fun onTransmit(packet: DatagramPacketWriter) {
         while (true) {

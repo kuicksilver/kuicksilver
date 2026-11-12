@@ -953,6 +953,13 @@ internal class PacketBuilder(
                         }
                     }
                     if (writeControlFrames(w, frames)) ackEliciting = true
+                    // a datagram with an urgency (DatagramSender.nextUrgency) lets strictly more urgent stream data go first
+                    // (RFC 9218 section 10 as WebTransport applies it to datagrams, draft-ietf-webtrans-http3-16 section 3.4)
+                    c.datagramSender?.takeIf { it.hasPending() }?.nextUrgency()?.let { u ->
+                        if (u >= 0) {
+                            while (w.remaining > 8 && c.streams.writeStreamFrame(w, frames, below = u)) ackEliciting = true
+                        }
+                    }
                     c.datagramSender?.let { s ->
                         val max = c.datagramPayloadLimit // 0: an empty datagram still goes (a peer limit of 2)
                         if (max >= 0 &&
