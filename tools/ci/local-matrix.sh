@@ -318,12 +318,13 @@ wants() { [[ "$pre_wanted" == *" $1 "* ]]; }
 # an arm64 Docker). A dry run does not ask Docker and says that it shows the host's architecture instead.
 if wants interop; then
   if [ -n "${KSL_INTEROP_PLATFORMS:-}" ]; then interop_platforms="$KSL_INTEROP_PLATFORMS"
-  elif [ "$dry" = 1 ]; then interop_platforms="linux/$(uname -m)"
+  elif [ "$dry" = 1 ]; then case "$(uname -m)" in x86_64) interop_platforms=linux/amd64 ;; *) interop_platforms=linux/arm64 ;; esac
     echo "preflight: the JVM interop image packs the Docker server's architecture; this dry run shows the host's ($(uname -m)) instead"
   elif arch=$(docker version -f '{{.Server.Arch}}' 2>/dev/null) && [ -n "$arch" ]; then interop_platforms="linux/$arch"
   else echo "local matrix: refused before step 1: the JVM interop image needs Docker, and docker version does not answer" >&2; exit 1; fi
-  case "$interop_platforms" in *amd64*|*x86_64*) pre_wanted="$pre_wanted linux-x64 " ;; esac
-  case "$interop_platforms" in *arm64*|*aarch64*) pre_wanted="$pre_wanted linux-arm64 " ;; esac
+  # matched as build-image.sh matches them (amd64, arm64), so the preflight builds exactly what the image packs
+  case "$interop_platforms" in *amd64*) pre_wanted="$pre_wanted linux-x64 " ;; esac
+  case "$interop_platforms" in *arm64*) pre_wanted="$pre_wanted linux-arm64 " ;; esac
 fi
 # Preflight, before step 1: the steps that run scripts rather than Gradle tasks read build/openssl/<target> directly
 # (c-tests, keylog check and double build: macos-arm64; the Docker c-tests and JNI builds: linux-x64, linux-arm64; the
