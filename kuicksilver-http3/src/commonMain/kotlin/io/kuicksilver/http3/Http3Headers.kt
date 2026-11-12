@@ -8,9 +8,14 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * Ordered HTTP fields without pseudo-headers; names are lowercase on the wire (RFC 9114 section 4.2). Equality and
  * [toString] look at [fields] only, not at the never-indexed marks.
  */
-public class Http3Headers(
+public class Http3Headers private constructor(
     fields: List<Pair<String, String>>,
+    neverIndexed: List<Pair<String, String>>,
+    neverIndexNames: Set<String>,
 ) {
+    /** A section of [fields] (copied), without never-indexed marks. */
+    public constructor(fields: List<Pair<String, String>>) : this(fields, emptyList(), emptySet())
+
     /** The fields as name/value pairs in wire order, repeats kept; a copy of the constructor's list. */
     public val fields: List<Pair<String, String>> = fields.toList()
 
@@ -20,13 +25,11 @@ public class Http3Headers(
      * section with these names go with the bit too, so a received section forwarded as it is keeps it. Empty otherwise.
      */
     @ExperimentalKuicksilverApi
-    public var neverIndexed: List<Pair<String, String>> = emptyList()
-        private set
+    public val neverIndexed: List<Pair<String, String>> = neverIndexed
 
     /** Names (lowercase) whose field lines this section sends as literals with the 'N' bit; see [withNeverIndexed]. */
     @ExperimentalKuicksilverApi
-    public var neverIndexNames: Set<String> = emptySet()
-        private set
+    public val neverIndexNames: Set<String> = neverIndexNames
 
     /**
      * A copy whose field lines named [names] (any case) are sent as literals with the 'N' bit (RFC 9204 sections 4.5.4,
@@ -36,17 +39,11 @@ public class Http3Headers(
      */
     @ExperimentalKuicksilverApi
     public fun withNeverIndexed(vararg names: String): Http3Headers =
-        Http3Headers(fields).also {
-            it.neverIndexed = neverIndexed
-            it.neverIndexNames = neverIndexNames + names.map { n -> n.lowercase() }
-        }
+        Http3Headers(fields, neverIndexed, neverIndexNames + names.map { n -> n.lowercase() })
 
     /** A copy with [lines] as the received never-indexed field lines. */
     internal fun withReceivedNeverIndexed(lines: List<Pair<String, String>>): Http3Headers =
-        Http3Headers(fields).also {
-            it.neverIndexed = lines.toList()
-            it.neverIndexNames = neverIndexNames
-        }
+        Http3Headers(fields, lines.toList(), neverIndexNames)
 
     /** The number of field lines, repeats counted. */
     public val size: Int get() = fields.size
@@ -59,10 +56,7 @@ public class Http3Headers(
 
     /** These fields followed by [other]'s; nothing is merged or replaced. */
     public operator fun plus(other: Http3Headers): Http3Headers =
-        Http3Headers(fields + other.fields).also {
-            it.neverIndexed = neverIndexed + other.neverIndexed
-            it.neverIndexNames = neverIndexNames + other.neverIndexNames
-        }
+        Http3Headers(fields + other.fields, neverIndexed + other.neverIndexed, neverIndexNames + other.neverIndexNames)
 
     /** Equal when the fields, in order, are. */
     override fun equals(other: Any?): Boolean = other is Http3Headers && other.fields == fields
