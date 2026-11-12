@@ -123,11 +123,12 @@ if [ "$cmd" = prepare ]; then echo "  prepared: $repo, branch $branch, no tag $v
   -m "Kuicksilver $version" -m "Kuicksilver.xcframework.zip of https://github.com/kuicksilver/kuicksilver/releases/tag/v$version
 (SHA-256 $sum), built from kuicksilver/kuicksilver@$commit."
 out_abs=$(cd "$out" && pwd)
+q_out=$(printf %q "$out_abs"); q_root=$(printf %q "$root")   # pasteable even with spaces in the path
 echo "  $out: commit $("${G[@]}" rev-parse --short HEAD) on $branch, checksum $sum (unsigned, no tag yet)"
 cat <<NEXT
   Swift package, once the GitHub release v$version is published (SwiftPM downloads $url),
   in a terminal with the release key, as the main tag is made:
-    cd $out_abs
+    cd $q_out
     export GPG_TTY=\$(tty)
     git commit --amend --no-edit -S$fpr
     git tag -s -u $fpr $version -m "Kuicksilver $version"
@@ -135,7 +136,7 @@ cat <<NEXT
     git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git $branch refs/tags/$version
   --atomic: both or neither, so a rejected branch never leaves the (immutable) tag behind. If the push is rejected
   ($branch moved since the clone: not a fast-forward), never force it: run
-    $root/tools/release/swift-package.sh finish $version $sum --source-commit $commit
+    $q_root/tools/release/swift-package.sh finish $version $sum --source-commit $commit
   again (it clones afresh) and repeat the commands above.
   Then from an empty package: .package(url: "https://github.com/kuicksilver/kuicksilver-swift", $req), swift package resolve.
 NEXT

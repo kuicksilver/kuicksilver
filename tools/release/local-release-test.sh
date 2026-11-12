@@ -190,7 +190,7 @@ if sp "$L" ok "commit [0-9a-f]+ on main, checksum $S1 \(unsigned, no tag yet\)" 
       && grep -q 'git tag -s -u 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68 0.3.0 -m "Kuicksilver 0.3.0"' <<< "$sp_out" \
       && grep -q "git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/0.3.0" <<< "$sp_out" \
       && grep -qx "    cd $tmp/sp" <<< "$sp_out" \
-      && grep -qx "    $root/tools/release/swift-package.sh finish 0.3.0 $S1 --source-commit 1234567" <<< "$sp_out"
+      && grep -qx "    $(printf %q "$root")/tools/release/swift-package.sh finish 0.3.0 $S1 --source-commit 1234567" <<< "$sp_out"
   then sp_pass "$L"; else sp_fail "$L" "files, tag, author, signing or push lines wrong"; fi
 fi
 ptag 0.3.0 main
