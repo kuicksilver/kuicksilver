@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** Which address family leads in the lists the engine assembles (RFC 8305 section 4, RFC 6724 section 6 Rules 1 and 2). */
+/** Which address family leads in the lists the engine assembles (RFC 8305 section 4; RFC 6724 section 6, Rules 1, 2 and 5). */
 class AddressFamilyOrderTest {
     private fun v4(last: Int) = TcpAddress(byteArrayOf(192.toByte(), 0, 2, last.toByte()), 0)
 
@@ -47,8 +47,9 @@ class AddressFamilyOrderTest {
         assertTrue(order(null, null).first.ipv6First()) // nothing to tell them apart
     }
 
-    @Test fun negative_ipv6SourcesTheDefaultPolicyRanksBelowIpv4PutIpv4First() {
-        // RFC 6724 Rule 2 (scope) and the default policy table: link-local, unique local, Teredo and 6to4 lose to IPv4
+    @Test fun negative_ipv6SourceOfAnotherScopeOrLabelPutsIpv4First() {
+        // RFC 6724 Rule 2 (a link-local source for a global destination) and Rule 5 (a unique local, Teredo or 6to4 source,
+        // whose label differs from a native global destination's): IPv4 goes first
         for (source in listOf(v6(0xfe, 0x80), v6(0xfd, 0x00), v6(0x20, 0x01, 0, 0), v6(0x20, 0x02))) {
             assertFalse(order(source, v4(100)).first.ipv6First(), "$source")
         }

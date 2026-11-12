@@ -171,4 +171,4 @@ internal class RequestDns private constructor(
 
 /** A fresh [RequestDns] with this configuration's resolver. */
 internal fun KuicksilverEngineConfig.newRequestDns(): RequestDns =
-    resolverForTest?.let { RequestDns(AddressFamilyOrder(), it) } ?: RequestDns(AddressFamilyOrder.system, ::resolveTcp)
+    resolverForTest?.let { RequestDns(AddressFamilyOrder.dualStackForTest(), it) } ?: RequestDns(AddressFamilyOrder.system, ::resolveTcp)

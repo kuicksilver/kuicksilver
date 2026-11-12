@@ -8,7 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** The source address the system would pick for a destination, without sending anything (RFC 6724 section 6, Rules 1 and 2). */
+/** The source address the system would pick for a destination, without sending anything (RFC 6724 section 6, Source(D)). */
 class SourceAddressTest {
     @Test fun loopbackDestinationHasALoopbackSource() {
         assertEquals("127.0.0.1", sourceAddressFor(TcpAddress(byteArrayOf(127, 0, 0, 1), 9))?.hostText)
