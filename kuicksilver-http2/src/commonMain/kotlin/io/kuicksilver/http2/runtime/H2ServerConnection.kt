@@ -222,6 +222,13 @@ public class H2ServerStream internal constructor(
         stallError: () -> Throwable = { kotlinx.io.IOException("the client took no content for $stallMillis ms") },
     ): Unit = rt.sendBody(s, source, stallMillis, stallError, end)
 
+    /**
+     * Sends an ALTSVC frame (RFC 7838 section 4) on this stream: [value], an `Alt-Svc` field value of visible ASCII, applies
+     * to the origin of the request. Before the response head it goes out ahead of it. Returns false, sending nothing, when
+     * the stream can no longer send; IllegalArgumentException for a value that is not visible ASCII or does not fit one frame.
+     */
+    public fun altSvc(value: String): Boolean = rt.altSvc(s, value)
+
     /** Sends trailers, which end the stream. */
     public fun trailers(fields: List<Pair<String, String>>): Unit = rt.respondTrailers(s, fields)
 

@@ -130,6 +130,11 @@ internal class H1Pool(
     private val selector: SelectorManager,
     private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
     private val clock: () -> Long = monotonicMillis(),
+    /**
+     * An ALTSVC frame (RFC 7838 section 4) for the origin of the URL, from an HTTP/2 connection to it that goes through no
+     * proxy (no `Alt-Svc` is learned through one); it must not block.
+     */
+    private val altSvcFrame: (Url, String) -> Unit = { _, _ -> },
 ) {
     /**
      * Orderly closes in progress ([closeOrderly]): TLS close_notify after what was written, bounded by
@@ -1056,6 +1061,21 @@ internal class H1Pool(
                                     prefaceTimeout =
                                         (data.connectTimeoutMillis(config).milliseconds - connectStarted.elapsedNow())
                                             .coerceAtLeast(1.milliseconds),
+                                    // RFC 7838 section 4: one on a request stream is for this connection's origin; one on
+                                    // stream 0 only when its Origin is that origin. Never through a proxy
+                                    onAltSvc =
+                                        if (proxy == null) {
+                                            { origin, value ->
+                                                if (origin == null ||
+                                                    io.kuicksilver.ktor.client
+                                                        .isAltSvcFrameOrigin(origin, url)
+                                                ) {
+                                                    altSvcFrame(url, value)
+                                                }
+                                            }
+                                        } else {
+                                            null
+                                        },
                                 )
                             } catch (e: Throwable) {
                                 tls.close()

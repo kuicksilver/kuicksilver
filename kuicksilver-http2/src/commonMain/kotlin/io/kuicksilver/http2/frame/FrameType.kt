@@ -14,6 +14,9 @@ internal object FrameType {
     const val GOAWAY: Int = 0x7
     const val WINDOW_UPDATE: Int = 0x8
     const val CONTINUATION: Int = 0x9
+
+    /** ALTSVC (RFC 7838 section 4): "The ALTSVC frame type is 0xa (decimal 10)." */
+    const val ALTSVC: Int = 0xa
 }
 
 /** Frame flags (RFC 9113 section 6); a flag without meaning for a type is ignored on receipt and never set (section 4.1). */

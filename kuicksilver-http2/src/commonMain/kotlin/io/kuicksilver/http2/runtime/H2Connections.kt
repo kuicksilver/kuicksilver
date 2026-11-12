@@ -140,6 +140,9 @@ public class H2ClientConnection private constructor(
          * connection. [closeTransportGracefully] ends the transport in order once the protocol is over and the last frames,
          * a GOAWAY among them, are in [output] (with TLS: those bytes, then close_notify; RFC 9113 sections 5.4.1, 6.8),
          * bounded by the caller; null uses [closeTransport], which also closes a failed or lost transport at once.
+         * [onAltSvc] hears the server's valid ALTSVC frames (RFC 7838 section 4): the Origin field of one on stream 0 (whether
+         * that origin is authoritative for this connection is the caller's to check: section 4 says an association with one
+         * that is not "MUST be ignored"), null for one on a request stream, and the `Alt-Svc` field value; it must not block.
          */
         public suspend fun start(
             input: ByteReadChannel,
@@ -153,6 +156,7 @@ public class H2ClientConnection private constructor(
             connectionErrorOf: (Throwable) -> Http2ErrorCode? = { null },
             closeTransportGracefully: (() -> Unit)? = null,
             prefaceTimeout: Duration = Duration.INFINITE,
+            onAltSvc: ((origin: String?, value: String) -> Unit)? = null,
         ): H2ClientConnection {
             val rt =
                 H2Runtime(
@@ -167,6 +171,7 @@ public class H2ClientConnection private constructor(
                     onChange,
                     connectionErrorOf = connectionErrorOf,
                     closeTransportGracefully = closeTransportGracefully,
+                    onAltSvc = onAltSvc,
                 )
             rt.expectPeerPrefaceWithin(prefaceTimeout.nanosOrMax())
             rt.start()

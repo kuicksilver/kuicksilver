@@ -39,7 +39,7 @@ internal class H2Call(
     override val coroutineContext: CoroutineContext,
     bodyIdle: Duration,
     sendStallMillis: Long,
-    altSvc: () -> String?,
+    altSvc: H2AltSvc,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request = H2Request(this, h2, local, remote, toKtorHeaders(h2), bodyIdle)

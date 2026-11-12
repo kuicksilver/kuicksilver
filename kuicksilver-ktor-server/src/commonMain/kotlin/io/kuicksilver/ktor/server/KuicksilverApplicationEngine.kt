@@ -164,7 +164,10 @@ public class KuicksilverApplicationEngine(
         /** Tests replace how the watcher reads the chain file (a read that never returns, say); null reads the file. */
         internal var identityReadTextForTest: ((String) -> String)? = null
 
-        /** Announce HTTP/3 with `Alt-Svc: h3=":<port>"; ma=86400` on HTTP/1.1 responses over TLS (on by default). */
+        /**
+         * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 responses,
+         * an ALTSVC frame once per origin on each HTTP/2 connection (RFC 7838 sections 3 and 4).
+         */
         public var altSvc: Boolean = true
 
         /** Serve HTTP/3 on UDP on the port of every TLS connector. */

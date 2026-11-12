@@ -5,6 +5,7 @@ package io.kuicksilver.ktor.client
 import io.ktor.http.Url
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -274,5 +275,29 @@ class AltSvcTest {
         store.clear()
         assertNull(cache.h3For(origin))
         assertNull(cache.h3For(Url("https://other.example/")))
+    }
+
+    /**
+     * RFC 7838 section 4: an ALTSVC frame on stream 0 is for the origin in its Origin field (RFC 6454 section 6.2
+     * serialization), and "An association with an origin that the client does not consider authoritative for the current
+     * connection MUST be ignored": only the connection's own origin matches.
+     */
+    @Test fun negative_altSvcFrameOriginMustBeTheConnectionsOrigin() {
+        assertTrue(isAltSvcFrameOrigin("https://example.com", origin))
+        assertTrue(isAltSvcFrameOrigin("HTTPS://Example.COM", origin))
+        assertTrue(isAltSvcFrameOrigin("https://example.com:443", origin))
+        assertTrue(isAltSvcFrameOrigin("https://example.com:8443", Url("https://example.com:8443/")))
+        for (other in listOf(
+            "https://other.example",
+            "http://example.com",
+            "https://example.com:8443",
+            "https://example.com/",
+            "example.com",
+            "",
+        )) {
+            assertFalse(isAltSvcFrameOrigin(other, origin), other)
+        }
+        assertFalse(isAltSvcFrameOrigin("https://example.com", Url("https://example.com:8443/")))
+        assertTrue(isAltSvcFrameOrigin("https://[2001:db8::1]", Url("https://[2001:db8::1]/")))
     }
 }

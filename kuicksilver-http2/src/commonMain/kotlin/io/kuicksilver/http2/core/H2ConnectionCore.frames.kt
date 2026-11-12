@@ -261,6 +261,27 @@ internal fun H2ConnectionCore.onPriority(
     if (f.dependency == f.streamId) streamError(f.streamId, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
 }
 
+/**
+ * ALTSVC (RFC 7838 section 4), decoded on a client only (a server's decoder skips it: "A device acting as a server MUST
+ * ignore it"). Each one costs a glitch, as other frames that carry no stream state do. "An ALTSVC frame on stream 0 with
+ * empty (length 0) "Origin" information is invalid and MUST be ignored. An ALTSVC frame on a stream other than stream 0
+ * containing non-empty "Origin" information is invalid and MUST be ignored." A frame on a stream we never opened has no
+ * origin to apply to and is ignored as well. Whether a stream 0 Origin is authoritative for the connection is the driver's
+ * to decide (section 4: such an association "MUST be ignored").
+ */
+internal fun H2ConnectionCore.onAltSvc(
+    f: Frame.AltSvc,
+    now: Long,
+) {
+    glitch(now, "ALTSVC")
+    val id = f.streamId
+    when {
+        id == 0 && f.origin.isEmpty() -> return
+        id != 0 && (f.origin.isNotEmpty() || peerInitiated(id) || isIdle(id)) -> return
+    }
+    emit(H2Event.AltSvc(id, f.origin.ifEmpty { null }, f.value))
+}
+
 internal fun H2ConnectionCore.onRstStream(
     f: Frame.RstStream,
     now: Long,

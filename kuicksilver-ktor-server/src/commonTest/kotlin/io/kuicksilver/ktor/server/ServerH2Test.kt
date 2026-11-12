@@ -229,14 +229,53 @@ class ServerH2Test {
             }
         }
 
-    @Test fun altSvcOnH2Responses() =
+    /**
+     * RFC 7838 section 3: "When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame (Section 4). A single
+     * ALTSVC frame can be sent for a connection; a new frame is not needed for every request." The engine's value goes out
+     * as an ALTSVC frame on the first request stream of each origin (an empty Origin: the stream's origin), ahead of the
+     * response's HEADERS, and not as a field; an application's own `Alt-Svc` field stays as it set it. Before, every HTTP/2
+     * response carried the field and no frame was ever sent.
+     */
+    @Test fun negative_altSvcGoesOutAsAnAltSvcFrameOnH2() =
         h3ServerTest {
-            val (server, port) = tlsServer(configure = { http2 = true }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) =
+                tlsServer(configure = { http2 = true }) {
+                    routing {
+                        get("/") { call.respondText("ok") }
+                        get("/own") {
+                            call.response.headers.append("Alt-Svc", "h3=\":1\"")
+                            call.respondText("own")
+                        }
+                    }
+                }
             try {
                 client().use { c ->
                     val r = withTimeout(10.seconds) { c.get("https://127.0.0.1:$port/") }
                     assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
-                    assertEquals("h3=\":$port\"; ma=86400", r.headers["Alt-Svc"])
+                    assertEquals(null, r.headers["Alt-Svc"], "the engine's value is no field on HTTP/2")
+                    assertEquals("h3=\":1\"", withTimeout(10.seconds) { c.get("https://127.0.0.1:$port/own") }.headers["Alt-Svc"])
+                }
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.headers(1, RawH2Client.get())
+                    val first = ArrayList<RawFrame>()
+                    raw.await {
+                        first += it
+                        it.type == RawFrame.HEADERS && it.stream == 1
+                    }
+                    val alt = first.filter { it.type == 0xa }
+                    assertEquals(listOf(1), alt.map { it.stream }, "$first")
+                    assertEquals(0, alt.single().flags)
+                    val payload = alt.single().payload
+                    assertEquals(0, (payload[0].toInt() shl 8) or payload[1].toInt(), "Origin-Len 0: the stream's origin")
+                    assertEquals("h3=\":$port\"; ma=86400", payload.copyOfRange(2, payload.size).decodeToString())
+                    raw.headers(3, RawH2Client.get())
+                    val second = ArrayList<RawFrame>()
+                    raw.await {
+                        second += it
+                        it.type == RawFrame.HEADERS && it.stream == 3
+                    }
+                    assertTrue(second.none { it.type == 0xa }, "one frame per connection and origin: $second")
                 }
             } finally {
                 server.stop(100, 500)

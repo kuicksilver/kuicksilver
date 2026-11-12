@@ -53,6 +53,17 @@ internal sealed interface H2Event {
         val streamId: Int,
     ) : H2Event
 
+    /**
+     * An ALTSVC frame (RFC 7838 section 4) a client takes: on stream 0 for [origin] (its Origin field), on one of our streams
+     * ([streamId]) for that stream's origin ([origin] null). [value] is an `Alt-Svc` field value, "semantically equivalent
+     * to receiving an Alt-Svc header field".
+     */
+    class AltSvc(
+        val streamId: Int,
+        val origin: String?,
+        val value: String,
+    ) : H2Event
+
     /** Our PING was answered after [rttNanos]. */
     class PingAck(
         val payload: Long,

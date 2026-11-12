@@ -145,6 +145,12 @@ internal class H2Runtime(
      * [closeTransport]. A transport that failed or was lost is always closed with [closeTransport].
      */
     private val closeTransportGracefully: (() -> Unit)? = null,
+    /**
+     * A client's ALTSVC frames (RFC 7838 section 4) as the core passed them: the Origin field of one on stream 0, null for
+     * one on a stream of ours (the origin of the requests this connection carries), and the `Alt-Svc` field value.
+     * Called while events are dispatched: it must not block. A callback that throws is ignored.
+     */
+    private val onAltSvc: ((origin: String?, value: String) -> Unit)? = null,
 ) {
     private val client = role == Role.CLIENT
     val lock = SpinLock()
@@ -360,6 +366,10 @@ internal class H2Runtime(
 
             is H2Event.WindowAvailable -> {
                 lock.withLock { streams[e.streamId] }?.writable?.trySend(Unit)
+            }
+
+            is H2Event.AltSvc -> {
+                runCatching { onAltSvc?.invoke(e.origin, e.value) }
             }
 
             is H2Event.PingAck -> {
@@ -1078,6 +1088,15 @@ internal class H2Runtime(
         guarded(s) { sendHeaders(s.id, listOf(":status" to status.toString()) + fields, endStream) }
         if (endStream) lock.withLock { s.localEnded = true }
     }
+
+    /**
+     * A server's ALTSVC frame on [s] (RFC 7838 section 4) for [value]; false when the stream can no longer send (it was
+     * reset, the connection ended). IllegalArgumentException for a value that is not visible ASCII or does not fit a frame.
+     */
+    fun altSvc(
+        s: StreamRt,
+        value: String,
+    ): Boolean = withCoreUnlessRefused { sendAltSvc(s.id, value) } != null
 
     /** Trailers on [s] (RFC 9113 section 8.1): they end our side. */
     fun respondTrailers(

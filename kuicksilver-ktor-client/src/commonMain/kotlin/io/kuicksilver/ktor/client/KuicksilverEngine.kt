@@ -159,7 +159,7 @@ internal class KuicksilverEngine(
 
     /** `proxyResolver`'s answers per route ([proxyFor]). */
     internal val proxies = ProxyRouting(config, events.logger)
-    internal val h1 = H1Pool(config, selector, events) // internal for tests (the engine's session cache)
+    internal val h1 = H1Pool(config, selector, events, altSvcFrame = ::onAltSvcFrame) // internal for tests (the engine's session cache)
     internal val h3 = H3Pool(config, events, migrationScope = migrationScope) // internal for tests (0-RTT reconnects)
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
     private val altSvcLock = Mutex()
@@ -533,6 +533,24 @@ internal class KuicksilverEngine(
             }
         if (changed) httpsRecords?.onNetworkChanged()
         return network
+    }
+
+    /** ALTSVC frames learned so far ([onAltSvcFrame]); internal for tests. */
+    internal val altSvcFramesLearned = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    /**
+     * An ALTSVC frame (RFC 7838 section 4) from an HTTP/2 connection to the origin of [url]: learned as an `Alt-Svc` header
+     * of a response is, in [Http3DiscoveryMode.Auto] (the mode that learns), and never through a proxy (the pool passes none).
+     */
+    private fun onAltSvcFrame(
+        url: io.ktor.http.Url,
+        value: String,
+    ) {
+        if (config.http3.discovery != Http3DiscoveryMode.Auto) return
+        engineScope.launch(CoroutineName("kuicksilver-altsvc-frame")) {
+            altSvcUpdate { altSvc.onAltSvcFrame(url, value) }
+            altSvcFramesLearned.value++
+        }
     }
 
     /**

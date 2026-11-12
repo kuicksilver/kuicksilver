@@ -11,12 +11,16 @@ package io.kuicksilver.ktor.server
  */
 @io.kuicksilver.annotations.ExperimentalKuicksilverApi
 public enum class Http3Advertising {
-    /** HTTP/1.1 responses advertise HTTP/3 with `Alt-Svc: h3=":<port>"; ma=86400`, and HTTP/3 is served (the default). */
+    /**
+     * HTTP/3 is advertised with `h3=":<port>"; ma=86400` (an `Alt-Svc` field on HTTP/1.1 responses, an ALTSVC frame on HTTP/2
+     * connections), and HTTP/3 is served (the default).
+     */
     On,
 
     /**
      * Responses say `Alt-Svc: clear` (RFC 7838 section 3: "the origin requests all alternatives for that origin to be
-     * invalidated"), HTTP/1.1 and HTTP/3 ones alike (an alternative may clear its origin's entries, section 2.2), so clients
+     * invalidated"), HTTP/1.1 and HTTP/3 ones alike, and HTTP/2 connections get an ALTSVC frame with `clear` (an alternative
+     * may clear its origin's entries, section 2.2), so clients
      * stop starting HTTP/3 connections from the cached alternative. HTTP/3 goes on serving: connections already open, and
      * new ones from clients that have not seen a `clear` yet.
      */

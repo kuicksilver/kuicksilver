@@ -428,6 +428,16 @@ internal class AltSvcCache(
         entry: AltSvcEntry,
     ): Boolean = !(url.port < 1024 && entry.port >= 1024) && AltSvcDestination.allowed(url.host, entry.host)
 
+    /**
+     * An ALTSVC frame (RFC 7838 section 4) for the origin of [url] on an HTTP/2 connection over verified TLS: "Receiving an
+     * ALTSVC frame is semantically equivalent to receiving an Alt-Svc header field", so [value] replaces the origin's
+     * alternatives or clears them as a header does; freshness counts from receipt (a frame has no age).
+     */
+    fun onAltSvcFrame(
+        url: Url,
+        value: String,
+    ) = onResponse(url, 200, listOf(value), verifiedTls = true)
+
     /** Forgets [entry] of the origin of [url] and keeps its other alternatives: a 421 from [entry] (RFC 7838 section 6). */
     fun removeAlternative(
         url: Url,
@@ -486,6 +496,22 @@ internal class AltSvcCache(
 @ExperimentalKuicksilverApi
 public suspend fun HttpClient.clearAlternativeServices(origin: Url? = null) {
     (engine as? KuicksilverEngine)?.clearAlternativeServices(origin)
+}
+
+/**
+ * Whether [origin], the Origin field of an ALTSVC frame on stream 0 (the ASCII serialization of an origin, RFC 6454 section
+ * 6.2: scheme, `://`, host, and `:port` unless it is the scheme's default), names the origin of [url]: RFC 7838 section 4,
+ * "An association with an origin that the client does not consider authoritative for the current connection MUST be
+ * ignored". The client's HTTP/2 connections serve one origin each (no coalescing), so only that one is authoritative.
+ * Scheme and host compare case-insensitively; an explicit default port is taken too.
+ */
+internal fun isAltSvcFrameOrigin(
+    origin: String,
+    url: Url,
+): Boolean {
+    val base = "${url.protocol.name}://${url.host}".lowercase()
+    val o = origin.lowercase()
+    return o == "$base:${url.port}" || (url.port == url.protocol.defaultPort && o == base)
 }
 
 /** Moves [key] to the most recently used end of this insertion-ordered map and returns its value. */

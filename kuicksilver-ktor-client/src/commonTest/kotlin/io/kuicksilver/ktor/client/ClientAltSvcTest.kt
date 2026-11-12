@@ -436,4 +436,27 @@ class ClientAltSvcTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * RFC 7838 section 4: "Receiving an ALTSVC frame is semantically equivalent to receiving an Alt-Svc header field." A
+     * server that follows section 3 ("When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame") sends no
+     * field over HTTP/2: the client learns the alternative from the frame. Before, the frame was skipped as unknown.
+     */
+    @Test fun negative_altSvcFrameOverH2IsLearned() =
+        h3Test {
+            val (server, port) = testServer(configure = { http2 = true }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                val url = io.ktor.http.Url("https://127.0.0.1:$port/")
+                testClient(Http3DiscoveryMode.Auto).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val r = c.get(url)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                    assertEquals(null, r.headers["Alt-Svc"])
+                    engine.altSvcFramesLearned.first { it >= 1 }
+                    assertEquals(listOf(port), engine.altSvcSnapshot(url).map { it.port })
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 }
