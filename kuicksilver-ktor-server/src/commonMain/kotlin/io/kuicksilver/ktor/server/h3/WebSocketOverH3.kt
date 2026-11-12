@@ -6,6 +6,7 @@ package io.kuicksilver.ktor.server.h3
 
 import io.ktor.http.Headers
 import io.ktor.http.HeadersBuilder
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.server.application.PipelineCall
 import io.ktor.utils.io.cancel
@@ -18,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.random.Random
@@ -65,6 +67,16 @@ internal class H3UpgradeResponse(
         super.respondOutgoingContent(content)
     }
 
+    /**
+     * A 2xx that does not come from the upgrade (a route other than `webSocket` answered the CONNECT) would tell the client
+     * a WebSocket is open that nobody accepted (RFC 9110 section 9.3.6: "Any 2xx (Successful) response indicates that the
+     * sender ... will switch to tunnel mode"): it is answered 501 instead, as RFC 9220 section 3 has an unsupported
+     * `:protocol` answered. The upgrade's own 101 and errors pass as they are.
+     */
+    override fun setStatus(statusCode: HttpStatusCode) {
+        super.setStatus(if (statusCode.value in 200..299) HttpStatusCode.NotImplemented else statusCode)
+    }
+
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         beforeUpgradeForTest?.invoke()
         val headers = Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED })
@@ -82,14 +94,18 @@ internal class H3UpgradeResponse(
         } finally {
             webSocket?.done()
             guard.cancel()
-            // the receive side first: it never suspends, so a cancelled call still stops the client's direction
-            stream.input.cancel()
-            // a call cancelled while the session ran (or while this flush waits) cannot end the stream in order: it is reset
-            // with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), never left with neither a FIN nor a reset
+            // a call cancelled while the session ran cannot end the stream in order: RFC 9220 section 3 has "RST exceptions"
+            // as a stream error of type H3_REQUEST_CANCELLED, so both directions are aborted with it (RFC 9114 section
+            // 4.1.1), never left with neither a FIN nor a reset. The receive side first, with that code: nothing here
+            // suspends before it, so a cancelled call still stops the client's direction
+            val cancelled = !currentCoroutineContext().isActive
+            if (cancelled) runCatching { stream.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
+            stream.input.cancel() // after an orderly end: the client's rest is not read (STOP_SENDING H3_NO_ERROR)
             try {
                 currentCoroutineContext().ensureActive()
                 stream.output.flushAndClose()
             } catch (e: CancellationException) {
+                // cancelled now, or while the flush waited
                 runCatching { stream.reset(Http3ErrorCode.REQUEST_CANCELLED) }
                 throw e
             }
