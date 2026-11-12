@@ -51,6 +51,11 @@ internal class StreamRuntime(
             loop.scope.launch { if (live()) conn.core.setPriority(id, v) }
         }
 
+    /** See [io.kuicksilver.quic.markTunnel]. */
+    internal fun markTunnel() {
+        loop.scope.launch { if (live()) conn.core.markTunnel(id) }
+    }
+
     internal fun signalReadable() {
         readable.trySend(Unit)
     }

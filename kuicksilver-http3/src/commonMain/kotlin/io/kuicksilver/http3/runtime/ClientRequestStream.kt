@@ -29,6 +29,7 @@ import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.markTunnel
 import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -208,6 +209,8 @@ private suspend fun H3Session.requestOnDispatcher(
             } catch (e: QuicException) {
                 throw map(e)
             }
+        // a CONNECT carries a tunnel: some of its data goes out even behind more urgent streams (RFC 9218 section 10.1)
+        if (r.method == "CONNECT") st.markTunnel()
         goAwayReceived.value?.let {
             if (st.id >=
                 it

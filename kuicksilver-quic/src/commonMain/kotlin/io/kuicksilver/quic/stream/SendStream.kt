@@ -26,6 +26,14 @@ internal class SendStream(
     internal var schedPrev: SendStream? = null
     internal var schedNext: SendStream? = null
 
+    /**
+     * The stream carries a tunnel (an HTTP CONNECT): while scheduled it is also on [StreamScheduler]'s tunnel list, through
+     * [tunnelPrev] and [tunnelNext], and gets a share of the frames whatever its urgency (RFC 9218 section 10.1).
+     */
+    internal var tunnel = false
+    internal var tunnelPrev: SendStream? = null
+    internal var tunnelNext: SendStream? = null
+
     /** Queued in [StreamManager]'s list of streams waiting for connection-level credit. */
     internal var connBlocked = false
 

@@ -1031,6 +1031,11 @@ public class ConnectionCore internal constructor(
         streams.setPriority(id, priority)
     }
 
+    /** Stream [id] carries a tunnel: it gets a share of the frames whatever its priority (RFC 9218 section 10.1). */
+    internal fun markTunnel(id: Long) {
+        streams.markTunnel(id)
+    }
+
     /** Closes with an application error (RFC 9000 section 10.2); Initial/Handshake copies carry APPLICATION_ERROR (0x0c) without the reason, the 1-RTT copy the application's code. */
     public fun close(
         code: Long,

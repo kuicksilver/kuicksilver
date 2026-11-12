@@ -853,6 +853,11 @@ internal class StreamManager(
         if (s.schedQueue >= 0) scheduler.reschedule(s)
     }
 
+    /** Marks stream [id] as carrying a tunnel: it gets a share of the frames whatever its urgency (RFC 9218 section 10.1). */
+    fun markTunnel(id: Long) {
+        streams[id]?.send?.let { scheduler.markTunnel(it) }
+    }
+
     /** Writes one STREAM frame for the next scheduled stream into [w]; records it in [frames]. False when nothing can be sent. */
     fun writeStreamFrame(
         w: WireWriter,
@@ -908,11 +913,7 @@ internal class StreamManager(
             frames.addStream(s.id, range.offset, range.length, range.fin)
             s.markSent(range.offset, range.length, range.fin)
             announceResetAtIfDue(s)
-            if (!s.hasPending) {
-                scheduler.remove(s)
-            } else if (s.priority.incremental) {
-                scheduler.rotate(s)
-            }
+            scheduler.onSent(s)
             return true
         }
     }

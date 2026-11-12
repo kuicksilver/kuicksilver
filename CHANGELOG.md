@@ -611,8 +611,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `ProxyException` (`replyCode` 407 when it wants credentials) instead of a plain `IOException`. The
   `protocolSelected` reason for a request through a proxy is the new `ProtocolReason.Proxy` (was `NotSecure`).
 - HTTP/3 scheduling (RFC 9218): a CONNECT tunnel without a priority signal, a WebSocket over HTTP/3 among them, is now
-  scheduled incremental on both sides, so it shares bandwidth with the other streams instead of holding back every
-  response of the same urgency. A `priority` header on a request now schedules the client's own stream too, and a
+  scheduled incremental on both sides, so it shares bandwidth with the incremental streams of its urgency instead of
+  holding back every response of that urgency. Within one urgency the incremental and the non-incremental streams now
+  take turns frame by frame (section 10), where non-incremental streams used to go strictly first and could starve an
+  incremental stream or tunnel; and a CONNECT tunnel gets at least one frame in 16 while more urgent streams have data
+  (section 10.1: "servers SHOULD allocate some amount of bandwidths to streams acting as tunnels"). A `priority` header on a request now schedules the client's own stream too, and a
   `priority` field in a server's response is merged into the client's signal and applied to the response's scheduling.
 - QUIC client: a server's `preferred_address` is now followed (validated, then moved to) instead of ignored; set
   `QuicConfig.followPreferredAddress = false` to keep the old behaviour.

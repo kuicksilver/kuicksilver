@@ -37,6 +37,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.quic.markTunnel
 import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -398,6 +399,8 @@ internal class ServerRequestImpl(
     init {
         // a tunnel without a signal shares bandwidth (RFC 9218 sections 10.1, 11); the client's signal itself stays the default
         st.priority = if (!signalled && method == "CONNECT") TUNNEL_PRIORITY else priorityFlow.value
+        // whatever its priority, a tunnel gets "some amount of bandwidths" behind more urgent streams (section 10.1)
+        if (method == "CONNECT") st.markTunnel()
         session.activeServerRequests[st.id] = this
     }
 
