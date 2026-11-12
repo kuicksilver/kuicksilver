@@ -250,13 +250,20 @@ internal object JvmLoader {
         }
     }
 
-    /** One directory of [sweepStaleFreshDirs] through [parent]'s descriptor: opened with `O_NOFOLLOW`, a link fails to open. */
+    /**
+     * One directory of [sweepStaleFreshDirs] through [parent]'s descriptor. The entry is first examined without being opened
+     * (`fstatat`, no link followed): the JDK opens it with neither `O_NONBLOCK` nor `O_DIRECTORY`, so opening a FIFO another
+     * user put there would block this start for good. Only a directory of this user is opened (`O_NOFOLLOW`, a link fails):
+     * in a sticky directory nobody else can rename that entry, so it cannot be swapped for a FIFO before the open.
+     */
     private fun sweepSecure(
         parent: SecureDirectoryStream<Path>,
         name: Path,
         now: Long,
         me: UserPrincipal,
     ) {
+        val entry = parent.getFileAttributeView(name, PosixFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS).readAttributes()
+        if (!entry.isDirectory || entry.owner() != me) return
         parent.newDirectoryStream(name, LinkOption.NOFOLLOW_LINKS).use { dir ->
             val attrs = dir.getFileAttributeView(PosixFileAttributeView::class.java).readAttributes()
             if (now - attrs.lastModifiedTime().toMillis() < STALE_AFTER_MS || attrs.owner() != me) return

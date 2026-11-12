@@ -252,6 +252,26 @@ class KslLoaderTest {
         assertTrue(File(target, "keep").isFile, "nothing is deleted through a link")
     }
 
+    /**
+     * A FIFO named like a stale per-process directory (anyone may create one in /tmp) is never opened: opening it would block
+     * the start for good. The sweep returns at once and leaves it alone.
+     */
+    @Test fun negative_fifoInPlaceOfAStaleDirectoryDoesNotBlock() {
+        if (!unix || !File("/usr/bin/mkfifo").canExecute()) return
+        val tmp = Files.createTempDirectory("ksl-sweep-fifo").toFile().apply { deleteOnExit() }
+        val fifo = File(tmp, "kuicksilver-native-t-9").apply { deleteOnExit() }
+        val p = ProcessBuilder("/usr/bin/mkfifo", fifo.path).inheritIO().start()
+        assertTrue(p.waitFor(30, TimeUnit.SECONDS) && p.exitValue() == 0, "mkfifo $fifo")
+        val now = System.currentTimeMillis()
+        fifo.setLastModified(now - 3_600_000)
+        val sweep =
+            java.util.concurrent.CompletableFuture.runAsync {
+                JvmLoader.sweepStaleFreshDirs(File(tmp, "kuicksilver-native-t").toPath(), tmp.toPath(), now)
+            }
+        sweep.get(30, TimeUnit.SECONDS) // a blocking open of the FIFO would never return
+        assertTrue(Files.exists(fifo.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS), "the FIFO is left alone")
+    }
+
     /** Below a directory others may write to without the sticky bit nothing is swept: a directory could be swapped for a link. */
     @Test fun negative_noSweepUnderRiskyParent() {
         if (!unix) return
