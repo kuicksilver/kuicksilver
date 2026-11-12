@@ -72,9 +72,10 @@ failed_tests() { # <dir>: one line per failed or errored JUnit test case in the 
 #   --needs <name>  it reads what the earlier step <name> produces: a selection must include that step, and it does not
 #                   run unless that step passed in this run (never an artifact of an earlier run, never one a failed step left)
 #   --after <name>  the same, but the earlier step only has to have run in this run (its marker files are what is read)
-#   --pre <groups>  the preflight it needs: macos, linux-x64, linux-arm64 or mingw (build/openssl/<target> read by a
+#   --pre <group>   the preflight it needs: macos, linux-x64, linux-arm64 or mingw (build/openssl/<target> read by a
 #                   script, or the kuicksilver-openssl-<target> image it runs in, which the same Gradle task rebuilds when
-#                   its Dockerfile changes), deps (the
+#                   its Dockerfile changes); interop (the Linux one of the JVM interop image's platforms, resolved after
+#                   the selection, below); deps (the
 #                   dependency cache of the offline Docker JVM builds)
 # The second walk (mode=run) runs, or with --dry-run lists, the selected steps.
 mode=list; names=(); needs_of=(); after_of=(); pres=(); state=(); pick=(); ran=0
@@ -148,11 +149,6 @@ interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so i
   fi
   bash tools/interop/build-image.sh
 }
-# the Linux OpenSSL build-image.sh reads: that of its platforms (KSL_INTEROP_PLATFORMS, else the Docker server's
-# architecture, which on this Mac is the host's)
-case "${KSL_INTEROP_PLATFORMS:-linux/$(uname -m)}" in
-  *amd64*|*x86_64*) interop_ossl=linux-x64 ;; *) interop_ossl="" ;; esac
-case "${KSL_INTEROP_PLATFORMS:-linux/$(uname -m)}" in *arm64*|*aarch64*) interop_ossl="$interop_ossl linux-arm64" ;; esac
 export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
@@ -246,7 +242,7 @@ step "docker: deployment guide commands"         env KSL_GRADLE="$G" bash tools/
 fi
 if [ "$with_interop" = 1 ]; then
 # CI runs one job per image x peer (the same cases and peers); --check-required is scoped to each run's image, peers and cases
-step --pre "$interop_ossl" "interop: jvm image"                       interop_jvm_image
+step --pre interop "interop: jvm image"                       interop_jvm_image
 step "interop: native image"                    bash tools/interop/build-image.sh --native
 # shellcheck disable=SC2086
 step --needs "interop: jvm image" "interop: jvm image vs all peers, required cells"    bash tools/interop/run-local.sh --check-required -t "$KSL_INTEROP_CASES" $KSL_INTEROP_PEERS
@@ -317,6 +313,18 @@ if [ -n "$selection" ]; then
 fi
 pre_wanted=" "; for k in $(picked); do pre_wanted="$pre_wanted${pres[k]} "; done
 wants() { [[ "$pre_wanted" == *" $1 "* ]]; }
+# "interop" (the JVM interop image) is the Linux OpenSSL of the platforms build-image.sh packs, found as it finds them:
+# KSL_INTEROP_PLATFORMS, else the Docker server's architecture (not uname -m, which a Rosetta shell reports as x86_64 on
+# an arm64 Docker). A dry run does not ask Docker and says that it shows the host's architecture instead.
+if wants interop; then
+  if [ -n "${KSL_INTEROP_PLATFORMS:-}" ]; then interop_platforms="$KSL_INTEROP_PLATFORMS"
+  elif [ "$dry" = 1 ]; then interop_platforms="linux/$(uname -m)"
+    echo "preflight: the JVM interop image packs the Docker server's architecture; this dry run shows the host's ($(uname -m)) instead"
+  elif arch=$(docker version -f '{{.Server.Arch}}' 2>/dev/null) && [ -n "$arch" ]; then interop_platforms="linux/$arch"
+  else echo "local matrix: refused before step 1: the JVM interop image needs Docker, and docker version does not answer" >&2; exit 1; fi
+  case "$interop_platforms" in *amd64*|*x86_64*) pre_wanted="$pre_wanted linux-x64 " ;; esac
+  case "$interop_platforms" in *arm64*|*aarch64*) pre_wanted="$pre_wanted linux-arm64 " ;; esac
+fi
 # Preflight, before step 1: the steps that run scripts rather than Gradle tasks read build/openssl/<target> directly
 # (c-tests, keylog check and double build: macos-arm64; the Docker c-tests and JNI builds: linux-x64, linux-arm64; the
 # mingw dll: mingw-x64). CI builds those in jobs of their own; here a fresh worktree had none, and the Docker steps failed
