@@ -565,6 +565,14 @@ public class KuicksilverApplicationEngine(
             }
 
             else -> {
+                // Ktor's sslConnector (JVM `-sslPort`, `ktor.security.ssl.*`) takes client certificates from its own trustStore:
+                // EngineMain's client CA keys would silently not apply to it, so the combination is refused
+                if (configuration.clientTrust != null) {
+                    throw TlsException.Config(
+                        "kuicksilver.tls.clientAuth and kuicksilver.tls.clientCa apply to the port of kuicksilver.tls.certificateChain, " +
+                            "not to $c: use ktor.security.ssl.trustStore there, or serve only the kuicksilver.tls port",
+                    )
+                }
                 platformTlsConnector(c)?.let { Listener(it, it) }
                     ?: throw TlsException.Config(
                         "connector $c is not supported by the Kuicksilver engine: use tlsConnector(identity) or a plain connector",

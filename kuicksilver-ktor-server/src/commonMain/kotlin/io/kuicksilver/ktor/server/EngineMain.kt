@@ -6,6 +6,7 @@ import io.ktor.server.config.ApplicationConfig
 import io.ktor.server.engine.CommandLineConfig
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.loadCommonConfiguration
+import io.ktor.util.logging.KtorSimpleLogger
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
@@ -29,6 +30,9 @@ import kotlin.time.Duration.Companion.seconds
  * server).
  */
 public object EngineMain {
+    /** Where configuration warnings go before the application exists (a client CA file with non-CA certificates). */
+    private val startupLog = KtorSimpleLogger("io.kuicksilver.ktor.server.EngineMain")
+
     /** Starts the server from command-line arguments and the configuration file, and blocks until it stops. */
     @JvmStatic
     public fun main(args: Array<String>) {
@@ -40,7 +44,12 @@ public object EngineMain {
      * `kuicksilver.tls.*` file keys is set, `kuicksilver.tls.reloadInterval` is set without them or is not a duration of
      * at least 1 second (or `0`), `kuicksilver.tls.clientAuth` is not `none`, `optional` or `required`, or is not `none`
      * exactly when `kuicksilver.tls.clientCa` is set, `kuicksilver.tls.clientCa` is set without the identity files, a boolean key is not `true`/`false`, or `kuicksilver.maxTcpConnections`,
-     * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range.
+     * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range. Throws
+     * `kotlinx.io.IOException` when a PEM file (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`) cannot be read
+     * or is larger than 1 MiB, and when the chain file (with `kuicksilver.tls.reloadInterval`) or the client CA file also holds
+     * a private key. Throws `TlsException.Config` when a PEM file holds no certificate or a damaged one, the key does not
+     * match the chain or is encrypted, and, with `kuicksilver.tls.reloadInterval`, when the leaf certificate has expired or is
+     * not valid yet or no certificate of the client CA file is valid now.
      */
     public fun createServer(args: Array<String>): EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration> {
         val config = CommandLineConfig(args)
@@ -176,7 +185,9 @@ public object EngineMain {
         }
         if (caFile == null) return
         // the watcher's checks at startup too: a key in the file is refused, a damaged file or one without a certificate fails
-        val bundle = TrustConfig.AnchoredCa(Certificate.parsePem(readPemText(caFile, refusePrivateKey = true)))
+        val roots = Certificate.parsePem(readPemText(caFile, refusePrivateKey = true, holds = CA_FILE_HOLDS))
+        warnNonCa(caFile, roots, startupLog)
+        val bundle = TrustConfig.AnchoredCa(roots)
         clientAuth = auth
         @OptIn(ExperimentalKuicksilverApi::class)
         clientTrust = if (reload) TrustConfig.reloadable(bundle) else bundle

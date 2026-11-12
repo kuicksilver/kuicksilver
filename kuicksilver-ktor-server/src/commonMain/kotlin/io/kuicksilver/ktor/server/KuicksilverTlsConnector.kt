@@ -27,7 +27,7 @@ public class KuicksilverTlsConnector private constructor(
     override val port: Int,
     /**
      * The server certificate chain and key, shared by TCP and QUIC. A `TlsIdentity.Reloadable` replaces them at run time:
-     * each new handshake on either takes the identity current when it starts, running connections keep theirs.
+     * each new handshake on either takes the identity current when its ClientHello arrives, running connections keep theirs.
      */
     public val identity: TlsIdentity,
     /** Whether a client certificate is asked for ([ClientAuth.Optional]) or required ([ClientAuth.Required]). */
@@ -35,7 +35,7 @@ public class KuicksilverTlsConnector private constructor(
     /**
      * Verifies client certificates (`TrustConfig.AnchoredCa`, optionally pinned); needed unless [clientAuth][KuicksilverTlsConnector.clientAuth] is None.
      * A `TrustConfig.ReloadableCa` replaces the CA bundle at run time: each new handshake on TCP or QUIC takes the bundle
-     * current when it starts, running connections keep theirs.
+     * current when its ClientHello arrives, running connections keep theirs.
      */
     public val trust: TrustConfig?,
     /** The TLS 1.3 cipher suites in preference order. */

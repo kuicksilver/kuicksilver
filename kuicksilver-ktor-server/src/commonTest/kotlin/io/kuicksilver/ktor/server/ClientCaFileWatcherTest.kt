@@ -118,7 +118,7 @@ class ClientCaFileWatcherTest {
         files["ca.pem"] = pemB + TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)
         repeat(2) { assertFalse(w.checkOnce()) }
         assertEquals(IdentityFileWatcher.Outcome.Failed, w.lastOutcome)
-        assertTrue("contains a private key" in log.lines.first { it.first == "WARN" }.second)
+        assertTrue("contains a private key; it must hold CA certificates only" in log.lines.first { it.first == "WARN" }.second)
         assertFalse(log.lines.any { "BEGIN PRIVATE KEY" in it.second }, "${log.lines}")
         files["ca.pem"] = "-----BEGIN CERTIFICATE-----\n@@@\n-----END CERTIFICATE-----\n"
         assertFalse(w.checkOnce())
@@ -130,6 +130,36 @@ class ClientCaFileWatcherTest {
         assertFalse(w.checkOnce())
         assertTrue(w.checkOnce(), "a good file is applied after the failures")
         assertEquals(listOf(caB), r.current.roots)
+    }
+
+    /** Every certificate of the bundle is an anchor: a leaf among them is applied, with a warning that says what it means. */
+    @Test fun nonCaCertificateInTheBundleWarns() {
+        val r = servingA()
+        val log = Lines()
+        val w = watcher(r, log)
+        files["ca.pem"] = pemB + TestCerts.toPem("CERTIFICATE", TestCerts.client)
+        assertFalse(w.checkOnce())
+        assertTrue(w.checkOnce())
+        assertEquals(2, r.current.roots.size)
+        val warning = log.lines.single { it.first == "WARN" }.second
+        assertTrue("1 certificate(s) that are not CA certificates" in warning, warning)
+        files["ca.pem"] = pemB
+        assertFalse(w.checkOnce())
+        assertTrue(w.checkOnce())
+        assertEquals(1, log.count("WARN"), "a bundle of CA certificates only: no warning")
+    }
+
+    /** The reader the watcher uses on disk refuses a key with the CA file's own words, as the watcher's own check does. */
+    @Test fun negative_privateKeyMessageNamesTheCaFile() {
+        val r = servingA()
+        val log = Lines()
+        val w =
+            ClientCaFileWatcher("ca.pem", r, log, readText = { throw PrivateKeyInPemFile(it, CA_FILE_HOLDS) })
+        assertFalse(w.checkOnce())
+        assertEquals(
+            "client CA bundle not reloaded from ca.pem, the current one stays: ca.pem contains a private key; it must hold CA certificates only",
+            log.lines.single { it.first == "WARN" }.second,
+        )
     }
 
     @Test fun pollingOnVirtualTime() =

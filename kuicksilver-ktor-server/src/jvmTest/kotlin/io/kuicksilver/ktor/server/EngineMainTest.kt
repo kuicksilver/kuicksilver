@@ -432,7 +432,7 @@ class EngineMainTest {
                         clientCaArgs("-P:kuicksilver.tls.clientAuth=required", "-P:kuicksilver.tls.clientCa=${withKey.path}"),
                     ).engine
             }
-        assertTrue("contains a private key" in e4.message.orEmpty(), e4.message)
+        assertTrue("contains a private key; it must hold CA certificates only" in e4.message.orEmpty(), e4.message)
         assertFailsWith<IllegalArgumentException> {
             EngineMain
                 .createServer(
@@ -506,6 +506,37 @@ class EngineMainTest {
                 server.stop(100, 500)
             }
             assertTrue(server.engine.identityWatcherForTest!!.isCompleted, "the watcher ends with the server")
+        }
+
+    /**
+     * Ktor's sslConnector (`-sslPort`) takes client certificates from its own trustStore: EngineMain's client CA keys would not
+     * apply to it, so the start is refused instead of serving that port without them.
+     */
+    @Test fun negative_clientCaKeysWithSslPortRefused() =
+        serverTest {
+            val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
+            val pk = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
+            val ksFile = File(dir, "mtls-server.p12")
+            KeyStore.getInstance("PKCS12").apply {
+                load(null, null)
+                setKeyEntry("mykey", pk, "pw".toCharArray(), arrayOf(cert))
+                ksFile.outputStream().use { store(it, "pw".toCharArray()) }
+            }
+            val ca = pem("sslport-ca.pem", TestCerts.toPem("CERTIFICATE", TestCerts.testCa))
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs(
+                        "-sslPort=0",
+                        "-sslKeyStore=${ksFile.path}",
+                        "-P:ktor.security.ssl.keyStorePassword=pw",
+                        "-P:ktor.security.ssl.privateKeyPassword=pw",
+                        "-P:kuicksilver.tls.clientAuth=required",
+                        "-P:kuicksilver.tls.clientCa=${ca.path}",
+                    ),
+                )
+            val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
+            assertTrue("ktor.security.ssl.trustStore" in e.message.orEmpty(), e.message)
+            server.stop(0, 0)
         }
 
     private fun clientA() = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())

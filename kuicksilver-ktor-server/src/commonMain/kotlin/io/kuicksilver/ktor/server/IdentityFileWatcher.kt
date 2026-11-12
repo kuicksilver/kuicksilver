@@ -143,6 +143,12 @@ internal suspend fun pollFiles(
     }
 }
 
+/** A PEM file that must hold certificates only ([holds]) also holds a private key; the message names the file, never the key. */
+internal class PrivateKeyInPemFile(
+    path: String,
+    holds: String,
+) : IOException("$path contains a private key; it must hold $holds only")
+
 /** The most a PEM file of the identity may hold (a chain of a dozen certificates is a few tens of KiB). */
 internal const val MAX_PEM_FILE_BYTES: Long = 1L shl 20
 
@@ -153,12 +159,11 @@ internal const val MAX_PEM_FILE_BYTES: Long = 1L shl 20
 internal fun readPemText(
     path: String,
     refusePrivateKey: Boolean = false,
+    holds: String = "the certificate chain",
 ): String {
     val chars = readSecretFile(path, MAX_PEM_FILE_BYTES)
     try {
-        if (refusePrivateKey && chars.containsText("PRIVATE KEY")) {
-            throw IOException("$path contains a private key; it must hold the certificate chain only")
-        }
+        if (refusePrivateKey && chars.containsText("PRIVATE KEY")) throw PrivateKeyInPemFile(path, holds)
         return chars.concatToString()
     } finally {
         chars.fill('\u0000')
