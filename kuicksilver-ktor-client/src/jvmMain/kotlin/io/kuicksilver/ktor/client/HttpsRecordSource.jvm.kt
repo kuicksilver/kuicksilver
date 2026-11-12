@@ -28,3 +28,6 @@ internal actual suspend fun platformAddressQuery(
     type: Int,
     timeout: Duration,
 ): AddressRecords? = KslDns.query(name, type, timeout)?.let { addressRecordsOf(it, name, type) }
+
+/** No platform prefix here (Apple synthesizes through `ksl_nat64_synthesize` instead): RFC 7050 discovery. */
+internal actual fun platformNat64Prefixes(): List<Pref64>? = null

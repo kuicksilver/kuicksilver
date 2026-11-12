@@ -254,6 +254,12 @@ internal expect suspend fun platformAddressQuery(
 ): AddressRecords?
 
 /**
+ * The network's NAT64 prefixes as the platform knows them (Android, API 30: `LinkProperties.getNat64Prefix` when the
+ * application gave the engine a `ConnectivityManager`), or null when it cannot tell: then RFC 7050 discovery.
+ */
+internal expect fun platformNat64Prefixes(): List<Pref64>?
+
+/**
  * NAT64 for Happy Eyeballs on an IPv6-only network (RFC 8305 section 7), for platforms that do not translate themselves:
  * "On platforms that do not support 464XLAT, the Happy Eyeballs engine SHOULD follow the recommendations in this section
  * to properly support IPv6-only networks with NAT64 and DNS64."
@@ -268,7 +274,7 @@ internal expect suspend fun platformAddressQuery(
  *   non-global one with the Well-Known Prefix (RFC 6052 section 3.1: "The Well-Known Prefix MUST NOT be used to represent
  *   non-global IPv4 addresses"). Without a prefix the address is handed out as it is.
  * - The prefixes: the platform's own where it synthesizes ([platformSynthesize]: Apple's `getaddrinfo` with
- *   `AI_DEFAULT`), else RFC 7050 section 3, an AAAA query for `ipv4only.arpa` ([query]), made only when an address needs
+ *   `AI_DEFAULT`) or tells them ([platformPrefixes]: Android's `LinkProperties.getNat64Prefix`), else RFC 7050 section 3, an AAAA query for `ipv4only.arpa` ([query]), made only when an address needs
  *   synthesis, one at a time however many requests need it. Every plausible prefix of the answer is used, in its order
  *   ("IPv6 addresses MUST be synthesized by using all discovered Pref64::/n prefixes in the received order"; section 3.2:
  *   "simply attempt to use the learned Pref64::/n", which the race does). "The node SHALL cache the replies ... and it
@@ -284,6 +290,7 @@ internal class Nat64(
     private val sourceFor: (TcpAddress) -> TcpAddress? = ::sourceAddressFor,
     private val query: suspend () -> AddressRecords? = { platformAddressQuery(WELL_KNOWN_NAME, DnsMessage.TYPE_AAAA, DISCOVERY_TIMEOUT) },
     private val platformSynthesize: (ByteArray) -> List<ByteArray>? = KslNet::nat64Synthesize,
+    private val platformPrefixes: () -> List<Pref64>? = ::platformNat64Prefixes,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private class Discovered(
@@ -344,7 +351,8 @@ internal class Nat64(
         if (!ipv6OnlyNetwork() || !synthesizable(v4) || sourceFor(TcpAddress(v4, 9)) != null) return native
         platformSynthesize(v4)?.let { own -> return own.map { TcpAddress(it, port) }.ifEmpty { native } }
         val global = isGlobalV4(v4)
-        val usable = prefixes().filter { global || it != Pref64.WELL_KNOWN }
+        val known = platformPrefixes()?.filter { it.plausible() }?.takeIf { it.isNotEmpty() } ?: prefixes()
+        val usable = known.filter { global || it != Pref64.WELL_KNOWN }
         return usable.map { TcpAddress(it.synthesize(v4), port) }.ifEmpty { native }
     }
 
@@ -431,7 +439,7 @@ internal class Nat64(
         val system: Nat64 = Nat64()
 
         /** Tests with a resolver of their own: never an IPv6-only network, whatever the machine is on. */
-        fun offForTest(): Nat64 = Nat64(ExpiryClock { 0L }, { null }, { null }, { null })
+        fun offForTest(): Nat64 = Nat64(ExpiryClock { 0L }, { null }, { null }, { null }, { null })
 
         // global destinations only to ask the routing table: a connected UDP socket sends nothing
         private val PROBE_V6 =

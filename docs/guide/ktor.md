@@ -1028,8 +1028,10 @@ alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; de
   it ends, 30 s between failed queries) and forgotten on a new `networkId` or a new IPv6 network. Addresses with a route
   (a LAN, a VPN, loopback) are used as they are, and the Well-Known Prefix `64:ff9b::/96` never carries a private
   address (RFC 6052). The engine then asks for a name's IPv4 addresses only when the IPv6 answer is empty, or 2 s after
-  the last IPv6 attempt started without a connection (a broken AAAA record). Android takes no prefix from the system
-  (that needs a `ConnectivityManager`): where it runs no 464XLAT, the `ipv4only.arpa` query goes through its resolver.
+  the last IPv6 attempt started without a connection (a broken AAAA record). On Android (API 30) the engine takes the
+  prefix Android knows (`LinkProperties.getNat64Prefix`) when the application gave it a `ConnectivityManager` through
+  `Http3ConnectionMigration.followDefaultNetwork(connectivity)` or `HttpsRecordSource.followingPrivateDns(connectivity)`;
+  otherwise, where it runs no 464XLAT, the `ipv4only.arpa` query goes through its resolver.
 - **Caching.** An answer is kept as long as the JDK's own cache would keep it (`networkaddress.cache.ttl`, 30 s, and
   `networkaddress.cache.negative.ttl`, 10 s by default; 2 s on Android), at most 1000 names and families; on
   Kotlin/Native the system resolver's cache does it.

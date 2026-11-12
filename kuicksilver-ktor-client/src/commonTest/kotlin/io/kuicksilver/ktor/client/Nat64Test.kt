@@ -115,6 +115,7 @@ class Nat64Test {
         },
         query = query,
         platformSynthesize = { null },
+        platformPrefixes = { null },
         scope = backgroundScope,
     )
 
@@ -300,6 +301,42 @@ class Nat64Test {
                     listOf(own)
                 })
             assertEquals(listOf("[2001:db8:64::5db8:d822]:443"), n.synthesize(global4, 443).map { it.toString() })
+        }
+
+    @Test fun thePlatformsPrefixIsUsedBeforeDiscovery() =
+        runTest {
+            // Android: LinkProperties.getNat64Prefix, when the application gave the engine a ConnectivityManager
+            val nsp = Pref64(ip6("2001:db8:64::"), 96)
+            val n =
+                Nat64(
+                    ExpiryClock { 0L },
+                    sourceFor = { d -> if (d.isIpv6) globalV6 else null },
+                    query = { error("not asked") },
+                    platformSynthesize = { null },
+                    platformPrefixes = { listOf(nsp) },
+                    scope = backgroundScope,
+                )
+            assertEquals(listOf("[2001:db8:64::5db8:d822]:443"), n.synthesize(global4, 443).map { it.toString() })
+        }
+
+    @Test fun negative_withoutAPlatformPrefixDiscoveryRuns() =
+        runTest {
+            var asked = 0
+            val implausible = Pref64(ip6("fe80::"), 96)
+            val n =
+                Nat64(
+                    ExpiryClock { 0L },
+                    sourceFor = { d -> if (d.isIpv6) globalV6 else null },
+                    query = {
+                        asked++
+                        aaaaAnswer(600)
+                    },
+                    platformSynthesize = { null },
+                    platformPrefixes = { listOf(implausible) }, // an implausible one counts as none
+                    scope = backgroundScope,
+                )
+            assertEquals(listOf("[64:ff9b::5db8:d822]:443"), n.synthesize(global4, 443).map { it.toString() })
+            assertEquals(1, asked)
         }
 
     @Test fun addressRecordsAfterCnameAndNegativeTtl() {

@@ -249,6 +249,7 @@ class RequestDnsTest {
             },
             query = { wkpAnswer },
             platformSynthesize = { null },
+            platformPrefixes = { null },
             scope = backgroundScope,
         )
 
@@ -294,6 +295,7 @@ class RequestDnsTest {
                         kotlinx.coroutines.awaitCancellation()
                     },
                     platformSynthesize = { null },
+                    platformPrefixes = { null },
                     scope = backgroundScope,
                 )
             val dns = RequestDns(n, dual) { _, v6 -> if (v6) listOf(v6(1)) else error("not asked") }
@@ -309,6 +311,7 @@ class RequestDnsTest {
                     sourceFor = { d -> if (d.isIpv6) v6(9) else addr(100) },
                     query = { error("not asked") },
                     platformSynthesize = { error("not asked") },
+                    platformPrefixes = { error("not asked") },
                 )
             val dns = RequestDns(n, dual) { _, _ -> error("not looked up") }
             val lit = dns.resolution("93.184.216.34", 443)

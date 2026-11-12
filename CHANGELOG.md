@@ -363,7 +363,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   delay, `H3Only` included; a server's CONNECTION_REFUSED at one address now moves on to the next, and counts as a
   refusal (no broken mark) only when every address refused. On an IPv6-only network without 464XLAT, IPv4 addresses
   the host has no route to (IPv4 literals, IPv4-only names) are reached through the network's NAT64 (RFC 6052): Apple's
-  own synthesis, elsewhere the prefix of RFC 7050 discovery, asked only when needed; IPv4 is asked for only when needed. The name is
+  own synthesis, Android's `LinkProperties.getNat64Prefix` (API 30) when the application gave the engine a
+  `ConnectivityManager` (`followDefaultNetwork`, `followingPrivateDns`), elsewhere the prefix of RFC 7050 discovery, asked only when needed; IPv4 is asked for only when needed. The name is
   resolved once per request for both sides of the h3/h1 race, off the caller's thread and within the connect timeout.
   On the JVM an application's own resolver (`InetAddressResolverProvider`, `jdk.net.hosts.file`) is still used, answers
   are kept for the JDK's `networkaddress.cache.ttl` and `.negative.ttl`, and `java.net.preferIPv6Addresses` no longer
