@@ -346,6 +346,21 @@ class StreamStateTest {
         peer.assertStreamError(3, Http2ErrorCode.PROTOCOL_ERROR)
     }
 
+    /**
+     * RFC 9218 section 2.1: "A server that receives SETTINGS_NO_RFC7540_PRIORITIES with a value of 1 MUST ignore HTTP/2
+     * priority signals." After that setting a self-dependent HEADERS or PRIORITY is accepted and ignored, not reset.
+     */
+    @Test
+    fun selfDependencyIgnoredAfterNoRfc7540Priorities() {
+        val peer = RawH2Peer(Role.SERVER)
+        peer.handshake(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(1)))
+        peer.send(peer.headers(1, endStream = false, dependency = 1), FrameEncoder.priority(1, 1))
+        peer.send(peer.headers(3, endStream = false), FrameEncoder.priority(3, 3))
+        peer.read()
+        assertTrue(peer.resets().isEmpty(), "resets: ${peer.resets().map { it.streamId }}")
+        assertEquals(listOf(1, 3), peer.events().filterIsInstance<H2Event.HeadersReceived>().map { it.streamId })
+    }
+
     @Test
     fun negative_frameInsideFieldBlockIsProtocolError() {
         val peer = RawH2Peer(Role.SERVER)

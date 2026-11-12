@@ -144,8 +144,11 @@ internal fun H2ConnectionCore.onHeaders(
             rememberClosed(id, weReset = true) // after our GOAWAY: discarded, its frames too; the block fed HPACK (section 6.8)
             return
         }
-        // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability; RFC 9113 section 5.3.2)
-        if (blockDependency == id) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+        // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability; RFC 9113 section 5.3.2), unless
+        // the peer said it sends no such signals: they are then ignored entirely (RFC 9218 section 2.1)
+        if (blockDependency == id && !peerNoRfc7540Priorities) {
+            return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+        }
         if (peerStreams >= settings.maxConcurrentStreams) {
             // section 5.1.2: REFUSED_STREAM; a peer that keeps opening past the limit is flooding (golang/go#63417: Go's
             // server.go scheduleHandler allows 4 x the limit of unstarted handlers)
@@ -257,8 +260,12 @@ internal fun H2ConnectionCore.onPriority(
     now: Long,
 ) {
     glitch(now, "PRIORITY") // deprecated (section 5.3.2): no state, but not for free (nghttp2 does the same)
-    // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability)
-    if (f.dependency == f.streamId) streamError(f.streamId, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+    // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability), unless the peer sent
+    // SETTINGS_NO_RFC7540_PRIORITIES = 1: "A server that receives [it] with a value of 1 MUST ignore HTTP/2 priority
+    // signals" (RFC 9218 section 2.1), and a check that resets the stream does not ignore the signal
+    if (f.dependency == f.streamId && !peerNoRfc7540Priorities) {
+        streamError(f.streamId, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+    }
 }
 
 internal fun H2ConnectionCore.onRstStream(
@@ -353,6 +360,7 @@ internal fun H2ConnectionCore.onSettings(
 
             SettingId.NO_RFC7540_PRIORITIES -> {
                 if (v > 1) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_NO_RFC7540_PRIORITIES = $v")
+                peerNoRfc7540Priorities = v == 1L
             }
 
             else -> {} // section 6.5.2: unknown settings are ignored

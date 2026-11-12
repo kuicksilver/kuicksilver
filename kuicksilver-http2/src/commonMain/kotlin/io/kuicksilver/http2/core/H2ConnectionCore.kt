@@ -113,6 +113,9 @@ internal class H2ConnectionCore(
     internal var peerMaxFrameSize = H2.MIN_MAX_FRAME_SIZE
     internal var peerMaxHeaderListSize = Long.MAX_VALUE
 
+    /** The peer sent SETTINGS_NO_RFC7540_PRIORITIES = 1: it uses no RFC 7540 priority signals (RFC 9218 section 2.1). */
+    internal var peerNoRfc7540Priorities = false
+
     /** The peer allows Extended CONNECT (RFC 8441 section 3). */
     var peerEnableConnectProtocol: Boolean = false
         internal set
