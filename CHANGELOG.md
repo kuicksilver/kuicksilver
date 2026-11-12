@@ -481,6 +481,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client, proxy auto-configuration (RFC 6455 section 4.1 step 3): `ProxyResolvers.System` runs a PAC script or
+  WPAD as the system does: on macOS and iOS with CFNetwork's PAC engine (`CFNetworkExecuteProxyAutoConfigurationURL`),
+  on Windows with WinHTTP's (`WinHttpGetProxyForUrl`, automatic detection by DHCP and DNS, then the PAC URL). A
+  WebSocket's lookup passes its `ws://`/`wss://` URI with the resource name (RFC 6455 section 4.1; on Apple platforms
+  CFNetwork drops the path and query before the script runs). A script that cannot be fetched or run within 5 seconds
+  gives the next setting (on Windows the fixed proxy), else a direct connection, with one warning. Before, those
+  requests connected directly.
 - Ktor client, HTTP/1.1 request framing (RFC 9112 section 6.1 MUST NOT): Transfer-Encoding (a body of unknown length,
   or a transfer coding the application applied) goes only to a server known to handle HTTP/1.1: an HTTP/1.1 response
   on the route, or ALPN `http/1.1`. On first contact without that knowledge (cleartext, or TLS without ALPN) the engine

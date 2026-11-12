@@ -233,6 +233,113 @@ class ProxyResolverTest {
         assertNull(pickCfProxy(listOf(CfProxy(CfProxy.Type.None, null, null), CfProxy(CfProxy.Type.Http, "p", 1))) {})
     }
 
+    /**
+     * RFC 6455 section 4.1 step 3: "If the client is configured to use a proxy ... the client SHOULD connect to that
+     * proxy". A PAC entry is run and its answer picked like the fixed entries; a script that fails is skipped with a
+     * warning, so the next entry counts (before, every PAC entry meant a direct connection).
+     */
+    @Test fun pacEntryIsRunAndItsAnswerPicked() {
+        val pac = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacUrl = "http://wpad/wpad.dat")
+        val ran = ArrayList<String?>()
+        val warnings = ArrayList<String>()
+        val viaPac =
+            pickCfProxy(listOf(pac), {
+                ran += it.pacUrl
+                listOf(CfProxy(CfProxy.Type.Http, "pac.test", 3128))
+            }) { warnings += it }
+        assertEquals(ResolvedProxy.http("pac.test", 3128), viaPac)
+        assertEquals(listOf<String?>("http://wpad/wpad.dat"), ran)
+        assertEquals(emptyList(), warnings)
+        // "DIRECT"
+        assertNull(pickCfProxy(listOf(pac, CfProxy(CfProxy.Type.Http, "p", 1)), { listOf(CfProxy(CfProxy.Type.None, null, null)) }) {})
+        // SOCKS from the script
+        assertEquals(
+            ResolvedProxy.socks5("s.test", 1080),
+            pickCfProxy(listOf(pac), { listOf(CfProxy(CfProxy.Type.Socks, "s.test", 1080)) }) {},
+        )
+    }
+
+    @Test fun negative_failedPacFallsToTheNextEntryWithAWarning() {
+        val pac = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = "x")
+        val warnings = ArrayList<String>()
+        assertEquals(
+            ResolvedProxy.http("next", 8080),
+            pickCfProxy(listOf(pac, CfProxy(CfProxy.Type.Http, "next", 8080)), { null }) { warnings += it },
+        )
+        assertEquals(listOf(PAC_FAILED), warnings)
+        assertNull(pickCfProxy(listOf(pac), { null }) {}, "nothing after the failed script: direct")
+    }
+
+    /** Windows: WPAD and the PAC URL first (WinHTTP's order), the fixed proxy when neither is set or the script failed. */
+    @Test fun windowsRunsPacBeforeTheFixedProxy() {
+        val url = Url("https://x.test/")
+        val both = IeProxySettings(autoDetect = true, autoConfigUrl = "http://cfg/proxy.pac", proxy = "fixed:1", bypass = null)
+        val warnings = ArrayList<String>()
+        assertEquals(
+            ResolvedProxy.http("pac", 3128),
+            windowsProxyFor(both, url, { WinPacAnswer.Proxies("pac:3128;other:1", null) }) { warnings += it },
+        )
+        assertNull(windowsProxyFor(both, url, { WinPacAnswer.Direct }) { warnings += it })
+        assertEquals(emptyList(), warnings)
+        assertEquals(ResolvedProxy.http("fixed", 1), windowsProxyFor(both, url, { WinPacAnswer.Failed }) { warnings += it })
+        assertEquals(listOf(PAC_FAILED), warnings)
+        var ran = false
+        val fixedOnly = IeProxySettings(autoDetect = false, autoConfigUrl = null, proxy = "fixed:1", bypass = null)
+        assertEquals(
+            ResolvedProxy.http("fixed", 1),
+            windowsProxyFor(fixedOnly, url, {
+                ran = true
+                WinPacAnswer.Direct
+            }) {},
+        )
+        assertFalse(ran)
+    }
+
+    /**
+     * RFC 6455 section 4.1: "For the purpose of proxy autoconfiguration scripts, the URI to pass the function MUST be
+     * constructed from /host/, /port/, /resource name/, and the /secure/ flag using the definition of a WebSocket URI".
+     */
+    @Test fun pacTargetIsTheWebSocketUri() {
+        assertEquals("wss://h.test:8443/chat?room=1", pacTarget(Url("wss://h.test:8443/chat?room=1")))
+        assertEquals("ws://h.test:80/", pacTarget(Url("ws://h.test")))
+        assertEquals("ws://[::1]:8080/a", pacTarget(Url("ws://[::1]:8080/a")))
+        assertEquals("https://h.test:443/", pacTarget(Url("https://h.test/a/b?q")))
+        assertEquals("http://h.test:8080/", pacTarget(Url("http://h.test:8080/a")))
+    }
+
+    /** A WebSocket's resource name is part of the PAC input, so the answer is kept per resource for ws and wss only. */
+    @Test fun webSocketAnswersAreKeptPerResource() =
+        runBlocking {
+            val seen = ArrayList<String>()
+            val routing =
+                ProxyRouting(
+                    KuicksilverEngineConfig().apply {
+                        proxyResolver =
+                            ProxyResolver {
+                                seen += it.toString()
+                                null
+                            }
+                    },
+                    NoLog,
+                )
+            routing.lookup(Url("wss://x.test/a"))
+            routing.lookup(Url("wss://x.test/b"))
+            routing.lookup(Url("wss://x.test/a"))
+            routing.lookup(Url("https://x.test/a"))
+            routing.lookup(Url("https://x.test/b"))
+            assertEquals(listOf("wss://x.test/a", "wss://x.test/b", "https://x.test/a"), seen)
+        }
+
+    private object NoLog : KuicksilverLogger {
+        override fun isEnabled(level: LogLevel) = false
+
+        override fun log(
+            level: LogLevel,
+            message: String,
+            cause: Throwable?,
+        ) {}
+    }
+
     /** One resolver call per route for 30 s, a new one after; at most 256 routes kept; the PAC warning once per engine. */
     @Test fun routingCachesAndWarnsOnce() =
         runBlocking {

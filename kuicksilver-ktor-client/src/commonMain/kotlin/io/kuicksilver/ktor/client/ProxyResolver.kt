@@ -57,13 +57,17 @@ public object ProxyResolvers {
      * `java.net.useSystemProxies`, Android's per-network proxy and PAC); on Apple platforms the system's proxy settings
      * (`CFNetworkCopyProxiesForURL`, with its exceptions list); on Windows the user's Internet settings
      * (`WinHttpGetIEProxyConfigForCurrentUser`, with its bypass list); on Linux, which has no system API, [Environment].
-     * A proxy auto-configuration (PAC or WPAD) on Apple platforms and Windows is not run: those requests connect directly
-     * and the engine logs one warning.
+     * A proxy auto-configuration on Apple platforms (a PAC URL or script, `CFNetworkExecuteProxyAutoConfigurationURL`)
+     * and Windows (automatic detection, WPAD, or a PAC URL, `WinHttpGetProxyForUrl`) is run as the system runs it, within
+     * 5 seconds; for a WebSocket the engine passes the `ws://` or `wss://` URI with the resource name (RFC 6455 section
+     * 4.1; CFNetwork drops the path and query before the script runs), for anything else `http://` or `https://`, host
+     * and port. A script that cannot be fetched or run means the next setting (on Windows the fixed proxy, if any) or a
+     * direct connection, and the engine logs one warning.
      */
     public val System: ProxyResolver get() = platformSystemProxyResolver
 }
 
-/** A built-in resolver that may warn (a PAC it does not run): the engine logs the first warning. */
+/** A built-in resolver that may warn (a PAC script that failed): the engine logs the first warning. */
 internal interface WarningProxyResolver : ProxyResolver {
     suspend fun proxyFor(
         url: Url,
@@ -419,16 +423,22 @@ internal class CfProxy(
     val type: Type,
     val host: String?,
     val port: Int?,
+    /** For [Type.AutoConfiguration]: the PAC script's URL, or the script itself. */
+    val pacUrl: String? = null,
+    val pacScript: String? = null,
 ) {
     enum class Type { None, Http, Https, Socks, AutoConfiguration, Other }
 }
 
 /**
- * The proxy to use from [proxies]: the first HTTP(S) or SOCKS entry, null for "none" first; a PAC entry (a script the
- * engine does not run) means a direct connection and a [warn]ing.
+ * The proxy to use from [proxies]: the first HTTP(S) or SOCKS entry, null for "none" first. A PAC entry is run by
+ * [runPac] and its answer picked the same way; a script that could not be fetched or run ([runPac] gives null) is
+ * skipped with a [warn]ing, so the next entry counts, as in CFNetwork's own list. Without [runPac] a PAC entry means a
+ * direct connection and a warning.
  */
 internal fun pickCfProxy(
     proxies: List<CfProxy>,
+    runPac: ((CfProxy) -> List<CfProxy>?)? = null,
     warn: (String) -> Unit,
 ): ResolvedProxy? {
     for (p in proxies) {
@@ -446,8 +456,13 @@ internal fun pickCfProxy(
             }
 
             CfProxy.Type.AutoConfiguration -> {
-                warn(PAC_WARNING)
-                return null
+                if (runPac == null) {
+                    warn(PAC_WARNING)
+                    return null
+                }
+                val answer = runPac(p)
+                if (answer != null) return pickCfProxy(answer.filter { it.type != CfProxy.Type.AutoConfiguration }, null, warn)
+                warn(PAC_FAILED)
             }
 
             CfProxy.Type.Other -> {}
@@ -465,6 +480,71 @@ private val resolverDispatcher = Dispatchers.IO.limitedParallelism(ProxyRouting.
 
 internal const val TLS_PROXY_UNSUPPORTED: String =
     "an https:// proxy (TLS to the proxy) is not supported; use an http:// proxy, whose CONNECT tunnels still carry TLS"
+
+internal const val PAC_FAILED: String =
+    "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script that could not be fetched or run in " +
+        "time: requests use the next setting, else connect directly; set engine { proxy = ... } or proxyResolver to choose"
+
+/**
+ * How long a PAC script (its download, WPAD's discovery and its run) may take for one lookup: half the default connect
+ * timeout, so a script that hangs falls back to the next setting before the request's own timeout.
+ */
+internal const val PAC_TIMEOUT_MILLIS: Long = 5_000
+
+/**
+ * The URI a PAC script's `FindProxyForURL` gets for [url]: for a WebSocket the `ws://` or `wss://` URI from its host,
+ * port and resource name (RFC 6455 section 4.1: "the URI to pass the function MUST be constructed from /host/, /port/,
+ * /resource name/, and the /secure/ flag using the definition of a WebSocket URI"), else the scheme, host and port
+ * (the path is left out, as the answers are kept per scheme, host and port, and as browsers do for `https`).
+ */
+internal fun pacTarget(url: Url): String {
+    val host = uriHost(socketHost(url.host))
+    return when (url.protocol.name) {
+        "ws", "wss" -> "${url.protocol.name}://$host:${url.port}${url.encodedPathAndQuery.ifEmpty { "/" }}"
+        else -> "${if (url.protocol.isSecure()) "https" else "http"}://$host:${url.port}/"
+    }
+}
+
+/** What Windows' PAC evaluation gave: a proxy list as WinINet writes it, a direct connection, or no answer. */
+internal sealed interface WinPacAnswer {
+    class Proxies(
+        val proxy: String?,
+        val bypass: String?,
+    ) : WinPacAnswer
+
+    object Direct : WinPacAnswer
+
+    object Failed : WinPacAnswer
+}
+
+/** The user's Internet settings, as WinHTTP reads them. */
+internal class IeProxySettings(
+    val autoDetect: Boolean,
+    val autoConfigUrl: String?,
+    val proxy: String?,
+    val bypass: String?,
+)
+
+/**
+ * The proxy Windows' settings [s] give for [url], as WinHTTP and Internet Explorer apply them: automatic detection (WPAD)
+ * and a configuration script (PAC) first, run by [runPac]; when neither is set, or the script failed (a [warn]ing), the
+ * fixed proxy and its bypass list.
+ */
+internal fun windowsProxyFor(
+    s: IeProxySettings,
+    url: Url,
+    runPac: () -> WinPacAnswer,
+    warn: (String) -> Unit,
+): ResolvedProxy? {
+    if (s.autoDetect || s.autoConfigUrl != null) {
+        when (val a = runPac()) {
+            is WinPacAnswer.Proxies -> return parseWinInetProxy(a.proxy, a.bypass, url)
+            WinPacAnswer.Direct -> return null
+            WinPacAnswer.Failed -> warn(PAC_FAILED)
+        }
+    }
+    return parseWinInetProxy(s.proxy, s.bypass, url)
+}
 
 internal const val PAC_WARNING: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script, which the Kuicksilver engine does not " +
@@ -504,7 +584,9 @@ internal class ProxyRouting(
     suspend fun lookup(url: Url): ResolvedProxy? {
         val resolver = config.proxyResolver
         if (resolver === ProxyResolvers.None) return null
-        val key = "${url.protocol.name}://${url.host}:${url.port}"
+        // a WebSocket's resource name is part of what a PAC script gets (RFC 6455 section 4.1), so of the key too
+        val resource = if (url.protocol.name == "ws" || url.protocol.name == "wss") url.encodedPathAndQuery else ""
+        val key = "${url.protocol.name}://${url.host}:${url.port}$resource"
         val now = clock()
         lock.withLock { cache[key]?.takeIf { now - it.second < TTL_MILLIS }?.let { return it.first } }
         val proxy = resolve(resolver, key, url)
