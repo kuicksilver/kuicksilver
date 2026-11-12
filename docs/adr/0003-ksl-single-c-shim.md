@@ -65,9 +65,10 @@ release: `KSL_ABI_VERSION 7`, and later 0.3.0 additions go under 7. 72 functions
 (0xff000c: `ksl_udp_open` whose bind was refused; other steps keep their codes), and `ksl_tcp_read` answering `KSL_OK`
 with nothing read when it must write first and the pair is full (it answered `KSL_WANT_READ`), and the local-address calls of a
 wildcard UDP socket: `KSL_UDP_PKTINFO`, `ksl_udp_send_src` (a source per slot) and `ksl_udp_recv_dst` (each datagram's
-destination), additive (ADR-0006, "Local addresses on a wildcard bind"); 74 functions. Also additive under 7:
+destination), additive (ADR-0006, "Local addresses on a wildcard bind"), and `ksl_tcp_abort` (a failed stream ends with the
+fatal alert internal_error instead of a clean close); 75 functions. Also additive under 7:
 `ksl_chain_level` and `KSL_OPT_LEVEL_AFTER_PAUSE` (OpenSSL's security level on the path the platform verifier built,
-checked after its yes under `TrustConfig.Platform`, instead of on the presented chain before the pause; T.5b); 75 functions.
+checked after its yes under `TrustConfig.Platform`, instead of on the presented chain before the pause; T.5b); 76 functions.
 
 DNS query, additive under 7 (L1.2, HTTPS records for the Ktor client): `ksl_dns_query(name, type, server, timeout_ms, out,
 cap, len)` asks the operating system's resolver for one record type, so the lookup follows the system's DNS settings:
@@ -76,7 +77,7 @@ older than the glibc floors), `DNSServiceQueryRecord` on Apple (libSystem), `Dns
 Linux returns the whole DNS message, Apple and Windows a list of records (they hand out records, not messages); the first
 byte of `out` says which. Android answers `KSL_DNS_NOT_SUPPORTED` (no public call below API 29: Kotlin asks
 `DnsResolver.rawQuery` there). No state, no threads; the call blocks for about `timeout_ms` at most (on Linux about max(`timeout_ms`, one second per configured nameserver), every nameserver asked and the tries and waits sized to the budget, plus a possible TCP retry of a truncated answer), except on Windows,
-whose call takes no timeout: Kotlin stops waiting and lets it end, at most four lookups at a time per process. 76 functions.
+whose call takes no timeout: Kotlin stops waiting and lets it end, at most four lookups at a time per process. 77 functions.
 
 QUIC-LB block key, additive under 7 (routable server connection IDs, draft-ietf-quic-load-balancers-21 section 5.4):
 `KSL_EKEY_LB`, `ksl_key_lb(key[16])` copies a configured AES-128 key into a `ksl_key` (the JNI copy and the Kotlin array are
@@ -89,14 +90,14 @@ contexts at creation; each call runs on an `EVP_CIPHER_CTX_copy` of one, so the 
 group share it, and an attacker-triggered check (the Stateless Reset gate) costs no key expansion. An LB key has no AEAD or
 header-protection context, so `ksl_seal`, `ksl_open`, `ksl_header_mask`, `ksl_key_mac16` and `ksl_key_next` refuse it.
 Kotlin: `QuicCrypto.newLoadBalancerKey` (`LoadBalancerKey`, with `derive` and `duplicate`), `KslLbKey` (internal).
-`test_key.c` `lb_key_concurrent_ecb16` runs one key on eight threads (clean under `KSL_TSAN=1`). 80 functions.
+`test_key.c` `lb_key_concurrent_ecb16` runs one key on eight threads (clean under `KSL_TSAN=1`). 81 functions.
 
 Send-only UDP clones, additive under 7 (several endpoint loops on one socket where the kernel does not balance
 `SO_REUSEPORT`): `ksl_udp_sender(base, err, msg, msglen)` makes a clone of a `ksl_udp` that shares its descriptor, has its
 own send scratch and refuses to receive (`KSL_E_NOT_SUPPORTED`); the descriptor closes with the last `ksl_udp_close` of
 the group (ADR-0006, "One socket, several senders"). With it the error code `KSL_E_NO_MEMORY` (0xff000d): a failed
 allocation in `ksl_udp_sender` or `ksl_udp_open`, which answered `KSL_E_BAD_ARG` for it before. JNI `KslNative.udpSender`, cinterop `ksl_udp_sender`, Kotlin
-`Ksl.udpSender` and `KslUdpSocket.sender()`. 81 functions.
+`Ksl.udpSender` and `KslUdpSocket.sender()`. 82 functions.
 
 Renegotiation report, additive under 7 (HTTP/2 over TLS 1.2, RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS
 renegotiation as a connection error (Section 5.4.1) of type PROTOCOL_ERROR"): OpenSSL refuses every renegotiation itself
@@ -104,7 +105,7 @@ renegotiation as a connection error (Section 5.4.1) of type PROTOCOL_ERROR"): Op
 callback of a TCP session (`ksl_msg_cb`) now counts what asks for one on an established TLS 1.2 session, a HelloRequest to a
 client or a ClientHello to a server, before OpenSSL refuses it; the getter `KSL_GET_RENEGOTIATION` (11, one byte) reports it, and
 the `ksl_tcp_read` that refused one answers `KSL_OK` with nothing read, as for a read that must write first, so that the caller
-drains the warning and looks before it reads what the peer sent after it. No function is added: 81 functions. Kotlin:
+drains the warning and looks before it reads what the peer sent after it. No function is added: 82 functions. Kotlin:
 `KslConst.GET_RENEGOTIATION`; `TlsConnection` fails the input of an `h2` connection with it, and the HTTP/2 client turns that
 into PROTOCOL_ERROR.
 
@@ -113,7 +114,7 @@ len, name, at, x509_err, path, cap, path_len)` is `ksl_ctx_verify_chain` that al
 (leaf first, its trust anchor last, framed as its input; `*path_len` is set on success and the path written when `cap`
 holds it), so a server checks the pins of a `Pinned` on the path built under a reloaded bundle. Both functions now set the
 context's security level as the verification's auth level, as a handshake does (`ssl_cert.c` `ssl_verify_internal`). JNI
-`KslNative.ctxVerifyChainPath`, cinterop `ksl_ctx_verify_chain_path`, Kotlin `Ksl.ctxVerifyChainPath`. 82 functions.
+`KslNative.ctxVerifyChainPath`, cinterop `ksl_ctx_verify_chain_path`, Kotlin `Ksl.ctxVerifyChainPath`. 83 functions.
 
 Per-family resolution and local address state, additive under 7 (Happy Eyeballs, RFC 8305 sections 3 and 4):
 `ksl_resolve(name, family, out, cap, len)` is `getaddrinfo` with `AF_INET` or `AF_INET6` alone (`KSL_ADDR_V4`,
@@ -130,4 +131,4 @@ addresses the platform synthesizes for an IPv4 address with its own NAT64 prefix
 of the literal with `AI_DEFAULT` (`nw_nat64_copy_prefixes` is not public API); `KSL_DNS_NOT_SUPPORTED` elsewhere, where
 Kotlin discovers the prefix by RFC 7050. JNI `KslNative.resolve`, `KslNative.addrInfo`, `KslNative.nat64Synthesize`,
 cinterop the same, Kotlin `Ksl.resolve`, `Ksl.addrInfo`, `Ksl.nat64Synthesize` and `KslNet` (internal). `test_net.c`.
-85 functions.
+86 functions.
