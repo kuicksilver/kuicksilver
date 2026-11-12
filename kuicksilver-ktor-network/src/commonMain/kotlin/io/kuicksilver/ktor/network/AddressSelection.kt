@@ -33,7 +33,7 @@ public fun localSourceInfo(source: TcpAddress): SourceInfo {
 
 /**
  * Destination Address Selection of RFC 6724 section 6, which RFC 8305 section 4 makes the first step of Happy Eyeballs:
- * "First, the client MUST sort the addresses received up to this point using Destination Address Selection ([RFC6724],
+ * "First, the client MUST sort the addresses received up to this point using Destination Address Selection (\[RFC6724\],
  * Section 6)." The ten rules are applied in order, "If a rule determines a result, then the remaining rules are not
  * relevant and MUST be ignored", with the default policy table of section 2.1 and IPv4 addresses "represented as
  * IPv4-mapped addresses" (section 3.2). Source(D) is the address the system would send from ([sourceFor]: a connected UDP

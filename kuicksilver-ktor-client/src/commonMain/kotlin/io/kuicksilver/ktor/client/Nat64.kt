@@ -113,7 +113,7 @@ internal class Pref64(
         /**
          * The Pref64::/n of [aaaa], the IPv6 addresses an AAAA query for `ipv4only.arpa` returned, in their order and once
          * each (RFC 7050 section 3): "the node SHALL determine the used address format by searching the received IPv6
-         * addresses for the WKN's well-known IPv4 addresses ... at the locations specified by [RFC6052], Section 2.2. The
+         * addresses for the WKN's well-known IPv4 addresses ... at the locations specified by \[RFC6052\], Section 2.2. The
          * node MUST check on octet boundaries to ensure a 32-bit well-known IPv4 address value is present only once in an
          * IPv6 address. In case another instance of the value is found inside the IPv6 address, the node SHALL repeat the
          * search with the other well-known IPv4 address." An address where neither is found once at a single location
