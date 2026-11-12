@@ -14,15 +14,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
-- SwiftPM: the repository is a Swift package. Its root `Package.swift` declares the binary target
-  `Kuicksilver.xcframework.zip`, attached to every GitHub release from 0.3.0 and signed with the release key, so a
-  Swift-only app adds `.package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "0.3.0"))`
-  instead of building the xcframework from a checkout (docs/guide/ios.md, "Swift only"). `tools/release/xcframework.sh`
-  builds the zip reproducibly (slices in a fixed order; the same checksum from any checkout directory) and writes its
-  checksum into `Package.swift` before the release commit; `local-release.sh` builds it again, refuses the release when
-  the checksums differ, signs it and lists it in the provenance; `verify-release.sh` checks that the tag's
-  `Package.swift` names the attached zip. `KuicksilverInfo.VERSION` in the xcframework is now the version it was built
-  as, not the `-SNAPSHOT` fallback.
+- SwiftPM: Kuicksilver is a Swift package, [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift),
+  a repository without source code whose binary target is `Kuicksilver.xcframework.zip`, attached to every GitHub
+  release from 0.3.0 and signed with the release key. A Swift-only app adds
+  `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0"))` instead of building
+  the xcframework from a checkout (docs/guide/ios.md, "Swift only"). `tools/release/xcframework.sh` builds the zip
+  reproducibly (the same checksum from any checkout directory); `local-release.sh` builds it, signs it, lists it in the
+  provenance and prepares the package repository's next commit and tag `<version>` with its checksum
+  (`tools/release/swift-package.sh`, from `tools/release/swift-package/`), pushed by hand after the GitHub release;
+  `verify-release.sh` checks that the package's `Package.swift` names the signed release asset. `KuicksilverInfo.VERSION`
+  in the xcframework is now the version it was built as, not the `-SNAPSHOT` fallback.
 - CI: `.github/workflows/gradle-wrapper.yml` validates `gradle/wrapper/gradle-wrapper.jar` against the official Gradle
   releases (Gradle's wrapper-validation action) on every push and pull request to `main` and `release/**`.
 

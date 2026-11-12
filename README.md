@@ -148,11 +148,12 @@ kotlin {
 }
 ```
 
-Swift only (no Kotlin in the app): the repository is a Swift package whose binary target is `Kuicksilver.xcframework`
-of the GitHub release, from 0.3.0 ([iOS guide, Swift only](docs/guide/ios.md#swift-only-kuicksilverxcframework-and-swiftpm)):
+Swift only (no Kotlin in the app): the Swift package [kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift),
+whose binary target is `Kuicksilver.xcframework` of the GitHub release, from 0.3.0
+([iOS guide, Swift only](docs/guide/ios.md#swift-only-kuicksilverxcframework-and-swiftpm)):
 
 ```swift
-.package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "0.3.0")),
+.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0")),
 ```
 
 A Kotlin/Native program (`linuxX64`, `linuxArm64`, `macosArm64`, `mingwX64`; Kotlin 2.4.x), here with raw QUIC

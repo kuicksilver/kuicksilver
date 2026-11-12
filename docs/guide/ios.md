@@ -16,7 +16,8 @@ check the size and the build.
 - Kuicksilver's binaries are built with Xcode 27.0; apps on Kotlin 2.4.20 may build with Xcode 26.4 or 27.0
   ([Platforms](../stability.md#platforms)).
 - Dependency: `io.kuicksilver:kuicksilver-http3:0.3.0` or newer (or `-quic`, `-ktor-client`) for Kotlin Multiplatform. For
-  Swift, the Swift package of this repository (`Kuicksilver.xcframework`, attached to every GitHub release from 0.3.0).
+  Swift, the Swift package [kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift) (`Kuicksilver.xcframework`,
+  attached to every GitHub release from 0.3.0).
 
 **Minimal example.** The Gradle setup is in [Kotlin Multiplatform: klibs and one framework](#kotlin-multiplatform-klibs-and-one-framework),
 the SwiftPM one in [Swift only](#swift-only-kuicksilverxcframework-and-swiftpm), and a running app in
@@ -73,27 +74,30 @@ sample's `SampleFacade` runs every operation on a background dispatcher and call
 
 ### Swift only: Kuicksilver.xcframework and SwiftPM
 
-The repository is a Swift package: its root [`Package.swift`](../../Package.swift) declares one binary target,
-`Kuicksilver.xcframework.zip` of the GitHub release, with its checksum. Add it in Xcode (*File → Add Package
-Dependencies…*, the URL `https://github.com/kuicksilver/kuicksilver`, *Up to Next Minor Version* from 0.3.0: before 1.0 a
-minor version may break the API, [Versioning](../stability.md)) or in your own `Package.swift`:
+The Swift package is [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift), a small
+repository with no source code: its `Package.swift` declares one binary target, `Kuicksilver.xcframework.zip` of this
+repository's GitHub release, with its checksum, and each of its tags (`0.3.0`, ...) is made by the release of that
+version. Add it in Xcode (*File → Add Package Dependencies…*, the URL `https://github.com/kuicksilver/kuicksilver-swift`,
+*Up to Next Minor Version* from 0.3.0: before 1.0 a minor version may break the API,
+[Stability levels](../stability.md#stability-levels)) or in your own `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "0.3.0")),
+    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0")),
 ],
 targets: [
-    .target(name: "App", dependencies: [.product(name: "Kuicksilver", package: "kuicksilver")]),
+    .target(name: "App", dependencies: [.product(name: "Kuicksilver", package: "kuicksilver-swift")]),
 ]
 ```
 
-SwiftPM resolves the release tag (`v0.3.0`), reads `Package.swift` there and downloads
+SwiftPM resolves the tag `0.3.0` of that repository, reads its `Package.swift` and downloads
 `https://github.com/kuicksilver/kuicksilver/releases/download/v0.3.0/Kuicksilver.xcframework.zip`, which it accepts only
-if its SHA-256 is the checksum in that file. The release signs the zip with the release key (`.asc` next to it) and
-lists it in the build provenance ([Verifying a release](../verifying.md)); `tools/verify/verify-release.sh` also checks
-that the tag's `Package.swift` names exactly that zip. The package only declares the binary target, but SwiftPM clones
-the whole repository with its history to read it, once per machine and version. Swift then calls the API directly
-(`import Kuicksilver`; suspend functions are `async`); `KuicksilverInfo.VERSION` names the version you got.
+if its SHA-256 is the checksum there. The release signs the zip with the release key (`.asc` next to it) and lists it in
+the build provenance; `tools/verify/verify-release.sh` checks both and that the Swift package's `Package.swift` names
+exactly that zip ([Verifying a release](../verifying.md#the-swift-package)). A release candidate is tagged too
+(`0.3.0-rc1`); SwiftPM never picks a prerelease for a version range, so name it with `exact: "0.3.0-rc1"`. Swift then
+calls the API directly (`import Kuicksilver`; suspend functions are `async`); `KuicksilverInfo.VERSION` names the
+version you got.
 
 The framework is dynamic, so its dSYMs travel with it and Apple finds its privacy manifest in its own bundle:
 

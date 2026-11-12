@@ -61,6 +61,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    Environments → github-pages → Deployment branches and tags → Add deployment branch or tag rule*, type Tag, pattern
    `v*`. The workflow creates the `gh-pages` branch on its first run; it is only the store of the published versions,
    never served as a branch.
+8. **Swift package repository** `kuicksilver/kuicksilver-swift` (created 2026-11-12, public, empty until 0.3.0): the
+   package Swift apps depend on ([below](#swiftpm-the-kuicksilver-swift-repository)). Only the maintainer pushes to it,
+   the commit and tag `local-release.sh` prepares (step 6); its default branch is `main`.
 
 ## Every release
 
@@ -82,11 +85,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    blocks, the Swift package line) and `docs/guide/ios.md` (the dependency line, the Swift package line, the xcframework
    URL) name the version itself (a prerelease such as
    0.3.0-rc1 leaves the status line at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks).
-   **`Package.swift`** at the root names the xcframework of the tag and its checksum, for every version, prereleases
-   included: run `tools/release/xcframework.sh <version> --write` on the tree that becomes the release commit (any time
-   after the last change to code, build scripts or `gradle/`; the documentation, the CHANGELOG and the reliability page do
-   not enter the zip) and commit the rewritten `Package.swift` with the rest
-   ([SwiftPM: why the checksum is in the release commit](#swiftpm-why-the-checksum-is-in-the-release-commit)). While a
+   While a
    minor version is in preparation on `main`, the README's Install blocks already name it and its status line and
    "Versions" paragraph say it is not published yet; the release commit of that version turns them into "X.Y.Z is on
    Maven Central" and drops the build-it-yourself note, and `docs/guide/ios.md` is bumped in the same commit as the
@@ -114,14 +113,13 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    its `origin` counterpart (pull first; a `--release-commit` may be older on purpose), a version already on Maven
    Central (a release asks `repo1.maven.org` for the BOM's POM and refuses on 200, or when it gets no 200 or 404; a dry
    run does not ask), a tree whose version fallbacks or (final versions) README and iOS
-   guide coordinates do not name the version (step 2), a `Package.swift` that does not name
-   `releases/download/v<version>/Kuicksilver.xcframework.zip` with a 64-digit checksum (the all-zero placeholder of `main`
-   included), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
+   guide coordinates do not name the version (step 2), a Swift package repository that already has the tag `<version>`
+   or cannot be read (release mode; `git ls-remote --tags`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
    `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version and its date (`## [0.2.0] - 2026-10-18`), an NDK or Xcode other
    than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key
-   (`tools/release/local-release-test.sh` runs the branch, origin, Central, CHANGELOG, version and `Package.swift` refusals in a
-   throwaway repository with a stubbed Central, and the version checks on the repository's own files; the local gate
-   runs it). Then:
+   (`tools/release/local-release-test.sh` runs the branch, origin, Central, CHANGELOG, version and Swift package refusals in a
+   throwaway repository with a stubbed Central, the version checks on the repository's own files, and
+   `tools/release/swift-package.sh` against a local package repository; the local gate runs it). Then:
    - OpenSSL: the pinned tarball fetched and verified; **all twelve targets rebuilt from it** (`KSL_OPENSSL_FRESH=1`:
      `build/openssl` (each worktree has its own) and the build cache are deleted or bypassed, never reused):
      `linux-x64`, `linux-arm64` and `mingw-x64` in Docker (one container at a time, under `nice`; `linux-x64` and
@@ -133,9 +131,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      its negative controls). `mingw-x64` is the `openssl-mingw-x64` the workflow downloads.
    - `Kuicksilver.xcframework.zip` for SwiftPM from those builds (`tools/release/xcframework.sh <version>`: the
      `samples/ios/kuicksilver-swift` umbrella, its layout, `CFBundleShortVersionString`, the checksum, which `swift
-     package compute-checksum` must agree with) into `build/release/`. Its checksum must be the one `Package.swift` of the
-     release commit names; otherwise the release refuses here, before the JNI builds (a dry run warns), because SwiftPM
-     would reject the asset of the tag.
+     package compute-checksum` must agree with) into `build/release/`, signed and a provenance subject like the SBOM
+     archive (below).
    - The five JVM libraries, as `build.yml`'s jobs build them, each into `build/release/jni-artifacts/jni-<classifier>`:
      `osx-aarch_64` and `osx-x86_64` (`.dylib`, the second cross-built with `clang -arch x86_64`), `linux-x86_64` and
      `linux-aarch_64` (manylinux2014 `.so`), `windows-x86_64` (mingw-w64 `.dll`, `tools/ci/jni-windows.sh`). Each is
@@ -154,6 +151,12 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      the CycloneDX 1.6 schema) and `build/release/kuicksilver-<version>.intoto.jsonl` (the build provenance, an in-toto
      bundle whose one DSSE envelope is signed by the release key), each signed with the release key (`.asc`) like
      `Kuicksilver.xcframework.zip`, and the signatures checked. A dry run without a key leaves them unsigned.
+   - The Swift package's next commit and tag, not pushed (`tools/release/swift-package.sh`,
+     [below](#swiftpm-the-kuicksilver-swift-repository)): a clone of `kuicksilver/kuicksilver-swift` in
+     `build/release/kuicksilver-swift` with `Package.swift` naming
+     `https://github.com/kuicksilver/kuicksilver/releases/download/v<version>/Kuicksilver.xcframework.zip` and the
+     checksum of the zip just built, its README for the version, the licence files, committed on `main` and tagged
+     `<version>`. A dry run that cannot reach the repository prepares it in a new one.
    - `publishToMavenCentral`: **one Gradle invocation, one deployment** (several would produce several deployments and
      inconsistent root metadata), signed, `automaticRelease = false`:
      ```
@@ -173,10 +176,14 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
 6. Only after the deployment is published: `git tag -s v<version> -m "Kuicksilver <version>"` on the release commit, push the
    branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the six files of
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
-   `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL (`Package.swift` of the tag), and
-   OpenSSF Scorecard's Signed-Releases check recognises the provenance by the `.intoto.jsonl` suffix. From then on
-   `.package(url: "https://github.com/kuicksilver/kuicksilver.git", .upToNextMinor(from: "<version>"))` resolves; check it
-   once from an empty Swift package (`swift package resolve`). The version is passed to
+   `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
+   Signed-Releases check recognises the provenance by the `.intoto.jsonl` suffix. **Then, once the GitHub release is
+   published** (before that the zip's URL does not resolve), push the Swift package's prepared commit and tag, the
+   command the script printed last: `git -C build/release/kuicksilver-swift push
+   https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/<version>`. Check it from an empty Swift package:
+   `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "<version>"))` (a prerelease:
+   `exact: "<version>"`), `swift package resolve`, and `tools/verify/verify-release.sh <version> --no-rebuild`, which
+   checks the package against the release. The version is passed to
    Gradle (`-Pkuicksilver.version`); the tree's `-SNAPSHOT` fallbacks only name the line, and the script checks that they
    do.
 7. Context7 (the documentation index coding agents read, configured by `context7.json` at the root): add the new tag to
@@ -221,7 +228,7 @@ guide to 0.2.2, `## [0.2.2] - unreleased` in the CHANGELOG; the script refuses t
 
 From 0.2.1 every release has a CycloneDX SBOM and a build provenance statement, both made by `local-release.sh` (dry run
 included) and attached to the GitHub release. Neither goes to Maven Central. From 0.3.0 the GitHub release also carries
-`Kuicksilver.xcframework.zip` for SwiftPM ([below](#swiftpm-why-the-checksum-is-in-the-release-commit)), a subject of
+`Kuicksilver.xcframework.zip` for SwiftPM ([below](#swiftpm-the-kuicksilver-swift-repository)), a subject of
 the provenance.
 
 ### SBOM
@@ -328,29 +335,28 @@ publication, and the upload is a second Gradle invocation on the same commit and
 files; the `.asc` signatures are not covered); and nothing third-party witnesses the build, which is what the
 `release` workflow below could add once it is used (GitHub's artifact attestations, SLSA Build L2).
 
-### SwiftPM: why the checksum is in the release commit
+### SwiftPM: the kuicksilver-swift repository
 
-SwiftPM resolves `.package(url:…, from:)` by tag: it checks out `v<version>`, reads the root `Package.swift`, downloads
-the `binaryTarget` URL and accepts the zip only if its SHA-256 is the `checksum` in that file. The checksum must
-therefore be in the tagged commit, and the tag goes on the release commit, which the gate and the provenance name, before
-`local-release.sh` builds anything. Alternatives considered:
+Swift apps take Kuicksilver from [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift), a
+repository with no source code: `Package.swift` with one binary target (the package and product `Kuicksilver`, iOS 15),
+a README, the licence files. Its sources are `tools/release/swift-package/*.in` here; `tools/release/swift-package.sh`
+renders them for a release. SwiftPM resolves a package by its tags (plain SemVer, `0.3.0`, `0.3.0-rc1`, as Swift
+packages tag), reads `Package.swift` there, downloads the `binaryTarget` URL and accepts the zip only if its SHA-256 is
+the `checksum` in that file.
 
-- **A separate package repository** (`kuicksilver-swift`, a `Package.swift` committed and tagged after each release):
-  no ordering problem, and SwiftPM clones a tiny repository instead of this one. But it is a second repository to keep,
-  its tags are not this repository's signed release tags, and nothing ties its checksum to the provenance of the
-  release. Worth revisiting if the clone size becomes a complaint.
-- **A commit after the release commit** carrying the checksum, tagged instead: the tag would no longer name the commit
-  the gate ran on and the provenance names, and `verify-release.sh` compares exactly those.
-- **The checksum in the release commit, from a reproducible build** (chosen). The zip depends only on the Kotlin and C
-  sources, the build scripts, `gradle/` and the pinned OpenSSL and Xcode: no commit hash, no timestamp (fixed zip
-  timestamps and order, the slices sorted in the xcframework's `Info.plist`, source paths relative to the checkout in
-  the klibs, the symbol names derived from them and the dSYMs: `-Xklib-relative-path-base`, `-Xdebug-prefix-map`; two
-  checkouts in different directories gave the same checksum). The release commit changes none of them, so `xcframework.sh --write` on the tree
-  just before the commit gives the zip the release builds again from the freshly built OpenSSL, and `local-release.sh`
-  refuses the release if the two checksums differ: a published `Package.swift` never names a zip that is not attached.
+Why a separate repository (owner decision, 2026-11-12): SwiftPM mirror-clones the repository of a package, every branch
+and tag with their history; for this repository that includes `gh-pages`, which grows by about 30 MB per released
+version of the documentation site. The package repository is a few kilobytes. And the checksum is known only once the
+release has built the zip, after the release commit and its gate, so it cannot be in this repository's tagged commit
+without building the zip before the commit; in the package repository it is simply the next commit.
 
-Between releases `main`'s `Package.swift` names the version in preparation with an all-zero checksum; SwiftPM refuses
-it (a branch dependency on `main` does not resolve), which is the intended state until the release commit.
+The order at a release: `local-release.sh` builds the zip (reproducibly: the same commit and Xcode give the same
+checksum in any checkout directory), signs it, lists it in the provenance and prepares the package's commit and tag
+naming its checksum; the GitHub release attaches the zip; only then is the package pushed, so its URL resolves from the
+first moment the tag exists. A tag in the package repository is never moved (the script refuses a version that already
+has one): SwiftPM caches resolved versions, and a moved tag with another checksum fails every build that resolved it
+before. Its tags are not signed; what makes the zip trustworthy is the release's signature and provenance, which
+`verify-release.sh` checks together with the package's `Package.swift` ([verifying.md](verifying.md#the-swift-package)).
 
 ## Alternative: the `release` workflow (not used)
 

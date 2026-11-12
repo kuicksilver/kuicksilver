@@ -12,8 +12,8 @@
 #      every subject digest of the provenance matches the file from Central or the GitHub release (and no Central file is
 #      left out), and its source commit is the commit of the verified tag. From 0.3.0 the provenance is the in-toto bundle
 #      kuicksilver-<version>.intoto.jsonl, whose one DSSE envelope must also carry a good signature by the key over its
-#      PAE, and Kuicksilver.xcframework.zip is on the release, signed, a subject, and the asset with the checksum the tag's
-#      Package.swift names; 0.2.1 and 0.2.x have the plain statement kuicksilver-<version>.intoto.json. From 0.2.1 their
+#      PAE, and Kuicksilver.xcframework.zip is on the release, signed, a subject, and the file whose URL and checksum
+#      Package.swift of the Swift package kuicksilver/kuicksilver-swift names at its tag <version>; 0.2.1 and 0.2.x have the plain statement kuicksilver-<version>.intoto.json. From 0.2.1 their
 #      absence fails; older releases have none (SKIPPED). No answer from GitHub fails for any version;
 #   3. rebuild: the verified tag is exported with git archive, OpenSSL is fetched and verified as the release does it
 #      (tools/openssl/fetch.sh), and the native libraries this host can build are built with the tag's own scripts and
@@ -32,7 +32,8 @@
 # Usage: tools/verify/verify-release.sh <version> [options]
 #   --offline <dir>   no network for the artifacts: <dir> is a Maven repository (<dir>/io/kuicksilver/<artifactId>/<version>/,
 #                     with the .asc and, when present, .sha1 files; build/release/m2 of a signed release run is one: it has
-#                     no .sha1, and offline their absence is not reported) and <dir>/github/ holds the GitHub release files.
+#                     no .sha1, and offline their absence is not reported) and <dir>/github/ holds the GitHub release files
+#                     (from 0.3.0 <dir>/swift/Package.swift the Swift package's manifest at its tag).
 #                     For a rebuild, openssl-<v>.tar.gz and its .asc in <dir>/openssl/ keep that offline too, and the tag
 #                     must already be in this clone.
 #   --no-rebuild      steps 0 to 2 only.
@@ -43,7 +44,8 @@
 #   --allow-toolchain-drift   build targets whose Xcode or NDK is not the tag's pin.
 #   --work <dir>      work directory (default build/verify/<version>; downloads, the exported tag, builds, logs).
 # Env: KSL_VERIFY_CENTRAL (https://repo1.maven.org/maven2), KSL_VERIFY_GITHUB
-#      (https://github.com/kuicksilver/kuicksilver/releases/download), JOBS (OpenSSL make jobs, 4),
+#      (https://github.com/kuicksilver/kuicksilver/releases/download), KSL_VERIFY_SWIFT
+#      (https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift), JOBS (OpenSSL make jobs, 4),
 #      KSL_VERIFY_KEY + KSL_VERIFY_FPR (another key) and KSL_VERIFY_REPO (another clone for the tag): for the tests only
 #      (tools/verify/verify-release-test.sh); a warning says so on every run that sets them.
 # The script and the key file are those of your checkout: compare the fingerprint above with the one in README.md,
@@ -54,6 +56,7 @@ fpr=22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
 key="$root/tools/release/kuicksilver-release-key.asc"
 repo="$root"
 central="${KSL_VERIFY_CENTRAL:-https://repo1.maven.org/maven2}"; github="${KSL_VERIFY_GITHUB:-https://github.com/kuicksilver/kuicksilver/releases/download}"
+swift="${KSL_VERIFY_SWIFT:-https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift}"   # <swift>/<tag>/Package.swift
 first_with_provenance=0.2.1   # docs/release.md, "Supply chain": every release from 0.2.1 has both files
 first_with_bundle=0.3.0       # from 0.3.0: kuicksilver-<v>.intoto.jsonl (DSSE envelope) and Kuicksilver.xcframework.zip
 
@@ -322,18 +325,20 @@ else: print(f"DIFF|provenance|source commit {src[:12]}|tag v{version} is {tag[:1
 PY
 )
   fi
-  # SwiftPM: the tag's Package.swift must name this very zip, or `.package(url:from:)` fails on the checksum
+  # SwiftPM: the Swift package kuicksilver/kuicksilver-swift at its tag <version> must name this very zip (the signed
+  # release asset and provenance subject checked above), or `.package(url:from:)` gives users another file or fails
   if [ -n "$xcf" ] && [ -f "$ghd/$xcf" ]; then
     want_url="https://github.com/kuicksilver/kuicksilver/releases/download/v$version/$xcf"
-    if [ "$tag_ok" != 1 ]; then res SKIPPED swiftpm "Package.swift" "no verified tag v$version to read it from"
+    pkgf="${offline:+$offline/swift/Package.swift}"; pkgf="${pkgf:-$work/swift/Package.swift}"; prc=0
+    [ -n "$offline" ] || { fetch "$swift/$version/Package.swift" "$pkgf"; prc=$?; }
+    if [ "$prc" = 2 ]; then res FAIL swiftpm "kuicksilver-swift $version" "no answer from $swift"
+    elif [ ! -f "$pkgf" ]; then res FAIL swiftpm "kuicksilver-swift $version" "no Package.swift at the tag $version of the Swift package"
     else
-      pkg=$(git -C "$repo" show "$tag_commit:Package.swift" 2>/dev/null || true)
-      p_url=$(sed -n 's/^ *url: "\(.*\)",$/\1/p' <<< "$pkg"); p_sum=$(sed -n 's/^ *checksum: "\([^"]*\)"$/\1/p' <<< "$pkg")
+      p_url=$(sed -n 's/^ *url: "\(.*\)",$/\1/p' "$pkgf"); p_sum=$(sed -n 's/^ *checksum: "\([^"]*\)"$/\1/p' "$pkgf")
       have=$( (sha256sum "$ghd/$xcf" 2>/dev/null || shasum -a 256 "$ghd/$xcf") | cut -d' ' -f1)
-      if [ -z "$pkg" ]; then res FAIL swiftpm "Package.swift" "not in tag v$version"
-      elif [ "$p_url" != "$want_url" ]; then res DIFF swiftpm "Package.swift" "names ${p_url:-no url}, not $want_url"
-      elif [ "$p_sum" = "$have" ]; then res OK swiftpm "github/$xcf" "the checksum Package.swift of v$version names"
-      else res DIFF swiftpm "github/$xcf" "sha256 ${have:0:16}, Package.swift of v$version names ${p_sum:0:16}"; fi
+      if [ "$p_url" != "$want_url" ]; then res DIFF swiftpm "kuicksilver-swift $version" "Package.swift names ${p_url:-no url}, not $want_url"
+      elif [ "$p_sum" = "$have" ]; then res OK swiftpm "kuicksilver-swift $version" "Package.swift names github/$xcf, checksum ${have:0:16}"
+      else res DIFF swiftpm "kuicksilver-swift $version" "Package.swift names checksum ${p_sum:0:16}, github/$xcf is ${have:0:16}"; fi
     fi
   fi
 fi

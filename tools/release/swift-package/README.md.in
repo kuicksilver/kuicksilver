@@ -1,0 +1,48 @@
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Kuicksilver for Swift
+
+The Swift package of [Kuicksilver](https://github.com/kuicksilver/kuicksilver), a QUIC, HTTP/3 and TLS 1.3 library.
+This repository holds no source code. It is the binary distribution of Kuicksilver: `Package.swift` declares one binary
+target, `Kuicksilver.xcframework.zip` of the matching
+[GitHub release of kuicksilver/kuicksilver](https://github.com/kuicksilver/kuicksilver/releases), with its SHA-256. Each
+tag here (`@VERSION@`, ...) is made by the release of that version and names the release's commit
+(`@COMMIT@` for @VERSION@). Issues and pull requests go to the main repository.
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "@VERSION@")),
+],
+targets: [
+    .target(name: "App", dependencies: [.product(name: "Kuicksilver", package: "kuicksilver-swift")]),
+]
+```
+
+iOS 15 or newer. Before 1.0 a minor version may break the API, hence `.upToNextMinor`. How to use it from Swift, the
+privacy manifest the framework carries and what App Store submission needs:
+[Kuicksilver on iOS](https://github.com/kuicksilver/kuicksilver/blob/v@VERSION@/docs/guide/ios.md).
+
+## Verifying
+
+SwiftPM refuses a zip whose SHA-256 is not the `checksum` in `Package.swift`. That the zip is the one the project
+released is shown by the release, not by this repository:
+
+```sh
+curl -sLO https://github.com/kuicksilver/kuicksilver/releases/download/v@VERSION@/Kuicksilver.xcframework.zip
+curl -sLO https://github.com/kuicksilver/kuicksilver/releases/download/v@VERSION@/Kuicksilver.xcframework.zip.asc
+shasum -a 256 Kuicksilver.xcframework.zip     # the checksum in Package.swift
+```
+
+then check the `.asc` against the release key (fingerprint `22C1 F2E4 FCE9 4B28 EB2C 7DB0 492A BD95 C8D0 EC68`) and that the
+zip is a subject of the release's build provenance, as
+[Verifying a release](https://github.com/kuicksilver/kuicksilver/blob/v@VERSION@/docs/verifying.md) describes;
+`tools/verify/verify-release.sh @VERSION@` in a clone of the main repository does all of it, including this
+repository's `Package.swift`.
+
+## License
+
+Apache License 2.0, like Kuicksilver: [LICENSE](LICENSE) and [NOTICE](NOTICE). The framework links OpenSSL statically
+(Apache License 2.0, [licenses/LICENSE.openssl.txt](licenses/LICENSE.openssl.txt)).
