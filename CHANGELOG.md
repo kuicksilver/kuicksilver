@@ -640,6 +640,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: `QuicStream.priority` set from several threads at once could leave the scheduler on an older value than the
+  property read, since each setter handed its own value to the loop and those hand-overs could run in another order.
+  The loop now applies the property's current value.
 - HTTP/2 client: a PRIORITY_UPDATE frame (type 0x10) from the server was ignored as an unknown frame; RFC 9218 section
   7.1 says "If a client receives a PRIORITY_UPDATE frame, it MUST respond with a connection error of type
   PROTOCOL_ERROR", and the connection now ends that way. A server still ignores the frame, which it does not implement.

@@ -853,6 +853,9 @@ internal class StreamManager(
         if (s.schedQueue >= 0) scheduler.reschedule(s)
     }
 
+    /** The priority the scheduler sends stream [id] with (a test hook); null without a sending half. */
+    internal fun priorityForTest(id: Long): StreamPriority? = streams[id]?.send?.priority
+
     /** Marks stream [id] as carrying a tunnel: it gets a share of the frames whatever its urgency (RFC 9218 section 10.1). */
     fun markTunnel(id: Long) {
         streams[id]?.send?.let { scheduler.markTunnel(it) }

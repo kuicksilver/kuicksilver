@@ -1031,6 +1031,9 @@ public class ConnectionCore internal constructor(
         streams.setPriority(id, priority)
     }
 
+    /** The priority the scheduler sends stream [id] with (a test hook). */
+    internal fun priorityForTest(id: Long): StreamPriority? = streams.priorityForTest(id)
+
     /** Stream [id] carries a tunnel: it gets a share of the frames whatever its priority (RFC 9218 section 10.1). */
     internal fun markTunnel(id: Long) {
         streams.markTunnel(id)
