@@ -142,16 +142,17 @@ class ServerWebSocketH2Test {
     /**
      * RFC 9218 section 10.1 with RFC 8441: an HTTP/2 WebSocket is an Extended CONNECT stream (`:method` CONNECT, while Ktor
      * sees a GET), so the server schedules it as a tunnel: incremental by default (sections 10.1, 11) and with one frame in
-     * 16 even behind more urgent streams (the share itself: `PriorityTest.tunnelGetsShareBehindMoreUrgentResponse`). Next
-     * to a u=0 response that does not end by itself (it streams until the test has the WebSocket's answer) the answer
-     * comes while that response is still going, and the response then ends in order.
+     * 16 even behind more urgent streams. This checks that the engine schedules it so (a tunnel, u=3, incremental) and
+     * that its answer comes next to a u=0 response that does not end by itself (it streams until the test has the answer),
+     * which then ends in order. It does not pin the share: the urgent stream is not queued at every moment, so the answer
+     * can pass without it; `PriorityTest.tunnelGetsShareBehindMoreUrgentResponse` pins the share.
      *
      * Before, the response was 32 MiB and the answer had to come before half of it: a race between the WebSocket's round
      * trip and the speed of the transfer, which a slow host lost (a linux/amd64 container on an arm64 Mac: both directions
      * of the round trip took 20 to 60 ms, the client's ping included, which no server scheduling touches, while the
      * response moved 10 MB).
      */
-    @Test fun webSocketKeepsItsTunnelShareNextToAnUrgentResponse() =
+    @Test fun webSocketIsScheduledAsATunnelAndAnswersNextToAnUrgentResponse() =
         serverTest {
             val scheduled = CompletableDeferred<Triple<Boolean, Int, Boolean>>()
             val answered = CompletableDeferred<Unit>()
@@ -211,7 +212,6 @@ class ServerWebSocketH2Test {
                         withTimeout(20.seconds) { received.first { it >= 1L shl 20 } } // the response is streaming
                         session.outgoing.send(Frame.Text("ping"))
                         assertEquals("HTTP/2:ping", (withTimeout(20.seconds) { session.incoming.receive() } as Frame.Text).readText())
-                        assertTrue(reader.isActive, "the u=0 response was still going when the WebSocket's answer came")
                         answered.complete(Unit)
                         withTimeout(60.seconds) { reader.join() } // read to its end: the stream ends in order, no reset
                         big.release()
