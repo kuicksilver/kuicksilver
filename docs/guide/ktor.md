@@ -816,8 +816,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   the call with `Http2Exception` (`StreamReset`, `ConnectionClosed`, `MalformedMessage`, `FieldSectionTooLarge`); there
   is no silent repeat over HTTP/1.1.
 - **Never-indexed fields** (RFC 7541 sections 6.2.3 and 7.1.3, experimental): `neverIndex("x-api-key")` in the request
-  builder sends the named fields as literals never indexed (the engine does so on its own for `authorization`,
-  `proxy-authorization` and `cookie` values under 20 bytes), and `response.neverIndexedHeaders` lists the response fields
+  builder sends the named fields as literals never indexed (the engine does so on its own for every `authorization`
+  and `proxy-authorization` value, and for `cookie` values under 20 bytes), and `response.neverIndexedHeaders` lists the response fields
   the server sent so. A proxy built on both engines keeps the representation by passing those names to `neverIndex` on
   the message it forwards. Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the
   list is empty and `neverIndex` changes nothing.

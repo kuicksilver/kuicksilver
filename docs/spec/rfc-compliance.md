@@ -74,7 +74,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9218 | priorities (transport part: the scheduler) | ✅ | 0.2.0 | The stream scheduler orders streams by urgency and the incremental flag. | [details](rfc/9218.md#priorities-transport-part-the-scheduler) |
 | draft-ietf-quic-qlog | qlog | ✅ | 0.2.0 | The endpoint writes qlog version 0.3 as JSON-SEQ. | [details](rfc/draft-ietf-quic-qlog.md#qlog) |
 | RFC 9368/9369 | compatible version negotiation, QUIC v2 | ✅ | 0.2.0 | QUIC v2 is opt-in on the wire, with compatible version negotiation and a downgrade check. | [details](rfc/9368-9369.md#compatible-version-negotiation-quic-v2) |
-| draft-ietf-quic-multipath | multipath | ⬜ | — | Multipath QUIC is planned after 0.3.x. | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
+| draft-ietf-quic-multipath | multipath | ⬜ | — | Multipath QUIC is not scheduled (roadmap: Later). | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
 | draft-ietf-quic-load-balancers | QUIC-LB, draft-21 §3, §5 | ✅ | 0.3.0 | Experimental server connection IDs encode a configured server ID with config rotation, self-encoded length, plaintext, single-pass or four-pass encryption and unroutable IDs. | [details](rfc/draft-ietf-quic-load-balancers.md#quic-lb) |
 
 ## TLS
