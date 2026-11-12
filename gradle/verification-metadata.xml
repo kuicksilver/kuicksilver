@@ -9,6 +9,7 @@
          <ignored-key id="0E91C2DE43B72BB1" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="10C81B79DBFF09EA" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="17A27CE7A60FF5F0" reason="Key couldn't be downloaded from any key server"/>
+         <ignored-key id="379CE192D401AB61" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="3AD93C3C677A106E" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="3D002DBC5EA9615F" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="571A5291E827E1C7" reason="Key couldn't be downloaded from any key server"/>
@@ -19,8 +20,10 @@
          <ignored-key id="991EFB94DB91127D" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="995EFBF4A3D20BEB" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="AC7A514BC9F9BB70" reason="Key couldn't be downloaded from any key server"/>
+         <ignored-key id="CFAE163B64AC9189" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="D041CAD2E452550F" reason="Key couldn't be downloaded from any key server"/>
          <ignored-key id="D9C565AA72BA2FDD" reason="Key couldn't be downloaded from any key server"/>
+         <ignored-key id="F4030798D861A159" reason="Key couldn't be downloaded from any key server"/>
       </ignored-keys>
       <trusted-keys>
          <trusted-key id="019082BC00E0324E2AEF4CF00D3B328562A119A7" group="org.openjdk.jmh"/>
@@ -36,7 +39,20 @@
          <trusted-key id="0D35D3F60078655126908E8AF3D1600878E85A3D" group="io.netty"/>
          <trusted-key id="0E225917414670F4442C250DFD533C07C264648F">
             <trusting group="androidx.databinding"/>
+            <trusting group="androidx.lifecycle"/>
+            <trusting group="^androidx[.]compose($|([.].*))" regex="true"/>
             <trusting group="^com[.]android($|([.].*))" regex="true"/>
+         </trusted-key>
+         <trusted-key id="0F06FF86BEEAF4E71866EE5232EE5355A6BC6E42">
+            <trusting group="androidx.activity"/>
+            <trusting group="androidx.annotation"/>
+            <trusting group="androidx.collection"/>
+            <trusting group="androidx.core"/>
+            <trusting group="androidx.lifecycle"/>
+            <trusting group="androidx.navigationevent"/>
+            <trusting group="androidx.savedstate"/>
+            <trusting group="androidx.window"/>
+            <trusting group="^androidx[.]compose($|([.].*))" regex="true"/>
          </trusted-key>
          <trusted-key id="13AC2213964ABE1D1C147C0E1939A2520BAB1D90" group="org.freemarker" name="freemarker" version="2.3.32"/>
          <trusted-key id="19BEAB2D799C020F17C69126B16698A4ADF4D638" group="org.checkerframework" name="checker-qual"/>
@@ -57,8 +73,11 @@
          </trusted-key>
          <trusted-key id="2E3A1AFFE42B5F53AF19F780BCF4173966770193" group="org.jetbrains" name="annotations" version="13.0"/>
          <trusted-key id="2FC53E6B1F681184F4CCD637F5C81DE10A0B8ECC" group="org.yaml" name="snakeyaml" version="2.3"/>
+         <trusted-key id="3051D45031E13516A6E8FAFF280D66A55F5316C5">
+            <trusting group="org.bitbucket.b_c" name="jose4j" version="0.9.5"/>
+            <trusting group="org.bitbucket.b_c" name="jose4j" version="0.9.6"/>
+         </trusted-key>
          <trusted-key id="31BAE2E51D95E0F8AD9B7BCC40A3C4432BD7308C" group="com.googlecode.juniversalchardet" name="juniversalchardet" version="1.0.3"/>
-         <trusted-key id="3051D45031E13516A6E8FAFF280D66A55F5316C5" group="org.bitbucket.b_c" name="jose4j" version="0.9.6"/>
          <trusted-key id="32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA" group="org.codehaus.mojo"/>
          <trusted-key id="33FD4BFD33554634053D73C0C2148900BCD3C2AF" group="^org[.]jetbrains($|([.].*))" regex="true"/>
          <trusted-key id="34441E504A937F43EB0DAEF96A65176A0FB1CD0B">
@@ -67,6 +86,7 @@
          </trusted-key>
          <trusted-key id="3F05DDA9F317301E927136D417A27CE7A60FF5F0" group="io.opentelemetry"/>
          <trusted-key id="41A1A08C62FCA78B79D3081164A16FAAEC16A4BE" group="org.apache.commons" name="commons-math3" version="3.6.1"/>
+         <trusted-key id="41CD49B4EF5876F9E9F691DABAC30622339994C4" group="org.jspecify" name="jspecify" version="1.0.0"/>
          <trusted-key id="47504B76CF89C15C0512D9AFE16AB52D79FD224F" group="com.google.api.grpc" name="proto-google-common-protos"/>
          <trusted-key id="475F3B8E59E6E63AA78067482C7B12F2A511E325" group="org.slf4j"/>
          <trusted-key id="47EB6836245D2D40E89DFB4136D4E9618F3ADAB5" group="io.github.oshai" name="kotlin-logging-jvm" version="7.0.13"/>
@@ -76,8 +96,10 @@
          <trusted-key id="4F8FEC6785F611D9A712EA2734918B7D3969D2F5" group="com.google.dagger" name="dagger" version="2.28.3"/>
          <trusted-key id="517B94F8D0A46317A28D8AB30DA8A5EC02D11EAD" group="net.sf.jopt-simple" name="jopt-simple"/>
          <trusted-key id="54A26BFDC7ECDD39BA4C123AC3BAB45F4AF71FAB" group="io.opencensus" name="opencensus-proto" version="0.2.0"/>
+         <trusted-key id="5897253BEA3046AEEA95A067E93671C7272B7B3F" group="org.jdom" name="jdom2" version="2.0.6"/>
          <trusted-key id="5CBA19E56141E78D54BF716F08A4A4958D61FC3D" group="io.kotest"/>
          <trusted-key id="5D283C23D9D9DC2D9C2130E6AADF2C18DCF95764" group="com.github.package-url" name="packageurl-java" version="1.5.0"/>
+         <trusted-key id="5DD80B0DDCCBE005F0A47FD66751E1A6E2001B8D" group="^com[.]squareup($|([.].*))" regex="true"/>
          <trusted-key id="600EA202B1EC682F4A788E5AAC7A514BC9F9BB70" group="io.opencensus" name="opencensus-api" version="0.31.0"/>
          <trusted-key id="60200AC4AE761F1614D6C46766D68DAA073BE985" group="org.slf4j"/>
          <trusted-key id="6214760097DC5CFAD0175AC2C9FBAA83A8753994" group="org.codehaus.woodstox"/>
@@ -94,7 +116,12 @@
          <trusted-key id="7B72C18D9C362314BF8E981B0CAEBC0883C5BB65" group="com.vanniktech"/>
          <trusted-key id="7E22D50A7EBD9D2CD269B2D4056ACA74D46000BF" group="io.netty"/>
          <trusted-key id="7F36E793AE3252E5D9E9B98FEE9E7DC9D92FC896" group="com.google.errorprone"/>
-         <trusted-key id="8461EFA0E74ABAE010DE66994EB27DB2A3B88B8B" group="androidx.annotation"/>
+         <trusted-key id="8461EFA0E74ABAE010DE66994EB27DB2A3B88B8B">
+            <trusting group="androidx.activity"/>
+            <trusting group="androidx.annotation"/>
+            <trusting group="androidx.emoji2"/>
+            <trusting group="androidx.tracing"/>
+         </trusted-key>
          <trusted-key id="84789D24DF77A32433CE1F079EB80E92EB2135B1">
             <trusting group="org.apache" name="apache"/>
             <trusting group="org.codehaus.mojo"/>
@@ -108,7 +135,15 @@
          <trusted-key id="95115197C5227C0887299D000F9FE62F88E938D8" group="com.google.dagger" name="dagger" version="2.48"/>
          <trusted-key id="98465301A4939C0279F2E847D89D05374952262B" group="org.jetbrains.dokka"/>
          <trusted-key id="A5BD02B93E7A40482EB1D66A5F69AD087600B22C" group="org.ow2.asm"/>
-         <trusted-key id="A5F483CD733A4EBAEA378B2AE88979FB9B30ACF2" group="^androidx[.]test($|([.].*))" regex="true"/>
+         <trusted-key id="A5F483CD733A4EBAEA378B2AE88979FB9B30ACF2">
+            <trusting group="androidx.annotation"/>
+            <trusting group="androidx.compose.runtime"/>
+            <trusting group="androidx.core"/>
+            <trusting group="androidx.graphics"/>
+            <trusting group="androidx.profileinstaller"/>
+            <trusting group="androidx.startup"/>
+            <trusting group="^androidx[.]test($|([.].*))" regex="true"/>
+         </trusted-key>
          <trusted-key id="A7892505CF1A58076453E52D7999BEFBA1039E8B" group="net.bytebuddy"/>
          <trusted-key id="AA70C7C433D501636392EC02153E7A3C2B4E5118" group="org.eclipse.ee4j" name="project"/>
          <trusted-key id="AEB1E1AEC035C66FA39589D13EFC46EE83C40224" group="com.networknt" name="json-schema-validator" version="2.0.4"/>
@@ -140,6 +175,103 @@
       </trusted-keys>
    </configuration>
    <components>
+      <component group="androidx.activity" name="activity" version="1.7.0">
+         <artifact name="activity-1.7.0.module">
+            <sha256 value="2a746b0126a8ab2f576e7167f1a785b452ef7ee997abd979ee0c5a29c36f6ea6" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.activity" name="activity-ktx" version="1.7.0">
+         <artifact name="activity-ktx-1.7.0.module">
+            <sha256 value="f4001a709b6f7132b22a5e17c24f8b8a9b3c462a598de3b0f16cc57a4344bab6" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.arch.core" name="core-common" version="2.1.0">
+         <artifact name="core-common-2.1.0.pom">
+            <sha256 value="83bbb3960eaabc600ac366c94cb59414e441532a1d6aa9388b0b8bfface5cf01" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.arch.core" name="core-common" version="2.2.0">
+         <artifact name="core-common-2.2.0.jar">
+            <sha256 value="65308a06b1c00ee186cb9e19321383f043b993813f1522c47f4a3e3303bdba41" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="core-common-2.2.0.module">
+            <sha256 value="edf4200cfdc2d946232252c99e5dcb9c61bb909eb5450b2613d1d4fdc974b981" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.arch.core" name="core-runtime" version="2.2.0">
+         <artifact name="core-runtime-2.2.0.aar">
+            <sha256 value="a1be5e0caa2b07623862af6ae21b3ab0718123245184d0e30dea81b53f990a47" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="core-runtime-2.2.0.module">
+            <sha256 value="a8b17513949e5db6c9601c30be19df953762dd877512f1e2cfcfae81d2440944" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.autofill" name="autofill" version="1.0.0">
+         <artifact name="autofill-1.0.0.aar">
+            <sha256 value="c9468f56e05006ea151a426c54957cd0799b8b83a579d2846dd22061f33e5ecd" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="autofill-1.0.0.pom">
+            <sha256 value="3677abead5d4e06cf76cbacb954151e051779c2274494451fb424e375aa9e450" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.collection" name="collection" version="1.0.0">
+         <artifact name="collection-1.0.0.jar">
+            <sha256 value="9c8d117b5c2bc120a1cdfeb857e05b495b16c36013570372a708f7827e3ac9f9" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="collection-1.0.0.pom">
+            <sha256 value="a7913a5275ad68e555d2612ebe8c14c367b153e14ca48a1872a64899020e54ef" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.compose.ui" name="ui" version="1.0.1">
+         <artifact name="ui-1.0.1.aar">
+            <sha256 value="1943daa4a3412861b9a2bdc1a7c8c2ff05d9b8191c1d3e56ebb223d2eb4a8526" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="ui-1.0.1.module">
+            <sha256 value="57031a6ac9b60e5b56792ebf5cde6e16812ff566ed9190cbd188b00b46c13779" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.compose.ui" name="ui-geometry" version="1.0.1">
+         <artifact name="ui-geometry-1.0.1.aar">
+            <sha256 value="04dcea79de0af8347f4517bec20578d4240ae5ee40191020ca07d7a38e640033" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="ui-geometry-1.0.1.module">
+            <sha256 value="e2fea4b568ff93e340bc4b18c8a3c2a9bafdf3e1210d9ed30036c1d9888be369" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.compose.ui" name="ui-graphics" version="1.0.1">
+         <artifact name="ui-graphics-1.0.1.aar">
+            <sha256 value="6b7f5d0c944483ea390b3d6da8438e7a69e0cfe310bd16c3c5e78ac0015b1663" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="ui-graphics-1.0.1.module">
+            <sha256 value="ad9ce40deec721b8988c43ab847d803d00bee88c67cfc838dee565691f35db95" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.compose.ui" name="ui-text" version="1.0.1">
+         <artifact name="ui-text-1.0.1.aar">
+            <sha256 value="f276b403fb95bda29fc83a33ff717591662ea2c769fc34c2077ec460b65f0da0" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="ui-text-1.0.1.module">
+            <sha256 value="43a1ec94d3cecc5f3bd20f1c53551ab03a0ba728af1871a74bf239c418795f1b" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.compose.ui" name="ui-unit" version="1.0.1">
+         <artifact name="ui-unit-1.0.1.aar">
+            <sha256 value="75b13e2a15da8a31acf75d81c4277ff2820b1bf58291b4688ac55200cdc18072" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="ui-unit-1.0.1.module">
+            <sha256 value="3db12e5b47d6f6da91ed46feb902fe511282c846e4ef1affbb914779fa6b1082" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.compose.ui" name="ui-util" version="1.0.1">
+         <artifact name="ui-util-1.0.1.module">
+            <sha256 value="6fdae8e4b8785034255fc907b0fff5e61eed0672de4fff15b608614e3a8b086f" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.concurrent" name="concurrent-futures" version="1.0.0">
+         <artifact name="concurrent-futures-1.0.0.pom">
+            <sha256 value="4505b9a5e30a9418b59a9ad6702c3e4193aea6e691a3d03cf220c7640ad083e2" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
       <component group="androidx.concurrent" name="concurrent-futures" version="1.1.0">
          <artifact name="concurrent-futures-1.1.0.jar">
             <sha256 value="0ce067c514a0d1049d1bebdf709e344ed3266fe9744275682937cdcb13334e9e" origin="Generated by Gradle" reason="Artifact is not signed"/>
@@ -156,6 +288,32 @@
             <sha256 value="69b79724566d49140846700690b8d2165231c577e93e66726a443e8f976bbe19" origin="Generated by Gradle" reason="Artifact is not signed"/>
          </artifact>
       </component>
+      <component group="androidx.core" name="core" version="1.16.0">
+         <artifact name="core-1.16.0.aar">
+            <sha256 value="6bf03d39dbe3744acce227d3b697374c3625aae1025fbec8ad9fd7bd58bce431" origin="Generated by Gradle"/>
+         </artifact>
+      </component>
+      <component group="androidx.customview" name="customview-poolingcontainer" version="1.0.0">
+         <artifact name="customview-poolingcontainer-1.0.0.aar">
+            <sha256 value="3584102fc49bf399c56e3b7be4bfe12000c46112320cd8cf85cc0a8f93f3e752" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="customview-poolingcontainer-1.0.0.module">
+            <sha256 value="903034d5152dd2e0162b1468ea25a22e1ca384006b3d282d5a143cc760321a01" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.emoji2" name="emoji2" version="1.3.0">
+         <artifact name="emoji2-1.3.0.module">
+            <sha256 value="ddc851edba65fd15a7a1bc3ad18648e2f732dd5ad8ef3602224bce0647f5b4d1" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.interpolator" name="interpolator" version="1.0.0">
+         <artifact name="interpolator-1.0.0.aar">
+            <sha256 value="33193135a64fe21fa2c35eec6688f1a76e512606c0fc83dc1b689e37add7732a" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="interpolator-1.0.0.pom">
+            <sha256 value="0ddc07cc39699f48ecd9ec894b5830c0f09e22e82959294edf37217224c88b7b" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
       <component group="androidx.lifecycle" name="lifecycle-common" version="2.3.1">
          <artifact name="lifecycle-common-2.3.1.jar">
             <sha256 value="15848fb56db32f4c7cdc72b324003183d52a4884d6bf09be708ac7f587d139b5" origin="Generated by Gradle" reason="Artifact is not signed"/>
@@ -164,12 +322,80 @@
             <sha256 value="5fb7c8514d8c56cada5e29ef89dc0289e71942ab4cb0b2e6dca137b9dcb8fdd4" origin="Generated by Gradle" reason="Artifact is not signed"/>
          </artifact>
       </component>
+      <component group="androidx.lifecycle" name="lifecycle-common" version="2.6.1">
+         <artifact name="lifecycle-common-2.6.1.module">
+            <sha256 value="93747a9145cb36bc71005f598ede32e2b1149ade5a16e62b0e4969345bc62d85" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.lifecycle" name="lifecycle-common-java8" version="2.3.0">
+         <artifact name="lifecycle-common-java8-2.3.0.module">
+            <sha256 value="2de56435ecd68ba2d49ae48011c34b758304af0a8e7e09ad2e8edfd2fe349b9c" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.lifecycle" name="lifecycle-livedata-core" version="2.6.1">
+         <artifact name="lifecycle-livedata-core-2.6.1.module">
+            <sha256 value="e9c0dc3f0ac54419c0cfed8ff5cecb82943a7c58f7a54169f0d849b2c60a3552" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.lifecycle" name="lifecycle-process" version="2.4.1">
+         <artifact name="lifecycle-process-2.4.1.module">
+            <sha256 value="e3aae3ed04b4744ff31452e98fd299e3adfd28d3b5723661d9678b92fa09ceb4" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.lifecycle" name="lifecycle-runtime" version="2.6.1">
+         <artifact name="lifecycle-runtime-2.6.1.module">
+            <sha256 value="a4cbb01a42d07047bd8d870017c96a1b0b7b4673320e86b66317a13be2ec10c7" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.lifecycle" name="lifecycle-runtime" version="2.6.2">
+         <artifact name="lifecycle-runtime-2.6.2.module">
+            <pgp value="8461EFA0E74ABAE010DE66994EB27DB2A3B88B8B"/>
+         </artifact>
+      </component>
+      <component group="androidx.lifecycle" name="lifecycle-runtime-ktx" version="2.6.1">
+         <artifact name="lifecycle-runtime-ktx-2.6.1.module">
+            <sha256 value="39854f32c9b010f652f4e5041ca4ce06981dcb6954128c1e8e1cc02e63ab185f" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.lifecycle" name="lifecycle-viewmodel-savedstate" version="2.6.1">
+         <artifact name="lifecycle-viewmodel-savedstate-2.6.1.module">
+            <sha256 value="dafb8649763d29c29cda27bc22fcdab9a9efc53c0fff9ae3de90882eabaa8944" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.savedstate" name="savedstate" version="1.2.1">
+         <artifact name="savedstate-1.2.1.module">
+            <sha256 value="5bb656fc760d9e3996b535160cbb4106033c9f736e9089e6ef4eb0c669785066" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.startup" name="startup-runtime" version="1.0.0">
+         <artifact name="startup-runtime-1.0.0.module">
+            <sha256 value="40effca0d6ee1fde32bc296897e54ebbcc4cf4aa29b0c531036cbd2a824a3c24" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.startup" name="startup-runtime" version="1.1.1">
+         <artifact name="startup-runtime-1.1.1.module">
+            <sha256 value="cfd96cf6450c6e2b697598924729ad9a0495c5a4fcf4ebee7e2f81b07e415865" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.tracing" name="tracing" version="1.0.0">
+         <artifact name="tracing-1.0.0.module">
+            <sha256 value="fc8b21ebe5fa3a7c96ee098bcdcd00f077ebce73f243fa858e2b0671615f75d8" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
       <component group="androidx.tracing" name="tracing" version="1.1.0">
          <artifact name="tracing-1.1.0.aar">
             <sha256 value="5b78e2c618fc10b3d14decc01df76158f15954ad746aacf0607766721da081f6" origin="Generated by Gradle" reason="Artifact is not signed"/>
          </artifact>
          <artifact name="tracing-1.1.0.module">
             <sha256 value="b1fed4309623b6f20bc817d8fbd70e4ea7085e40647694cd399ae58d2f0049e3" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="androidx.versionedparcelable" name="versionedparcelable" version="1.1.1">
+         <artifact name="versionedparcelable-1.1.1.aar">
+            <sha256 value="57e8d93260d18d5b9007c9eed3c64ad159de90c8609ebfc74a347cbd514535a4" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+         <artifact name="versionedparcelable-1.1.1.pom">
+            <sha256 value="5f51e65873ca612de3838fa90d2ee95b8d040efd31b9c390a19bf94d615cdb2f" origin="Generated by Gradle" reason="Artifact is not signed"/>
          </artifact>
       </component>
       <component group="com.android.tools.build" name="bundletool" version="1.18.3">
@@ -690,6 +916,14 @@
             <sha256 value="f18355af4cf80a8a4ef04ebd742a47e90a7eaf080c725b2095dbc4fc5dbdefb7" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
          </artifact>
       </component>
+      <component group="org.apache.httpcomponents" name="httpclient" version="4.5.6">
+         <artifact name="httpclient-4.5.6.jar">
+            <sha256 value="c03f813195e7a80e3608d0ddd8da80b21696a4c92a6a2298865bf149071551c7" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="httpclient-4.5.6.pom">
+            <sha256 value="7efc1241e73e7fbb268bfd33242d11ebd3ca07061d7d85f2962dc32a0f0b8855" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
       <component group="org.apache.httpcomponents" name="httpcomponents-client" version="4.5.14">
          <artifact name="httpcomponents-client-4.5.14.pom">
             <sha256 value="5bad1de4f101447659f89d089868ccbad64a68cc503d2d65410b51f6904aa061" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
@@ -773,9 +1007,867 @@
             <sha256 value="55795e1018b8ae647b937967cf810a99b08582c2374e7873c128734c8c914bf3" origin="Generated by Gradle" reason="Artifact is not signed"/>
          </artifact>
       </component>
+      <component group="org.jetbrains.androidx.lifecycle" name="lifecycle-common" version="2.9.6">
+         <artifact name="lifecycle-common-2.9.6.jar">
+            <sha256 value="b21a149fe28cccc7ece37b55098d10027aba3d2e0db31d12d3cdc907ded2368a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-common-2.9.6.module">
+            <sha256 value="805e4521b03379810848c7ac314cf3c954fc8d2df34a5b0911c456d438dcda26" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.lifecycle" name="lifecycle-runtime" version="2.9.6">
+         <artifact name="lifecycle-runtime-2.9.6.jar">
+            <sha256 value="9dd583b709136e0aafe60e1b90249bf63bc80cd7ba6e0641ce74a1ab3613c64f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-runtime-2.9.6.module">
+            <sha256 value="2d237bf1103971c56967a19531bc08f1006e4993a84319a92f4e15fb0f90ca1b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.lifecycle" name="lifecycle-runtime-compose" version="2.9.6">
+         <artifact name="lifecycle-runtime-compose-2.9.6.jar">
+            <sha256 value="adb75b2b89d68f338d9420b8b24dd9ba5368872a4fc70e32282c2fa0f193a0fc" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-runtime-compose-2.9.6.module">
+            <sha256 value="80030c6408a8f20b1955787e1a613cb69f05876eaf5b9185fbe159480c0f6721" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.lifecycle" name="lifecycle-runtime-compose-uikitarm64" version="2.9.6">
+         <artifact name="lifecycle-runtime-compose-uikitArm64Main-2.9.6.klib">
+            <sha256 value="03c737cb868e358b40eb7404c278512b9af388de90eba3bf09e162e10d55683f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-runtime-compose-uikitarm64-2.9.6-metadata.jar">
+            <sha256 value="c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-runtime-compose-uikitarm64-2.9.6.module">
+            <sha256 value="42b277cff55ed93d2de7981ccc8365fccfd0f0c588ce2ebaf18bc793877f6c92" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.lifecycle" name="lifecycle-runtime-compose-uikitsimarm64" version="2.9.6">
+         <artifact name="lifecycle-runtime-compose-uikitSimArm64Main-2.9.6.klib">
+            <sha256 value="4880c6df470d1ee3ec4f5b1fa5381892b627f275fce3719a0a9d32b119e8b3b4" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-runtime-compose-uikitsimarm64-2.9.6-metadata.jar">
+            <sha256 value="c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-runtime-compose-uikitsimarm64-2.9.6.module">
+            <sha256 value="1b003bfa091315aeae2e2907d464630b0fc51a60d1f6b520ba9faffcc6d42e61" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.lifecycle" name="lifecycle-viewmodel" version="2.9.6">
+         <artifact name="lifecycle-viewmodel-2.9.6.jar">
+            <sha256 value="9ecd2bc61365fb4fa3f6f284aba92148dbfd3d1aca38662ad54bcecac2ab5546" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-viewmodel-2.9.6.module">
+            <sha256 value="24cbfc3653759275e49cbf5697be3c2fe7c4a6a1c1ca4f825805a4f3611b6095" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.lifecycle" name="lifecycle-viewmodel-savedstate" version="2.9.6">
+         <artifact name="lifecycle-viewmodel-savedstate-2.9.6.jar">
+            <sha256 value="74239398cb1f20a8113b37b93d309f1f57494a14f70d6578648e8bb083f80f5d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="lifecycle-viewmodel-savedstate-2.9.6.module">
+            <sha256 value="ad0dbae23dd9dcaba3a95d1d082c1bfb4c404b17bb932490f4049ac93825dc4f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.navigationevent" name="navigationevent-compose" version="1.1.0">
+         <artifact name="navigationevent-compose-1.1.0.jar">
+            <sha256 value="26c0c8ba35740bc66d9288a385eab8a7450762d260556db63c241339895a908f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="navigationevent-compose-1.1.0.module">
+            <sha256 value="cd2a5d8a131867c33b1b94c03b1dde7d65d0dd5a43db8b9c64a157cfcb1639a1" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.navigationevent" name="navigationevent-compose-iosarm64" version="1.1.0">
+         <artifact name="navigationevent-compose-iosArm64Main-1.1.0.klib">
+            <sha256 value="5931f6bcae923f6918b39763a9cd1d4d8f661b952f38f77a5d56b54c256100c0" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="navigationevent-compose-iosarm64-1.1.0-metadata.jar">
+            <sha256 value="2fa4288c2625e6a1256d8f361db73c603be3e6d6724d05a07c499831ac039796" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="navigationevent-compose-iosarm64-1.1.0.module">
+            <sha256 value="b69f5abbc8f0c4fd17bfba75e7b4a2a00d66cc5dc5e497c7c30c573611ea906d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.navigationevent" name="navigationevent-compose-iossimulatorarm64" version="1.1.0">
+         <artifact name="navigationevent-compose-iosSimulatorArm64Main-1.1.0.klib">
+            <sha256 value="36da927ef084ab195cd8543258a360b09b9c5609c0f108a0457d370311ad7066" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="navigationevent-compose-iossimulatorarm64-1.1.0-metadata.jar">
+            <sha256 value="2fa4288c2625e6a1256d8f361db73c603be3e6d6724d05a07c499831ac039796" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="navigationevent-compose-iossimulatorarm64-1.1.0.module">
+            <sha256 value="54332c7d33cd3412c540d364453044cd7f4049b93637c278cf150ca798f3db9e" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.savedstate" name="savedstate" version="1.3.6">
+         <artifact name="savedstate-1.3.6.jar">
+            <sha256 value="0741a750940978c7e8b1605f117be62e399fd57a7625ab1ae80a28a2ca0f3415" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="savedstate-1.3.6.module">
+            <sha256 value="e59f9a0d872ce33b78e16d7c5ea63696046e6172934a8ce8d427726b07791934" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.savedstate" name="savedstate-compose" version="1.3.6">
+         <artifact name="savedstate-compose-1.3.6.jar">
+            <sha256 value="61b8b51d04b4d992e8e1b618ad4cf117324301e492ad06a058fc96cdf861b780" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="savedstate-compose-1.3.6.module">
+            <sha256 value="afc3e5bd44604ea9ca610c23405a096b4089d62cd346797d339ff5e2c8a0e5b4" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.savedstate" name="savedstate-compose-uikitarm64" version="1.3.6">
+         <artifact name="savedstate-compose-uikitArm64Main-1.3.6.klib">
+            <sha256 value="de9566cb2f8dd2cb58c8c7ac5c0df7c12a95d81166e00b4d380fbb8cdca80b7c" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="savedstate-compose-uikitarm64-1.3.6-metadata.jar">
+            <sha256 value="c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="savedstate-compose-uikitarm64-1.3.6.module">
+            <sha256 value="a1c411136801f7bde2c47c6b67f65eba15769ca7e1494a1fa9f721274691108d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.androidx.savedstate" name="savedstate-compose-uikitsimarm64" version="1.3.6">
+         <artifact name="savedstate-compose-uikitSimArm64Main-1.3.6.klib">
+            <sha256 value="ab0ceb3cfa4d34701a03093799e4dee8fa81bf2aa54a97d0ff45fc673581f3a0" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="savedstate-compose-uikitsimarm64-1.3.6-metadata.jar">
+            <sha256 value="c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="savedstate-compose-uikitsimarm64-1.3.6.module">
+            <sha256 value="fc55f74fef66f2b1fc8cb41e0c6c8b462275535fba804b91ea5975da2f9d1be6" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose" name="compose-gradle-plugin" version="1.12.2">
+         <artifact name="compose-gradle-plugin-1.12.2.jar">
+            <sha256 value="676e47ac7664ddd9ca5be8c80de2a7f66b36e05a3f8087f7e950ab32b1d6c54a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="compose-gradle-plugin-1.12.2.module">
+            <sha256 value="f51bb802cbd9e877708041e8e80abbde99844212bc4e3e496c7faa7b34cb13a9" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose" name="org.jetbrains.compose.gradle.plugin" version="1.12.2">
+         <artifact name="org.jetbrains.compose.gradle.plugin-1.12.2.pom">
+            <sha256 value="2ba6cd69bdeeee4f1364720fd242e5b3d19e35247c6e9a3ca32c3c3ea4aefcbf" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation" version="1.12.2">
+         <artifact name="animation-1.12.2.module">
+            <sha256 value="1401d9f319d7ca6b349851d5cfc64dfd1e1a9b4492e093a8bf1ae8a9f5bffc98" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-metadata-1.12.2.jar">
+            <sha256 value="7e3d0284f2eb12196795bdfa6804e246eab5166f8c7891508b460dbc9cb221fc" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-android" version="1.12.2">
+         <artifact name="animation-android-1.12.2.module">
+            <sha256 value="1cc2b2371587eab9dee7a34d14add622619eeab6a777d248fb07c59498b8a474" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation.aar">
+            <sha256 value="d13a4f113b767b62d56a5f5b78ed01e56831c634c41135bd89b4bb991dc750ad" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-core" version="1.12.2">
+         <artifact name="animation-core-1.12.2.module">
+            <sha256 value="91261f4b2333be8811a97019cf4323f7175584e3927e8025bac192f83f291a8b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-core-metadata-1.12.2.jar">
+            <sha256 value="856030c34d84adb0feea651ef55d053203aebd200dbdb8192815c50131316336" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-core" version="1.9.1">
+         <artifact name="animation-core-1.9.1.module">
+            <sha256 value="b0b35c69720dd845aa32bf434d4c8c6a560e1387a52008748ef94678948ea324" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-core-android" version="1.12.2">
+         <artifact name="animation-core-android-1.12.2.module">
+            <sha256 value="31abc25bba356480fa0a4317abc9aea9ae3741730d30204750fc3d37e372e190" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-core.aar">
+            <sha256 value="db26201d7cb3d407bb98776e937a0fedbe9f3d56425f3a061d0e76dde10238a6" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-core-iosarm64" version="1.12.2">
+         <artifact name="animation-core-iosArm64Main-1.12.2.klib">
+            <sha256 value="32d45581de91d5a4cb45120fb6a512fe6af0801f09133ceca4ff915647ec4bc2" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-core-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="b8baaa21781d644b3af14f03976806ca24a144538df8eda486be9113bd4f14a2" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-core-iosarm64-1.12.2.module">
+            <sha256 value="09945587207f3ed364c99fa1b210f295740ab766236da5fca3b19fdbd5dfe0c1" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-core-iossimulatorarm64" version="1.12.2">
+         <artifact name="animation-core-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="bb139e0464d746315531ea683e53e8cd5d2ed5a8515239a4cbf848e2df5dd566" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-core-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="b8baaa21781d644b3af14f03976806ca24a144538df8eda486be9113bd4f14a2" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-core-iossimulatorarm64-1.12.2.module">
+            <sha256 value="672a93ac2ce7378477eeaa97fc827b2157aae85bb0a81aeb57f9f9a5ed2549e8" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-core-uikitarm64" version="1.9.1">
+         <artifact name="animation-core-uikitarm64-1.9.1.module">
+            <sha256 value="78e9b90f1c81e76961c62f7913083df87607614675a038a449ae40ad7ccc965a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-core-uikitsimarm64" version="1.9.1">
+         <artifact name="animation-core-uikitsimarm64-1.9.1.module">
+            <sha256 value="ac405bff18ed9322fcd99aa3b16871091f92ad92022c364adaa1483c3ce91109" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-iosarm64" version="1.12.2">
+         <artifact name="animation-iosArm64Main-1.12.2.klib">
+            <sha256 value="39eb9e3a0813f74fd98f56729a4656c44d150c7bd63968b290cc754e6d9db602" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="1931c57592e0c9b273de22d6bbf2ed2e4f97ef7ad40925639fe33255eacfe2fd" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-iosarm64-1.12.2.module">
+            <sha256 value="5dc8a457c19b3610d6dce003517996cdf1d8242b870f79fe566aef5066c913f3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.animation" name="animation-iossimulatorarm64" version="1.12.2">
+         <artifact name="animation-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="2224fb05936ed8a38496101f5967689644551cf22dfa294db5bf4d75cce34d2c" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="1931c57592e0c9b273de22d6bbf2ed2e4f97ef7ad40925639fe33255eacfe2fd" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="animation-iossimulatorarm64-1.12.2.module">
+            <sha256 value="4143148d0e32735e96ec1d91c4a47f40b2c291aa451d023c4ce396ce58dd6bda" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.annotation-internal" name="annotation" version="1.10.0">
+         <artifact name="annotation-1.10.0.jar">
+            <sha256 value="59a0e9b77b3e1f61d3e3f0df8f99ed2a12b168ded809ea39e6fd75eeff94be12" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="annotation-1.10.0.module">
+            <sha256 value="1cbfae413d80c8a1583b334ff579efbc2f280cb723d911c0e241447f34b5e36c" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.annotation-internal" name="annotation" version="1.9.1">
+         <artifact name="annotation-1.9.1.module">
+            <sha256 value="46c9279e57d594ebf9ef21c27c633cc20cbceb2a4520832b94e81a7a36890a98" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.collection-internal" name="collection" version="1.10.0">
+         <artifact name="collection-1.10.0.jar">
+            <sha256 value="367b8ea28496dc024531a0fe97576dd76864bb066ffa09ba2141f73c79bf3c3d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="collection-1.10.0.module">
+            <sha256 value="0ba937b34e8502735ff9db35cb446902cf11a28560c86aa6483365bbdff9e3c2" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.collection-internal" name="collection" version="1.9.1">
+         <artifact name="collection-1.9.1.module">
+            <sha256 value="66beb8f1c3f4d92067ffd6158ae7dbf1679994e07544ce8d34c4a90f77d9b1f0" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation" version="1.12.2">
+         <artifact name="foundation-1.12.2.module">
+            <sha256 value="55797f4704b840da371ebb516bcb2a8bc98bb0a7c5bd4b15b01370be1bfef2a6" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-metadata-1.12.2.jar">
+            <sha256 value="0205f5d393967c37a360a1840e9b630bcd6149f3730ce8830789ae62d049d4e9" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation-android" version="1.12.2">
+         <artifact name="foundation-android-1.12.2.module">
+            <sha256 value="46b5cfd3c0f2a7d04f975293744d82d305253c0535a22984fd75a2f488a7d662" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation.aar">
+            <sha256 value="17c4466ca753a6ce68dcf4333674e0934d15c8246b223653d18f5dbaef0f6c10" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation-iosarm64" version="1.12.2">
+         <artifact name="foundation-iosArm64Main-1.12.2.klib">
+            <sha256 value="397aa76a03de31f6628a3dcce52e4cec1ee723b9027aa36c903a9a695ce65b36" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="fb8ecc72d1dc34bd8c6aabd8dfdeff0b7ba76f7e37b66006c55df95f27732859" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-iosarm64-1.12.2.module">
+            <sha256 value="7a5dca9425a1e1744718980e4a332fd4f6de5b95d2745c495422065ae05b5106" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation-iossimulatorarm64" version="1.12.2">
+         <artifact name="foundation-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="4a2b4b552b986e915bdd2e19a1718959571842b4349a3f314cf3ab79f4890858" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="fb8ecc72d1dc34bd8c6aabd8dfdeff0b7ba76f7e37b66006c55df95f27732859" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-iossimulatorarm64-1.12.2.module">
+            <sha256 value="7e834cdd2401af70ac093fe86ef71c06dd3cf1648ffc907ca23593ccfe86840d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation-layout" version="1.12.2">
+         <artifact name="foundation-layout-1.12.2.module">
+            <sha256 value="a44c5955550e0f5a1f5e8c570486a14c3b7dc731301ddd4ad1dfe369091e8b2b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-layout-metadata-1.12.2.jar">
+            <sha256 value="eef6a1f78be2f3a6324f71e92d4396dbf45a69328a222494a9fd908f92772b3a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation-layout" version="1.9.1">
+         <artifact name="foundation-layout-1.9.1.module">
+            <sha256 value="e48e01da28ba055424f2ca2b71b6d4e44cfd93c0f1ef4893aa5bd91fa0359471" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation-layout-android" version="1.12.2">
+         <artifact name="foundation-layout-android-1.12.2.module">
+            <sha256 value="5de19ed03c13e85e2c0302c76276b0fe595f726c52231d3d25525b502ce6ea5c" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-layout.aar">
+            <sha256 value="a3bce509f3412b8002c7eb2084f4605e1f8d04a8eff420b7b165d1a396f611df" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation-layout-iosarm64" version="1.12.2">
+         <artifact name="foundation-layout-iosArm64Main-1.12.2.klib">
+            <sha256 value="2079e0798ac7c7a56fd1b8dce004f63acfcf7d08c518e45bac2179cf15e07756" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-layout-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="54d0cad2e0691dd198cbd01ca52735346583480c37b1a607f4f963df25c815ec" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-layout-iosarm64-1.12.2.module">
+            <sha256 value="6fdd0bb83dfa13eb1992c1b08457fe288c29bde4a7818929805039392a886032" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.foundation" name="foundation-layout-iossimulatorarm64" version="1.12.2">
+         <artifact name="foundation-layout-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="032472040135ded93a5bd5b1b6610ff5044d4a67ca6a125df5aba1b203d16281" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-layout-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="54d0cad2e0691dd198cbd01ca52735346583480c37b1a607f4f963df25c815ec" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="foundation-layout-iossimulatorarm64-1.12.2.module">
+            <sha256 value="eab8081c36f97f6fba8fc7aee7f02c257cd326cbbbb3c366d2e1bd7c70c9fb43" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.hot-reload" name="hot-reload-gradle-plugin" version="1.2.0">
+         <artifact name="hot-reload-gradle-plugin-1.2.0.jar">
+            <sha256 value="8f57ecbd0ebd15137e0ce10a9a092e01c90cbe38152afd23bd0e60335fd5fda6" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="hot-reload-gradle-plugin-1.2.0.module">
+            <sha256 value="5aba1d74b5c40d4a9f34607597f2b3454f26fb9977442e6c48b619f20ceae506" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.material" name="material-ripple" version="1.9.1">
+         <artifact name="material-ripple-1.9.1.jar">
+            <sha256 value="292d2b3fbbbcc24bb326f3f642dac9a8cd55e18d5b518365bac6daca23a5cf74" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material-ripple-1.9.1.module">
+            <sha256 value="898dbe9a0e62c9ca391b375ec1a27b49965743b74a06ad85f6e710a0bbb4a3da" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.material" name="material-ripple-uikitarm64" version="1.9.1">
+         <artifact name="material-ripple-uikitArm64Main-1.9.1.klib">
+            <sha256 value="331f2f3eef11a0eecf834e9ce4133657336f93d50d446f0391f15075e0aa2d42" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material-ripple-uikitarm64-1.9.1-metadata.jar">
+            <sha256 value="c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material-ripple-uikitarm64-1.9.1.module">
+            <sha256 value="d7acf5e4b57fe9a254131b4e2257d860aa698700794e3669897f5f9f77935c82" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.material" name="material-ripple-uikitsimarm64" version="1.9.1">
+         <artifact name="material-ripple-uikitSimArm64Main-1.9.1.klib">
+            <sha256 value="4b7eb82e2229e55e1245c21269dfe8383ff8d76b2eea4e4ee4ad77a76ac156f1" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material-ripple-uikitsimarm64-1.9.1-metadata.jar">
+            <sha256 value="c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material-ripple-uikitsimarm64-1.9.1.module">
+            <sha256 value="f0631a3a183c97ca9526a69d2448d4358249565524c25b2257e3a06d336723ec" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.material3" name="material3" version="1.9.0">
+         <artifact name="material3-1.9.0.jar">
+            <sha256 value="0be26b1746e5baae437dbf820daefef7e107b648846f97e7b411dcd1de4f6433" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material3-1.9.0.module">
+            <sha256 value="fa7a745df9170591d98f3773303bcf53829313acfb43c72c1aa4f8fb99ba45a4" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.material3" name="material3-uikitarm64" version="1.9.0">
+         <artifact name="material3-uikitArm64Main-1.9.0.klib">
+            <sha256 value="fa637880ccc0b8f6cae9af6a62159f4abd7c5be33e6d6134a3bc9f865e4437e2" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material3-uikitarm64-1.9.0-metadata.jar">
+            <sha256 value="8bd24d0627934a3018a958c76ddbd64a50b1719424b162a88b50c229bc9f0d0b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material3-uikitarm64-1.9.0.module">
+            <sha256 value="6e1d0b24cb631ed464bf0b043ab8f10ce19fd600eea920150400884ea4d2a368" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.material3" name="material3-uikitsimarm64" version="1.9.0">
+         <artifact name="material3-uikitSimArm64Main-1.9.0.klib">
+            <sha256 value="2be9cb12bd12969a953d4ded412fb81acf658188d35f940eff82b32910536e56" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material3-uikitsimarm64-1.9.0-metadata.jar">
+            <sha256 value="8bd24d0627934a3018a958c76ddbd64a50b1719424b162a88b50c229bc9f0d0b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="material3-uikitsimarm64-1.9.0.module">
+            <sha256 value="de99364234e8cf8cc213c802400edb0fb37eec1a7bdb97d87fbe385e54defbaa" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.runtime" name="runtime" version="1.12.2">
+         <artifact name="runtime-1.12.2.module">
+            <sha256 value="05229deab7f5be9f8d1a5ffd2bb50a243281416310671abc7d4df295be41faaa" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-metadata-1.12.2.jar">
+            <sha256 value="6ac0a3c72f0f2324308bbb26d2bf3781fb48206b275638168fcf540e6ba58cd4" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.runtime" name="runtime-android" version="1.12.2">
+         <artifact name="runtime-android-1.12.2.module">
+            <sha256 value="4402eb2bcf523efc00e04ff3d8817f8e57d6bfc259ee7421cb3c5403744ccb4d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime.aar">
+            <sha256 value="5732b59bc214b94c5a0c2c29410eda6ca8a28c52bc57ba20964f0259910bd9fe" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.runtime" name="runtime-iosarm64" version="1.12.2">
+         <artifact name="runtime-iosArm64Main-1.12.2.klib">
+            <sha256 value="dbcea40a289b54c09a85e3cc219c374f462dffdc2fc4d753c4a5d80fa1f0bd2f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="b10293fed418440ba12b492e0e42caaa1096581334b4b506dae319f9712ba86e" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-iosarm64-1.12.2.module">
+            <sha256 value="a3535e7566417bcc885e27e7121f780cc869eb42d922b445b98f4d188ffa9625" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.runtime" name="runtime-iossimulatorarm64" version="1.12.2">
+         <artifact name="runtime-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="38b04c57626f3013b35b45258f756321c689f7fcf411317cf69cb7814d03f4d6" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="b10293fed418440ba12b492e0e42caaa1096581334b4b506dae319f9712ba86e" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-iossimulatorarm64-1.12.2.module">
+            <sha256 value="97158f3e30c96965a5cd936f43706e5237a0647320d4184b1e759e7dba38f81c" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.runtime" name="runtime-saveable" version="1.12.2">
+         <artifact name="runtime-saveable-1.12.2.module">
+            <sha256 value="8e02a1f96df334ff44892a1384571f8179bd1614cbb8b8e547aad67f5fdc85eb" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-saveable-metadata-1.12.2.jar">
+            <sha256 value="df706f39cb0cceab1b580c32c0b87d855224758dfac2d98ddd6243e2ba628a36" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.runtime" name="runtime-saveable-android" version="1.12.2">
+         <artifact name="runtime-saveable-android-1.12.2.module">
+            <sha256 value="fe1610962d402e846a09eb35c72c5711a989c5dace4ed92bf0383c774745a2aa" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-saveable.aar">
+            <sha256 value="ac260d459f82f654b7336bc18c9f835c9f0d2b2adc5096dfc729aad386eac5c5" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.runtime" name="runtime-saveable-iosarm64" version="1.12.2">
+         <artifact name="runtime-saveable-iosArm64Main-1.12.2.klib">
+            <sha256 value="b7c766e2aa2c416b9c49b05d27b8ec8fa368f403afa0dcd05df99ec5ae48a847" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-saveable-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="1b1b4e11cece463d7b8e3c4caebe93938a4372b6442be63365ae4bc17b84c119" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-saveable-iosarm64-1.12.2.module">
+            <sha256 value="67a796d5036e5f31f410169dd78266bb37ea3b15059437570abf96d9a9ba90f0" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.runtime" name="runtime-saveable-iossimulatorarm64" version="1.12.2">
+         <artifact name="runtime-saveable-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="ddd159771caa9f58b24adf1637242c0839aafd0fdf6532c25c6deab13c74c3ad" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-saveable-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="1b1b4e11cece463d7b8e3c4caebe93938a4372b6442be63365ae4bc17b84c119" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="runtime-saveable-iossimulatorarm64-1.12.2.module">
+            <sha256 value="4c931a49ef8c34ccbe2a2fbb6844bb4f876e5dc6c3c81d1729d61f49ada90463" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui" version="1.12.2">
+         <artifact name="ui-1.12.2.module">
+            <sha256 value="7964d695a744846a67b1e6112c5020961fe4901052bcbfa253a55d42ffa6405d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-metadata-1.12.2.jar">
+            <sha256 value="002699b67fd985e9bafb67aa4322f4b2034bf0a9998c7ebdc484aa61d0b1ac2c" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-android" version="1.12.2">
+         <artifact name="ui-android-1.12.2.module">
+            <sha256 value="1ffa0222bf5a7378e85561718caa831eef91eb79127fcaa521cc666006a60618" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui.aar">
+            <sha256 value="8abae416be8db5bf5861b7705a1e1bb03369a45d253f0e54d4215b9e80ac7ed8" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-backhandler" version="1.12.2">
+         <artifact name="ui-backhandler-1.12.2.module">
+            <sha256 value="12c10955c09295a9fb6d62e75fe8670b5615bf02a43f60a00708dee72166108e" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-backhandler-metadata-1.12.2.jar">
+            <sha256 value="1cbc77ff4e3031f1d7f1d9ae8ae6e82c81ed084b85fa38d353f150543d7e8e77" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-backhandler" version="1.9.1">
+         <artifact name="ui-backhandler-1.9.1.module">
+            <sha256 value="31dfa186cd71b355cb1be78607ffd5256dcc83cff115a260ea4d697492092582" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-backhandler-android" version="1.12.2">
+         <artifact name="ui-backhandler-android-1.12.2.module">
+            <sha256 value="262e673eb53e108853b835de8cbc04b688982ad5b543c084c0014f3248d0298f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-backhandler.aar">
+            <sha256 value="663a8a2072379a3de4465d7d0bf5ec6d0d3e0ae1f21a914e037f1c96b553674a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-backhandler-iosarm64" version="1.12.2">
+         <artifact name="ui-backhandler-iosArm64Main-1.12.2.klib">
+            <sha256 value="26f6d1215e1d61323eafca94f9b77116a70083e4d4f921b058101f4a02f21959" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-backhandler-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="bd4ac56a1980917bdb8da0e9a4dfac9f3ef7f23e7ac3489b10f353f1b853b349" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-backhandler-iosarm64-1.12.2.module">
+            <sha256 value="6b64dbb420c6871acd8d6d9572963f01b1405a71e5de20cc7d3e0c8907875758" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-backhandler-iossimulatorarm64" version="1.12.2">
+         <artifact name="ui-backhandler-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="b099b9b290b2c20e1920f955594e475c93b0ae8ab9d4ffcf28b4a2106879890d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-backhandler-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="bd4ac56a1980917bdb8da0e9a4dfac9f3ef7f23e7ac3489b10f353f1b853b349" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-backhandler-iossimulatorarm64-1.12.2.module">
+            <sha256 value="65a5e6ba3e587cf3195b6fb86aaefa9913125cbf2ee79590a5a77ccf6b930564" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-geometry" version="1.12.2">
+         <artifact name="ui-geometry-1.12.2.module">
+            <sha256 value="272ef488253e31a2d63bce76ad17350b23e572fb99684e50dffa4e710ba5392f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-geometry-metadata-1.12.2.jar">
+            <sha256 value="b9cb13d0db999d5ad3fb8da5a6d4f0813c3998ceaf4dea3031c2196778ee3c60" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-geometry-android" version="1.12.2">
+         <artifact name="ui-geometry-android-1.12.2.module">
+            <sha256 value="89b840386390b514a186a4a5648f920779843e66e5568f8a120b360936158247" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-geometry.aar">
+            <sha256 value="0efa6af8d9ff9c8d28930deabe9ede9844ce2d8ceab552d9e237ca08412e4120" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-geometry-iosarm64" version="1.12.2">
+         <artifact name="ui-geometry-iosArm64Main-1.12.2.klib">
+            <sha256 value="4ba36474fe6359fb2a4e7c94bf35e3c1448ab347b0fd206631490369cf98785a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-geometry-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="e1dec010e5baf4ed5546685e5de7f114f56961749e59c7b1a702b3b47d23166a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-geometry-iosarm64-1.12.2.module">
+            <sha256 value="9d303bef6479ba0892d9a82a1fbbc3a2283096b583dafdd38c0d4ffa188ea1e8" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-geometry-iossimulatorarm64" version="1.12.2">
+         <artifact name="ui-geometry-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="285c8c24d8d271203abe417964e5627f07b77f90da7eea622acf44a11f4faf59" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-geometry-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="e1dec010e5baf4ed5546685e5de7f114f56961749e59c7b1a702b3b47d23166a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-geometry-iossimulatorarm64-1.12.2.module">
+            <sha256 value="7d8a8c70a3ca4bf6925c2fd5808b0f0459e4cffb9a80f73bacb35e5539ea435a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-graphics" version="1.12.2">
+         <artifact name="ui-graphics-1.12.2.module">
+            <sha256 value="54728551f91dbe653446925b11fadc7ee3b998c7a266d522bc0f2105ad133284" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-graphics-metadata-1.12.2.jar">
+            <sha256 value="16807b2b81ac0a1d28f0c82b6c0dab1ce59ce403a97aa7d26c9ce7bd523a270a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-graphics" version="1.9.1">
+         <artifact name="ui-graphics-1.9.1.module">
+            <sha256 value="b6d264ac8e5c48dd4f6f13d9fd8190780f1a386e4a10bd90c3bb055652d47401" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-graphics-android" version="1.12.2">
+         <artifact name="ui-graphics-android-1.12.2.module">
+            <sha256 value="d00b7e4197c80935617c215a53827adcd84727a15572bd0d275c68cf91326c39" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-graphics.aar">
+            <sha256 value="755edf074fc2a455ad7c35308048fb76de1736a620c37d7fe8c3de1486e74abe" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-graphics-iosarm64" version="1.12.2">
+         <artifact name="ui-graphics-iosArm64Main-1.12.2.klib">
+            <sha256 value="bc48749b3f8443590fb2ad84e52abe67d343f9a5e191125ae53553a02bcbb23f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-graphics-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="203c4fc28f707eb2596dcf2f7bb6fd64740bd5a05db03df864f7c7f77199fc88" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-graphics-iosarm64-1.12.2.module">
+            <sha256 value="e892bd3946a0ca640e098f8f919d549da42bfa20dbe6b13a4c075a43fd1b3af5" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-graphics-iossimulatorarm64" version="1.12.2">
+         <artifact name="ui-graphics-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="9f3d7fa289108991892360f70cd95308712d5b279c8bf0145a85e50b959cd759" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-graphics-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="203c4fc28f707eb2596dcf2f7bb6fd64740bd5a05db03df864f7c7f77199fc88" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-graphics-iossimulatorarm64-1.12.2.module">
+            <sha256 value="f7c1ed45103851118ec30203ef0b7ee13389a117360e546b0896124983f4fcd7" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-iosarm64" version="1.12.2">
+         <artifact name="ui-iosArm64Main-1.12.2.klib">
+            <sha256 value="d8a9558a5c0b1458bd890bd1160a281acf8298ffda3c4d6d0ea622f7f243ee92" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="508cd4cd3a3538420be776a2cc7b3478f3c7b909bcd932e6bea4b1686c78bd92" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-iosarm64-1.12.2.module">
+            <sha256 value="9058c478db31be19679cff155cf05ceb667bd3eb868a9e11babee0d69ea817ae" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-iossimulatorarm64" version="1.12.2">
+         <artifact name="ui-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="024f9af9a40c548d2f92bdd1e91196840ad122b4c67f0fe30bcb52a471e5b894" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="508cd4cd3a3538420be776a2cc7b3478f3c7b909bcd932e6bea4b1686c78bd92" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-iossimulatorarm64-1.12.2.module">
+            <sha256 value="09c0513e4050b01e4c919f1bc8b6e2909a78c4c52780336e1fe94971ff262d48" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-text" version="1.12.2">
+         <artifact name="ui-text-1.12.2.module">
+            <sha256 value="bec1add462862417a0dc83af2d6c9a49405546257a7a712f66062cb3d99db4b2" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-text-metadata-1.12.2.jar">
+            <sha256 value="dde3f95b44553326d8626e2f76dd803d44b464729d452cbca27a51b8fd85cf89" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-text" version="1.9.1">
+         <artifact name="ui-text-1.9.1.module">
+            <sha256 value="944bf0e17834b956ab4606b78e05c6f74331a92540727609d10ab572377a17d9" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-text-android" version="1.12.2">
+         <artifact name="ui-text-android-1.12.2.module">
+            <sha256 value="1f8b6ab6821b4266511099b5760bacd0595a8643fdddbcccc54a9007bf5e2c20" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-text.aar">
+            <sha256 value="06eca5c263fac0f7d403e8c0d3c2eb1d683723cd671901d583f1675bd19937e5" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-text-iosarm64" version="1.12.2">
+         <artifact name="ui-text-iosArm64Main-1.12.2.klib">
+            <sha256 value="55a3a32b075ba608df1d92ff6b1fe5554462ffffaf7e32a2b5017676d00afbe3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-text-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="03f4f697ce1a006864c18532ff9db5da63c030825ece30f1e05f7ea91020cf2b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-text-iosarm64-1.12.2.module">
+            <sha256 value="000f1aaed6b99bd5a38a55f2b88f159622459e755dea7eae33c719e23a772544" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-text-iossimulatorarm64" version="1.12.2">
+         <artifact name="ui-text-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="2a73b9c44ede767773c560ed402b511af19960661aea99d557b73ee995b7ada5" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-text-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="03f4f697ce1a006864c18532ff9db5da63c030825ece30f1e05f7ea91020cf2b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-text-iossimulatorarm64-1.12.2.module">
+            <sha256 value="75d5ec8f116f24594746c138fa61db1f709bb17b5f36f79332d7f4ae1acded7a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-uikit" version="1.12.2">
+         <artifact name="ui-uikit-1.12.2.module">
+            <sha256 value="f7260232f30e63c9d2de5fc597ec83e876029295c061cc6438aa1cf2aa7ca85e" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-uikit-metadata-1.12.2.jar">
+            <sha256 value="6b197e31eb49012fd0bdcd07c558eb5d5a576246685e9541bc3d2b71335aeee8" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-uikit-iosarm64" version="1.12.2">
+         <artifact name="ui-uikit-iosArm64Cinterop-utilsMain-1.12.2.klib">
+            <sha256 value="da3881a34372521df8f563c47462c643c9cc52a5b7ba0cde090d20f2831be82f" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-uikit-iosArm64Main-1.12.2.klib">
+            <sha256 value="22313c6e16e0b07551a00d519322a2af44d515dd814f61ccb0e476d00ca4d552" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-uikit-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="8bca7a50bbffc449531dd039c17d557060fd821a7307837755a07c9d5b3f7066" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-uikit-iosarm64-1.12.2.module">
+            <sha256 value="0ffee4f6880c232bc3f2a7085ef127f9e30ce390cac4c413905e2b054f5cca87" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-uikit-iossimulatorarm64" version="1.12.2">
+         <artifact name="ui-uikit-iosSimulatorArm64Cinterop-utilsMain-1.12.2.klib">
+            <sha256 value="04947a4d9a80bbd92fce413deeede0e7941e358611c0c40a28669f7675866b30" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-uikit-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="010fe35b5e94dcfe6f4cc3bac497735c91b0fab90dd522c3bf774e70025b86e4" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-uikit-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="8bca7a50bbffc449531dd039c17d557060fd821a7307837755a07c9d5b3f7066" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-uikit-iossimulatorarm64-1.12.2.module">
+            <sha256 value="4951eb8164f73306a12079fb80b32791782ad36ef003904442f3d8c7cd772264" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-unit" version="1.12.2">
+         <artifact name="ui-unit-1.12.2.module">
+            <sha256 value="96e723f4bed87f41651221cf3bab016ddf3755b1f49853214f0c549f5cc4c2ef" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-unit-metadata-1.12.2.jar">
+            <sha256 value="2a3b120dfa31dbfa3d3ddf327cff4a1c15f050ff0c19e64f69c1e241db6a072a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-unit-android" version="1.12.2">
+         <artifact name="ui-unit-android-1.12.2.module">
+            <sha256 value="39dbf97e5e000c1733904d51fe0a5894cb65cf716a73b9ec31b5bc922ccbdcf5" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-unit.aar">
+            <sha256 value="3478a9d0818fde7de41b84512521d4b8b5536e40abef334c105b07c903f866c3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-unit-iosarm64" version="1.12.2">
+         <artifact name="ui-unit-iosArm64Main-1.12.2.klib">
+            <sha256 value="2d2990d2fb0ad636b39646ad863fe4e1de543cd1fad523afbf6ba9bec2dafd35" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-unit-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="6be4e020e12c7b439091c27ac327ae3ce060220135cced10d46d0228551b7fcc" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-unit-iosarm64-1.12.2.module">
+            <sha256 value="b3350ebd5726f6c2c0184cc95925b98c298c35b76a6707d4c3c8a53929535cdb" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-unit-iossimulatorarm64" version="1.12.2">
+         <artifact name="ui-unit-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="9a92489cf5792264e521c3be08ba6f6638077e4b38ceca1f8b8c066291f54a06" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-unit-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="6be4e020e12c7b439091c27ac327ae3ce060220135cced10d46d0228551b7fcc" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-unit-iossimulatorarm64-1.12.2.module">
+            <sha256 value="6d4867a251c1e0a3306bf2b67c4a483642f456c3c85284d0a9c5888de1be058a" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-util" version="1.12.2">
+         <artifact name="ui-util-1.12.2.module">
+            <sha256 value="00b2bcb84ff00b228912d75a4f415572090cca820313ce6f0c31081f0121b30b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-util-metadata-1.12.2.jar">
+            <sha256 value="3650828fdf751ef5f95673766b770bac878ab288de083580487c4720af66903d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-util" version="1.9.1">
+         <artifact name="ui-util-1.9.1.module">
+            <sha256 value="8037cfcd912def30911b46411ee28d1355a6457e05111d4354d0fec333aafc77" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-util-android" version="1.12.2">
+         <artifact name="ui-util-android-1.12.2.module">
+            <sha256 value="748cf3c596f3d3b5f8160bd6d5146cad91285144e42d2a873d091c2274c28e8b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-util.aar">
+            <sha256 value="76d359b874d8f0cd4f01717cbefe7cb3cc31ea06a50dca6d4d9a5368e3a42c7b" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-util-iosarm64" version="1.12.2">
+         <artifact name="ui-util-iosArm64Main-1.12.2.klib">
+            <sha256 value="56e934db8d3f37b992e9fd0f4fe80537b36c72e956c0f3df20d1b264040eb2a8" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-util-iosarm64-1.12.2-metadata.jar">
+            <sha256 value="5f125e5f88dae339f100ff7b8246a7ca7f88a4adcf07b4520547192fac6796d2" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-util-iosarm64-1.12.2.module">
+            <sha256 value="ca31d354d53f38c34ade3e08d189a6a634bfd298df1aa47008295bdbf716f64d" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.compose.ui" name="ui-util-iossimulatorarm64" version="1.12.2">
+         <artifact name="ui-util-iosSimulatorArm64Main-1.12.2.klib">
+            <sha256 value="b231236f58859e10d5fee25ada4bcb32bfe045cec87602ed410b959b9a7c52ca" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-util-iossimulatorarm64-1.12.2-metadata.jar">
+            <sha256 value="5f125e5f88dae339f100ff7b8246a7ca7f88a4adcf07b4520547192fac6796d2" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="ui-util-iossimulatorarm64-1.12.2.module">
+            <sha256 value="4cad3446d5378db0fdc73ff9397bd87860c9fed9ad44463ec1cab4fada5738aa" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.kotlin.jvm" name="org.jetbrains.kotlin.jvm.gradle.plugin" version="2.4.20">
+         <artifact name="org.jetbrains.kotlin.jvm.gradle.plugin-2.4.20.pom">
+            <sha256 value="97ffd2004e0be1df8f80f28f451b9f6aaaed08b6ff37e6979df825cbc314a4dd" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
       <component group="org.jetbrains.kotlin.multiplatform" name="org.jetbrains.kotlin.multiplatform.gradle.plugin" version="2.4.20">
          <artifact name="org.jetbrains.kotlin.multiplatform.gradle.plugin-2.4.20.pom">
             <sha256 value="7538cff5749e40827ba4b4b8af5f46fa06be7033103e712ccda57515d69a8771" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.kotlin.plugin.compose" name="org.jetbrains.kotlin.plugin.compose.gradle.plugin" version="2.4.20">
+         <artifact name="org.jetbrains.kotlin.plugin.compose.gradle.plugin-2.4.20.pom">
+            <sha256 value="ad4bc062bf802e7b570ecf30467bb70a480d779502cf6be0700204c7c89e9d97" origin="Generated by Gradle" reason="Artifact is not signed"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.kotlinx" name="kotlinx-coroutines-core" version="1.3.4">
+         <artifact name="kotlinx-coroutines-core-1.3.4.pom">
+            <sha256 value="c7cc337927e05dfe4437717eb2ca7c3c9a58f10efecb93d387c3b806829adee6" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.skiko" name="skiko" version="0.150.2">
+         <artifact name="skiko-0.150.2.module">
+            <sha256 value="c90d7099a752a3c6ed3f699b199ae977c9e22abae581b7c1a5c4437293175f75" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="skiko-metadata-0.150.2.jar">
+            <sha256 value="7f5100bb4aac99ff4b896ddf5a59e8c73cfe4c0f83c5951762a08f848565a8a8" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.skiko" name="skiko-iosarm64" version="0.150.2">
+         <artifact name="skiko-iosArm64Cinterop-uikitMain-0.150.2.klib">
+            <sha256 value="1a5c05052e0321166e7519b7aaec2306ea940732c28c24a679fb8df4161df72c" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="skiko-iosArm64Main-0.150.2.klib">
+            <sha256 value="8e70c2e80b8b3ac026c44c381e57dbb87a8b371ae42cb2f9e1f009a193195b90" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="skiko-iosarm64-0.150.2-metadata.jar">
+            <sha256 value="34570035a53920b678eb61563377f090e77ce0b5d81f326a11bc669f2d8efe33" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="skiko-iosarm64-0.150.2.module">
+            <sha256 value="9fe69b78875d6d4cb82fac74b81af4d88a2797252519120443d8bcdf13af9e68" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+      </component>
+      <component group="org.jetbrains.skiko" name="skiko-iossimulatorarm64" version="0.150.2">
+         <artifact name="skiko-iosSimulatorArm64Cinterop-uikitMain-0.150.2.klib">
+            <sha256 value="bf60cbf0d6aa8c27930ce5d66f261b0fcaa44df2cc26e8ab2e35111799ec6ee3" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="skiko-iosSimulatorArm64Main-0.150.2.klib">
+            <sha256 value="154d8bb20e0047d91b5517e24e7ecc650d17b06eed17a24467592baefb943050" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="skiko-iossimulatorarm64-0.150.2-metadata.jar">
+            <sha256 value="34570035a53920b678eb61563377f090e77ce0b5d81f326a11bc669f2d8efe33" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
+         </artifact>
+         <artifact name="skiko-iossimulatorarm64-0.150.2.module">
+            <sha256 value="18e61fc9ea9dfd92109b9022fa419a0d4221c5fa01a790877fd896ecf1b9f578" origin="Generated by Gradle" reason="A key couldn't be downloaded"/>
          </artifact>
       </component>
       <component group="org.jmailen.gradle" name="kotlinter-gradle" version="5.7.0">

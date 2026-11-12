@@ -25,7 +25,9 @@ It is not published. The guide behind it is [docs/guide/ktor.md, "Connection mig
 | `certs/gen.sh` | the demo's private CA and server certificate (a copy of `samples/ios/certs/gen.sh` that also names 10.0.2.2) |
 
 Like `samples/ios`, it is a separate Gradle build that depends on `io.kuicksilver:*` by coordinates; the composite build
-in `settings.gradle.kts` substitutes this repository's modules. Kotlin and AGP are the repository's versions; Compose
+in `settings.gradle.kts` substitutes this repository's modules. Like `samples/realtime-telemetry`, it verifies every
+plugin and dependency against the repository's `gradle/verification-metadata.xml` (linked from `gradle/`; CONTRIBUTING.md,
+"Dependency verification"). Kotlin and AGP are the repository's versions; Compose
 Multiplatform is 1.12.2 with Material 3 1.9.0, which only this demo uses.
 
 ## Run it
