@@ -37,7 +37,8 @@ extern "C" {
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
    ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_sender (send-only clones
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
-   section 9.2.1) */
+   section 9.2.1); certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
+   ksl_ocsp_check, ksl_ctx_set_crls */
 
 /* return codes */
 #define KSL_OK 0
@@ -83,7 +84,18 @@ extern "C" {
                                       before KSL_WANT_VERIFY; the caller holds the path its verifier built to it with ksl_chain_level before
                                       it accepts (TrustConfig.Platform: the platform's path, not every certificate the peer sent).
                                       KSL_E_BAD_ARG on a server context */
+#define KSL_OPT_REVOCATION 12 /* client (ABI 7, additive): KSL_REVOCATION_*; asks for a stapled OCSP response (status_request, RFC 6066
+                                      section 8) and checks it where ksl's own verifier runs (KSL_VERIFY_OPENSSL) against the issuer that
+                                      verifier trusted (ksl_ocsp_check rules); a failed check ends the handshake with
+                                      bad_certificate_status_response (113), the X509 error in ksl_ssl_last_error: CERT_REVOKED,
+                                      OCSP_VERIFY_FAILED (does not verify, another certificate, outside its validity interval),
+                                      OCSP_VERIFY_NEEDED (none sent) or OCSP_CERT_UNKNOWN ("unknown"); the last two only under
+                                      KSL_REVOCATION_REQUIRE_STAPLED or for a leaf with the RFC 7633 status_request feature. A leaf
+                                      that is itself a trust anchor is not checked. KSL_E_BAD_ARG on a server context */
 /* clang-format on */
+#define KSL_REVOCATION_OFF 0                /* no status_request */
+#define KSL_REVOCATION_STAPLED_IF_PRESENT 1 /* a stapled response must pass; none, or "unknown", passes */
+#define KSL_REVOCATION_REQUIRE_STAPLED 2    /* a stapled response saying "good" is required */
 
 /* ksl_ssl_get keys */
 #define KSL_GET_ALPN 1    /* negotiated protocol, bytes */
@@ -101,6 +113,9 @@ extern "C" {
                                       server's HelloRequest, a client's ClientHello), which OpenSSL refused with a no_renegotiation
                                       warning; the session goes on. RFC 9113 section 9.2.1 makes it a connection error on HTTP/2.
                                       The ksl_tcp_read that refused it stops there (KSL_OK, nothing read). Additive in ABI 7 */
+#define KSL_GET_OCSP_STATUS 12 /* client, 9 bytes: the KSL_OCSP_* of the stapled response the handshake accepted (KSL_OCSP_GOOD or
+                                      KSL_OCSP_UNKNOWN), 0xff when none was checked, then 8 bytes big-endian: the epoch second until which
+                                      that response is fresh (its nextUpdate plus 5 minutes of clock skew), 0 with none. Additive in ABI 7 */
 /* clang-format on */
 
 /* ksl_ssl_set keys */
@@ -116,6 +131,10 @@ extern "C" {
 #define KSL_SET_EARLY_DATA 5 /* 1 byte before the first drive. Client: 1 = send 0-RTT with the session set by ksl_ssl_set_session
                                       (KSL_E_NOT_SUPPORTED when its ticket does not allow early data). Server: 1 = the transport admits early
                                       data for this hello (replay register), 0 = refuse; KSL_E_NOT_SUPPORTED without KSL_OPT_EARLY_DATA */
+#define KSL_SET_OCSP_RESPONSE 6 /* server, before the first drive: a DER OCSPResponse (RFC 6960) to staple when the client sends
+                                      status_request; copied. Sent only when it is for the leaf the handshake presents (the issuer: the
+                                      certificate of the configured chain that issued it), verifies, and is inside its validity interval
+                                      at that moment (ksl_ocsp_check rules); otherwise nothing is stapled. Additive in ABI 7 */
 /* clang-format on */
 
 /* ksl_ssl_get_peer_chain selector */
@@ -265,6 +284,30 @@ int ksl_ctx_last_error(ksl_ctx *, uint32_t *packed, char *buf, size_t len);
    key or signature (EE_KEY_TOO_SMALL, CA_KEY_TOO_SMALL, CA_MD_TOO_WEAK, CERT_CHAIN_TOO_LONG), or -1 when the input holds no
    certificate or does not parse. Touches no context: safe from any thread (ABI 7, additive). */
 int ksl_chain_level(const uint8_t *chain, size_t chain_len, int built);
+
+/* --- certificate revocation (additive under ABI 7; RFC 9325 section 7.5) --- */
+#define KSL_OCSP_GOOD 0
+#define KSL_OCSP_REVOKED 1
+#define KSL_OCSP_UNKNOWN 2
+#define KSL_OCSP_INVALID                                                                                               \
+    3 /* not a successful basic response, a bad signature, a signer not authorized for the issuer */
+#define KSL_OCSP_MISMATCH 4 /* no single response for this certificate */
+#define KSL_OCSP_STALE 5    /* outside its validity interval at `at` */
+/* Checks one DER OCSPResponse for the first certificate of `chain` (framed as for ksl_ctx_set_roots) issued by the second, as RFC
+   6960 section 3.2 says: the certID (under the response's hash) names that certificate and issuer, the signature verifies, the
+   signer is the issuer's key or a delegated responder the issuer signed with id-kp-OCSPSigning and valid at `at` (section
+   4.2.2.2), thisUpdate is at most 5 minutes after `at`, and nextUpdate (thisUpdate + 1 day without one) at most 5 minutes
+   before. `at`: epoch seconds, 0 for now. Returns a KSL_OCSP_* (the certificate's status only when the response passes; then
+   *valid_until is nextUpdate + 5 minutes, else 0), or KSL_ERROR when the chain holds fewer than two certificates or does not
+   parse. Touches no context: safe from any thread. */
+int ksl_ocsp_check(const uint8_t *resp, size_t resp_len, const uint8_t *chain, size_t chain_len, int64_t at,
+                   int64_t *valid_until);
+/* Adds CRLs (framed as for ksl_ctx_set_roots, each one DER CertificateList) to the context's own trust store, before freeze and
+   after ksl_ctx_set_roots with certificates (KSL_E_BAD_ARG on the system store). Every certificate on a verified path is then
+   checked against the CRL of its issuer (X509_V_FLAG_CRL_CHECK_ALL), in handshakes and in ksl_ctx_verify_chain alike: revoked
+   fails (X509_V_ERR_CERT_REVOKED), so does a CRL that is expired, not yet valid or does not verify; a certificate whose issuer
+   has no configured CRL is not checked. A list that does not parse is refused whole (KSL_E_BAD_ARG). */
+int ksl_ctx_set_crls(ksl_ctx *, const uint8_t *crls, size_t crls_len);
 
 /* --- session (QUIC or TCP) --- */
 ksl_ssl *ksl_ssl_new(ksl_ctx *, int mode);

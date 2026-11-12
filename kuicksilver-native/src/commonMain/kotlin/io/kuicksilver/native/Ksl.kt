@@ -137,6 +137,28 @@ public expect object Ksl {
         builtPath: Boolean,
     ): Int
 
+    /**
+     * Adds CRLs ([crlsDer], each one DER CertificateList) to the context's own trust store (after [ctxSetRoots] with
+     * certificates): every certificate on a verified path is then checked against its issuer's CRL, when one is configured
+     * (`ksl_ctx_set_crls`, ABI 7 additive). Throws [KslException.Internal] when a CRL does not parse or the context uses the
+     * system store.
+     */
+    public fun ctxSetCrls(
+        ctx: Long,
+        crlsDer: List<ByteArray>,
+    )
+
+    /**
+     * Checks the DER OCSP response [response] for `chainDer[0]` issued by `chainDer[1]` at [atEpochSeconds] (0 = now) by RFC
+     * 6960 section 3.2 (`ksl_ocsp_check`): [KslOcspVerdict.status] is a `KslConst.OCSP_*`, or -1 when the chain is unusable or
+     * the library has no OCSP support.
+     */
+    public fun ocspCheck(
+        response: ByteArray,
+        chainDer: List<ByteArray>,
+        atEpochSeconds: Long,
+    ): KslOcspVerdict
+
     // session
     public fun sslNew(
         ctx: Long,
@@ -578,3 +600,10 @@ internal inline fun <T> withTicketKeys(
         keys.forEach { it.fill(0) }
     }
 }
+
+/** What [Ksl.ocspCheck] found: a `KslConst.OCSP_*` (or -1), and until when (epoch seconds) a passing response is fresh, else 0. */
+@InternalKuicksilverApi
+public class KslOcspVerdict(
+    public val status: Int,
+    public val validUntil: Long,
+)

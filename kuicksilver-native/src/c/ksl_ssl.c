@@ -14,6 +14,7 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
     s->mode = mode;
     s->rcd_level = -1;
     s->quic_version = 0x00000001u;
+    s->ocsp_status = -1;
     s->ssl = SSL_new(c->ctx);
     if (!s->ssl) {
         free(s);
@@ -85,6 +86,7 @@ void ksl_ssl_free(ksl_ssl *s) {
     }
     free(s->last_popped);
     free(s->tp);
+    free(s->ocsp_staple);
     free(s->verify_host);
     free(s->verify_ip);
     sk_X509_pop_free(s->presented_chain, X509_free);
@@ -209,6 +211,30 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
             return KSL_ERROR;
         }
         return KSL_OK;
+    case KSL_SET_OCSP_RESPONSE: {
+        if (s->owner->role != KSL_SERVER || !data || len == 0 || len > (1u << 24) - 1) {
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: an OCSP response is server-only, 1..2^24-1 bytes");
+            return KSL_ERROR;
+        }
+#ifdef OPENSSL_NO_OCSP
+        ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: built without OCSP (OpenSSL no-ocsp)");
+        return KSL_ERROR;
+#endif
+        if (SSL_in_before(s->ssl) != 1) {
+            ksl_ssl_set_error(s, KSL_E_TOO_LATE, "ksl: the OCSP response is set before the handshake");
+            return KSL_ERROR;
+        }
+        uint8_t *copy = malloc(len);
+        if (!copy) {
+            ksl_ssl_set_error(s, KSL_E_NO_MEMORY, "ksl: no memory for the OCSP response");
+            return KSL_ERROR;
+        }
+        memcpy(copy, data, len);
+        free(s->ocsp_staple);
+        s->ocsp_staple = copy;
+        s->ocsp_staple_len = len;
+        return KSL_OK;
+    }
     default:
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown setter");
         return KSL_ERROR;
@@ -290,6 +316,13 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
         int st = SSL_get_early_data_status(s->ssl);
         uint8_t b = st == SSL_EARLY_DATA_ACCEPTED ? 2 : st == SSL_EARLY_DATA_REJECTED ? 1 : 0;
         return copy_out(out, cap, len, &b, 1);
+    }
+    case KSL_GET_OCSP_STATUS: {
+        uint8_t b[9] = {s->ocsp_status < 0 ? 0xff : (uint8_t)s->ocsp_status};
+        uint64_t u = s->ocsp_status < 0 ? 0 : (uint64_t)s->ocsp_until;
+        for (int i = 0; i < 8; i++)
+            b[1 + i] = (uint8_t)(u >> (56 - 8 * i));
+        return copy_out(out, cap, len, b, sizeof b);
     }
     case KSL_GET_RENEGOTIATION: {
         uint8_t b = s->renegotiations > 0;

@@ -203,6 +203,24 @@ static jbyteArray j_ctx_verify_chain_path(JNIEnv *e, jclass c, jlong h, jbyteArr
     free(buf);
     return path;
 }
+static jint j_ctx_set_crls(JNIEnv *e, jclass c, jlong h, jbyteArray a) {
+    (void)c;
+    bytes b = get_bytes(e, a);
+    int r = ksl_ctx_set_crls(CTX(h), b.p, b.n);
+    drop(&b);
+    return r;
+}
+static jint j_ocsp_check(JNIEnv *e, jclass c, jbyteArray resp, jbyteArray chain, jlong at, jlongArray until) {
+    (void)c;
+    bytes r = get_bytes(e, resp), ch = get_bytes(e, chain);
+    int64_t u = 0;
+    int v = ksl_ocsp_check(r.p, r.n, ch.p, ch.n, (int64_t)at, &u);
+    drop(&r);
+    drop(&ch);
+    jlong ju = (jlong)u;
+    (*e)->SetLongArrayRegion(e, until, 0, 1, &ju);
+    return v;
+}
 static jint j_chain_level(JNIEnv *e, jclass c, jbyteArray a, jboolean built) {
     (void)c;
     bytes b = get_bytes(e, a);
@@ -889,6 +907,8 @@ static const JNINativeMethod methods[] = {
     {"ctxVerifyChain", "(J[B" S_STR "J)I", (void *)j_ctx_verify_chain},
     {"ctxVerifyChainPath", "(J[B" S_STR "J[I)[B", (void *)j_ctx_verify_chain_path},
     {"chainLevel", "([BZ)I", (void *)j_chain_level},
+    {"ctxSetCrls", "(J[B)I", (void *)j_ctx_set_crls},
+    {"ocspCheck", "([B[BJ[J)I", (void *)j_ocsp_check},
     {"ctxLastError", "(J[I)" S_STR, (void *)j_ctx_last_error},
     {"sslNew", "(JI)J", (void *)j_ssl_new},
     {"sslFree", "(J)V", (void *)j_ssl_free},

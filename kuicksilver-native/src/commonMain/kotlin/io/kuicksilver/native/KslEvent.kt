@@ -51,6 +51,23 @@ public object KslConst {
      */
     public const val OPT_LEVEL_AFTER_PAUSE: Int = 11
 
+    /**
+     * Client context: `REVOCATION_*`, the stapled OCSP response asked for and checked where ksl's own verifier runs (ABI 7,
+     * additive; RFC 9325 section 7.5). [E_NOT_SUPPORTED] for anything but off in a build without OpenSSL's ocsp module.
+     */
+    public const val OPT_REVOCATION: Int = 12
+    public const val REVOCATION_OFF: Int = 0
+    public const val REVOCATION_STAPLED_IF_PRESENT: Int = 1
+    public const val REVOCATION_REQUIRE_STAPLED: Int = 2
+
+    /** [Ksl.ocspCheck] results (`KSL_OCSP_*`). */
+    public const val OCSP_GOOD: Int = 0
+    public const val OCSP_REVOKED: Int = 1
+    public const val OCSP_UNKNOWN: Int = 2
+    public const val OCSP_INVALID: Int = 3
+    public const val OCSP_MISMATCH: Int = 4
+    public const val OCSP_STALE: Int = 5
+
     public const val GET_ALPN: Int = 1
     public const val GET_VERSION: Int = 2
     public const val GET_CHANNEL_BINDING: Int = 4
@@ -71,6 +88,12 @@ public object KslConst {
      */
     public const val GET_RENEGOTIATION: Int = 11
 
+    /**
+     * Client, 9 bytes: the `OCSP_*` of the stapled response the handshake accepted ([OCSP_GOOD] or [OCSP_UNKNOWN]), 0xff when
+     * none was checked, then the epoch second (8 bytes big-endian) until which it is fresh (additive in ABI 7).
+     */
+    public const val GET_OCSP_STATUS: Int = 12
+
     public const val SET_SNI: Int = 1
     public const val SET_VERIFY_NAME: Int = 2
     public const val SET_QUIC_VERSION: Int = 3
@@ -80,6 +103,9 @@ public object KslConst {
 
     /** 1 byte: client requests 0-RTT; server admits early data for this hello. */
     public const val SET_EARLY_DATA: Int = 5
+
+    /** Server, before the first drive: the DER OCSP response stapled when it is for the leaf sent and fresh (additive in ABI 7). */
+    public const val SET_OCSP_RESPONSE: Int = 6
 
     public const val CHAIN_PRESENTED: Int = 0
     public const val CHAIN_VALIDATED: Int = 1

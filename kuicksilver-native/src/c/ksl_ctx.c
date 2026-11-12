@@ -465,6 +465,11 @@ ksl_ctx *ksl_ctx_new(int role) {
                                     c); /* QUIC ALPN check, SNI pause (KSL_OPT_SNI_PAUSE) */
     if (role == KSL_SERVER)
         SSL_CTX_set_tlsext_servername_callback(c->ctx, server_name_cb);
+    /* certificate status (ksl_ocsp.c): a client asks for it only with KSL_OPT_REVOCATION; a server staples what its session was
+       given (KSL_SET_OCSP_RESPONSE) */
+#ifndef OPENSSL_NO_OCSP
+    SSL_CTX_set_tlsext_status_cb(c->ctx, ksl_ocsp_status_cb);
+#endif
     if (role == KSL_CLIENT &&
         SSL_CTX_add_client_custom_ext(c->ctx, KSL_ABORT_EXT_TYPE, abort_ext_add_cb, NULL, NULL, NULL, NULL) != 1) {
         SSL_CTX_free(c->ctx);
@@ -776,6 +781,7 @@ int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
         ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: root rejected");
         return KSL_ERROR;
     }
+    c->own_roots = 1;
     return KSL_OK;
 }
 /* RFC 10015 sections 2-4: "Clients MUST NOT offer and servers MUST NOT select" non-ephemeral FFDH, FFDHE and RSA cipher suites in
@@ -934,6 +940,23 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         }
         c->level_after_pause = value != 0;
         return KSL_OK;
+    case KSL_OPT_REVOCATION:
+        if (c->role != KSL_CLIENT || value < KSL_REVOCATION_OFF || value > KSL_REVOCATION_REQUIRE_STAPLED) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: revocation is client-only (0..2)");
+            return KSL_ERROR;
+        }
+#ifdef OPENSSL_NO_OCSP
+        if (value != KSL_REVOCATION_OFF) {
+            ksl_ctx_set_error(c, KSL_E_NOT_SUPPORTED, "ksl: built without OCSP (OpenSSL no-ocsp)");
+            return KSL_ERROR;
+        }
+        return KSL_OK;
+#else
+        c->revocation = value;
+        return SSL_CTX_set_tlsext_status_type(c->ctx, value == KSL_REVOCATION_OFF ? -1 : TLSEXT_STATUSTYPE_ocsp) == 1
+                   ? KSL_OK
+                   : KSL_ERROR;
+#endif
     case KSL_OPT_SNI_PAUSE:
         if (c->role != KSL_SERVER) {
             ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: SNI pause is server-only");

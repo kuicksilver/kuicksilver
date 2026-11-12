@@ -90,8 +90,9 @@ identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the 
 hints for PMTUD: `ksl_udp_take_ptb`, `ksl_udp_emsgsize`, and a receive that no longer fails on a queued ICMP error; under 7 too,
 additive, `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, `ksl_udp_sender` for
 several sender threads on one socket, `ksl_chain_level` with
-`KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, and `ksl_ctx_verify_chain_path`
-for the path a chain re-verification built). It is bumped on
+`KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, `ksl_ctx_verify_chain_path`
+for the path a chain re-verification built, and `ksl_ctx_set_crls`, `ksl_ocsp_check`, `KSL_OPT_REVOCATION`,
+`KSL_SET_OCSP_RESPONSE` and `KSL_GET_OCSP_STATUS` for certificate revocation). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
 `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
 "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the

@@ -40,6 +40,7 @@ typedef struct {
 struct ksl_ctx {
     SSL_CTX *ctx;
     int role, verify_mode, client_cert_mode, frozen, sni_pause, keylog, generic_alerts, early_data, level_after_pause;
+    int revocation; /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
     size_t num_tickets;
     uint8_t alpn[256];
     size_t alpn_len;
@@ -57,6 +58,7 @@ struct ksl_ctx {
     int64_t leaf_not_after;
     int has_leaf;     /* the identity's leaf, digested once when it is set (tickets bind it) */
     int shared_roots; /* the cert store is the process-wide system store: never modified */
+    int own_roots;    /* ksl_ctx_set_roots installed certificates into the context's own store (CRLs may join them) */
     uint32_t last_err;
     char last_msg[KSL_MSG];
 };
@@ -131,6 +133,12 @@ struct ksl_ssl {
     void (*msg_observer)(int, int, int, const void *, size_t, SSL *, void *);
     void *msg_observer_arg;
 #endif
+    /* certificate status (ksl_ocsp.c): a server's response to staple (KSL_SET_OCSP_RESPONSE); a client's verdict on the stapled
+       response it accepted (KSL_OCSP_GOOD or KSL_OCSP_UNKNOWN, -1 none) and until when that response is fresh */
+    uint8_t *ocsp_staple;
+    size_t ocsp_staple_len;
+    int ocsp_status;
+    int64_t ocsp_until;
     /* errors */
     int verify_err; /* X509_V_ERR_* of the last local verification failure */
     uint32_t last_err;
@@ -183,6 +191,11 @@ int ksl_client_hello_sni(SSL *ssl, const unsigned char **name,
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl,
                 void *arg); /* a TCP client's handshake messages (ksl_ssl.c) */
 
+/* certificate status (ksl_ocsp.c, not with OPENSSL_NO_OCSP): the status callback of every context (client: checks the stapled
+   response; server: staples its own) */
+#ifndef OPENSSL_NO_OCSP
+int ksl_ocsp_status_cb(SSL *ssl, void *arg);
+#endif
 /* the system CA store (ksl_ctx.c, ksl_trust_cache.c) */
 void ksl_trust_paths(const char *const **files, const char *const **dirs);
 int ksl_load_system_roots(ksl_ctx *c, X509_STORE *st);

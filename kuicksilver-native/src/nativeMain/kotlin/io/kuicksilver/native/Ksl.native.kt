@@ -192,6 +192,24 @@ public actual object Ksl {
             rc
         }
 
+    public actual fun ctxSetCrls(
+        ctx: Long,
+        crlsDer: List<ByteArray>,
+    ): Unit = frameDerList(crlsDer).pin { p, n -> ctxCheck(ctx, ksl_ctx_set_crls(ctx(ctx), p, n)) }
+
+    public actual fun ocspCheck(
+        response: ByteArray,
+        chainDer: List<ByteArray>,
+        atEpochSeconds: Long,
+    ): KslOcspVerdict =
+        memScoped {
+            val until = alloc<LongVar>()
+            until.value = 0
+            val r =
+                response.pin { rp, rn -> frameDerList(chainDer).pin { p, n -> ksl_ocsp_check(rp, rn, p, n, atEpochSeconds, until.ptr) } }
+            KslOcspVerdict(if (r < 0) -1 else r, until.value)
+        }
+
     public actual fun chainLevel(
         chainDer: List<ByteArray>,
         builtPath: Boolean,

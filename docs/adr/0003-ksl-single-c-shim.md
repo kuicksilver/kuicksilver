@@ -114,3 +114,16 @@ len, name, at, x509_err, path, cap, path_len)` is `ksl_ctx_verify_chain` that al
 holds it), so a server checks the pins of a `Pinned` on the path built under a reloaded bundle. Both functions now set the
 context's security level as the verification's auth level, as a handshake does (`ssl_cert.c` `ssl_verify_internal`). JNI
 `KslNative.ctxVerifyChainPath`, cinterop `ksl_ctx_verify_chain_path`, Kotlin `Ksl.ctxVerifyChainPath`. 82 functions.
+
+Certificate revocation, additive under 7 (RFC 9325 section 7.5: "TLS implementations MUST implement a strategy to distrust
+revoked certificates"): `ksl_ctx_set_crls(ctx, crls, len)` adds CRLs (framed as roots) to a context's own trust store and turns
+on `X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL`, with a store verify callback that passes only "unable to get
+certificate CRL" (an issuer without a configured CRL is not checked); handshakes and `ksl_ctx_verify_chain` see them alike.
+`ksl_ocsp_check(resp, len, chain, chain_len, at, valid_until)` checks one DER OCSP response for a leaf and its issuer by RFC
+6960 section 3.2 (certID, signature, the issuer's key or a delegated responder with id-kp-OCSPSigning that the issuer signed,
+thisUpdate and nextUpdate with 5 minutes of skew). The status callback of every context (`ksl_ocsp.c`) checks a client's
+stapled response (`KSL_OPT_REVOCATION`, `KSL_GET_OCSP_STATUS`) and staples a server's (`KSL_SET_OCSP_RESPONSE`) only when it
+is for the leaf sent and fresh. The OCSP half needs OpenSSL's ocsp module, which `no-http` in
+`tools/openssl/configure-flags.txt` turns off (Configure cascades http to ocsp): built without it, `ksl_ocsp_check` answers
+`KSL_ERROR` and the option and setter `KSL_E_NOT_SUPPORTED`. JNI `KslNative.ctxSetCrls` / `KslNative.ocspCheck`, cinterop
+`ksl_ctx_set_crls` / `ksl_ocsp_check`, Kotlin `Ksl.ctxSetCrls` / `Ksl.ocspCheck`. 84 functions.
