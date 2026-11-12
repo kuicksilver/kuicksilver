@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# C formatting check: the hand-written C of the ksl shim (src/c, src/jni, src/testhooks) must match .clang-format.
+# C formatting check: the hand-written C of the ksl shim (src/c, src/jni, src/testhooks) and of tools/certs must match .clang-format.
 #   bash tools/check/clang-format.sh          check (clang-format --dry-run -Werror)
 #   bash tools/check/clang-format.sh --fix    rewrite the files in place
 # Output is only reproducible for one exact version of clang-format (minor releases have changed the layout), so the check
@@ -20,4 +20,4 @@ found="$("$cf" --version | sed -n 's/.*version \([0-9][0-9.]*\).*/\1/p' | head -
 [ "$found" = "$CLANG_FORMAT_VERSION" ] || { echo "clang-format.sh: need clang-format $CLANG_FORMAT_VERSION (tools/check/clang-format-requirements.txt), found '$found'" >&2; exit 2; }
 mode=(--dry-run -Werror); [ "${1:-}" = "--fix" ] && mode=(-i)
 git ls-files 'kuicksilver-native/src/c/*.c' 'kuicksilver-native/src/c/*.h' 'kuicksilver-native/src/jni/*.[ch]' \
-  'kuicksilver-native/src/testhooks/*.[ch]' | grep -v '/vectors_rfc[0-9]*\.h$' | tr '\n' '\0' | xargs -0 "$cf" "${mode[@]}"
+  'kuicksilver-native/src/testhooks/*.[ch]' 'tools/certs/*.[ch]' | grep -v '/vectors_rfc[0-9]*\.h$' | tr '\n' '\0' | xargs -0 "$cf" "${mode[@]}"
