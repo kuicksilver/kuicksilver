@@ -60,7 +60,10 @@ import kotlinx.io.readTo
  * MUST NOT send any more data frames"): nothing of them reaches [output] and the write does not fail, so a session that
  * ends in order still does. Ktor's sessions send nothing after their Close; the rule bounds what any other upgrade (an
  * application's own `ProtocolUpgrade`) can write once its engine stopped holding it at the peer's window. Control frames
- * still pass.
+ * still pass. Once [peerClosed] says the peer's Close arrived, the message being sent may finish (its continuation frames
+ * up to its FIN: RFC 6455 section 1.4, an endpoint "may delay sending a Close frame until its current message is sent",
+ * and section 7.1.2) but a data frame that starts a new message is discarded, with its continuations: what is written
+ * between the peer's Close and this side's own is bounded by one message.
  */
 @InternalKuicksilverApi
 public fun guardWebSocketOutput(
@@ -69,7 +72,8 @@ public fun guardWebSocketOutput(
     checkText: Boolean = true,
     compression: SentCompression = SentCompression.Checked,
     onClose: () -> Unit = {},
-): ByteWriteChannel = OutputGuard(output, masking, checkText, compression, onClose)
+    peerClosed: () -> Boolean = { false },
+): ByteWriteChannel = OutputGuard(output, masking, checkText, compression, onClose, peerClosed)
 
 /** How the extension that compresses what this side sends (permessage-deflate) frames a compressed message. */
 @InternalKuicksilverApi
@@ -105,6 +109,7 @@ private class OutputGuard(
     private val checkText: Boolean,
     private val compression: SentCompression,
     private val onClose: () -> Unit,
+    private val peerClosed: () -> Boolean,
 ) : ByteWriteChannel {
     private val staged = Buffer()
     private val chunk = ByteArray(CHUNK)
@@ -116,6 +121,7 @@ private class OutputGuard(
     private var closeLength = 0
     private var closeWritten = false // this side's Close went to the output: data frames are discarded
     private var discardLeft = -1L // -1: no frame being discarded
+    private var discardingMessage = false // a message started after the peer's Close: its continuations are dropped too
 
     // the frame being handed on
     private var payloadLeft = -1L // -1: reading a header
@@ -213,8 +219,10 @@ private class OutputGuard(
             if (length == 0L) closeBody()
             return
         }
-        if (closeWritten && opcode < OPCODE_CLOSE) {
-            // RFC 6455 section 5.5.1: no data frame after this side's Close
+        // RFC 6455 section 5.5.1: no data frame after this side's Close; after the peer's, the message in progress may
+        // finish (sections 1.4 and 7.1.2), but no new one starts
+        if (opcode < OPCODE_CLOSE && (closeWritten || discardingMessage || (!inMessage && peerClosed()))) {
+            discardingMessage = !closeWritten && b0 and 0x80 == 0
             if (length > 0) discardLeft = length
             return
         }

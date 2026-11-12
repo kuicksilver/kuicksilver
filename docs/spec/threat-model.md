@@ -518,8 +518,9 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   its writer once the client's Close arrived or its own Close is written (the send-stall deadline bounds the rest). A
   server writer already held behind earlier frames sees its own Close only when it gets to it, so it waits for the window
   or the send-stall deadline; after its own Close no data frame goes out (RFC 6455 §5.5.1, discarded by the output
-  guard); between the client's Close and its own, an application's own upgrade that keeps writing is bounded by the
-  send-stall deadline only. Its frames pass the same guard as over HTTP/1.1
+  guard); between the client's Close and its own, the message in progress may finish but no new message starts (the
+  output guard discards it, RFC 6455 §1.4, §7.1.2), so an application's own upgrade that keeps writing is bounded by one
+  message in memory and by the send-stall deadline in time. Its frames pass the same guard as over HTTP/1.1
   and HTTP/3 (§3.20.1). The server takes `:protocol` only when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL
   (`webSocketsOverHttp2`), serves only `websocket` (another protocol or a classic CONNECT: 501; no tunnel to the
   `:authority` is ever made, RFC 8441 §4), checks the version before the application sees the request (400), never

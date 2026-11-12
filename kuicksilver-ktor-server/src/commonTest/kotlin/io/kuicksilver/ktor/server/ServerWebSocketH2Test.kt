@@ -24,7 +24,10 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
@@ -50,6 +53,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -1120,6 +1124,95 @@ class ServerWebSocketH2Test {
                             }
                         }
                         assertNull(withTimeout(10.seconds) { released.await() }, "the server's flush returned at the client's Close")
+                    }
+                    s.release()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * After the client's Close the server may finish the message it is sending (RFC 6455 sections 1.4 and 7.1.2) but
+     * starts no new one: an upgrade that keeps writing new messages after the client's Close has them discarded by the
+     * engine's output guard, the message in progress completes, and the server's Close still goes out. This bounds what
+     * such an upgrade can write once its writer is no longer held at the lead.
+     */
+    @Test fun negative_newMessagesAfterTheClientsCloseAreDiscarded() =
+        serverTest {
+            val writerDone = CompletableDeferred<Throwable?>()
+            val (server, port) =
+                h2TlsServer {
+                    install(WebSockets)
+                    routing {
+                        get("/ws") {
+                            call.respond(
+                                object : OutgoingContent.ProtocolUpgrade() {
+                                    override suspend fun upgrade(
+                                        input: ByteReadChannel,
+                                        output: ByteWriteChannel,
+                                        engineContext: CoroutineContext,
+                                        userContext: CoroutineContext,
+                                    ): Job =
+                                        CoroutineScope(engineContext).launch {
+                                            try {
+                                                fun f(
+                                                    b0: Int,
+                                                    text: String,
+                                                ) = byteArrayOf(b0.toByte(), text.length.toByte()) + text.encodeToByteArray()
+                                                // a message in progress: its first fragment (binary, no FIN)
+                                                output.writeFully(f(0x02, "first"))
+                                                output.flush()
+                                                // the client's Close is the first frame it sends
+                                                assertEquals(0x88.toByte(), input.readByte())
+                                                output.writeFully(f(0x80, "last")) // the message in progress ends
+                                                output.writeFully(f(0x82, "new one")) // a new message: dropped
+                                                output.writeFully(f(0x01, "new two")) // a new fragmented message: dropped
+                                                output.writeFully(f(0x80, "its end")) // with its continuation
+                                                output.writeFully(f(0x89, "ping")) // control frames pass
+                                                output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                                                output.flushAndClose()
+                                                writerDone.complete(null)
+                                            } catch (e: Throwable) {
+                                                writerDone.complete(e)
+                                            }
+                                        }
+                                },
+                            )
+                        }
+                    }
+                }
+            try {
+                h2(port) { c ->
+                    val s = c.connect()
+                    assertEquals(200, s.response().status)
+                    // the first fragment arrives before the client closes
+                    val first = ByteArray(7)
+                    withTimeout(10.seconds) { s.body.readFully(first, 0, 7) }
+                    val close = byteArrayOf(0x88.toByte(), 0x82.toByte(), 0, 0, 0, 0, 0x03, 0xE8.toByte())
+                    coroutineScopeWithJob { scope ->
+                        scope.launch {
+                            runCatching {
+                                s.sendBody(
+                                    ByteReadChannel(close),
+                                    end = false,
+                                    stallMillis = null,
+                                ) { error("no stall") }
+                            }
+                        }
+                        assertNull(withTimeout(10.seconds) { writerDone.await() })
+                        val rest = withTimeout(10.seconds) { s.body.readBuffer().readByteArray() }
+                        val frames = ArrayList<Pair<Int, String>>()
+                        var i = 0
+                        while (i < rest.size) {
+                            val n = rest[i + 1].toInt()
+                            frames += (rest[i].toInt() and 0xff) to rest.decodeToString(i + 2, i + 2 + n)
+                            i += 2 + n
+                        }
+                        assertEquals(0x02, first[0].toInt())
+                        assertEquals("first", first.decodeToString(2, 7))
+                        assertEquals(listOf(0x80 to "last", 0x89 to "ping"), frames.dropLast(1))
+                        assertEquals(0x88, frames.last().first)
                     }
                     s.release()
                 }

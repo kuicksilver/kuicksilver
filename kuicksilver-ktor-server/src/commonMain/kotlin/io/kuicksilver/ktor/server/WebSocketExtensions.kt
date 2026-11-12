@@ -60,6 +60,9 @@ internal class ServerWebSocket(
 
     val channel: ByteReadChannel
 
+    /** The client's Close arrived: the output starts no new message (RFC 6455 sections 1.4, 5.5.1 and 7.1.2). */
+    @kotlin.concurrent.Volatile private var clientClosed = false
+
     init {
         val offered = webSocketExtensionNames(request.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty())
         val answer = response.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty()
@@ -81,15 +84,21 @@ internal class ServerWebSocket(
                 maxMessageSize = maxMessageSize,
                 checkText = checkText,
                 onEnd = onPeerClose,
-                onClose = onPeerClose,
+                onClose = {
+                    clientClosed = true
+                    onPeerClose()
+                },
             )
     }
 
-    /** The upgrade's [output], as the frames must go out; [onClose] runs once the server's own Close was written. */
+    /**
+     * The upgrade's [output], as the frames must go out; [onClose] runs once the server's own Close was written. After the
+     * client's Close the message in progress may finish, but no new one goes out.
+     */
     fun output(
         output: ByteWriteChannel,
         onClose: () -> Unit = {},
-    ): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression, onClose)
+    ): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression, onClose) { clientClosed }
 
     fun done() {
         deflate?.dispose()
