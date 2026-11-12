@@ -69,6 +69,8 @@ internal class WtSessionImpl(
     internal val stream: Http3Stream,
     override val headers: Http3Headers,
     override val protocol: String?,
+    /** The draft this session runs ([wtClientVersion], [wtServerVersion]). */
+    internal val version: WtVersion,
 ) : WebTransportSession,
     WtSessionSink {
     override val sessionId: Long get() = stream.streamId
@@ -422,15 +424,15 @@ internal suspend fun H3Session.webTransport(
     val ps =
         withinWtDeadline { awaitPeerSettings() }
             ?: throw Http3Exception.Settings("no SETTINGS from the server within $wtDeadline")
-    if (peerWtVersion() == null) {
+    if (highestCommonWtVersion() == null) {
         throw Http3Exception.Settings("the server does not offer WebTransport in a draft we speak (draft-16 or draft-02) in its SETTINGS")
     }
     if (!ps.h3Datagram) throw Http3Exception.Settings("the server did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs")
     // section 3.1: "A client MUST NOT establish WebTransport sessions if the server's SETTINGS do not have correct values for
     // every required setting or if the server's transport parameters do not have correct values for every required
-    // transport parameter"; a server that also announces draft-02 gets a draft-02 session ([wtSelect])
-    val (selected, refusal) = wtSelect(this)
-    val version = selected ?: throw Http3Exception.Settings(refusal!!)
+    // transport parameter"; a server that also announces draft-02 gets a draft-02 CONNECT ([wtClientVersion])
+    val (chosen, refusal) = wtClientVersion(this)
+    val version = chosen ?: throw Http3Exception.Settings(refusal!!)
     withContext(dispatcher) {
         check(!wtClientBusy) {
             "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one"
@@ -461,7 +463,7 @@ internal suspend fun H3Session.webTransport(
                     throw WebTransportException.Alpn(protocols, p)
                 }
             }
-        val s = WtSessionImpl(this, stream, stream.headers, selected)
+        val s = WtSessionImpl(this, stream, stream.headers, selected, version)
         withContext(dispatcher) {
             wt.register(stream.streamId, s)
             s.start()

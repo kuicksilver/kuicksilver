@@ -465,9 +465,10 @@ internal class H3Session(
 
     /**
      * The highest WebTransport draft both sides announce (draft-16 section 7.1); null before the peer's SETTINGS arrived or
-     * when there is none.
+     * when there is none. Not necessarily the version a session runs: that is `WtSessionImpl.version`, which can fall back
+     * to draft-02 ([io.kuicksilver.http3.webtransport.wtClientVersion], [io.kuicksilver.http3.webtransport.wtServerVersion]).
      */
-    fun peerWtVersion(): WtVersion? = wtCommonVersions.firstOrNull()
+    fun highestCommonWtVersion(): WtVersion? = wtCommonVersions.firstOrNull()
 
     /** The WebTransport drafts both sides announce, highest first ([WtVersion.common]); empty before the peer's SETTINGS. */
     internal var wtCommonVersions: List<WtVersion> = emptyList()

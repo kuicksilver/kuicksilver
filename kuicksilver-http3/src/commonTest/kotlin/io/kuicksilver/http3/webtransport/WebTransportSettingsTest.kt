@@ -157,7 +157,7 @@ class WebTransportSettingsTest {
                 val client = Http3Connection.client(c, wtOn)
                 val ps = withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
                 assertTrue(ps.webTransport)
-                assertEquals(WtVersion.Draft02, client.session.peerWtVersion())
+                assertEquals(WtVersion.Draft02, client.session.highestCommonWtVersion())
                 // interpreted codepoints are not reported as unknown
                 assertFalse(SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 in ps.unknown)
                 assertFalse(SettingsId.WT_MAX_SESSIONS_DRAFT14 in ps.unknown)
@@ -178,7 +178,7 @@ class WebTransportSettingsTest {
                 )
                 val client = Http3Connection.client(c, wtOn)
                 assertFailsWith<Http3Exception.Settings> { client.webTransport(wtReq()) }
-                assertNull(client.session.peerWtVersion())
+                assertNull(client.session.highestCommonWtVersion())
             }
         }
 
@@ -216,7 +216,7 @@ class WebTransportSettingsTest {
                 val client = Http3Connection.client(c, wtOn)
                 val ps = withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
                 assertFalse(ps.webTransport)
-                assertNull(client.session.peerWtVersion())
+                assertNull(client.session.highestCommonWtVersion())
             }
         }
 

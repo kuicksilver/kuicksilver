@@ -448,6 +448,8 @@ class WebTransportSessionTest {
                 ).useScoped { p ->
                     val (client, server) = sessions(p)
                     assertEquals("1", server.headers[WtTokens.DRAFT02_REQUEST_FIELD])
+                    assertEquals(WtVersion.Draft02, (client as WtSessionImpl).version)
+                    assertEquals(WtVersion.Draft02, (server as WtSessionImpl).version)
                     val out = client.openUni()
                     out.output.writeFully("x".encodeToByteArray())
                     out.output.flush()
@@ -459,7 +461,10 @@ class WebTransportSessionTest {
                 }
         }
 
-    /** The same fallback seen from the server: a client of draft-16 and draft-02 without `reset_stream_at` gets draft-02. */
+    /**
+     * The same fallback seen from the server: a client of draft-16 and draft-02 without `reset_stream_at` whose CONNECT is a
+     * draft-02 request (`:protocol webtransport`, `sec-webtransport-http3-draft02: 1`) gets a draft-02 session.
+     */
     @Test fun draft16And02ClientWithoutResetStreamAtIsAcceptedAsDraft02() =
         h3Test {
             QuicPair.open(H3Fixtures.quic).useScoped { q ->
@@ -467,12 +472,37 @@ class WebTransportSessionTest {
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
-                launch { server.acceptRequest().acceptWebTransport() }
+                val accepted = async { server.acceptRequest().acceptWebTransport() }
                 val st = c.openBidi()
                 st.output.writeFully(raw.wtConnect(st, WtTokens.LEGACY, WtTokens.DRAFT02_REQUEST_FIELD to "1"))
                 st.output.flush()
                 assertEquals("200", readHeaders(st)[":status"])
-                assertEquals(WtVersion.Draft16, server.session.peerWtVersion()) // announced, but not runnable here
+                assertEquals(WtVersion.Draft02, (withTimeout(5.seconds) { accepted.await() } as WtSessionImpl).version)
+                // announced by both, but not runnable on this connection
+                assertEquals(WtVersion.Draft16, server.session.highestCommonWtVersion())
+            }
+        }
+
+    /**
+     * The fallback holds only for a draft-02 request: a draft-16 CONNECT (`:protocol webtransport-h3`) from that client
+     * would be a draft-16 session without `reset_stream_at` (section 3.1), whose resets could not keep their header
+     * (section 4.4), so it is malformed: 400 and STOP_SENDING H3_MESSAGE_ERROR.
+     */
+    @Test fun negative_draft16ConnectWithoutResetStreamAtIsMalformedEvenWithDraft02Offered() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(QuicConfig.Default)
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st, WtTokens.H3))
+                st.output.flush()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                val e = assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
+                assertTrue("reset_stream_at" in e.message.orEmpty(), e.message)
+                assertEquals("400", readHeaders(st)[":status"])
+                assertMessageErrorStop(st)
             }
         }
 
