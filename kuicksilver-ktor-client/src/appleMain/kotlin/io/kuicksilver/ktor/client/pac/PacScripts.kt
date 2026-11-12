@@ -32,6 +32,11 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -65,11 +70,24 @@ internal object PacScripts {
         val until: Long,
     )
 
+    /** A download under way and the lookups waiting for it. */
+    private class Flight {
+        lateinit var job: Deferred<String?>
+        var waiters = 0
+    }
+
     private val clock = monotonicMillis()
     private val lock = Mutex()
     private val cache = HashMap<String, Entry>()
-    private val inFlight = HashMap<String, Deferred<String?>>()
+    private val inFlight = HashMap<String, Flight>()
     private val downloadCount = AtomicInt(0)
+    private val waiting = MutableStateFlow(0)
+
+    /** Lookups waiting for a download (tests). */
+    val waitingForTest: StateFlow<Int> get() = waiting
+
+    /** Tests: whether a script (true) or a failure (false) is cached for [url], null when nothing is. */
+    suspend fun cachedForTest(url: String): Boolean? = lock.withLock { cache[url]?.takeIf { it.until > now() }?.let { it.script != null } }
 
     /** Tests: replaces the clock reading; null for the real one. */
     var nowForTest: (() -> Long)? = null
@@ -92,8 +110,12 @@ internal object PacScripts {
     }
 
     /**
-     * The script at [url], from the cache or downloaded within [timeoutMillis]; null when it cannot be had. A download
-     * that does not end in time, also when the caller is cancelled, is remembered as a failure.
+     * The script at [url], from the cache or downloaded within [timeoutMillis]; null when it cannot be had. Lookups of a
+     * URL whose download is under way wait for that one. The download records its own outcome: a script, or a failure
+     * when it failed or ran out of the first lookup's time. A lookup that runs out of its own time stops waiting, and
+     * when it was the last one waiting gives the download up and records a failure (a script that hangs costs one
+     * attempt a minute). A lookup that is cancelled only stops waiting (the last one gives the download up) and records
+     * nothing; a lookup whose shared download was given up gets null.
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     suspend fun script(
@@ -102,34 +124,59 @@ internal object PacScripts {
         allowFile: Boolean = true,
     ): String? {
         if (!allowFile && !url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) return null
-        val call =
+        val flight =
             lock.withLock {
                 cache[url]?.takeIf { it.until > now() }?.let { return it.script }
-                inFlight[url] ?: GlobalScope.async(Dispatchers.IO) { download(url) }.also { d ->
-                    inFlight[url] = d
-                    downloadCount.incrementAndFetch()
-                }
+                (
+                    inFlight[url] ?: Flight().also { f ->
+                        f.job =
+                            GlobalScope.async(Dispatchers.IO) {
+                                val script = withTimeoutOrNull(timeoutMillis) { download(url) }
+                                // a download given up (cancelled) records nothing; one that ended or timed out does
+                                withContext(NonCancellable) {
+                                    lock.withLock {
+                                        record(url, script)
+                                        if (inFlight[url] === f) inFlight.remove(url)
+                                    }
+                                }
+                                script
+                            }
+                        inFlight[url] = f
+                        downloadCount.incrementAndFetch()
+                    }
+                ).also { it.waiters++ }
             }
-        var result: String? = null
-        var done = false
+        waiting.update { it + 1 }
+        var timedOut = false
         try {
-            result = withTimeoutOrNull(timeoutMillis) { call.await() }
-            done = true
-            return result
+            val answer = withTimeoutOrNull(timeoutMillis) { flight.job.await() }
+            if (answer == null && !flight.job.isCompleted) timedOut = true
+            return answer
+        } catch (e: CancellationException) {
+            currentCoroutineContext().ensureActive() // this lookup was cancelled: it stops
+            return null // the shared download was given up: no script
         } finally {
+            waiting.update { it - 1 }
             withContext(NonCancellable) {
                 lock.withLock {
-                    // the first waiter to finish records the outcome; a download still running then is given up
-                    if (inFlight[url] === call) {
-                        val ok = done && result != null
-                        cache[url] = Entry(if (ok) result else null, now() + if (ok) SCRIPT_TTL_MILLIS else FAILURE_TTL_MILLIS)
-                        if (cache.size > 64) cache.remove(cache.keys.first())
-                        inFlight.remove(url)
-                        if (!call.isCompleted) call.cancel()
+                    flight.waiters--
+                    if (flight.waiters == 0 && !flight.job.isCompleted) {
+                        flight.job.cancel()
+                        if (inFlight[url] === flight) inFlight.remove(url)
+                        if (timedOut) record(url, null)
                     }
                 }
             }
         }
+    }
+
+    /** Under [lock]: [script], or a failure when null, for [url]. */
+    private fun record(
+        url: String,
+        script: String?,
+    ) {
+        cache[url] = Entry(script, now() + if (script != null) SCRIPT_TTL_MILLIS else FAILURE_TTL_MILLIS)
+        if (cache.size > 64) cache.remove(cache.keys.first())
     }
 
     /** Tests: forget every script. */

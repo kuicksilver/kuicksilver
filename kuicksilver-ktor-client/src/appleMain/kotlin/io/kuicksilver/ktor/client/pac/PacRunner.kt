@@ -85,6 +85,11 @@ internal object PacRunner {
 
     internal fun now(): Long = nowForTest?.invoke() ?: clock()
 
+    private val queued = MutableStateFlow(0)
+
+    /** Lookups waiting for their run to start (tests). */
+    val queuedForTest: StateFlow<Int> get() = queued
+
     /** Threads now abandoned to runs that overran their limit (tests). */
     val abandonedThreads: StateFlow<Int> get() = abandonedCount
 
@@ -126,7 +131,12 @@ internal object PacRunner {
             }
         var answer: Result<String>? = null
         try {
-            started.await()
+            queued.update { it + 1 }
+            try {
+                started.await()
+            } finally {
+                queued.update { it - 1 }
+            }
             answer = withTimeoutOrNull(limitMillis) { call.await() }
             return answer?.getOrNull()
         } finally {

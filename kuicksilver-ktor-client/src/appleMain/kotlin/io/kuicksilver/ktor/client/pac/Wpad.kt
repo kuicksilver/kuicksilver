@@ -5,7 +5,8 @@ package io.kuicksilver.ktor.client.pac
 /**
  * WPAD discovery (draft-ietf-wrec-wpad-01) without walking up the DNS tree: the PAC URL of DHCP option 252 when the
  * platform gives it (`http` or `https` only, never `file`), then `http://wpad.<domain>/wpad.dat` for each configured DNS
- * search domain exactly as configured (no parent domain is tried, so no `wpad.<public suffix>` such as `wpad.co.uk`),
+ * search domain exactly as configured (no parent domain is tried: `x.corp.example.co.uk` never leads to `wpad.co.uk`;
+ * a search domain that is itself a public suffix, such as `co.uk` from a rogue DHCP server, is used as given),
  * then `http://wpad/wpad.dat`, a single-label name the system resolver completes with its own search domains (no
  * "devolution" up the tree). `.local` (mDNS) domains and single-label domains are skipped.
  */

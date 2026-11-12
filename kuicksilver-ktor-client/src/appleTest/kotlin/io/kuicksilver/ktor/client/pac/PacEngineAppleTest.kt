@@ -27,6 +27,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -36,7 +37,6 @@ import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fputs
 import platform.posix.remove
-import platform.posix.usleep
 import kotlin.concurrent.AtomicInt
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -55,6 +55,7 @@ class PacEngineAppleTest {
     /** What the scripts' native calls get: blocking ones wait for [release]. */
     private class FakeHost : PacHost {
         val release = CompletableDeferred<Unit>()
+        val entered = CompletableDeferred<Unit>()
         val resolveCalls = AtomicInt(0)
 
         override fun resolve(
@@ -68,11 +69,6 @@ class PacEngineAppleTest {
                     listOf("10.0.0.9")
                 }
 
-                "pause.test" -> {
-                    usleep(150_000u) // a resolver that answers, slowly
-                    listOf("10.0.0.8")
-                }
-
                 else -> {
                     listOf("10.0.0.1")
                 }
@@ -81,6 +77,7 @@ class PacEngineAppleTest {
 
         /** A script calling `myIpAddress()` blocks until [release]: a run that overruns, and ends when released. */
         override fun myAddresses(ipv4Only: Boolean): List<String> {
+            entered.complete(Unit)
             runBlocking { release.await() }
             return listOf("192.168.1.2")
         }
@@ -256,21 +253,46 @@ class PacEngineAppleTest {
         }
 
     /**
-     * A PAC URL that never answers: no answer within the bound, and the failure is remembered, so later lookups do not
-     * pay the bound again (also when the caller gives up first).
+     * A PAC URL that never answers: no answer within the bound, and that timeout is remembered, so later lookups do not
+     * pay the bound again.
      */
     @Test fun negative_pacUrlThatHangsTimesOut() =
+        hangingServer { url ->
+            assertNull(PacScripts.script(url, 300))
+            assertEquals(false, PacScripts.cachedForTest(url), "the timeout is remembered")
+            val mark = TimeSource.Monotonic.markNow()
+            assertNull(PacScripts.script(url, 5_000))
+            assertTrue(mark.elapsedNow() < 1.seconds, "the failure was remembered: ${mark.elapsedNow()}")
+            assertEquals(1, PacScripts.downloads)
+        }
+
+    /**
+     * Two lookups share one download; the first is cancelled (for its own reasons): the second keeps waiting, gets null
+     * at its own timeout instead of an exception, and the cancellation records nothing. Before, the first to leave
+     * cancelled the shared download, the other lookup failed with the cancellation, and a failure was cached.
+     */
+    @Test fun negative_aCancelledLookupDoesNotBreakTheOthers() =
+        hangingServer { url ->
+            coroutineScope {
+                val first = async(Dispatchers.Default) { PacScripts.script(url, 2_000) }
+                val second = async(Dispatchers.Default) { PacScripts.script(url, 2_000) }
+                PacScripts.waitingForTest.first { it == 2 }
+                first.cancel()
+                first.join()
+                assertNull(PacScripts.cachedForTest(url), "a cancelled lookup records nothing")
+                assertNull(second.await()) // no exception: its own timeout
+                assertEquals(1, PacScripts.downloads)
+            }
+        }
+
+    /** A server that accepts and never answers, at the URL given to [block]. */
+    private fun hangingServer(block: suspend (String) -> Unit) =
         runBlocking {
             val selector = SelectorManager(Dispatchers.IO)
             val listener = bindTcp(selector, "127.0.0.1", 0)
-            val accepted = launch { listener.accept() } // accepts, never answers
+            val accepted = launch { while (true) listener.accept() } // accepts, never answers
             try {
-                val url = "http://127.0.0.1:${(listener.localAddress as InetSocketAddress).port}/proxy.pac"
-                assertNull(withTimeoutOrNull(300) { PacScripts.script(url, 5_000) }, "the caller gave up first")
-                val mark = TimeSource.Monotonic.markNow()
-                assertNull(PacScripts.script(url, 5_000))
-                assertTrue(mark.elapsedNow() < 1.seconds, "the failure was remembered: ${mark.elapsedNow()}")
-                assertEquals(1, PacScripts.downloads)
+                withTimeout(30.seconds) { block("http://127.0.0.1:${(listener.localAddress as InetSocketAddress).port}/proxy.pac") }
             } finally {
                 accepted.cancel()
                 listener.close()
@@ -330,25 +352,28 @@ class PacEngineAppleTest {
             val script =
                 "function FindProxyForURL(url, host) { " +
                     "return dnsResolve('slow.test') === null ? 'PROXY nodns.test:1' : 'DIRECT'; }"
-            assertEquals("PROXY nodns.test:1", PacRunner.findProxy("slow", script, "https://x.test:443/", "x.test", 800))
+            assertEquals("PROXY nodns.test:1", PacRunner.findProxy("slow", script, "https://x.test:443/", "x.test", 2_000))
             assertEquals(0, PacRunner.abandonedThreads.value)
         }
 
     /**
-     * Lookups queued behind each other: each run's limit counts from its own start, so slow but finishing runs are no
-     * runaways however many wait. Before, the limit counted from the queueing and the later ones were abandoned.
+     * A lookup queued behind a long run: its limit counts from its own start, so it is no runaway however long it waited.
+     * Run A holds the thread until released (its limit is far away); B, with a short limit, waits behind it while the
+     * test waits a while longer than B's limit (a lower bound only: correct code passes however long that is; before,
+     * B's limit counted from its queueing and it was given up). Then A ends and B answers.
      */
     @Test fun negative_queuedRunsAreNotRunaways() =
         runBlocking {
-            val script = "function FindProxyForURL(url, host) { return 'PROXY ' + dnsResolve('pause.test') + ':1'; }"
-            val answers =
-                withTimeout(20.seconds) {
-                    (1..6)
-                        .map { i ->
-                            async(Dispatchers.Default) { PacRunner.findProxy("pause$i", script, "https://x$i.test:443/", "x.test", 500) }
-                        }.awaitAll()
-                }
-            assertTrue(answers.all { it == "PROXY 10.0.0.8:1" }, "$answers")
+            withTimeout(30.seconds) {
+                val a = async(Dispatchers.Default) { PacRunner.findProxy("a", blocking, "https://a.test:443/", "a.test", 60_000) }
+                host.entered.await() // A runs
+                val b = async(Dispatchers.Default) { PacRunner.findProxy("b", ok, "https://b.test:443/", "b.test", 300) }
+                PacRunner.queuedForTest.first { it == 1 } // B waits for its turn
+                assertNull(withTimeoutOrNull(900) { b.await() }, "B cannot answer while A holds the thread")
+                host.release.complete(Unit)
+                assertEquals("DIRECT", a.await())
+                assertEquals("PROXY ok.test:1", b.await())
+            }
             assertEquals(0, PacRunner.abandonedThreads.value)
         }
 
@@ -383,7 +408,10 @@ class PacEngineAppleTest {
             val base = TimeSource.Monotonic.markNow()
             var offset = 0L
             PacRunner.nowForTest = { base.elapsedNow().inWholeMilliseconds + offset }
-            assertNull(withTimeoutOrNull(100) { PacRunner.findProxy("block", blocking, "https://x.test:443/", "x.test", 1_000) })
+            val caller = async(Dispatchers.Default) { PacRunner.findProxy("block", blocking, "https://x.test:443/", "x.test", 1_000) }
+            withTimeout(10.seconds) { host.entered.await() } // the run is under way
+            caller.cancel() // the caller gives up before the limit: no accounting
+            caller.join()
             assertEquals(0, PacRunner.abandonedThreads.value, "not overrun yet when the caller gave up")
             offset += 2_000 // the run is now past its limit
             assertEquals(

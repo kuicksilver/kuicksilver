@@ -172,14 +172,21 @@ internal object SystemPacHost : PacHost {
 }
 
 /**
- * Name resolution for a script's `dnsResolve` and `dnsResolveEx`: during a run of [PacRunner] each lookup runs on a
- * thread of [Dispatchers.IO] and is waited for at most what remains of the run's DNS budget ([PacRun.remaining]); a
+ * Name resolution for a script's `dnsResolve` and `dnsResolveEx`: during a run of [PacRunner] each lookup runs on one of
+ * [PacDns.THREADS] threads of [Dispatchers.IO] and is waited for at most what remains of the run's DNS budget ([PacRun.remaining]); a
  * lookup that does not answer in time resolves to nothing (its thread ends with `getaddrinfo`, its answer dropped), so a
  * slow resolver cannot make a script overrun its limit. Answers are kept for the rest of the run. Outside a run (tests
  * of the utility functions) the lookup is made directly.
  */
-@OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+@OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 internal object PacDns {
+    /**
+     * The threads lookups run on: at most [THREADS] of `Dispatchers.IO`, so lookups stuck in `getaddrinfo` (given up by
+     * their runs, their threads still blocked) hold at most that many; later lookups queue and are given up in time.
+     */
+    const val THREADS: Int = 4
+    private val lookups = Dispatchers.IO.limitedParallelism(THREADS)
+
     fun resolve(
         name: String,
         ipv4Only: Boolean,
@@ -189,7 +196,7 @@ internal object PacDns {
         val remaining = PacRun.remaining()
         if (remaining <= 0) return emptyList()
         val host = PacHost.current
-        val lookup = GlobalScope.async(Dispatchers.IO) { host.resolve(name, ipv4Only) }
+        val lookup = GlobalScope.async(lookups) { host.resolve(name, ipv4Only) }
         val answer =
             runBlocking { withTimeoutOrNull(remaining) { lookup.await() } }
                 ?: emptyList<String>().also { lookup.cancel() }
