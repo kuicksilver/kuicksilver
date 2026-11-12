@@ -84,10 +84,12 @@ int ksl_resolve(const char *name, int family, uint8_t *out, size_t cap, size_t *
     hints.ai_family = family == KSL_ADDR_V6 ? AF_INET6 : AF_INET;
     hints.ai_socktype = SOCK_STREAM; /* one entry per address, not one per socket type */
     /* flags of our own: Apple applies its AI_DEFAULT (AI_V4MAPPED_CFG) to flags 0, so an IPv6 query would wait for the A
-       answer and hand it back as IPv4-mapped addresses */
+       answer and hand it back as IPv4-mapped addresses. AI_NUMERICSERV goes with a numeric service, whose port nobody
+       reads: Apple's fallback lookup (its _gai_simple, taken when mDNSResponder cannot be reached) fails every name with
+       AI_NUMERICSERV and no service ("0" counts as none), hosts-file names such as localhost included. */
     hints.ai_flags = AI_NUMERICSERV;
     struct addrinfo *res = NULL;
-    int rc = getaddrinfo(name, NULL, &hints, &res);
+    int rc = getaddrinfo(name, "1", &hints, &res);
     int r = KSL_OK;
     if (rc != 0) {
         r = net_gai_not_found(rc) ? KSL_DNS_NOT_FOUND : KSL_ERROR;
