@@ -379,6 +379,10 @@ internal class Pmtud(
         now: TimeMark,
         disprovedAfterPn: Long,
     ) {
+        // probes declared lost before the verdict: a late acknowledgment of one is about the path before it (as onPacketAcked takes a
+        // late full-size packet only after the packets the verdict rested on), so it raises nothing ([takeLostProbeIn])
+        for (i in 0 until SENT_PROBES) sentLost[i] = false
+        lostProbes = 0
         // a validated Packet Too Big under confirmation tells where the path stands: fall to its size, not the base, and without the
         // pause; a black hole there too falls to the base next time (the hint is used once)
         val hinted = if (confirmPtb >= base) base + (confirmPtb - base) / step * step else 0

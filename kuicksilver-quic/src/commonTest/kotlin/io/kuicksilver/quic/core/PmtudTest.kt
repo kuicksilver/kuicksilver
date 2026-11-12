@@ -213,6 +213,22 @@ class PmtudTest {
         }
     }
 
+    @Test fun negative_aLateAckOfAProbeSentBeforeABlackHoleVerdictRaisesNothing() {
+        // a probe declared lost, then a black-hole verdict (back to 1200 and a 60 s pause): an acknowledgment of that probe arriving
+        // later is about the path before the verdict, as `Pmtud.onPacketAcked` judges a late full-size packet only after the packets
+        // the verdict rested on; it must not raise the MTU during the pause
+        val m = Pmtud(upperBound = 1452)
+        val t = io.kuicksilver.quic.TimeMark(1_000_000_000L)
+        val size = m.nextProbeSize(t)
+        assertTrue(size > 1200)
+        m.onProbeSent(10, size)
+        m.onProbeDeclaredLost(10)
+        m.onBlackHole(t + 100.milliseconds)
+        assertEquals(0, m.takeLostProbeIn(10, 10), "the probe sent before the verdict is no longer matched")
+        assertTrue(!m.hasLostProbes)
+        assertEquals(1200, m.current)
+    }
+
     @Test fun probeLossNotCongestion() {
         // RFC 9000 section 14.4 and RFC 8899 section 3 item 7: a lost probe is not a congestion signal. The probes go out during a
         // transfer on a link that drops everything above 1200 bytes and nothing else, so every loss is a probe's: the controller
