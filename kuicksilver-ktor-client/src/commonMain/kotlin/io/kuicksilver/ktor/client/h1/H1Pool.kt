@@ -654,7 +654,7 @@ internal class H1Pool(
     }
 
     /**
-     * [execute]; [webSocketKeys] are the remote hosts of a WebSocket ([remoteHosts]), null for any other request. A
+     * [execute]; [webSocketKeysAsked] are the remote hosts of a WebSocket ([remoteHosts]), null for any other request. A
      * WebSocket holds them from [obtain] until the server answered its handshake (the response head, the 101 or a
      * refusal), or the exchange failed or was cancelled; that answer must arrive within the connect timeout, counted
      * from the moment the connection is in hand, or the WebSocket fails with [ConnectTimeoutException]: its opening

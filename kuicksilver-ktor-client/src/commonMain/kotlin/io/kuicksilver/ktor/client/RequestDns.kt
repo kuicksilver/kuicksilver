@@ -163,7 +163,7 @@ internal class RequestDns private constructor(
     }
 
     /**
-     * The addresses of [host] with [port] that have answered, for keys that name the host ([h1.WebSocketConnecting]): a
+     * The addresses of [host] with [port] that have answered, for keys that name the host (`WebSocketConnecting`): a
      * literal itself; else the first family that answers with addresses, and the other one when it answers within the
      * Resolution Delay (RFC 8305 section 3), never waiting for a family that stalls (a network that drops AAAA queries).
      * A family that answers with none or fails is waited past. Fails only when both failed or neither has an address.
