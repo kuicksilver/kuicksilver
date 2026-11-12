@@ -69,7 +69,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9221 | DATAGRAM frames | ✅ | 0.2.0 | DATAGRAM frames are advertised by default and sent and received within the peer's size limit. | [details](rfc/9221.md#datagram-frames) |
 | RFC 8899 | §3, §4.1 — DF on the socket for PMTUD probes | ✅ | 0.3.0 | The native UDP socket sets Don't Fragment for MTU probes on every platform that offers it. | [details](rfc/8899.md#s3-df-on-the-socket-for-pmtud) |
 | RFC 8899 | §3, §4.3, §4.6, §5.1.1 — probing, black holes, Packet Too Big, timers | ✅ | 0.3.0 | Probe loss is no congestion signal, black holes fall back to 1200 bytes, Packet Too Big messages are validated hints, and the search repeats every 600 s. | [details](rfc/8899.md#s3-probing-black-holes-ptb-timers) |
-| draft-ietf-quic-reliable-stream-reset | RESET_STREAM_AT | 🔶 | 0.3.0 | An experimental, off-by-default RESET_STREAM_AT delivers a reliable prefix of a reset stream. | [details](rfc/draft-ietf-quic-reliable-stream-reset.md#reset-stream-at) |
+| draft-ietf-quic-reliable-stream-reset | RESET_STREAM_AT | ✅ | 0.3.0 | An experimental, off-by-default RESET_STREAM_AT (draft-11) delivers a reliable prefix of a reset stream. | [details](rfc/draft-ietf-quic-reliable-stream-reset.md#reset-stream-at) |
 | RFC 9287 | grease bit | ✅ | 0.2.0 | The QUIC bit is greased only towards a peer that advertised `grease_quic_bit`. | [details](rfc/9287.md#grease-bit) |
 | RFC 9218 | priorities (transport part: the scheduler) | ✅ | 0.2.0 | The stream scheduler orders streams by urgency and the incremental flag. | [details](rfc/9218.md#priorities-transport-part-the-scheduler) |
 | draft-ietf-quic-qlog | qlog | ✅ | 0.2.0 | The endpoint writes qlog version 0.3 as JSON-SEQ. | [details](rfc/draft-ietf-quic-qlog.md#qlog) |
@@ -201,8 +201,9 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 7541 | §7 — security | ✅ | 0.3.0 | Credentials are never indexed, and a decoded field list is bounded by the local limit while the table stays in step. | [details](rfc/7541.md#s7-security) |
 | RFC 9112 | HTTP/1.1 | ✅ | 0.2.1 | HTTP/1.1 is served and spoken by the Ktor engines. | [details](rfc/9112.md#http-1-1) |
 | RFC 9110 | §9.2.2; RFC 9112 §9.2, §9.3.1 — client retry | ✅ | 0.2.1 | An idle pooled HTTP/1.1 connection the server closed is replaced once, for idempotent requests only. | [details](rfc/9110.md#s9-2-2-client-retry) |
-| RFC 1928/1929 | §3–§6 (client) — SOCKS5 client | 🔶 | 0.3.0 | The client speaks SOCKS5 CONNECT only, with no authentication or username/password. | [details](rfc/1928-1929.md#s3-socks5-client) |
-| RFC 1928/1929 | RFC 1929 — username/password | 🔶 | 0.3.0 | Username/password authentication is offered only with credentials and checked by the RFC's rules. | [details](rfc/1928-1929.md#username-password) |
+| RFC 1928/1929 | §3–§6 (client) — SOCKS5 client | ✅ | 0.3.0 | The client speaks SOCKS5 CONNECT (no BIND, no UDP ASSOCIATE) with no authentication or username/password. | [details](rfc/1928-1929.md#s3-socks5-client) |
+| RFC 1928 | §3 — GSSAPI method | ❌ | — | The GSSAPI method is not offered, so a proxy that requires it is refused. | [details](rfc/1928-1929.md#s3-gssapi) |
+| RFC 1928/1929 | RFC 1929 — username/password | ✅ | 0.3.0 | Username/password authentication is offered only with credentials and checked by the RFC's rules. | [details](rfc/1928-1929.md#username-password) |
 | RFC 6455 | §4.1 (client: connecting, through a proxy) — connecting, through a proxy | 🔶 | 0.3.0 | At most one WebSocket per remote host is in the CONNECTING state; PAC is planned. | [details](rfc/6455.md#s4-1-connecting-through-a-proxy) |
 | RFC 9110 | §9.3.6, §11.7.2; RFC 9931 §8 — client CONNECT tunnel | ✅ | 0.2.1 | HTTPS through an HTTP proxy uses a CONNECT tunnel. | [details](rfc/9110.md#s9-3-6-client-connect-tunnel) |
 | RFC 9112 | §6.1, §6.3, §7.1, §8, §9.6 — client response framing | ✅ | 0.2.1 | The client frames a response as RFC 9112 §6.3 orders. | [details](rfc/9112.md#s6-1-client-response-framing) |
@@ -219,7 +220,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9112 | §9.3.2 — server pipelining | ✅ | 0.2.1 | Pipelined requests are answered in order. | [details](rfc/9112.md#s9-3-2-server-pipelining) |
 | RFC 9112 | §4 — server status line | ✅ | 0.2.1 | The status line is always `HTTP/1.1` with a valid reason phrase. | [details](rfc/9112.md#s4-server-status-line) |
 | RFC 9110 | §7.8, §15.2 — server Upgrade in HTTP/1.0 | ✅ | 0.2.1 | The Upgrade field of an HTTP/1.0 request is ignored. | [details](rfc/9110.md#s7-8-server-upgrade-in-http-1-0) |
-| RFC 9931 | §8 (updates RFC 9112; server CONNECT) — server CONNECT | ✅ | 0.2.1 | Every CONNECT is refused and is the last request on its connection; tunnels are planned. | [details](rfc/9931.md#s8-server-connect) |
+| RFC 9931 | §8 (updates RFC 9112; server CONNECT) — server CONNECT | ✅ | 0.2.1 | Every CONNECT is refused and is the last request on its connection. | [details](rfc/9931.md#s8-server-connect) |
 | RFC 9112 | §9.6 — server staged close | ✅ | 0.2.1 | A response that ends the connection while the client may still send closes in stages. | [details](rfc/9112.md#s9-6-server-staged-close) |
 | RFC 9110 | §15.5.9; RFC 9112 §9.5 — server timeouts | ✅ | 0.2.1 | Incomplete request heads and stalled bodies time out. | [details](rfc/9110.md#s15-5-9-server-timeouts) |
 | RFC 9110 | §10.1.1 — `Expect: 100-continue` | ✅ | 0.3.0 | The server sends `100 Continue` at once unless the head alone determines the final status. | [details](rfc/9110.md#s10-1-1-expect-100-continue) |

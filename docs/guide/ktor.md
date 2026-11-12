@@ -417,8 +417,8 @@ cached alternative service entries".
 - `Drain` sends GOAWAY to every live HTTP/3 connection at once, as a [graceful stop](#graceful-stop) does, and to every
   connection whose handshake completes while it is set. The requests in flight complete; once the last response is
   acknowledged the client closes the connection (a Kuicksilver client does), or the server three seconds later.
-  **Not bounded in 0.3.0:** `Drain` has no grace deadline, so a long-lived stream (a WebSocket or WebTransport session
-  over HTTP/3) keeps its connection until the application or the client ends it; a drain deadline is planned for 0.3.x.
+  **Not bounded:** `Drain` has no grace deadline (RFC 9114 section 5.2 sets none), so a long-lived stream (a WebSocket
+  or WebTransport session over HTTP/3) keeps its connection until the application or the client ends it.
   To cut such sessions, stop the server (its grace period applies) or end them in the application.
 - A new client is refused with a stateless Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED, as RFC 9000 section
   5.2.2 asks: "If a server refuses to accept a new connection, it SHOULD send an Initial packet containing a

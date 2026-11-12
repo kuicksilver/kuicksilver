@@ -19,6 +19,14 @@ Original row: draft-ietf-quic-multipath.
 
 **How it is met.**
 
-- `PathId` is prepared
+- Nothing is owed while the extension is not advertised: draft-21 section 2 "If either of the endpoints does not
+  advertise the initial_max_path_id transport parameter, then both endpoints MUST NOT use any frame or mechanism defined
+  in this document." We never send `initial_max_path_id`, and a peer's is ignored as an unknown transport parameter.
+- `PathId` (`PathId.kt`) is in place for it.
 
-**Open items.** See the roadmap ([docs/roadmap.md](../../roadmap.md)).
+**Open items.**
+
+- Not implemented: draft-ietf-quic-multipath (draft-21) as a whole — the `initial_max_path_id` transport parameter,
+  the PATH_ACK, PATH_ABANDON, PATH_STATUS_BACKUP/AVAILABLE, PATH_NEW_CONNECTION_ID, PATH_RETIRE_CONNECTION_ID,
+  MAX_PATH_ID, PATHS_BLOCKED and PATH_CIDS_BLOCKED frames, per-path packet number spaces and the per-path nonce. Not
+  scheduled: listed under "Later" in the [roadmap](../../roadmap.md#later).
