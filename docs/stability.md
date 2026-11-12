@@ -268,6 +268,7 @@ the connection core are internal.
 | API | Feature |
 |---|---|
 | `http3 { earlyData }` | 0-RTT |
+| `HttpClient.clearAlternativeServices`, `AltSvcStore.clear`, `AltSvcStore.networkId`, `Http3ConnectionMigration.networks` | removing Alt-Svc information with origin data (RFC 7838 section 9.4) and the network it was learned on (section 2.2) |
 | `maxConnectionsCount`, `maxConnectionsPerRoute`, `idleTimeout`, `maxConnectionLifetime` | connection limits and idle cleanup |
 | `logger`, `eventListener`, `KuicksilverEventListener`, `ProtocolReason`, `http3 { qlog; connectionListener }` | observability |
 | `http2 { enabled; settings; pingInterval }`, `Http2ClientConfig`, `FallbackReason.H2Refused` | HTTP/2 on the TCP path |

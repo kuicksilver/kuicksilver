@@ -611,8 +611,9 @@ capture answers the same question without code.
 From a machine outside your network:
 
 ```sh
-# 1. TCP side: the Alt-Svc header (h3 with the public port; "clear" under Clear or Drain)
-curl -sI https://example.com/ | grep -i '^alt-svc'
+# 1. TCP side: the Alt-Svc header (h3 with the public port; "clear" under Clear or Drain); over HTTP/1.1, since on
+#    HTTP/2 the engine sends it as an ALTSVC frame (RFC 7838 section 4), which `curl -I` does not show
+curl --http1.1 -sI https://example.com/ | grep -i '^alt-svc'
 
 # 2. UDP side: HTTP/3 only, no fallback (needs a curl built with HTTP/3: `curl -V` lists HTTP3)
 curl --http3-only -sI https://example.com/

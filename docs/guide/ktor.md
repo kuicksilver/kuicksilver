@@ -288,7 +288,8 @@ picks the TCP port first, so its UDP twin may be taken: the pair is then bound a
 every other time with the UDP port picked first and TCP taking the same number, after which the connector serves
 HTTP/1.1 alone with a warning. A fixed port whose UDP side is taken fails the start. HTTP/1.1
 responses then carry `Alt-Svc: h3=":<port>"; ma=86400` so clients can switch (RFC 7838) — unless the application set
-its own `Alt-Svc`, or the response is a 421; `altSvc = false` turns the header off.
+its own `Alt-Svc`, or the response is a 421; on HTTP/2 the same value goes out as an ALTSVC frame instead (see
+[HTTP/2 on the server](#http2-on-the-server)); `altSvc = false` turns both off.
 
 In an HTTP/3 call `call.request.httpVersion` is `"HTTP/3"`, `call.request.local.scheme` is the request's `:scheme`
 (`"https"` from browsers and the Kuicksilver client; `"http"` when a client sends that), `serverPort` without a port in
@@ -332,8 +333,12 @@ val server = embeddedServer(Kuicksilver, configure = {
 Each stream is a Ktor call: `call.request.httpVersion` is `"HTTP/2"`, `call.request.local.scheme` is `"https"` (the
 connection's, whatever the request's `:scheme`), `:authority` appears as the `Host` header and split `cookie` fields as one (RFC 9113 section 8.2.3). Responses
 go out without connection-specific headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade` are dropped), a
-response to HEAD, a 204 or a 304 without content, and every response carries the engine's `Alt-Svc` as on HTTP/1.1, so
-a client on HTTP/2 learns HTTP/3 too. Requests are checked against RFC 9113 section 8 before the application sees them:
+response to HEAD, a 204 or a 304 without content. The engine's `Alt-Svc` value goes out as an ALTSVC frame (RFC 7838
+section 4) on the request stream, ahead of the response, once per origin and value on the connection, and not as a
+header: section 3 says "When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame (Section 4). A single
+ALTSVC frame can be sent for a connection". A client on HTTP/2 that reads the frame (the Kuicksilver client does) learns
+HTTP/3 from it; one that reads only the header learns it from an HTTP/1.1 response. An application's own `Alt-Svc`
+header, and a 421, are left as they are. Requests are checked against RFC 9113 section 8 before the application sees them:
 a malformed one (an uppercase or invalid field name, a connection-specific field, `te` other than `trailers`, a missing,
 repeated or unknown pseudo-header field, `host` that differs from `:authority`, content that does not match
 `content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
@@ -395,11 +400,11 @@ server.engine.http3Advertising = Http3Advertising.Drain
 server.engine.http3Advertising = Http3Advertising.On
 ```
 
-| Value | HTTP/1.1 responses | HTTP/3 responses | Live HTTP/3 connections | New QUIC connections |
-|---|---|---|---|---|
-| `On` (default) | `Alt-Svc: h3=":<port>"; ma=86400` | no `Alt-Svc` | served | accepted |
-| `Clear` | `Alt-Svc: clear` | `Alt-Svc: clear` | served | accepted |
-| `Drain` | `Alt-Svc: clear` | `Alt-Svc: clear` | GOAWAY (RFC 9114 section 5.2): requests in flight finish, then the connection closes | refused at the first Initial with CONNECTION_REFUSED |
+| Value | HTTP/1.1 responses | HTTP/2 connections | HTTP/3 responses | Live HTTP/3 connections | New QUIC connections |
+|---|---|---|---|---|---|
+| `On` (default) | `Alt-Svc: h3=":<port>"; ma=86400` | ALTSVC frame `h3=":<port>"; ma=86400` | no `Alt-Svc` | served | accepted |
+| `Clear` | `Alt-Svc: clear` | ALTSVC frame `clear` | `Alt-Svc: clear` | served | accepted |
+| `Drain` | `Alt-Svc: clear` | ALTSVC frame `clear` | `Alt-Svc: clear` | GOAWAY (RFC 9114 section 5.2): requests in flight finish, then the connection closes | refused at the first Initial with CONNECTION_REFUSED |
 
 RFC 7838 section 3: "A field value containing the special value "clear" indicates that the origin requests all
 alternatives for that origin to be invalidated". An HTTP/3 response may send it too, since section 2.2 says
@@ -408,7 +413,7 @@ cached alternative service entries".
 
 - Every response reads the value as its head goes out, so the next response on a keep-alive connection follows a
   change; every new client Initial is checked when the QUIC endpoint admits it. The setter returns at once.
-- The header part applies where the engine sends `Alt-Svc` at all: on a TLS connector that serves HTTP/3, with
+- The `Alt-Svc` part (header or HTTP/2 frame) applies where the engine sends `Alt-Svc` at all: on a TLS connector that serves HTTP/3, with
   `altSvc = true`. With `altSvc = false` no `Alt-Svc` is sent in any mode, but `Drain` still sends GOAWAY and refuses new
   QUIC connections. An `Alt-Svc` the application sets itself is left as it is in every mode, and a 421 gets none.
 - `Clear` stops the advertising and withdraws it: a client drops the alternative at its next response, over HTTP/1.1 or
@@ -640,7 +645,7 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.maxTcpConnections` | TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
-| `kuicksilver.altSvc` | send `Alt-Svc` on HTTP/1.1 responses (`true`) |
+| `kuicksilver.altSvc` | announce HTTP/3: `Alt-Svc` on HTTP/1.1 responses, ALTSVC frames on HTTP/2 (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
@@ -886,14 +891,24 @@ to the address is in neither: only the call (its request timeout or cancellation
 
 ### Discovery and Alt-Svc
 
-In `Auto` mode the engine learns alternatives from `Alt-Svc` headers (RFC 7838) of HTTPS responses and sends the next
-requests to the origin over HTTP/3, with an `Alt-Used` header; SNI and certificate verification still use the
-origin's host. The rules:
+In `Auto` mode the engine learns alternatives from `Alt-Svc` headers (RFC 7838) of HTTPS responses, and from ALTSVC
+frames on HTTP/2 connections (section 4: "semantically equivalent to receiving an Alt-Svc header field"; one on stream
+0 counts only when its Origin is the connection's own origin), and sends the next requests to the origin over HTTP/3,
+with an `Alt-Used` header; SNI and certificate verification still use the origin's host. The rules:
 
-- only responses over verified TLS count (an `http://` response can never redirect a client to an alternative);
-- a new `Alt-Svc` replaces every entry of the origin, `clear` removes them, and so does a 421 response; this applies
-  to every HTTP/1.1 response, including the ones served while a cached alternative is broken or lost the race;
-- `ma` defaults to 86400 seconds and expired entries are ignored;
+- only responses over verified TLS count (an `http://` response can never redirect a client to an alternative), and
+  nothing is learned through a proxy;
+- a new `Alt-Svc` replaces every entry of the origin, and `clear` removes them, alone or anywhere in the list (section
+  3: "including those specified in the same response"); this applies to every response, over HTTP/1.1, HTTP/2 and
+  HTTP/3, including the ones served while a cached alternative is broken or lost the race. A 421 from the origin
+  changes nothing (it is not authoritative for the origin, RFC 9110 section 15.5.20, so its `Alt-Svc` is ignored too);
+  a 421 over HTTP/3 from an alternative removes that alternative and keeps the others (RFC 7838 section 6);
+- `ma` defaults to 86400 seconds and counts from the response's generation (section 3.1): the response's `Age` and the
+  time from sending the request to the response are subtracted, so a copy a CDN kept for a day does not get a fresh
+  day; expired entries are ignored;
+- the alternatives are tried in the server's order of preference: the first fresh one that is not marked broken (section
+  2.4), so a broken first alternative does not hide a working second one;
+- an alternative port is digits only (`h3=":+443"` is malformed);
 - an alternative on an unprivileged port (1024 and up) is refused for an origin on a privileged one, as Chromium does;
 - an alternative on a loopback, link-local or private address, or a `localhost` name, is refused unless the origin is
   on such an address too, and one on an unspecified, multicast or broadcast address always; an IPv4 address counts in
@@ -902,14 +917,28 @@ origin's host. The rules:
   resolved for this check;
 - only `h3` alternatives are used.
 
+The same checks apply to every entry a store hands back, so a store file written by an older version or edited by hand,
+or an application's own `AltSvcStore`, cannot bring in what the header path refuses; `FileAltSvcStore` also checks every
+field of every record again on load (origin form, protocol, host, ports, expiry, persist flag), drops what fails, and
+does not read a file over 8 MiB.
+
 Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default. `FileAltSvcStore(path)` keeps them
 in one tab-separated text file (loaded once, rewritten atomically after every change, expired records dropped on load)
 so the first request after a cold start can already use HTTP/3; implement `AltSvcStore` for any other backing store
 (one engine per file: two engines sharing a file overwrite each other). Both built-in stores keep at most 8 alternatives
 per origin (the first ones of the header) and 1000 origins, dropping the least recently used; `FileAltSvcStore` skips
 the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. Entries
-without `persist=1` are dropped when `networkId()` reports a new network (RFC 7838 section 2.2); `clearOnNetworkChange =
-false` keeps them.
+without `persist=1` are dropped when the network changes (RFC 7838 section 2.2): when `networkId()` reports a new network,
+or, while `networkId` is not set, when the networks `connectionMigration` follows do (the `followDefaultNetwork`
+factories). A store also keeps the network its entries were learned on (`AltSvcStore.networkId`, experimental;
+`FileAltSvcStore` writes it to its file), so the first request after a restart on another network drops them too;
+`clearOnNetworkChange = false` keeps them. Without either source the engine sees no network change.
+
+RFC 7838 section 9.4: "In a user agent, any alternative service information MUST be removed when origin-specific data is
+cleared (typically, when cookies [RFC6265] are cleared)". Call `client.clearAlternativeServices(url)` (experimental) where
+the application clears an origin's cookies or other site data, or `client.clearAlternativeServices()` for all of them:
+the cached alternatives (persistent ones too, and from the store file before it returns), broken marks and RTTs go;
+open HTTP/3 connections stay (`closeHttp3Connections()` closes them). A store of your own implements `AltSvcStore.clear()`.
 
 ### HTTPS records (experimental)
 
@@ -953,7 +982,7 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 - answers are cached for their TTL, never longer (at most a day; "no records" for the negative TTL of the answer's SOA
   record, RFC 2308, and not at all without one; at most 1000 names), together with the other HTTPS records and the
   A/AAAA records the answer carried, which spare follow-up queries (RFC 9460 section 5), and forgotten when
-  `networkId()` reports a new network; without `networkId` the engine cannot see a network change and keeps no answers
+  the network changes (`networkId()`, or the networks `connectionMigration` follows); without either the engine cannot see a network change and keeps no answers
   of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
   asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at
   most the connect timeout (30 s at most); closing the client cancels the lookups still running.
@@ -991,8 +1020,8 @@ failure is reported — the race was the one HTTP/1.1 attempt, there is no secon
 
 An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell
 back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
-single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
-network. Broken alternatives are skipped (straight to HTTP/1.1). A server that refuses the QUIC setup with
+single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when the network changes
+(`networkId()`, or the networks `connectionMigration` follows). Broken alternatives are skipped (straight to HTTP/1.1). A server that refuses the QUIC setup with
 `CONNECTION_REFUSED` (it is in `Drain`, stopping, or its accept queue is full: RFC 9000 section 5.2.2) has not shown the
 alternative broken: that call falls back to HTTP/1.1 once (`fallback = Refused`), the alternative stays cached and
 unmarked (RFC 7838 sections 2.2 and 3), and the next call tries HTTP/3 again. Any other close of the setup by the
@@ -1079,7 +1108,6 @@ val connectivity = context.getSystemService(ConnectivityManager::class.java)
 // guide:ktor:android-migration
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 connectionMigration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
-networkId = { connectivity.activeNetwork?.toString() }
 ```
 
 On iOS and macOS, `Http3ConnectionMigration.followDefaultNetwork()` does the same with the Network framework
@@ -1099,8 +1127,10 @@ What the engine does:
 - every step reaches `KuicksilverEventListener.connectionMigrated(origin, event)`: `Migrated`, `Failed` (also logged at
   `Info`, or at `Debug` when the server does not allow migration), `NetworkLost` (the connection waits; its idle
   timeout decides if no network comes back) and `SourceFailed`;
-- a migration neither marks the alternative broken nor forgets marks; `networkId` is separate, which is why the sample
-  gives it the same source, so that a new network also gets a fresh chance at alternatives marked broken on the old one.
+- a migration itself neither marks the alternative broken nor forgets marks, but while `networkId` is not set the
+  network the factories follow (`Http3ConnectionMigration.networks`) is the engine's network: a new one gives
+  alternatives marked broken on the old one a fresh chance, drops the alternatives without `persist=1` (RFC 7838 section
+  2.2) and flushes the HTTPS record cache, as a `networkId` change does. A `networkId` that is set wins.
 
 What does not survive a network change: HTTP/1.1 and HTTP/2 run over TCP, which cannot move, and so do WebSockets over
 HTTP/1.1; a call on such a connection fails and the application repeats it. The dedicated connections of WebTransport

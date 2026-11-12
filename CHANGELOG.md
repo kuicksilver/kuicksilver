@@ -14,6 +14,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: `HttpClient.clearAlternativeServices(origin)` (experimental) for RFC 7838 section 9.4: "any alternative
+  service information MUST be removed when origin-specific data is cleared (typically, when cookies [RFC6265] are
+  cleared)". It forgets, under the engine's lock, the cached alternatives of one origin or of all (persistent ones too,
+  from a `FileAltSvcStore`'s file before it returns), their broken marks and RTTs; call it where the application clears
+  cookies or site data. `AltSvcStore.clear()` (experimental) backs it; see Changed.
+- HTTP/2: the ALTSVC frame (RFC 7838 section 4, type 0xa). The Ktor server sends the engine's `Alt-Svc` value as one on
+  HTTP/2 (see the HTTP/2 server entry); the Ktor client learns from it as from the header: a frame on a request stream
+  for the connection's origin, one on stream 0 only when its Origin is that origin, in `Auto`, never through a proxy.
+  Frames section 4 says to ignore are ignored, a server ignores the frame, and each one costs a glitch.
+- Ktor client: `Http3ConnectionMigration.networks` (experimental): the networks a migration hook follows. The
+  `followDefaultNetwork` factories return their system source, and while `networkId` is not set it is the engine's
+  network: a change resets broken marks and QUIC confirmation, drops the `Alt-Svc` alternatives without `persist=1`
+  (RFC 7838 section 2.2) and flushes the HTTPS record cache, which such an engine now keeps. `networkId` wins when set.
+- Ktor client: `AltSvcStore.networkId` (experimental): the network the stored alternatives were learned on.
+  `InMemoryAltSvcStore` keeps it, `FileAltSvcStore` writes it as the file's first line (which earlier versions skip), and
+  the engine compares it with the first network it sees, so alternatives without `persist=1` learned on another network
+  before a restart are dropped (RFC 7838 section 2.2). An application's store that keeps none loses those at each start
+  where the engine knows the network.
 - Documentation site: the API reference of the published modules (Dokka HTML, with module and package descriptions,
   source links to the release tag and links into the kotlinx-coroutines, kotlinx-io and Ktor references) and the guide
   as HTML, per version, at <https://kuicksilver.github.io/kuicksilver/> (`/<version>/api/`, `/<version>/guide/`,
@@ -151,8 +169,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `http2 = true` (`EngineMain` key `kuicksilver.http2`; off by default) makes every TLS connector offer `h2` before
   `http/1.1` in ALPN, and `http2Settings` takes the windows and limits. Each stream is a Ktor call (`httpVersion`
   "HTTP/2"); requests are checked against RFC 9113 section 8 (a malformed one is reset with PROTOCOL_ERROR before any
-  handler runs, a field section above the limit gets 431), responses go out without connection-specific fields and with
-  the engine's `Alt-Svc`, content within the client's flow-control windows and never past or short of its
+  handler runs, a field section above the limit gets 431), responses go out without connection-specific fields, the
+  engine's `Alt-Svc` value goes out as an ALTSVC frame (RFC 7838 section 4: "When using HTTP/2 ([RFC7540]), servers SHOULD
+  instead send an ALTSVC frame") once per origin and value on a connection, ahead of the response, and not as a field,
+  content within the client's flow-control windows and never past or short of its
   `Content-Length` (the stream is reset instead). One stream's failure (a client's reset, a handler's exception) ends
   that stream only, and the server never answers a client's RST_STREAM with one. The client's preface and field blocks are
   bounded by `requestHeaderTimeoutSeconds`, request content and idle connections by `connectionIdleTimeoutSeconds`; a
@@ -425,6 +445,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client (breaking for an application that implements `AltSvcStore`): the interface gains `clear()` (experimental),
+  which forgets every origin's entries (RFC 7838 section 9.4, `HttpClient.clearAlternativeServices`), and `networkId`
+  (experimental, with a default that keeps nothing).
+- Ktor client: `Alt-Svc` freshness counts from the response's generation (RFC 7838 section 3.1: fresh "for 24 hours from
+  generation of the message", `ma` "the number of seconds since the response was generated"): the first valid member of
+  `Age` plus the time from the request to the response is subtracted (RFC 9111 section 4.2.3, `corrected_age_value`).
+  Before, freshness counted from receipt, so a copy a CDN had kept for a day stayed fresh for another day.
+- Ktor client: of the cached alternatives of an origin, the first fresh one that is not marked broken is used, in the
+  server's order (RFC 7838 section 2.4). Before, a broken mark on the first one sent the call to TCP although a second
+  fresh one was cached.
 - HTTP/2 client: the first request on a new connection no longer waits for the server's SETTINGS (RFC 9113 §3.4), which
   saves one round trip per new connection. Only that request goes out before them: the other requests for the route wait
   for the SETTINGS (and their SETTINGS_MAX_CONCURRENT_STREAMS) rather than open streams under the initial "unlimited" of
@@ -637,6 +667,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client: `Alt-Svc: clear, h3=":443"` (or `clear` in any list element, as when an intermediary folds two field lines)
+  stored the alternative; RFC 7838 section 3: a value "containing the special value "clear"" invalidates all alternatives
+  of the origin, "including those specified in the same response". Any element that is exactly `clear` clears now.
+- Ktor client: an alt-authority port with a sign (`h3=":+443"`) was taken as 443; RFC 3986's `port = *DIGIT` (RFC 7838
+  section 3) makes it malformed, and only digits are taken now, in headers and in stored records.
+- Ktor client: `FileAltSvcStore` checked only the port range and the expiry of the records it loads, so a file written by
+  an older version, edited by hand or by another program could bring in what the header path refuses (a local
+  destination, a host that is no connection target, text for the diagnostics log line). Every field is checked again on
+  load (origin form, protocol token, host, ports, expiry, persist flag), a file over 8 MiB is not read, and the engine
+  checks every entry it is about to use as it checks a header's, whatever the store.
+- Docs: the Alt-Svc rules said a 421 removes the origin's alternatives (a 421 from the origin changes nothing; one from
+  the alternative removes that alternative only), the threat model cited a test that does not exist
+  (`status421RemovesEntry`), the RFC 7838 cache-bounds row cited section 9.4 (now a row of its own), and the server's
+  `Alt-Svc` was described as HTTP/1.1 only.
 - HTTP/3 client: `Http3Response.cancel(code)` and a client `Http3Stream`'s `reset`/`stopSending` sent H3_REQUEST_REJECTED
   when the application passed it, a code clients MUST NOT use (RFC 9114 section 4.1.1: it tells that the server did not
   process the request). It now goes out as H3_REQUEST_CANCELLED.
