@@ -653,4 +653,16 @@ public actual object Ksl {
         server: ByteArray?,
         timeoutMs: Int,
     ): ByteArray? = KslNative.dnsQuery(name, type, server, timeoutMs)
+
+    public actual fun resolve(
+        name: String,
+        family: Int,
+    ): ByteArray? = KslNative.resolve(name, family)
+
+    public actual fun addrInfo(
+        addr: ByteArray,
+        scope: Int,
+    ): IntArray? = if (addr.size != 4 && addr.size != 16) null else KslNative.addrInfo(addr, scope)
+
+    public actual fun nat64Synthesize(v4: ByteArray): ByteArray? = if (v4.size != 4) null else KslNative.nat64Synthesize(v4)
 }

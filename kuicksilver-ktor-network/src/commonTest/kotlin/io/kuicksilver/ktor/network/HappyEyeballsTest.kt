@@ -163,7 +163,8 @@ class HappyEyeballsTest {
             val original = e.cause?.takeIf { it::class == e::class && it.message == e.message } ?: e
             assertEquals("refused by $v6b", original.message)
             assertEquals(2, original.suppressedExceptions.size)
-            assertEquals(listOf(v6a to 0L, v4a to 5L, v6b to 10L), log.started)
+            // a failure 5 ms in: the next attempt still waits for 10 ms after the previous start (RFC 8305 section 5, MUST NOT)
+            assertEquals(listOf(v6a to 0L, v4a to 10L, v6b to 20L), log.started)
         }
 
     @Test fun infiniteDelayIsSequential() =

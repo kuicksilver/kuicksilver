@@ -140,13 +140,14 @@ internal class KuicksilverEngine(
             config.http3.httpsRecords
                 .lookup(timeout)
                 // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId, or the
-                // networks connectionMigration follows)
+                // networks connectionMigration follows). TTLs run on an ExpiryClock: neither a wall clock stepped back nor a
+                // device that slept keeps a record past its TTL
                 ?.let {
                     HttpsRecords(
                         it,
                         engineScope,
                         timeout,
-                        ::getTimeMillis,
+                        ExpiryClock(),
                         caching =
                             followedNetworks != null || config.http3.networkIdSet,
                     )
@@ -564,7 +565,8 @@ internal class KuicksilverEngine(
 
     /**
      * A new network (`networkId`, else the networks `connectionMigration` follows) forgets broken marks, QUIC confirmation,
-     * the HTTPS records and, if asked, non-persistent alternatives (RFC 7838 section 2.2). The first network the engine sees
+     * the HTTPS records, the NAT64 prefixes ([Nat64]), the kept name lookups and, if asked, non-persistent alternatives (RFC
+     * 7838 section 2.2). The first network the engine sees
      * is compared with the one the store's entries were learned on ([AltSvcStore.networkId], kept across restarts by
      * [FileAltSvcStore]) when it comes from `networkId`. A network of the followed source has no identity that is stable
      * across restarts (an Android network handle is a number the system reuses, an Apple path key an interface), so it is
@@ -608,7 +610,13 @@ internal class KuicksilverEngine(
                 if (fromNetworkId) altSvc.network = id
                 id
             }
-        if (changed) httpsRecords?.onNetworkChanged()
+        if (changed) {
+            httpsRecords?.onNetworkChanged()
+            Nat64.system.reset() // RFC 7050 section 3: the new network's Pref64::/n is discovered when needed
+            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+            io.kuicksilver.ktor.network
+                .clearLookupCache() // the old network's resolver answered those
+        }
         return network
     }
 

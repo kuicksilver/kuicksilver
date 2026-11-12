@@ -564,4 +564,15 @@ class ClientHttpsRecordTest {
             QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).build() }.build(),
         )
     }
+
+    @Test fun recordCacheCountsOnTheMonotonicAndTheWallClock() {
+        // ExpiryClock: neither a wall clock stepped back nor a device that slept keeps a record past its TTL
+        // (HttpsRecordCacheTest pins both); here: the engine gives the cache both clocks, not the time of day alone
+        client(Records(emptyMap()).source).use { c ->
+            val clock = (c.engine as KuicksilverEngine).httpsRecordsForTest!!.clock
+            assertTrue(clock.monotonicForTest() in 0..<getTimeMillis() / 2, "the record cache's monotonic clock is the time of day")
+            val mark = clock.mark()
+            assertTrue(clock.elapsedMillis(mark) in 0..60_000)
+        }
+    }
 }

@@ -1096,7 +1096,8 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 - the name asked is the host for port 443, `_<port>._https.<host>` otherwise (section 9.1); AliasMode records are
   followed (one at random among several; at most 8 steps; a loop or a longer chain is treated as no record; an AliasMode
   "." is ignored); the ServiceMode records of the final name, by ascending priority and shuffled within a priority, are
-  the endpoints, each at its target (the record's own name for ".") and `port` (the origin's when absent); after an
+  the endpoints (at most 32, the lowest priorities first), each at its target (the record's own name for ".") and
+  `port` (the origin's when absent); after an
   AliasMode chain the last name with the origin's port is one more endpoint, last (section 3);
 - an endpoint is tried over the transports its ALPN set allows (section 7.1.2; the default set is `http/1.1`, so
   `alpn=h3` means QUIC and TCP, `alpn=h2` TCP, and `no-default-alpn` with `alpn=h3` QUIC only); QUIC and TCP race as for
@@ -1123,10 +1124,14 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   `HttpsRecordSource.followingPrivateDns(connectivity)` says so while strict Private DNS is on (the engine has no
   `Context`: with plain `System` strict Private DNS is not taken into account, so opt in with this builder). Elsewhere no public API
   tells whether the system's DNS is encrypted, so `System` treats failures as "no records";
-- answers are cached for their TTL, never longer (at most a day; "no records" for the negative TTL of the answer's SOA
-  record, RFC 2308, and not at all without one; at most 1000 names), together with the other HTTPS records and the
-  A/AAAA records the answer carried, which spare follow-up queries (RFC 9460 section 5), and forgotten when
-  the network changes (`networkId()`, or the networks `connectionMigration` follows); without either the engine cannot see a network change and keeps no answers
+- answers are cached for their TTL (at most a day, expired once the monotonic or the wall clock has seen it pass, so
+  neither a clock stepped back nor a device that slept keeps them longer; "no records" for the negative
+  TTL of the answer's SOA record, RFC 2308 section 5, no longer than a CNAME that led there, and not at all without one; at most
+  1000 names and about 1 MiB, and no answer of over 64 records), together with the other HTTPS records and the A/AAAA records the answer carried, which spare follow-up
+  queries (RFC 9460 section 5; when only the A or only the AAAA records came, those are used at once and the other
+  family is still looked up, joining the [Happy Eyeballs](#happy-eyeballs) race whenever it answers), and forgotten
+  when the network changes (`networkId()`, or the networks `connectionMigration` follows); without either the engine
+  cannot see a network change and keeps no answers
   of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
   asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at
   most the connect timeout (30 s at most); closing the client cancels the lookups still running.
@@ -1136,7 +1141,13 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 `DnsResolver.rawQuery` on the default network (Private DNS included) on Android from API 29. On Android API 24 to 28 there
 is no public way to ask for a record type (and a resolver of the engine's own would bypass Private DNS), so every lookup
 counts as failed there and requests behave as without records. At most four system lookups run at once per process.
-`HttpsRecordSource.Exchange` works everywhere.
+`HttpsRecordSource.Exchange` works everywhere. Its queries carry ID 0 (RFC 8484 section 4.1: DoH clients "SHOULD use
+a DNS ID of 0 in every DNS request") and the
+engine checks the question of a response, not its ID, so the exchange must tie each response to its query: DNS over
+HTTPS and DNS over TLS do; an exchange over plain UDP or TCP sets a random ID of its own in the query (its first two
+bytes) and accepts only a response with that ID. An answer is read in time linear in its size, at most 65535 bytes
+(RFC 8484 section 6: "This media type restricts the maximum size of the DNS message to 65535 bytes"), and
+a lookup's timeout stops the read: a hostile resolver cannot hold a thread with one answer.
 
 An `http://` request (not `ws://`, not through a proxy, not to an IP address) first looks up the records of the same URL
 with `https` (port 80 becomes 443), waiting for the answer as an `https` request does (while the origin's addresses
@@ -1148,6 +1159,56 @@ has an AliasMode record or a ServiceMode record the engine could use, the engine
 those repeated over `https` too. An AliasMode record whose target is no host name counts as "." and does not upgrade. The upgrade is no more trusted than a 307 over cleartext:
 nothing is remembered for the origin beyond the records' TTL. An origin that publishes HTTPS records but serves
 different content on `http://` cannot be reached over `http://` by such a client.
+
+### Happy Eyeballs
+
+Every connection the engine makes to a host name, HTTP/1.1 and HTTP/2 over TCP, HTTP/3 over QUIC, to the origin, to an
+alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; details and the RFC text in
+[RFC 8305](../spec/rfc/8305.md)):
+
+- **Resolution.** The name's IPv6 (AAAA) and IPv4 (A) addresses are asked for separately, IPv6 first: one `getaddrinfo`
+  per family on two threads, on the JVM and Android through Kuicksilver's native library, since `InetAddress` asks for
+  both at once. The first IPv6 answer starts a connection at once; an IPv4 answer that comes first waits up to 50 ms for
+  the IPv6 one (the Resolution Delay), and goes ahead at once when the IPv6 answer is empty or failed. An answer that
+  comes while connections are being tried joins them. On the JVM, an application that installed its own resolver
+  (`InetAddressResolverProvider`, `jdk.net.hosts.file`) keeps it: lookups go through `InetAddress` then, both families in
+  one call. `java.net.preferIPv4Stack=true` leaves IPv6 out. At most 8 lookups of each family run at once, so a network
+  that drops AAAA queries does not hold up the A lookups of other names.
+- **Order.** The addresses are sorted by RFC 6724's destination address selection, the engine's own on every platform
+  (also for the addresses of an [HTTPS record](#https-records-experimental)): an address without a usable source
+  address (no IPv6 route, say) goes last, then matching scope and label, the policy table's precedence (native IPv6
+  before IPv4 before 6to4 and Teredo), native transport before a tunnel, and the longest prefix shared with the source.
+  The two families then alternate, starting with the first one in the sorted list. `java.net.preferIPv6Addresses` no
+  longer decides the order.
+- **Attempts.** One attempt at a time: the next one starts when `connectionAttemptDelay` (250 ms) has passed since the
+  last one started, or as soon as an attempt failed, but never within 10 ms of the last start. The first connection
+  wins; the other attempts are cancelled, and one that connected anyway is closed. So an address that drops connection
+  attempts silently costs 250 ms, not the request's connect timeout, which bounds all attempts together.
+  `connectionAttemptDelay` takes 100 ms to 2 s, or `Duration.INFINITE` to try one address after another.
+- **HTTP/3.** QUIC handshakes race over the addresses in the same way, so a family that drops UDP costs one attempt
+  delay, also with `Http3DiscoveryMode.H3Only`; a cancelled handshake closes its connection. With `earlyData` and a
+  session ticket for the server, the first address of the order can send 0-RTT at once and is used without a race:
+  its requests go out early, and if its handshake then fails they fail and fall back as any HTTP/3 failure does; the
+  other addresses are not tried for that setup. When every address fails, a server's CONNECTION_REFUSED counts as a
+  refusal (no broken mark) only when every address refused. The [h3/h1 race](#racing-and-fallback) runs on top: each
+  side races the addresses of the request's one resolution. An `Alt-Svc` alternative's host and an HTTPS record's
+  endpoint are raced the same way, and [connection migration](#connection-migration) follows the connection that won.
+- **IPv6-only networks (NAT64).** When the host has a global IPv6 address and no IPv4 route (464XLAT, as Android's
+  clatd and iOS on cellular run it, gives one, and the engine then leaves IPv4 to the platform), an IPv4 address the
+  host has no route to (an IPv4 literal, or a name with IPv4 addresses only) is reached through the network's NAT64:
+  on Apple platforms with the system's own synthesis (`getaddrinfo` of the literal, Apple's documented way, so an iPhone
+  on a NAT64 Wi-Fi uses the prefixes iOS knows), elsewhere with the prefix of an AAAA query for `ipv4only.arpa` (RFC
+  7050), asked only once an address needs it, cached for its TTL (at least a minute, refreshed in the background before
+  it ends, 30 s between failed queries) and forgotten on a new `networkId` or a new IPv6 network. Addresses with a route
+  (a LAN, a VPN, loopback) are used as they are, and the Well-Known Prefix `64:ff9b::/96` never carries a private
+  address (RFC 6052). The engine then asks for a name's IPv4 addresses only when the IPv6 answer is empty, or 2 s after
+  the last IPv6 attempt started without a connection (a broken AAAA record). On Android (API 30) the engine takes the
+  prefix Android knows (`LinkProperties.getNat64Prefix`) when the application gave it a `ConnectivityManager` through
+  `Http3ConnectionMigration.followDefaultNetwork(connectivity)` or `HttpsRecordSource.followingPrivateDns(connectivity)`;
+  otherwise, where it runs no 464XLAT, the `ipv4only.arpa` query goes through its resolver.
+- **Caching.** An answer is kept as long as the JDK's own cache would keep it (`networkaddress.cache.ttl`, 30 s, and
+  `networkaddress.cache.negative.ttl`, 10 s by default; 2 s on Android), at most 1000 names and families; on
+  Kotlin/Native the system resolver's cache does it.
 
 ### Racing and fallback
 
@@ -2005,19 +2066,11 @@ that binds and connects the address `getaddrinfo` returned. So on every platform
   `0.0.0.0` stay the wildcards;
 - the client's HTTP/1.1 connection (and its connection to an HTTP proxy) goes to the address in the URL; an
   IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the JVM does. A host name is resolved to all its
-  addresses (`InetAddress.getAllByName` on the JVM and Android, `getaddrinfo` on Kotlin/Native, off the caller's thread
-  and within the connect timeout) and connected with Happy Eyeballs (RFC 8305): IPv6 and IPv4 addresses alternate,
-  starting with the family the resolver listed first (on the JVM `java.net.preferIPv6Addresses` decides, IPv4 first by
-  default); a new attempt starts every `connectionAttemptDelay` (250 ms) or as soon as the previous one failed, the first
-  connection wins and the other attempts are cancelled or closed. So an address that drops connection attempts silently
-  costs 250 ms, not the request's connect timeout, which bounds all attempts together. `connectionAttemptDelay =
-  Duration.INFINITE` tries one address after another, as 0.2 did on Kotlin/Native.
-- HTTP/3 connects to the first address of the same resolution (one lookup per request for both sides of the h3/h1
-  race); it does not race addresses: a family that drops UDP loses the h3/h1 race instead. With `H3Only` there is no
-  race, so when the first address's family is broken (UDP dropped on it) the request fails at the connect timeout.
-- Name lookups block a thread (`getaddrinfo`, `getAllByName`): at most 8 run at once, on their own share of
-  `Dispatchers.IO`, and a name has one lookup in flight however many requests wait for it, so a stalled resolver cannot
-  take the threads the sockets run on (threat model 3.21). An address literal is never looked up.
+  addresses and connected with Happy Eyeballs ([Happy Eyeballs](#happy-eyeballs)); HTTP/3 races the same addresses over
+  QUIC.
+- Name lookups block a thread (`getaddrinfo`): at most 8 of each address family run at once, on their own share of
+  `Dispatchers.IO`, and a name has one lookup per address family in flight however many requests wait for it, so a stalled resolver cannot take the
+  threads the sockets run on (threat model 3.21). An address literal is never looked up.
 
 HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint
 is dual-stack, ADR-0006). The portable Kotlin/Native UDP socket (`IoPreference.Portable`, or a sandbox that refuses the

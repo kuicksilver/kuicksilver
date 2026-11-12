@@ -9,6 +9,8 @@ import io.kuicksilver.ktor.client.dns.DnsMessage
 import io.kuicksilver.ktor.client.dns.SvcbMalformedException
 import io.kuicksilver.ktor.client.dns.SvcbRecord
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlin.time.Duration
 
 /**
@@ -48,7 +50,17 @@ public sealed interface HttpsRecordSource {
      * Lookups through [exchange][HttpsRecordSource.Exchange.exchange]: it gets a DNS query in wire format (RFC 1035 section 4.1, ID 0 and RD set, as RFC 8484
      * section 4.1 asks for DNS over HTTPS) and returns the response in wire format, for example the body of a POST to a
      * DoH server with `Content-Type: application/dns-message`. The engine has no DoH client of its own. An exchange that
-     * throws, or returns something that is not the response to the query, counts as a failed lookup.
+     * throws, or returns something that is not the response to the query, counts as a failed lookup; so does a response
+     * over 65535 bytes (RFC 8484 section 6: "This media type restricts the maximum size of the DNS message to 65535
+     * bytes").
+     *
+     * The engine checks that the response answers the question it asked, but not its ID: every query has ID 0, so the
+     * exchange must tie a response to its query itself, which is what the ID is for: it "can be used by the requester to
+     * match up replies to outstanding queries" (RFC 1035 section 4.1.1). DNS over HTTPS does (the response is the one to its HTTP
+     * request), and so does DNS over TLS that matches responses to queries. An exchange over plain UDP or TCP must not
+     * send ID 0 as is: it sets a random ID of its own in the query (bytes 0 and 1), accepts only a response with that
+     * ID from the server it asked, and may hand it back with either ID; otherwise an off-path attacker who guesses the
+     * question can forge the answer.
      */
     public class Exchange(
         /**
@@ -120,7 +132,10 @@ internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> D
         is HttpsRecordSource.Exchange -> {
             { name ->
                 try {
-                    DnsMessage.read(exchange(DnsMessage.query(name)), name)
+                    val response = exchange(DnsMessage.query(name))
+                    // the read checks the coroutine: the lookup's timeout stops it, however long the answer
+                    val context = currentCoroutineContext()
+                    DnsMessage.read(response, name) { context.ensureActive() }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: SvcbMalformedException) {

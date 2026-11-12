@@ -10,35 +10,27 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.io.IOException
-import kotlin.concurrent.Volatile
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /*
- * Happy Eyeballs version 2 (RFC 8305) for the engines' TCP connects: every address a name resolves to, the two families
- * interleaved (section 4), attempts started one connection attempt delay apart or as soon as the previous one failed
- * (section 5), the first connected socket wins and the others are cancelled or, if they connected too, closed (section 5).
- * Not yet (docs/spec/rfc/8305.md, the section 4-6 TCP address race): separate asynchronous AAAA and A queries with the
- * resolution delay (section 3; getaddrinfo and InetAddress.getAllByName answer once, with both families), an RFC 6724
- * sort where the platform resolver does not sort (section 4; the desktop JVM), NAT64 synthesis (section 7).
+ * Happy Eyeballs version 2 (RFC 8305) for the engines' connects, TCP and QUIC: the two families asked for separately and
+ * raced as they arrive (section 3), every address sorted by RFC 6724 and the families interleaved (section 4, the sort in
+ * AddressSelection.kt), attempts one connection attempt delay apart or as soon as the previous one failed (section 5), late
+ * answers joining the race (section 6), and on an IPv6-only network the NAT64 timing of section 7 (the synthesis is the
+ * resolution's: the Ktor client's RequestDns). Name lookups: NameResolution.kt.
  */
 
 /**
@@ -81,95 +73,13 @@ public class TcpAddress(
 }
 
 /**
- * The addresses [host] resolves to for [port], in the resolver's order (RFC 6724 destination address selection where the
- * platform does it; on the JVM, `java.net.preferIPv6Addresses` decides which family comes first, IPv4 by default).
- *
- * - An address literal (brackets allowed) never reaches the resolver: a dotted-decimal IPv4 address (four octets
- *   0..255) is parsed here, an IPv6 one (anything with a `:`) by `getaddrinfo` with `AI_NUMERICHOST` or the JVM's literal
- *   parser, which do not look anything up; an invalid one fails with an [IOException].
- * - A name is resolved by `InetAddress.getAllByName` (JVM, Android) or `getaddrinfo` (Kotlin/Native), which block a
- *   thread and cannot be interrupted. Lookups run on a view of [Dispatchers.IO] limited to [MAX_CONCURRENT_LOOKUPS]
- *   threads, so a resolver that stalls holds at most that many and never the threads the socket loops run on (the rest
- *   of `Dispatchers.IO`, threat model 3.21); and one lookup of a name is in flight at a time, shared by every caller
- *   that asks for it meanwhile, so a storm of requests to one stalled name holds one thread. A caller does not wait for
- *   a lookup once it is cancelled: a connect timeout ends a slow resolution as it ends a slow connect, while the lookup
- *   itself finishes on its thread and is then forgotten (nothing is cached past it).
- *
- * Fails with an [IOException] when the name does not resolve or resolves to no address.
- */
-@InternalKuicksilverApi
-public suspend fun resolveTcp(
-    host: String,
-    port: Int,
-): List<TcpAddress> {
-    require(port in 0..0xffff) { "port out of range: $port" }
-    val name = if (host.length >= 2 && host.first() == '[' && host.last() == ']') host.substring(1, host.length - 1) else host
-    parseIpv4Literal(name)?.let { return listOf(TcpAddress(it, port)) }
-    val found =
-        if (':' in name) {
-            platformResolveTcp(name, port, numericHost = true) // an IPv6 literal: parsed, never looked up
-        } else {
-            sharedLookup(name).map { it.withPort(port) }
-        }
-    if (found.isEmpty()) throw IOException("$name resolved to no address")
-    return found.distinct()
-}
-
-/**
- * How many name lookups run at once, process-wide. `getaddrinfo` and `getAllByName` block their thread for as long as
- * the system resolver takes (a stalled DNS server: tens of seconds), and [Dispatchers.IO] (64 threads by default) also
- * runs the engines' socket loops; 8 leaves those loops nearly all of it while lookups of different names still proceed
- * in parallel (Chromium runs 6 system lookups at once).
- */
-internal const val MAX_CONCURRENT_LOOKUPS: Int = 8
-
-@OptIn(ExperimentalCoroutinesApi::class)
-private val lookupDispatcher = Dispatchers.IO.limitedParallelism(MAX_CONCURRENT_LOOKUPS)
-
-/** The lookups in flight, by name; each removes itself when it completes. */
-private val lookupLock = Mutex()
-private val lookupsInFlight = HashMap<String, Deferred<List<TcpAddress>>>()
-
-/** Replaces the platform's blocking lookup of a name (tests: a resolver that stalls); null in production. */
-@Volatile
-internal var blockingLookupForTest: ((String) -> List<TcpAddress>)? = null
-
-/**
- * The addresses of [name] (port 0) from the lookup in flight for it, or a new one on [lookupDispatcher]. The lookup is
- * not a child of the caller: a cancelled caller leaves it to the others waiting for it, or to finish on its own.
- */
-@OptIn(DelicateCoroutinesApi::class)
-private suspend fun sharedLookup(name: String): List<TcpAddress> {
-    val lookup =
-        lookupLock.withLock {
-            lookupsInFlight[name] ?: GlobalScope
-                .async(lookupDispatcher, CoroutineStart.LAZY) {
-                    try {
-                        blockingLookupForTest?.invoke(name) ?: platformResolveTcp(name, 0, numericHost = false)
-                    } finally {
-                        val self = coroutineContext[Job]
-                        withContext(NonCancellable) {
-                            lookupLock.withLock { if (lookupsInFlight[name] === self) lookupsInFlight.remove(name) }
-                        }
-                    }
-                }.also {
-                    lookupsInFlight[name] = it
-                    it.start()
-                }
-        }
-    return lookup.await()
-}
-
-/** The lookups in flight (tests). */
-internal suspend fun lookupsInFlightForTest(): Int = lookupLock.withLock { lookupsInFlight.size }
-
-/**
  * The four bytes of a dotted-decimal IPv4 literal (each octet 0..255, at most three digits, no leading zero), or null.
  * An octet with a leading zero (`010`) is octal to `inet_aton`, `getaddrinfo`, curl and WHATWG URLs (8, not 10): such a
  * string is left to the platform as before, so the address connected to is the one those parsers (and any allow or
  * deny list built on them) see.
  */
-internal fun parseIpv4Literal(name: String): ByteArray? {
+@InternalKuicksilverApi
+public fun parseIpv4Literal(name: String): ByteArray? {
     val parts = name.split('.')
     if (parts.size != 4) return null
     val out = ByteArray(4)
@@ -183,17 +93,6 @@ internal fun parseIpv4Literal(name: String): ByteArray? {
 }
 
 /**
- * The platform's blocking resolution of [name] for [port]: `getAllByName` or `getaddrinfo`. With [numericHost], [name]
- * is an address literal that must not be looked up (`AI_NUMERICHOST`; on the JVM a literal parse), and an invalid one
- * fails with an [IOException].
- */
-internal expect fun platformResolveTcp(
-    name: String,
-    port: Int,
-    numericHost: Boolean,
-): List<TcpAddress>
-
-/**
  * Opens a TCP connection to exactly [address], as [connectTcp] does for one resolved address (on Kotlin/Native a socket
  * of this module, not ktor-network's native connect: Ktor issue KTOR-10017, security, under coordinated disclosure).
  * Fails with an [IOException] when the connection cannot be made; a cancelled connect closes its socket.
@@ -205,11 +104,11 @@ public expect suspend fun connectTcpAddress(
 ): Socket
 
 /**
- * Opens a TCP connection to [host] and [port] with Happy Eyeballs (RFC 8305): [resolve] gives the addresses, the families
- * are interleaved ([interleaveFamilies]), and a new attempt starts every [attemptDelay] or as soon as the previous one
- * failed; the first connected socket is returned, the other attempts are cancelled and sockets that connected too are
- * closed. [Duration.INFINITE] tries the addresses one after another. When every attempt fails, the last failure is thrown
- * with the others suppressed. The race has no deadline of its own: the caller bounds it (the engines' connect timeout).
+ * Opens a TCP connection to [host] and [port] with Happy Eyeballs (RFC 8305, [raceAddresses]): [resolution] gives the
+ * addresses one family at a time, [order] sorts and interleaves those not tried yet (RFC 6724 and RFC 8305 section 4 by
+ * default), and a new attempt starts every [attemptDelay] or as soon as the previous one failed; the first connected socket
+ * is returned, the other attempts are cancelled and sockets that connected too are closed. [Duration.INFINITE] tries the
+ * addresses one after another. The race has no deadline of its own: the caller bounds it (the engines' connect timeout).
  */
 @InternalKuicksilverApi
 public suspend fun connectTcpRacing(
@@ -217,40 +116,40 @@ public suspend fun connectTcpRacing(
     host: String,
     port: Int,
     attemptDelay: Duration,
-    resolve: suspend (String, Int) -> List<TcpAddress> = ::resolveTcp,
-): Socket {
-    require(attemptDelay.isPositive()) { "attemptDelay must be positive, was $attemptDelay" }
-    val addrs = interleaveFamilies(resolve(host, port))
-    if (addrs.isEmpty()) throw IOException("$host resolved to no address")
-    return happyEyeballs(addrs, attemptDelay, connect = { connectTcpAddress(selector, it) }, close = { it.close() })
-}
+    resolution: AddressResolution = SystemResolution(host, port),
+    order: (List<TcpAddress>) -> List<TcpAddress> = defaultOrder(),
+): Socket = raceAddresses(host, resolution, attemptDelay, order, connect = { connectTcpAddress(selector, it) }, close = { it.close() })
+
+/** The order of RFC 8305 section 4: an RFC 6724 sort ([DestinationSort], one per race), then the families interleaved. */
+@InternalKuicksilverApi
+public fun defaultOrder(sort: DestinationSort = DestinationSort()): (List<TcpAddress>) -> List<TcpAddress> =
+    { interleaveFamilies(sort.sort(it)) }
 
 /**
- * [addrs] with the two families alternating (RFC 8305 section 4, First Address Family Count 1): the family of the first
- * address leads, as the resolver ordered it (RFC 6724), and the order within each family is kept.
+ * The Resolution Delay of RFC 8305 section 3: "The recommended value for the Resolution Delay is 50 milliseconds." An IPv4
+ * answer that comes first waits this long for the IPv6 one before the first attempt starts.
  */
-internal fun interleaveFamilies(addrs: List<TcpAddress>): List<TcpAddress> {
-    if (addrs.isEmpty()) return addrs
-    val firstV6 = addrs.first().isIpv6
-    val lead = addrs.filter { it.isIpv6 == firstV6 }
-    val other = addrs.filter { it.isIpv6 != firstV6 }
-    val out = ArrayList<TcpAddress>(addrs.size)
-    for (i in 0 until maxOf(lead.size, other.size)) {
-        if (i < lead.size) out += lead[i]
-        if (i < other.size) out += other[i]
-    }
-    return out
-}
+@InternalKuicksilverApi
+public val RESOLUTION_DELAY: Duration = 50.milliseconds
 
 /**
- * The race of RFC 8305 section 5 over [addrs], in order: each attempt is a child coroutine running [connect]; the next
- * one starts when [attemptDelay] has passed since the last start or when an attempt failed, whichever comes first
- * ([Duration.INFINITE]: only on failure, one at a time). The first result wins; the other attempts are cancelled, and a
- * result that arrives anyway (a connect that completed as it was cancelled) is given to [close]. When every attempt fails,
- * the last failure is thrown with the earlier ones suppressed. Cancelling the caller cancels every attempt, and closes a
- * winner it can no longer return.
+ * RFC 8305 section 5: "a subsequent connection MUST NOT be started within 10 milliseconds of the previous attempt", also
+ * when the previous attempt failed sooner.
  */
-@OptIn(ExperimentalCoroutinesApi::class)
+@InternalKuicksilverApi
+public val MIN_ATTEMPT_GAP: Duration = 10.milliseconds
+
+/**
+ * The Last Resort Local Synthesis Delay of RFC 8305 section 7.2, "recommended to be 2 seconds": on an IPv6-only network,
+ * how long after the last IPv6 attempt started the IPv4 addresses are asked for, to be synthesized.
+ */
+@InternalKuicksilverApi
+public val LAST_RESORT_SYNTHESIS_DELAY: Duration = 2.seconds
+
+/**
+ * The race of RFC 8305 over a static list [addrs], tried in the given order (no sort): [raceAddresses] with every address
+ * known at the start.
+ */
 internal suspend fun <S> happyEyeballs(
     addrs: List<TcpAddress>,
     attemptDelay: Duration,
@@ -258,41 +157,276 @@ internal suspend fun <S> happyEyeballs(
     close: (S) -> Unit,
 ): S {
     require(addrs.isNotEmpty()) { "no address to connect to" }
+    return raceAddresses("", null, attemptDelay, { it }, connect, close, known = addrs)
+}
+
+private sealed interface RaceEvent {
+    class Answer(
+        val ipv6: Boolean,
+        val result: Result<List<TcpAddress>>,
+    ) : RaceEvent
+
+    class Failed(
+        val cause: Throwable,
+    ) : RaceEvent
+
+    /** A timer of the attempt numbered [attempt]: the attempt delay, or the 10 ms gap after its start. */
+    class AttemptDelayOver(
+        val attempt: Int,
+    ) : RaceEvent
+
+    class GapOver(
+        val attempt: Int,
+    ) : RaceEvent
+
+    data object ResolutionDelayOver : RaceEvent
+
+    data object LastResort : RaceEvent
+}
+
+private enum class FamilyState { NotAsked, Pending, Positive, Negative }
+
+/**
+ * Happy Eyeballs version 2 (RFC 8305) over the addresses [resolution] gives for [host]: each attempt is a child coroutine
+ * running [connect], the first result wins, the other attempts are cancelled and a result that arrives anyway (a connect
+ * that completed as it was cancelled) goes to [close]. When every attempt failed and no answer is outstanding, the last
+ * failure is thrown with the earlier ones suppressed (a failed lookup is thrown when there was nothing to try). Cancelling
+ * the caller cancels every attempt and lookup, and closes a winner it can no longer return.
+ *
+ * - Section 3: the IPv6 and IPv4 addresses are asked for at once, IPv6 first. "if a positive AAAA response ... is received
+ *   first, the first IPv6 connection attempt is immediately started"; an IPv4 answer that comes first waits
+ *   [resolutionDelay] for the IPv6 one, and goes ahead at once when the IPv6 answer is negative or failed. An answer that
+ *   comes while attempts run joins them: "the newly received IPv6 addresses are incorporated into the list of available
+ *   candidate addresses".
+ * - Section 4 and section 6: before each attempt the addresses received and not tried yet are put in [order] (an RFC 6724
+ *   sort and the families interleaved: [defaultOrder]); "If an address is added to the list, it should be sorted into the
+ *   list of addresses not yet attempted according to the rules above".
+ * - Section 5: "one connection attempt to a single address is started first, followed by the others in the list, one at a
+ *   time": the next one when [attemptDelay] has passed since the last start, or when an attempt failed, never within
+ *   [MIN_ATTEMPT_GAP] of the previous start ([Duration.INFINITE]: only on failure).
+ * - Section 7: on an IPv6-only network ([AddressResolution.ipv6Only]) IPv4 is asked for only when the IPv6 answer was
+ *   negative or failed, or as the last resort [lastResortDelay] after the last attempt started without a connection (or
+ *   at once when all of them failed); the resolution synthesizes the answer.
+ *
+ * [known] (with no [resolution]): a list given up front, both families settled. [failures] collects every attempt's failure
+ * as it comes (a caller whose own timeout ends the race still has them); when every attempt failed, [chooseFailure] picks
+ * the one thrown, the others suppressed in it (each attempt's failure is its own; a lookup's failure, which a request's
+ * other races share, is never changed: a fresh [IOException] carries it).
+ */
+@InternalKuicksilverApi
+@OptIn(ExperimentalCoroutinesApi::class)
+public suspend fun <S> raceAddresses(
+    host: String,
+    resolution: AddressResolution?,
+    attemptDelay: Duration,
+    order: (List<TcpAddress>) -> List<TcpAddress>,
+    connect: suspend (TcpAddress) -> S,
+    close: (S) -> Unit,
+    resolutionDelay: Duration = RESOLUTION_DELAY,
+    lastResortDelay: Duration = LAST_RESORT_SYNTHESIS_DELAY,
+    known: List<TcpAddress> = emptyList(),
+    failures: MutableList<Throwable>? = null,
+    chooseFailure: (List<Throwable>) -> Throwable = { it.last() },
+): S {
+    require(attemptDelay.isPositive()) { "attemptDelay must be positive, was $attemptDelay" }
+    require(resolution != null || known.isNotEmpty()) { "no address to connect to" }
     // outside the scope: a caller cancelled after an attempt won (while the losers wind down) still closes the winner
     val won = CompletableDeferred<S>()
     try {
         coroutineScope {
-            val failures = Channel<Throwable>(Channel.UNLIMITED)
-            val errors = ArrayList<Throwable>(addrs.size)
+            val events = Channel<RaceEvent>(Channel.UNLIMITED)
+            val received = ArrayList<TcpAddress>(known.distinct())
+            val attempted = HashSet<TcpAddress>()
+            val errors = ArrayList<Throwable>()
+            val lookupErrors = ArrayList<Throwable>()
+            val ipv6Only = resolution?.ipv6Only == true
+            var v6 = if (resolution == null) FamilyState.Positive else FamilyState.Pending
+            var v4 =
+                if (resolution == null) {
+                    FamilyState.Positive
+                } else if (ipv6Only) {
+                    FamilyState.NotAsked
+                } else {
+                    FamilyState.Pending
+                }
             var started = 0
+            var inFlight = 0
+            var delayOver = true // the attempt delay since the last start has passed (or nothing started)
+            var gapOpen = true // MIN_ATTEMPT_GAP since the last start has passed
+            var startWhenGapOpens = false
+            var resolutionDelayOver = false
+            var resolutionTimer: Job? = null
+            var attemptTimer: Job? = null
+            var gapTimer: Job? = null
+            var lastResortTimer: Job? = null
+
+            fun timer(
+                d: Duration,
+                event: RaceEvent,
+            ): Job =
+                launch {
+                    delay(d)
+                    events.trySend(event)
+                }
+
+            fun ask(ipv6: Boolean) {
+                // undispatched: the query is on its way when this returns, the IPv6 one before the IPv4 one
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    val result =
+                        try {
+                            Result.success(resolution!!.addresses(ipv6))
+                        } catch (e: CancellationException) {
+                            currentCoroutineContext().ensureActive() // the race's own end; else the lookup's (a timeout)
+                            Result.failure(e)
+                        } catch (e: Throwable) {
+                            Result.failure(e)
+                        }
+                    events.trySend(RaceEvent.Answer(ipv6, result))
+                }
+            }
+
+            // the whole list in order, then the addresses not tried yet: a late answer is sorted in among those, and the
+            // families keep alternating from where the attempts got to
+            fun pending(): List<TcpAddress> = order(received).filter { it !in attempted }
+
+            fun firstAllowed(): Boolean =
+                started > 0 || v6 == FamilyState.Positive ||
+                    (v4 == FamilyState.Positive && (v6 == FamilyState.Negative || resolutionDelayOver))
 
             fun startNext() {
-                val address = addrs[started++]
+                val next = pending().firstOrNull() ?: return
+                attempted += next
+                started++
+                inFlight++
+                delayOver = false
+                gapOpen = false
+                startWhenGapOpens = false
+                attemptTimer?.cancel()
+                if (!attemptDelay.isInfinite()) attemptTimer = timer(attemptDelay, RaceEvent.AttemptDelayOver(started))
+                gapTimer?.cancel()
+                gapTimer = timer(MIN_ATTEMPT_GAP, RaceEvent.GapOver(started))
                 launch {
                     val s =
                         try {
-                            connect(address)
+                            connect(next)
                         } catch (e: CancellationException) {
-                            throw e
+                            // the race's own end; else the attempt's (a timeout inside it), a failure like any other
+                            currentCoroutineContext().ensureActive()
+                            events.trySend(RaceEvent.Failed(e))
+                            return@launch
                         } catch (e: Throwable) {
-                            failures.trySend(e)
+                            events.trySend(RaceEvent.Failed(e))
                             return@launch
                         }
                     // a loser that connected after all: nobody takes its socket
                     if (!won.complete(s)) runCatching { close(s) }
                 }
+                // section 7.2: "The timer is started when the last connection attempt is fired."
+                if (ipv6Only && v4 == FamilyState.NotAsked && v6 != FamilyState.Pending && pending().isEmpty()) {
+                    lastResortTimer?.cancel()
+                    lastResortTimer = timer(lastResortDelay, RaceEvent.LastResort)
+                }
             }
 
-            startNext()
+            // [due]: an attempt failed or the attempt delay passed, so the next one may start now
+            fun maybeStart(due: Boolean) {
+                if (!firstAllowed()) return
+                if (!(due || inFlight == 0 || delayOver)) return
+                if (!gapOpen) {
+                    startWhenGapOpens = true
+                    return
+                }
+                startNext()
+            }
+
+            fun askIpv4() {
+                if (v4 != FamilyState.NotAsked) return
+                v4 = FamilyState.Pending
+                lastResortTimer?.cancel()
+                ask(false)
+            }
+
+            if (resolution != null) {
+                ask(true)
+                if (!ipv6Only) ask(false)
+            } else {
+                maybeStart(due = true)
+            }
             while (!won.isCompleted) {
+                if (inFlight == 0 && v6 != FamilyState.Pending && v4 != FamilyState.Pending && pending().isEmpty()) {
+                    if (v4 == FamilyState.NotAsked) {
+                        askIpv4() // section 7.2: every IPv6 attempt failed already, nothing to wait for
+                        continue
+                    }
+                    throw raceFailure(host, errors, lookupErrors, chooseFailure)
+                }
                 select<Unit> {
                     won.onJoin {}
-                    failures.onReceive { e ->
-                        errors += e
-                        if (errors.size == addrs.size) throw lastWithSuppressed(errors)
-                        if (started < addrs.size) startNext()
+                    events.onReceive { e ->
+                        when (e) {
+                            is RaceEvent.Answer -> {
+                                val found =
+                                    e.result
+                                        .getOrNull()
+                                        .orEmpty()
+                                        .filter { it !in received }
+                                e.result.exceptionOrNull()?.let { lookupErrors += it }
+                                received += found
+                                val state =
+                                    if (e.result
+                                            .getOrNull()
+                                            .orEmpty()
+                                            .isNotEmpty()
+                                    ) {
+                                        FamilyState.Positive
+                                    } else {
+                                        FamilyState.Negative
+                                    }
+                                if (e.ipv6) {
+                                    v6 = state
+                                    if (state == FamilyState.Negative && ipv6Only) askIpv4()
+                                } else {
+                                    v4 = state
+                                    if (state == FamilyState.Positive && v6 == FamilyState.Pending && started == 0 &&
+                                        resolutionTimer == null
+                                    ) {
+                                        resolutionTimer = timer(resolutionDelay, RaceEvent.ResolutionDelayOver)
+                                    }
+                                }
+                                if (found.isNotEmpty() || started == 0) maybeStart(due = false)
+                            }
+
+                            is RaceEvent.Failed -> {
+                                errors += e.cause
+                                failures?.add(e.cause)
+                                inFlight--
+                                maybeStart(due = true)
+                            }
+
+                            is RaceEvent.AttemptDelayOver -> {
+                                if (e.attempt == started) {
+                                    delayOver = true
+                                    maybeStart(due = true)
+                                }
+                            }
+
+                            is RaceEvent.GapOver -> {
+                                if (e.attempt == started) {
+                                    gapOpen = true
+                                    if (startWhenGapOpens) maybeStart(due = true)
+                                }
+                            }
+
+                            RaceEvent.ResolutionDelayOver -> {
+                                resolutionDelayOver = true
+                                maybeStart(due = false)
+                            }
+
+                            RaceEvent.LastResort -> {
+                                askIpv4()
+                            }
+                        }
                     }
-                    if (started < addrs.size && !attemptDelay.isInfinite()) onTimeout(attemptDelay) { startNext() }
                 }
             }
             coroutineContext.cancelChildren()
@@ -304,11 +438,38 @@ internal suspend fun <S> happyEyeballs(
     return won.getCompleted()
 }
 
-private fun lastWithSuppressed(errors: List<Throwable>): Throwable {
-    val last = errors.last()
-    for (e in errors) if (e !== last) last.addSuppressed(e)
-    return last
+/**
+ * The race's failure: the attempt failure [chooseFailure] picks, the others suppressed in it (they are the race's own);
+ * else the lookups' (shared with the request's other races, so never changed: one alone as it is, several as the causes
+ * of a fresh [IOException]); else "no address".
+ */
+private fun raceFailure(
+    host: String,
+    errors: List<Throwable>,
+    lookupErrors: List<Throwable>,
+    chooseFailure: (List<Throwable>) -> Throwable,
+): Throwable {
+    if (errors.isNotEmpty()) {
+        val chosen = chooseFailure(errors)
+        for (e in errors.distinct()) if (e !== chosen) chosen.addSuppressed(e)
+        return chosen
+    }
+    if (lookupErrors.isNotEmpty()) return sharedFailures(host, lookupErrors.distinct())
+    return IOException("$host resolved to no address")
 }
+
+/**
+ * [shared] failures (a lookup's, kept for its negative TTL and handed to every caller) as a fresh [IOException] of this
+ * caller's, the last as its cause and the others suppressed in it: whatever the caller adds to it (a protocol race its
+ * other failure) never reaches the shared ones.
+ */
+internal fun sharedFailures(
+    host: String,
+    shared: List<Throwable>,
+): Throwable =
+    IOException("$host could not be resolved: ${shared.last().message}", shared.last()).also { e ->
+        shared.dropLast(1).forEach { e.addSuppressed(it) }
+    }
 
 private fun Byte.u(): Int = toInt() and 0xff
 

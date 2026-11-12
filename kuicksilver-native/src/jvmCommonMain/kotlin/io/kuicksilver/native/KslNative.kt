@@ -406,4 +406,16 @@ internal object KslNative {
         server: ByteArray?,
         timeoutMs: Int,
     ): ByteArray?
+
+    @JvmStatic external fun resolve(
+        name: String,
+        family: Int,
+    ): ByteArray?
+
+    @JvmStatic external fun addrInfo(
+        addr: ByteArray,
+        scope: Int,
+    ): IntArray?
+
+    @JvmStatic external fun nat64Synthesize(v4: ByteArray): ByteArray?
 }

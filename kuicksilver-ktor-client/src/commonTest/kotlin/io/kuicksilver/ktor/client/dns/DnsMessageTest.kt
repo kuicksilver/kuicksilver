@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client.dns
 
 import io.kuicksilver.ktor.client.dns.SvcbTestEncoder.response
 import io.kuicksilver.ktor.client.dns.SvcbTestEncoder.rr
+import kotlinx.coroutines.CancellationException
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -12,6 +13,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * DNS messages around the HTTPS records: the query (RFC 1035 section 4.1, RFC 8484 section 4.1 for its ID), the answer
@@ -177,15 +180,201 @@ class DnsMessageTest {
         assertEquals(30, ttl)
     }
 
+    @Test fun relatedRrsetOfACnameTargetIsFiledUnderTheTargetName() { // RFC 9460 section 3, step 3: "after following CNAMEs"
+        val alias = SvcbTestEncoder.encode(SvcbRecord(0, "svc.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response(
+                "a.example",
+                listOf(rr("a.example", 65, 300, alias), rr("svc.example", 5, 30, SvcbTestEncoder.name("cdn.example"))),
+            ).let { it.copyOf().also { m -> m[11] = 3 } } +
+                rr("cdn.example", 65, 300, h3Here) + rr("cdn.example", 1, 200, hex("c0000201")) +
+                rr("cdn.example", 28, 200, hex("20010db8000000000000000000000001"))
+        val a = DnsMessage.read(msg, "a.example")
+        // the target's RRset is the one at the end of its chain, no longer than the CNAME that led there
+        val rs = assertNotNull(a.related["svc.example"])
+        assertEquals("cdn.example", rs.single().owner)
+        assertEquals(30, rs.single().ttlSeconds)
+        assertEquals(30, a.addresses["svc.example"]?.second)
+        assertEquals(200, a.addresses["cdn.example"]?.second)
+    }
+
+    @Test fun negative_cnameTargetLeavingTheZoneIsNotInBailiwick() { // RFC 2181 section 5.4.1
+        // svc.a.example is in the query's bailiwick, but its records come from cdn.other through a CNAME: they serve this
+        // resolution, and are not cached beyond it
+        val alias = SvcbTestEncoder.encode(SvcbRecord(0, "svc.a.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response(
+                "a.example",
+                listOf(rr("a.example", 65, 300, alias), rr("svc.a.example", 5, 30, SvcbTestEncoder.name("cdn.other"))),
+            ).let { it.copyOf().also { m -> m[11] = 1 } } + rr("cdn.other", 65, 300, h3Here)
+        val a = DnsMessage.read(msg, "a.example")
+        assertEquals("cdn.other", a.related["svc.a.example"]?.single()?.owner)
+        assertTrue(!a.inBailiwick("svc.a.example"))
+        assertTrue(a.inBailiwick("www.a.example"))
+    }
+
+    @Test fun targetOnAnotherTargetsCnamePathIsFiledToo() {
+        // a.example has AliasMode records to t1 and t2 (one is picked at random, RFC 9460 section 2.4.2), and t1 is a
+        // CNAME to t2, a CNAME to cdn: both targets have cdn's RRset, whichever is walked first
+        fun alias(t: String) = SvcbTestEncoder.encode(SvcbRecord(0, t, emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response(
+                "a.example",
+                listOf(
+                    rr("a.example", 65, 300, alias("t1.example")),
+                    rr("a.example", 65, 300, alias("t2.example")),
+                    rr("t1.example", 5, 300, SvcbTestEncoder.name("t2.example")),
+                    rr("t2.example", 5, 300, SvcbTestEncoder.name("cdn.example")),
+                ),
+            ).let { it.copyOf().also { m -> m[11] = 1 } } + rr("cdn.example", 65, 300, h3Here)
+        val a = DnsMessage.read(msg, "a.example")
+        // (and cdn.example itself, the TargetName "." of its ServiceMode record)
+        assertEquals(setOf("t1.example", "t2.example", "cdn.example"), a.related.keys)
+        assertEquals(a.related["t1.example"], a.related["t2.example"])
+    }
+
+    @Test fun negative_rrsetReachedByManyTargetsIsParsedOnce() {
+        // 16 ServiceMode targets, each a CNAME to cdn.example with 300 records: those are read once, not once per target
+        val targets = (0 until 16).map { "t$it.example" }
+        val service =
+            targets.map {
+                rr(
+                    "a.example",
+                    65,
+                    300,
+                    SvcbTestEncoder.encode(SvcbRecord(1, it, listOf("h3"), false, null, emptyList(), emptyList(), 0, "x")),
+                )
+            }
+        val cnames = targets.map { rr(it, 5, 300, SvcbTestEncoder.name("cdn.example")) }
+        val big = List(300) { rr("cdn.example", 65, 300, h3Here) }
+        val msg =
+            response("a.example", service + cnames).let {
+                it.copyOf().also { m ->
+                    m[10] = (300 shr 8).toByte()
+                    m[11] = 300.toByte()
+                }
+            } +
+                big.reduce { x, y -> x + y }
+        var checkpoints = 0
+        val a = DnsMessage.read(msg, "a.example") { checkpoints++ }
+        assertEquals(targets.toSet(), a.related.keys)
+        assertTrue(a.related.values.all { it.size == 300 })
+        // about 650 units of work (records read and parsed, CNAME steps), a checkpoint every 64; parsing cdn's RRset per
+        // target would be 16 x 300 more
+        assertTrue(checkpoints <= 15, "$checkpoints checkpoints")
+    }
+
     @Test fun negative_recordsOfUnrelatedNamesAreNotKept() { // RFC 2181 section 5.4.1: only what the answer leads to
         val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
         val msg =
-            response("a.example", listOf(rr("a.example", 65, 300, alias))).let { it.copyOf().also { m -> m[11] = 3 } } +
+            response("a.example", listOf(rr("a.example", 65, 300, alias))).let { it.copyOf().also { m -> m[11] = 4 } } +
                 rr("victim.example", 65, 200, h3Here) + rr("victim.example", 1, 30, hex("c0000201")) +
-                rr("cdn.example", 1, 30, hex("c0000202"))
+                rr("cdn.example", 1, 30, hex("c0000202")) + rr("cdn.example", 28, 30, hex("20010db8000000000000000000000002"))
         val a = DnsMessage.read(msg, "a.example")
         assertTrue(a.related.isEmpty(), "kept ${a.related.keys}")
         assertEquals(setOf("cdn.example"), a.addresses.keys)
+    }
+
+    @Test fun oneAddressFamilyAloneIsKept() { // RFC 9460 section 5: placed in cache before any follow-up query
+        val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val service = SvcbTestEncoder.encode(SvcbRecord(1, "v4.example", listOf("h3"), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response("a.example", listOf(rr("a.example", 65, 300, alias))).let { it.copyOf().also { m -> m[11] = 3 } } +
+                rr("cdn.example", 65, 300, service) + rr("cdn.example", 28, 30, hex("20010db8000000000000000000000001")) +
+                rr("v4.example", 1, 30, hex("c0000201"))
+        val a = DnsMessage.read(msg, "a.example")
+        // the family that came is kept; RequestDns.seed looks up the missing one (RequestDnsTest)
+        assertEquals(listOf(16), a.addresses["cdn.example"]?.first?.map { it.size })
+        assertEquals(listOf(4), a.addresses["v4.example"]?.first?.map { it.size })
+    }
+
+    @Test fun negative_noRecordsThroughACnameLastNoLongerThanTheCname() { // RFC 2308 section 5, RFC 1035 section 3.2.1
+        val soa =
+            SvcbTestEncoder.name("ns.example") + SvcbTestEncoder.name("host.example") + hex("00000001 00000e10 00000384 00093a80 00000e10")
+        for (rcode in listOf(0, 3)) { // NODATA and NXDOMAIN at the end of the chain
+            val msg =
+                response("www.example", listOf(rr("www.example", 5, 60, SvcbTestEncoder.name("cdn.example")))).let {
+                    it.copyOf().also { m -> m[3] = (m[3].toInt() or rcode).toByte() }.also { m -> m[9] = 1 }
+                } + rr("example", 6, 900, soa)
+            val a = DnsMessage.read(msg, "www.example")
+            assertEquals(emptyList(), a.records)
+            assertEquals(60, a.negativeTtl, "rcode $rcode: the CNAME that led there expires after 60 s")
+        }
+        val direct = response("cdn.example", emptyList()).let { it.copyOf().also { m -> m[9] = 1 } } + rr("example", 6, 900, soa)
+        assertEquals(900, DnsMessage.read(direct, "cdn.example").negativeTtl)
+    }
+
+    // ---- bounded work on hostile answers (RFC 9460 section 9.2.2: the DNS is "an untrusted channel")
+
+    /**
+     * A response to a.example of nearly the largest DNS message size whose answer section holds [n] ServiceMode records,
+     * each with an owner compressed to the question and its own three-letter TargetName (no SvcParams), and none of the
+     * targets with records of its own: the worst case for following the TargetNames.
+     */
+    private fun manyTargets(n: Int): ByteArray {
+        val abc = "abcdefghijklmnopqrstuvwxyz0123456789"
+        val head =
+            response("a.example", emptyList()).let {
+                it.copyOf().also { m -> m[6] = (n shr 8).toByte() }.also { m ->
+                    m[7] =
+                        n.toByte()
+                }
+            }
+        val out = ArrayList<Byte>(head.size + n * 19)
+        out.addAll(head.toList())
+        for (i in 0 until n) {
+            val label = "${abc[i / 1296 % 36]}${abc[i / 36 % 36]}${abc[i % 36]}"
+            out.addAll(hex("c00c 0041 0001 0000012c 0007 0001 03").toList())
+            for (c in label) out += c.code.toByte()
+            out += 0
+        }
+        return out.toByteArray()
+    }
+
+    @Test fun negative_hostileLargestAnswerIsReadInLinearTime() {
+        val n = (65_535 - 27) / 19
+        val msg = manyTargets(n)
+        assertTrue(msg.size <= 65_535, "${msg.size} bytes")
+        val start = TimeSource.Monotonic.markNow()
+        val a = DnsMessage.read(msg, "a.example")
+        val took = start.elapsedNow()
+        assertEquals(n, a.records.size)
+        assertEquals(
+            n,
+            a.records
+                .map { it.target }
+                .toSet()
+                .size,
+        )
+        // linear work is milliseconds even on a slow, loaded machine; walking every name for every new TargetName took
+        // tens of seconds at this size
+        assertTrue(took < 5.seconds, "read took $took")
+    }
+
+    @Test fun negative_readStopsAtACheckpoint() { // so a lookup's timeout cancels a read in progress
+        var calls = 0
+        assertFailsWith<CancellationException> {
+            DnsMessage.read(manyTargets(1000), "a.example") { if (++calls == 2) throw CancellationException("timed out") }
+        }
+        assertEquals(2, calls)
+    }
+
+    @Test fun negative_messageOverTheDnsMaximumIsRejected() { // RFC 1035 section 4.2.2, RFC 8484 section 6: 65535 bytes
+        val ok = response("a.example", listOf(rr("a.example", 65, 300, h3Here)))
+        assertEquals(1, DnsMessage.answers(ok + ByteArray(65_535 - ok.size), "a.example").size)
+        assertFailsWith<DnsFormatException> { DnsMessage.answers(ok + ByteArray(65_536 - ok.size), "a.example") }
+    }
+
+    @Test fun negative_relatedRrsetsFollowedAreCapped() {
+        fun alias(t: String) = SvcbTestEncoder.encode(SvcbRecord(0, t, emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        // a.example -> t0 -> t1 -> ... -> t40, every step's RRset in the additional section
+        val extra = (0 until 40).map { rr("t$it.example", 65, 300, alias("t${it + 1}.example")) }
+        val msg =
+            response("a.example", listOf(rr("a.example", 65, 300, alias("t0.example")))).let {
+                it.copyOf().also { m -> m[11] = extra.size.toByte() }
+            } + extra.reduce { x, y -> x + y }
+        val a = DnsMessage.read(msg, "a.example")
+        assertEquals((0 until DnsMessage.MAX_RELATED).map { "t$it.example" }, a.related.keys.toList())
     }
 
     @Test fun ttlWithTopBitIsZero() { // RFC 2181 section 8
@@ -215,6 +404,16 @@ class DnsMessageTest {
         // an RRSet with an AliasMode record: its ServiceMode records are ignored (RFC 9460 section 2.4.1)
         assertNull(first(listOf(rec(0, "x.example"), rec(1, "b.example", "h3"))))
         assertEquals("x.example", aliasTarget(listOf(rec(0, "x.example"), rec(1, "b.example", "h3")), Random(1)))
+    }
+
+    @Test fun negative_endpointsAreCapped() { // each endpoint is a connection attempt: a hostile RRset cannot make thousands
+        val many = (0 until 100).map { rec(3 - it % 3, "t$it.example", "h3") }
+        val eps = serviceEndpoints(many, 443, all, Random(1))
+        assertEquals(MAX_ENDPOINTS, eps.size)
+        // the lowest SvcPriority first (RFC 9460 section 3: "Clients SHOULD try higher-priority alternatives first"); the 33
+        // records of priority 1 outnumber the cap
+        val priority = many.associate { it.target to it.priority }
+        assertEquals(setOf(1), eps.map { priority.getValue(it.host) }.toSet())
     }
 
     @Test fun dotTargetMeansOwner() {

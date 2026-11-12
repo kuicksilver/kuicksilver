@@ -111,7 +111,23 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 0.3.0: the DNS parser of the HTTPS records (RFC 9460, `kuicksilver-ktor-client/.../dns/`) reads answers from the system
 resolver or a DNS-over-HTTPS exchange, which may be on the attacker's path: every read is bounds-checked, a name follows
 at most 128 compression pointers and each must point back, names are at most 255 bytes, and nothing is allocated beyond
-the message's length. New fuzz target `client.svcb` (`SvcbFuzzTest.svcbMessage`, seeds from `tools/fuzz/gen-svcb-seeds.py`).
+the message's length. The work is linear in the message and bounded: a message over 65535 bytes is refused (RFC 8484
+section 6: "This media type restricts the maximum size of the DNS message to 65535 bytes"; RFC 1035 section 4.2.2 gives
+a message over TCP "a two byte length field"); the records' TargetNames are followed with a work list, each TargetName
+walked once (at most 16 CNAMEs) and each owner's RRset parsed once however many TargetNames lead to it, at most 16
+other HTTPS RRsets per answer; a record's `mandatory` keys are checked against its keys in one merge pass; and the read
+stops at the lookup's timeout or cancellation (it checks the coroutine every 64 units of work), so a hostile resolver or
+DNS-over-HTTPS server cannot pin a thread with one answer (0.3.0 review: before, an answer of a few thousand
+ServiceMode records with distinct TargetNames took time cubic in their number, over a minute at 64 KiB and unbounded
+through `HttpsRecordSource.Exchange`, and the timeout could not interrupt it;
+`DnsMessageTest.negative_hostileLargestAnswerIsReadInLinearTime`, `.negative_readStopsAtACheckpoint`,
+`.negative_rrsetReachedByManyTargetsIsParsedOnce`). At most 32 ServiceMode endpoints of an RRset are tried, so a forged
+RRset cannot turn one request into thousands of connection attempts. Records of other names are kept beyond the
+resolution only within the bailiwick of the query (RFC 2181 section 5.4.1), anchored on the name asked and its CNAME
+chain; a lying resolver can stretch that anchor with a CNAME to a public suffix (`com`), but such a resolver can forge
+any answer anyway, and the cache is per network (RFC 9460 section 12). New fuzz target `client.svcb`
+(`SvcbFuzzTest.svcbMessage`, seeds from `tools/fuzz/gen-svcb-seeds.py`), which also reads the other RRsets and addresses
+of an answer and checks the bounds above.
 
 0.2.0 status (fuzzing campaigns, 2026-10-13/14): local campaigns replace ClusterFuzzLite (`tools/fuzz/campaign.sh`,
 CONTRIBUTING "Fuzzing"): every target runs in slices of at most 20 minutes at background priority, one at a time, and the
@@ -262,7 +278,9 @@ Status (core review): skipped packet numbers, all CIDs (the client's ODCID/SCID,
   and is marked broken
   (`ClientHttpsRecordTest.negative_wrongCertificateAtTargetFallsBackAndMarksBroken`). Lookups are bounded: one per name
   at a time, each at most the connect timeout (30 s at most), at most 8 AliasMode steps with loop detection
-  (`.negative_aliasLoopStops`), 1000 cached names, and a request waits at most `httpsRecordExtraWait` after its addresses
+  (`.negative_aliasLoopStops`), 1000 cached names and about 1 MiB each for records and addresses (an estimate of the objects' size) with no RRset or address
+  list of over 64 entries stored, so a forged answer cannot fill the memory through the cache
+  (`HttpsRecordCacheTest.negative_oversizedRrsetIsNotCached`, `.negative_cacheBytesAreBounded`), and a request waits at most `httpsRecordExtraWait` after its addresses
   resolved (`.negative_hangingSourceDoesNotDelayBeyondExtraWait`). An attacker who drops the HTTPS answers can only make
   the client connect as without records; with `Exchange(secure = true)` (protected answers) a failed lookup abandons the
   request instead (RFC 9460 section 3.1; `ClientHttpsFailureTest.negative_failureOverSecureDnsAbandonsTheRequest`).
@@ -381,8 +399,8 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
 #### 3.21.1 A stalled name resolver (all platforms)
 
 - **Threats:** `getaddrinfo` and `InetAddress.getAllByName` block a thread for as long as the system resolver takes and cannot be interrupted; a client that resolves every new connection's host on `Dispatchers.IO`, under a storm of reconnects to a name whose DNS server does not answer, would leave one blocked thread per abandoned lookup and exhaust `Dispatchers.IO`, which also runs the socket loops (the same class as above).
-- **Mitigations:** `resolveTcp` (`kuicksilver-ktor-network`) runs lookups on a view of `Dispatchers.IO` limited to 8 threads, and keeps one lookup per name in flight, shared by every caller waiting for it and removed when it completes; a caller's connect timeout ends its wait, not the lookup. A stalled resolver thus holds at most 8 threads, one per name, whatever the number of requests. Address literals are parsed (`AI_NUMERICHOST`, the JVM's literal parser) and never reach the resolver; a request that saw a name fail does not ask again (`RequestDns`).
-- **Verification:** `ResolveTcpTest.negative_stalledResolverHoldsBoundedThreads` (40 requests to 20 stalled names: 20 lookups, 8 running, `Dispatchers.IO` still serves other work), `.negative_invalidIpv6LiteralIsNotLookedUp`, `.ipv4LiteralsAreStrict`.
+- **Mitigations:** `resolveFamily` (`kuicksilver-ktor-network`; since 0.3.0 one `getaddrinfo` per address family, RFC 8305 section 3) runs lookups on two views of `Dispatchers.IO` limited to 8 threads each, one per address family (a network that drops AAAA queries stalls IPv6 lookups only, never the IPv4 ones of other names), and keeps one lookup per name and family in flight, shared by every caller waiting for it and removed when it completes; a caller's connect timeout ends its wait, not the lookup. A stalled resolver thus holds at most 16 threads, whatever the number of requests. Answers are kept for the JDK's cache TTLs (at most 1000). Address literals are parsed (`AI_NUMERICHOST`, the JVM's literal parser) and never reach the resolver; a request that saw a name fail does not ask again (`RequestDns`).
+- **Verification:** `ResolveTcpTest.negative_stalledResolverHoldsBoundedThreads` (40 requests to 20 stalled names: 40 lookups, one per name and family, 8 of each family running, `Dispatchers.IO` still serves other work), `.negative_stalledAaaaLookupsDoNotBlockALookupsOfOtherNames`, `.negative_invalidIpv6LiteralIsNotLookedUp`, `.ipv4LiteralsAreStrict`.
 ### 3.22 HTTP/1.1 server resource exhaustion (slowloris on both sides, oversized heads) and accept failures
 
 - **Threats:** a client holds HTTP/1.1 connections open without completing a request: it connects and stays silent (on a TLS connector it never sends a ClientHello) or sends the request head a byte at a time, each byte inside the idle timeout. With enough such connections the server runs out of descriptors or memory. A fast client can instead send a head of unbounded size: Ktor's parser limits each line to 8 KiB but not their number, and 0.2.0 buffered megabytes of header fields per request. On the send side, a client can request a large response and never read it: the response writer, its handler and, on close, the socket's write loop wait for the client for ever. Released 0.2.0 had no deadline for the head at all, its 45 s idle timer closed only the output side while the reader kept waiting, and there was no handshake timeout, so one such connection was held for ever. Separately, an `accept()` that fails (EMFILE/ENFILE once the descriptor table is full, which such connections cause) was retried at once: the accept loop spun at 100 % CPU for as long as the condition lasted.
@@ -570,6 +588,12 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   up to eight requests, fed arbitrary server bytes after a valid SETTINGS and driven like the engine (every field section
   through the section 8 checks): nothing escapes but protocol errors, its state stays within its settings and the send
   window is conserved; regression runs on its seeds only so far.
+
+### 3.24 NAT64 prefix discovery (RFC 8305 §7, RFC 7050 §3.1)
+
+- **Threats:** on a network the client takes for IPv6-only (a global IPv6 source address, no IPv4 one), the Ktor client engine synthesizes IPv6 addresses for IPv4 literals and A-only names from the Pref64::/n that the AAAA answer for `ipv4only.arpa` gives (RFC 7050 section 3). Whoever forges that answer (the network's resolver, or an on-path attacker on an unencrypted DNS path) chooses where those connections go: "This may result in denial-of-service, redirection, man-in-the-middle, or other attacks" (section 3.1). The same attacker can already forge the AAAA records of any name on that path.
+- **Mitigations:** where the platform synthesizes itself (Apple: `getaddrinfo` with `AI_DEFAULT`) or tells its prefix (Android API 30 with a `ConnectivityManager` given to the engine: `LinkProperties.getNat64Prefix`) that is used and no query is made. Elsewhere the discovery asks the system resolver, through whatever protection the platform gives it (Android's Private DNS, an encrypted-DNS profile, systemd-resolved over TLS); "DNSSEC validation cannot be utilized in the case of a WKP". Only plausible prefixes count (`2000::/3`, `64:ff9b::/96`, `64:ff9b:1::/48`: never link-local, loopback or mapped space), and only the lengths of RFC 6052 with the well-known address found exactly once. Synthesis runs only on a network detected as IPv6-only and only for an IPv4 destination the host has no route to: loopback, LAN and VPN addresses are never redirected, and the Well-Known Prefix never carries a non-global address (RFC 6052 section 3.1). TLS authenticates the server behind a synthesized address against the URL's host (an IP address SAN for an IPv4 literal), so a forged prefix can deny service or redirect cleartext `http` only. A prefix belongs to the IPv6 /64 it was learnt on. The discovery is one query at a time of at most 2 s, at most every 30 s after a failure, and its answer is read by the same bounded DNS reader as the HTTPS records.
+- **Verification:** `Nat64Test.negative_aWkaTwiceRepeatsTheSearchWithTheOther`, `.negative_noWellKnownAddressNoPrefix`, `.negative_extractionNeedsAZeroUOctet`, `.negative_implausiblePrefixesAreIgnored`, `.negative_loopbackAndNonGlobalAreNotSynthesizedWithTheWellKnownPrefix`, `.negative_noDiscoveryOffAnIpv6OnlyNetwork`, `.negative_aNegativeAnswerIsNotAskedAgainWithinItsTtl`, `.negative_aFailedDiscoveryBacksOff`, `.negative_aNewIpv6NetworkDropsThePrefix`, `RequestDnsTest.negative_loopbackLiteralOnAnIpv6OnlyNetworkStaysIpv4`, `.negative_aRoutedPrivateIpv4AnswerStaysIpv4`, `.negative_noSynthesisOnADualStackNetwork`.
 
 ## 4. What we do not protect against
 

@@ -49,6 +49,63 @@ internal actual fun platformResolveTcp(
     }
 }
 
+internal actual fun platformResolveFamily(
+    name: String,
+    ipv6: Boolean,
+): List<TcpAddress> {
+    // the JDK opens IPv4 sockets only: an IPv6 address could not be connected to
+    if (ipv6 && System.getProperty("java.net.preferIPv4Stack").toBoolean()) return emptyList()
+    if (!jdkResolverReplaced) kslResolveFamily(name, ipv6)?.let { return it }
+    // the application's resolver (or no native library): one lookup answers both families, filtered here
+    return platformResolveTcp(name, 0, numericHost = false).filter { it.isIpv6 == ipv6 }
+}
+
+/**
+ * What `InetAddress` would keep: `networkaddress.cache.ttl` and `networkaddress.cache.negative.ttl` (security properties,
+ * or the `sun.net.inetaddr` system properties), 30 s and 10 s by default as the JDK has them; Android keeps 2 s.
+ */
+internal actual fun platformLookupCacheTtl(): LookupTtl {
+    fun read(
+        security: String,
+        system: String,
+        default: Long,
+    ): Long =
+        try {
+            java.security.Security
+                .getProperty(security)
+                ?.trim()
+                ?.toLongOrNull() ?: System.getProperty(system)?.trim()?.toLongOrNull() ?: default
+        } catch (_: SecurityException) {
+            default
+        }
+    val android = System.getProperty("java.vm.name").orEmpty().contains("Dalvik", ignoreCase = true)
+    return if (android) {
+        LookupTtl(2, 2)
+    } else {
+        LookupTtl(
+            read("networkaddress.cache.ttl", "sun.net.inetaddr.ttl", 30),
+            read("networkaddress.cache.negative.ttl", "sun.net.inetaddr.negative.ttl", 10),
+        )
+    }
+}
+
+/**
+ * Whether the application replaced the JDK's resolver: a hosts file of its own (`jdk.net.hosts.file`) or an
+ * `InetAddressResolverProvider` (JDK 18+). Name lookups then go through `InetAddress`, as the application expects.
+ */
+private val jdkResolverReplaced: Boolean by lazy {
+    System.getProperty("jdk.net.hosts.file") != null ||
+        try {
+            val spi = Class.forName("java.net.spi.InetAddressResolverProvider")
+            java.util.ServiceLoader
+                .load(spi, ClassLoader.getSystemClassLoader())
+                .iterator()
+                .hasNext()
+        } catch (_: Throwable) {
+            false // no such SPI (before JDK 18, Android), or a provider that cannot be loaded: the JDK ignores it too
+        }
+}
+
 @InternalKuicksilverApi
 public actual suspend fun bindTcp(
     selector: SelectorManager,
@@ -78,3 +135,15 @@ internal actual fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?) {
 internal actual fun Socket.tcpReadDelivery(): ReadDelivery? = (this as? KslNioSocket)?.readDelivery
 
 internal actual fun Socket.sendFailuresForTest(): SendFailures? = (this as? KslNioSocket)?.sendFailures
+
+internal actual fun platformSourceAddress(destination: TcpAddress): TcpAddress? =
+    java.net.DatagramSocket(null as java.net.SocketAddress?).use { s ->
+        // connect only selects the route and the source address (no packet); without one it throws, or stays unconnected
+        s.connect(java.net.InetSocketAddress(java.net.InetAddress.getByAddress(destination.bytes), destination.port))
+        val local = s.localAddress
+        if (!s.isConnected || local == null || local.isAnyLocalAddress) {
+            null
+        } else {
+            TcpAddress(local.address, 0, (local as? java.net.Inet6Address)?.scopeId ?: 0) // a link-local source keeps its zone
+        }
+    }

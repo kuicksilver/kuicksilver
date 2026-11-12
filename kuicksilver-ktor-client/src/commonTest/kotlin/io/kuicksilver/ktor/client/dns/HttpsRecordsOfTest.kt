@@ -24,6 +24,17 @@ class HttpsRecordsOfTest {
         assertEquals("cdn.example", r.serviceHost)
     }
 
+    @Test fun negative_recordListTtlWithTheTopBitIsZero() {
+        // RFC 2181 section 8: "Implementations should treat TTL values received with the most significant bit set as if
+        // the entire value received was zero"; DnsQuery_W and DNSServiceQueryRecord hand the 32 bits over unsigned
+        for (ttl in listOf(0x80000000L, 0xffffffffL)) {
+            val r = httpsRecordsOf(KslDnsAnswer.Records(listOf(KslDnsAnswer.Record("a.example", ttl, h3))), "a.example")!!.records.single()
+            assertEquals(0, r.ttlSeconds, "TTL $ttl")
+        }
+        val max = httpsRecordsOf(KslDnsAnswer.Records(listOf(KslDnsAnswer.Record("a.example", 0x7fffffffL, h3))), "a.example")
+        assertEquals(0x7fffffffL, max!!.records.single().ttlSeconds)
+    }
+
     @Test fun negative_malformedRecordInTheListRejectsTheRrset() {
         val bad = hex("0001 00 0003 0003 0001bb")
         // rejected as a whole, and no failure either: the connection goes on without SVCB (section 2.2)

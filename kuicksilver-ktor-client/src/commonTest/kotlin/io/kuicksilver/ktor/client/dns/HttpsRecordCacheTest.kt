@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client.dns
 
+import io.kuicksilver.ktor.client.ExpiryClock
 import io.kuicksilver.ktor.client.HttpsRecordSource
 import io.kuicksilver.ktor.client.isSecure
 import io.kuicksilver.ktor.client.lookup
@@ -15,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** The HTTPS record cache and lookups of the engine (bounds, TTLs, one lookup per name) and the DoH exchange's query. */
@@ -26,7 +28,7 @@ class HttpsRecordCacheTest {
 
     @Test fun ttlKeptAndBounded() {
         var now = 0L
-        val cache = HttpsRecordCache { now }
+        val cache = HttpsRecordCache(ExpiryClock { now })
         cache.put("short.example", listOf(rec("short.example", 5)), null)
         cache.put("long.example", listOf(rec("long.example", 10_000_000)), null)
         cache.put("none.example", emptyList(), 120)
@@ -50,6 +52,54 @@ class HttpsRecordCacheTest {
         assertEquals(1, cache.get("o1499.example")?.size)
     }
 
+    @Test fun negative_oversizedRrsetIsNotCached() { // a forged answer cannot fill the cache through one name
+        val cache = HttpsRecordCache(ExpiryClock { 0L })
+        cache.put("a.example", List(HttpsRecordCache.MAX_RECORDS) { rec("a.example", 300) }, null)
+        assertEquals(HttpsRecordCache.MAX_RECORDS, cache.get("a.example")?.size)
+        cache.put("a.example", List(HttpsRecordCache.MAX_RECORDS + 1) { rec("a.example", 300) }, null)
+        assertNull(cache.get("a.example")) // not stored, and the older answer it replaces is gone
+        cache.putAddresses("b.example", List(HttpsRecordCache.MAX_RECORDS + 1) { ByteArray(16) }, 300)
+        assertNull(cache.addressesOf("b.example"))
+    }
+
+    @Test fun negative_cacheBytesAreBounded() {
+        // records of long ALPN ids and many hints, under the per-name cap: the byte budget drops the least recently used
+        val cache = HttpsRecordCache(ExpiryClock { 0L })
+        val big =
+            SvcbRecord(1, ".", List(16) { "x".repeat(255) }, false, null, List(32) { ByteArray(4) }, List(32) { ByteArray(16) }, 300, "o")
+        for (i in 0 until 1000) cache.put("n$i.example", List(HttpsRecordCache.MAX_RECORDS) { big }, null)
+        assertTrue(cache.bytesForTest <= HttpsRecordCache.MAX_BYTES, "${cache.bytesForTest} bytes")
+        assertTrue(cache.size < 1000)
+        assertNull(cache.get("n0.example"))
+        assertEquals(HttpsRecordCache.MAX_RECORDS, cache.get("n999.example")?.size)
+    }
+
+    @Test fun negative_wallClockAloneExpiresAnEntry() {
+        // the monotonic clock stops while a device sleeps: the wall clock still sees the TTL pass
+        var mono = 0L
+        var wall = 1_000_000L
+        val cache = HttpsRecordCache(ExpiryClock({ mono }, { wall }))
+        cache.put("a.example", listOf(rec("a.example", 60)), null)
+        cache.putAddresses("a.example", listOf(ByteArray(4)), 60)
+        mono = 1_000 // a second awake, then the device slept for an hour
+        wall += 3_600_000
+        assertNull(cache.get("a.example"))
+        assertNull(cache.addressesOf("a.example"))
+    }
+
+    @Test fun negative_wallClockSteppedBackDoesNotExtendAnEntry() {
+        // a wall clock stepped back (NTP, by hand): the monotonic clock still sees the TTL pass
+        var mono = 0L
+        var wall = 1_000_000L
+        val cache = HttpsRecordCache(ExpiryClock({ mono }, { wall }))
+        cache.put("a.example", listOf(rec("a.example", 60)), null)
+        wall -= 3_600_000
+        mono = 59_999
+        assertEquals(1, cache.get("a.example")?.size)
+        mono = 60_000
+        assertNull(cache.get("a.example"))
+    }
+
     @Test fun oneLookupPerNameAndFailuresNotCached() =
         runTest {
             var calls = 0
@@ -60,7 +110,7 @@ class HttpsRecordCacheTest {
                     calls++
                     gate.await()
                     if (fail) null else DnsAnswer(listOf(rec(name, 300)))
-                }, backgroundScope, 10.seconds, { testScheduler.currentTime })
+                }, backgroundScope, 10.seconds, ExpiryClock { testScheduler.currentTime })
             val a = async { records.records("a.example") }
             val b = async { records.records("a.example") }
             testScheduler.runCurrent()
@@ -81,7 +131,7 @@ class HttpsRecordCacheTest {
                 HttpsRecords({
                     calls++
                     awaitCancellation()
-                }, backgroundScope, 10.seconds, { testScheduler.currentTime })
+                }, backgroundScope, 10.seconds, ExpiryClock { testScheduler.currentTime })
             assertNull(records.records("a.example")) // virtual time: ends at the query timeout
             assertEquals(10_000, testScheduler.currentTime)
             assertNull(records.records("a.example")) // nothing stuck in flight: asked again

@@ -133,6 +133,12 @@ internal expect fun tcpLingerZero(fd: Int)
 /** Closes [fd] that never reached the selector (which otherwise closes it). */
 internal expect fun tcpClose(fd: Int)
 
+/**
+ * The local address of a UDP socket connected to [to]: the source address the system picks for that destination, or null
+ * when it has none. Connecting a UDP socket sends nothing; the socket is closed again.
+ */
+internal expect fun udpSourceAddress(to: Sockaddr): Sockaddr?
+
 // SHUT_RD / SD_RECEIVE, SHUT_WR / SD_SEND, SHUT_RDWR / SD_BOTH: the same values on every platform
 internal const val TCP_SHUT_RD = 0
 internal const val TCP_SHUT_WR = 1

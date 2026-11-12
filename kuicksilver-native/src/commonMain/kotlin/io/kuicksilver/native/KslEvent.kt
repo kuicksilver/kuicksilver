@@ -129,6 +129,21 @@ public object KslConst {
     /** `Ksl.dnsQuery` answer kind: `ttl:4 | owner length:1 | owner | rdata length:2 | rdata` records follow (`KSL_DNS_RECORDS`). */
     public const val DNS_RECORDS: Int = 2
 
+    /** `Ksl.resolve` family: IPv4 (`KSL_ADDR_V4`). */
+    public const val ADDR_V4: Int = 4
+
+    /** `Ksl.resolve` family: IPv6 (`KSL_ADDR_V6`). */
+    public const val ADDR_V6: Int = 6
+
+    /** `Ksl.resolve` entry length: `family:1 | address:16 | scope id:4` (`KSL_RESOLVE_ENTRY_LEN`). */
+    public const val RESOLVE_ENTRY_LEN: Int = 21
+
+    /** `Ksl.addrInfo` flag: a deprecated address, RFC 4862 (`KSL_ADDR_DEPRECATED`). */
+    public const val ADDR_DEPRECATED: Int = 1
+
+    /** `Ksl.addrInfo` flag: the address's interface is an encapsulating tunnel (`KSL_ADDR_TUNNEL`). */
+    public const val ADDR_TUNNEL: Int = 2
+
     // ksl_live_objects indices (KSL_LIVE_*)
     public const val LIVE_CTX: Int = 0
     public const val LIVE_SSL: Int = 1

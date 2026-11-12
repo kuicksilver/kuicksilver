@@ -68,7 +68,7 @@ class ClientRaceTest {
                         listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p))
                     }
                 }).use { c ->
-                    val r = c.get("https://127.0.0.1:$port/")
+                    val r = c.get("https://server.test:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals("ok", r.bodyAsText())
                 }

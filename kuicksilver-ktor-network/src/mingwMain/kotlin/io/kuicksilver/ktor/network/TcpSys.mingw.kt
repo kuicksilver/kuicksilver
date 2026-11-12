@@ -43,6 +43,7 @@ import platform.posix.AF_INET
 import platform.posix.AF_INET6
 import platform.posix.AF_UNSPEC
 import platform.posix.INVALID_SOCKET
+import platform.posix.SOCK_DGRAM
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_EXCLUSIVEADDRUSE
@@ -55,7 +56,9 @@ import platform.posix.WSAEINTR
 import platform.posix.WSAEWOULDBLOCK
 import platform.posix.WSAStartup
 import platform.posix.closesocket
+import platform.posix.connect
 import platform.posix.shutdown
+import platform.posix.socket
 import platform.windows.AI_NUMERICHOST
 import platform.windows.AI_NUMERICSERV
 import platform.windows.GetHandleInformation
@@ -375,4 +378,15 @@ internal actual fun tcpLingerZero(fd: Int) {
 
 internal actual fun tcpClose(fd: Int) {
     closesocket(fd.convert())
+}
+
+internal actual fun udpSourceAddress(to: Sockaddr): Sockaddr? {
+    val s = socket(to.family, SOCK_DGRAM, 0)
+    if (s == INVALID_SOCKET) return null
+    try {
+        val connected = to.bytes.usePinned { connect(s, it.addressOf(0).reinterpret(), to.bytes.size) == 0 }
+        return if (connected) tcpAddressOf(s.toInt(), peer = false) else null
+    } finally {
+        closesocket(s)
+    }
 }

@@ -268,6 +268,14 @@ internal actual fun platformResolveTcp(
     return tcpResolve(name, port, numericHost).map { it.toTcpAddress() }
 }
 
+/** None here: the system's own caches (mDNSResponder, the Windows DNS client, systemd-resolved) do it, as before. */
+internal actual fun platformLookupCacheTtl(): LookupTtl = LookupTtl(0, 0)
+
+internal actual fun platformResolveFamily(
+    name: String,
+    ipv6: Boolean,
+): List<TcpAddress> = kslResolveFamily(name, ipv6) ?: throw IOException("Failed to resolve $name: the native library is not usable")
+
 @InternalKuicksilverApi
 public actual suspend fun bindTcp(
     selector: SelectorManager,
@@ -763,3 +771,8 @@ internal actual fun Socket.holdReadEndForTest(hook: (suspend () -> Unit)?) {
 internal actual fun Socket.tcpReadDelivery(): ReadDelivery? = (this as? NativeTcpSocket)?.readDelivery
 
 internal actual fun Socket.sendFailuresForTest(): SendFailures? = (this as? NativeTcpSocket)?.sendFailures
+
+internal actual fun platformSourceAddress(destination: TcpAddress): TcpAddress? {
+    tcpStartup()
+    return udpSourceAddress(Sockaddr.of(destination))?.toTcpAddress()?.let { TcpAddress(it.bytes, 0, it.scopeId) }
+}

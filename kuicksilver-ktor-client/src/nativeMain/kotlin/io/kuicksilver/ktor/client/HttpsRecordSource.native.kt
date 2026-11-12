@@ -6,6 +6,8 @@ import io.kuicksilver.ktor.client.dns.DnsAnswer
 import io.kuicksilver.ktor.client.dns.DnsMessage
 import io.kuicksilver.ktor.client.dns.httpsRecordsOf
 import io.kuicksilver.tls.KslDns
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlin.time.Duration
 
 /** The OS resolver through ksl (`ksl_dns_query`): res_nquery on Linux, DNSServiceQueryRecord on Apple, DnsQuery_W on Windows. */
@@ -13,4 +15,19 @@ import kotlin.time.Duration
 internal actual suspend fun platformHttpsQuery(
     name: String,
     timeout: Duration,
-): DnsAnswer? = KslDns.query(name, DnsMessage.TYPE_HTTPS, timeout)?.let { httpsRecordsOf(it, name) }
+): DnsAnswer? {
+    val answer = KslDns.query(name, DnsMessage.TYPE_HTTPS, timeout) ?: return null
+    val context = currentCoroutineContext()
+    return httpsRecordsOf(answer, name) { context.ensureActive() } // a timeout or cancellation stops the read
+}
+
+/** RFC 7050 discovery through the OS resolver (`ksl_dns_query`), with the records' TTLs. */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+internal actual suspend fun platformAddressQuery(
+    name: String,
+    type: Int,
+    timeout: Duration,
+): AddressRecords? = KslDns.query(name, type, timeout)?.let { addressRecordsOf(it, name, type) }
+
+/** No platform prefix here (Apple synthesizes through `ksl_nat64_synthesize` instead): RFC 7050 discovery. */
+internal actual fun platformNat64Prefixes(): List<Pref64>? = null

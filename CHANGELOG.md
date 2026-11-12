@@ -446,14 +446,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
   drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and
   a manual check for Firefox and Safari in `docs/spec/interop.md`, "Interop WebTransport".
-- Ktor client: Happy Eyeballs for HTTP/1.1's TCP connects, to the origin and to an HTTP proxy (RFC 8305 sections 4 to 6;
-  `docs/guide/ktor.md`, "IPv6 over TCP on Kotlin/Native"). Every address of a host name is tried, IPv6 and IPv4
-  alternating, a new attempt every `connectionAttemptDelay` (*experimental*, 250 ms; 10 ms to 2 s, or
-  `Duration.INFINITE` for one address after another) or at once when the previous one failed; the first connection
-  wins and the others are cancelled or closed. An address that drops connection attempts now costs 250 ms instead of
-  the request's connect timeout, and the JVM and Android no longer connect only to the first address of a name. The
-  name is resolved once per request for both sides of the h3/h1 race (HTTP/3 takes the first address), off the
-  caller's thread and within the connect timeout.
+- Ktor client: Happy Eyeballs version 2 (RFC 8305) for every connect to a host name, HTTP/1.1 and HTTP/2 over TCP to the
+  origin and to an HTTP proxy, and HTTP/3 over QUIC (`docs/guide/ktor.md`, "Happy Eyeballs"; `docs/spec/rfc/8305.md`).
+  A name's IPv6 and IPv4 addresses are asked for separately (one `getaddrinfo` per family; on the JVM and Android
+  through the native library, as `InetAddress` asks for both at once), the first IPv6 answer starts a connection at
+  once and an IPv4 answer that comes first waits at most 50 ms for it; answers that come later join the attempts in
+  progress. The addresses are sorted by RFC 6724 destination address selection of the engine's own on every platform
+  (also those of HTTPS records), with the families alternating, and tried one `connectionAttemptDelay` apart
+  (*experimental*, 250 ms; 100 ms to 2 s, or `Duration.INFINITE` for one address after another) or at once when an
+  attempt failed, never within 10 ms of the last one; the first connection wins and the others are cancelled or
+  closed. HTTP/3 races its QUIC handshakes over the same addresses, so a family that drops UDP costs one attempt
+  delay, `H3Only` included (with `earlyData` and a session ticket the first address sends 0-RTT at once and the others
+  are not tried for that setup; a failed handshake there falls back as before); a server's CONNECTION_REFUSED at one address now moves on to the next, and counts as a
+  refusal (no broken mark) only when every address refused. On an IPv6-only network without 464XLAT, IPv4 addresses
+  the host has no route to (IPv4 literals, IPv4-only names) are reached through the network's NAT64 (RFC 6052): Apple's
+  own synthesis, Android's `LinkProperties.getNat64Prefix` (API 30) when the application gave the engine a
+  `ConnectivityManager` (`followDefaultNetwork`, `followingPrivateDns`), elsewhere the prefix of RFC 7050 discovery, asked only when needed; IPv4 is asked for only when needed. The name is
+  resolved once per request for both sides of the h3/h1 race, off the caller's thread and within the connect timeout.
+  On the JVM an application's own resolver (`InetAddressResolverProvider`, `jdk.net.hosts.file`) is still used, answers
+  are kept for the JDK's `networkaddress.cache.ttl` and `.negative.ttl`, and `java.net.preferIPv6Addresses` no longer
+  orders the addresses. Native: `ksl_resolve`, `ksl_addr_info` and `ksl_nat64_synthesize`, additive under ABI 7.
 - Ktor engines: WebSocket extension negotiation and frame checks (RFC 6455 sections 4.1, 5.2 and 9.1; RFC 7692
   section 6.1; `docs/guide/ktor.md`, "Client"). The client engine declares `WebSocketExtensionsCapability`, so Ktor's
   `WebSockets` plugin offers and negotiates the installed extensions over HTTP/1.1 and HTTP/3 (Ktor's JVM
@@ -766,9 +778,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   before, both engines took such frames.
 - Ktor client on the JVM and Android: an HTTP/1.1 connection to a host name now tries every address the name resolves
   to (Happy Eyeballs), not only the first; on Kotlin/Native the addresses are tried 250 ms apart instead of one after the
-  other. `connectionAttemptDelay = Duration.INFINITE` restores one address after another.
-- Ktor client: name lookups run at most 8 at a time on their own share of `Dispatchers.IO`, one per name however many
-  requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
+  other. `connectionAttemptDelay = Duration.INFINITE` restores one address after another. HTTP/3 no longer connects to
+  the first address only.
+- Ktor client: name lookups run at most 8 of each address family at a time on their own share of `Dispatchers.IO`, one
+  per name and address family however many requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
   is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
 
 ### Fixed
@@ -1569,6 +1582,23 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   permessage-deflate was the one extension negotiated; with another extension next to it every bit passed. RSV1 is now
   checked whenever permessage-deflate is negotiated, and another extension implemented by an installed Ktor extension may
   use only the bits its factory declares.
+- Ktor client, HTTPS records (new in this release): the A or AAAA records of one family alone in an answer no longer
+  stand in for the whole address lookup of that name, which a resolver that omitted the other family's RRset (RFC 9460
+  section 5.2) left without it, IPv6 on an IPv6-only network say. That family is still used at once (section 5), and
+  the other family is looked up as well: its addresses join the Happy Eyeballs race whenever they come (RFC 8305
+  section 3), all of them sorted by RFC 6724 (section 4: "the client MUST sort the addresses received up to this point
+  using Destination Address Selection"). "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it was kept for the
+  SOA's negative TTL, RFC 2308 section 5, although the negative answer is about "the data field of the last CNAME", RFC
+  2308 section 1, and a CNAME "may be cached" only for its TTL, RFC 1035 section 3.2.1). The record cache counts a TTL
+  on both the monotonic and the wall clock and expires an entry once either has seen it pass: a wall clock stepped back
+  no longer keeps a record, a forged one included, past its TTL, and neither does a device that slept (the monotonic
+  clock stops in sleep on most platforms). A TTL with the top bit set in the record lists of Apple and Windows counts as
+  0 (RFC 2181 section 8), as in a whole message; it was taken as 2^31 - 1. An alias target that is a CNAME is now
+  resolved from the answer's own records (the RRset and addresses at the end of its chain), without a follow-up query;
+  they were filed under the CNAME's target before, which resolution never asks for, and a TargetName on another
+  TargetName's CNAME path was not filed at all. The KDoc of `HttpsRecordSource.Exchange` and the guide now say that the
+  engine matches a response by its question, not its ID (the queries carry ID 0), so an exchange over plain UDP or TCP
+  must set and check a random ID of its own.
 
 ### Security
 
@@ -1599,9 +1629,6 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   13 was upgraded too. It now gets 400, or 426 with `Upgrade: websocket` for another version (400 over HTTP/3), with
   `Sec-WebSocket-Version: 13`, and the handler does not run; over HTTP/3 a missing `sec-websocket-version` is no longer
   made up as 13 (RFC 8441 section 5).
-
-### Security
-
 - JVM: the native library extraction (`KslLoader`) no longer creates anything under the umask or an inherited ACL
   (CodeQL `java/local-temp-file-or-directory-information-disclosure`). The library was written through
   `File.createTempFile` (mode `0644` under the usual umask) and missing parents of `-Dkuicksilver.native.workdir` were
@@ -1630,6 +1657,17 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - C tests and the `ksl` fuzz harness write their files with mode `0600` and `O_NOFOLLOW`, and the fuzz driver checks
   a corpus file on its open descriptor instead of by name (CodeQL `cpp/world-writable-file-creation`,
   `cpp/toctou-race-condition`).
+- Ktor client, HTTPS records (new in this release): reading a DNS answer took time cubic in the number of its records
+  with distinct TargetNames, and nothing interrupted it: one answer of 64 KiB from a hostile or spoofed resolver (the
+  system resolver over plain DNS, or an `HttpsRecordSource.Exchange` server, with no size limit there) held a thread
+  for over a minute per lookup, and the lookup's timeout could not stop it. The read is now linear in the message: each
+  TargetName is walked once and each owner's RRset parsed once, a message over 65535 bytes is refused (RFC 8484 section
+  6: "This media type restricts the maximum size of the DNS message to 65535 bytes"), at most 16 CNAMEs per name and 16
+  other HTTPS RRsets per answer are followed, a record's `mandatory` keys are checked in one merge pass, and the read
+  checks the lookup's coroutine every 64 units of work, so the timeout and cancellation stop it. At most 32 ServiceMode
+  endpoints of an RRset are tried, so a forged RRset cannot turn one request into thousands of connection attempts, and
+  the record cache holds about 1 MiB at most each of records and addresses (an estimate of the objects' size), and no RRset or address list of over 64 entries.
+  The `client.svcb` fuzz target checks the parse bounds.
 
 ## [0.2.1] - 2026-11-04
 

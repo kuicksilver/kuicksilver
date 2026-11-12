@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client.dns
 
+import io.kuicksilver.ktor.client.ExpiryClock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
@@ -33,7 +34,7 @@ class SvcbResolutionTest {
     ) = HttpsRecords({ name ->
         asked += name
         (if (name in answers) answers[name] else emptyList())?.let { DnsAnswer(it) }
-    }, scope, 10.seconds, { 0L })
+    }, scope, 10.seconds, ExpiryClock { 0L })
 
     @Test fun endpointsInPriorityOrderWithTheirTransports() =
         runTest {
@@ -86,9 +87,7 @@ class SvcbResolutionTest {
                                 rec(n, 2, "z.example", "h2"),
                             ),
                         )
-                    }, backgroundScope, 10.seconds, {
-                        0L
-                    }, Random(seed))
+                    }, backgroundScope, 10.seconds, ExpiryClock { 0L }, Random(seed))
                 val eps = assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 443, all)).endpoints
                 assertEquals("z.example", eps.last().host)
                 seen += eps.first().host
@@ -166,12 +165,42 @@ class SvcbResolutionTest {
                             addresses = mapOf("cdn.example" to (listOf(byteArrayOf(192.toByte(), 0, 2, 1)) to 60L)),
                         )
                     }
-                }, backgroundScope, 10.seconds, { 0L })
+                }, backgroundScope, 10.seconds, ExpiryClock { 0L })
             val r = assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 443, all) { prefetched += it })
             assertEquals(listOf("a.example"), asked)
             assertEquals("cdn.example", r.endpoints.first().host)
             assertEquals(listOf(4), r.addresses["cdn.example"]?.map { it.size })
             assertEquals(emptyList(), prefetched) // its addresses came with the answer
+        }
+
+    @Test fun aliasTargetThatIsACnameIsUsedWithoutAQuery() =
+        runTest {
+            // section 5: the alias target svc.example is a CNAME to cdn.example, whose RRset and addresses the answer
+            // carried; the target's records are those at the end of its chain ("after following CNAMEs as normal", step 3)
+            val alias = SvcbTestEncoder.encode(SvcbRecord(0, "svc.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+            val dot = SvcbTestEncoder.encode(SvcbRecord(1, ".", listOf("h3"), false, null, emptyList(), emptyList(), 0, "x"))
+            val msg =
+                SvcbTestEncoder
+                    .response(
+                        "a.example",
+                        listOf(
+                            SvcbTestEncoder.rr("a.example", 65, 300, alias),
+                            SvcbTestEncoder.rr("svc.example", 5, 30, SvcbTestEncoder.name("cdn.example")),
+                        ),
+                    ).let { it.copyOf().also { m -> m[11] = 3 } } +
+                    SvcbTestEncoder.rr("cdn.example", 65, 300, dot) +
+                    SvcbTestEncoder.rr("cdn.example", 1, 200, hex("c0000201")) +
+                    SvcbTestEncoder.rr("cdn.example", 28, 200, hex("20010db8000000000000000000000001"))
+            val asked = ArrayList<String>()
+            val rs =
+                HttpsRecords({ name ->
+                    asked += name
+                    if (name == "a.example") DnsMessage.read(msg, name) else DnsAnswer(emptyList())
+                }, backgroundScope, 10.seconds, ExpiryClock { 0L })
+            val r = assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 443, all))
+            assertEquals(listOf("a.example"), asked)
+            assertEquals("cdn.example", r.endpoints.first().host)
+            assertEquals(listOf(4, 16), r.addresses["cdn.example"]?.map { it.size })
         }
 
     @Test fun negative_outOfZoneRecordsAreNotCachedBeyondTheResolution() =
@@ -190,7 +219,7 @@ class SvcbResolutionTest {
                     } else {
                         DnsAnswer(listOf(rec(name, 1, ".", "h2")))
                     }
-                }, backgroundScope, 10.seconds, { 0L })
+                }, backgroundScope, 10.seconds, ExpiryClock { 0L })
             assertEquals("cdn.other", assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 443, all)).endpoints.first().host)
             assertEquals(listOf("a.example"), asked) // used for this resolution
             rs.resolve("cdn.other", 443, all)
@@ -222,7 +251,7 @@ class SvcbResolutionTest {
                 HttpsRecords({ n ->
                     if (n == "cdn.example") gate.await()
                     DnsAnswer(if (n == "a.example") listOf(rec("a.example", 0, "cdn.example")) else emptyList())
-                }, backgroundScope, 10.seconds, { 0L })
+                }, backgroundScope, 10.seconds, ExpiryClock { 0L })
             val progress = AliasProgress()
             val job = backgroundScope.launch { rs.resolve("a.example", 443, all, progress = progress) }
             testScheduler.runCurrent()
@@ -240,7 +269,7 @@ class SvcbResolutionTest {
                     asked++
                     DnsMessage.query(n)
                     DnsAnswer(emptyList())
-                }, backgroundScope, 10.seconds, { 0L })
+                }, backgroundScope, 10.seconds, ExpiryClock { 0L })
             assertSame(HttpsResolution.None, rs.resolve("bücher.example", 443, all))
             assertEquals(false, rs.upgradesToHttps("bücher.example", 443, all))
             assertEquals(0, asked)

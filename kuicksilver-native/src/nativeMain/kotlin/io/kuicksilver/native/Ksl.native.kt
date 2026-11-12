@@ -1000,6 +1000,50 @@ public actual object Ksl {
         }
     }
 
+    public actual fun resolve(
+        name: String,
+        family: Int,
+    ): ByteArray? {
+        val out = ByteArray(KslConst.RESOLVE_ENTRY_LEN * 256)
+        return memScoped {
+            val len = alloc<ULongVar>()
+            when (out.pin { o, cap -> ksl_resolve(name, family, o, cap, len.ptr) }) {
+                KSL_OK -> out.copyOf(len.value.toInt())
+                KSL_DNS_NOT_FOUND -> ByteArray(0)
+                else -> null
+            }
+        }
+    }
+
+    public actual fun addrInfo(
+        addr: ByteArray,
+        scope: Int,
+    ): IntArray? {
+        if (addr.size != 4 && addr.size != 16) return null
+        return memScoped {
+            val plen = alloc<IntVar>()
+            val flags = alloc<IntVar>()
+            when (addr.pin { a, n -> ksl_addr_info(a, n, scope.toUInt(), plen.ptr, flags.ptr) }) {
+                KSL_OK -> intArrayOf(plen.value, flags.value)
+                KSL_DNS_NOT_FOUND -> IntArray(0)
+                else -> null
+            }
+        }
+    }
+
+    public actual fun nat64Synthesize(v4: ByteArray): ByteArray? {
+        if (v4.size != 4) return null
+        val out = ByteArray(16 * 16)
+        return memScoped {
+            val len = alloc<ULongVar>()
+            when (v4.pin { a, _ -> out.pin { o, cap -> ksl_nat64_synthesize(a, o, cap, len.ptr) } }) {
+                KSL_OK -> out.copyOf(len.value.toInt())
+                KSL_DNS_NOT_SUPPORTED -> null
+                else -> ByteArray(0)
+            }
+        }
+    }
+
     /** A DNS message over TCP is at most 64 KiB; the record list of Apple and Windows adds a few bytes per record. */
     private const val DNS_ANSWER_CAP = 65536 + 1 + 4096
 }

@@ -89,7 +89,9 @@ The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_AB
 identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters, ABI 7 the ICMP
 hints for PMTUD: `ksl_udp_take_ptb`, `ksl_udp_emsgsize`, and a receive that no longer fails on a queued ICMP error; under 7 too,
 additive, `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, `ksl_udp_sender` for
-several sender threads on one socket, `ksl_chain_level` with
+several sender threads on one socket, `ksl_dns_query` for one record type from the system resolver, `ksl_resolve`,
+`ksl_addr_info` and `ksl_nat64_synthesize` for Happy Eyeballs (one address family per lookup, the state of a local
+address, the platform's NAT64 synthesis), `ksl_chain_level` with
 `KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, and `ksl_ctx_verify_chain_path`
 for the path a chain re-verification built). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of

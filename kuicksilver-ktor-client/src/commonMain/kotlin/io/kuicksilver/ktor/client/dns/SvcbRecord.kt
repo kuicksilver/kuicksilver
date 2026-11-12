@@ -52,6 +52,10 @@ internal class SvcbRecord(
     /** The host of a ServiceMode endpoint: [target], or [owner] when it is "." (RFC 9460 section 2.5.2). */
     val serviceHost: String get() = if (target == ".") owner else target
 
+    /** This record with a TTL of at most [cap] (the smallest TTL of the CNAMEs that led to it). */
+    fun withTtlAtMost(cap: Long): SvcbRecord =
+        if (ttlSeconds <= cap) this else SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4Hints, ipv6Hints, cap, owner)
+
     override fun equals(other: Any?): Boolean =
         other is SvcbRecord && priority == other.priority && target == other.target && alpn == other.alpn &&
             noDefaultAlpn == other.noDefaultAlpn && port == other.port && ttlSeconds == other.ttlSeconds && owner == other.owner &&
@@ -170,10 +174,31 @@ internal object SvcbCodec {
             }
         }
         // every key the mandatory list names must be in the record (section 8)
-        for (k in mandatory) if (k !in keys) throw DnsFormatException("mandatory key $k missing")
+        if (!hasAllMandatory(keys, mandatory)) throw DnsFormatException("a mandatory key is missing")
         if (mandatory.any { it !in SUPPORTED }) return null
         if (noDefaultAlpn && alpn.isEmpty()) return null
         return SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4, ipv6, ttl, owner)
+    }
+
+    /**
+     * Whether every key of [mandatory] is in [keys] (section 8). Both lists are strictly increasing (section 2.2 for the
+     * keys, section 8 for `mandatory`, both checked as they are read), so one merge pass answers, with at most
+     * `keys.size + mandatory.size` reads, however many keys there are.
+     */
+    internal fun hasAllMandatory(
+        keys: List<Int>,
+        mandatory: List<Int>,
+    ): Boolean {
+        var j = 0
+        for (k in mandatory) {
+            while (true) {
+                if (j == keys.size) return false
+                val key = keys[j++] // each key read once
+                if (key == k) break
+                if (key > k) return false
+            }
+        }
+        return true
     }
 
     /** `mandatory` (section 8): a non-empty list of keys in strictly increasing order, never naming itself. */
@@ -373,11 +398,20 @@ internal const val HTTPS_DEFAULT_ALPN = "http/1.1"
 internal fun SvcbRecord.alpnSet(): Set<String> = if (noDefaultAlpn) alpn.toSet() else alpn.toSet() + HTTPS_DEFAULT_ALPN
 
 /**
+ * ServiceMode endpoints tried at most from one RRset ([serviceEndpoints]): each is a connection attempt that may wait for
+ * the connect timeout, and the records come over an untrusted channel (RFC 9460 section 9.2.2), so a forged RRset of
+ * thousands of records must not turn one request into thousands of attempts. The lowest SvcPriority levels are kept
+ * (section 3: "Clients SHOULD try higher-priority alternatives first"); after them the client connects as without records.
+ */
+internal const val MAX_ENDPOINTS = 32
+
+/**
  * The ServiceMode endpoints of one RRset in the order to try them (RFC 9460 section 3, step 4): ascending SvcPriority,
  * shuffled within a priority level with [random] (section 2.4.1, SHOULD), each at its effective TargetName (the owner for
  * ".", section 2.5.2) and its `port` or [authorityPort] (section 7.2, SHALL). An endpoint whose SVCB ALPN set has no
  * protocol in [supported] is left out (section 7.1.2, SHOULD NOT attempt), and so is one whose name a socket cannot take.
- * Empty when the RRset has an AliasMode record: its ServiceMode records are then ignored (section 2.4.1, MUST).
+ * At most [MAX_ENDPOINTS]. Empty when the RRset has an AliasMode record: its ServiceMode records are then ignored
+ * (section 2.4.1, MUST).
  */
 internal fun serviceEndpoints(
     records: List<SvcbRecord>,
@@ -396,7 +430,7 @@ internal fun serviceEndpoints(
             val quic = "h3" in set
             val tcp = "h2" in set || HTTPS_DEFAULT_ALPN in set
             if ((!quic && !tcp) || !isHostName(r.serviceHost)) null else HttpsEndpoint(r.serviceHost, r.port ?: authorityPort, quic, tcp)
-        }
+        }.take(MAX_ENDPOINTS)
 }
 
 /**

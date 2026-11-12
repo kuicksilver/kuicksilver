@@ -169,6 +169,7 @@ void run_verify(void);
 void run_udp(void);
 void run_security(void);
 void run_dns(void);
+void run_net(void);
 /* test hooks of ksl_udp.c (KSL_TEST builds) */
 struct ssl_st *ksl_ssl_raw_for_test(ksl_ssl *);
 void ksl_tcp_set_key_update_records_for_test(ksl_ssl *, uint64_t records);

@@ -865,6 +865,51 @@ static jbyteArray j_dns_query(JNIEnv *e, jclass c, jstring name, jint type, jbyt
     return a;
 }
 
+/* ksl_resolve: the entries, an empty array for KSL_DNS_NOT_FOUND, null for a failed lookup */
+static jbyteArray j_resolve(JNIEnv *e, jclass c, jstring name, jint family) {
+    (void)c;
+    uint8_t out[KSL_RESOLVE_ENTRY_LEN * 256];
+    const char *n = cstr(e, name);
+    size_t len = 0;
+    int r = n ? ksl_resolve(n, family, out, sizeof out, &len) : KSL_ERROR;
+    cstr_free(e, name, n);
+    return r == KSL_OK ? new_bytes(e, out, len) : r == KSL_DNS_NOT_FOUND ? new_bytes(e, NULL, 0) : NULL;
+}
+/* ksl_addr_info: {prefix length, flags}, an empty array when no interface has the address, null on failure */
+static jintArray j_addr_info(JNIEnv *e, jclass c, jbyteArray addr, jint scope) {
+    (void)c;
+    uint8_t a[16];
+    jsize n = addr ? (*e)->GetArrayLength(e, addr) : 0;
+    if (n != 4 && n != 16)
+        return NULL;
+    (*e)->GetByteArrayRegion(e, addr, 0, n, (jbyte *)a);
+    int plen = -1, flags = 0;
+    int r = ksl_addr_info(a, (size_t)n, (uint32_t)scope, &plen, &flags);
+    if (r != KSL_OK && r != KSL_DNS_NOT_FOUND)
+        return NULL;
+    jintArray out = (*e)->NewIntArray(e, r == KSL_OK ? 2 : 0);
+    if (out && r == KSL_OK) {
+        jint v[2] = {plen, flags};
+        (*e)->SetIntArrayRegion(e, out, 0, 2, v);
+    }
+    return out;
+}
+
+/* ksl_nat64_synthesize: the addresses (16 bytes each), empty for none or a failure, null where the platform cannot */
+static jbyteArray j_nat64_synthesize(JNIEnv *e, jclass c, jbyteArray v4) {
+    (void)c;
+    uint8_t a[4];
+    if (!v4 || (*e)->GetArrayLength(e, v4) != 4)
+        return NULL;
+    (*e)->GetByteArrayRegion(e, v4, 0, 4, (jbyte *)a);
+    uint8_t out[16 * 16];
+    size_t len = 0;
+    int r = ksl_nat64_synthesize(a, out, sizeof out, &len);
+    if (r == KSL_DNS_NOT_SUPPORTED)
+        return NULL;
+    return new_bytes(e, out, r == KSL_OK ? len : 0);
+}
+
 #define S_BB "Ljava/nio/ByteBuffer;"
 #define S_STR "Ljava/lang/String;"
 static const JNINativeMethod methods[] = {
@@ -946,6 +991,9 @@ static const JNINativeMethod methods[] = {
     {"udpEmsgsize", "(J[I)J", (void *)j_udp_emsgsize},
     {"liveObjects", "([J)I", (void *)j_live_objects},
     {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},
+    {"resolve", "(" S_STR "I)[B", (void *)j_resolve},
+    {"addrInfo", "([BI)[I", (void *)j_addr_info},
+    {"nat64Synthesize", "([B)[B", (void *)j_nat64_synthesize},
 };
 
 static jint on_load(JavaVM *vm, jint version) {

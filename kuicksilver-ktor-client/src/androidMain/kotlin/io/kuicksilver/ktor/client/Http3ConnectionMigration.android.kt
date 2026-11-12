@@ -20,11 +20,16 @@ import kotlinx.coroutines.flow.Flow
  * for a new network bound to it (`Network.bindSocket`) and migrates there, as `QuicConnection.followDefaultNetwork` does.
  * Needs `ACCESS_NETWORK_STATE`, which the library manifest declares. The same source is the engine's network
  * ([Http3ConnectionMigration.networks]) unless `networkId` is set: a new default network resets the broken marks of `Alt-Svc`
- * alternatives and drops those without `persist=1`.
+ * alternatives and drops those without `persist=1`. The engine also takes the network's NAT64 prefix from [connectivity]
+ * (`LinkProperties.getNat64Prefix`, API 30), for Happy Eyeballs on an IPv6-only network without 464XLAT.
+ * Get the manager from the application's context
+ * (`context.applicationContext.getSystemService(ConnectivityManager::class.java)`), not an Activity's, which the engine
+ * would keep alive.
  */
 @ExperimentalKuicksilverApi
-public fun Http3ConnectionMigration.Companion.followDefaultNetwork(connectivity: ConnectivityManager): Http3ConnectionMigration =
-    object : Http3ConnectionMigration {
+public fun Http3ConnectionMigration.Companion.followDefaultNetwork(connectivity: ConnectivityManager): Http3ConnectionMigration {
+    AndroidConnectivity.manager = connectivity // also where the network's NAT64 prefix comes from (platformNat64Prefixes)
+    return object : Http3ConnectionMigration {
         override fun start(
             connection: QuicConnection,
             scope: CoroutineScope,
@@ -36,3 +41,4 @@ public fun Http3ConnectionMigration.Companion.followDefaultNetwork(connectivity:
 
         override val networks: Flow<Any?> = connectivity.defaultNetworks()
     }
+}
