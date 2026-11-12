@@ -541,21 +541,79 @@ internal class KuicksilverEngine(
         return network
     }
 
-    /** ALTSVC frames learned so far ([onAltSvcFrame]); internal for tests. */
-    internal val altSvcFramesLearned = kotlinx.coroutines.flow.MutableStateFlow(0)
+    /** One received ALTSVC frame waiting to be learned: [seq] orders it among all frames of this engine. */
+    private class PendingAltSvcFrame(
+        val url: io.ktor.http.Url,
+        val value: String,
+        val seq: Long,
+    )
+
+    /**
+     * The latest ALTSVC frame per origin not yet learned (at most [AltSvcCache.MAX_ORIGINS] origins, the eldest dropped):
+     * a newer frame for an origin replaces the one waiting, so a flood holds one value per origin, not one per frame.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val pendingAltSvcFrames = kotlin.concurrent.atomics.AtomicReference<Map<String, PendingAltSvcFrame>>(emptyMap())
+
+    /** Whether the one coroutine that learns [pendingAltSvcFrames] runs. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val altSvcFrameLearner = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val altSvcFrameSeq = kotlin.concurrent.atomics.AtomicLong(0)
+
+    /** The sequence number of the last ALTSVC frame received ([onAltSvcFrame]); internal for tests. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val altSvcFramesReceived: Long get() = altSvcFrameSeq.load()
+
+    /** The sequence number up to which ALTSVC frames are learned (or superseded by a later one); internal for tests. */
+    internal val altSvcFramesApplied = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** ALTSVC frames waiting to be learned; internal for tests. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val altSvcFramesWaiting: Int get() = pendingAltSvcFrames.load().size
 
     /**
      * An ALTSVC frame (RFC 7838 section 4) from an HTTP/2 connection to the origin of [url]: learned as an `Alt-Svc` header
      * of a response is, in [Http3DiscoveryMode.Auto] (the mode that learns), and never through a proxy (the pool passes none).
+     * Called on the connection's reader without blocking: the frame waits in [pendingAltSvcFrames], replacing an older one
+     * of its origin, and one coroutine learns the waiting frames in order, so the last frame an origin sent is the one that
+     * holds (an `h3` then a `clear` ends cleared) and a flood costs no more than one value per origin. Internal for tests.
      */
-    private fun onAltSvcFrame(
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal fun onAltSvcFrame(
         url: io.ktor.http.Url,
         value: String,
     ) {
         if (config.http3.discovery != Http3DiscoveryMode.Auto) return
-        engineScope.launch(CoroutineName("kuicksilver-altsvc-frame")) {
-            altSvcUpdate { altSvc.onAltSvcFrame(url, value) }
-            altSvcFramesLearned.value++
+        val origin = originKey(url)
+        while (true) {
+            val m = pendingAltSvcFrames.load()
+            val next = LinkedHashMap(m)
+            next.remove(origin)
+            next[origin] = PendingAltSvcFrame(url, value, altSvcFrameSeq.addAndFetch(1))
+            next.evictEldest(AltSvcCache.MAX_ORIGINS)
+            if (pendingAltSvcFrames.compareAndSet(m, next)) break
+        }
+        if (altSvcFrameLearner.compareAndSet(false, true)) {
+            engineScope.launch(CoroutineName("kuicksilver-altsvc-frames")) { learnAltSvcFrames() }
+        }
+    }
+
+    /** The one learner of [pendingAltSvcFrames]: takes them all, learns them in order of arrival, until none waits. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private suspend fun learnAltSvcFrames() {
+        while (true) {
+            val batch = pendingAltSvcFrames.exchange(emptyMap())
+            if (batch.isEmpty()) {
+                altSvcFrameLearner.store(false)
+                // a frame that came after the exchange and found the learner still marked running is taken here
+                if (pendingAltSvcFrames.load().isEmpty() || !altSvcFrameLearner.compareAndSet(false, true)) return
+                continue
+            }
+            val frames = batch.values.sortedBy { it.seq }
+            altSvcUpdate { for (f in frames) altSvc.onAltSvcFrame(f.url, f.value) }
+            altSvcFramesApplied.value = maxOf(altSvcFramesApplied.value, frames.last().seq)
         }
     }
 

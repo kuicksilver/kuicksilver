@@ -439,8 +439,9 @@ class ClientAltSvcTest {
 
     /**
      * RFC 7838 section 4: "Receiving an ALTSVC frame is semantically equivalent to receiving an Alt-Svc header field." A
-     * server that follows section 3 ("When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame") sends no
-     * field over HTTP/2: the client learns the alternative from the frame. Before, the frame was skipped as unknown.
+     * server that follows section 3 ("When using HTTP/2 ([RFC7540]), servers SHOULD instead send an ALTSVC frame") sends
+     * the frame (the Kuicksilver server the field too): the client learns the alternative from the frame. Before, the frame
+     * was skipped as unknown and nothing was learned from it.
      */
     @Test fun negative_altSvcFrameOverH2IsLearned() =
         h3Test {
@@ -451,12 +452,37 @@ class ClientAltSvcTest {
                     val engine = c.engine as KuicksilverEngine
                     val r = c.get(url)
                     assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
-                    assertEquals(null, r.headers["Alt-Svc"])
-                    engine.altSvcFramesLearned.first { it >= 1 }
+                    engine.altSvcFramesApplied.first { it >= 1 }
                     assertEquals(listOf(port), engine.altSvcSnapshot(url).map { it.port })
                 }
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * ALTSVC frames are learned by one coroutine, the last frame of an origin winning: an `h3` followed by a `clear` ends
+     * cleared, whatever the scheduling, and a flood waits as at most one value per origin (bounded by the origins kept),
+     * not as a coroutine per frame. Before, every frame launched its own coroutine, unbounded and in no order.
+     */
+    @Test fun negative_altSvcFramesLearnedInOrderAndBounded() =
+        clientTest {
+            testClient(Http3DiscoveryMode.Auto).use { c ->
+                val engine = c.engine as KuicksilverEngine
+                val url = io.ktor.http.Url("https://example.com/")
+                repeat(5_000) {
+                    engine.onAltSvcFrame(url, "h3=\":443\"")
+                    engine.onAltSvcFrame(url, "clear")
+                    assertTrue(engine.altSvcFramesWaiting <= 1, "one value per origin waits")
+                }
+                engine.altSvcFramesApplied.first { it >= engine.altSvcFramesReceived }
+                assertTrue(engine.altSvcSnapshot(url).isEmpty(), "the last frame, clear, holds")
+                engine.onAltSvcFrame(url, "h3=\":443\"")
+                engine.altSvcFramesApplied.first { it >= engine.altSvcFramesReceived }
+                assertEquals(listOf(443), engine.altSvcSnapshot(url).map { it.port })
+                repeat(AltSvcCache.MAX_ORIGINS + 500) { engine.onAltSvcFrame(io.ktor.http.Url("https://o$it.example/"), "clear") }
+                assertTrue(engine.altSvcFramesWaiting <= AltSvcCache.MAX_ORIGINS, "${engine.altSvcFramesWaiting} waiting")
+                engine.altSvcFramesApplied.first { it >= engine.altSvcFramesReceived }
             }
         }
 }
