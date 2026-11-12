@@ -272,6 +272,7 @@ int ksl_addr_info(const uint8_t *addr, size_t len, uint32_t scope, int *prefix_l
 #include <netpacket/packet.h>
 #include <net/if_arp.h>
 #include <unistd.h>
+#include <sys/time.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/if_addr.h>
@@ -305,7 +306,13 @@ static int net_nl_deprecated(const uint8_t *addr, uint32_t scope) {
     memset(&to, 0, sizeof to);
     to.nl_family = AF_NETLINK;
     int found = -1;
-    if (sendto(fd, &req, req.nh.nlmsg_len, 0, (struct sockaddr *)&to, sizeof to) < 0) {
+    struct timeval tv = {1, 0}; /* a dump that never ends must not hold the caller: one second per read at most */
+    struct sockaddr_nl me;
+    socklen_t mel = sizeof me;
+    memset(&me, 0, sizeof me);
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) != 0 ||
+        sendto(fd, &req, req.nh.nlmsg_len, 0, (struct sockaddr *)&to, sizeof to) < 0 ||
+        getsockname(fd, (struct sockaddr *)&me, &mel) != 0) {
         close(fd);
         return -1;
     }
@@ -317,11 +324,13 @@ static int net_nl_deprecated(const uint8_t *addr, uint32_t scope) {
             break;
         unsigned int left = (unsigned int)got;
         for (struct nlmsghdr *h = (struct nlmsghdr *)(void *)buf; NLMSG_OK(h, left); h = NLMSG_NEXT(h, left)) {
+            if (h->nlmsg_seq != req.nh.nlmsg_seq || h->nlmsg_pid != me.nl_pid)
+                continue; /* not the answer to this dump */
             if (h->nlmsg_type == NLMSG_DONE || h->nlmsg_type == NLMSG_ERROR) {
                 done = 1;
                 break;
             }
-            if (h->nlmsg_type != RTM_NEWADDR)
+            if (h->nlmsg_type != RTM_NEWADDR || h->nlmsg_len < NLMSG_LENGTH(sizeof(struct ifaddrmsg)))
                 continue;
             const struct ifaddrmsg *ifa = (const struct ifaddrmsg *)NLMSG_DATA(h);
             if (ifa->ifa_family != AF_INET6 || (scope != 0 && ifa->ifa_index != scope))
