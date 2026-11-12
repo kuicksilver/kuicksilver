@@ -11,6 +11,8 @@ import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeByte
 import io.ktor.utils.io.writeFully
+import io.ktor.websocket.WebSocketExtension
+import io.ktor.websocket.WebSocketExtensionFactory
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.ktor.network.websocket.DeflateDataException
 import io.kuicksilver.ktor.network.websocket.INFLATE_CHUNK
@@ -26,8 +28,9 @@ import kotlinx.io.EOFException
 import kotlin.coroutines.CoroutineContext
 
 /*
- * The engines' check of the WebSocket frames a peer sends, against what the handshake negotiated (RFC 6455 sections 5.2
- * and 9.1, RFC 7692 section 6.1): Ktor's frame readers accept any RSV bit whether or not an extension gave it a meaning.
+ * The engines' check of the WebSocket frames a peer sends (RFC 6455 sections 5 to 8 and 10.4, RFC 7692 section 6.1), in
+ * front of Ktor's session: its frame readers accept any RSV bit whether or not an extension gave it a meaning, check no
+ * UTF-8 and no Close code, and its JVM reader allocates whatever length a frame claims.
  */
 
 /** RSV1 in the first byte of a WebSocket frame (RFC 6455 section 5.2); permessage-deflate's "compressed" bit. */
@@ -102,40 +105,89 @@ public fun webSocketExtensionNames(values: List<String>): List<String> {
 /**
  * The RSV bits a peer's frames may set after a handshake in which [offered] extensions were requested and [accepted]
  * ones answered ([webSocketExtensionNames]); an extension counts only when it is in both. `permessage-deflate` (RFC 7692)
- * gives RSV1; any other extension both sides agreed on is the application's own, whose bits the engine does not know, so
- * then every bit is allowed ([WS_RSV_ALL]). No extension: 0.
+ * gives RSV1. Another extension gives the bits its factory declares when one of the [installed] Ktor extensions answers
+ * to its name, and every bit ([WS_RSV_ALL]) when none does: then it is the application's own, whose bits the engine does
+ * not know. No extension: 0.
  */
 @InternalKuicksilverApi
 public fun negotiatedWebSocketRsv(
     offered: List<String>,
     accepted: List<String>,
+    installed: List<WebSocketExtension<*>> = emptyList(),
 ): Int {
     var rsv = 0
     for (name in accepted) {
         if (name !in offered) continue
-        rsv = rsv or if (name == PERMESSAGE_DEFLATE) WS_RSV1 else WS_RSV_ALL
+        rsv = rsv or
+            if (name == PERMESSAGE_DEFLATE) {
+                WS_RSV1
+            } else {
+                installed.firstOrNull { e -> e.protocols.any { it.name.trim().lowercase() == name } }?.factory?.rsvBits() ?: WS_RSV_ALL
+            }
     }
     return rsv
 }
+
+/** Whether `permessage-deflate` was agreed ([negotiatedWebSocketRsv]): RFC 7692 section 6.1 then governs RSV1. */
+@InternalKuicksilverApi
+public fun negotiatedPerMessageDeflate(
+    offered: List<String>,
+    accepted: List<String>,
+): Boolean = PERMESSAGE_DEFLATE in offered && PERMESSAGE_DEFLATE in accepted
+
+/**
+ * Whether the payload of the peer's text messages is the text its application sent, which the frame guard can check is
+ * UTF-8 (RFC 6455 section 8.1): no extension was agreed, or only `permessage-deflate` that the guard decompresses itself
+ * ([inflating]). Any other extension may transform the payload in a way the engine does not know.
+ */
+@InternalKuicksilverApi
+public fun webSocketTextCheckable(
+    offered: List<String>,
+    accepted: List<String>,
+    inflating: Boolean,
+): Boolean = accepted.filter { it in offered }.all { it == PERMESSAGE_DEFLATE && inflating }
+
+private fun WebSocketExtensionFactory<*, *>.rsvBits(): Int =
+    (if (rsv1) WS_RSV1 else 0) or (if (rsv2) WS_RSV2 else 0) or (if (rsv3) WS_RSV3 else 0)
 
 /** The name of the WebSocket per-message compression extension (RFC 7692 section 7). */
 private const val PERMESSAGE_DEFLATE = "permessage-deflate"
 
 /**
- * The WebSocket frames of [input], passed through unchanged frame by frame after their first byte was checked (RFC 6455
- * section 5.2): an opcode that is not defined (3-7, 11-15), an RSV bit outside [allowedRsv], or, when [allowedRsv] is
- * exactly [WS_RSV1] (permessage-deflate), RSV1 on a continuation or control frame (RFC 7692 section 6.1), a mask bit
- * that does not match [peerMasks] (RFC 6455 section 5.1: a client masks every frame, a server none), or a 64-bit payload
- * length whose most significant bit is set (section 5.2: it MUST be 0) fails the
- * connection (RFC 6455 section 7.1.7) with code 1002 (protocol error): in place of that frame the returned channel
- * carries a Close frame with 1002 and the reason, then ends. Ktor's session answers it with the same Close through its
- * own writer (the only writer of the connection), so 1002 is what goes on the wire and is the session's `closeReason`;
- * its `incoming` then ends without the bad frame or anything after it, and every frame before it was delivered. A raw
- * session (`webSocketRaw`) sees that Close frame in `incoming` and answers it itself, as any Close.
+ * The default of the engines' `webSocketMaxMessageSize`: 16 MiB, as `PerMessageDeflate`'s `maxInflatedMessageSize`. The
+ * largest frame, and message once reassembled, a peer may send (RFC 6455 section 10.4).
+ */
+@InternalKuicksilverApi
+public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
+
+/**
+ * The WebSocket frames of [input], checked frame by frame before Ktor's session reads them; a frame that breaks a rule
+ * fails the connection (RFC 6455 section 7.1.7): in place of that frame the returned channel carries a Close frame with
+ * the code below and a reason, then ends. Ktor's session answers it with the same Close through its own writer (the only
+ * writer of the connection), so that code is what goes on the wire and is the session's `closeReason`; its `incoming`
+ * ends without the bad frame or anything after it, and every frame before it was delivered. A raw session
+ * (`webSocketRaw`) sees that Close frame in `incoming` and answers it itself, as any Close.
  *
- * The violation is not raised as Ktor's `ProtocolViolationException` in the reader: on its common (Kotlin/Native) reader
- * the session's `incoming` closes before its 1002 is queued, so an application closing at that moment sends 1000 first,
- * and ktor-io's `readAvailable` (its JVM reader) reports a cancelled channel as an ordinary end of stream.
+ * 1002 (protocol error): an opcode that is not defined (3-7, 11-15); an RSV bit outside [allowedRsv]; with
+ * [perMessageDeflate], RSV1 on a continuation or control frame (RFC 7692 section 6.1); a mask bit that does not match
+ * [peerMasks] (section 5.1: a client masks every frame, a server none); a 64-bit payload length whose most significant
+ * bit is set (section 5.2); a control frame with FIN clear or a payload over 125 bytes (section 5.5); a continuation
+ * frame outside a fragmented message or a new message inside one (section 5.4); a Close frame whose body is 1 byte or
+ * whose code an endpoint may not send ([isValidCloseCode], sections 5.5.1 and 7.4).
+ *
+ * 1009 (message too big, section 10.4): a frame whose header claims more payload than [maxMessageSize], or one that
+ * takes its message past it, is refused from its header, before any of its payload is read: Ktor's JVM reader allocates
+ * a frame's whole claimed length at once. A compressed message is held to the smaller of [maxMessageSize] and
+ * [WebSocketInflate.maxMessageSize], counted inflated.
+ *
+ * 1007 (invalid data, sections 5.6 and 8.1): with [checkText] ([webSocketTextCheckable]), a text message that is not
+ * UTF-8 as a whole, a sequence split across fragments included; and always a Close reason that is not UTF-8. A text
+ * message is checked as it streams: it is handed on unmasked, in frames of at most 64 KiB (the first with its opcode,
+ * the rest continuations), and none of the bytes that broke it.
+ *
+ * The violations are not raised as Ktor's `ProtocolViolationException` in the reader: on its common (Kotlin/Native)
+ * reader the session's `incoming` closes before its Close is queued, so an application closing at that moment sends
+ * 1000 first, and ktor-io's `readAvailable` (its JVM reader) reports a cancelled channel as an ordinary end of stream.
  *
  * With [untilClose], the channel ends after the peer's Close frame: the session is over once Close frames were exchanged
  * (RFC 6455 section 7.1.1), and the peer sends no frame after its Close (section 5.5.1). Ktor's JVM WebSocket reader stops
@@ -146,13 +198,14 @@ private const val PERMESSAGE_DEFLATE = "permessage-deflate"
  * first frame has RSV1 is decompressed as its frames arrive and handed on as plain frames (no RSV1) of at most 64 KiB
  * each, the first with the message's opcode and the rest continuations, so Ktor's session and the extension see it
  * uncompressed; uncompressed messages and control frames between the fragments pass as they are. A message that inflates
- * to more than [WebSocketInflate.maxMessageSize] bytes is cut off there with a Close frame with 1009 (RFC 6455 section
- * 7.4.1, message too big) after at most 64 KiB more than the limit was handed on; malformed compressed data, a
- * continuation frame outside a message or a new message inside a fragmented one ends it with 1002, as above.
+ * past its limit is cut off there with 1009 after at most 64 KiB more than the limit was handed on; malformed compressed
+ * data ends it with 1002.
  *
  * A failed [input] fails the returned channel with its cause, and the end of [input] ends it. The copy runs in [context]
- * but outside its job, so it never holds a call open (a reader that gave up, e.g. on a frame over its limit, leaves it
- * waiting for room); the end of [context]'s job stops it.
+ * but outside its job, so it never holds a call open (a reader that gave up leaves it waiting for room); the end of
+ * [context]'s job stops it.
+ *
+ * @throws IllegalArgumentException when [maxMessageSize] is less than 1.
  */
 @InternalKuicksilverApi
 public fun guardWebSocketInput(
@@ -162,83 +215,19 @@ public fun guardWebSocketInput(
     peerMasks: Boolean,
     context: CoroutineContext,
     inflate: WebSocketInflate? = null,
+    perMessageDeflate: Boolean = inflate != null,
+    maxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
+    checkText: Boolean = true,
 ): ByteReadChannel {
+    require(maxMessageSize >= 1) { "maxMessageSize $maxMessageSize is less than 1" }
     val out = ByteChannel()
     val job = Job()
     context[Job]?.invokeOnCompletion { job.cancel() }
+    val rules = InputRules(allowedRsv, untilClose, peerMasks, perMessageDeflate, maxMessageSize, checkText)
     CoroutineScope(context + job).launch(CoroutineName("ws-frame-guard")) {
-        val inflater = inflate?.let { GuardInflater(it) }
-        val header = ByteArray(MAX_HEADER)
+        val guard = InputGuard(input, out, rules, inflate)
         try {
-            while (true) {
-                val b0 = input.readByte()
-                val b1 = input.readByte()
-                violation(b0.toInt() and 0xff, b1.toInt() and 0xff, allowedRsv, peerMasks)?.let {
-                    out.failWith(CLOSE_PROTOCOL_ERROR, "Received illegal frame: $it")
-                    return@launch
-                }
-                header[0] = b0
-                header[1] = b1
-                var n = 2
-                var length = (b1.toInt() and 0x7f).toLong()
-                val extended =
-                    when (length) {
-                        126L -> 2
-                        127L -> 8
-                        else -> 0
-                    }
-                if (extended > 0) {
-                    length = 0
-                    repeat(extended) {
-                        val b = input.readByte()
-                        header[n++] = b
-                        length = (length shl 8) or (b.toLong() and 0xff)
-                    }
-                }
-                val maskAt = n
-                if (b1.toInt() and 0x80 != 0) repeat(4) { header[n++] = input.readByte() } // masking key
-                if (length < 0) {
-                    out.failWith(CLOSE_PROTOCOL_ERROR, "Received illegal frame: a 64-bit length with its most significant bit set")
-                    return@launch
-                }
-                val opcode = b0.toInt() and 0x0f
-                if (inflater != null && opcode < OPCODE_CLOSE) {
-                    inflater.sequenceViolation(opcode)?.let {
-                        out.failWith(CLOSE_PROTOCOL_ERROR, "Received illegal frame: $it")
-                        return@launch
-                    }
-                    val fin = b0.toInt() and 0x80 != 0
-                    if (inflater.dataFrame(opcode, fin, compressed = b0.toInt() and WS_RSV1 != 0)) {
-                        val mask = if (n > maskAt) header.copyOfRange(maskAt, n) else null
-                        try {
-                            inflater.inflateFrame(input, out, length, mask, fin)
-                        } catch (e: MessageTooBigException) {
-                            val reason =
-                                if (e.compressedBytes) {
-                                    "Message is too big: more than ${e.limit} compressed bytes"
-                                } else {
-                                    "Message is too big: more than ${e.limit} bytes inflated"
-                                }
-                            out.failWith(CLOSE_MESSAGE_TOO_BIG, reason)
-                            return@launch
-                        } catch (_: DeflateDataException) {
-                            // zlib's own message stays here: it says nothing the peer needs
-                            out.failWith(CLOSE_PROTOCOL_ERROR, "Invalid compressed data")
-                            return@launch
-                        }
-                        continue
-                    }
-                }
-                out.writeFully(header, 0, n)
-                if (length > 0 && input.copyTo(out, length) < length) {
-                    // ktor-io's copyTo stops on an input failed with a cause as at its end, without the cause
-                    input.closedCause?.let { throw it }
-                    break
-                }
-                out.flush()
-                if (untilClose && opcode == OPCODE_CLOSE) break
-            }
-            out.flushAndClose()
+            guard.run()
         } catch (_: EOFException) {
             // the stream ended (between or inside frames): so does the session's input. ktor-io's readFully answers an input
             // failed with a cause with an EOFException too: that one fails the session's input with the cause
@@ -247,108 +236,272 @@ public fun guardWebSocketInput(
         } catch (cause: Throwable) {
             out.cancel(cause)
         } finally {
-            inflater?.close()
+            guard.close()
         }
     }
     return out
 }
 
-/** Writes a Close frame with [code] and [reason] in place of the frame that broke the rules, and ends the channel. */
-private suspend fun ByteChannel.failWith(
-    code: Int,
-    reason: String,
-) {
-    writeFully(closeFrame(code, reason))
-    flushAndClose()
-}
+/** What the handshake decided for the peer's frames ([guardWebSocketInput]'s parameters). */
+private class InputRules(
+    val allowedRsv: Int,
+    val untilClose: Boolean,
+    val peerMasks: Boolean,
+    val perMessageDeflate: Boolean,
+    val maxMessageSize: Long,
+    val checkText: Boolean,
+)
 
-/** The longest frame header: 2 bytes, an 8-byte length and a 4-byte masking key. */
-private const val MAX_HEADER = 14
+/** A frame that fails the connection with Close [code] and [reason] (RFC 6455 section 7.1.7). */
+private class FrameRuleException(
+    val code: Int,
+    val reason: String,
+) : Exception(reason)
+
+private fun protocolError(what: String) = FrameRuleException(CLOSE_PROTOCOL_ERROR, "Received illegal frame: $what")
+
+private fun invalidText() = FrameRuleException(CLOSE_INVALID_DATA, "Invalid UTF-8 in a text message")
 
 /**
- * The guard's half of permessage-deflate (RFC 7692 section 7.2.2): which message the frames belong to and whether it is
- * compressed, and the decompression of a compressed one into frames of at most [INFLATE_CHUNK] bytes.
+ * The guard of one connection's input: which message the frames belong to, whether it is compressed or checked as text,
+ * and the re-framing of the data it hands on itself (inflated, or checked text) in frames of at most [INFLATE_CHUNK].
  */
-private class GuardInflater(
-    spec: WebSocketInflate,
+private class InputGuard(
+    private val input: ByteReadChannel,
+    private val out: ByteChannel,
+    private val rules: InputRules,
+    inflate: WebSocketInflate?,
 ) {
-    private val inflater = MessageInflater(spec.noContextTakeover, spec.maxMessageSize)
+    private val inflater =
+        inflate?.let { MessageInflater(it.noContextTakeover, minOf(it.maxMessageSize, rules.maxMessageSize)) }
+    private val header = ByteArray(MAX_HEADER)
+    private val utf8 = Utf8Validator()
     private var inMessage = false
-    private var compressed = false
     private var messageOpcode = 0
+    private var compressed = false
+    private var text = false
+    private var messageBytes = 0L
     private var emitted = false
     private var output: ByteArray? = null
     private var outputLength = 0
     private var buffer: ByteArray? = null
 
-    /** Why a data frame with [opcode] cannot come now (RFC 6455 section 5.4), or null. */
-    fun sequenceViolation(opcode: Int): String? =
-        when {
-            opcode == OPCODE_CONTINUATION && !inMessage -> "a continuation frame outside a fragmented message"
-            opcode != OPCODE_CONTINUATION && inMessage -> "a new message before the fragmented one ended"
-            else -> null
+    /** Copies frames until the input ends, the peer's Close with [InputRules.untilClose], or a violation. */
+    suspend fun run() {
+        try {
+            while (frame()) continue
+            out.flushAndClose()
+        } catch (e: FrameRuleException) {
+            out.writeFully(closeFrame(e.code, e.reason))
+            out.flushAndClose()
         }
-
-    /** Follows a data frame; true when its payload is compressed data for [inflateFrame]. */
-    fun dataFrame(
-        opcode: Int,
-        fin: Boolean,
-        compressed: Boolean,
-    ): Boolean {
-        if (opcode != OPCODE_CONTINUATION) {
-            this.compressed = compressed
-            messageOpcode = opcode
-            emitted = false
-        }
-        inMessage = !fin
-        return this.compressed
     }
 
-    /** Reads the [length] bytes of compressed payload (unmasked with [mask]) and writes what they inflate to. */
-    suspend fun inflateFrame(
-        input: ByteReadChannel,
-        out: ByteChannel,
+    fun close() {
+        inflater?.close()
+    }
+
+    /** One frame; false once the peer's Close went on and the channel ends there. */
+    private suspend fun frame(): Boolean {
+        val b0 = input.readByte().toInt() and 0xff
+        val b1 = input.readByte().toInt() and 0xff
+        violation(b0, b1, rules)?.let { throw protocolError(it) }
+        header[0] = b0.toByte()
+        header[1] = b1.toByte()
+        var n = 2
+        var length = (b1 and 0x7f).toLong()
+        val extended =
+            when (length) {
+                126L -> 2
+                127L -> 8
+                else -> 0
+            }
+        if (extended > 0) {
+            length = 0
+            repeat(extended) {
+                val b = input.readByte()
+                header[n++] = b
+                length = (length shl 8) or (b.toLong() and 0xff)
+            }
+        }
+        val maskAt = n
+        if (b1 and 0x80 != 0) repeat(4) { header[n++] = input.readByte() } // masking key
+        if (length < 0) throw protocolError("a 64-bit length with its most significant bit set")
+        val mask = if (n > maskAt) header.copyOfRange(maskAt, n) else null
+        val opcode = b0 and 0x0f
+        val fin = b0 and 0x80 != 0
+        if (opcode >= OPCODE_CLOSE) return control(opcode, fin, length, n, mask)
+        data(opcode, fin, b0 and WS_RSV1 != 0, length, n, mask)
+        return true
+    }
+
+    /** RFC 6455 section 5.5: a control frame is not fragmented and has at most 125 bytes; a Close body is checked. */
+    private suspend fun control(
+        opcode: Int,
+        fin: Boolean,
+        length: Long,
+        headerLength: Int,
+        mask: ByteArray?,
+    ): Boolean {
+        if (!fin) throw protocolError("a fragmented control frame")
+        if (length > MAX_CONTROL_PAYLOAD) throw protocolError("a control frame of $length bytes")
+        val payload = ByteArray(length.toInt())
+        input.readFully(payload, 0, payload.size)
+        if (opcode == OPCODE_CLOSE) {
+            val body = payload.copyOf()
+            if (mask != null) unmask(body, body.size, mask, 0)
+            checkCloseBody(body)
+        }
+        out.writeFully(header, 0, headerLength)
+        out.writeFully(payload)
+        out.flush()
+        return !(rules.untilClose && opcode == OPCODE_CLOSE)
+    }
+
+    /** RFC 6455 sections 5.5.1, 7.4 and 8.1: no body, or a code an endpoint may send and an optional UTF-8 reason. */
+    private fun checkCloseBody(body: ByteArray) {
+        if (body.isEmpty()) return
+        if (body.size == 1) throw protocolError("a Close frame with a 1-byte body")
+        val code = ((body[0].toInt() and 0xff) shl 8) or (body[1].toInt() and 0xff)
+        if (!isValidCloseCode(code)) throw protocolError("Close code $code, which an endpoint may not send")
+        if (!isUtf8(body, 2, body.size)) throw FrameRuleException(CLOSE_INVALID_DATA, "Invalid UTF-8 in a Close reason")
+    }
+
+    private suspend fun data(
+        opcode: Int,
+        fin: Boolean,
+        rsv1: Boolean,
+        length: Long,
+        headerLength: Int,
+        mask: ByteArray?,
+    ) {
+        // RFC 6455 section 5.4: continuations follow a first fragment, and messages do not interleave
+        if (opcode == OPCODE_CONTINUATION && !inMessage) throw protocolError("a continuation frame outside a fragmented message")
+        if (opcode != OPCODE_CONTINUATION && inMessage) throw protocolError("a new message before the fragmented one ended")
+        if (opcode != OPCODE_CONTINUATION) {
+            messageOpcode = opcode
+            compressed = rsv1 && inflater != null
+            text = rules.checkText && opcode == OPCODE_TEXT
+            messageBytes = 0
+            emitted = false
+            utf8.reset()
+        }
+        inMessage = !fin
+        if (compressed) return inflateFrame(length, mask, fin)
+        // RFC 6455 section 10.4, from the header alone: nothing of the payload is read or handed on
+        if (length > rules.maxMessageSize - messageBytes) {
+            throw FrameRuleException(CLOSE_MESSAGE_TOO_BIG, "Message is too big: more than ${rules.maxMessageSize} bytes")
+        }
+        messageBytes += length
+        if (text) return textFrame(length, mask, fin)
+        out.writeFully(header, 0, headerLength)
+        if (length > 0 && input.copyTo(out, length) < length) {
+            // ktor-io's copyTo stops on an input failed with a cause as at its end, without the cause
+            input.closedCause?.let { throw it }
+            throw EOFException("the stream ended inside a frame")
+        }
+        out.flush()
+    }
+
+    /** An uncompressed text frame: its payload checked as UTF-8 piece by piece and handed on re-framed. */
+    private suspend fun textFrame(
         length: Long,
         mask: ByteArray?,
         fin: Boolean,
     ) {
-        val buf = buffer ?: ByteArray(INPUT_CHUNK).also { buffer = it }
+        val buf = buffer()
         var left = length
         var position = 0L
         while (left > 0) {
             val n = minOf(left, buf.size.toLong()).toInt()
             input.readFully(buf, 0, n)
-            if (mask != null) for (i in 0 until n) buf[i] = (buf[i].toInt() xor mask[((position + i) and 3).toInt()].toInt()).toByte()
+            if (mask != null) unmask(buf, n, mask, position)
             position += n
             left -= n
-            inflater.input(buf, 0, n)
-            drain(out)
+            if (!utf8.feed(buf, 0, n)) throw invalidText()
+            append(buf, n)
         }
+        endOfFrame(fin)
+    }
+
+    private suspend fun append(
+        src: ByteArray,
+        length: Int,
+    ) {
+        val o = output()
+        var at = 0
+        while (at < length) {
+            val k = minOf(length - at, o.size - outputLength)
+            src.copyInto(o, outputLength, at, at + k)
+            outputLength += k
+            at += k
+            if (outputLength == o.size) emit(fin = false)
+        }
+    }
+
+    /** A compressed frame: its payload (unmasked) inflated and handed on re-framed (RFC 7692 section 7.2.2). */
+    private suspend fun inflateFrame(
+        length: Long,
+        mask: ByteArray?,
+        fin: Boolean,
+    ) {
+        val inflater = inflater!!
+        val buf = buffer()
+        var left = length
+        var position = 0L
+        try {
+            while (left > 0) {
+                val n = minOf(left, buf.size.toLong()).toInt()
+                input.readFully(buf, 0, n)
+                if (mask != null) unmask(buf, n, mask, position)
+                position += n
+                left -= n
+                inflater.input(buf, 0, n)
+                drain(inflater)
+            }
+            if (fin) {
+                inflater.endOfMessage()
+                drain(inflater)
+            }
+        } catch (e: MessageTooBigException) {
+            val reason =
+                if (e.compressedBytes) {
+                    "Message is too big: more than ${e.limit} compressed bytes"
+                } else {
+                    "Message is too big: more than ${e.limit} bytes inflated"
+                }
+            throw FrameRuleException(CLOSE_MESSAGE_TOO_BIG, reason)
+        } catch (_: DeflateDataException) {
+            // zlib's own message stays here: it says nothing the peer needs
+            throw FrameRuleException(CLOSE_PROTOCOL_ERROR, "Invalid compressed data")
+        }
+        endOfFrame(fin)
+        if (fin) inflater.messageDone()
+    }
+
+    private suspend fun drain(inflater: MessageInflater) {
+        val o = output()
+        while (true) {
+            val n = inflater.read(o, outputLength, o.size - outputLength)
+            if (n == 0) return
+            if (text && !utf8.feed(o, outputLength, n)) throw invalidText()
+            outputLength += n
+            if (outputLength == o.size) emit(fin = false)
+        }
+    }
+
+    /** The end of a re-framed frame: the message's last frame, or what this frame gave (the next one may be a while). */
+    private suspend fun endOfFrame(fin: Boolean) {
         if (fin) {
-            inflater.endOfMessage()
-            drain(out)
-            emit(out, fin = true)
-            inflater.messageDone()
+            if (text && !utf8.complete) throw invalidText()
+            emit(fin = true)
         } else if (outputLength > 0) {
-            emit(out, fin = false) // what this frame gave goes on now: the next frame may be a while
+            emit(fin = false)
         }
         out.flush()
     }
 
-    private suspend fun drain(out: ByteChannel) {
-        val o = output ?: ByteArray(INFLATE_CHUNK).also { output = it }
-        while (true) {
-            val n = inflater.read(o, outputLength, o.size - outputLength)
-            if (n == 0) return
-            outputLength += n
-            if (outputLength == o.size) emit(out, fin = false)
-        }
-    }
-
-    private suspend fun emit(
-        out: ByteChannel,
-        fin: Boolean,
-    ) {
+    private suspend fun emit(fin: Boolean) {
         val opcode = if (emitted) OPCODE_CONTINUATION else messageOpcode
         out.writeByte(((if (fin) 0x80 else 0) or opcode).toByte())
         when {
@@ -372,26 +525,59 @@ private class GuardInflater(
         outputLength = 0
     }
 
-    fun close() {
-        inflater.close()
-    }
+    private fun buffer(): ByteArray = buffer ?: ByteArray(INPUT_CHUNK).also { buffer = it }
+
+    private fun output(): ByteArray = output ?: ByteArray(INFLATE_CHUNK).also { output = it }
 }
 
-/** The compressed payload is read in pieces of this size. */
+/** Unmasks (or masks) the first [length] bytes of [bytes], which start at [position] of the payload, with [mask]. */
+internal fun unmask(
+    bytes: ByteArray,
+    length: Int,
+    mask: ByteArray,
+    position: Long,
+) {
+    for (i in 0 until length) bytes[i] = (bytes[i].toInt() xor mask[((position + i) and 3).toInt()].toInt()).toByte()
+}
+
+/**
+ * Whether an endpoint may send [code] in a Close frame, and so whether one received is valid: 1000-1003 and 1007-1011
+ * (RFC 6455 section 7.4.1), 1012-1014 (registered since, in the IANA WebSocket Close Code Number registry), and
+ * 3000-4999 (section 7.4.2: libraries, frameworks and applications). Not 0-999 (not used), 1004 (reserved), 1005, 1006
+ * and 1015 (MUST NOT be set in a Close frame), nor the rest of 1000-2999, which no specification defines.
+ */
+@InternalKuicksilverApi
+public fun isValidCloseCode(code: Int): Boolean = code in 1000..1003 || code in 1007..1014 || code in 3000..4999
+
+/** The longest frame header: 2 bytes, an 8-byte length and a 4-byte masking key. */
+private const val MAX_HEADER = 14
+
+/** RFC 6455 section 5.5: all control frames MUST have a payload length of 125 bytes or less. */
+private const val MAX_CONTROL_PAYLOAD = 125L
+
+/** The payload of a compressed or checked frame is read in pieces of this size. */
 private const val INPUT_CHUNK = 16 * 1024
 
 /** RFC 6455 section 7.4.1: 1009, an endpoint received a message too big for it to process. */
 private const val CLOSE_MESSAGE_TOO_BIG = 1009
 
+/** RFC 6455 section 7.4.1: 1007, data within a message that was not consistent with its type (non-UTF-8 text). */
+private const val CLOSE_INVALID_DATA = 1007
+
 /** RFC 6455 section 7.4.1: 1002, an endpoint is terminating the connection due to a protocol error. */
 private const val CLOSE_PROTOCOL_ERROR = 1002
 
-/** An unmasked Close frame with [code] and [reason] (cut to the 123 bytes a control frame leaves it). */
+/** An unmasked Close frame with [code] and [reason] (cut to the 123 bytes a control frame leaves it, at a character). */
 private fun closeFrame(
     code: Int,
     reason: String,
 ): ByteArray {
-    val text = reason.encodeToByteArray().let { if (it.size > 123) it.copyOf(123) else it }
+    var text = reason.encodeToByteArray()
+    if (text.size > 123) {
+        var end = 123
+        while (end > 0 && text[end].toInt() and 0xC0 == 0x80) end-- // not inside a character: the reason stays UTF-8
+        text = text.copyOf(end)
+    }
     return byteArrayOf((0x80 or OPCODE_CLOSE).toByte(), (2 + text.size).toByte(), (code shr 8).toByte(), code.toByte()) + text
 }
 
@@ -399,26 +585,25 @@ private fun closeFrame(
 private fun violation(
     b0: Int,
     b1: Int,
-    allowedRsv: Int,
-    peerMasks: Boolean,
+    rules: InputRules,
 ): String? {
     val opcode = b0 and 0x0f
     val rsv = b0 and WS_RSV_ALL
     val masked = b1 and 0x80 != 0
     return when {
-        masked != peerMasks -> {
-            if (peerMasks) "unmasked frame from a client" else "masked frame from a server"
+        masked != rules.peerMasks -> {
+            if (rules.peerMasks) "unmasked frame from a client" else "masked frame from a server"
         }
 
         opcode in 3..7 || opcode > OPCODE_PONG -> {
             "reserved opcode $opcode"
         }
 
-        rsv and allowedRsv.inv() != 0 -> {
+        rsv and rules.allowedRsv.inv() != 0 -> {
             "RSV bits 0x${rsv.toString(16)} set without an extension that defines them"
         }
 
-        allowedRsv == WS_RSV1 && rsv != 0 && (opcode == OPCODE_CONTINUATION || opcode >= OPCODE_CLOSE) -> {
+        rules.perMessageDeflate && rsv and WS_RSV1 != 0 && (opcode == OPCODE_CONTINUATION || opcode >= OPCODE_CLOSE) -> {
             "RSV1 on a ${if (opcode == OPCODE_CONTINUATION) "continuation" else "control"} frame (RFC 7692 section 6.1)"
         }
 
@@ -428,6 +613,7 @@ private fun violation(
     }
 }
 
-private const val OPCODE_CONTINUATION = 0x0
-private const val OPCODE_CLOSE = 0x8
+internal const val OPCODE_CONTINUATION = 0x0
+internal const val OPCODE_TEXT = 0x1
+internal const val OPCODE_CLOSE = 0x8
 private const val OPCODE_PONG = 0xA
