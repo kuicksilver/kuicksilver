@@ -252,6 +252,8 @@ internal class KslQuicTlsSession(
                 lease.close()
                 throw t
             }
+        } else {
+            stapleFor(ssl, config)
         }
     }
 
@@ -321,6 +323,10 @@ internal class KslQuicTlsSession(
         if (ticket.closed) return false
         // ADR-0011: the OpenSSL verifier's verdict is not taken from the cache: an expired leaf or a withdrawn anchor runs a full handshake
         if (ctx.verifyMode == KslConst.VERIFY_OPENSSL && !ctx.cachedChainStillTrusted(ticket.entry.chain, reference)) {
+            ticket.close()
+            return false
+        }
+        if (!ctx.cachedStapleStillFresh(ticket.entry)) {
             ticket.close()
             return false
         }
@@ -419,7 +425,15 @@ internal class KslQuicTlsSession(
             resumed?.entry?.validated ?: if (ctx.verifyMode == KslConst.VERIFY_OPENSSL) validatedChain() else presented
         Ksl.sslGet1Session(s()).let {
             pendingTickets +=
-                QuicSessionTicket(SessionCache.Entry(it, chain, validated, identityTag = ctx.identityTag))
+                QuicSessionTicket(
+                    SessionCache.Entry(
+                        it,
+                        chain,
+                        validated,
+                        identityTag = ctx.identityTag,
+                        stapleUntil = resumed?.entry?.stapleUntil ?: stapleUntilOf(s()),
+                    ),
+                )
         }
     }
 

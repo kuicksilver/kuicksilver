@@ -73,4 +73,6 @@ public val VerifyReason.alertCode: Int
             is VerifyReason.InvalidPurpose -> 43
 
             is VerifyReason.CertificateTransparency, is VerifyReason.Custom -> 46
+
+            is VerifyReason.InvalidStatusResponse -> 113
         }

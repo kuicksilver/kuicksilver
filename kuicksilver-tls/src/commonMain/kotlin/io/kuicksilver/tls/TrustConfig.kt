@@ -38,15 +38,42 @@ public sealed interface TrustConfig {
         }
 
         /**
-         * The SHA-256 of each root's DER, hex, sorted and without repeats (the roots are a set of anchors: order and duplicates
-         * change nothing): what session caches, server session contexts and the shared contexts key this trust by.
+         * The certificate revocation lists checked next to [roots] (RFC 9325 section 7.5), empty unless given: each certificate
+         * on a verified path whose issuer has one of these CRLs is checked against it, revoked fails with
+         * [VerifyReason.Revoked], and a CRL that expired or does not verify fails with [VerifyReason.UnknownRevocationStatus];
+         * a certificate whose issuer has none is not checked. Clients and servers (client certificates) alike; with
+         * [TrustConfig.ReloadableCa], a reload to the same roots with new CRLs replaces them.
          */
+        @ExperimentalKuicksilverApi
+        public var crls: List<CertificateRevocationList> = emptyList()
+            private set
+
+        /**
+         * [roots] with the CRLs [crls] (see [AnchoredCa.crls]).
+         *
+         * @throws TlsException.Config when a CRL does not parse.
+         */
+        @ExperimentalKuicksilverApi
+        public constructor(roots: List<Certificate>, crls: List<CertificateRevocationList>) : this(roots) {
+            val list = crls.toList()
+            checkCrls(this.roots, list)
+            this.crls = list
+        }
+
+        /**
+         * The SHA-256 of each root's DER, hex, sorted and without repeats (the roots are a set of anchors: order and duplicates
+         * change nothing), then the same of each CRL: what session caches, server session contexts and the shared contexts key
+         * this trust by, so new CRLs are another trust (a ReloadableCa reload to them builds new contexts and voids tickets).
+         */
+        @OptIn(ExperimentalKuicksilverApi::class)
         internal val derKey: String by lazy {
-            this.roots
-                .map { c -> Ksl.sha2(256, c.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') } }
-                .distinct()
-                .sorted()
-                .joinToString(",")
+            fun hashes(ders: List<ByteArray>) =
+                ders
+                    .map { d -> Ksl.sha2(256, d).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') } }
+                    .distinct()
+                    .sorted()
+                    .joinToString(",")
+            hashes(this.roots.map { it.encoded }) + if (crls.isEmpty()) "" else "|crl:" + hashes(crls.map { it.encoded })
         }
     }
 
@@ -349,15 +376,29 @@ public sealed interface VerifyReason {
     /** A certificate of the chain is before its notBefore; alert `certificate_expired` (45). */
     public data object NotYetValid : VerifyReason
 
-    /** A certificate of the chain is revoked; alert `certificate_revoked` (44). */
+    /**
+     * A certificate of the chain is revoked; alert `certificate_revoked` (44), or `bad_certificate_status_response` (113) when a
+     * stapled OCSP response said so (RFC 6066 section 8).
+     */
     public data object Revoked : VerifyReason
 
     /**
      * The revocation status could not be determined and the verifier requires it; alert `unknown_ca` (48). Reported by the
      * platform verifier when it says so (JVM PKIX `UNDETERMINED_REVOCATION_STATUS`, Apple
-     * `errSecIncompleteCertRevocationCheck`) and by a [CertificateVerifier]; `ksl`'s own verifier does not check revocation in v1.
+     * `errSecIncompleteCertRevocationCheck`), by a [CertificateVerifier], and by `ksl`'s own verifier for a configured CRL that
+     * expired, is not valid yet or does not verify, and when [RevocationPolicy.RequireStapled] or a must-staple certificate
+     * (RFC 7633) found no stapled response or one that says "unknown" (then the alert sent is `bad_certificate_status_response`
+     * (113), RFC 6066 section 8).
      */
     public data object UnknownRevocationStatus : VerifyReason
+
+    /**
+     * The OCSP response the server stapled is not satisfactory (RFC 6066 section 8): it does not verify, its signer may not
+     * speak for the certificate's issuer, it names another certificate, or it is outside its validity interval (RFC 6960
+     * section 3.2); alert `bad_certificate_status_response` (113). See [RevocationPolicy].
+     */
+    @ExperimentalKuicksilverApi
+    public data object InvalidStatusResponse : VerifyReason
 
     /** A signature in the chain does not verify; alert `bad_certificate` (42). */
     public data object BadSignature : VerifyReason

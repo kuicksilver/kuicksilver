@@ -1,0 +1,321 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+@file:OptIn(ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class, DelicateKuicksilverApi::class)
+
+package io.kuicksilver.tls
+
+import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Certificate revocation (RFC 9325 section 7.5): a server staples an OCSP response ([OcspStapling]), a client checks it
+ * ([RevocationPolicy]), and CRLs join an [TrustConfig.AnchoredCa], over QUIC and TCP. The PKI, the responses and the CRLs
+ * come from `tools/certs/gen-revocation-certs.sh`.
+ */
+class RevocationTest {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    private val root = Certificate(RevocationCerts.rvRoot)
+    private val anchored = TrustConfig.AnchoredCa(listOf(root))
+
+    private fun client(
+        policy: RevocationPolicy = RevocationPolicy.StapledIfPresent,
+        trust: TrustConfig = anchored,
+    ) = Fixtures.client(trust) { revocation = policy }
+
+    private fun server(
+        leaf: ByteArray = RevocationCerts.rvLeaf,
+        key: ByteArray = RevocationCerts.rvLeafKey,
+        stapling: OcspStapling? = null,
+    ) = Fixtures.server(listOf(leaf, RevocationCerts.rvMid), key) { ocspStapling = stapling }
+
+    private fun quic(
+        client: TlsConfig,
+        server: TlsConfig,
+    ): Pump {
+        val p =
+            Pump(KslQuicCrypto.newSession(client), KslQuicCrypto.newSession(server)).also {
+                it.c.setTransportParameters(Fixtures.tp)
+                it.s.setTransportParameters(Fixtures.tp)
+            }
+        p.run()
+        return p
+    }
+
+    private fun quicPasses(
+        client: TlsConfig,
+        server: TlsConfig,
+    ) {
+        val p = quic(client, server)
+        try {
+            assertTrue(p.cs.done && p.ss.done, "the handshake completes: ${p.cs.last}")
+        } finally {
+            p.close()
+        }
+    }
+
+    private fun quicRefused(
+        client: TlsConfig,
+        server: TlsConfig,
+        alert: Int = 113,
+    ): VerifyReason {
+        val p = quic(client, server)
+        try {
+            val f = assertIs<DriveResult.Failed>(p.cs.last, "the client refuses")
+            assertEquals(alert, f.alert)
+            return assertIs<TlsException.Verify>(f.exception).reason
+        } finally {
+            p.close()
+        }
+    }
+
+    private val good = OcspStapling(RevocationCerts.ocspGood)
+
+    @Test fun quicStapledGoodPasses() {
+        quicPasses(client(), server(stapling = good))
+        quicPasses(client(RevocationPolicy.RequireStapled), server(stapling = OcspStapling(RevocationCerts.ocspGoodDelegated)))
+    }
+
+    @Test fun negative_quicStapledRevokedFails() {
+        val r =
+            quicRefused(
+                client(),
+                server(RevocationCerts.rvLeafRevoked, RevocationCerts.rvLeafRevokedKey, OcspStapling(RevocationCerts.ocspRevoked)),
+            )
+        assertEquals(VerifyReason.Revoked, r)
+    }
+
+    @Test fun quicNoStapleSoftFails() {
+        quicPasses(client(), server())
+        quicPasses(client(RevocationPolicy.Off), server())
+    }
+
+    @Test fun negative_quicRequiredStapleMissing() {
+        assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.RequireStapled), server()))
+    }
+
+    @Test fun negative_quicMustStapleLeafWithoutStaple() {
+        val s = server(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey)
+        assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(), s), "RFC 7633: hard-fail by default")
+        quicPasses(
+            client(),
+            server(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey, OcspStapling(RevocationCerts.ocspMustStaple)),
+        )
+    }
+
+    @Test fun negative_quicUnknownRequired() {
+        val s = server(RevocationCerts.rvLeafUnlisted, RevocationCerts.rvLeafUnlistedKey, OcspStapling(RevocationCerts.ocspUnknown))
+        quicPasses(client(), s)
+        assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.RequireStapled), s))
+    }
+
+    /** The server checks before it staples: a stale response, or one for another certificate, is not sent. */
+    @Test fun negative_serverStaplesNoStaleOrForeignResponse() {
+        assertEquals(
+            VerifyReason.UnknownRevocationStatus,
+            quicRefused(client(RevocationPolicy.RequireStapled), server(stapling = OcspStapling(RevocationCerts.ocspStale))),
+        )
+        assertEquals(
+            VerifyReason.UnknownRevocationStatus,
+            quicRefused(client(RevocationPolicy.RequireStapled), server(stapling = OcspStapling(RevocationCerts.ocspRevoked))),
+        )
+    }
+
+    @Test fun updateReplacesTheStapledResponse() {
+        val st = OcspStapling()
+        val s = server(stapling = st)
+        assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.RequireStapled), s))
+        st.update(RevocationCerts.ocspGood)
+        quicPasses(client(RevocationPolicy.RequireStapled), s)
+        val chain = listOf(Certificate(RevocationCerts.rvLeaf), Certificate(RevocationCerts.rvMid))
+        assertTrue(st.isUsableFor(chain))
+        st.update(RevocationCerts.ocspStale)
+        assertFalse(st.isUsableFor(chain), "a stale response is reported unusable")
+    }
+
+    @Test fun negative_staplingArgumentsRefused() {
+        assertFailsWith<TlsException.Config> { OcspStapling(ByteArray(0)) }
+        assertFailsWith<TlsException.Config> { OcspStapling().update(byteArrayOf(1, 2, 3)) }
+        assertFailsWith<TlsException.Config> { Fixtures.client { ocspStapling = good } }
+    }
+
+    /** A platform or application verifier keeps its own revocation behaviour; requiring a staple there is refused. */
+    @Test fun negative_requireStapledNeedsKslVerifier() {
+        val custom = TrustConfig.Custom(CertificateVerifier { chain, _, _ -> VerifyResult.Accepted(chain) })
+        assertFailsWith<TlsException.Config> { KslQuicCrypto.newSession(client(RevocationPolicy.RequireStapled, custom)).close() }
+    }
+
+    // ---- TCP ----
+
+    private suspend fun tcp(
+        client: TlsConfig,
+        server: TlsConfig,
+        cache: SessionCache = SessionCache(),
+    ): Pair<TlsConnection, TlsConnection> {
+        val (cd, sd) = connect(client, server, clientCache = cache)
+        return withTimeout(20.seconds) { cd.await() to sd.await() }
+    }
+
+    private fun tcpClient(policy: RevocationPolicy = RevocationPolicy.StapledIfPresent) =
+        TcpFixtures.client {
+            trust = anchored
+            revocation = policy
+        }
+
+    private fun tcpServer(
+        leaf: ByteArray = RevocationCerts.rvLeaf,
+        key: ByteArray = RevocationCerts.rvLeafKey,
+        stapling: OcspStapling? = null,
+        v12: Boolean = false,
+    ) = TcpFixtures.server {
+        identity = TlsIdentity.fromDer(listOf(leaf, RevocationCerts.rvMid), key.copyOf())
+        ocspStapling = stapling
+        if (v12) versions = TlsVersions.Tls12And13
+    }
+
+    @Test fun tcpStapledGoodPasses(): Unit =
+        runBlocking {
+            for (v12 in listOf(false, true)) {
+                val client =
+                    TcpFixtures.client {
+                        trust = anchored
+                        revocation = RevocationPolicy.RequireStapled
+                        if (v12) versions = TlsVersions.Tls12And13
+                    }
+                val (c, s) = tcp(client, tcpServer(stapling = good, v12 = v12))
+                c.close()
+                s.close()
+            }
+        }
+
+    @Test fun negative_tcpStapledRevokedFails(): Unit =
+        runBlocking {
+            for (v12 in listOf(false, true)) {
+                val client =
+                    TcpFixtures.client {
+                        trust = anchored
+                        if (v12) versions = TlsVersions.Tls12And13
+                    }
+                val (cd, sd) =
+                    connect(
+                        client,
+                        tcpServer(
+                            RevocationCerts.rvLeafRevoked,
+                            RevocationCerts.rvLeafRevokedKey,
+                            OcspStapling(RevocationCerts.ocspRevoked),
+                            v12,
+                        ),
+                        clientCache = SessionCache(),
+                    )
+                val e = assertFailsWith<TlsException.Verify> { withTimeout(20.seconds) { cd.await() } }
+                assertEquals(VerifyReason.Revoked, e.reason, "TLS ${if (v12) "1.2" else "1.3"}")
+                runCatching { withTimeout(20.seconds) { sd.await() }.close() }
+            }
+        }
+
+    @Test fun negative_tcpRequiredStapleMissing(): Unit =
+        runBlocking {
+            val (cd, sd) = connect(tcpClient(RevocationPolicy.RequireStapled), tcpServer(), clientCache = SessionCache())
+            val e = assertFailsWith<TlsException.Verify> { withTimeout(20.seconds) { cd.await() } }
+            assertEquals(VerifyReason.UnknownRevocationStatus, e.reason)
+            runCatching { withTimeout(20.seconds) { sd.await() }.close() }
+        }
+
+    /** A session resumes only while the response its full handshake checked is fresh, and never without one when required. */
+    @Test fun negative_staleCachedStapleIsNotResumed() {
+        val now = nowSeconds()
+
+        fun fresh(
+            policy: RevocationPolicy,
+            until: Long,
+        ): Boolean {
+            val lease = KslContext.create(client(policy), quic = false)
+            try {
+                return lease.ctx.cachedStapleStillFresh(SessionCache.Entry(0L, emptyList(), emptyList(), stapleUntil = until))
+            } finally {
+                lease.close()
+            }
+        }
+        assertTrue(fresh(RevocationPolicy.StapledIfPresent, now + 3600))
+        assertFalse(fresh(RevocationPolicy.StapledIfPresent, now - 1), "past nextUpdate: a full handshake fetches a fresh one")
+        assertTrue(fresh(RevocationPolicy.StapledIfPresent, 0), "none was required")
+        assertFalse(fresh(RevocationPolicy.RequireStapled, 0))
+        assertTrue(fresh(RevocationPolicy.Off, now - 1))
+    }
+
+    // ---- CRLs ----
+
+    private val midCrl = CertificateRevocationList(RevocationCerts.crlMid)
+    private val withCrl = TrustConfig.AnchoredCa(listOf(root), listOf(midCrl))
+
+    @Test fun negative_crlRevokedLeafFails() {
+        quicPasses(client(RevocationPolicy.Off, withCrl), server())
+        val r =
+            quicRefused(client(RevocationPolicy.Off, withCrl), server(RevocationCerts.rvLeafRevoked, RevocationCerts.rvLeafRevokedKey), 44)
+        assertEquals(VerifyReason.Revoked, r)
+    }
+
+    @Test fun negative_expiredCrlFails() {
+        val stale = TrustConfig.AnchoredCa(listOf(root), listOf(CertificateRevocationList(RevocationCerts.crlMidStale)))
+        assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.Off, stale), server(), 45))
+    }
+
+    @Test fun crlsChangeTheTrustKey() {
+        assertNotEquals(anchored.derKey, withCrl.derKey)
+        assertEquals(withCrl.derKey, TrustConfig.AnchoredCa(listOf(root), listOf(midCrl)).derKey)
+        assertFailsWith<TlsException.Config> {
+            TrustConfig.AnchoredCa(
+                listOf(root),
+                listOf(CertificateRevocationList(byteArrayOf(0x30, 0))),
+            )
+        }
+    }
+
+    @Test fun negative_reloadedCrlRefusesRevokedClient(): Unit =
+        runBlocking {
+            val r = TrustConfig.reloadable(anchored)
+            val server =
+                TcpFixtures.server {
+                    clientAuth = ClientAuth.Required
+                    trust = r
+                }
+            val revokedClient =
+                TcpFixtures.client {
+                    identity =
+                        TlsIdentity.fromDer(
+                            listOf(RevocationCerts.rvClientRevoked, RevocationCerts.rvMid),
+                            RevocationCerts.rvClientRevokedKey.copyOf(),
+                        )
+                }
+            val (c1, s1) = tcp(revokedClient, server)
+            c1.close()
+            s1.close()
+            r.reload(withCrl)
+            val (cd, sd) = connect(revokedClient, server, clientCache = SessionCache())
+            val e = assertFailsWith<TlsException.Verify> { withTimeout(20.seconds) { sd.await() } }
+            assertEquals(VerifyReason.Revoked, e.reason)
+            runCatching { withTimeout(20.seconds) { cd.await() }.close() }
+        }
+
+    @Test fun crlPemParses() {
+        val pem =
+            "-----BEGIN X509 CRL-----\n" +
+                kotlin.io.encoding.Base64.Mime
+                    .encode(RevocationCerts.crlMid) + "\n-----END X509 CRL-----\n"
+        assertEquals(listOf(midCrl), CertificateRevocationList.parsePem(pem))
+        assertFailsWith<TlsException.Config> { CertificateRevocationList.parsePem("nothing") }
+    }
+}

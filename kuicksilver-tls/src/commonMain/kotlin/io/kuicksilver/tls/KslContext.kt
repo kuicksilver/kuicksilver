@@ -166,6 +166,22 @@ internal class KslContext private constructor(
                 else -> KslConst.VERIFY_PAUSE
             }
 
+        private fun revocationOption(p: RevocationPolicy): Int =
+            when (p) {
+                RevocationPolicy.Off -> KslConst.REVOCATION_OFF
+                RevocationPolicy.StapledIfPresent -> KslConst.REVOCATION_STAPLED_IF_PRESENT
+                RevocationPolicy.RequireStapled -> KslConst.REVOCATION_REQUIRE_STAPLED
+            }
+
+        /** The CRLs of the AnchoredCa under [trust] (through Pinned and ExpectedName), empty for any other trust. */
+        fun crlsOf(trust: TrustConfig): List<CertificateRevocationList> =
+            when (trust) {
+                is TrustConfig.AnchoredCa -> trust.crls
+                is TrustConfig.Pinned -> crlsOf(trust.base)
+                is TrustConfig.ExpectedName -> crlsOf(trust.base)
+                else -> emptyList()
+            }
+
         fun rootsOf(trust: TrustConfig): List<Certificate>? =
             when (trust) {
                 is TrustConfig.AnchoredCa -> trust.roots
@@ -328,9 +344,19 @@ internal class KslContext private constructor(
             } else {
                 rootsOf(trust)?.takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
             }
+            // RFC 9325 section 7.5: the application's CRLs join the roots of an AnchoredCa (also a ReloadableCa's snapshot)
+            crlsOf(trust).takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetCrls(h, it.map { c -> c.encoded }) }
             if (config.role == TlsRole.Client) {
                 val mode = verifyModeFor(config)
                 Ksl.ctxSetOption(h, KslConst.OPT_VERIFY_MODE, mode)
+                // the stapled OCSP response is checked where ksl's verifier runs; a platform or application verifier keeps its own
+                if (mode == KslConst.VERIFY_OPENSSL) {
+                    Ksl.ctxSetOption(h, KslConst.OPT_REVOCATION, revocationOption(config.revocation))
+                } else if (config.revocation == RevocationPolicy.RequireStapled) {
+                    throw TlsException.Config(
+                        "RevocationPolicy.RequireStapled needs a trust ksl verifies (AnchoredCa, or Platform on Linux Native), not ${config.trust}",
+                    )
+                }
                 // T.5b: the platform's path is held to the level after its yes (platformLevel), not the presented chain before the pause
                 if (mode == KslConst.VERIFY_PAUSE && platformDecides(config.trust)) Ksl.ctxSetOption(h, KslConst.OPT_LEVEL_AFTER_PAUSE, 1)
             } else {
@@ -617,6 +643,17 @@ internal fun verifyReasonOf(
 
         68 -> {
             VerifyReason.WeakSignature
+        }
+
+        // a stapled OCSP response that did not pass (RFC 6960 section 3.2)
+        74 -> {
+            VerifyReason.InvalidStatusResponse
+        }
+
+        // OCSP_VERIFY_NEEDED, OCSP_CERT_UNKNOWN (a required staple missing or "unknown"); a configured CRL not valid yet, expired,
+        // with a bad time field, from an issuer without cRLSign, with an unknown critical extension or of another scope
+        73, 75, 11, 12, 15, 16, 35, 36, 44 -> {
+            VerifyReason.UnknownRevocationStatus
         }
 
         else -> {

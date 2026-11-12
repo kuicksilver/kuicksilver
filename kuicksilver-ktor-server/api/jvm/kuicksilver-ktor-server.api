@@ -114,6 +114,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector : io/ktor/
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
 	public fun getHost ()Ljava/lang/String;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getOcspStapling ()Lio/kuicksilver/tls/OcspStapling;
 	public fun getPort ()I
 	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
@@ -130,6 +131,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getOcspStapling ()Lio/kuicksilver/tls/OcspStapling;
 	public final fun getPort ()I
 	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
@@ -137,6 +139,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
 	public final fun setHost (Ljava/lang/String;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun setOcspStapling (Lio/kuicksilver/tls/OcspStapling;)V
 	public final fun setPort (I)V
 	public final fun setSniSelector (Lkotlin/jvm/functions/Function2;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V

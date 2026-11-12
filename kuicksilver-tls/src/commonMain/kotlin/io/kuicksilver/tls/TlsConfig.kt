@@ -1,8 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.native.Ksl
@@ -172,9 +175,13 @@ public class TlsConfig private constructor(
     public val handshakeTimeout: Duration,
     /** Whether every verification failure is sent as `handshake_failure`; see [Builder.genericAlerts]. */
     public val genericAlerts: Boolean,
+    /** A client's treatment of the stapled OCSP response; see [Builder.revocation]. */
+    @property:ExperimentalKuicksilverApi public val revocation: RevocationPolicy,
+    /** The OCSP response a server staples; see [Builder.ocspStapling]. */
+    @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
 ) {
     /** A copy with one connection's selector override applied (server side); the override passes the checks of [Builder.build]. */
-    @OptIn(DelicateKuicksilverApi::class)
+    @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
     internal fun withOverride(o: ServerTlsOverride): TlsConfig {
         val overrideAlpn = o.alpn?.toList()?.also { validateAlpn(it) } // copy first: the stored list is the one validated
         checkServerAuth(o.clientAuth ?: clientAuth, o.trust ?: trust)
@@ -192,6 +199,8 @@ public class TlsConfig private constructor(
             keylog,
             handshakeTimeout,
             genericAlerts,
+            revocation,
+            ocspStapling,
         )
     }
 
@@ -310,12 +319,30 @@ public class TlsConfig private constructor(
         public var genericAlerts: Boolean = false
 
         /**
+         * Client: how the revocation status the server staples is treated (RFC 9325 section 7.5); default
+         * [RevocationPolicy.StapledIfPresent]. Applies where `ksl` verifies the chain ([TrustConfig.AnchoredCa], and
+         * [TrustConfig.Platform] on Linux Native, also inside Pinned or ExpectedName); [RevocationPolicy.RequireStapled] with any
+         * other trust throws [TlsException.Config] when the configuration is used. Servers ignore it (client certificates are
+         * checked against the CRLs of their [TrustConfig.AnchoredCa]).
+         */
+        @ExperimentalKuicksilverApi
+        public var revocation: RevocationPolicy = RevocationPolicy.StapledIfPresent
+
+        /**
+         * Server: the OCSP response stapled for the certificate when the client asks (RFC 6066 section 8, RFC 9325 section 7.5);
+         * default null, nothing stapled. See [OcspStapling] for when a response is sent. A client configuration with one throws
+         * [TlsException.Config].
+         */
+        @ExperimentalKuicksilverApi
+        public var ocspStapling: OcspStapling? = null
+
+        /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
          * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
          * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
-        @OptIn(DelicateKuicksilverApi::class)
+        @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
         public fun build(): TlsConfig {
             val validAlpn = alpn.toList().also { validateAlpn(it) } // copy first: the stored list is the one validated
             if (!handshakeTimeout.isPositive()) throw TlsException.Config("handshakeTimeout must be positive")
@@ -324,6 +351,7 @@ public class TlsConfig private constructor(
                 checkServerAuth(clientAuth, trust)
             } else {
                 if (clientAuth != ClientAuth.None) throw TlsException.Config("clientAuth applies to servers")
+                if (ocspStapling != null) throw TlsException.Config("ocspStapling applies to servers")
                 refuseReloadableOnClient(trust)
                 serverName?.let { HostName.normalize(it) }
             }
@@ -342,6 +370,8 @@ public class TlsConfig private constructor(
                 keylog,
                 handshakeTimeout,
                 genericAlerts,
+                revocation,
+                ocspStapling,
             )
         }
     }
