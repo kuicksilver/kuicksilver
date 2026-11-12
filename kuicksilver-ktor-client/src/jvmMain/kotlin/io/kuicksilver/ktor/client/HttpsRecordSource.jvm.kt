@@ -6,6 +6,8 @@ import io.kuicksilver.ktor.client.dns.DnsAnswer
 import io.kuicksilver.ktor.client.dns.DnsMessage
 import io.kuicksilver.ktor.client.dns.httpsRecordsOf
 import io.kuicksilver.tls.KslDns
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlin.time.Duration
 
 /** The OS resolver through ksl (`ksl_dns_query`): res_nquery on Linux, DNSServiceQueryRecord on Apple, DnsQuery_W on Windows. */
@@ -13,4 +15,8 @@ import kotlin.time.Duration
 internal actual suspend fun platformHttpsQuery(
     name: String,
     timeout: Duration,
-): DnsAnswer? = KslDns.query(name, DnsMessage.TYPE_HTTPS, timeout)?.let { httpsRecordsOf(it, name) }
+): DnsAnswer? {
+    val answer = KslDns.query(name, DnsMessage.TYPE_HTTPS, timeout) ?: return null
+    val context = currentCoroutineContext()
+    return httpsRecordsOf(answer, name) { context.ensureActive() } // a timeout or cancellation stops the read
+}

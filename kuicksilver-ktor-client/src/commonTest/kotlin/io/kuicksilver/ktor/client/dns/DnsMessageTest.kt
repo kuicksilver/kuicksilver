@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client.dns
 
 import io.kuicksilver.ktor.client.dns.SvcbTestEncoder.response
 import io.kuicksilver.ktor.client.dns.SvcbTestEncoder.rr
+import kotlinx.coroutines.CancellationException
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -12,6 +13,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * DNS messages around the HTTPS records: the query (RFC 1035 section 4.1, RFC 8484 section 4.1 for its ID), the answer
@@ -188,6 +191,79 @@ class DnsMessageTest {
         assertEquals(setOf("cdn.example"), a.addresses.keys)
     }
 
+    // ---- bounded work on hostile answers (RFC 9460 section 9.2.2: the DNS is "an untrusted channel")
+
+    /**
+     * A response to a.example of nearly the largest DNS message size whose answer section holds [n] ServiceMode records,
+     * each with an owner compressed to the question and its own three-letter TargetName (no SvcParams), and none of the
+     * targets with records of its own: the worst case for following the TargetNames.
+     */
+    private fun manyTargets(n: Int): ByteArray {
+        val abc = "abcdefghijklmnopqrstuvwxyz0123456789"
+        val head =
+            response("a.example", emptyList()).let {
+                it.copyOf().also { m -> m[6] = (n shr 8).toByte() }.also { m ->
+                    m[7] =
+                        n.toByte()
+                }
+            }
+        val out = ArrayList<Byte>(head.size + n * 19)
+        out.addAll(head.toList())
+        for (i in 0 until n) {
+            val label = "${abc[i / 1296 % 36]}${abc[i / 36 % 36]}${abc[i % 36]}"
+            out.addAll(hex("c00c 0041 0001 0000012c 0007 0001 03").toList())
+            for (c in label) out += c.code.toByte()
+            out += 0
+        }
+        return out.toByteArray()
+    }
+
+    @Test fun negative_hostileLargestAnswerIsReadInLinearTime() {
+        val n = (65_535 - 27) / 19
+        val msg = manyTargets(n)
+        assertTrue(msg.size <= 65_535, "${msg.size} bytes")
+        val start = TimeSource.Monotonic.markNow()
+        val a = DnsMessage.read(msg, "a.example")
+        val took = start.elapsedNow()
+        assertEquals(n, a.records.size)
+        assertEquals(
+            n,
+            a.records
+                .map { it.target }
+                .toSet()
+                .size,
+        )
+        // linear work is milliseconds even on a slow, loaded machine; walking every name for every new TargetName took
+        // tens of seconds at this size
+        assertTrue(took < 5.seconds, "read took $took")
+    }
+
+    @Test fun negative_readStopsAtACheckpoint() { // so a lookup's timeout cancels a read in progress
+        var calls = 0
+        assertFailsWith<CancellationException> {
+            DnsMessage.read(manyTargets(1000), "a.example") { if (++calls == 2) throw CancellationException("timed out") }
+        }
+        assertEquals(2, calls)
+    }
+
+    @Test fun negative_messageOverTheDnsMaximumIsRejected() { // RFC 1035 section 4.2.2: a two-byte length
+        val ok = response("a.example", listOf(rr("a.example", 65, 300, h3Here)))
+        assertEquals(1, DnsMessage.answers(ok + ByteArray(65_535 - ok.size), "a.example").size)
+        assertFailsWith<DnsFormatException> { DnsMessage.answers(ok + ByteArray(65_536 - ok.size), "a.example") }
+    }
+
+    @Test fun negative_relatedRrsetsFollowedAreCapped() {
+        fun alias(t: String) = SvcbTestEncoder.encode(SvcbRecord(0, t, emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        // a.example -> t0 -> t1 -> ... -> t40, every step's RRset in the additional section
+        val extra = (0 until 40).map { rr("t$it.example", 65, 300, alias("t${it + 1}.example")) }
+        val msg =
+            response("a.example", listOf(rr("a.example", 65, 300, alias("t0.example")))).let {
+                it.copyOf().also { m -> m[11] = extra.size.toByte() }
+            } + extra.reduce { x, y -> x + y }
+        val a = DnsMessage.read(msg, "a.example")
+        assertEquals((0 until DnsMessage.MAX_RELATED).map { "t$it.example" }, a.related.keys.toList())
+    }
+
     @Test fun ttlWithTopBitIsZero() { // RFC 2181 section 8
         val msg = response("a.example", listOf(rr("a.example", 65, 0x80000001L, h3Here)))
         assertEquals(0, DnsMessage.answers(msg, "a.example").single().ttlSeconds)
@@ -215,6 +291,16 @@ class DnsMessageTest {
         // an RRSet with an AliasMode record: its ServiceMode records are ignored (RFC 9460 section 2.4.1)
         assertNull(first(listOf(rec(0, "x.example"), rec(1, "b.example", "h3"))))
         assertEquals("x.example", aliasTarget(listOf(rec(0, "x.example"), rec(1, "b.example", "h3")), Random(1)))
+    }
+
+    @Test fun negative_endpointsAreCapped() { // each endpoint is a connection attempt: a hostile RRset cannot make thousands
+        val many = (0 until 100).map { rec(3 - it % 3, "t$it.example", "h3") }
+        val eps = serviceEndpoints(many, 443, all, Random(1))
+        assertEquals(MAX_ENDPOINTS, eps.size)
+        // the lowest SvcPriority first (RFC 9460 section 3: "Clients SHOULD try higher-priority alternatives first"); the 33
+        // records of priority 1 outnumber the cap
+        val priority = many.associate { it.target to it.priority }
+        assertEquals(setOf(1), eps.map { priority.getValue(it.host) }.toSet())
     }
 
     @Test fun dotTargetMeansOwner() {

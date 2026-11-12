@@ -38,6 +38,18 @@ internal object DnsMessage {
     /** CNAMEs followed at most inside one answer; a longer chain or a loop leaves the name without records. */
     private const val MAX_CNAMES = 16
 
+    /** The largest DNS message: RFC 1035 section 4.2.2 gives a message over TCP a two-byte length. */
+    const val MAX_MESSAGE = 65_535
+
+    /**
+     * Other RRsets of the type asked for that are followed at most in one answer ([DnsAnswer.related]): twice the AliasMode
+     * steps SVCB resolution takes ([HttpsRecords.MAX_ALIASES]).
+     */
+    const val MAX_RELATED = 16
+
+    /** Units of work (a record read or parsed, a CNAME followed) between two calls of the checkpoint of [read]. */
+    private const val CHECKPOINT_EVERY = 64
+
     /**
      * A recursive query for [name]/[type] in class IN: ID 0 (RFC 8484 section 4.1 asks for it in DNS over HTTPS; a system
      * resolver sets its own), RD set, one question, no other section. Throws [IllegalArgumentException] for a name that is
@@ -85,15 +97,31 @@ internal object DnsMessage {
      * the SOA record's TTL and its MINIMUM, null without an SOA in the authority section), and the other records of
      * [type] and the A/AAAA records the answer and additional sections carry for other names (RFC 9460 section 5: they
      * "SHOULD be placed in cache before performing any follow-up queries"; an RRset of [type] that is malformed is left
-     * out, section 2.2). Throws as [answers].
+     * out, section 2.2). Throws as [answers], and [DnsFormatException] for a message over [MAX_MESSAGE] bytes.
+     *
+     * The work is linear in the message (the DNS is "an untrusted channel that might be controlled by an attacker", RFC
+     * 9460 section 9.2.2): every name is looked at once, at most 16 CNAMEs are followed from one name and at most
+     * [MAX_RELATED] other RRsets. [checkpoint] is called every few records; a lookup passes its coroutine's `ensureActive`,
+     * so its timeout or cancellation stops a read in progress (whatever it throws ends the read).
      */
     fun read(
         msg: ByteArray,
         qname: String,
         type: Int = TYPE_HTTPS,
+        checkpoint: () -> Unit = {},
     ): DnsAnswer {
+        // RFC 1035 section 4.2.2 frames a message over TCP with a two-byte length, and DNS over HTTPS carries the same
+        // wire format: anything longer is no DNS message, and the work below is linear in this bound
+        if (msg.size > MAX_MESSAGE) throw DnsFormatException("a message of ${msg.size} bytes, over the DNS maximum of $MAX_MESSAGE")
+        var steps = 0
+
+        // every unit of work below (a record read or parsed, a CNAME followed) counts; the caller's checkpoint every
+        // CHECKPOINT_EVERY units lets a lookup's timeout or cancellation stop a read in progress
+        fun tick() {
+            if (++steps % CHECKPOINT_EVERY == 0) checkpoint()
+        }
         val r = DnsReader(msg, 0, msg.size)
-        r.u16() // ID: matched by the transport (the system resolver, or the DoH exchange that carried it)
+        r.u16() // ID: matched by the transport (the system resolver, or the exchange that carried it: HttpsRecordSource.Exchange)
         val flags = r.u16()
         val qd = r.u16()
         val an = r.u16()
@@ -108,7 +136,7 @@ internal object DnsMessage {
         val qc = r.u16()
         if (qn != want || qt != type || qc != CLASS_IN) throw DnsFormatException("the answer to another question ($qn $qt)")
         val cnames = HashMap<String, Pair<String, Long>>()
-        val found = ArrayList<Triple<String, Long, IntRange>>() // owner, TTL, RDATA of [type], answer and additional sections
+        val found = HashMap<String, MutableList<Pair<Long, IntRange>>>() // TTL and RDATA of [type] by owner: answer and additional sections
         val addresses = LinkedHashMap<String, MutableList<Pair<ByteArray, Long>>>()
         var negativeTtl: Long? = null
         for (section in 0 until 3) {
@@ -121,6 +149,7 @@ internal object DnsMessage {
                     ar
                 }
             repeat(count) {
+                tick()
                 val owner = r.name(compression = true)
                 val t = r.u16()
                 val c = r.u16()
@@ -142,7 +171,7 @@ internal object DnsMessage {
                     section == 1 -> {}
 
                     t == type -> {
-                        found += Triple(owner, ttl, at until at + len)
+                        found.getOrPut(owner) { ArrayList() } += ttl to (at until at + len)
                     }
 
                     t == TYPE_CNAME && section == 0 -> {
@@ -160,50 +189,66 @@ internal object DnsMessage {
         if (flags and 0x0200 != 0) throw DnsException("truncated response (TC)")
         val rcode = flags and 0xf
         if (rcode != 0 && rcode != RCODE_NXDOMAIN) throw DnsException("RCODE $rcode")
+        // the CNAME chain from the name asked
         var name = want
-        var ttl = Long.MAX_VALUE
-        var steps = 0
+        var chainTtl = Long.MAX_VALUE
+        var hops = 0
         val chain = linkedSetOf(want)
-        var chainEnds = rcode != RCODE_NXDOMAIN
-        while (chainEnds && found.none { it.first == name }) {
-            val next = cnames[name]
-            if (next == null || ++steps > MAX_CNAMES) {
-                chainEnds = false
+        var ends = true // whether the chain ends at a name (no loop, not longer than MAX_CNAMES)
+        while (rcode != RCODE_NXDOMAIN && name !in found) {
+            val next = cnames[name] ?: break
+            if (++hops > MAX_CNAMES) {
+                ends = false
                 break
             }
-            ttl = minOf(ttl, next.second)
+            tick()
+            chainTtl = minOf(chainTtl, next.second)
             name = next.first
             chain += name
         }
 
-        fun rrset(owner: String): List<SvcbRecord> =
-            found.filter { it.first == owner }.mapNotNull { (o, t, rd) ->
-                SvcbCodec.parseRdata(msg, rd.first, rd.last - rd.first + 1, o, minOf(t, if (o == name) ttl else Long.MAX_VALUE))
+        // the records of [owner], each TTL no longer than the CNAMEs that led to the name asked
+        fun rrset(owner: String): List<SvcbRecord> {
+            val cap = if (owner == name) chainTtl else Long.MAX_VALUE
+            return found[owner].orEmpty().mapNotNull { (ttl, rd) ->
+                tick()
+                SvcbCodec.parseRdata(msg, rd.first, rd.last - rd.first + 1, owner, minOf(ttl, cap))
             }
-        val records = if (chainEnds) rrset(name) else emptyList()
+        }
+        val records = if (ends) rrset(name) else emptyList()
         // RFC 2181 section 5.4.1: of the other records only those the answer leads to are kept, the CNAME chain and the
-        // TargetNames (and theirs, in turn); anything else in the sections could plant records for unrelated names
+        // TargetNames (and theirs, in turn); anything else in the sections could plant records for unrelated names. Each
+        // name is looked at once (a work list), and at most MAX_RELATED RRsets are followed
         val allowed = HashSet<String>(chain)
-        val pending = ArrayDeque<List<SvcbRecord>>().apply { add(records) }
-        val related = LinkedHashMap<String, List<SvcbRecord>>()
-        while (pending.isNotEmpty()) {
-            for (r in pending.removeFirst()) {
-                val target = if (r.isAlias) r.target else r.serviceHost
+        val work = ArrayDeque<String>()
+
+        fun admit(rs: List<SvcbRecord>) {
+            for (rec in rs) {
+                val target = if (rec.isAlias) rec.target else rec.serviceHost
                 if (target == "." || !allowed.add(target)) continue
+                work += target
                 var n = target
-                var hops = 0
-                while (++hops <= MAX_CNAMES) n = cnames[n]?.first?.also { allowed += it } ?: break
-                for (owner in listOf(target) + allowed.filter { it != target }) {
-                    if (owner in related || owner == name || found.none { it.first == owner }) continue
-                    try {
-                        rrset(owner).also {
-                            related[owner] = it
-                            pending.add(it)
-                        }
-                    } catch (_: SvcbMalformedException) {
-                        // section 2.2: that RRset is rejected; it does not spoil the one asked for
-                    }
+                for (i in 1..MAX_CNAMES) {
+                    tick()
+                    n = cnames[n]?.first ?: break
+                    if (allowed.add(n)) work += n
                 }
+            }
+        }
+        admit(records)
+        val related = LinkedHashMap<String, List<SvcbRecord>>()
+        var followed = 0
+        while (work.isNotEmpty() && followed < MAX_RELATED) {
+            val owner = work.removeFirst()
+            if (owner == name || owner !in found) continue
+            followed++
+            try {
+                rrset(owner).also {
+                    related[owner] = it
+                    admit(it)
+                }
+            } catch (_: SvcbMalformedException) {
+                // section 2.2: that RRset is rejected; it does not spoil the one asked for
             }
         }
         val addrs =
@@ -226,8 +271,9 @@ internal object DnsMessage {
 }
 
 /**
- * The HTTPS records of [name] in an answer of the system resolver: a whole message goes through [DnsMessage.answers];
- * a record list (Apple, Windows, which hand out records) through [SvcbCodec.parseRdata], each with its owner and TTL.
+ * The HTTPS records of [name] in an answer of the system resolver: a whole message goes through [DnsMessage.read] (with
+ * [checkpoint]); a record list (Apple, Windows, which hand out records) through [SvcbCodec.parseRdata], each with its
+ * owner and TTL.
  * Empty for a malformed RRset (RFC 9460 section 2.2: rejected, the connection goes on without SVCB); null when the
  * answer cannot be used.
  */
@@ -235,11 +281,12 @@ internal object DnsMessage {
 internal fun httpsRecordsOf(
     answer: io.kuicksilver.tls.KslDnsAnswer,
     name: String,
+    checkpoint: () -> Unit = {},
 ): DnsAnswer? =
     try {
         when (answer) {
             is io.kuicksilver.tls.KslDnsAnswer.Message -> {
-                DnsMessage.read(answer.bytes, name)
+                DnsMessage.read(answer.bytes, name, checkpoint = checkpoint)
             }
 
             is io.kuicksilver.tls.KslDnsAnswer.Records -> {

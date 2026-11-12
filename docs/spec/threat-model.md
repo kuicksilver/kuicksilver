@@ -108,7 +108,17 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 0.3.0: the DNS parser of the HTTPS records (RFC 9460, `kuicksilver-ktor-client/.../dns/`) reads answers from the system
 resolver or a DNS-over-HTTPS exchange, which may be on the attacker's path: every read is bounds-checked, a name follows
 at most 128 compression pointers and each must point back, names are at most 255 bytes, and nothing is allocated beyond
-the message's length. New fuzz target `client.svcb` (`SvcbFuzzTest.svcbMessage`, seeds from `tools/fuzz/gen-svcb-seeds.py`).
+the message's length. The work is linear in the message and bounded: a message over 65535 bytes (RFC 1035 section 4.2.2)
+is refused, every name is looked at once when the records' TargetNames are followed (a work list, not a rescan per
+target), at most 16 CNAMEs are followed per name and at most 16 other HTTPS RRsets per answer, and the read stops at
+the lookup's timeout or cancellation (it checks the coroutine every 64 records), so a hostile resolver or DNS-over-HTTPS
+server cannot pin a thread with one answer (0.3.0 review: before, an answer of a few thousand ServiceMode records
+with distinct TargetNames took time cubic in their number, over a minute at 64 KiB and unbounded through
+`HttpsRecordSource.Exchange`, and the timeout could not interrupt it;
+`DnsMessageTest.negative_hostileLargestAnswerIsReadInLinearTime`, `.negative_readStopsAtACheckpoint`). At most 32
+ServiceMode endpoints of an RRset are tried, so a forged RRset cannot turn one request into thousands of connection
+attempts. New fuzz target `client.svcb` (`SvcbFuzzTest.svcbMessage`, seeds from `tools/fuzz/gen-svcb-seeds.py`), which
+also reads the other RRsets and addresses of an answer and checks the bounds above.
 
 0.2.0 status (fuzzing campaigns, 2026-10-13/14): local campaigns replace ClusterFuzzLite (`tools/fuzz/campaign.sh`,
 CONTRIBUTING "Fuzzing"): every target runs in slices of at most 20 minutes at background priority, one at a time, and the

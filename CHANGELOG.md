@@ -1281,6 +1281,17 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   UTF-8; RFC 9110 §5.5 has a recipient treat obs-text as opaque data. Such a value now arrives byte for byte, each byte
   as the char of the same code (ISO-8859-1); a value that is valid UTF-8 is decoded as UTF-8 as before.
 
+### Security
+
+- Ktor client, HTTPS records (new in this release): reading a DNS answer took time cubic in the number of its records
+  with distinct TargetNames, and nothing interrupted it: one answer of 64 KiB from a hostile or spoofed resolver (the
+  system resolver over plain DNS, or an `HttpsRecordSource.Exchange` server, with no size limit there) held a thread
+  for over a minute per lookup, and the lookup's timeout could not stop it. The read is now linear in the message
+  (every name looked at once), a message over 65535 bytes is refused, at most 16 CNAMEs per name and 16 other HTTPS
+  RRsets per answer are followed, and the read checks the lookup's coroutine every 64 records, so the timeout and
+  cancellation stop it. At most 32 ServiceMode endpoints of an RRset are tried, so a forged RRset cannot turn one
+  request into thousands of connection attempts. The `client.svcb` fuzz target checks these bounds.
+
 ## [0.2.1] - 2026-11-04
 
 ### Added

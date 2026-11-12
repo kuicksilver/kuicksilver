@@ -9,6 +9,8 @@ import io.kuicksilver.ktor.client.dns.DnsMessage
 import io.kuicksilver.ktor.client.dns.SvcbMalformedException
 import io.kuicksilver.ktor.client.dns.SvcbRecord
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlin.time.Duration
 
 /**
@@ -48,7 +50,8 @@ public sealed interface HttpsRecordSource {
      * Lookups through [exchange][HttpsRecordSource.Exchange.exchange]: it gets a DNS query in wire format (RFC 1035 section 4.1, ID 0 and RD set, as RFC 8484
      * section 4.1 asks for DNS over HTTPS) and returns the response in wire format, for example the body of a POST to a
      * DoH server with `Content-Type: application/dns-message`. The engine has no DoH client of its own. An exchange that
-     * throws, or returns something that is not the response to the query, counts as a failed lookup.
+     * throws, or returns something that is not the response to the query, counts as a failed lookup; so does a response
+     * over 65535 bytes, the DNS maximum.
      */
     public class Exchange(
         /**
@@ -120,7 +123,10 @@ internal fun HttpsRecordSource.lookup(timeout: Duration): (suspend (String) -> D
         is HttpsRecordSource.Exchange -> {
             { name ->
                 try {
-                    DnsMessage.read(exchange(DnsMessage.query(name)), name)
+                    val response = exchange(DnsMessage.query(name))
+                    // the read checks the coroutine: the lookup's timeout stops it, however long the answer
+                    val context = currentCoroutineContext()
+                    DnsMessage.read(response, name) { context.ensureActive() }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: SvcbMalformedException) {
