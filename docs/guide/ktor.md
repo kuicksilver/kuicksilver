@@ -545,8 +545,9 @@ identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyChars))
 ```
 
 `keyChars` and `renewedKeyChars` are the key files read into `CharArray`s (not through a `String`, which would leave the
-key on the heap). Every handshake that starts after `reload` returns, HTTP/1.1 over TCP and HTTP/3 over QUIC, presents
-the new chain and key; handshakes in progress and open connections keep the old ones. A key that does not match its
+key on the heap). Every handshake whose ClientHello arrives after `reload` returns, HTTP/1.1 and HTTP/2 over TCP and
+HTTP/3 over QUIC, presents the new chain and key (also on a TCP connection accepted before the reload); handshakes in
+progress and open connections keep the old ones. A key that does not match its
 certificate fails in `fromPem`, and `reload` refuses an expired leaf and one not valid yet (`TlsException.Config`): the
 identity in use stays. Session tickets are bound to the certificate they were issued under, so after a reload clients
 run one full handshake and see the new certificate (see [Rotating the server certificate](tls.md#rotating-the-server-certificate)
@@ -628,10 +629,11 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 
 **The client CA.** A connector that asks for client certificates ([Mutual TLS](#mutual-tls-client-certificates)) can
 rotate the CA bundle it verifies them with in the same way: give it `trust = TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
-(alone or as the `base` of `Pinned`) and call `reload(TrustConfig.AnchoredCa(newRoots))`. HTTP/1.1 and HTTP/3
-handshakes that start after `reload` returns verify client certificates against the new bundle; handshakes in progress
-and open connections keep the old one, and a session ticket from before the reload is not resumed, so a client whose CA
-was dropped gets in neither with a new handshake nor with a ticket. `reload` refuses a bundle in which no certificate is
+(alone or as the `base` of `Pinned`) and call `reload(TrustConfig.AnchoredCa(newRoots))`. Handshakes whose ClientHello
+arrives after `reload` returns, HTTP/1.1 and HTTP/2 over TCP and HTTP/3 over QUIC, verify client certificates against the
+new bundle, also on a TCP connection accepted before the reload; handshakes in progress and open connections keep the old
+one, and a session ticket from before the reload is not resumed, so a client whose CA was dropped gets in neither with a
+new handshake nor with a ticket. `reload` refuses a bundle in which no certificate is
 valid now ([Rotating the client CA](tls.md#rotating-the-client-ca)).
 
 ```kotlin
@@ -653,7 +655,10 @@ With `EngineMain`, `kuicksilver.tls.clientAuth` (`optional` or `required`) and `
 CA certificates) ask for client certificates on the deployment port. With `kuicksilver.tls.reloadInterval` set, the CA
 file is watched at that interval with the rules above: a changed bundle is used once two reads a second apart agree. A
 file holding a private key, a damaged file and a bundle with no certificate valid now keep the bundle in use, and so do
-they at startup (where they fail the start). A reload is logged at info level, a failure as a warning.
+they at startup (where they fail the start). A reload is logged at info level, a failure as a warning, and so is a bundle
+holding certificates that are not CA certificates (each is an anchor: a client presenting exactly it is accepted). The
+keys apply to the port of `kuicksilver.tls.certificateChain`; on the JVM, a `-sslPort` connector (`ktor.security.ssl.*`)
+takes client certificates from its `trustStore` instead, and the start is refused when both are configured.
 
 ### EngineMain and configuration keys
 

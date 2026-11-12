@@ -108,9 +108,9 @@ val server = tlsConfig(TlsRole.Server) {
 
 A server identity can be replaced while the server runs (experimental, 0.3.0): wrap it with
 `TlsIdentity.reloadable(identity)`, use the result as the `identity`, and call `reload(TlsIdentity.fromPem(...))` when a
-renewed certificate arrives. Every handshake that starts afterwards, over TCP and QUIC alike, presents the new chain and
-key; handshakes in progress and established connections keep the identity they started with, and nothing they hold is
-freed under them.
+renewed certificate arrives. Every handshake whose ClientHello arrives afterwards, over TCP and QUIC alike, presents the new
+chain and key, also on a TCP connection accepted before the reload; handshakes in progress and established connections
+keep the identity they started with, and nothing they hold is freed under them.
 
 - **Bad input never replaces the identity in use.** A key that does not match the leaf already fails in `fromPem` or
   `fromDer`; `reload` refuses a closed identity, a leaf certificate that has expired, and one that is not valid yet
@@ -138,10 +138,16 @@ while the server runs (experimental, 0.3.0). Wrap the bundle with `TrustConfig.r
 and use the result as the server's `trust`, alone or as the `base` of `Pinned`. Call `reload(TrustConfig.AnchoredCa(newRoots))`
 when the bundle changes. It follows the rules of the identity above:
 
-- **One bundle per handshake.** Every handshake that starts after `reload` returns, over TCP and QUIC alike, verifies the
-  client's certificate against the new bundle. Handshakes in progress and established connections keep the bundle they
-  started with, so a client of a CA you dropped stays connected until its connection closes. Close such connections
-  yourself if the CA was compromised.
+- **One bundle per handshake.** Every handshake whose ClientHello arrives after `reload` returns, over TCP and QUIC alike,
+  verifies the client's certificate against the new bundle. The bundle is taken when the ClientHello arrives, not when a
+  TCP connection is accepted, so a client of a dropped CA cannot connect before the reload and send its hello after it.
+  Handshakes in progress and established connections keep the bundle they started with, so a client of a CA you dropped
+  that is already connected stays connected until its connection closes. Close such connections yourself if the CA was
+  compromised.
+- **Shared contexts.** The first handshake under the new bundle replaces the old bundle's shared OpenSSL context, which is
+  freed with its last connection. With `clientAuth` `None` the bundle plays no part, and a reload changes nothing.
+- **Non-CA certificates.** Every certificate of the bundle is a trust anchor, also a leaf: a client presenting exactly that
+  certificate is accepted. `EngineMain` warns about such certificates in its CA file.
 - **Bad input never replaces the bundle in use.** `reload` refuses a bundle in which no certificate is valid now (each
   expired, or not valid yet beyond 5 minutes of clock skew) with `TlsException.Config`, and the old bundle stays.
 - **Resumption.** A session resumes only under the bundle it was authenticated with. After a reload, a ticket from before
