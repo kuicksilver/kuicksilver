@@ -481,6 +481,13 @@ public expect object Ksl {
         addr: ByteArray,
         scope: Int,
     ): IntArray?
+
+    /**
+     * `ksl_nat64_synthesize` (additive under ABI 7): the IPv6 addresses (16 bytes each, concatenated) the platform
+     * synthesizes for the IPv4 address [v4] with its own NAT64 prefixes (Apple); empty when it synthesizes none or failed,
+     * null where the platform has no such call.
+     */
+    public fun nat64Synthesize(v4: ByteArray): ByteArray?
 }
 
 /**

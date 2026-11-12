@@ -36,7 +36,7 @@ extern "C" {
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
    ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_sender (send-only clones
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
-   section 9.2.1); ksl_resolve and ksl_addr_info (Happy Eyeballs, RFC 8305 sections 3 and 4) */
+   section 9.2.1); ksl_resolve, ksl_addr_info and ksl_nat64_synthesize (Happy Eyeballs, RFC 8305 sections 3, 4 and 7) */
 
 /* return codes */
 #define KSL_OK 0
@@ -463,14 +463,18 @@ int ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int ti
 int ksl_resolve(const char *name, int family, uint8_t *out, size_t cap, size_t *len);
 /* getaddrinfo(name, AF_INET or AF_INET6 by family, SOCK_STREAM): the name's addresses of that family in the resolver's order,
             each KSL_RESOLVE_ENTRY_LEN bytes, duplicates left out. KSL_DNS_NOT_FOUND when the name has none of that family or does
-            not exist; KSL_ERROR for a failed lookup, a bad argument (name: as ksl_dns_query's) or an answer over cap. Blocks for as
-            long as the system resolver takes (RFC 8305 section 3: the two families asked on two threads) */
+            not exist; KSL_ERROR for a failed lookup or a bad argument (name: as ksl_dns_query's; cap below one entry). More
+            addresses than cap holds: the first ones. Blocks for as long as the system resolver takes (RFC 8305 section 3) */
+int ksl_nat64_synthesize(const uint8_t *v4, uint8_t *out, size_t cap, size_t *len);
+/* the IPv6 addresses the platform synthesizes for the IPv4 address v4 (4 bytes) with its own NAT64 prefixes, 16 bytes each
+            (Apple: getaddrinfo of the literal with AI_DEFAULT). KSL_DNS_NOT_FOUND when it synthesizes none (no NAT64 here);
+            KSL_DNS_NOT_SUPPORTED where the platform has no such call (Kotlin discovers the prefix itself, RFC 7050) */
 /* ksl_addr_info flags: a deprecated address (RFC 4862 section 5.5.4); its interface an encapsulating tunnel (RFC 6724 Rule 7) */
 #define KSL_ADDR_DEPRECATED 1
 #define KSL_ADDR_TUNNEL 2
 int ksl_addr_info(const uint8_t *addr, size_t len, uint32_t scope, int *prefix_len, int *flags);
 /* the host's own address addr (4 or 16 bytes; scope: the zone of a link-local IPv6 address, 0 for any): its on-link prefix
-            length (-1 when unknown) and KSL_ADDR_* flags as far as the platform tells (deprecated: Linux /proc/net/if_inet6,
+            length (-1 when unknown) and KSL_ADDR_* flags as far as the platform tells (deprecated: Linux and Android RTM_GETADDR,
             macOS SIOCGIFAFLAG_IN6, Windows DadState; tunnel: Linux sit/ipip/ip6tnl/GRE, Apple gif/stf, Windows IF_TYPE_TUNNEL).
             KSL_DNS_NOT_FOUND when no interface has it; KSL_ERROR for a bad argument or a failed enumeration */
 

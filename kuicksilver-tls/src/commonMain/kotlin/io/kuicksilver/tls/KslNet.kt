@@ -77,6 +77,22 @@ public object KslNet {
     }
 
     /**
+     * The IPv6 addresses the platform itself synthesizes for the IPv4 address [v4] with its NAT64 prefixes (Apple's
+     * `getaddrinfo` with `AI_DEFAULT`): empty when it synthesizes none (no NAT64 network), null where the platform has no
+     * such call or the library cannot be used.
+     */
+    public fun nat64Synthesize(v4: ByteArray): List<ByteArray>? {
+        val raw =
+            try {
+                if (KslLoader.isAvailable()) Ksl.nat64Synthesize(v4) else null
+            } catch (e: Throwable) {
+                if (e !is Exception && !isLinkageError(e)) throw e
+                null
+            } ?: return null
+        return (0 until raw.size / 16).map { raw.copyOfRange(it * 16, it * 16 + 16) }
+    }
+
+    /**
      * What the system knows about [address] (4 or 16 bytes, [scopeId] its zone or 0), one of this host's own addresses:
      * null when no interface has it, its interfaces cannot be read or the library cannot be used.
      */

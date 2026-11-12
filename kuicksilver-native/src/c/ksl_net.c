@@ -71,7 +71,8 @@ static int net_gai_not_found(int rc) {
 int ksl_resolve(const char *name, int family, uint8_t *out, size_t cap, size_t *len) {
     if (len)
         *len = 0;
-    if (!net_name_ok(name) || !out || !len || (family != KSL_ADDR_V4 && family != KSL_ADDR_V6))
+    if (!net_name_ok(name) || !out || !len || cap < KSL_RESOLVE_ENTRY_LEN ||
+        (family != KSL_ADDR_V4 && family != KSL_ADDR_V6))
         return KSL_ERROR;
 #if defined(_WIN32)
     WSADATA wsa;
@@ -121,10 +122,8 @@ int ksl_resolve(const char *name, int family, uint8_t *out, size_t cap, size_t *
                 dup = memcmp(out + p, e, KSL_RESOLVE_ENTRY_LEN) == 0;
             if (dup)
                 continue;
-            if (at > cap || cap - at < KSL_RESOLVE_ENTRY_LEN) {
-                r = KSL_ERROR;
-                break;
-            }
+            if (cap - at < KSL_RESOLVE_ENTRY_LEN)
+                break; /* more addresses than fit: the first ones, in the resolver's order, are kept */
             memcpy(out + at, e, KSL_RESOLVE_ENTRY_LEN);
             at += KSL_RESOLVE_ENTRY_LEN;
         }
@@ -140,6 +139,51 @@ int ksl_resolve(const char *name, int family, uint8_t *out, size_t cap, size_t *
     if (r != KSL_OK)
         *len = 0;
     return r;
+}
+
+int ksl_nat64_synthesize(const uint8_t *v4, uint8_t *out, size_t cap, size_t *len) {
+    if (len)
+        *len = 0;
+    if (!v4 || !out || !len || cap < 16)
+        return KSL_ERROR;
+#if defined(__APPLE__)
+    /* Apple's documented way (getaddrinfo on an IPv4 literal with AI_DEFAULT): on a NAT64 network the system answers
+       with the IPv6 addresses its own prefixes give, elsewhere with the IPv4 address (or its mapped form) */
+    char text[16];
+    snprintf(text, sizeof text, "%u.%u.%u.%u", v4[0], v4[1], v4[2], v4[3]);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_DEFAULT;
+    struct addrinfo *res = NULL;
+    if (getaddrinfo(text, NULL, &hints, &res) != 0)
+        return KSL_ERROR;
+    static const uint8_t mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+    size_t at = 0;
+    for (struct addrinfo *a = res; a; a = a->ai_next) {
+        if (a->ai_family != AF_INET6 || !a->ai_addr || (size_t)a->ai_addrlen < sizeof(struct sockaddr_in6))
+            continue;
+        const uint8_t *b = (const uint8_t *)&((const struct sockaddr_in6 *)a->ai_addr)->sin6_addr;
+        if (memcmp(b, mapped, 12) == 0)
+            continue;
+        int dup = 0;
+        for (size_t p = 0; p < at && !dup; p += 16)
+            dup = memcmp(out + p, b, 16) == 0;
+        if (dup)
+            continue;
+        if (cap - at < 16)
+            break;
+        memcpy(out + at, b, 16);
+        at += 16;
+    }
+    freeaddrinfo(res);
+    *len = at;
+    return at ? KSL_OK : KSL_DNS_NOT_FOUND;
+#else
+    (void)cap;
+    return KSL_DNS_NOT_SUPPORTED;
+#endif
 }
 
 #if !defined(_WIN32)
@@ -188,7 +232,8 @@ int ksl_addr_info(const uint8_t *addr, size_t len, uint32_t scope, int *prefix_l
             return KSL_ERROR;
         }
         rc = gaa(len == 16 ? AF_INET6 : AF_INET,
-                 GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_SKIP_FRIENDLY_NAME,
+                 GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER |
+                     GAA_FLAG_SKIP_FRIENDLY_NAME,
                  NULL, list, &size);
     }
     int r = KSL_DNS_NOT_FOUND;
@@ -226,6 +271,10 @@ int ksl_addr_info(const uint8_t *addr, size_t len, uint32_t scope, int *prefix_l
 #if defined(__linux__)
 #include <netpacket/packet.h>
 #include <net/if_arp.h>
+#include <unistd.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <linux/if_addr.h>
 #ifndef ARPHRD_IP6GRE
 #define ARPHRD_IP6GRE 823
 #endif
@@ -236,28 +285,65 @@ static int net_tunnel_type(unsigned short t) {
     return t == ARPHRD_TUNNEL || t == ARPHRD_TUNNEL6 || t == ARPHRD_SIT || t == ARPHRD_IPGRE || t == ARPHRD_IP6GRE;
 }
 
-/* the flags of an IPv6 address in /proc/net/if_inet6 ("<32 hex> <ifindex> <plen> <scope> <flags> <name>"), or -1 */
-static long net_proc_inet6_flags(const uint8_t *addr, uint32_t scope) {
-    FILE *f = fopen("/proc/net/if_inet6", "re");
-    if (!f)
+/* whether the IPv6 address addr (of interface scope, 0 for any) is deprecated, from an RTM_GETADDR dump (netlink, no
+   file: /proc/net is closed to Android apps): 1 or 0, -1 when the dump cannot be read or has no such address */
+static int net_nl_deprecated(const uint8_t *addr, uint32_t scope) {
+    int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    if (fd < 0)
         return -1;
-    char want[33];
-    for (int i = 0; i < 16; i++)
-        snprintf(want + 2 * i, 3, "%02x", addr[i]);
-    char line[256];
-    long found = -1;
-    while (found < 0 && fgets(line, sizeof line, f)) {
-        char hex[33], ifname[64];
-        unsigned int ifindex = 0, plen = 0, sc = 0, fl = 0;
-        if (sscanf(line, "%32s %x %x %x %x %63s", hex, &ifindex, &plen, &sc, &fl, ifname) != 6)
-            continue;
-        if (strcmp(hex, want) == 0 && (scope == 0 || ifindex == scope))
-            found = (long)fl;
+    struct {
+        struct nlmsghdr nh;
+        struct ifaddrmsg ifa;
+    } req;
+    memset(&req, 0, sizeof req);
+    req.nh.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifaddrmsg));
+    req.nh.nlmsg_type = RTM_GETADDR;
+    req.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    req.nh.nlmsg_seq = 1;
+    req.ifa.ifa_family = AF_INET6;
+    struct sockaddr_nl to;
+    memset(&to, 0, sizeof to);
+    to.nl_family = AF_NETLINK;
+    int found = -1;
+    if (sendto(fd, &req, req.nh.nlmsg_len, 0, (struct sockaddr *)&to, sizeof to) < 0) {
+        close(fd);
+        return -1;
     }
-    fclose(f);
+    uint32_t buf[4096]; /* 16 KiB, aligned for nlmsghdr */
+    int done = 0;
+    for (int rounds = 0; !done && rounds < 1024; rounds++) {
+        ssize_t got = recv(fd, buf, sizeof buf, 0);
+        if (got <= 0)
+            break;
+        unsigned int left = (unsigned int)got;
+        for (struct nlmsghdr *h = (struct nlmsghdr *)(void *)buf; NLMSG_OK(h, left); h = NLMSG_NEXT(h, left)) {
+            if (h->nlmsg_type == NLMSG_DONE || h->nlmsg_type == NLMSG_ERROR) {
+                done = 1;
+                break;
+            }
+            if (h->nlmsg_type != RTM_NEWADDR)
+                continue;
+            const struct ifaddrmsg *ifa = (const struct ifaddrmsg *)NLMSG_DATA(h);
+            if (ifa->ifa_family != AF_INET6 || (scope != 0 && ifa->ifa_index != scope))
+                continue;
+            uint32_t flags = ifa->ifa_flags;
+            int match = 0;
+            unsigned int rl = (unsigned int)IFA_PAYLOAD(h);
+            for (struct rtattr *at = IFA_RTA(ifa); RTA_OK(at, rl); at = RTA_NEXT(at, rl)) {
+                if ((at->rta_type == IFA_ADDRESS || at->rta_type == IFA_LOCAL) && RTA_PAYLOAD(at) == 16 &&
+                    memcmp(RTA_DATA(at), addr, 16) == 0)
+                    match = 1;
+                else if (at->rta_type == IFA_FLAGS && RTA_PAYLOAD(at) >= 4)
+                    memcpy(&flags, RTA_DATA(at), 4); /* the full flags; ifa_flags holds the low 8 bits */
+            }
+            if (match && found < 0)
+                found = (flags & IFA_F_DEPRECATED) ? 1 : 0;
+        }
+    }
+    close(fd);
     return found;
 }
-#define NET_IFA_F_DEPRECATED 0x20 /* linux/if_addr.h */
+
 #elif defined(__APPLE__)
 #include <net/if_dl.h>
 #include <net/if_types.h>
@@ -299,7 +385,8 @@ int ksl_addr_info(const uint8_t *addr, size_t len, uint32_t scope, int *prefix_l
     }
     if (hit->ifa_netmask) {
         if (len == 16)
-            *prefix_len = net_prefix_len((const uint8_t *)&((const struct sockaddr_in6 *)hit->ifa_netmask)->sin6_addr, 16);
+            *prefix_len =
+                net_prefix_len((const uint8_t *)&((const struct sockaddr_in6 *)hit->ifa_netmask)->sin6_addr, 16);
         else
             *prefix_len = net_prefix_len((const uint8_t *)&((const struct sockaddr_in *)hit->ifa_netmask)->sin_addr, 4);
     }
@@ -321,8 +408,7 @@ int ksl_addr_info(const uint8_t *addr, size_t len, uint32_t scope, int *prefix_l
     }
     if (len == 16) {
 #if defined(__linux__)
-        long fl = net_proc_inet6_flags(addr, scope);
-        if (fl >= 0 && (fl & NET_IFA_F_DEPRECATED))
+        if (net_nl_deprecated(addr, scope) == 1)
             *flags |= KSL_ADDR_DEPRECATED;
 #elif defined(__APPLE__) && TARGET_OS_OSX
         int fd = socket(AF_INET6, SOCK_DGRAM, 0);

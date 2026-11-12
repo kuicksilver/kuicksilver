@@ -997,6 +997,19 @@ public actual object Ksl {
         }
     }
 
+    public actual fun nat64Synthesize(v4: ByteArray): ByteArray? {
+        if (v4.size != 4) return null
+        val out = ByteArray(16 * 16)
+        return memScoped {
+            val len = alloc<ULongVar>()
+            when (v4.pin { a, _ -> out.pin { o, cap -> ksl_nat64_synthesize(a, o, cap, len.ptr) } }) {
+                KSL_OK -> out.copyOf(len.value.toInt())
+                KSL_DNS_NOT_SUPPORTED -> null
+                else -> ByteArray(0)
+            }
+        }
+    }
+
     /** A DNS message over TCP is at most 64 KiB; the record list of Apple and Windows adds a few bytes per record. */
     private const val DNS_ANSWER_CAP = 65536 + 1 + 4096
 }

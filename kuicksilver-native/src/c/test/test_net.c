@@ -17,7 +17,8 @@ static void resolve_one_family(void) {
     size_t len = 0;
     static const uint8_t lo4[4] = {127, 0, 0, 1};
     int r = ksl_resolve("127.0.0.1", KSL_ADDR_V4, out, sizeof out, &len);
-    CHECK(r == KSL_OK && len == KSL_RESOLVE_ENTRY_LEN && net_has(out, len, KSL_ADDR_V4, lo4, 4), "an IPv4 literal, as IPv4");
+    CHECK(r == KSL_OK && len == KSL_RESOLVE_ENTRY_LEN && net_has(out, len, KSL_ADDR_V4, lo4, 4),
+          "an IPv4 literal, as IPv4");
     r = ksl_resolve("localhost", KSL_ADDR_V4, out, sizeof out, &len);
     CHECK(r == KSL_OK && len >= KSL_RESOLVE_ENTRY_LEN && len % KSL_RESOLVE_ENTRY_LEN == 0, "localhost has IPv4");
     int only_v4 = 1;
@@ -29,7 +30,8 @@ static void resolve_one_family(void) {
     CHECK((r == KSL_DNS_NOT_FOUND || r == KSL_ERROR) && len == 0, "an IPv4 literal has no IPv6 address");
     static const uint8_t lo6[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
     r = ksl_resolve("::1", KSL_ADDR_V6, out, sizeof out, &len);
-    CHECK(r == KSL_OK && len == KSL_RESOLVE_ENTRY_LEN && net_has(out, len, KSL_ADDR_V6, lo6, 16), "an IPv6 literal, as IPv6");
+    CHECK(r == KSL_OK && len == KSL_RESOLVE_ENTRY_LEN && net_has(out, len, KSL_ADDR_V6, lo6, 16),
+          "an IPv6 literal, as IPv6");
 }
 
 static void resolve_bad_arguments(void) {
@@ -43,14 +45,19 @@ static void resolve_bad_arguments(void) {
     CHECK(ksl_resolve("localhost", KSL_ADDR_V4, out, sizeof out, NULL) == KSL_ERROR, "no length");
     len = 9;
     CHECK(ksl_resolve("127.0.0.1", KSL_ADDR_V4, out, KSL_RESOLVE_ENTRY_LEN - 1, &len) == KSL_ERROR && len == 0,
-          "an answer over cap fails, nothing written past it");
+          "a buffer below one entry is refused");
+    uint8_t one[KSL_RESOLVE_ENTRY_LEN + 3];
+    len = 0;
+    CHECK(ksl_resolve("localhost", KSL_ADDR_V4, one, sizeof one, &len) == KSL_OK && len == KSL_RESOLVE_ENTRY_LEN,
+          "more addresses than fit: the first one, nothing written past the cap");
 }
 
 static void addr_info_loopback(void) {
     static const uint8_t lo4[4] = {127, 0, 0, 1};
     int plen = 0, flags = -1;
     int r = ksl_addr_info(lo4, 4, 0, &plen, &flags);
-    CHECK(r == KSL_OK && plen == 8 && !(flags & KSL_ADDR_TUNNEL) && !(flags & KSL_ADDR_DEPRECATED), "127.0.0.1 is 127/8");
+    CHECK(r == KSL_OK && plen == 8 && !(flags & KSL_ADDR_TUNNEL) && !(flags & KSL_ADDR_DEPRECATED),
+          "127.0.0.1 is 127/8");
     static const uint8_t doc4[4] = {192, 0, 2, 1};
     plen = 0;
     CHECK(ksl_addr_info(doc4, 4, 0, &plen, &flags) == KSL_DNS_NOT_FOUND && plen == -1 && flags == 0,
@@ -62,10 +69,26 @@ static void addr_info_loopback(void) {
     CHECK(ksl_addr_info(lo4, 4, 0, NULL, &flags) == KSL_ERROR, "no prefix length");
 }
 
+static void nat64_synthesize_off_nat64(void) {
+    static const uint8_t v4[4] = {192, 0, 2, 33};
+    uint8_t out[64];
+    size_t len = 7;
+    int r = ksl_nat64_synthesize(v4, out, sizeof out, &len);
+#if defined(__APPLE__)
+    /* this host is on no NAT64 network: nothing is synthesized */
+    CHECK(r == KSL_DNS_NOT_FOUND && len == 0, "no NAT64 here, no synthesis");
+#else
+    CHECK(r == KSL_DNS_NOT_SUPPORTED && len == 0, "no platform synthesis here");
+#endif
+    CHECK(ksl_nat64_synthesize(v4, out, 15, &len) == KSL_ERROR, "a buffer below one address");
+    CHECK(ksl_nat64_synthesize(NULL, out, sizeof out, &len) == KSL_ERROR, "no address");
+}
+
 void run_net(void) {
     SECTION("net");
     resolve_one_family();
     resolve_bad_arguments();
     addr_info_loopback();
+    nat64_synthesize_off_nat64();
     END();
 }

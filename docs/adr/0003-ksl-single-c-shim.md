@@ -112,11 +112,15 @@ Per-family resolution and local address state, additive under 7 (Happy Eyeballs,
 `ksl_resolve(name, family, out, cap, len)` is `getaddrinfo` with `AF_INET` or `AF_INET6` alone (`KSL_ADDR_V4`,
 `KSL_ADDR_V6`; flags of its own, so Apple's `AI_V4MAPPED` default cannot make the IPv6 query wait for the A answer, and
 IPv4-mapped answers are left out), each address a `KSL_RESOLVE_ENTRY_LEN` entry (family, 16 address bytes, scope id),
-`KSL_DNS_NOT_FOUND` for none of that family: the JVM's and Android's `InetAddress` asks for both families in one call, and
+`KSL_DNS_NOT_FOUND` for none of that family, the first ones when more than `cap` holds: the JVM's and Android's `InetAddress` asks for both families in one call, and
 RFC 8305 section 3 wants them apart. `ksl_addr_info(addr, len, scope, prefix_len, flags)` reports one of the host's own
 addresses for RFC 6724 section 6: its on-link prefix length (`getifaddrs` netmask; Windows `OnLinkPrefixLength`) and
-`KSL_ADDR_DEPRECATED` (Linux `/proc/net/if_inet6`, macOS `SIOCGIFAFLAG_IN6`, Windows `DadState`) and `KSL_ADDR_TUNNEL`
+`KSL_ADDR_DEPRECATED` (Linux and Android: an `RTM_GETADDR` netlink dump, no file, as `/proc/net` is closed to Android apps; macOS `SIOCGIFAFLAG_IN6`, Windows `DadState`) and `KSL_ADDR_TUNNEL`
 (Linux `sll_hatype` sit, ipip, ip6tnl, GRE; Apple `IFT_GIF`, `IFT_STF`; Windows `IF_TYPE_TUNNEL`). Windows loads
 `iphlpapi.dll` for that call alone (`LoadLibraryExW` from System32), so no import library is added. No state, no threads;
-`ksl_resolve` blocks for as long as the system resolver takes. JNI `KslNative.resolve`, `KslNative.addrInfo`, cinterop the
-same, Kotlin `Ksl.resolve`, `Ksl.addrInfo` and `KslNet` (internal). `test_net.c`. 83 functions.
+`ksl_resolve` blocks for as long as the system resolver takes. `ksl_nat64_synthesize(v4, out, cap, len)` gives the IPv6
+addresses the platform synthesizes for an IPv4 address with its own NAT64 prefixes: Apple's documented way, `getaddrinfo`
+of the literal with `AI_DEFAULT` (`nw_nat64_copy_prefixes` is not public API); `KSL_DNS_NOT_SUPPORTED` elsewhere, where
+Kotlin discovers the prefix by RFC 7050. JNI `KslNative.resolve`, `KslNative.addrInfo`, `KslNative.nat64Synthesize`,
+cinterop the same, Kotlin `Ksl.resolve`, `Ksl.addrInfo`, `Ksl.nat64Synthesize` and `KslNet` (internal). `test_net.c`.
+84 functions.

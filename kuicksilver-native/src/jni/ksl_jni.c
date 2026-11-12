@@ -867,6 +867,21 @@ static jintArray j_addr_info(JNIEnv *e, jclass c, jbyteArray addr, jint scope) {
     return out;
 }
 
+/* ksl_nat64_synthesize: the addresses (16 bytes each), empty for none or a failure, null where the platform cannot */
+static jbyteArray j_nat64_synthesize(JNIEnv *e, jclass c, jbyteArray v4) {
+    (void)c;
+    uint8_t a[4];
+    if (!v4 || (*e)->GetArrayLength(e, v4) != 4)
+        return NULL;
+    (*e)->GetByteArrayRegion(e, v4, 0, 4, (jbyte *)a);
+    uint8_t out[16 * 16];
+    size_t len = 0;
+    int r = ksl_nat64_synthesize(a, out, sizeof out, &len);
+    if (r == KSL_DNS_NOT_SUPPORTED)
+        return NULL;
+    return new_bytes(e, out, r == KSL_OK ? len : 0);
+}
+
 #define S_BB "Ljava/nio/ByteBuffer;"
 #define S_STR "Ljava/lang/String;"
 static const JNINativeMethod methods[] = {
@@ -949,6 +964,7 @@ static const JNINativeMethod methods[] = {
     {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},
     {"resolve", "(" S_STR "I)[B", (void *)j_resolve},
     {"addrInfo", "([BI)[I", (void *)j_addr_info},
+    {"nat64Synthesize", "([B)[B", (void *)j_nat64_synthesize},
 };
 
 static jint on_load(JavaVM *vm, jint version) {

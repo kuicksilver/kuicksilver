@@ -650,4 +650,6 @@ public actual object Ksl {
         addr: ByteArray,
         scope: Int,
     ): IntArray? = if (addr.size != 4 && addr.size != 16) null else KslNative.addrInfo(addr, scope)
+
+    public actual fun nat64Synthesize(v4: ByteArray): ByteArray? = if (v4.size != 4) null else KslNative.nat64Synthesize(v4)
 }

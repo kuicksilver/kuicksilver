@@ -407,4 +407,6 @@ internal object KslNative {
         addr: ByteArray,
         scope: Int,
     ): IntArray?
+
+    @JvmStatic external fun nat64Synthesize(v4: ByteArray): ByteArray?
 }
