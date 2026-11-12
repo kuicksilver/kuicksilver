@@ -14,9 +14,7 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
-import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.discard
-import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.network.TcpAddress
@@ -60,12 +58,12 @@ class ClientWebSocketConnectingTest {
             val decided = CompletableDeferred<Unit>()
             val secondAccepted = CompletableDeferred<Unit>()
             rawServer({ index, input, output ->
-                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                val key = input.readWebSocketKey()
                 if (index == 0) {
                     firstHead.complete(Unit)
                     decided.await()
                 }
-                answer(input, output)
+                answer(key, input, output)
             }, onAccept = { if (it == 1) secondAccepted.complete(Unit) }) { port ->
                 testClient(
                     engine = { resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) } },
@@ -96,15 +94,15 @@ class ClientWebSocketConnectingTest {
             val decided = CompletableDeferred<Unit>()
             val secondHead = CompletableDeferred<Unit>()
             rawServer({ _, input, output ->
-                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                val key = input.readWebSocketKey()
                 firstHead.complete(Unit)
                 decided.await()
-                answer(input, output)
+                answer(key, input, output)
             }) { first ->
                 rawServer({ _, input, output ->
-                    while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                    val key = input.readWebSocketKey()
                     secondHead.complete(Unit)
-                    answer(input, output)
+                    answer(key, input, output)
                 }) { second ->
                     testClient(block = { install(WebSockets) }).use { c ->
                         coroutineScope {
@@ -140,16 +138,16 @@ class ClientWebSocketConnectingTest {
             val firstHead = CompletableDeferred<Unit>()
             val secondHead = CompletableDeferred<Unit>()
             rawServer({ _, input, output ->
-                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                val key = input.readWebSocketKey()
                 firstHead.complete(Unit)
                 secondHead.await()
-                answer(input, output)
+                answer(key, input, output)
             }) { first ->
                 // the IPv6 loopback: on every host the tests run on, unlike 127.0.0.2 (not routed on macOS by default)
                 rawServer({ _, input, output ->
-                    while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                    val key = input.readWebSocketKey()
                     secondHead.complete(Unit)
-                    answer(input, output)
+                    answer(key, input, output)
                 }, host = "::1") { second ->
                     testClient(block = { install(WebSockets) }).use { c ->
                         coroutineScope {
@@ -181,8 +179,8 @@ class ClientWebSocketConnectingTest {
         clientTest {
             val accepted = kotlin.concurrent.atomics.AtomicInt(0)
             rawServer({ _, input, output ->
-                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
-                answer(input, output)
+                val key = input.readWebSocketKey()
+                answer(key, input, output)
             }, onAccept = { accepted.addAndFetch(1) }) { port ->
                 testClient(
                     engine = { connectTimeout = 5.seconds },
@@ -218,8 +216,8 @@ class ClientWebSocketConnectingTest {
     fun aRaceOpenedConnectionIsNotHeldWhileItsWebSocketWaitsForTheAddress() =
         clientTest {
             rawServer({ _, input, output ->
-                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
-                output.writeStringUtf8(SWITCHING)
+                val key = input.readWebSocketKey()
+                output.writeStringUtf8(switchingProtocols(key))
                 input.discard()
             }) { port ->
                 testClient(block = { install(WebSockets) }).use { c ->
@@ -259,9 +257,9 @@ class ClientWebSocketConnectingTest {
     @Test fun negative_stalledHandshakeTimesOutAndFreesTheAddress() =
         clientTest {
             rawServer({ index, input, output ->
-                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                val key = input.readWebSocketKey()
                 if (index == 0) awaitCancellation()
-                answer(input, output)
+                answer(key, input, output)
             }) { port ->
                 testClient(
                     engine = { connectTimeout = 500.milliseconds },
@@ -313,8 +311,8 @@ class ClientWebSocketConnectingTest {
     @Test fun aWebSocketWaitingForAPoolSlotHoldsItsAddressOnly() =
         clientTest {
             rawServer({ _, input, output ->
-                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
-                output.writeStringUtf8(SWITCHING)
+                val key = input.readWebSocketKey()
+                output.writeStringUtf8(switchingProtocols(key))
                 input.discard()
             }) { port ->
                 testClient(
@@ -410,16 +408,12 @@ class ClientWebSocketConnectingTest {
 
     /** The 101, then a Close frame (so the session ends without a timeout); then reads until the client closes. */
     private suspend fun answer(
+        key: String?,
         input: ByteReadChannel,
         output: ByteWriteChannel,
     ) {
-        output.writeStringUtf8(SWITCHING)
+        output.writeStringUtf8(switchingProtocols(key))
         output.writeFully(byteArrayOf(0x88.toByte(), 0x00))
         input.discard()
-    }
-
-    private companion object {
-        const val SWITCHING =
-            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: unchecked\r\n\r\n"
     }
 }

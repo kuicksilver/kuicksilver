@@ -226,6 +226,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lkotlin/jvm/functions/Function1;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun getWebSocketMaxMessageSize ()J
 	public final fun http2 (Lkotlin/jvm/functions/Function1;)V
 	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
@@ -243,6 +244,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setTls (Lkotlin/jvm/functions/Function1;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
+	public final fun setWebSocketMaxMessageSize (J)V
 }
 
 public final class io/kuicksilver/ktor/client/KuicksilverEngineContainer : io/ktor/client/HttpClientEngineContainer {

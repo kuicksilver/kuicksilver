@@ -26,7 +26,7 @@ import kotlin.time.Duration.Companion.seconds
  * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
  * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
  * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`,
- * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
+ * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.webSocketsOverHttp2` (on by default), `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
  * server).
  */
 public object EngineMain {
@@ -107,6 +107,14 @@ public object EngineMain {
             ?.let {
                 @OptIn(ExperimentalKuicksilverApi::class)
                 http2 = it
+            }
+        config
+            .propertyOrNull("kuicksilver.webSocketsOverHttp2")
+            ?.getString()
+            ?.toBooleanStrict()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                webSocketsOverHttp2 = it
             }
         config
             .propertyOrNull("kuicksilver.http2RepeatOffenderPenalty")

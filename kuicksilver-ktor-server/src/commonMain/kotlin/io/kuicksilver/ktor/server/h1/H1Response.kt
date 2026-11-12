@@ -2,7 +2,7 @@
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 // Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationResponse.kt (internal there), adapted: Alt-Svc for HTTP/3 (RFC 7838),
-// `Connection: close` once the server is stopping, WebSocket frames checked against the negotiated extensions, no
+// `Connection: close` once the server is stopping, WebSocket handshakes and frames checked (RFC 6455), no
 // framing fields and no content where a response has none (RFC 9110 sections 8.6 and 9.3.2), 501 for a 2xx to CONNECT.
 @file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
@@ -26,9 +26,12 @@ import io.ktor.utils.io.cancel
 import io.ktor.utils.io.close
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
-import io.kuicksilver.ktor.server.ServerWebSocketInput
+import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.copyContentFrom
+import io.kuicksilver.ktor.server.startServerWebSocket
+import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,6 +56,8 @@ internal class H1Response(
      * the body of a response of unknown length to an HTTP/1.0 request.
      */
     private val endsConnection: CompletableDeferred<Boolean>? = null,
+    /** The engine's `webSocketMaxMessageSize`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
+    private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK
     private val headersBuilder = HeadersBuilder()
@@ -84,20 +89,31 @@ internal class H1Response(
         val isWebSocket = call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true
         sendResponseMessage(contentReady = false)
 
-        // a WebSocket's frames are checked against the extensions negotiated here (RFC 6455 section 5.2); the check
-        // ends with the upgrade
+        // a WebSocket's frames are checked against the extensions negotiated here (RFC 6455 section 5.2) and its limits;
+        // the check ends with the upgrade. Its frames go out unmasked (section 5.1)
         val guard = Job()
-        var webSocket: ServerWebSocketInput? = null
+        var webSocket: ServerWebSocket? = null
         try {
             val upgradedInput =
                 if (isWebSocket) {
-                    ServerWebSocketInput(input, call.request.headers, headersBuilder, call.attributes, engineDispatcher + guard)
-                        .also { webSocket = it }
-                        .channel
+                    val ws =
+                        startServerWebSocket(
+                            input,
+                            call.request.headers,
+                            headersBuilder,
+                            call.attributes,
+                            engineDispatcher + guard,
+                            webSocketMaxMessageSize,
+                            output,
+                            call.application.environment.log,
+                        ) ?: return // a Close with 1011 went out instead
+                    webSocket = ws
+                    ws.channel
                 } else {
                     input
                 }
-            val upgradedJob = upgrade.upgrade(upgradedInput, output, engineDispatcher, userDispatcher)
+            val upgradedOutput = webSocket?.output(output) ?: output
+            val upgradedJob = upgrade.upgrade(upgradedInput, upgradedOutput, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {
             webSocket?.done()
@@ -123,11 +139,24 @@ internal class H1Response(
     }
 
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
-        if (content is OutgoingContent.ProtocolUpgrade) {
-            // before anything is committed, so the refusal can still be an ordinary error response
-            if (call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true) {
+        var sent = content
+        if (content is OutgoingContent.ProtocolUpgrade &&
+            call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true
+        ) {
+            // before anything is committed, so the refusal can still be an ordinary error response: a handshake that is
+            // not RFC 6455's gets 400 or 426 instead of the upgrade (section 4.2.1)
+            val refusal = webSocketHandshakeRefusal(call.request.headers, http3 = false)
+            if (refusal != null) {
+                if (refusal.upgradeRequired) {
+                    headersBuilder.append(HttpHeaders.Upgrade, "websocket")
+                    headersBuilder.append(HttpHeaders.Connection, "Upgrade")
+                }
+                sent = refusal.content
+            } else {
                 checkWebSocketRsvConflicts(call.attributes)
             }
+        }
+        if (sent is OutgoingContent.ProtocolUpgrade) {
             upgraded?.complete(true) ?: throw IllegalStateException(
                 "Unable to perform upgrade as it is not requested by the client: " +
                     "request should have Upgrade and Connection headers filled properly",
@@ -137,9 +166,9 @@ internal class H1Response(
         }
 
         try {
-            super.respondOutgoingContent(content)
+            super.respondOutgoingContent(sent)
         } catch (cause: Throwable) {
-            if (content !is OutgoingContent.ProtocolUpgrade) failResponse(cause)
+            if (sent !is OutgoingContent.ProtocolUpgrade) failResponse(cause)
             throw cause
         }
         chunkedChannel?.flushAndClose()

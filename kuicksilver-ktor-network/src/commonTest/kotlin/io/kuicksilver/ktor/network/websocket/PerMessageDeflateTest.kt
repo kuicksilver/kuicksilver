@@ -528,4 +528,20 @@ class PerMessageDeflateTest {
         assertFalse(first.rsv1 || last.rsv1)
         assertEquals("c", last.data.decodeToString())
     }
+
+    /**
+     * RFC 6455 section 5.6: a text message MUST be UTF-8 as a whole, and once compressed nothing after the extension can
+     * check it: the extension refuses the frame that shows it is not, across fragments too.
+     */
+    @Test fun negative_compressedTextThatIsNotUtf8IsRefused() {
+        val c = client { minSizeToCompress = 0 }
+        assertFailsWith<ProtocolViolationException> { c.processOutgoingFrame(Frame.Text(true, bytes(0xC0, 0xAF))) }
+        val d = client { minSizeToCompress = 0 }
+        d.processOutgoingFrame(Frame.Text(false, bytes(0x61, 0xE2)))
+        assertFailsWith<ProtocolViolationException> { d.processOutgoingFrame(Frame.Text(true, bytes(0x82))) }
+        val e = client { minSizeToCompress = 0 }
+        e.processOutgoingFrame(Frame.Text(false, bytes(0x61, 0xE2)))
+        assertTrue(e.processOutgoingFrame(Frame.Text(true, bytes(0x82, 0xAC))).fin, "a character split across fragments")
+        assertTrue(e.processOutgoingFrame(Frame.Binary(true, bytes(0xC0, 0xAF))).rsv1, "binary is not text")
+    }
 }

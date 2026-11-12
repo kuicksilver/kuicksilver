@@ -218,8 +218,10 @@ public class Http3ClientConfig {
 /**
  * HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): every `https://` connection over TCP offers `h2` and
  * `http/1.1` in ALPN, and a server that picks `h2` gets one multiplexed connection per route instead of up to
- * `maxConnectionsPerRoute` HTTP/1.1 connections. Never for `http://` (no cleartext HTTP/2, h2c) and never for WebSockets
- * (RFC 8441 is not supported yet: they offer `http/1.1` only). HTTP/3 is unaffected, and so is its kill switch
+ * `maxConnectionsPerRoute` HTTP/1.1 connections. Never for `http://` (no cleartext HTTP/2, h2c). A `wss://` WebSocket goes
+ * over HTTP/2 (RFC 8441, Extended CONNECT) on a connection to its origin that is there already and whose server allows it
+ * (SETTINGS_ENABLE_CONNECT_PROTOCOL); otherwise it opens a connection of its own that offers `http/1.1` only, as in 0.2
+ * (docs/guide/ktor.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch
  * (`http3 { http3Allowed }` turns HTTP/3 off, not HTTP/2). A `tls` block that allows TLS 1.2 (`versions =
  * TlsVersions.Tls12And13`) offers `h2` as well (RFC 9113 section 9.2): over TLS 1.2 renegotiation stays refused, and a server
  * that asks for one (a HelloRequest) ends the connection with a connection error of type PROTOCOL_ERROR (section 9.2.1);
@@ -357,6 +359,18 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      */
     @ExperimentalKuicksilverApi
     public var proxyResolver: ProxyResolver = ProxyResolvers.System
+
+    /**
+     * The largest WebSocket message, and so frame, the client takes from a server, in bytes (RFC 6455 section 10.4: an
+     * implementation "SHOULD impose a limit on frame sizes and the total message size after reassembly"); 16 MiB by
+     * default, as `PerMessageDeflate`'s `maxInflatedMessageSize`. A frame whose header claims more, or that takes its
+     * message past it, closes the connection with 1009 (message too big) before any of its payload is read; a compressed
+     * message is held to the smaller of this and the extension's limit, counted inflated. Over HTTP/1.1, HTTP/2 and HTTP/3 alike;
+     * Ktor's `WebSockets { maxFrameSize }` applies on top of it. Less than 1 fails the engine's creation with
+     * [IllegalArgumentException].
+     */
+    @ExperimentalKuicksilverApi
+    public var webSocketMaxMessageSize: Long = 16_777_216L // 16 MiB
 
     /** Replaces the system resolver for both pools (tests: names and addresses the test owns). */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)

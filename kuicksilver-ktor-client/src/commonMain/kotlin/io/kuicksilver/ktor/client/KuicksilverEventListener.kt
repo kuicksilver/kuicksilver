@@ -151,7 +151,10 @@ public enum class ProtocolReason {
     /** The alternative is marked broken on this network. */
     BrokenAlternative,
 
-    /** A WebSocket to an origin without an HTTP/3 connection that allows Extended CONNECT (RFC 9220) starts on HTTP/1.1. */
+    /**
+     * A WebSocket to an origin without an HTTP/3 connection that allows Extended CONNECT (RFC 9220) goes over TCP: on an
+     * HTTP/2 connection there already that allows it (RFC 8441), else on HTTP/1.1.
+     */
     WebSocket,
 
     /** HTTP/3 failed for this request; it is repeated over TCP. */

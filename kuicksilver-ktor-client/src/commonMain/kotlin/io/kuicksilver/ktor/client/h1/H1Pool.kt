@@ -37,8 +37,10 @@ import io.kuicksilver.ktor.client.h2.H2NotProcessed
 import io.kuicksilver.ktor.client.h2.H2Pool
 import io.kuicksilver.ktor.client.h2.H2RefusedRoutes
 import io.kuicksilver.ktor.client.h2.h2Exchange
+import io.kuicksilver.ktor.client.h2.h2WebSocket
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.newRequestDns
+import io.kuicksilver.ktor.client.newWebSocketKey
 import io.kuicksilver.ktor.client.platformCleartextPermitted
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
@@ -257,6 +259,18 @@ internal class H1Pool(
         }
 
     /**
+     * The HTTP/2 route of a [key]: a WebSocket's is its HTTP origin's (`wss` is `https`, RFC 8441 section 5: "The scheme of
+     * the target URI ... MUST be "https" for "wss"-schemed WebSockets"), so it finds that origin's connections and its
+     * HTTP_1_1_REQUIRED mark; any other request's is the key itself.
+     */
+    private fun h2RouteOf(key: String): String =
+        when {
+            key.startsWith("wss://") -> "https://" + key.removePrefix("wss://")
+            key.startsWith("ws://") -> "http://" + key.removePrefix("ws://")
+            else -> key
+        }
+
+    /**
      * A connection for [data]: an idle pooled one, else a new one (the HTTP/1.1 side of the h3/h1 race). [Opened.reused]
      * travels with it to [execute], so a pooled connection the server closed still earns the stale-connection retry.
      */
@@ -284,16 +298,79 @@ internal class H1Pool(
     )
 
     /**
-     * Whether [data] may go over HTTP/2 on [key]: enabled, `https` (no h2c, ADR-0017), not a WebSocket (RFC 8441 is not
-     * supported: OkHttp also opens WebSockets over HTTP/1.1) and the route did not answer HTTP_1_1_REQUIRED lately.
+     * Whether [data] may open or use an HTTP/2 connection on [key]: enabled, `https` (no h2c, ADR-0017), not a WebSocket
+     * (one takes HTTP/2 only on a connection that is there already, [webSocketConnection]: a new connection for it
+     * offers `http/1.1` only, as Chromium's) and the route did not answer HTTP_1_1_REQUIRED lately.
      */
-    @OptIn(io.ktor.utils.io.InternalAPI::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
     private fun h2Allowed(
         data: HttpRequestData,
         key: String,
-    ): Boolean =
-        config.http2.enabled && data.url.protocol.isSecure() &&
-            !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !upgrades(data.body) && !h2Refused.isRefused(key)
+    ): Boolean = h2Usable(data, key) && !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !upgrades(data.body)
+
+    /** HTTP/2 is enabled, the request is `https` (no h2c) and the route did not answer HTTP_1_1_REQUIRED lately. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun h2Usable(
+        data: HttpRequestData,
+        key: String,
+    ): Boolean = config.http2.enabled && data.url.protocol.isSecure() && !h2Refused.isRefused(key)
+
+    /** How long a WebSocket waits for the SETTINGS of a new HTTP/2 connection before it goes over HTTP/1.1 (tests lower it). */
+    internal var h2WebSocketSettingsWaitMillis: Long = 1_000
+
+    /** A WebSocket's wait for its last frames and the server's END_STREAM after an orderly close (tests lower it). */
+    internal var h2WebSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.h2.H2_WEBSOCKET_CLOSE_WAIT_MILLIS
+
+    /**
+     * A stream for a WebSocket over HTTP/2 (RFC 8441) on a usable connection of [key] whose server enabled Extended CONNECT,
+     * reserved; null when there is none, and the WebSocket goes over HTTP/1.1 as before. RFC 8441 section 3: a client MAY
+     * use Extended CONNECT "Upon receipt of SETTINGS_ENABLE_CONNECT_PROTOCOL with a value of 1", and the setting's initial
+     * value is 0, so a connection whose server's SETTINGS have not arrived yet (it carries its first request) is waited
+     * for before the WebSocket decides: at most [h2WebSocketSettingsWaitMillis] (1 s, within the connect timeout), then
+     * the WebSocket goes over HTTP/1.1. A connection that allows it but has no free
+     * stream is not waited for: the WebSocket takes a connection of its own (HTTP/1.1). A connection quiet for a while
+     * gets the health PING other requests get first.
+     */
+    private suspend fun webSocketConnection(
+        data: HttpRequestData,
+        key: String,
+    ): H2Conn? {
+        val signal = h2.watch(key)
+        val started =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
+        try {
+            while (true) {
+                val seen = h2.version(key)
+                val conns = h2.usable(key)
+                var pending = false
+                for (c in conns) {
+                    if (!c.client.serverSettingsReceived) {
+                        pending = true
+                        continue
+                    }
+                    if (!c.client.serverAllowsExtendedConnect || !c.client.tryReserve()) continue
+                    if (c.client.receivedIdleMillis >= h2HealthAfterIdleMillis && !c.client.checkHealth(healthTimeoutMillis(data))) {
+                        c.client.unreserve()
+                        if (c.client.reservedStreams > 0) {
+                            c.client.shutdown()
+                        } else {
+                            c.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                        }
+                        continue
+                    }
+                    return c
+                }
+                if (!pending) return null
+                // its SETTINGS (or its end) bump the route; a server that sends none within the budget does not hold the
+                // WebSocket for its whole connect timeout: it goes over HTTP/1.1
+                val left = h2WebSocketSettingsWaitMillis - started.elapsedNow().inWholeMilliseconds
+                if (left <= 0 || withTimeoutOrNull(left) { signal.first { it > seen } } == null) return null
+            }
+        } finally {
+            h2.unwatch(key)
+        }
+    }
 
     /** A body that takes over the connection (`Upgrade`): HTTP/2 has no such thing (RFC 9113 section 8.6), so HTTP/1.1. */
     private fun upgrades(body: OutgoingContent): Boolean =
@@ -325,6 +402,7 @@ internal class H1Pool(
     ): Obtained {
         val held = webSocketKeys?.let { webSocketConnecting.acquire(it) }
         val h2Ok = webSocketKeys == null && h2Allowed(data, key)
+        val webSocketOverH2 = webSocketKeys != null && h2Usable(data, h2RouteOf(key))
         var conn: H1Connection? = null
         var stream: H2Conn? = null
         var reused = false
@@ -334,6 +412,14 @@ internal class H1Pool(
                 .markNow()
         try {
             withTimeout((data.connectTimeoutMillis(config) - resolvedMillis).coerceAtLeast(1)) {
+                // RFC 8441: a WebSocket on an HTTP/2 connection there already, when its server allows Extended CONNECT
+                if (webSocketOverH2) {
+                    webSocketConnection(data, h2RouteOf(key))?.let {
+                        stream = it
+                        reused = true
+                        return@withTimeout
+                    }
+                }
                 // a request that may use HTTP/2 also watches its route: a stream that frees up, or a connection that
                 // another request just set up, serves it instead of a new TCP connection (OkHttp RealRoutePlanner)
                 val signal = if (h2Ok) h2.watch(key) else null
@@ -623,7 +709,7 @@ internal class H1Pool(
             // HTTP/1.1 where HTTP/2 would have been offered, but the route answered HTTP_1_1_REQUIRED lately
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             if (h2c == null && diagnostics != null && webSocketKeys == null && !h2Allowed(data, key) &&
-                config.http2.enabled && secure && h2Refused.isRefused(key)
+                config.http2.enabled && secure && h2Refused.isRefused(h2RouteOf(key))
             ) {
                 diagnostics.h2Refused = true
             }
@@ -636,8 +722,26 @@ internal class H1Pool(
             if (h2c != null) {
                 events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_2_0, obtained.reused) }
                 try {
-                    return h2Exchange(h2c, data, callContext, events) { kept ->
+                    val released = { kept: Boolean ->
                         events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_2_0, kept) }
+                    }
+                    if (webSocketKeys == null) return h2Exchange(h2c, data, callContext, events, released)
+                    // RFC 8441: the WebSocket's Extended CONNECT; it holds its keys (RFC 6455 section 4.1) until the server
+                    // answered, and that answer comes within the connect timeout, as over HTTP/1.1
+                    try {
+                        return connectingWithin(data) {
+                            h2WebSocket(
+                                h2c,
+                                data,
+                                callContext,
+                                events,
+                                h2WebSocketCloseWaitMillis,
+                                config.webSocketMaxMessageSize,
+                                released,
+                            )
+                        }
+                    } finally {
+                        obtained.held?.release()
                     }
                 } catch (e: H2NotProcessed) {
                     // RFC 9113 section 8.7: not processed, so safe to repeat whatever the method, on another stream or
@@ -656,7 +760,7 @@ internal class H1Pool(
                     continue
                 } catch (e: H2Http11Required) {
                     // RFC 9113 section 7: the server wants this request over HTTP/1.1; the route offers only http/1.1 for a while
-                    h2Refused.mark(key)
+                    h2Refused.mark(h2RouteOf(key))
                     // a request the server may have processed is not sent again (RFC 9110 section 9.2.2, RFC 9113 section 8.7)
                     if (!e.mayRepeat) {
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -725,12 +829,15 @@ internal class H1Pool(
 
                 suspend fun exchangeOnce(): HttpResponseData =
                     withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterExpiry() }) {
+                        // a new key for every connection a WebSocket handshake is sent on (RFC 6455 section 4.1)
+                        val webSocketKey = if (webSocketKeys != null) newWebSocketKey() else null
                         writeHeaders(
                             data,
                             output,
                             overProxy = proxy != null && !tunneled,
                             tunneled = tunneled,
                             proxyAuthorization = proxy?.takeIf { !tunneled }?.basicAuthorization,
+                            webSocketKey = webSocketKey,
                         )
 
                         suspend fun sendBody() {
@@ -758,6 +865,8 @@ internal class H1Pool(
                             conn.input,
                             continueBody,
                             requestBodySent = { bodyJob?.sent },
+                            webSocketKey = webSocketKey,
+                            webSocketMaxMessageSize = config.webSocketMaxMessageSize,
                         ) { after ->
                             fun released(kept: Boolean) =
                                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }

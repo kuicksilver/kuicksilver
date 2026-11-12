@@ -214,7 +214,10 @@ internal class H2Request(
     val fields: List<Pair<String, String>>,
     /** The `content-length`, -1 without one. */
     val contentLength: Long,
-)
+) {
+    /** The same request with no content length to hold its content to: a CONNECT's (RFC 9110 section 9.3.6: it has none). */
+    fun withoutContentLength(): H2Request = H2Request(method, scheme, authority, path, protocol, fields, -1)
+}
 
 /** A response's status (RFC 9113 section 8.3.2) and its regular fields. */
 internal class H2Response(
@@ -389,8 +392,9 @@ internal object H2Messages {
     }
 
     /**
-     * A request's field section (section 8.3.1): `:method`, `:scheme`, `:authority` (clients use it instead of `host`), then
-     * `:path` and the regular [fields], which must already be lowercase and free of connection-specific fields.
+     * A request's field section (section 8.3.1): `:method`, `:scheme`, `:authority` (clients use it instead of `host`),
+     * `:path`, the `:protocol` of an Extended CONNECT when [protocol] is set (RFC 8441 section 4), then the regular
+     * [fields], which must already be lowercase and free of connection-specific fields.
      */
     fun buildRequest(
         method: String,
@@ -398,12 +402,14 @@ internal object H2Messages {
         authority: String,
         path: String,
         fields: List<Pair<String, String>>,
+        protocol: String? = null,
     ): List<Pair<String, String>> {
-        val out = ArrayList<Pair<String, String>>(4 + fields.size)
+        val out = ArrayList<Pair<String, String>>(5 + fields.size)
         out += ":method" to method
         out += ":scheme" to scheme
         out += ":authority" to authority
         out += ":path" to path
+        if (protocol != null) out += ":protocol" to protocol
         out += fields
         return out
     }

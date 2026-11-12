@@ -488,33 +488,6 @@ class ServerH2Test {
             }
         }
 
-    /** RFC 8441 is not offered: no SETTINGS_ENABLE_CONNECT_PROTOCOL, and `:protocol` makes the request malformed. */
-    @Test fun negative_extendedConnectRefused() =
-        serverTest {
-            val (server, port) = h2Server { routing { get("/") { call.respondText("ok") } } }
-            try {
-                RawH2Client.connect(port).use { raw ->
-                    raw.preface()
-                    raw.headers(
-                        1,
-                        listOf(
-                            ":method" to "CONNECT",
-                            ":protocol" to "websocket",
-                            ":scheme" to "https",
-                            ":authority" to "server.test",
-                            ":path" to "/",
-                        ),
-                    )
-                    val rst = assertNotNull(raw.await { it.stream == 1 })
-                    assertEquals(RawFrame.RST_STREAM, rst.type)
-                    assertEquals(protocolError, rst.errorCode)
-                    assertNull(assertNotNull(raw.serverSettings)[0x8], "SETTINGS_ENABLE_CONNECT_PROTOCOL is not sent")
-                }
-            } finally {
-                server.stop(100, 500)
-            }
-        }
-
     /** Each request is sent on its own stream of one connection; each must be reset with protocolError, then a GET works. */
     private suspend fun assertMalformed(vararg cases: Pair<String, suspend RawH2Client.(Int) -> Unit>) {
         val handled = Channel<String>(Channel.UNLIMITED)

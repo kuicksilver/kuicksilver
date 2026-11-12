@@ -19,6 +19,7 @@ import io.kuicksilver.ktor.network.bytesSent
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h2.H2Call
+import io.kuicksilver.ktor.server.h2.WebSocketOverH2
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -129,6 +130,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                                 .markNow()
                                 .let { m -> { m.elapsedNow().inWholeNanoseconds } },
                     ownResponseFields = { listOf("date" to httpDateNow()) }, // RFC 9110 section 6.6.1, on the 431
+                    enableConnectProtocol = configuration.webSocketsOverHttp2, // RFC 8441 section 3
                 )
             conn = c
             h2Live.add(c)
@@ -269,8 +271,9 @@ private suspend fun closeWhenIdle(
 }
 
 /**
- * One request stream as a Ktor call, after HTTP/3's handleHttp3: a CONNECT is answered 501 (the engine has no tunnels), a
- * request a gateway forwarded from early data and not replayable 425 (RFC 8470 section 5.1). The handler is cancelled
+ * One request stream as a Ktor call, after HTTP/3's handleHttp3: an Extended CONNECT for `websocket` (RFC 8441, with
+ * `webSocketsOverHttp2`) is a WebSocket upgrade for Ktor's routes, any other CONNECT is answered 501 (the engine has no
+ * tunnels), a request a gateway forwarded from early data and not replayable 425 (RFC 8470 section 5.1). The handler is cancelled
  * when the stream fails under it (the client's RST_STREAM, the connection), and then nothing is sent on the stream (RFC
  * 9113 section 5.4.2: no RST_STREAM in answer to one). A call that ends without a response on a live stream resets it
  * (INTERNAL_ERROR), never leaving it unanswered. Whatever the call throws ends this stream only (section 5.4.2: a stream
@@ -289,7 +292,12 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     r.invokeOnFailure { job.cancel(CancellationException("HTTP/2 stream ${r.id} ended: ${it.message}", it)) }
     var answered = false
     try {
-        if (r.method == "CONNECT") {
+        // RFC 8441 section 5: `:protocol = websocket` (an upgrade token, matched in any case, RFC 9110 section 7.8); the
+        // connection only takes `:protocol` when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (webSocketsOverHttp2)
+        val webSocket = r.method == "CONNECT" && r.protocol.equals(WebSocketOverH2.PROTOCOL, ignoreCase = true)
+        if (r.method == "CONNECT" && !webSocket) {
+            // a classic CONNECT (no tunnels here), or another protocol: RFC 9220 section 3's answer to an Extended CONNECT
+            // for a protocol the server does not support
             answered = runCatching { r.respond(501, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
             return
         }
@@ -311,6 +319,10 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     bodyIdle,
                     sendTimeout.inWholeMilliseconds,
                     altSvc,
+                    webSocket,
+                    engineDispatcher,
+                    userDispatcher,
+                    configuration.webSocketMaxMessageSize,
                 )
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_2_0, call) }
             var failure: Throwable? = null

@@ -191,10 +191,20 @@ public class KuicksilverApplicationEngine(
          * HTTP/2 (docs/guide/ktor.md, "HTTP/2 on the server"). Off by default in 0.3.0, so the ALPN of a TLS connector stays
          * `http/1.1` unless this is set. Plain connectors never serve HTTP/2 (no h2c: a client's `PRI *` preface is
          * answered `505 HTTP Version Not Supported`, as before). Over TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
-         * WebSockets over HTTP/2 (RFC 8441) are not offered: a WebSocket client uses HTTP/1.1 on the same port.
+         * WebSockets come over HTTP/2 too (RFC 8441), unless [webSocketsOverHttp2] is turned off.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
         public var http2: Boolean = false
+
+        /**
+         * Accept WebSockets over HTTP/2 (RFC 8441) on the connections of [http2]: their SETTINGS carry
+         * `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, and an Extended CONNECT with `:protocol = websocket` reaches Ktor's
+         * `webSocket {}` routes as an upgrade request, answered `:status 200` (docs/guide/ktor.md, "WebSockets over HTTP/2").
+         * On by default, as [webSocketsOverHttp3]; it has no effect while [http2] is off. When false the parameter is not
+         * sent, and a client keeps opening its WebSockets over HTTP/1.1. `EngineMain` key `kuicksilver.webSocketsOverHttp2`.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var webSocketsOverHttp2: Boolean = true
 
         /**
          * The HTTP/2 SETTINGS, windows and flood limits of every HTTP/2 connection (`Http2Settings()` until assigned). The
@@ -322,6 +332,23 @@ public class KuicksilverApplicationEngine(
          * Extended CONNECT is answered 501 (RFC 9220 section 3), also while [webTransport] advertises Extended CONNECT.
          */
         public var webSocketsOverHttp3: Boolean = true
+
+        /**
+         * The largest WebSocket message, and so frame, the server takes from a client, in bytes (RFC 6455 section 10.4: an
+         * implementation "SHOULD impose a limit on frame sizes and the total message size after reassembly"); 16 MiB by
+         * default, as `PerMessageDeflate`'s `maxInflatedMessageSize`. A frame whose header claims more, or that takes its
+         * message past it, closes the connection with 1009 (message too big) before any of its payload is read; a
+         * compressed message is held to the smaller of this and the extension's limit, counted inflated. Over HTTP/1.1,
+         * HTTP/2 and HTTP/3 alike; Ktor's `WebSockets { maxFrameSize }` applies on top of it.
+         *
+         * @throws IllegalArgumentException when set below 1.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var webSocketMaxMessageSize: Long = 16_777_216L // 16 MiB
+            set(value) {
+                require(value >= 1) { "webSocketMaxMessageSize must be at least 1" }
+                field = value
+            }
 
         /**
          * Serve WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) to `webTransport(path) { }` routes: turns on

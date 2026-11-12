@@ -68,7 +68,9 @@ internal class MessageInflater(
 
     // the message's compressed bytes, and the most it may have
     private var compressed = 0L
-    private val maxCompressed =
+
+    /** The most compressed bytes a message may have: 8 times [maxMessageSize] plus 64 KiB. */
+    val maxCompressed: Long =
         if (maxMessageSize >
             (Long.MAX_VALUE - (64 shl 10)) / 8
         ) {
@@ -210,6 +212,9 @@ internal class MessageInflater(
         lastInput = TAIL
         lastEnd = 0
     }
+
+    /** How many more compressed bytes the current message may have ([maxCompressed] minus what it had). */
+    val compressedRoom: Long get() = maxCompressed - compressed
 
     /** Frees the zlib state. */
     fun close() {

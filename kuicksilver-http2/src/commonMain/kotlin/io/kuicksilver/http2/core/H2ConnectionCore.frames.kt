@@ -347,7 +347,17 @@ internal fun H2ConnectionCore.onSettings(
             }
 
             SettingId.ENABLE_CONNECT_PROTOCOL -> {
+                // RFC 8441 section 3: "The value of the parameter MUST be 0 or 1", and "A sender MUST NOT send a
+                // SETTINGS_ENABLE_CONNECT_PROTOCOL parameter with the value of 0 after previously sending a value of 1": a
+                // server that takes it back would leave our Extended CONNECT streams malformed, so it is a connection error
+                // (as in nghttp2); a server is not affected by the parameter at all
                 if (v > 1) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_ENABLE_CONNECT_PROTOCOL = $v")
+                if (client && peerEnableConnectProtocol && v == 0L) {
+                    throw H2ConnectionError(
+                        Http2ErrorCode.PROTOCOL_ERROR,
+                        "SETTINGS_ENABLE_CONNECT_PROTOCOL taken back (RFC 8441 section 3)",
+                    )
+                }
                 peerEnableConnectProtocol = v == 1L
             }
 

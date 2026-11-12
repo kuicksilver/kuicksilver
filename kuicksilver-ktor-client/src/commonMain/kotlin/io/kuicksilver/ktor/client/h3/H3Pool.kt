@@ -41,6 +41,7 @@ import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.connectTimeoutMillis
+import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.originKeyOf
@@ -51,6 +52,7 @@ import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MigrationEvent
@@ -187,6 +189,8 @@ internal class H3Pool(
             .monotonicMillis(),
     /** Where the migrators of `http3.connectionMigration` run ([followNetwork]); null: connections never migrate. */
     private val migrationScope: CoroutineScope? = null,
+    /** The engine's one-WebSocket-CONNECTING-per-host lock (RFC 6455 section 4.1 step 2), shared with HTTP/1.1. */
+    private val webSocketConnecting: WebSocketConnecting = WebSocketConnecting(),
 ) {
     private val lock = Mutex()
 
@@ -921,7 +925,7 @@ internal class H3Pool(
                             WEBSOCKETS_KEY,
                         )
                     ) {
-                        webSocket(conn, data, callContext, extraHeaders)
+                        webSocket(conn, data, callContext, extraHeaders, t, dns)
                     } else {
                         exchange(conn, data, callContext, extraHeaders)
                     }
@@ -1005,24 +1009,47 @@ internal class H3Pool(
         return HttpResponseData(status, requestTime, headers, HttpProtocolVersion.HTTP_3_0, responseBody, callContext)
     }
 
-    /** RFC 9220: Extended CONNECT with `:protocol = websocket`; the 2xx is reported as 101 so Ktor's plugin accepts it. */
+    /**
+     * RFC 9220: Extended CONNECT with `:protocol = websocket`; the 2xx is reported as 101 so Ktor's plugin accepts it.
+     * The handshake is a WebSocket CONNECTING (RFC 6455 section 4.1 step 2: "There MUST be no more than one connection in
+     * a CONNECTING state"): it holds every address the target's name resolves to ([dns], as over HTTP/1.1) from before
+     * the CONNECT goes out until the server answered it, the attempt failed, or the connect timeout passed (then
+     * `ConnectTimeoutException`), so a second WebSocket to the host, over either protocol, waits for it at most that long.
+     */
     @OptIn(InternalAPI::class)
     private suspend fun webSocket(
         conn: Http3Connection,
         data: HttpRequestData,
         callContext: CoroutineContext,
         extraHeaders: List<Pair<String, String>>,
+        t: H3Target,
+        dns: RequestDns,
     ): HttpResponseData {
         val requestTime = GMTDate()
         val headers = Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders)
+        val held = webSocketConnecting.acquire(dns.lookup(t.host, t.port).map { WebSocketConnecting.addressKey(it) })
+        // the answer must come within the connect timeout, as over HTTP/1.1: a server that never answers holds the host's
+        // other WebSockets back for at most that long (cancelling the CONNECT resets its stream)
+        val millis = data.connectTimeoutMillis(config)
         val stream =
-            conn.connect(
-                http3Request("CONNECT", data.url.authority(), data.url.h3Path()) {
-                    this.headers = headers
-                    priority = data.priority
-                },
-                "websocket",
-            )
+            try {
+                withTimeout(millis) {
+                    conn.connect(
+                        http3Request("CONNECT", data.url.authority(), data.url.h3Path()) {
+                            this.headers = headers
+                            priority = data.priority
+                        },
+                        "websocket",
+                    )
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw io.ktor.client.network.sockets.ConnectTimeoutException(
+                    "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
+                    e,
+                )
+            } finally {
+                held.release()
+            }
         // each direction on its own when the call is over. A send side the session closed cleanly ends with its FIN (the Close
         // reply may still be on its way to the stream): a RESET_STREAM could overtake it and discard that reply. The closing
         // handshake can end before the peer's FIN arrives (it may trail the peer's Close frame): only the read side is abandoned
@@ -1035,13 +1062,16 @@ internal class H3Pool(
             if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
         }
-        // an extension the client did not offer fails the handshake (RFC 6455 section 4.1, RFC 9220 section 3); the
-        // call's failure resets the stream (above)
-        val extensions =
+
+        // an extension or a subprotocol the client did not offer fails the handshake (RFC 6455 section 4.1, kept by RFC 8441
+        // section 5 and RFC 9220 section 3); the call's failure resets the stream (above)
+        fun values(name: String) =
             stream.headers.fields
-                .filter { it.first == "sec-websocket-extensions" }
+                .filter { it.first == name }
                 .map { it.second }
-        val handshake = webSocketAfterHandshake(data, extensions, callContext)
+        val handshake =
+            webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), callContext)
+        // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
         val session =
             RawWebSocket(
                 guardWebSocketInput(
@@ -1051,9 +1081,12 @@ internal class H3Pool(
                     peerMasks = false,
                     context = callContext,
                     inflate = handshake.inflate,
+                    perMessageDeflate = handshake.perMessageDeflate,
+                    maxMessageSize = config.webSocketMaxMessageSize,
+                    checkText = handshake.checkText,
                 ),
-                stream.output,
-                masking = true,
+                guardWebSocketOutput(stream.output, masking = true, handshake.checkText, handshake.sentCompression),
+                masking = false,
                 coroutineContext = callContext,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
             )

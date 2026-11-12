@@ -38,18 +38,23 @@ private val CONNECTION_SPECIFIC = setOf("connection", "keep-alive", "proxy-conne
  * response without content (to HEAD, a 204 or a 304, RFC 9110 sections 9.3.2, 15.3.5, 15.4.5) ends with its HEADERS and
  * the application's content is not sent. The engine's `Alt-Svc` goes on every response that has none, as on HTTP/1.1.
  */
-internal class H2Response(
+internal open class H2Response(
     call: PipelineCall,
-    private val h2: H2ServerStream,
-    private val sendStallMillis: Long,
+    protected val h2: H2ServerStream,
+    protected val sendStallMillis: Long,
     private val altSvc: () -> String?,
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK
-    private val headersBuilder = HeadersBuilder()
+    protected val headersBuilder: HeadersBuilder = HeadersBuilder()
 
     /** The head went out: the engine resets a stream left unanswered at the end of the call. */
     internal var answered: Boolean = false
         private set
+
+    /** A head went out by other means than [sendHead] (a WebSocket's `:status 200`). */
+    protected fun markAnswered() {
+        answered = true
+    }
 
     /** Sends the content handed to [responseChannel]; joined before the stream is released. */
     private var pump: Job? = null
@@ -77,7 +82,7 @@ internal class H2Response(
     }
 
     /** The head as HTTP/2 fields (RFC 9113 section 8.2): lowercase names, no connection-specific field, values without OWS. */
-    private fun fields(): List<Pair<String, String>> =
+    protected fun fields(): List<Pair<String, String>> =
         buildList {
             for (name in headersBuilder.names()) {
                 val n = name.lowercase()
@@ -216,7 +221,10 @@ internal class H2Response(
         pump?.join()
     }
 
-    /** An HTTP/1.1 upgrade has no meaning in HTTP/2 (RFC 9113 section 8.6); WebSockets over HTTP/2 (RFC 8441) are not offered. */
+    /**
+     * An HTTP/1.1 upgrade has no meaning in HTTP/2 (RFC 9113 section 8.6): 501. WebSockets come through Extended CONNECT
+     * instead (RFC 8441, [H2UpgradeResponse]).
+     */
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         status(HttpStatusCode.NotImplemented) // the call's status too: listeners and logs see what was sent
         sendHead(endStream = true)

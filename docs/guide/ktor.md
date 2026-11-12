@@ -337,8 +337,8 @@ a client on HTTP/2 learns HTTP/3 too. Requests are checked against RFC 9113 sect
 a malformed one (an uppercase or invalid field name, a connection-specific field, `te` other than `trailers`, a missing,
 repeated or unknown pseudo-header field, `host` that differs from `:authority`, content that does not match
 `content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
-answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441, planned for 0.3.0) are not offered yet:
-the engine never sends SETTINGS_ENABLE_CONNECT_PROTOCOL, so a request with `:protocol` is malformed. A request with
+answered 431. A CONNECT is answered 501 (the engine has no tunnels), and so is an Extended CONNECT for a protocol other
+than `websocket`; WebSockets come over HTTP/2 too ([WebSockets over HTTP/2](#websockets-over-http2)). A request with
 `Expect: 100-continue` gets an interim 100 as the handler starts (RFC 9110 §10.1.1: immediate), unless the request has no
 content; another expectation is answered 417 when the handler reads the body. Content that does not match the
 response's `Content-Length` is never sent as a complete response (the stream is reset); a 1xx as the final status goes
@@ -455,6 +455,27 @@ server.engine.http3Advertising = Http3Advertising.On
 What is left when the deadline passes is a long-lived stream (a WebSocket or WebTransport session over HTTP/3): end it
 in the application, or let the server's [graceful stop](#graceful-stop) cut it.
 
+### WebSockets on the server
+
+Ktor's `WebSockets` plugin and `webSocket("/path") {}` routes work as on Ktor's own engines, over HTTP/1.1, HTTP/2
+(RFC 8441) and HTTP/3, with the checks RFC 6455 asks of a server that Ktor leaves out:
+
+- A handshake is upgraded only when it is one (section 4.2.1): over HTTP/1.1 exactly one `Sec-WebSocket-Key` that is 16
+  bytes in base64, and on every protocol exactly one `Sec-WebSocket-Version: 13`. Otherwise the route's answer becomes
+  `400 Bad Request`, or for another version `426 Upgrade Required` over HTTP/1.1 (400 over HTTP/2 and HTTP/3), with
+  `Sec-WebSocket-Version: 13`; the handler does not run.
+- A client's uncompressed frame or message larger than the engine's `webSocketMaxMessageSize` (16 MiB by default,
+  *experimental*) closes the connection with 1009 from the frame's header, before its payload is read (section 10.4);
+  a compressed one closes it as it inflates past the limit (and a compressed frame claiming more than 8 times the limit
+  plus 64 KiB, from its header). Ktor's own `maxFrameSize` (unlimited on the server by default) applies on top. The
+  engine decompresses permessage-deflate itself, whichever extension negotiated it (`PerMessageDeflate` or Ktor's
+  `WebSocketDeflateExtension`). A text message or a Close reason that is not UTF-8 closes it with 1007 (section 8.1),
+  and a malformed control frame, fragment, length or Close frame with 1002.
+- The server's frames are never masked (section 5.1), whatever `WebSockets { masking }` says, and a Close the
+  application sends with a code no endpoint may send (1005, 1006, 1015, below 1000, …) goes out without a code.
+
+The client engine applies the same rules to what servers send ([Client](#client)).
+
 ### WebSockets over HTTP/3
 
 With `webSocketsOverHttp3 = true` (the default) the HTTP/3 listener advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL` and
@@ -468,6 +489,25 @@ with `webSocketsOverHttp3 = false`, also when `webTransport = true` advertises E
 tunnel nobody accepted (RFC 9110 section 9.3.6), and `call.response.status()` reports the 501. An accepted upgrade
 reports 101, as on HTTP/1.1, while `:status 200` goes out. A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
 section 4.5) and gets 501 too.
+
+### WebSockets over HTTP/2
+
+With `http2 = true`, `webSocketsOverHttp2 = true` (the default) has the HTTP/2 connections advertise
+`SETTINGS_ENABLE_CONNECT_PROTOCOL` and accept Extended CONNECT with `:protocol = websocket` (RFC 8441), as over HTTP/3:
+the request reaches Ktor's pipeline as the HTTP/1.1 upgrade request the `WebSockets` plugin knows, ordinary
+`webSocket("/path") {}` routes serve it unchanged (`call.request.httpVersion` is `"HTTP/2"`), and the upgrade is answered
+with `:status 200` (no `Sec-WebSocket-Accept`, RFC 8441 section 5). The frames travel as DATA on the stream, within the
+client's flow-control windows (a client that takes none for the send-stall deadline has its stream reset), and the
+session's frames are checked against the negotiated extensions as over HTTP/1.1. The session's end is the stream's
+END_STREAM, after which the server waits up to 5 s for the client's (an orderly close has no RST_STREAM); a call
+cancelled or failed meanwhile resets the stream with CANCEL (RFC 8441 section 5), and a client's RST_STREAM ends the
+session. The request must carry one `sec-websocket-version: 13` (RFC 6455 section 4.2.1): otherwise the answer is 400
+with `sec-websocket-version: 13` (not 426, which needs an Upgrade field that HTTP/2 does not have). A route that is not a WebSocket one answering
+the CONNECT with a 2xx gets 501 instead (no session was accepted), an Extended CONNECT for another protocol 501, and
+a HEADERS frame on the stream after its request (RFC 9113 section 8.5) a stream error PROTOCOL_ERROR. A WebSocket stream
+counts toward `Http2Settings.maxConcurrentStreams` while it is open, and keeps its connection from being idle. With
+`webSocketsOverHttp2 = false` the parameter is not sent and a `:protocol` request is malformed: clients keep opening their
+WebSockets over HTTP/1.1 on the same port.
 
 ### WebTransport over HTTP/3 (experimental)
 
@@ -683,6 +723,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
 | `kuicksilver.altSvc` | send `Alt-Svc` on HTTP/1.1 responses (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
+| `kuicksilver.webSocketsOverHttp2` | accept RFC 8441 WebSockets on HTTP/2 connections (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
 
@@ -757,17 +798,30 @@ val client = HttpClient(Kuicksilver) {
   last progress; every read of the response body then has it on its own. Without `HttpTimeout` the engine's `connectTimeout` (10 s) applies.
 - Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `WebSocketExtensionsCapability`, `SSECapability`; no
   Unix sockets. With `WebSocketExtensionsCapability` Ktor's `WebSockets` plugin offers the extensions installed with
-  `extensions { install(...) }` in `Sec-WebSocket-Extensions` and negotiates them, over HTTP/1.1 and HTTP/3 (RFC 9220).
+  `extensions { install(...) }` in `Sec-WebSocket-Extensions` and negotiates them, over HTTP/1.1, HTTP/2 (RFC 8441) and HTTP/3 (RFC 9220).
   permessage-deflate on every target is `PerMessageDeflate` ([WebSocket compression](#websocket-compression-experimental));
   Ktor's own `WebSocketDeflateExtension` exists on the JVM and Android only. Both engines check the
-  handshake and the frames (RFC 6455 sections 4.1, 5.2 and 9.1): an answer that accepts an extension the client did not
-  offer fails the call with `WebSocketException` before a session opens, and a frame with an RSV bit that no negotiated
-  extension defines (RSV1 for permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a
-  reserved opcode, or a mask bit in the wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a
-  client's always are) fails the connection with code 1002: the engine hands the session a Close frame with 1002 in place
-  of the bad frame, Ktor's session answers it, so 1002 goes on the wire and is the session's `closeReason`, and
-  `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in `incoming` and answers it
-  itself). An extension the engine does not know (the application's own) may use every RSV bit.
+  handshake and the frames (RFC 6455 sections 4.1, 5, 8.1 and 9.1). The client checks the server's answer before a
+  session opens and fails the call with `WebSocketException` ("Handshake exception: …") unless, over HTTP/1.1, it has
+  `Upgrade: websocket`, a `Connection` with `Upgrade` and exactly one `Sec-WebSocket-Accept` that answers the request's
+  key, and, over every protocol, at most one `Sec-WebSocket-Extensions` with only offered extensions and at most
+  one `Sec-WebSocket-Protocol` naming a subprotocol the request offered (Ktor's plugin checks only the status). The key
+  is the engine's, from OpenSSL's CSPRNG and new for every connection, and every frame the client sends is masked with a
+  new key from the same source. A frame with an RSV bit that no negotiated extension defines (RSV1 for
+  permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a reserved opcode, a mask bit in the
+  wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a client's always are), a malformed
+  control frame, fragment, length or Close frame fails the connection with code 1002; a text message or a Close reason
+  that is not UTF-8 with 1007, after permessage-deflate, which the engine decompresses itself whichever extension
+  negotiated it; an uncompressed frame or message over the engine's `webSocketMaxMessageSize` (16 MiB by default,
+  *experimental*) with 1009, from the frame's header, before its payload is read, and a compressed one as it inflates
+  past the limit. The engine hands the session a Close
+  frame with that code in place of the bad frame, Ktor's session answers it, so the code goes on the wire and is the
+  session's `closeReason`, and `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in
+  `incoming` and answers it itself). An extension the engine does not know (the application's own) may use every RSV
+  bit; one implemented by an installed Ktor extension the bits its factory declares. A text message the application
+  builds from bytes (`Frame.Text(fin, ByteArray)`) that is not UTF-8 is not sent (also when Ktor's
+  `WebSocketDeflateExtension` compresses it): the session fails with `ProtocolViolationException`. An extension the
+  application brings with its own specification defines its payload: with one agreed, text is not checked.
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
   and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
 
@@ -793,8 +847,8 @@ This holds directly, through an HTTP CONNECT tunnel and through SOCKS5 (ALPN is 
 as with OkHttp), in every `http3 { discovery }` mode but `H3Only`, and whatever `http3Allowed` says: the HTTP/3 kill
 switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1.1`, as in 0.2.
 
-- **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c) and WebSockets, which offer `http/1.1` only (WebSockets over
-  HTTP/2, RFC 8441, are not supported yet). No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
+- **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c). A WebSocket opens no HTTP/2 connection of its own: see
+  WebSockets below. No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
   ends the connection), no RFC 7540 priorities (`priority(...)` goes as the end-to-end `priority` field), and no
   connection coalescing across origins.
 - **Repeats.** A request the server did not process, a stream above a GOAWAY's last stream or refused with
@@ -838,6 +892,23 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
 - **Events and diagnostics.** `protocolSelected` comes once the connection is in hand and names its protocol
   (`HTTP_2_0`), then `connectionAcquired(HTTP_2_0, reused)`; the race reports `raceEnded(winner = HTTP_2_0)`; and
   `ProtocolDiagnostics.protocol` is `HTTP_2_0` (its `fallback` still says why HTTP/3 was not used).
+- **WebSockets** (RFC 8441). A `wss://` WebSocket goes over HTTP/2 when its origin has an HTTP/2 connection already
+  (opened by an earlier request, as in Chromium) whose server enabled Extended CONNECT (SETTINGS_ENABLE_CONNECT_PROTOCOL
+  = 1, section 3): an Extended CONNECT with `:protocol = websocket` on a new stream, without `Sec-WebSocket-Key`,
+  `Connection` and `Upgrade` (section 5); the session's `call.response.version` is `HTTP_2_0`. A connection whose
+  server's SETTINGS have not arrived yet is waited for, at most 1 s (within the connect timeout), before the WebSocket
+  decides (section 3: the client "MUST NOT" use `:protocol` before the setting arrives); without them by then it goes
+  over HTTP/1.1. Otherwise (no HTTP/2 connection, a server without
+  the setting, a connection without a free stream, HTTP_1_1_REQUIRED) the WebSocket opens a connection of its own that
+  offers `http/1.1` only and upgrades as in 0.2; a WebSocket never opens an HTTP/2 connection. A 2xx answer opens the
+  session after its `Sec-WebSocket-Extensions` and `Sec-WebSocket-Protocol` were checked against the offer (an extension
+  or a subprotocol not offered fails the handshake with `WebSocketException`, RFC 6455 section 4.1); any other answer
+  fails it as an HTTP/1.1 answer without 101 does. The frames go within the server's flow-control windows (a send stall
+  is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order ends the
+  stream with END_STREAM and waits up to 5 s, in all, for its last frames to go out and for the server's END_STREAM, then
+  resets the stream with CANCEL if either is missing; a handshake refused here, or a call that failed or was
+  cancelled before the session closed, resets the stream with CANCEL. As over HTTP/1.1, one WebSocket per remote host
+  is in its handshake at a time (RFC 6455 section 4.1).
 
 ### Connection pool
 
@@ -917,7 +988,8 @@ hands out Ktor's copy of the body, which keeps ktor-io's contract: its `readAvai
 `closedCause`, so a loop over that channel checks `closedCause` after -1 (or reads the rest with `readRemaining`).
 
 WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT (or the
-mode is `H3Only`); over HTTP/3 the handshake is RFC 9220 and the plugin sees the usual 101. Over HTTP/1.1 at most one
+mode is `H3Only`), or an HTTP/2 one does ([HTTP/2 on the client](#http2-on-the-client)); over HTTP/3 the handshake is RFC
+9220, over HTTP/2 RFC 8441, and the plugin sees the usual 101. Over HTTP/1.1 at most one
 WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
 any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
 the name counts as the host. The connect timeout applies twice to such a WebSocket, in two phases: resolving the name,
@@ -1430,7 +1502,8 @@ refuses an upgrade that negotiated two extensions claiming the same bit (Ktor's 
 to `PerMessageDeflate`, say) with 500, and its client engine fails such an answer, as RFC 7692 section 5 requires. Incoming
 messages are always inflated with a 32 KiB window, which reads every smaller one.
 
-Decompression bombs. A compressed message may inflate to at most `maxInflatedMessageSize` bytes. Kuicksilver's engines
+Decompression bombs. A compressed message may inflate to at most `maxInflatedMessageSize` bytes (on Kuicksilver's
+engines, to at most the smaller of that and the engine's `webSocketMaxMessageSize`). Kuicksilver's engines
 decompress the frames as they arrive, in pieces of 64 KiB, and close the connection with 1009 (message too big, RFC 6455
 section 7.4.1) once a message passes the limit, after at most one piece more; malformed compressed data closes it with
 1002 ("Invalid compressed data"). On Kuicksilver's engines Ktor's `maxFrameSize` sees only the decompressed pieces, so
@@ -1816,7 +1889,7 @@ for a fresh client's handshake on a loaded host (comments in the file). Left out
   HTTP/3 would also have no `Connection`/`Upgrade`/`Sec-WebSocket-Key` to compare — RFC 9220 drops them);
 - `testWebsocketWithDefaultRequest` over HTTP/3 only: `defaultRequest` sets host and port, so the URL stays `ws://`;
 - `ServerSentEventsTest` and `HeadersTest`: they need serialization, logging and auth plugins (SSE is covered by the
-  engine's own tests over both protocols).
+  engine's own tests over all three protocols).
 
 The contract found and fixed: a closed client kept its UDP socket (the engine's cleanup waited for its own parent
 job), the socket timeout did not cover response bodies, an HTTP/3 body cancelled by the call reported the stream reset
@@ -1851,14 +1924,18 @@ request now contains its own failure.
 **Other WebSocket peers.** The engines check every frame against the handshake (RFC 6455 sections 5.1 and 5.2, RFC
 7692 section 6.1), stricter than Ktor's own engines:
 
-- Ktor's `WebSocketDeflateExtension` sets RSV1 on every fragment of a compressed message, not only the first. A peer
-  that uses it and fragments a compressed message (a message larger than its frame size) is closed with 1002; unfragmented
-  messages, the common case, pass.
+- Ktor's `WebSocketDeflateExtension` compresses each fragment of a message on its own and sets RSV1 on every fragment,
+  not only the first. A peer that uses it and fragments a compressed message is closed with 1002 by Kuicksilver's
+  engines; unfragmented messages, the common case, pass. When Ktor's extension runs in Kuicksilver's engines, they send
+  such a message as an RFC 7692 one (RSV1 on the first frame only, the fragments one DEFLATE stream); a message in which
+  Ktor's `compressCondition` left a fragment uncompressed cannot be, and fails with `ProtocolViolationException`.
 - A client that does not mask its frames, or a server that masks them, is closed with 1002, as the RFC requires; Ktor's
   own frame readers accept either.
 - Ktor 3.6.1's WebSocket writer on Kotlin/Native (its common `RawWebSocket`) sends every fragment of a message with the
-  message's opcode instead of 0 (continuation), so a fragmented message sent from Kotlin/Native, through any engine, is
-  refused by the peer as a new message inside an unfinished one; send whole messages there. Its JVM writer is right.
+  message's opcode instead of 0 (continuation), so a fragmented message sent from Kotlin/Native through another engine
+  is refused by the peer as a new message inside an unfinished one. Kuicksilver's engines send the later fragments as
+  continuations on every platform (0.3.0); with another engine on Kotlin/Native, send whole messages. Its JVM writer is
+  right.
 - Ktor 3.6.1's `WebSocketDeflateExtension` fails (`IllegalArgumentException: byteCount: -5 < 0`, the session closes
   with 1011) when it compresses an empty message after an earlier one; it reads an empty message from
   `PerMessageDeflate` (a single 0x00 byte, RFC 7692 section 7.2.3.6) correctly. Otherwise the two interoperate in both

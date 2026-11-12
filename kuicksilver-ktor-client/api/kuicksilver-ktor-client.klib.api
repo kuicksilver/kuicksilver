@@ -333,6 +333,9 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
     final var trust // io.kuicksilver.ktor.client/KuicksilverEngineConfig.trust|{}trust[0]
         final fun <get-trust>(): io.kuicksilver.tls/TrustConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.trust.<get-trust>|<get-trust>(){}[0]
         final fun <set-trust>(io.kuicksilver.tls/TrustConfig) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.trust.<set-trust>|<set-trust>(io.kuicksilver.tls.TrustConfig){}[0]
+    final var webSocketMaxMessageSize // io.kuicksilver.ktor.client/KuicksilverEngineConfig.webSocketMaxMessageSize|{}webSocketMaxMessageSize[0]
+        final fun <get-webSocketMaxMessageSize>(): kotlin/Long // io.kuicksilver.ktor.client/KuicksilverEngineConfig.webSocketMaxMessageSize.<get-webSocketMaxMessageSize>|<get-webSocketMaxMessageSize>(){}[0]
+        final fun <set-webSocketMaxMessageSize>(kotlin/Long) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.webSocketMaxMessageSize.<set-webSocketMaxMessageSize>|<set-webSocketMaxMessageSize>(kotlin.Long){}[0]
 
     final fun http2(kotlin/Function1<io.kuicksilver.ktor.client/Http2ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http2|http2(kotlin.Function1<io.kuicksilver.ktor.client.Http2ClientConfig,kotlin.Unit>){}[0]
     final fun http3(kotlin/Function1<io.kuicksilver.ktor.client/Http3ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3|http3(kotlin.Function1<io.kuicksilver.ktor.client.Http3ClientConfig,kotlin.Unit>){}[0]

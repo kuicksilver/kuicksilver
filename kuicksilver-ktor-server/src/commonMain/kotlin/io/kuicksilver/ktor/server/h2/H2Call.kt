@@ -40,10 +40,31 @@ internal class H2Call(
     bodyIdle: Duration,
     sendStallMillis: Long,
     altSvc: () -> String?,
+    /** An Extended CONNECT for `websocket`: presented as Ktor's HTTP/1.1 upgrade request (RFC 8441, [WebSocketOverH2]). */
+    webSocket: Boolean,
+    engineDispatcher: CoroutineContext,
+    userDispatcher: CoroutineContext,
+    /** The engine's `webSocketMaxMessageSize`, for an Extended CONNECT for `websocket`. */
+    webSocketMaxMessageSize: Long,
 ) : BaseApplicationCall(application),
     CoroutineScope {
-    override val request = H2Request(this, h2, local, remote, toKtorHeaders(h2), bodyIdle)
-    override val response = H2Response(this, h2, sendStallMillis, altSvc)
+    override val request =
+        H2Request(
+            this,
+            h2,
+            local,
+            remote,
+            if (webSocket) WebSocketOverH2.upgradeHeaders(h2) else toKtorHeaders(h2),
+            bodyIdle,
+            if (webSocket) HttpMethod.Get else method(h2),
+            idleBounded = !webSocket,
+        )
+    override val response: H2Response =
+        if (webSocket) {
+            H2UpgradeResponse(this, h2, sendStallMillis, engineDispatcher, userDispatcher, webSocketMaxMessageSize)
+        } else {
+            H2Response(this, h2, sendStallMillis, altSvc)
+        }
 
     init {
         putResponseAttribute()
@@ -55,7 +76,7 @@ internal class H2Call(
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             attributes.put(ReceivedEarlyKey, true)
         }
-        answerExpectation()
+        if (!webSocket) answerExpectation()
     }
 
     /**

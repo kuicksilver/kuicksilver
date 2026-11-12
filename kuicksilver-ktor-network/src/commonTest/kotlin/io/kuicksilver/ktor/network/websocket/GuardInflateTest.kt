@@ -233,7 +233,15 @@ class GuardInflateTest {
             }
             val inflate = WebSocketInflate(noContextTakeover = false, maxMessageSize = 64L * 1024 * 1024)
             val out =
-                guardWebSocketInput(raw, WS_RSV1, untilClose = false, peerMasks = false, context = coroutineContext, inflate = inflate)
+                guardWebSocketInput(
+                    raw,
+                    WS_RSV1,
+                    untilClose = false,
+                    peerMasks = false,
+                    context = coroutineContext,
+                    inflate = inflate,
+                    maxMessageSize = 64L * 1024 * 1024, // the engine's limit holds for an inflated message too
+                )
             runCurrent() // the first 16 KiB inflate to more than the output holds: the guard waits for room
             raw.cancel(IOException("connection reset"))
             val e = assertFails { out.readBuffer() }

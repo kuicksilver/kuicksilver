@@ -833,7 +833,8 @@ class ClientH2Test {
             tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }, h1 = { _, input, _ -> readRequest(input) }) { port, log ->
                 testClient(block = { install(WebSockets) }).use { c ->
                     runCatching { c.webSocket("wss://127.0.0.1:$port/ws") {} }
-                    // RFC 8441 is not supported: a WebSocket offers http/1.1 only, so this server's h2 preference is not used
+                    // no HTTP/2 connection to the origin yet: the WebSocket's own connection offers http/1.1 only (as
+                    // Chromium's), so this server's h2 preference is not used (ClientH2WebSocketTest: RFC 8441 on one that is)
                     assertEquals("http/1.1", withTimeout(10.seconds) { log.accepted.receive() })
                     assertEquals(listOf<String?>("http/1.1"), log.protocols)
                 }

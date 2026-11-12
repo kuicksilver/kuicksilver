@@ -34,9 +34,12 @@ internal class H2Request(
     remote: InetSocketAddress?,
     override var engineHeaders: Headers,
     bodyIdle: Duration,
+    method: HttpMethod,
+    /** The body's waits are bounded by [bodyIdle]; not for a WebSocket, whose stream may stay quiet for as long as it likes. */
+    idleBounded: Boolean = true,
 ) : BaseApplicationRequest(call) {
     override val cookies: RequestCookies by lazy { RequestCookies(this) }
-    override val engineReceiveChannel: ByteReadChannel = IdleBoundedBody(h2.body, bodyIdle)
+    override val engineReceiveChannel: ByteReadChannel = if (idleBounded) IdleBoundedBody(h2.body, bodyIdle) else h2.body
 
     override val rawQueryParameters: Parameters by lazy {
         val uri = h2.path
@@ -48,7 +51,7 @@ internal class H2Request(
     override val queryParameters: Parameters by lazy {
         encodeParameters(rawQueryParameters).withEmptyStringForValuelessKeys()
     } // as the CIO request: `?auto` gives ""
-    override val local: RequestConnectionPoint = H2ConnectionPoint(h2, local, remote, H2Call.method(h2))
+    override val local: RequestConnectionPoint = H2ConnectionPoint(h2, local, remote, method)
 }
 
 internal class H2ConnectionPoint(

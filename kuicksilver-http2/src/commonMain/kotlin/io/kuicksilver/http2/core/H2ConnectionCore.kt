@@ -51,6 +51,8 @@ internal class H2ConnectionCore(
     val role: Role,
     val settings: Http2Settings,
     now: Long,
+    /** A server that accepts Extended CONNECT (RFC 8441 section 3): SETTINGS_ENABLE_CONNECT_PROTOCOL = 1 in our SETTINGS. */
+    val enableConnectProtocol: Boolean = false,
 ) {
     internal val client = role == Role.CLIENT
     private val decoder = FrameDecoder(settings.maxFrameSize)
@@ -192,6 +194,9 @@ internal class H2ConnectionCore(
     val activeStreams: Int get() = streams.size
 
     init {
+        // RFC 8441 section 3: the parameter tells a client what a server accepts; "Receipt of this parameter by a server
+        // does not have any impact"
+        require(!client || !enableConnectProtocol) { "only a server enables Extended CONNECT" }
         if (client) initial.addLast(H2.PREFACE)
         val ids = mutableListOf<Int>()
         val values = mutableListOf<Long>()
@@ -210,6 +215,9 @@ internal class H2ConnectionCore(
         if (settings.maxFrameSize != H2.MIN_MAX_FRAME_SIZE) put(SettingId.MAX_FRAME_SIZE, settings.maxFrameSize.toLong())
         put(SettingId.MAX_HEADER_LIST_SIZE, settings.maxHeaderListSize.toLong())
         put(SettingId.NO_RFC7540_PRIORITIES, 1)
+        // RFC 8441 section 3: sent once, in our first SETTINGS, and never taken back ("A sender MUST NOT send a
+        // SETTINGS_ENABLE_CONNECT_PROTOCOL parameter with the value of 0 after previously sending a value of 1")
+        if (enableConnectProtocol) put(SettingId.ENABLE_CONNECT_PROTOCOL, 1)
         val frame = FrameEncoder.settings(ids.toIntArray(), values.toLongArray())
         ourSettingsFrame = frame
         initial.addLast(frame)

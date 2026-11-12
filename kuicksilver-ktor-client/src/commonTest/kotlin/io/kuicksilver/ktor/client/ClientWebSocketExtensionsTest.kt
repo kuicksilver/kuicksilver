@@ -13,11 +13,9 @@ import io.ktor.server.application.install
 import io.ktor.server.routing.routing
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
-import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
-import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.CloseReason
@@ -112,6 +110,22 @@ class ClientWebSocketExtensionsTest {
             rawH3WebSocketServer(extensions = "x-foo", frames = ByteArray(0)) { port, _ ->
                 testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
                     assertFailsWith<WebSocketException> { c.webSocket("wss://127.0.0.1:$port/ws") { opened = true } }
+                }
+            }
+            assertEquals(false, opened)
+        }
+
+    /**
+     * RFC 6455 section 4.1 step 6, which RFC 8441 section 5 keeps for Extended CONNECT: a subprotocol the client did not
+     * offer in the 2xx fails the handshake. Before, the engine looked only at the extensions over HTTP/3.
+     */
+    @Test fun negative_unofferedSubprotocolFailsHandshakeH3() =
+        h3Test {
+            var opened = false
+            rawH3WebSocketServer(extensions = null, frames = ByteArray(0), protocol = "chat") { port, _ ->
+                testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                    val e = assertFailsWith<WebSocketException> { c.webSocket("wss://127.0.0.1:$port/ws") { opened = true } }
+                    assertTrue("chat" in e.message.orEmpty(), e.message)
                 }
             }
             assertEquals(false, opened)
@@ -226,11 +240,15 @@ class ClientWebSocketExtensionsTest {
             }
         }
 
-    /** The RSV1 a negotiated permessage-deflate defines passes on the first frame of a message. */
+    /**
+     * The RSV1 a negotiated permessage-deflate defines passes on the first frame of a message, and the engine decompresses
+     * the message whichever extension negotiated it (here one that only answers to the name): "a" compressed.
+     */
     @Test fun rsv1OnFirstFrameWithDeflateNegotiatedPasses() =
         clientTest {
             var text: String? = null
-            rawH1WebSocketServer(extensions = "permessage-deflate", frames = byteArrayOf(0xC1.toByte(), 0x01, 0x61)) { port ->
+            val compressedA = byteArrayOf(0xC1.toByte(), 0x03, 0x4a, 0x04, 0x00)
+            rawH1WebSocketServer(extensions = "permessage-deflate", frames = compressedA) { port ->
                 testClient(block = { install(WebSockets) { extensions { install(FakeDeflate) } } }).use { c ->
                     c.webSocket("ws://127.0.0.1:$port/ws") { text = (incoming.receive() as Frame.Text).readText() }
                 }
@@ -267,12 +285,8 @@ class ClientWebSocketExtensionsTest {
                         listener.accept().use { s ->
                             val input = s.openReadChannel()
                             val output = s.openWriteChannel(autoFlush = true)
-                            while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
-                            output.writeStringUtf8(
-                                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-                                    "Sec-WebSocket-Accept: unchecked\r\n" +
-                                    (extensions?.let { "Sec-WebSocket-Extensions: $it\r\n" } ?: "") + "\r\n",
-                            )
+                            val key = input.readWebSocketKey()
+                            output.writeStringUtf8(switchingProtocols(key, extensions?.let { "Sec-WebSocket-Extensions: $it\r\n" } ?: ""))
                             output.writeFully(frames)
                             closeCodeOfFirstFrame(input)
                         }
@@ -291,6 +305,7 @@ class ClientWebSocketExtensionsTest {
         extensions: String?,
         frames: ByteArray,
         endsWithFin: Boolean = false,
+        protocol: String? = null,
         block: suspend (port: Int, served: Deferred<Int>) -> Unit,
     ): Int {
         val serverTls =
@@ -314,7 +329,12 @@ class ClientWebSocketExtensionsTest {
                         val conn = ep.accept()
                         val s =
                             conn.acceptRequest().acceptConnect(
-                                Http3Headers(listOfNotNull(extensions?.let { "sec-websocket-extensions" to it })),
+                                Http3Headers(
+                                    listOfNotNull(
+                                        extensions?.let { "sec-websocket-extensions" to it },
+                                        protocol?.let { "sec-websocket-protocol" to it },
+                                    ),
+                                ),
                             )
                         // a client that refuses the answer (an unoffered extension) may stop this stream before the frames go out
                         runCatching {

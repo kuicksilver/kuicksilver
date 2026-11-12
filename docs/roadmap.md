@@ -123,7 +123,8 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 
 - WebTransport over HTTP/3 (draft-ietf-webtrans-http3), experimental.
 - HTTP/2 (RFC 9113, HPACK RFC 7541) in a new module `kuicksilver-http2` (ADR-0017): the client offers `h2` next to
-  `http/1.1` over TLS, the server serves it opt-in, WebSocket over HTTP/2 (RFC 8441); no h2c, no server push.
+  `http/1.1` over TLS, the server serves it opt-in, WebSocket over HTTP/2 (RFC 8441, done in both engines); no h2c, no
+  server push.
 - RFC 9460 HTTPS records as a source of h3, off by default (done: `http3 { httpsRecords }`).
 - QUIC server, rebind during the handshake: keep both candidate addresses as separate paths and challenge both, so that
   a client that really rebinds while an observer races copies of its packets from the old address is not held on the

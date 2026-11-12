@@ -38,6 +38,16 @@ class KuicksilverH1WebSocketTest : WebSocketEngineSuite<E, C>(Kuicksilver) {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /**
+     * Ktor's `testBigFrame` sends a 20 MiB frame, over the engine's default `webSocketMaxMessageSize` (16 MiB, RFC 6455
+     * section 10.4), which would close the connection with 1009: the suite runs with a larger limit.
+     * `ServerWebSocketHandshakeTest` covers the limit itself.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    override fun configure(configuration: C) {
+        configuration.webSocketMaxMessageSize = 32L shl 20
+    }
+
+    /**
      * Ktor's test sends RSV1 without negotiating an extension and expects the server to take it. The engine fails such a
      * connection with 1002 (RFC 6455 section 5.2, threat model 3.20.1): `ServerWebSocketGuardTest` covers that, and
      * the RSV1 of a negotiated extension reaching the session is covered by `ClientDeflateKtorTest` (both directions).

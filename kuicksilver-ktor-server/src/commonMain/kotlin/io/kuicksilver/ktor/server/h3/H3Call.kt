@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server.h3
 
 import io.ktor.http.Headers
@@ -31,6 +33,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ResponseWriter
 import io.kuicksilver.http3.Http3ServerRequest
+import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.ReceivedEarlyKey
@@ -60,6 +63,8 @@ internal class H3Call(
     beforeUpgradeForTest: (() -> Unit)? = null,
     /** The engine's `Alt-Svc` for a plain response, read as its head goes out (`clear` while HTTP/3 is withdrawn); null for none. */
     altSvc: () -> String? = { null },
+    /** The engine's `webSocketMaxMessageSize`, for an Extended CONNECT for `websocket`. */
+    webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -80,6 +85,7 @@ internal class H3Call(
                 engineDispatcher,
                 userDispatcher,
                 beforeUpgradeForTest,
+                webSocketMaxMessageSize,
             )
         } else {
             H3Response(this, h3, altSvc)
