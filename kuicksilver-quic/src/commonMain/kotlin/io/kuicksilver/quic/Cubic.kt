@@ -265,12 +265,7 @@ public class Cubic(
     }
 
     /** 1.25 x cwnd per smoothed RTT (RFC 9002 section 7.7). */
-    override fun pacingRate(smoothedRtt: Duration): Long {
-        val nanos = maxOf(smoothedRtt.inWholeNanoseconds, 1L)
-        return cwnd * 5 / 4 *
-            1_000_000_000L /
-            nanos
-    }
+    override fun pacingRate(smoothedRtt: Duration): Long = windowPacingRate(cwnd, smoothedRtt)
 
     /** The initial window (RFC 9002 section 7.7: "Senders SHOULD limit bursts to the initial congestion window"), at most 64 KiB or one datagram. */
     override val sendQuantum: Int get() = minOf(initialWindow(mss), maxOf(65_536L, mss.toLong())).toInt()

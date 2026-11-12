@@ -112,13 +112,26 @@ public class NewReno(
     }
 
     /** 1.25 × cwnd per smoothed RTT (RFC 9002 section 7.7). */
-    override fun pacingRate(smoothedRtt: Duration): Long {
-        val nanos = maxOf(smoothedRtt.inWholeNanoseconds, 1L)
-        return cwnd * 5 / 4 *
-            1_000_000_000L /
-            nanos
-    }
+    override fun pacingRate(smoothedRtt: Duration): Long = windowPacingRate(cwnd, smoothedRtt)
 
     /** The initial window (RFC 9002 section 7.7: "Senders SHOULD limit bursts to the initial congestion window"), at most 64 KiB or one datagram. */
     override val sendQuantum: Int get() = minOf(initialWindow(maxDatagramSize), maxOf(65_536L, maxDatagramSize.toLong())).toInt()
 }
+
+/**
+ * 1.25 x [cwnd] per [smoothedRtt] in bytes a second (RFC 9002 section 7.7), at least 1 ns of RTT. Exact in Long arithmetic up to a
+ * window of about 7.4 GB; above that cwnd x 5 / 4 x 10^9 would overflow (and the pacer then waited hours for a negative rate), so
+ * the rate is computed in Double and saturates at Long.MAX_VALUE.
+ */
+internal fun windowPacingRate(
+    cwnd: Long,
+    smoothedRtt: Duration,
+): Long {
+    val nanos = maxOf(smoothedRtt.inWholeNanoseconds, 1L)
+    if (cwnd <= EXACT_PACING_WINDOW) return cwnd * 5 / 4 * 1_000_000_000L / nanos
+    val r = cwnd * 1.25e9 / nanos
+    return if (r >= Long.MAX_VALUE.toDouble()) Long.MAX_VALUE else r.toLong()
+}
+
+/** The largest window whose cwnd x 5 / 4 x 10^9 fits a Long. */
+private const val EXACT_PACING_WINDOW: Long = Long.MAX_VALUE / 1_000_000_000L * 4 / 5

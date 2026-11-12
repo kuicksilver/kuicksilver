@@ -34,7 +34,7 @@ internal class Pacer {
         }
         val elapsed = (now - lastRefill).inWholeNanoseconds
         if (elapsed <= 0) return
-        val rate = maxOf(cc.pacingRate(srtt), 1L)
+        val rate = cc.pacingRate(srtt).coerceIn(1L, MAX_RATE)
         // past the time that fills the bucket it is simply full: rate x elapsed would overflow after a long gap (a minute at
         // 100 MB/s, 10 Gbit/s x 7.4 s), and a refill that came out negative left the sender waiting for credit that never came
         val missing = burst - credit
@@ -58,7 +58,7 @@ internal class Pacer {
     ): TimeMark {
         refill(now, cc, smoothedRtt)
         if (credit >= bytes) return TimeMark.NEVER
-        val rate = maxOf(cc.pacingRate(smoothedRtt), 1L)
+        val rate = cc.pacingRate(smoothedRtt).coerceIn(1L, MAX_RATE)
         return now + ((bytes - credit) * 1_000_000_000L / rate).nanoseconds
     }
 
@@ -69,5 +69,10 @@ internal class Pacer {
         if (credit < 0) credit = 0
         credit -= bytes
         if (credit < 0) credit = 0
+    }
+
+    private companion object {
+        /** 2^62 bytes a second, far past any link: the refill arithmetic (missing x 10^9 + rate) stays inside a Long. */
+        const val MAX_RATE: Long = 1L shl 62
     }
 }

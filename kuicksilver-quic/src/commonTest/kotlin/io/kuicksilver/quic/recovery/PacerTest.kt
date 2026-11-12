@@ -183,4 +183,26 @@ class PacerTest {
         assertTrue(n * 1200 <= cc.sendQuantum + 1200, "$n datagrams at once at 0.2 ms")
         assertNotEquals(TimeMark.NEVER, p.nextSendTime(t0, 1200, cc, srtt))
     }
+
+    /**
+     * W3B-16: 1.25 x cwnd x 10^9 / sRTT in Long arithmetic overflowed for a window above about 7.4 GB (cwnd x 5 / 4 x 10^9 past
+     * 2^63): the rate came out negative, the pacer took it as 1 byte a second and held the next datagram for hours. A 100 Gbit/s x
+     * 1 s path (12.5 GB in flight) on NewReno and on CUBIC, the default controller.
+     */
+    @Test fun negative_windowControllersPaceAWindowAbove7GB() {
+        for (cc in listOf<CongestionController>(NewReno(1200), Cubic(1200))) {
+            var t = t0
+            while (cc.cwnd < 12_500_000_000L) {
+                cc.onPacketSent(t, Int.MAX_VALUE)
+                cc.onAck(t + 1.seconds, t, Int.MAX_VALUE, 1.seconds, appLimited = false)
+                t += 1.seconds
+            } // slow start, one 2 GiB acknowledgment at a time
+            val rate = cc.pacingRate(1.seconds)
+            assertTrue(rate >= cc.cwnd, "${cc::class.simpleName}: rate $rate for a window of ${cc.cwnd} per second")
+            val p = Pacer()
+            while (p.nextSendTime(t, 1200, cc, 1.seconds) == TimeMark.NEVER) p.onSent(t, 1200)
+            val next = p.nextSendTime(t, 1200, cc, 1.seconds)
+            assertTrue(next > t && next <= t + 1.milliseconds, "${cc::class.simpleName}: next datagram at ${next - t} after a full burst")
+        }
+    }
 }
