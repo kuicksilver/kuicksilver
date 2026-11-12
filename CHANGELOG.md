@@ -236,6 +236,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (the server's session ID context covers the bundle), so a client of a dropped CA cannot come back with a ticket. Shared
   server contexts are kept per identity snapshot and bundle; the old bundle's context is freed with its last connection. A
   client configuration with a `ReloadableCa` throws `TlsException.Config`.
+- Ktor server: `EngineMain` keys `kuicksilver.tls.clientAuth` (`none`, `optional`, `required`) and
+  `kuicksilver.tls.clientCa` (a PEM file of CA certificates) ask for client certificates on the deployment port. With
+  `kuicksilver.tls.reloadInterval` the CA file is watched like the identity's files (two equal reads a second apart,
+  retries with backoff, one warning per distinct failure, a file holding a private key refused) and new handshakes verify
+  against the renewed bundle (`docs/guide/ktor.md`, "Certificate rotation"). A connector's `trust` may be a
+  `TrustConfig.ReloadableCa`, shared by its TCP and QUIC handshakes.
 - Ktor client: experimental `FileAltSvcStore(file: java.io.File)` on the JVM and Android, for an Android app's
   `File(context.filesDir, "altsvc.tsv")` (`docs/guide/ktor.md`, "Discovery and Alt-Svc"). It works on API 24 and 25 too:
   nothing on its path uses `java.nio.file` or `File.toPath()`, which arrived in API 26. The `kotlinx.io.files.Path`

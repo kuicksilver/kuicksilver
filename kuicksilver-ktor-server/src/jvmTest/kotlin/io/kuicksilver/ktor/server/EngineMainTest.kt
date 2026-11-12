@@ -11,7 +11,9 @@ import io.ktor.server.routing.routing
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
@@ -24,6 +26,7 @@ import java.security.spec.PKCS8EncodedKeySpec
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
@@ -355,4 +358,157 @@ class EngineMainTest {
             assertFailsWith<IllegalStateException>("the identity EngineMain made is closed with the server") { identity.reload(probe) }
             probe.close()
         }
+
+    private fun pem(
+        name: String,
+        text: String,
+    ) = File(dir, name).apply { writeText(text) }
+
+    private fun clientCaArgs(vararg extra: String): Array<String> {
+        val chain = pem("ca-chain.pem", TestCerts.toPem("CERTIFICATE", TestCerts.server))
+        val key = pem("ca-key.pem", TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey))
+        return arrayOf(
+            "-host=127.0.0.1",
+            "-port=0",
+            "-P:ktor.application.modules.size=1",
+            "-P:ktor.application.modules.0=$module",
+            "-P:kuicksilver.tls.certificateChain=${chain.path}",
+            "-P:kuicksilver.tls.privateKey=${key.path}",
+            "-P:kuicksilver.altSvc=false",
+        ) + extra
+    }
+
+    @Test fun clientAuthKeyParsed() {
+        assertEquals(ClientAuth.None, EngineMain.parseClientAuth(null))
+        assertEquals(ClientAuth.None, EngineMain.parseClientAuth("none"))
+        assertEquals(ClientAuth.Optional, EngineMain.parseClientAuth("optional"))
+        assertEquals(ClientAuth.Required, EngineMain.parseClientAuth(" required "))
+        assertFailsWith<IllegalArgumentException> { EngineMain.parseClientAuth("yes") }
+    }
+
+    /** The client CA keys go together, need the identity files, and the CA file gets the watcher's checks at startup. */
+    @Test fun negative_clientCaKeyCombinationsRefused() {
+        val ca = pem("client-ca.pem", TestCerts.toPem("CERTIFICATE", TestCerts.testCa))
+        val e1 =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        clientCaArgs("-P:kuicksilver.tls.clientAuth=required"),
+                    ).engine
+            }
+        assertTrue("needs kuicksilver.tls.clientCa" in e1.message.orEmpty(), e1.message)
+        val e2 =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        clientCaArgs("-P:kuicksilver.tls.clientCa=${ca.path}"),
+                    ).engine
+            }
+        assertTrue("optional or required" in e2.message.orEmpty(), e2.message)
+        val e3 =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        arrayOf(
+                            "-host=127.0.0.1",
+                            "-port=0",
+                            "-P:ktor.application.modules.size=1",
+                            "-P:ktor.application.modules.0=$module",
+                            "-P:kuicksilver.tls.clientAuth=required",
+                            "-P:kuicksilver.tls.clientCa=${ca.path}",
+                        ),
+                    ).engine
+            }
+        assertTrue("certificateChain" in e3.message.orEmpty(), e3.message)
+        val withKey =
+            pem(
+                "client-ca-key.pem",
+                TestCerts.toPem("CERTIFICATE", TestCerts.testCa) + TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey),
+            )
+        val e4 =
+            assertFailsWith<kotlinx.io.IOException> {
+                EngineMain
+                    .createServer(
+                        clientCaArgs("-P:kuicksilver.tls.clientAuth=required", "-P:kuicksilver.tls.clientCa=${withKey.path}"),
+                    ).engine
+            }
+        assertTrue("contains a private key" in e4.message.orEmpty(), e4.message)
+        assertFailsWith<IllegalArgumentException> {
+            EngineMain
+                .createServer(
+                    clientCaArgs("-P:kuicksilver.tls.clientAuth=sometimes", "-P:kuicksilver.tls.clientCa=${ca.path}"),
+                ).engine
+        }
+    }
+
+    /** Without reloading the CA file is read once into an AnchoredCa; client certificates are required on the deployment port. */
+    @Test fun clientCaRequiredOnTheDeploymentPort() =
+        serverTest {
+            val ca = pem("fixed-ca.pem", TestCerts.toPem("CERTIFICATE", TestCerts.testCa))
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs("-P:kuicksilver.tls.clientAuth=required", "-P:kuicksilver.tls.clientCa=${ca.path}"),
+                )
+            assertIs<TrustConfig.AnchoredCa>(server.engine.configuration.clientTrust)
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                assertTrue(rawHttp(port, get, ServerFixtures.clientTls(identity = clientA())).endsWith("engine main"))
+                assertFails("negative: no client certificate") { rawHttp(port, get) }
+                assertFails("negative: a certificate of another CA") { rawHttp(port, get, ServerFixtures.clientTls(identity = clientB())) }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * With `kuicksilver.tls.reloadInterval` the client CA file is watched as the identity's files are: a bundle renewed after
+     * `createServer` read it is used for new handshakes without a restart.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun renewedClientCaFileUsedWithoutRestart() =
+        serverTest {
+            val ca = pem("renew-ca.pem", TestCerts.toPem("CERTIFICATE", TestCerts.testCa))
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs(
+                        "-P:kuicksilver.tls.clientAuth=required",
+                        "-P:kuicksilver.tls.clientCa=${ca.path}",
+                        "-P:kuicksilver.tls.reloadInterval=1h",
+                    ),
+                )
+            val config = server.engine.configuration
+            val trust = assertIs<TrustConfig.ReloadableCa>(config.clientTrust)
+            assertEquals(listOf(Certificate(TestCerts.testCa)), trust.current.roots)
+            config.identitySettleForTest = Duration.ZERO
+            ca.writeText(TestCerts.toPem("CERTIFICATE", TestCerts.otherCa)) // renewed after the server read it
+            server.startSuspend(false)
+            try {
+                val applied =
+                    withTimeoutOrNull(20.seconds) {
+                        while (trust.current.roots != listOf(Certificate(TestCerts.otherCa))) yield()
+                        true
+                    }
+                assertTrue(applied == true, "the watcher did not apply the renewed CA file within 20 s")
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                assertTrue(rawHttp(port, get, ServerFixtures.clientTls(identity = clientB())).endsWith("engine main"))
+                assertFails("negative: the dropped CA's client") { rawHttp(port, get, ServerFixtures.clientTls(identity = clientA())) }
+            } finally {
+                server.stop(100, 500)
+            }
+            assertTrue(server.engine.identityWatcherForTest!!.isCompleted, "the watcher ends with the server")
+        }
+
+    private fun clientA() = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())
+
+    private fun clientB() = TlsIdentity.fromDer(listOf(TestCerts.clientOtherCa), TestCerts.clientOtherCaKey.copyOf())
 }

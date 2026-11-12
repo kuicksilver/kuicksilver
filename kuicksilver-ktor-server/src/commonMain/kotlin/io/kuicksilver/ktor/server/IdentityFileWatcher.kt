@@ -106,30 +106,40 @@ internal class IdentityFileWatcher(
      * Checks every [interval] until cancelled; a changed chain is read again after [settle] (and once more [settle] after it
      * was applied), a failure retried after 1 s, then twice as long each time, up to [interval].
      */
-    suspend fun run(interval: Duration) {
-        val firstRetry = minOf(1.seconds, interval)
-        var retry = firstRetry
-        while (true) {
-            checkOnce()
-            val wait =
-                when (lastOutcome) {
-                    Outcome.Failed -> {
-                        retry.also { retry = minOf(retry * 2, interval) }
-                    }
+    suspend fun run(interval: Duration): Unit = pollFiles(interval, settle) { checkOnce().let { lastOutcome } }
+}
 
-                    // after a reload too: a chain file still being written when two reads agreed is seen and fixed one settle later
-                    Outcome.Settling, Outcome.Reloaded -> {
-                        retry = firstRetry
-                        minOf(settle, interval)
-                    }
-
-                    else -> {
-                        retry = firstRetry
-                        interval
-                    }
+/**
+ * The polling loop of the file watchers ([IdentityFileWatcher], [ClientCaFileWatcher]): [check] once, then again after
+ * [interval]; a changed file is read again after [settle] (and once more [settle] after it was applied), a failure retried
+ * after 1 s, then twice as long each time, up to [interval]. Runs until cancelled.
+ */
+internal suspend fun pollFiles(
+    interval: Duration,
+    settle: Duration,
+    check: suspend () -> IdentityFileWatcher.Outcome,
+) {
+    val firstRetry = minOf(1.seconds, interval)
+    var retry = firstRetry
+    while (true) {
+        val wait =
+            when (check()) {
+                IdentityFileWatcher.Outcome.Failed -> {
+                    retry.also { retry = minOf(retry * 2, interval) }
                 }
-            delay(wait)
-        }
+
+                // after a reload too: a file still being written when two reads agreed is seen and fixed one settle later
+                IdentityFileWatcher.Outcome.Settling, IdentityFileWatcher.Outcome.Reloaded -> {
+                    retry = firstRetry
+                    minOf(settle, interval)
+                }
+
+                else -> {
+                    retry = firstRetry
+                    interval
+                }
+            }
+        delay(wait)
     }
 }
 

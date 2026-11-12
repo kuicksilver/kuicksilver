@@ -626,6 +626,35 @@ cannot be interrupted). Polling once an hour means a renewed certificate may wai
 files at startup get the same checks as a reload, so an expired or not yet valid certificate fails the start; without
 it, `EngineMain` serves the files as they are, as before. The identity `EngineMain` made is closed when the server stops.
 
+**The client CA.** A connector that asks for client certificates ([Mutual TLS](#mutual-tls-client-certificates)) can
+rotate the CA bundle it verifies them with in the same way: give it `trust = TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
+(alone or as the `base` of `Pinned`) and call `reload(TrustConfig.AnchoredCa(newRoots))`. HTTP/1.1 and HTTP/3
+handshakes that start after `reload` returns verify client certificates against the new bundle; handshakes in progress
+and open connections keep the old one, and a session ticket from before the reload is not resumed, so a client whose CA
+was dropped gets in neither with a new handshake nor with a ticket. `reload` refuses a bundle in which no certificate is
+valid now ([Rotating the client CA](tls.md#rotating-the-client-ca)).
+
+```kotlin
+// guide:ktor:client-ca-rotation
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) {
+        port = 443
+        clientAuth = ClientAuth.Required
+        trust = clientCa
+    }
+}, module = Application::module)
+// later: new TCP and QUIC handshakes verify client certificates against the new bundle
+clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+```
+
+With `EngineMain`, `kuicksilver.tls.clientAuth` (`optional` or `required`) and `kuicksilver.tls.clientCa` (a PEM file of
+CA certificates) ask for client certificates on the deployment port. With `kuicksilver.tls.reloadInterval` set, the CA
+file is watched at that interval with the rules above: a changed bundle is used once two reads a second apart agree. A
+file holding a private key, a damaged file and a bundle with no certificate valid now keep the bundle in use, and so do
+they at startup (where they fail the start). A reload is logged at info level, a failure as a warning.
+
 ### EngineMain and configuration keys
 
 `io.kuicksilver.ktor.server.EngineMain` reads the usual `ktor.deployment.*` keys (and on the JVM `-sslPort` with
@@ -634,7 +663,9 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | Key | Meaning |
 |---|---|
 | `kuicksilver.tls.certificateChain`, `kuicksilver.tls.privateKey` | PEM files; the deployment port then serves TLS and HTTP/3 |
-| `kuicksilver.tls.reloadInterval` | how often those PEM files are checked for a renewed certificate (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
+| `kuicksilver.tls.reloadInterval` | how often those PEM files, and the `kuicksilver.tls.clientCa` file, are checked for a renewed certificate or CA bundle (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
+| `kuicksilver.tls.clientAuth` | ask for a client certificate on the deployment port: `none` (unset), `optional` or `required`; anything but `none` needs `kuicksilver.tls.clientCa` |
+| `kuicksilver.tls.clientCa` | PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |

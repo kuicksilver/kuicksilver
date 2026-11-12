@@ -280,6 +280,7 @@ the connection core are internal.
 | API | Feature |
 |---|---|
 | `quicEarlyData`, `ApplicationRequest.receivedEarly` | 0-RTT |
+| `identityReloadInterval` | `EngineMain` watching the certificate and client CA files |
 | `logger`, `qlog`, `connectionListener`, `eventListener`, `KuicksilverServerEventListener` | observability |
 | `http2`, `http2Settings` | HTTP/2 on TLS connectors (opt-in) |
 

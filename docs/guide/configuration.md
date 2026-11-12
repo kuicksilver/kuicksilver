@@ -365,7 +365,7 @@ Guide: [Ktor: Client](ktor.md#client).
 |---|---|---|---|---|
 | `tlsConnector(identity) { … }` |  |  | 0.2.0 | a TLS connector: HTTP/1.1 (and HTTP/2 with `http2`) over TLS on TCP and HTTP/3 on UDP on the same port ([Ktor: HTTP/3 on the server](ktor.md#http3-on-the-server)) |
 | `identity` | `TlsIdentity?` | `null` | 0.2.0 | turns every plain connector (`port = …`, `connector { }`) into a TLS connector; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](ktor.md#certificate-rotation)) |
-| `identityReloadInterval` (*experimental*) | `Duration?` | `null` | 0.3.0 | at least 1 s; how often the PEM files `EngineMain` read are checked for a renewed certificate (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](ktor.md#certificate-rotation)) |
+| `identityReloadInterval` (*experimental*) | `Duration?` | `null` | 0.3.0 | at least 1 s; how often the PEM files `EngineMain` read (the identity and `kuicksilver.tls.clientCa`) are checked for a renewed certificate or CA bundle (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](ktor.md#certificate-rotation)) |
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | 0.2.0 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | 0.2.1 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](ktor.md#server)) |
 | `maxTcpConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n` ([Connection limits](ktor.md#connection-limits)) |
@@ -409,13 +409,15 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `host` | `String` | `"0.0.0.0"` |  | 0.2.0 | bind address for TCP and UDP |
 | `port` | `Int` | 443 | 0..65 535 | 0.2.0 | TCP port and UDP port of HTTP/3; 0 picks a free pair (`resolvedConnectors()`) |
 | `clientAuth` | `ClientAuth` | `None` |  | 0.2.0 | ask for or require client certificates |
-| `trust` | `TrustConfig?` | `null` | `AnchoredCa` (optionally under `Pinned`) when `clientAuth` is not `None` | 0.2.0 | verifies client certificates |
+| `trust` | `TrustConfig?` | `null` | `AnchoredCa` or `ReloadableCa` (optionally under `Pinned`) when `clientAuth` is not `None` | 0.2.0 | verifies client certificates; a `ReloadableCa` rotates for TCP and QUIC alike |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` |  | 0.2.0 | TLS 1.3 suites |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP; the connector then serves no HTTP/3 (warning) |
 
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
-`kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
+`kuicksilver.tls.clientAuth` (`none`, `optional` or `required`) and `kuicksilver.tls.clientCa` (the PEM file of the CAs
+client certificates are verified against; set together),
+`kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
 `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and

@@ -7,7 +7,10 @@ import io.ktor.server.engine.CommandLineConfig
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.loadCommonConfiguration
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TrustConfig
 import kotlin.jvm.JvmStatic
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -16,7 +19,9 @@ import kotlin.time.Duration.Companion.seconds
  * `EngineMain` for the Kuicksilver engine, configured like Ktor's own engines (`ktor.deployment.*`, and on the JVM
  * `ktor.security.ssl.*` with `-sslPort`). Keys of its own, on every platform:
  * `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files: the deployment port then serves TLS
- * and HTTP/3), `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate, e.g. `1h`;
+ * and HTTP/3), `kuicksilver.tls.clientAuth` (`none`, `optional` or `required`: ask for a client certificate) and
+ * `kuicksilver.tls.clientCa` (the PEM file of the CAs client certificates are verified against),
+ * `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle, e.g. `1h`;
  * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
  * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
  * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`,
@@ -33,7 +38,8 @@ public object EngineMain {
     /**
      * The server [main] would run, not started yet. Throws [IllegalArgumentException] when only one of the two
      * `kuicksilver.tls.*` file keys is set, `kuicksilver.tls.reloadInterval` is set without them or is not a duration of
-     * at least 1 second (or `0`), a boolean key is not `true`/`false`, or `kuicksilver.maxTcpConnections`,
+     * at least 1 second (or `0`), `kuicksilver.tls.clientAuth` is not `none`, `optional` or `required`, or is not `none`
+     * exactly when `kuicksilver.tls.clientCa` is set, `kuicksilver.tls.clientCa` is set without the identity files, a boolean key is not `true`/`false`, or `kuicksilver.maxTcpConnections`,
      * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range.
      */
     public fun createServer(args: Array<String>): EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration> {
@@ -57,6 +63,8 @@ public object EngineMain {
         require((chain == null) == (key == null)) { "kuicksilver.tls.certificateChain and kuicksilver.tls.privateKey go together" }
         val reload = parseReloadInterval(config.propertyOrNull("kuicksilver.tls.reloadInterval")?.getString())
         require(reload == null || chain != null) { "kuicksilver.tls.reloadInterval needs kuicksilver.tls.certificateChain and privateKey" }
+        // before the identity: a refused client CA leaves no native key behind
+        loadClientCa(config, chain != null, reload != null)
         if (chain != null && key != null) {
             // with reloading, the startup files get the watcher's checks: a combined PEM (key in the chain file) is refused
             val loaded = TlsIdentity.fromPem(readPemText(chain, refusePrivateKey = reload != null), readPemKey(key))
@@ -149,6 +157,40 @@ public object EngineMain {
             ?.toInt()
             ?.let { udpSocketCount = it }
     }
+
+    /**
+     * `kuicksilver.tls.clientAuth` and `kuicksilver.tls.clientCa`: client certificates on the deployment port, verified against
+     * the CA file, which [reload] makes a `TrustConfig.ReloadableCa` the identity's watcher interval also polls.
+     */
+    private fun KuicksilverApplicationEngine.Configuration.loadClientCa(
+        config: ApplicationConfig,
+        tls: Boolean,
+        reload: Boolean,
+    ) {
+        val auth = parseClientAuth(config.propertyOrNull("kuicksilver.tls.clientAuth")?.getString())
+        val caFile = config.propertyOrNull("kuicksilver.tls.clientCa")?.getString()
+        require(caFile == null || tls) { "kuicksilver.tls.clientCa needs kuicksilver.tls.certificateChain and privateKey" }
+        require(auth == ClientAuth.None || caFile != null) { "kuicksilver.tls.clientAuth $auth needs kuicksilver.tls.clientCa" }
+        require(caFile == null || auth != ClientAuth.None) {
+            "kuicksilver.tls.clientCa needs kuicksilver.tls.clientAuth optional or required"
+        }
+        if (caFile == null) return
+        // the watcher's checks at startup too: a key in the file is refused, a damaged file or one without a certificate fails
+        val bundle = TrustConfig.AnchoredCa(Certificate.parsePem(readPemText(caFile, refusePrivateKey = true)))
+        clientAuth = auth
+        @OptIn(ExperimentalKuicksilverApi::class)
+        clientTrust = if (reload) TrustConfig.reloadable(bundle) else bundle
+        clientCaFile = caFile
+    }
+
+    /** `kuicksilver.tls.clientAuth`: `none` (or absent), `optional` or `required`. */
+    internal fun parseClientAuth(value: String?): ClientAuth =
+        when (value?.trim()) {
+            null, "none" -> ClientAuth.None
+            "optional" -> ClientAuth.Optional
+            "required" -> ClientAuth.Required
+            else -> throw IllegalArgumentException("kuicksilver.tls.clientAuth: \"$value\" is not none, optional or required")
+        }
 
     /** A whole-number key; the setter checks its range. */
     private fun parseCount(
