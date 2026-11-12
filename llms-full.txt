@@ -1392,8 +1392,12 @@ when the bundle changes. It follows the rules of the identity above:
 - **The rule.** After `reload` returns, no handshake accepts a client certificate that only a removed CA vouches for,
   over TCP and QUIC alike, however the client times its flights. A handshake takes the bundle current when its ClientHello
   arrives (over TCP when its first bytes are there, not at the accept) and OpenSSL verifies against it; if a reload replaced
-  that bundle before the handshake completes, the certificate is verified again against the bundle current then, and the
-  handshake fails unless it passes. Connections established before the reload are not affected: a client of a CA you
+  that bundle with other certificates before the handshake completes, the certificate is verified again against the bundle
+  current then, as a fresh handshake would (OpenSSL's security level, and the pins of a `Pinned` around the bundle on the
+  path built under it), and the handshake fails unless it passes. A reload to the same certificates changes nothing. One
+  case is refused that a fresh handshake would accept: a session resumed across a reload that changed the certificates
+  holds only the client's leaf, so it passes only if that leaf chains to the new bundle without intermediates (the client
+  then runs a full handshake on its next connection). Connections established before the reload are not affected: a client of a CA you
   dropped that is already connected stays connected until its connection closes. Close such connections yourself if the
   CA was compromised.
 - **Shared contexts.** The first handshake under the new bundle replaces the old bundle's shared OpenSSL context, which is

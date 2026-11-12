@@ -232,8 +232,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `docs/guide/tls.md`, "Rotating the client CA"). A server's `trust` for client certificates may be a `ReloadableCa`
   (alone or as the base of `Pinned`). Once `reload(next)` returns, no handshake, over TCP or QUIC, accepts a client
   certificate that only a CA missing from `next` vouches for: a handshake takes the bundle when its ClientHello arrives,
-  and one that completes after a reload replaced it verifies the client's chain again against the current bundle.
-  Established connections are not affected. A bundle with no certificate valid now is refused and the old one
+  and one that completes after a reload replaced its certificates verifies the client's chain again against the current
+  bundle (security level and the pins of a `Pinned` on the new path included). A reload to the same certificates changes
+  nothing. Established connections are not affected. A bundle with no certificate valid now is refused and the old one
   stays. A session authenticated under the old bundle is not resumed, TLS 1.3 and TLS 1.2 tickets and QUIC's alike (the
   server's session ID context covers the bundle's certificates, so a CA re-issued on its key counts as another bundle),
   so a client of a dropped CA cannot come back with a ticket. Shared server contexts are kept per identity snapshot and
@@ -668,6 +669,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS: `ksl_ctx_verify_chain`, which re-verifies a client's cached chain before it resumes (ADR-0011), now applies
+  OpenSSL's security level as a handshake does; before, the re-verification was weaker than the handshake it stands for
+  (a client's cached chains come from handshakes at the same level under the same trust, so no weaker chain could resume
+  in practice). The client CA recheck of a server relies on it.
 - TLS: a TCP server takes its identity (and client CA bundle) when the client's ClientHello arrives, not when the
   connection is accepted. Before, a connection accepted before a `TlsIdentity.Reloadable.reload` whose ClientHello came
   later (an HTTP server waits up to its request header timeout) was served the replaced certificate and key. The wait
