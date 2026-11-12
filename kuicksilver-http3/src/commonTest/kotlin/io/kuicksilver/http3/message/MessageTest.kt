@@ -378,6 +378,23 @@ class PseudoHeadersTest {
         )
         assertEquals("/up", PseudoHeaders.parseRequest(f, false).path)
     }
+
+    /**
+     * [Http3Request.priority] schedules the stream and is the signal the server gets: it replaces a `priority` field among
+     * the headers, so the wire and our own scheduling never disagree. The default sends no field at all.
+     */
+    @Test fun priorityReplacesThePriorityHeader() {
+        fun fields(p: StreamPriority) =
+            PseudoHeaders
+                .buildRequest(
+                    http3Request("GET", "example.com", "/") {
+                        headers = Http3Headers.of("priority" to "u=7", "x-a" to "1", "priority" to "i")
+                        priority = p
+                    },
+                ).filter { it.first == "priority" || it.first == "x-a" }
+        assertEquals(listOf("x-a" to "1", "priority" to "u=0"), fields(StreamPriority(0)))
+        assertEquals(listOf("x-a" to "1"), fields(StreamPriority.Default))
+    }
 }
 
 class PriorityFieldTest {

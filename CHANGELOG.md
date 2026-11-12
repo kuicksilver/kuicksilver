@@ -640,6 +640,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: `Http3Request.priority` now replaces a `priority` field among the request's headers. The header went
+  out while the explicit priority scheduled the stream, so the server and the client used different priorities.
 - HTTP/3 (RFC 8941 section 4.2): a `priority` field that fails to parse now counts as absent wherever its presence
   mattered. A CONNECT carrying one was not scheduled as a tunnel (on either side), and a server response carrying one
   stopped the client's later PRIORITY_UPDATEs from rescheduling it, as if the server had chosen a priority.

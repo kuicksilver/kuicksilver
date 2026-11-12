@@ -371,8 +371,14 @@ internal object PseudoHeaders {
         }
         r.authority?.let { out += ":authority" to it }
         if (r.method != "CONNECT" || r.protocol != null) r.path?.let { out += ":path" to it }
-        out += r.headers.fields
-        r.priority?.let { p -> PriorityField.format(p)?.let { if (r.headers["priority"] == null) out += "priority" to it } }
+        val p = r.priority
+        if (p == null) {
+            out += r.headers.fields
+        } else {
+            // the explicit priority is the signal: a `priority` header would tell the server something else than we schedule
+            for (f in r.headers.fields) if (f.first != "priority") out += f
+            PriorityField.format(p)?.let { out += "priority" to it }
+        }
         return out
     }
 
