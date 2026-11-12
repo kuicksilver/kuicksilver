@@ -998,7 +998,8 @@ alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; de
   the IPv6 one (the Resolution Delay), and goes ahead at once when the IPv6 answer is empty or failed. An answer that
   comes while connections are being tried joins them. On the JVM, an application that installed its own resolver
   (`InetAddressResolverProvider`, `jdk.net.hosts.file`) keeps it: lookups go through `InetAddress` then, both families in
-  one call. `java.net.preferIPv4Stack=true` leaves IPv6 out.
+  one call. `java.net.preferIPv4Stack=true` leaves IPv6 out. At most 8 lookups of each family run at once, so a network
+  that drops AAAA queries does not hold up the A lookups of other names.
 - **Order.** The addresses are sorted by RFC 6724's destination address selection, the engine's own on every platform
   (also for the addresses of an [HTTPS record](#https-records-experimental)): an address without a usable source
   address (no IPv6 route, say) goes last, then matching scope and label, the policy table's precedence (native IPv6
@@ -1011,15 +1012,27 @@ alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; de
   attempts silently costs 250 ms, not the request's connect timeout, which bounds all attempts together.
   `connectionAttemptDelay` takes 100 ms to 2 s, or `Duration.INFINITE` to try one address after another.
 - **HTTP/3.** QUIC handshakes race over the addresses in the same way, so a family that drops UDP costs one attempt
-  delay, also with `Http3DiscoveryMode.H3Only`; a cancelled handshake closes its connection. With `earlyData`, a QUIC
-  attempt that can send 0-RTT (a resumed session) wins at once. The [h3/h1 race](#racing-and-fallback) runs on top: each
+  delay, also with `Http3DiscoveryMode.H3Only`; a cancelled handshake closes its connection. With `earlyData` and a
+  session ticket for the server, the first address of the order can send 0-RTT at once and is used without a race:
+  its requests go out early, and if its handshake then fails they fail and fall back as any HTTP/3 failure does; the
+  other addresses are not tried for that setup. When every address fails, a server's CONNECTION_REFUSED counts as a
+  refusal (no broken mark) only when every address refused. The [h3/h1 race](#racing-and-fallback) runs on top: each
   side races the addresses of the request's one resolution. An `Alt-Svc` alternative's host and an HTTPS record's
   endpoint are raced the same way, and [connection migration](#connection-migration) follows the connection that won.
-- **IPv6-only networks (NAT64).** When the host has a global IPv6 address and no IPv4 route, the engine looks for the
-  network's NAT64 prefix (an AAAA query for `ipv4only.arpa`, RFC 7050, cached for its TTL and again on a new
-  `networkId`) and connects to IPv4 literals and IPv4-only names through it. It then asks for a name's IPv4 addresses
-  only when the IPv6 answer is empty, or 2 s after the last IPv6 attempt started without a connection (a broken AAAA
-  record). Platforms that translate IPv4 themselves (464XLAT: Android, iOS) have an IPv4 route and are left alone.
+- **IPv6-only networks (NAT64).** When the host has a global IPv6 address and no IPv4 route (464XLAT, as Android's
+  clatd and iOS on cellular run it, gives one, and the engine then leaves IPv4 to the platform), an IPv4 address the
+  host has no route to (an IPv4 literal, or a name with IPv4 addresses only) is reached through the network's NAT64:
+  on Apple platforms with the system's own synthesis (`getaddrinfo` of the literal, Apple's documented way, so an iPhone
+  on a NAT64 Wi-Fi uses the prefixes iOS knows), elsewhere with the prefix of an AAAA query for `ipv4only.arpa` (RFC
+  7050), asked only once an address needs it, cached for its TTL (at least a minute, refreshed in the background before
+  it ends, 30 s between failed queries) and forgotten on a new `networkId` or a new IPv6 network. Addresses with a route
+  (a LAN, a VPN, loopback) are used as they are, and the Well-Known Prefix `64:ff9b::/96` never carries a private
+  address (RFC 6052). The engine then asks for a name's IPv4 addresses only when the IPv6 answer is empty, or 2 s after
+  the last IPv6 attempt started without a connection (a broken AAAA record). Android takes no prefix from the system
+  (that needs a `ConnectivityManager`): where it runs no 464XLAT, the `ipv4only.arpa` query goes through its resolver.
+- **Caching.** An answer is kept as long as the JDK's own cache would keep it (`networkaddress.cache.ttl`, 30 s, and
+  `networkaddress.cache.negative.ttl`, 10 s by default; 2 s on Android), at most 1000 names and families; on
+  Kotlin/Native the system resolver's cache does it.
 
 ### Racing and fallback
 
@@ -1862,8 +1875,8 @@ that binds and connects the address `getaddrinfo` returned. So on every platform
   IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the JVM does. A host name is resolved to all its
   addresses and connected with Happy Eyeballs ([Happy Eyeballs](#happy-eyeballs)); HTTP/3 races the same addresses over
   QUIC.
-- Name lookups block a thread (`getaddrinfo`): at most 8 run at once, on their own share of `Dispatchers.IO`, and a name
-  has one lookup per address family in flight however many requests wait for it, so a stalled resolver cannot take the
+- Name lookups block a thread (`getaddrinfo`): at most 8 of each address family run at once, on their own share of
+  `Dispatchers.IO`, and a name has one lookup per address family in flight however many requests wait for it, so a stalled resolver cannot take the
   threads the sockets run on (threat model 3.21). An address literal is never looked up.
 
 HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint

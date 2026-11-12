@@ -360,12 +360,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (*experimental*, 250 ms; 100 ms to 2 s, or `Duration.INFINITE` for one address after another) or at once when an
   attempt failed, never within 10 ms of the last one; the first connection wins and the others are cancelled or
   closed. HTTP/3 races its QUIC handshakes over the same addresses, so a family that drops UDP costs one attempt
-  delay, `H3Only` included. On an IPv6-only network without 464XLAT the engine discovers the NAT64 prefix (RFC 7050)
-  and reaches IPv4 literals and IPv4-only names through it (RFC 6052), asking for IPv4 only when needed. The name is
+  delay, `H3Only` included; a server's CONNECTION_REFUSED at one address now moves on to the next, and counts as a
+  refusal (no broken mark) only when every address refused. On an IPv6-only network without 464XLAT, IPv4 addresses
+  the host has no route to (IPv4 literals, IPv4-only names) are reached through the network's NAT64 (RFC 6052): Apple's
+  own synthesis, elsewhere the prefix of RFC 7050 discovery, asked only when needed; IPv4 is asked for only when needed. The name is
   resolved once per request for both sides of the h3/h1 race, off the caller's thread and within the connect timeout.
-  On the JVM an application's own resolver (`InetAddressResolverProvider`, `jdk.net.hosts.file`) is still used, and
-  `java.net.preferIPv6Addresses` no longer orders the addresses. Native: `ksl_resolve` and `ksl_addr_info`, additive
-  under ABI 7.
+  On the JVM an application's own resolver (`InetAddressResolverProvider`, `jdk.net.hosts.file`) is still used, answers
+  are kept for the JDK's `networkaddress.cache.ttl` and `.negative.ttl`, and `java.net.preferIPv6Addresses` no longer
+  orders the addresses. Native: `ksl_resolve`, `ksl_addr_info` and `ksl_nat64_synthesize`, additive under ABI 7.
 - Ktor engines: WebSocket extension negotiation and frame checks (RFC 6455 sections 4.1, 5.2 and 9.1; RFC 7692
   section 6.1; `docs/guide/ktor.md`, "Client"). The client engine declares `WebSocketExtensionsCapability`, so Ktor's
   `WebSockets` plugin offers and negotiates the installed extensions over HTTP/1.1 and HTTP/3 (Ktor's JVM
@@ -640,8 +642,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   to (Happy Eyeballs), not only the first; on Kotlin/Native the addresses are tried 250 ms apart instead of one after the
   other. `connectionAttemptDelay = Duration.INFINITE` restores one address after another. HTTP/3 no longer connects to
   the first address only.
-- Ktor client: name lookups run at most 8 at a time on their own share of `Dispatchers.IO`, one per name and address
-  family however many requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
+- Ktor client: name lookups run at most 8 of each address family at a time on their own share of `Dispatchers.IO`, one
+  per name and address family however many requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
   is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
 
 ### Fixed
