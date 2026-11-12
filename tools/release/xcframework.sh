@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Kuicksilver.xcframework.zip for SwiftPM (docs/guide/ios.md, "Swift only"; docs/release.md, "Every release"): builds it
 # from samples/ios/kuicksilver-swift with -Pkuicksilver.version=<version>, checks its layout (two slices, the privacy
-# manifest in each framework, the dSYMs, the version in Info.plist), copies it to build/release/ and prints its SwiftPM
+# manifest and the licences in each framework, the dSYMs, the version in Info.plist), copies it to build/release/ and prints its SwiftPM
 # checksum, which `swift package compute-checksum` must agree with.
 #
 # The checksum is what the Swift package kuicksilver/kuicksilver-swift names for the release (tools/release/swift-package.sh,
@@ -40,6 +40,12 @@ check_layout() {
   for e in Kuicksilver.xcframework/Info.plist \
       Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/Kuicksilver \
       Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/PrivacyInfo.xcprivacy \
+      Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/LICENSE \
+      Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/NOTICE \
+      Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/licenses/LICENSE.openssl.txt \
+      Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/LICENSE \
+      Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/NOTICE \
+      Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/licenses/LICENSE.openssl.txt \
       Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/Info.plist \
       Kuicksilver.xcframework/ios-arm64/dSYMs/Kuicksilver.framework.dSYM/Contents/Info.plist \
       Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/Kuicksilver \

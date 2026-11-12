@@ -72,13 +72,24 @@ kotlin {
     }
 }
 
-// Apple reads a framework's privacy manifest from the framework bundle (the root of a shallow iOS bundle).
+// Apple reads a framework's privacy manifest from the framework bundle (the root of a shallow iOS bundle). The licences
+// travel with the framework into every app that embeds it: Kuicksilver's LICENSE and NOTICE, and the licence of the
+// OpenSSL linked into it, at the path NOTICE names (licenses/LICENSE.openssl.txt).
 val privacyManifest = rootProject.file("../../kuicksilver-native/apple/PrivacyInfo.xcprivacy")
+val licenceFiles = mapOf(
+    "LICENSE" to rootProject.file("../../LICENSE"),
+    "NOTICE" to rootProject.file("../../NOTICE"),
+    "licenses/LICENSE.openssl.txt" to rootProject.file("../../licenses/LICENSE.openssl.txt"),
+)
 tasks.matching { it.name.startsWith("assembleKuicksilver") && it.name.endsWith("XCFramework") }.configureEach {
     inputs.file(privacyManifest)
+    inputs.files(licenceFiles.values)
     doLast {
         outputs.files.files.flatMap { it.walkTopDown().filter { f -> f.isDirectory && f.name == "Kuicksilver.framework" }.toList() }
-            .forEach { privacyManifest.copyTo(it.resolve("PrivacyInfo.xcprivacy"), overwrite = true) }
+            .forEach { framework ->
+                privacyManifest.copyTo(framework.resolve("PrivacyInfo.xcprivacy"), overwrite = true)
+                licenceFiles.forEach { (path, file) -> file.copyTo(framework.resolve(path), overwrite = true) }
+            }
         // dsymutil records the absolute path of the linked binary in each dSYM; name it relative to the repository
         outputs.files.files.flatMap { it.walkTopDown().filter { f -> f.isFile && f.extension == "yml" && f.path.contains(".dSYM/") }.toList() }
             .forEach { it.writeText(it.readText().replace("$repositoryRoot/", "")) }
@@ -114,6 +125,9 @@ tasks.register<Zip>("zipKuicksilverXCFramework") {
     archiveFileName.set("Kuicksilver.xcframework.zip")
     destinationDirectory.set(layout.buildDirectory.dir("spm"))
     isPreserveFileTimestamps = false; isReproducibleFileOrder = true
+    // the same modes on every machine (a umask must not change the checksum): executables 755, everything else 644
+    dirPermissions { unix("755") }
+    eachFile { permissions { unix(if (file.canExecute()) "755" else "644") } }
     doLast {
         val zip = archiveFile.get().asFile
         val sha = MessageDigest.getInstance("SHA-256").digest(zip.readBytes()).joinToString("") { "%02x".format(it) }
