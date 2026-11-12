@@ -95,10 +95,10 @@ internal object DnsMessage {
     /**
      * Everything in the response [msg] to [qname]/[type] that the HTTPS record client uses: the records of the name after
      * its CNAME chain ([answers]), the negative-caching TTL of an answer without them (RFC 2308 section 5: the smaller of
-     * the SOA record's TTL and its MINIMUM, null without an SOA in the authority section), and the other records of
-     * [type] and the A/AAAA records the answer and additional sections carry for other names (RFC 9460 section 5: they
-     * "SHOULD be placed in cache before performing any follow-up queries"; an RRset of [type] that is malformed is left
-     * out, section 2.2). Throws as [answers], and [DnsFormatException] for a message over [MAX_MESSAGE] bytes.
+     * the SOA record's TTL and its MINIMUM, and no longer than a CNAME that led to the name without them; null without
+     * an SOA in the authority section), and the other records of [type] and the A/AAAA records the answer and additional
+     * sections carry for other names (RFC 9460 section 5: they "SHOULD be placed in cache before performing any follow-up
+     * queries"; an RRset of [type] that is malformed is left out, section 2.2). Throws as [answers], and [DnsFormatException] for a message over [MAX_MESSAGE] bytes.
      *
      * The work is linear in the message (the DNS is "an untrusted channel that might be controlled by an attacker", RFC
      * 9460 section 9.2.2): every name is looked at once, at most 16 CNAMEs are followed from one name and at most
@@ -190,13 +190,14 @@ internal object DnsMessage {
         if (flags and 0x0200 != 0) throw DnsException("truncated response (TC)")
         val rcode = flags and 0xf
         if (rcode != 0 && rcode != RCODE_NXDOMAIN) throw DnsException("RCODE $rcode")
-        // the CNAME chain from the name asked
+        // the CNAME chain from the name asked, also for NXDOMAIN and NODATA: what the answer says of the name asked holds
+        // only as long as every CNAME that led there (RFC 1035 section 3.2.1, RFC 2308 section 5)
         var name = want
         var chainTtl = Long.MAX_VALUE
         var hops = 0
         val chain = linkedSetOf(want)
         var ends = true // whether the chain ends at a name (no loop, not longer than MAX_CNAMES)
-        while (rcode != RCODE_NXDOMAIN && name !in found) {
+        while (name !in found) {
             val next = cnames[name] ?: break
             if (++hops > MAX_CNAMES) {
                 ends = false
@@ -216,7 +217,7 @@ internal object DnsMessage {
                 SvcbCodec.parseRdata(msg, rd.first, rd.last - rd.first + 1, owner, minOf(ttl, cap))
             }
         }
-        val records = if (ends) rrset(name) else emptyList()
+        val records = if (ends && rcode != RCODE_NXDOMAIN) rrset(name) else emptyList()
         // RFC 2181 section 5.4.1: of the other records only those the answer leads to are kept, the CNAME chain and the
         // TargetNames (and theirs, in turn); anything else in the sections could plant records for unrelated names. Each
         // name is looked at once (a work list), and at most MAX_RELATED RRsets are followed
@@ -258,7 +259,7 @@ internal object DnsMessage {
             addresses
                 .filter { (owner, l) -> owner in allowed && l.any { it.first.size == 4 } && l.any { it.first.size == 16 } }
                 .mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
-        return DnsAnswer(records, negativeTtl, related, addrs, chain)
+        return DnsAnswer(records, negativeTtl?.let { minOf(it, chainTtl) }, related, addrs, chain)
     }
 
     /**

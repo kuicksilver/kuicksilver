@@ -204,6 +204,22 @@ class DnsMessageTest {
         assertTrue(a.addresses.isEmpty(), "kept ${a.addresses.keys}")
     }
 
+    @Test fun negative_noRecordsThroughACnameLastNoLongerThanTheCname() { // RFC 2308 section 5, RFC 1035 section 3.2.1
+        val soa =
+            SvcbTestEncoder.name("ns.example") + SvcbTestEncoder.name("host.example") + hex("00000001 00000e10 00000384 00093a80 00000e10")
+        for (rcode in listOf(0, 3)) { // NODATA and NXDOMAIN at the end of the chain
+            val msg =
+                response("www.example", listOf(rr("www.example", 5, 60, SvcbTestEncoder.name("cdn.example")))).let {
+                    it.copyOf().also { m -> m[3] = (m[3].toInt() or rcode).toByte() }.also { m -> m[9] = 1 }
+                } + rr("example", 6, 900, soa)
+            val a = DnsMessage.read(msg, "www.example")
+            assertEquals(emptyList(), a.records)
+            assertEquals(60, a.negativeTtl, "rcode $rcode: the CNAME that led there expires after 60 s")
+        }
+        val direct = response("cdn.example", emptyList()).let { it.copyOf().also { m -> m[9] = 1 } } + rr("example", 6, 900, soa)
+        assertEquals(900, DnsMessage.read(direct, "cdn.example").negativeTtl)
+    }
+
     // ---- bounded work on hostile answers (RFC 9460 section 9.2.2: the DNS is "an untrusted channel")
 
     /**
