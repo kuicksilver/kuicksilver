@@ -134,6 +134,52 @@ class ServerH2ResponseTest {
             }
         }
 
+    /**
+     * The same for content in hand (`respondBytes` and the like): a content-length that does not match the array is caught
+     * before anything is sent. A content-length smaller than the array sends no DATA at all, only RST_STREAM
+     * INTERNAL_ERROR; so does a larger one.
+     */
+    @Test fun negative_bytesNotMatchingTheirLengthSendNoData() =
+        serverTest {
+            fun bytes(
+                declared: Long,
+                size: Int,
+            ) = object : io.ktor.http.content.OutgoingContent.ByteArrayContent() {
+                override val contentLength: Long = declared
+
+                override fun bytes(): ByteArray = ByteArray(size) { 'x'.code.toByte() }
+            }
+            val (server, port) =
+                h2TlsServer {
+                    routing {
+                        get("/smaller") { call.respond(bytes(declared = 3, size = 40_000)) }
+                        get("/larger") { call.respond(bytes(declared = 10, size = 5)) }
+                    }
+                }
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    for ((id, path) in listOf(1 to "/smaller", 3 to "/larger")) {
+                        raw.headers(id, RawH2Client.get(path))
+                        val frames = ArrayList<RawFrame>()
+                        withTimeout(10.seconds) {
+                            while (true) {
+                                val f = assertNotNull(raw.readFrame(), "$path: $frames")
+                                frames += f
+                                if (f.stream == id && (f.type == RawFrame.RST_STREAM || f.endStream)) break
+                            }
+                        }
+                        val end = frames.last()
+                        assertEquals(RawFrame.RST_STREAM, end.type, "$path: $frames")
+                        assertEquals(0x2L, end.errorCode, path) // INTERNAL_ERROR
+                        assertTrue(frames.none { it.stream == id && it.type == RawFrame.DATA }, "$path: DATA went out: $frames")
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     /** A call that ends without a response leaves no stream waiting: it is reset with INTERNAL_ERROR (RFC 9113 section 8.1). */
     @Test fun negative_callWithoutAResponseResetsItsStream() =
         serverTest {
