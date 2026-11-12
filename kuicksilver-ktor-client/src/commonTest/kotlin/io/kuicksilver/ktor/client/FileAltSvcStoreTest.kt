@@ -272,4 +272,27 @@ class FileAltSvcStoreTest {
         assertNull(FileAltSvcStore(damaged) { now }.networkId)
         assertEquals(1, FileAltSvcStore(damaged) { now }.get("https://a:443").size)
     }
+
+    /**
+     * The network line is no record: a file of 8000 records behind it keeps all 8000 (before, the line took the place of the
+     * last one). An id too long for its bound is not written, and the network is unknown after a restart.
+     */
+    @Test fun negative_networkLineDoesNotCostARecord() {
+        val p = tmp()
+        SystemFileSystem.sink(p).buffered().use { sink ->
+            sink.writeString("network\t${"wifi".encodeToByteArray().toHexString()}\n")
+            for (o in 0 until AltSvcCache.MAX_ORIGINS) {
+                for (k in 0 until AltSvcCache.MAX_ENTRIES_PER_ORIGIN) {
+                    sink.writeString(
+                        "https://o$o:443\th3\t\t${443 + k}\t${now + 60_000}\t0\n",
+                    )
+                }
+            }
+        }
+        val s = FileAltSvcStore(p) { now }
+        assertEquals("wifi", s.networkId)
+        assertEquals(AltSvcCache.MAX_ENTRIES_PER_ORIGIN, s.get("https://o${AltSvcCache.MAX_ORIGINS - 1}:443").size)
+        s.networkId = "n".repeat(256)
+        assertNull(FileAltSvcStore(p) { now }.networkId)
+    }
 }

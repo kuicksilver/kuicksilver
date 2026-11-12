@@ -5,9 +5,11 @@ package io.kuicksilver.ktor.client
 import io.ktor.util.date.getTimeMillis
 import io.ktor.util.logging.KtorSimpleLogger
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import kotlinx.io.Buffer
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlin.random.Random
 
@@ -82,8 +84,8 @@ public class FileAltSvcStore(
     }
 
     /**
-     * Kept in the file as its first line (`network`, a tab, the id's UTF-8 bytes in hex); a file without that line, or with a
-     * damaged one, has none.
+     * Kept in the file as its first line (`network`, a tab, the id's UTF-8 bytes in hex), when the id has at most 255 bytes; a
+     * file without that line, or with a damaged one, has none (and the network counts as unknown after a restart).
      */
     @ExperimentalKuicksilverApi
     override var networkId: String? = null
@@ -133,7 +135,8 @@ public class FileAltSvcStore(
         persisted = LinkedHashMap(map)
         val text =
             buildString {
-                networkId?.let { append("$NETWORK_RECORD\t${it.encodeToByteArray().toHexString()}\n") }
+                // an id too long for its line's bound is not kept on disk: after a restart the network counts as unknown
+                networkId?.encodeToByteArray()?.takeIf { it.size <= MAX_FIELD }?.let { append("$NETWORK_RECORD\t${it.toHexString()}\n") }
                 for ((origin, entries) in map) {
                     for (e in entries) {
                         append(
@@ -153,27 +156,25 @@ public class FileAltSvcStore(
         val lines =
             try {
                 SystemFileSystem.source(path).buffered().use { src ->
-                    // at most MAX_FILE_BYTES, which a full store (8000 records of bounded fields) never reaches: the records
-                    // of a longer file up to that point are read, the rest (and the line cut by the limit) is not
-                    val buf = ByteArray(MAX_FILE_BYTES)
-                    var n = 0
-                    while (n < buf.size) {
-                        val r = src.readAtMostTo(buf, n, buf.size)
-                        if (r < 0) break
-                        n += r
+                    // at most MAX_FILE_BYTES, as much as the file holds (no buffer of the limit's size up front), which a
+                    // full store never reaches: of a longer file the records up to the limit are read, not the line it cuts
+                    val b = Buffer()
+                    while (b.size < MAX_FILE_BYTES && src.readAtMostTo(b, MAX_FILE_BYTES - b.size) >= 0) {
+                        // reading
                     }
-                    val cut = n == buf.size && !src.exhausted()
-                    val all = buf.decodeToString(0, n).split('\n')
-                    (if (cut) all.dropLast(1) else all).take(maxLines).map { it.removeSuffix("\r") }
+                    val cut = b.size == MAX_FILE_BYTES.toLong() && !src.exhausted()
+                    val all = b.readString().split('\n').map { it.removeSuffix("\r") }
+                    if (cut) all.dropLast(1) else all
                 }
             } catch (_: Exception) {
                 return
             } // an unreadable file is an empty store
-        lines.firstOrNull()?.let { first ->
-            val f = first.split('\t')
-            if (f.size == 2 && f[0] == NETWORK_RECORD) networkId = networkOf(f[1])
-        }
-        for (line in lines) {
+        val records =
+            lines.firstOrNull()?.split('\t')?.takeIf { it.size == 2 && it[0] == NETWORK_RECORD }?.let { f ->
+                networkId = networkOf(f[1])
+                lines.drop(1) // the network line is no record: it does not cost the last one
+            } ?: lines
+        for (line in records.take(maxLines)) {
             val (origin, e) = recordOf(line) ?: continue
             if (e.expiresAtEpochMillis <= now) continue
             val had = map.remove(origin).orEmpty()
@@ -266,7 +267,11 @@ public class FileAltSvcStore(
          */
         private const val MAX_FIELD = 255
 
-        /** The most of a store file that is read: twice what 8000 records of bounded fields can take. */
+        /**
+         * The most of a store file that is read. A full store takes less: 8000 records of at most 810 bytes (an origin of 269,
+         * a protocol and a host of 255 each, a port, an expiry of 19 digits, the flag, 5 tabs and the line end), 6 480 000
+         * bytes, plus a network line of at most 519.
+         */
         internal const val MAX_FILE_BYTES: Int = 8 shl 20
     }
 }
