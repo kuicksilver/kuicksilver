@@ -10,6 +10,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "$(uname)" = Darwin ] || { echo "SKIP: ksl-resolve-fallback is macOS only"; exit 0; }
 command -v sandbox-exec >/dev/null 2>&1 || { echo "SKIP: sandbox-exec not found"; exit 0; }
+# a host where sandbox-exec cannot apply a profile (inside another sandbox, or Apple removed it) cannot run the check
+sandbox-exec -p '(version 1)(allow default)' /usr/bin/true >/dev/null 2>&1 ||
+    { echo "SKIP: sandbox-exec cannot apply a profile here"; exit 0; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT INT TERM HUP
 cat >"$tmp/main.c" <<'C'
 #include "ksl.h"
@@ -32,6 +35,8 @@ int main(void) {
     if (res)
         freeaddrinfo(res);
     check(rc != 0, "control: the fallback path is in use (AI_NUMERICSERV, no service fails)");
+    if (rc == 0)
+        printf("the profile no longer reaches the fallback, or Apple changed it: the checks below prove nothing\n");
     uint8_t out[KSL_RESOLVE_ENTRY_LEN * 8];
     size_t len = 0;
     static const uint8_t lo4[4] = {127, 0, 0, 1}, lo6[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
