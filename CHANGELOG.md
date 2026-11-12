@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- SwiftPM: Kuicksilver is a Swift package, [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift),
+  a repository without source code whose binary target is `Kuicksilver.xcframework.zip`, attached to every GitHub
+  release from 0.3.0 and signed with the release key. A Swift-only app adds
+  `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0"))` instead of building
+  the xcframework from a checkout (docs/guide/ios.md, "Swift only"). `tools/release/xcframework.sh` builds the zip
+  reproducibly (the same checksum from any checkout directory); `local-release.sh` builds it, signs it, lists it in the
+  provenance and prepares the package repository's next commit with its checksum (`tools/release/swift-package.sh`,
+  from `tools/release/swift-package/`), which the maintainer signs, tags `<version>` with the release key and pushes
+  after the GitHub release;
+  `verify-release.sh` checks that the package's `Package.swift` names the signed release asset. Each framework of the
+  xcframework carries Kuicksilver's `LICENSE` and `NOTICE` and OpenSSL's licence. `KuicksilverInfo.VERSION`
+  in the xcframework is now the version it was built as, not the `-SNAPSHOT` fallback.
+- CI: `.github/workflows/gradle-wrapper.yml` validates `gradle/wrapper/gradle-wrapper.jar` against the official Gradle
+  releases (Gradle's wrapper-validation action) on every push and pull request to `main` and `release/**`.
+
 - Documentation site: the API reference of the published modules (Dokka HTML, with module and package descriptions,
   source links to the release tag and links into the kotlinx-coroutines, kotlinx-io and Ktor references) and the guide
   as HTML, per version, at <https://kuicksilver.github.io/kuicksilver/> (`/<version>/api/`, `/<version>/guide/`,
@@ -424,6 +439,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   version it releases the release in preparation.
 
 ### Changed
+
+- Kotlin/Native klibs record source paths relative to the repository (`-Xklib-relative-path-base`) instead of the
+  absolute paths of the machine that built them, in their debug information and in the symbol names Kotlin/Native
+  derives from file paths, so a build no longer depends on (or reveals) the checkout directory.
+
+- Release provenance: from 0.3.0 the GitHub release carries `kuicksilver-<version>.intoto.jsonl`, an in-toto
+  attestation bundle (JSON Lines) whose one DSSE envelope holds the SLSA provenance statement and is signed by the release
+  key, instead of the bare statement `kuicksilver-<version>.intoto.json` of 0.2.1. `tools/verify/verify-release.sh`
+  checks the envelope's signature as well and still reads the 0.2.1 form (docs/release.md, "Build provenance").
 
 - HTTP/2 client: the first request on a new connection no longer waits for the server's SETTINGS (RFC 9113 §3.4), which
   saves one round trip per new connection. Only that request goes out before them: the other requests for the route wait

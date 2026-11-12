@@ -8,10 +8,13 @@
 #      good detached signature (.asc) by the release key, whose fingerprint is pinned here and in docs/release.md
 #      (tools/release/kuicksilver-release-key.asc, the key gradle/verification-metadata.xml trusts); Central's .sha1
 #      matches; a file that is listed but does not download, or has no .sha1, fails;
-#   2. supply chain: kuicksilver-<version>.intoto.json and kuicksilver-<version>-sbom.zip of the GitHub release are signed
-#      by the same key, every subject digest of the provenance matches the file from Central (and no Central file is left
-#      out), and its source commit is the commit of the verified tag. From 0.2.1 their absence fails; older releases have
-#      none (SKIPPED). No answer from GitHub fails for any version;
+#   2. supply chain: the provenance and kuicksilver-<version>-sbom.zip of the GitHub release are signed by the same key,
+#      every subject digest of the provenance matches the file from Central or the GitHub release (and no Central file is
+#      left out), and its source commit is the commit of the verified tag. From 0.3.0 the provenance is the in-toto bundle
+#      kuicksilver-<version>.intoto.jsonl, whose one DSSE envelope must also carry a good signature by the key over its
+#      PAE, and Kuicksilver.xcframework.zip is on the release, signed, a subject, and the file whose URL and checksum
+#      Package.swift of the Swift package kuicksilver/kuicksilver-swift names at its tag <version>; 0.2.1 and 0.2.x have the plain statement kuicksilver-<version>.intoto.json. From 0.2.1 their
+#      absence fails; older releases have none (SKIPPED). No answer from GitHub fails for any version;
 #   3. rebuild: the verified tag is exported with git archive, OpenSSL is fetched and verified as the release does it
 #      (tools/openssl/fetch.sh), and the native libraries this host can build are built with the tag's own scripts and
 #      compared byte for byte with the ones inside the published artifacts:
@@ -29,7 +32,8 @@
 # Usage: tools/verify/verify-release.sh <version> [options]
 #   --offline <dir>   no network for the artifacts: <dir> is a Maven repository (<dir>/io/kuicksilver/<artifactId>/<version>/,
 #                     with the .asc and, when present, .sha1 files; build/release/m2 of a signed release run is one: it has
-#                     no .sha1, and offline their absence is not reported) and <dir>/github/ holds the GitHub release files.
+#                     no .sha1, and offline their absence is not reported) and <dir>/github/ holds the GitHub release files
+#                     (from 0.3.0 <dir>/swift/Package.swift the Swift package's manifest at its tag).
 #                     For a rebuild, openssl-<v>.tar.gz and its .asc in <dir>/openssl/ keep that offline too, and the tag
 #                     must already be in this clone.
 #   --no-rebuild      steps 0 to 2 only.
@@ -40,7 +44,8 @@
 #   --allow-toolchain-drift   build targets whose Xcode or NDK is not the tag's pin.
 #   --work <dir>      work directory (default build/verify/<version>; downloads, the exported tag, builds, logs).
 # Env: KSL_VERIFY_CENTRAL (https://repo1.maven.org/maven2), KSL_VERIFY_GITHUB
-#      (https://github.com/kuicksilver/kuicksilver/releases/download), JOBS (OpenSSL make jobs, 4),
+#      (https://github.com/kuicksilver/kuicksilver/releases/download), KSL_VERIFY_SWIFT
+#      (https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift), JOBS (OpenSSL make jobs, 4),
 #      KSL_VERIFY_KEY + KSL_VERIFY_FPR (another key) and KSL_VERIFY_REPO (another clone for the tag): for the tests only
 #      (tools/verify/verify-release-test.sh); a warning says so on every run that sets them.
 # The script and the key file are those of your checkout: compare the fingerprint above with the one in README.md,
@@ -51,7 +56,9 @@ fpr=22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
 key="$root/tools/release/kuicksilver-release-key.asc"
 repo="$root"
 central="${KSL_VERIFY_CENTRAL:-https://repo1.maven.org/maven2}"; github="${KSL_VERIFY_GITHUB:-https://github.com/kuicksilver/kuicksilver/releases/download}"
+swift="${KSL_VERIFY_SWIFT:-https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift}"   # <swift>/refs/tags/<tag>/Package.swift
 first_with_provenance=0.2.1   # docs/release.md, "Supply chain": every release from 0.2.1 has both files
+first_with_bundle=0.3.0       # from 0.3.0: kuicksilver-<v>.intoto.jsonl (DSSE envelope) and Kuicksilver.xcframework.zip
 
 usage() { sed -n '4,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 version=""; offline=""; rebuild=1; rebuilt=""; targets=""; drift=0; work=""
@@ -212,10 +219,15 @@ done
 # ------------------------------------------------------------------------------------------------ 2. SBOM, provenance
 echo "-- GitHub release: SBOM and provenance"
 ghd="${offline:+$offline/github}"; ghd="${ghd:-$work/github}"
-prov="kuicksilver-$version.intoto.json"; sbom="kuicksilver-$version-sbom.zip"
+sbom="kuicksilver-$version-sbom.zip"; xcf=""
+if ver_ge "$version" "$first_with_bundle"; then prov="kuicksilver-$version.intoto.jsonl"; xcf=Kuicksilver.xcframework.zip
+else prov="kuicksilver-$version.intoto.json"; fi
 noanswer=""
 if [ -z "$offline" ]; then
-  for f in "$prov" "$prov.asc" "$sbom" "$sbom.asc"; do fetch "$github/v$version/$f" "$ghd/$f"; [ $? != 2 ] || noanswer="$noanswer $f"; done
+  for f in "$prov" "$prov.asc" "$sbom" "$sbom.asc" ${xcf:+"$xcf" "$xcf.asc"}; do
+    rm -f "$ghd/$f"   # a file from an earlier run of the work directory must not stand in for a 404 now
+    fetch "$github/v$version/$f" "$ghd/$f"; [ $? != 2 ] || noanswer="$noanswer $f"
+  done
 fi
 if [ -n "$noanswer" ]; then
   for f in $noanswer; do res FAIL provenance "github/$f" "no answer from $github (not a 404): cannot tell whether it exists"; done
@@ -223,20 +235,59 @@ elif [ ! -f "$ghd/$prov" ] && [ ! -f "$ghd/$sbom" ] && ! ver_ge "$version" "$fir
   res SKIPPED provenance "$prov" "not on the GitHub release v$version (releases before $first_with_provenance have none)"
 else
   prov_ok=1
-  for f in "$prov" "$sbom"; do
+  for f in "$prov" "$sbom" ${xcf:+"$xcf"}; do
     if [ ! -f "$ghd/$f" ]; then res FAIL provenance "github/$f" "not on the GitHub release v$version"; [ "$f" = "$sbom" ] || prov_ok=0
     elif [ ! -f "$ghd/$f.asc" ]; then res FAIL signature "github/$f" "no .asc"; [ "$f" = "$sbom" ] || prov_ok=0
     elif sig_ok "$ghd/$f" "$ghd/$f.asc"; then res OK signature "github/$f"
     else res FAIL signature "github/$f" "not a good signature by $fpr"; [ "$f" = "$sbom" ] || prov_ok=0; fi
   done
+  stmt="$ghd/$prov"; prov_why=""
+  if [ "$prov_ok" = 1 ] && [ -n "$xcf" ]; then
+    # the in-toto bundle: JSON Lines, unrecognised lines ignored, exactly one DSSE envelope of a SLSA provenance Statement,
+    # signed by the release key over its PAE (DSSEv1 SP len(type) SP type SP len(body) SP body)
+    dd="$work/dsse"; rm -rf "$dd"; mkdir -p "$dd"
+    env_state=$(python3 - "$ghd/$prov" "$dd" <<'PY'
+import base64, binascii, json, os, sys
+src, out = sys.argv[1:3]
+found = []
+for i, line in enumerate(open(src, "rb").read().split(b"\n"), 1):
+    if not line.strip(): continue
+    try: o = json.loads(line)
+    except ValueError as e: print(f"line {i} is not JSON ({e})"); sys.exit()
+    if not isinstance(o, dict) or o.get("payloadType") != "application/vnd.in-toto+json" or not isinstance(o.get("payload"), str): continue
+    try: body = base64.b64decode(o["payload"], validate=True); st = json.loads(body)
+    except (binascii.Error, ValueError): continue
+    if isinstance(st, dict) and st.get("_type") == "https://in-toto.io/Statement/v1" and st.get("predicateType") == "https://slsa.dev/provenance/v1":
+        found.append((o, body))
+if len(found) != 1: print(f"{len(found)} DSSE envelopes of a SLSA provenance statement, not exactly one"); sys.exit()
+o, body = found[0]
+t = o["payloadType"].encode()
+open(os.path.join(out, "statement.json"), "wb").write(body)
+open(os.path.join(out, "pae"), "wb").write(b"DSSEv1 %d %s %d %s" % (len(t), t, len(body), body))
+n = 0
+for s in o.get("signatures") or []:
+    try: raw = base64.b64decode(s.get("sig", ""), validate=True)
+    except (binascii.Error, AttributeError): continue
+    if raw: open(os.path.join(out, f"sig-{n}"), "wb").write(raw); n += 1
+print(f"READY {n}")
+PY
+)
+    case "$env_state" in
+      "READY 0") res FAIL signature "github/$prov (DSSE envelope)" "the envelope carries no signature"; prov_ok=0 ;;
+      READY*) good=0; for sg in "$dd"/sig-*; do sig_ok "$dd/pae" "$sg" && good=1; done
+        if [ "$good" = 1 ]; then res OK signature "github/$prov (DSSE envelope)"; stmt="$dd/statement.json"
+        else res FAIL signature "github/$prov (DSSE envelope)" "no good signature by $fpr over the envelope's PAE"; prov_ok=0; fi ;;
+      *) res FAIL provenance "github/$prov" "not an in-toto bundle of the provenance: $env_state"; prov_ok=0; prov_why="it is not a provenance bundle" ;;
+    esac
+  fi
   if [ "$prov_ok" = 0 ]; then
-    [ ! -f "$ghd/$prov" ] || res SKIPPED provenance "subjects of $prov" "its signature is not good: its contents are not used"
+    [ ! -f "$ghd/$prov" ] || res SKIPPED provenance "subjects of $prov" "${prov_why:-its signature is not good}: its contents are not used"
   else
     # subjects against the files; every Central file must be a subject; the source commit against the verified tag
     while IFS='|' read -r st check subject detail; do res "$st" "$check" "$subject" "$detail"
-    done < <(python3 - "$ghd/$prov" "$m2" "$ghd" "$version" "$([ "$tag_ok" = 1 ] && echo "$tag_commit")" <<'PY'
+    done < <(python3 - "$stmt" "$m2" "$ghd" "$version" "$([ "$tag_ok" = 1 ] && echo "$tag_commit")" "$prov" <<'PY'
 import hashlib, json, os, re, sys
-prov, m2, ghd, version, tag = sys.argv[1:6]
+prov, m2, ghd, version, tag, prov_name = sys.argv[1:7]
 def sha(p):
     h = hashlib.sha256()
     with open(p, "rb") as f:
@@ -246,7 +297,7 @@ try:
     st = json.load(open(prov, encoding="utf-8"))
     subj = st["subject"]
 except Exception as e:
-    print(f"FAIL|provenance|{os.path.basename(prov)}|unreadable: {e}"); sys.exit()
+    print(f"FAIL|provenance|{prov_name}|unreadable: {e}"); sys.exit()
 names = set()
 for s in subj:
     name, want = str(s.get("name", "")), str(s.get("digest", {}).get("sha256", ""))
@@ -274,6 +325,25 @@ elif src == tag: print(f"OK|provenance|source commit {src[:12]}|the commit of ta
 else: print(f"DIFF|provenance|source commit {src[:12]}|tag v{version} is {tag[:12]}")
 PY
 )
+  fi
+  # SwiftPM: the Swift package kuicksilver/kuicksilver-swift at its tag <version> must name this very zip (the signed
+  # release asset and provenance subject checked above), or `.package(url:from:)` gives users another file or fails
+  if [ -n "$xcf" ] && [ -f "$ghd/$xcf" ]; then
+    want_url="https://github.com/kuicksilver/kuicksilver/releases/download/v$version/$xcf"
+    pkgf="${offline:+$offline/swift/Package.swift}"; pkgf="${pkgf:-$work/swift/Package.swift}"; prc=0
+    # the tag, never a branch of that name; a manifest from an earlier run must not stand in for a 404 now
+    [ -n "$offline" ] || { rm -f "$pkgf"; fetch "$swift/refs/tags/$version/Package.swift" "$pkgf"; prc=$?; }
+    if [ "$prc" = 2 ]; then res FAIL swiftpm "kuicksilver-swift $version" "no answer from $swift"
+    elif [ "$prc" = 1 ] || [ ! -f "$pkgf" ]; then res FAIL swiftpm "kuicksilver-swift $version" "no tag $version in the Swift package (no Package.swift there)"
+    else
+      # strings from the manifest are printed: no control characters (a terminal escape in a crafted Package.swift), bounded
+      p_url=$(sed -n 's/^ *url: "\(.*\)",$/\1/p' "$pkgf" | head -1 | LC_ALL=C tr -d '[:cntrl:]' | cut -c1-300)
+      p_sum=$(sed -n 's/^ *checksum: "\([^"]*\)"$/\1/p' "$pkgf" | head -1 | LC_ALL=C tr -d '[:cntrl:]' | cut -c1-64)
+      have=$( (sha256sum "$ghd/$xcf" 2>/dev/null || shasum -a 256 "$ghd/$xcf") | cut -d' ' -f1)
+      if [ "$p_url" != "$want_url" ]; then res DIFF swiftpm "kuicksilver-swift $version" "Package.swift names ${p_url:-no url}, not $want_url"
+      elif [ "$p_sum" = "$have" ]; then res OK swiftpm "kuicksilver-swift $version" "Package.swift names github/$xcf, checksum ${have:0:16}"
+      else res DIFF swiftpm "kuicksilver-swift $version" "Package.swift names checksum ${p_sum:0:16}, github/$xcf is ${have:0:16}"; fi
+    fi
   fi
 fi
 

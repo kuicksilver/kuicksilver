@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of tools/verify/verify-release.sh on fixtures, without network. A fixture is a Maven repository of a
 # made-up version (a BOM naming kuicksilver-native, whose Gradle module file names a jar, an AAR and a cinterop klib
-# carrying stand-in native libraries), its GitHub release files (an in-toto statement whose subjects are those files, an
-# SBOM zip), a directory of "rebuilt" libraries (--rebuilt) and a throwaway git repository with the signed tag
+# carrying stand-in native libraries), its GitHub release files (the provenance whose subjects are those files: from
+# 0.3.0 an in-toto bundle with one DSSE envelope, before it a plain statement; an SBOM zip; from 0.3.0 a stand-in
+# Kuicksilver.xcframework.zip, and the Swift package's Package.swift naming it), a directory of "rebuilt" libraries (--rebuilt) and a throwaway git repository with the signed tag
 # (KSL_VERIFY_REPO), all signed with a throwaway key handed to the script through KSL_VERIFY_KEY/KSL_VERIFY_FPR. Each case
 # copies the fixture, breaks one thing and expects an exit code and the lines the report must (and must not) contain.
 # The offline cases read the copy with --offline; the online cases go through a curl stub that serves the copy as
@@ -18,7 +19,7 @@ trap 'for h in "$tmp"/gpg-*; do gpgconf --homedir "$h" --kill all >/dev/null 2>&
 sha1() { (sha1sum "$1" 2>/dev/null || shasum -a 1 "$1") | cut -d' ' -f1; }
 
 # curl: https://central.invalid/maven2/<path> is $STUB_CENTRAL/<path> (a directory gives an HTML listing),
-# https://github.invalid/dl/v<version>/<file> is $STUB_GITHUB/<file>; a URL matching $STUB_NOANSWER gets no answer (000,
+# https://github.invalid/dl/v<version>/<file> is $STUB_GITHUB/<file>, https://swift.invalid/refs/tags/<tag>/<file> is $STUB_SWIFT/<file>; a URL matching $STUB_NOANSWER gets no answer (000,
 # exit 7), one matching $STUB_404 a 404; $STUB_LISTING_EXTRA is added to every listing; anything else is a test bug and gets no answer
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/curl" <<'PY'
@@ -43,9 +44,11 @@ def answer(code, body=None, path=None):
 if os.environ.get("STUB_NOANSWER") and re.search(os.environ["STUB_NOANSWER"], url): answer("000")
 if os.environ.get("STUB_404") and re.search(os.environ["STUB_404"], url): answer("404")
 for prefix, base, flat in (("https://central.invalid/maven2/", os.environ.get("STUB_CENTRAL"), False),
-                           ("https://github.invalid/dl/", os.environ.get("STUB_GITHUB"), True)):
+                           ("https://github.invalid/dl/", os.environ.get("STUB_GITHUB"), True),
+                           ("https://swift.invalid/", os.environ.get("STUB_SWIFT"), True)):
     if base and url.startswith(prefix):
         rel = url[len(prefix):]
+        if prefix == "https://swift.invalid/" and not rel.startswith("refs/tags/"): answer("404")   # tags only, never a branch
         p = os.path.join(base, os.path.basename(rel) if flat else rel)
         if rel.endswith("/") and os.path.isdir(p):
             extra = [os.environ["STUB_LISTING_EXTRA"]] if os.environ.get("STUB_LISTING_EXTRA") else []
@@ -71,7 +74,10 @@ gpg --homedir "$tmp/gpg-test" --batch --armor --export "$fpr" > "$tmp/test-key.a
 # the git repository with the tags: v9.9.9 signed by the test key, v9.9.8 by the other key
 git init -q "$tmp/git"; git -C "$tmp/git" config user.email t@example.invalid; git -C "$tmp/git" config user.name t
 git -C "$tmp/git" config commit.gpgsign false; git -C "$tmp/git" config core.hooksPath /dev/null
-echo x > "$tmp/git/f"; git -C "$tmp/git" add f; git -C "$tmp/git" commit -qm x
+echo x > "$tmp/git/f"
+printf 'xcframework stand-in\n' > "$tmp/xcframework.zip"
+xcf_sum=$( (sha256sum "$tmp/xcframework.zip" 2>/dev/null || shasum -a 256 "$tmp/xcframework.zip") | cut -d' ' -f1)
+git -C "$tmp/git" add f; git -C "$tmp/git" commit -qm x
 commit=$(git -C "$tmp/git" rev-parse HEAD)
 GNUPGHOME="$tmp/gpg-test" git -C "$tmp/git" -c gpg.format=openpgp -c gpg.program=gpg -c user.signingkey="$fpr" tag -s v9.9.9 -m t
 GNUPGHOME="$tmp/gpg-other" git -C "$tmp/git" -c gpg.format=openpgp -c gpg.program=gpg -c user.signingkey="$other" tag -s v9.9.8 -m t
@@ -87,6 +93,25 @@ cp "$rb/android/arm64-v8a/libksl.so" "$x/jni/arm64-v8a/"
 cp "$rb/klib/macos_arm64"/*.a "$x/default/targets/macos_arm64/included/"
 printf '{"cyclonedx":"stand-in"}\n' > "$x/bom.cdx.json"
 
+envelope() { # <statement.json> <out.intoto.jsonl> [<key name>]: the in-toto bundle as the release writes it
+  # (tools/release/dsse.py, an armored signature over the PAE), after an unrecognised line the verifier must ignore
+  python3 "$here/../release/dsse.py" payload "$1" "$2.payload" "$2.pae" >/dev/null || return 1
+  gpg --homedir "$tmp/gpg-${3:-test}" --batch --pinentry-mode loopback --passphrase '' --armor --detach-sign -o "$2.pae.asc" "$2.pae"
+  python3 "$here/../release/dsse.py" envelope "$2.payload" "$2.env" --sig "$2.pae.asc" --keyid test >/dev/null || return 1
+  { echo '{"note":"an unrecognised line, ignored"}'; cat "$2.env"; } > "$2"
+  rm -f "$2.pae" "$2.pae.asc" "$2.payload" "$2.env"
+}
+statement() { # <in-toto bundle>: its Statement, pretty, on stdout
+  python3 -c 'import base64,json,sys
+for l in open(sys.argv[1]):
+    o = json.loads(l)
+    if "payload" in o: print(json.dumps(json.loads(base64.b64decode(o["payload"])), indent=1))' "$1"
+}
+restate() { # <bundle> <python on s, the Statement>: changes the Statement and signs the envelope and the file again
+  statement "$1" > "$1.st"; python3 -c "import json,sys; s=json.load(open(sys.argv[1])); $2; json.dump(s,open(sys.argv[1],'w'))" "$1.st"
+  envelope "$1.st" "$1"; rm -f "$1.st"; sign test "$1"
+}
+ver_ge() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
 fixture() { # <version> <dir> <source commit of the provenance>
   local v="$1" fx="$2" m="$2/io/kuicksilver" f
   mk() { mkdir -p "$m/$1/$v"; printf '%s' "$m/$1/$v/$1-$v$2"; }
@@ -97,7 +122,11 @@ fixture() { # <version> <dir> <source commit of the provenance>
   printf '<project><dependencyManagement><dependencies><dependency><groupId>io.kuicksilver</groupId><artifactId>kuicksilver-native</artifactId><version>%s</version></dependency></dependencies></dependencyManagement></project>\n' "$v" > "$(mk kuicksilver-bom .pom)"
   printf '{"variants":[{"name":"a","available-at":{"url":"../../kuicksilver-native-jvm/%s/kuicksilver-native-jvm-%s.module"}},{"name":"b","available-at":{"url":"../../kuicksilver-native-android/%s/kuicksilver-native-android-%s.module"}},{"name":"c","available-at":{"url":"../../kuicksilver-native-macosarm64/%s/kuicksilver-native-macosarm64-%s.module"}}]}\n' "$v" "$v" "$v" "$v" "$v" "$v" > "$(mk kuicksilver-native .module)"
   (cd "$x" && zip -q "$fx/github/kuicksilver-$v-sbom.zip" bom.cdx.json)
-  python3 - "$fx" "$v" "$3" > "$fx/github/kuicksilver-$v.intoto.json" <<'PY'
+  if ver_ge "$v" 0.3.0; then   # the release asset, and the Swift package's manifest at its tag naming it
+    cp "$tmp/xcframework.zip" "$fx/github/Kuicksilver.xcframework.zip"; mkdir -p "$fx/swift"
+    printf '        .binaryTarget(\n            name: "Kuicksilver",\n            url: "https://github.com/kuicksilver/kuicksilver/releases/download/v%s/Kuicksilver.xcframework.zip",\n            checksum: "%s"\n        ),\n' "$v" "$xcf_sum" > "$fx/swift/Package.swift"
+  fi
+  python3 - "$fx" "$v" "$3" > "$fx/statement.json" <<'PY'
 import hashlib, json, os, sys
 fx, v, commit = sys.argv[1:4]
 subj = []
@@ -106,16 +135,22 @@ for d, _, fs in os.walk(os.path.join(fx, "io")):
         p = os.path.join(d, f); subj.append({"name": os.path.relpath(p, fx), "digest": {"sha256": hashlib.sha256(open(p, "rb").read()).hexdigest()}})
 z = os.path.join(fx, "github", f"kuicksilver-{v}-sbom.zip")
 subj.append({"name": os.path.basename(z), "digest": {"sha256": hashlib.sha256(open(z, "rb").read()).hexdigest()}})
+z = os.path.join(fx, "github", "Kuicksilver.xcframework.zip")
+if os.path.isfile(z): subj.append({"name": os.path.basename(z), "digest": {"sha256": hashlib.sha256(open(z, "rb").read()).hexdigest()}})
 src = {"uri": "git+https://github.com/kuicksilver/kuicksilver", "digest": {"gitCommit": commit}}
 print(json.dumps({"_type": "https://in-toto.io/Statement/v1", "subject": sorted(subj, key=lambda s: s["name"]),
                   "predicateType": "https://slsa.dev/provenance/v1",
                   "predicate": {"buildDefinition": {"externalParameters": {"source": src, "version": v}}}}, indent=1))
 PY
+  if ver_ge "$v" 0.3.0; then envelope "$fx/statement.json" "$fx/github/kuicksilver-$v.intoto.jsonl"
+  else mv "$fx/statement.json" "$fx/github/kuicksilver-$v.intoto.json"; fi
+  rm -f "$fx/statement.json"
   for f in $(cd "$fx" && find io -type f); do sign test "$fx/$f"; sha1 "$fx/$f" > "$fx/$f.sha1"; done
   for f in "$fx/github"/*; do sign test "$f"; done
 }
 fixture 9.9.9 "$tmp/fx-9.9.9" "$commit"
 fixture 9.9.8 "$tmp/fx-9.9.8" "$commit"
+fixture 0.2.5 "$tmp/fx-0.2.5" "$commit"   # 0.2.x: a plain statement, kuicksilver-<v>.intoto.json, no xcframework
 fixture 0.1.9 "$tmp/fx-0.1.9" "$commit"; rm -r "$tmp/fx-0.1.9/github"   # before 0.2.1: no SBOM or provenance
 
 pass=0; fail=0
@@ -128,7 +163,8 @@ t() { # [V=<version>] [ONLINE=1] [PINNED=1] [NOREBUILT=1] t <name> <expected exi
   [ "${PINNED:-0}" = 1 ] && env=(-u KSL_VERIFY_KEY -u KSL_VERIFY_FPR KSL_VERIFY_REPO="$tmp/git")
   local mode=(--offline "$c/repo")
   [ "${ONLINE:-0}" = 1 ] && { mode=(); env+=(KSL_VERIFY_CENTRAL=https://central.invalid/maven2 KSL_VERIFY_GITHUB=https://github.invalid/dl
-                                            STUB_CENTRAL="$c/repo" STUB_GITHUB="$c/repo/github"); }
+                                            STUB_CENTRAL="$c/repo" STUB_GITHUB="$c/repo/github"
+                                            KSL_VERIFY_SWIFT=https://swift.invalid STUB_SWIFT="$c/repo/swift"); }
   local out rc why="" given=(--rebuilt "$c/rebuilt"); [ "${NOREBUILT:-0}" = 1 ] && given=()
   out=$(cd "$c" && env "${env[@]}" bash "$script" "$v" ${mode[@]+"${mode[@]}"} \
     ${given[@]+"${given[@]}"} --targets macos-arm64,android-arm64 --work "$c/work" "$@" 2>&1); rc=$?
@@ -147,7 +183,7 @@ jar="repo/io/kuicksilver/kuicksilver-native-jvm/9.9.9/kuicksilver-native-jvm-9.9
 aar="repo/io/kuicksilver/kuicksilver-native-android/9.9.9/kuicksilver-native-android-9.9.9.aar"
 bom="repo/io/kuicksilver/kuicksilver-bom/9.9.9/kuicksilver-bom-9.9.9.pom"
 mod="repo/io/kuicksilver/kuicksilver-native/9.9.9/kuicksilver-native-9.9.9.module"
-prov="repo/github/kuicksilver-9.9.9.intoto.json"
+prov="repo/github/kuicksilver-9.9.9.intoto.jsonl"; xcf="repo/github/Kuicksilver.xcframework.zip"
 flip() { python3 -c 'import sys; p=sys.argv[1]; b=bytearray(open(p,"rb").read()); b[len(b)//2]^=1; open(p,"wb").write(b)' "$1"; }
 resign() { sign test "$1"; sha1 "$1" > "$1.sha1"; }
 
@@ -155,7 +191,10 @@ resign() { sign test "$1"; sha1 "$1" > "$1.sha1"; }
 t "good release"                       0 ':' \
   '+^OK +tag +v9.9.9 +\(commit [0-9a-f]{40}, signed by' \
   '+^OK +signature +io/kuicksilver/kuicksilver-native-jvm/9.9.9/kuicksilver-native-jvm-9.9.9.jar' \
-  '+^OK +signature +github/kuicksilver-9.9.9.intoto.json' '+^OK +provenance +io/kuicksilver/kuicksilver-native-android/9.9.9/' \
+  '+^OK +signature +github/kuicksilver-9.9.9.intoto.jsonl$' '+^OK +signature +github/kuicksilver-9.9.9.intoto.jsonl \(DSSE envelope\)' \
+  '+^OK +signature +github/Kuicksilver.xcframework.zip' '+^OK +provenance +Kuicksilver.xcframework.zip' \
+  '+^OK +swiftpm +kuicksilver-swift 9.9.9 +\(Package.swift names github/Kuicksilver.xcframework.zip, checksum [0-9a-f]{16}\)' \
+  '+^OK +provenance +io/kuicksilver/kuicksilver-native-android/9.9.9/' \
   '+^OK +provenance +source commit [0-9a-f]{12} +\(the commit of tag v9.9.9\)' \
   '+^OK +rebuild +jni/osx-aarch_64/libksl_7_osx_aarch_64.dylib' '+^OK +rebuild +android/arm64-v8a/libksl.so' \
   '+^OK +rebuild +klib/macos_arm64/libcrypto.a' '+^SKIPPED +rebuild +jni/linux-x86_64' \
@@ -173,8 +212,29 @@ t "rebuilt library differs by a byte"  1 'flip rebuilt/android/arm64-v8a/libksl.
 t "signature by another key"           1 "rm $aar.asc; gpg --homedir $tmp/gpg-other --batch --armor --detach-sign -o $aar.asc $aar" \
   '+^FAIL +signature +.*kuicksilver-native-android-9.9.9.aar +\(not a good signature' '+^OK +rebuild +android/arm64-v8a'
 t "provenance signed by another key"   1 "rm $prov.asc; gpg --homedir $tmp/gpg-other --batch --armor --detach-sign -o $prov.asc $prov" \
-  '+^FAIL +signature +github/kuicksilver-9.9.9.intoto.json' '+^SKIPPED +provenance +subjects of .* +\(its signature is not good' \
-  '-^OK +provenance'
+  '+^FAIL +signature +github/kuicksilver-9.9.9.intoto.jsonl' '+^SKIPPED +provenance +subjects of .* +\(its signature is not good' \
+  '-^OK +provenance' '-DSSE envelope'
+t "envelope signed by another key"     1 "statement $prov > st.json; envelope st.json $prov other; sign test $prov" \
+  '+^OK +signature +github/kuicksilver-9.9.9.intoto.jsonl$' \
+  '+^FAIL +signature +github/kuicksilver-9.9.9.intoto.jsonl \(DSSE envelope\) +\(no good signature' \
+  '+^SKIPPED +provenance +subjects of' '-^OK +provenance'
+t "envelope without a signature"       1 "python3 -c 'import json,sys; p=sys.argv[1]; ls=[json.loads(l) for l in open(p)]; ls[-1][\"signatures\"]=[]; open(p,\"w\").write(\"\".join(json.dumps(l)+chr(10) for l in ls))' $prov; sign test $prov" \
+  '+^FAIL +signature +github/kuicksilver-9.9.9.intoto.jsonl \(DSSE envelope\) +\(the envelope carries no signature' '-^OK +provenance'
+t "bundle with two provenance envelopes" 1 "tail -1 $prov >> $prov; sign test $prov" \
+  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.jsonl +\(not an in-toto bundle of the provenance: 2 DSSE' '-^OK +provenance'
+t "bundle that is one pretty-printed statement" 1 "statement $prov > $prov.st; mv $prov.st $prov; sign test $prov" \
+  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.jsonl +\(not an in-toto bundle of the provenance: line [0-9]+ is not JSON' '+^SKIPPED +provenance +subjects of .* +\(it is not a provenance bundle' '-^OK +provenance'
+t "xcframework differs from the Swift package's checksum" 1 "printf 'other\\\\n' > $xcf; sign test $xcf" \
+  '+^OK +signature +github/Kuicksilver.xcframework.zip' '+^DIFF +provenance +Kuicksilver.xcframework.zip' \
+  '+^DIFF +swiftpm +kuicksilver-swift 9.9.9 +\(Package.swift names checksum [0-9a-f]{16}, github/Kuicksilver.xcframework.zip is'
+t "xcframework missing"                1 "rm $xcf $xcf.asc" \
+  '+^FAIL +provenance +github/Kuicksilver.xcframework.zip +\(not on the GitHub release v9.9.9\)' '-swiftpm'
+t "Swift package not tagged 9.9.9"      1 "rm -r repo/swift" \
+  '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no tag 9.9.9 in the Swift package' '+^OK +provenance +Kuicksilver.xcframework.zip'
+t "Swift package names another release's zip" 1 "sed -i.bak 's#/v9.9.9/#/v9.9.8/#' repo/swift/Package.swift; rm repo/swift/Package.swift.bak" \
+  '+^DIFF +swiftpm +kuicksilver-swift 9.9.9 +\(Package.swift names https://github.com/kuicksilver/kuicksilver/releases/download/v9.9.8/'
+V=0.2.5 t "0.2.x: the plain statement, no xcframework" 0 ':' \
+  '+^OK +signature +github/kuicksilver-0.2.5.intoto.json$' '+^OK +provenance +kuicksilver-0.2.5-sbom.zip' '-xcframework' '-DSSE' '-^(DIFF|FAIL)' -- --no-rebuild
 t "missing signature"                  1 "rm $jar.asc" '+^FAIL +signature +.*kuicksilver-native-jvm-9.9.9.jar +\(no \.asc\)'
 t "missing artifact"                   1 "rm $aar $aar.asc $aar.sha1" \
   '+^FAIL +provenance +.*kuicksilver-native-android-9.9.9.aar +\(a subject of the provenance, missing here' \
@@ -184,16 +244,16 @@ t "published file not in the provenance" 1 "cp $jar ${jar%.jar}-extra.jar; cp $j
 t "wrong .sha1"                        1 "echo 0000000000000000000000000000000000000000 > $aar.sha1" '+^DIFF +sha1 +.*\.aar'
 t "missing rebuilt library"            1 'rm rebuilt/klib/macos_arm64/libssl.a' '+^FAIL +rebuild +klib/macos_arm64/libssl.a +\(the rebuild produced no'
 t "0.2.1 or later without GitHub release files" 1 'rm -r repo/github' \
-  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.json +\(not on the GitHub release v9.9.9\)' \
+  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.jsonl +\(not on the GitHub release v9.9.9\)' \
   '+^FAIL +provenance +github/kuicksilver-9.9.9-sbom.zip' '-^SKIPPED +provenance'
 V=0.1.9 t "before 0.2.1: no GitHub release files is not a failure" 0 ':' \
   '+^SKIPPED +provenance +kuicksilver-0.1.9.intoto.json +\(not on the GitHub release v0.1.9 \(releases before 0.2.1' \
   '+^SKIPPED +tag +v0.1.9 +\(not in this clone' '-^(DIFF|FAIL)'
 t "provenance names another commit than the verified tag" 1 \
-  "python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s[\"predicate\"][\"buildDefinition\"][\"externalParameters\"][\"source\"][\"digest\"][\"gitCommit\"]=\"1\"*40; json.dump(s,open(p,\"w\"))' $prov; sign test $prov" \
+  "restate $prov 's[\"predicate\"][\"buildDefinition\"][\"externalParameters\"][\"source\"][\"digest\"][\"gitCommit\"]=\"1\"*40'" \
   '+^DIFF +provenance +source commit 111111111111 +\(tag v9.9.9 is [0-9a-f]{12}\)'
 t "provenance subject with a traversal name" 1 \
-  "python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s[\"subject\"].append({\"name\":\"../../../etc/passwd\",\"digest\":{\"sha256\":\"0\"}}); json.dump(s,open(p,\"w\"))' $prov; sign test $prov" \
+  "restate $prov 's[\"subject\"].append({\"name\":\"../../../etc/passwd\",\"digest\":{\"sha256\":\"0\"}})'" \
   "+^FAIL +provenance +'../../../etc/passwd' +\\(not a plain relative path"
 V=9.9.8 t "tag signed by another key"  1 ':' '+^FAIL +tag +v9.9.8 +\(commit [0-9a-f]{40}, not a good signature' \
   '+^SKIPPED +provenance +source commit .* +\(no verified tag v9.9.8' '-^OK +tag'
@@ -204,6 +264,18 @@ t "--no-rebuild"                       0 ':' '+^SKIPPED +rebuild +native librari
 PINNED=1 t "the pinned key, not the fixture's" 1 ':' '+^FAIL +signature +io/kuicksilver/kuicksilver-bom/' '-^OK +signature' '+^FAIL +tag +v9.9.9'
 
 # online, through the curl stub
+ONLINE=1 STUB_404='^https://swift\.invalid/' t "online: Swift package without the tag" 1 ':' \
+  '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no tag 9.9.9 in the Swift package' '+^OK +signature +github/Kuicksilver.xcframework.zip'
+ONLINE=1 STUB_NOANSWER='^https://swift\.invalid/' t "online: Swift package host does not answer" 1 ':' \
+  '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no answer from https://swift.invalid'
+ONLINE=1 STUB_404='^https://swift\.invalid/' t "online: a stale Package.swift of an earlier run is not used" 1 \
+  "mkdir -p work/swift && cp repo/swift/Package.swift work/swift/" '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no tag 9.9.9' '-^OK +swiftpm'
+ONLINE=1 STUB_404='^https://github\.invalid/.*intoto' t "online: a stale provenance of an earlier run is not used" 1 \
+  "mkdir -p work/github && cp repo/github/kuicksilver-9.9.9.intoto.jsonl* work/github/" \
+  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.jsonl +\(not on the GitHub release' '-^OK +signature +github/kuicksilver-9.9.9.intoto.jsonl'
+t "control characters in the Swift package's URL are not printed" 1 \
+  "python3 -c 'import sys; p=sys.argv[1]; t=open(p).read(); open(p,\"w\").write(t.replace(\"/v9.9.9/K\", \"/v9.9.9/\\x1b[2JK\"))' repo/swift/Package.swift" \
+  '+^DIFF +swiftpm +kuicksilver-swift 9.9.9 +\(Package.swift names https://github.com/kuicksilver/kuicksilver/releases/download/v9.9.9/\[2JKuicksilver'
 ONLINE=1 t "online: good release"       0 ':' '+5 files of 5 publications' '+^OK +signature +io/kuicksilver/kuicksilver-native-macosarm64/' \
   '+^OK +provenance +source commit' '+^OK +rebuild +klib/macos_arm64/libssl.a' '-^(DIFF|FAIL)'
 ONLINE=1 STUB_NOANSWER='kuicksilver-native-android-9\.9\.9\.aar$' t "online: a listed file does not download" 1 ':' \
@@ -212,9 +284,9 @@ ONLINE=1 STUB_NOANSWER='kuicksilver-native-android-9\.9\.9\.aar$' t "online: a l
 ONLINE=1 STUB_404='kuicksilver-native-jvm-9\.9\.9\.jar\.sha1$' t "online: no .sha1 on Central" 1 ':' \
   '+^FAIL +sha1 +.*kuicksilver-native-jvm-9.9.9.jar +\(good signature, but no \.sha1'
 ONLINE=1 STUB_NOANSWER='^https://github\.invalid/' t "online: GitHub does not answer" 1 ':' \
-  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.json +\(no answer from' '-^SKIPPED +provenance'
+  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.jsonl +\(no answer from' '-^SKIPPED +provenance'
 ONLINE=1 STUB_404='^https://github\.invalid/' t "online: 0.2.1 or later, GitHub answers 404" 1 ':' \
-  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.json +\(not on the GitHub release'
+  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.jsonl +\(not on the GitHub release'
 ONLINE=1 t "online: traversal artifact id in the BOM" 1 \
   "sed -i.bak 's#<artifactId>kuicksilver-native</artifactId>#<artifactId>kuicksilver-native/../../../x</artifactId>#' $bom; rm $bom.bak; resign $bom" \
   "+^FAIL +central +BOM artifactId 'kuicksilver-native/../../../x' +\\(not a plain artifact id"

@@ -5,7 +5,6 @@
 
 # Outputs of documented commands, not references to tracked files.
 CONTRIBUTING.md | path-ignored | kuicksilver-soak/build/soak # the soak report's default directory, written by the run
-docs/guide/ios.md | path-ignored | samples/ios/kuicksilver-swift/build/XCFrameworks/ # the XCFramework the build writes
 docs/benchmarks.md | path-missing | tables.md (missing # a file run-table.sh writes into its --out directory
 
 # ADR-0013 is a design record: its test plan and API sketch name what was planned, and a note after them names what

@@ -9,13 +9,15 @@
 #      release/<X.Y>.x of the version's own X.Y (or the commit named by --release-commit, contained in main or in that
 #      branch), and not main once that branch exists (release mode fetches origin first), nor a branch behind origin; the
 #      version is not on Maven Central yet (release mode); every version fallback of the tree is <X.Y.Z>-SNAPSHOT of the version
-#      and, for a final version, the README and the iOS guide name it; the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
+#      and, for a final version, the README and the iOS guide name it; the Swift package repository clones, has no tag
+#      <version> yet and its rendered manifest reads back (swift-package.sh prepare); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
 #      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version
 #      with its date; the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
 #   2. OpenSSL: fetch and verify the pinned tarball; rebuild all twelve targets from it, never from build/openssl or the build
 #      cache (KSL_OPENSSL_FRESH=1): linux-x64, linux-arm64 and mingw-x64 in Docker (one container at a time, under nice;
 #      linux-x64 and mingw run emulated on Apple Silicon), the macOS, iOS, Android and Kotlin/Native Linux ones on the host;
 #      no-sslkeylog and no FIPS provider in each; the prefixed Kotlin/Native archives are made again from them.
+#      Kuicksilver.xcframework.zip for SwiftPM from them (tools/release/xcframework.sh), and its SwiftPM checksum.
 #   3. The five JVM libraries, each into build/release/jni-artifacts/jni-<classifier> (the layout of the CI artifacts):
 #      osx-aarch_64, osx-x86_64 (cross-built with clang -arch x86_64), linux-x86_64, linux-aarch_64 (manylinux2014),
 #      windows-x86_64 (mingw-w64, tools/ci/jni-windows.sh). Checks per library: architecture, export whitelist, the shared
@@ -27,8 +29,13 @@
 #      inside, no sanitizer or coverage instrumentation, no debug sections, the export whitelist or the ksl_ prefix).
 #      Supply chain (docs/release.md, "Supply chain"; none of it goes to Central, so the deployment count is unchanged): the
 #      CycloneDX SBOM of every publication, checked against the CycloneDX 1.6 schema, in build/release/kuicksilver-<v>-sbom.zip;
-#      the SLSA provenance v1 statement build/release/kuicksilver-<v>.intoto.json (source commit, toolchain pins, OpenSSL
-#      tarball, digests of every file of the publication); both signed with the release key as the artifacts (.asc, checked).
+#      the SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball, digests of every file of the
+#      publication, the SBOM archive and the xcframework zip) as a signed DSSE envelope in the in-toto bundle
+#      build/release/kuicksilver-<v>.intoto.jsonl; the bundle, the SBOM archive and the xcframework zip signed with the
+#      release key as the artifacts (.asc, checked). The next commit of the Swift package repository
+#      kuicksilver/kuicksilver-swift in build/release/kuicksilver-swift (tools/release/swift-package.sh finish), not
+#      signed, tagged or pushed (that is by hand); prepared in step 1 already, so it fails early; its failure here is
+#      not fatal and the script prints the command to make it again.
 #   6. publishToMavenCentral (skipped by --dry-run), then the portal steps and the checks after publishing.
 #
 # Usage: tools/release/local-release.sh <version> [--dry-run [--unsigned]] [--resume] [--repro] [--release-commit <sha>]
@@ -154,15 +161,15 @@ fi
 base="${version%%-*}"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
-    samples/ios/kuicksilver-swift/build.gradle.kts samples/ios/kuicksilver-swift/src/commonMain/kotlin/io/kuicksilver/swift/Kuicksilver.kt \
+    samples/ios/kuicksilver-swift/build.gradle.kts \
     tools/check/consumer-smoke.sh; do
   have=$(grep -ohE '[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT' "$f" 2>/dev/null | sort -u | tr '\n' ' ' || true)
   [ "$have" = "$base-SNAPSHOT " ] || refuse "$f names ${have:-no X.Y.Z-SNAPSHOT version }instead of $base-SNAPSHOT: this tree is not the $base line (the commit that prepares $version sets every fallback)"
 done
 if [ "$base" = "$version" ]; then
-  for f in README.md docs/guide/ios.md; do   # coordinates, the xcframework URL, "X.Y.Z is on Maven Central"
-    have=$(grep -oE 'io\.kuicksilver:kuicksilver-[a-z0-9-]+:[0-9][-.A-Za-z0-9]*|releases/[0-9][-.A-Za-z0-9]*/|[0-9]+\.[0-9]+\.[0-9]+[-.A-Za-z0-9]* is on Maven Central' "$f" 2>/dev/null \
-      | sed -E 's/^io\.kuicksilver:kuicksilver-[a-z0-9-]+://; s/^releases\/([^/]*)\/$/\1/; s/ is on Maven Central$//' | sort -u | tr '\n' ' ' || true)
+  for f in README.md docs/guide/ios.md; do   # coordinates, the SwiftPM package version and xcframework URL, "X.Y.Z is on Maven Central"
+    have=$(grep -oE 'io\.kuicksilver:kuicksilver-[a-z0-9-]+:[0-9][-.A-Za-z0-9]*|releases/download/v[0-9][-.A-Za-z0-9]*/|kuicksilver-swift", \.upToNextMinor\(from: "[0-9][-.A-Za-z0-9]*"|[0-9]+\.[0-9]+\.[0-9]+[-.A-Za-z0-9]* is on Maven Central' "$f" 2>/dev/null \
+      | sed -E 's/^io\.kuicksilver:kuicksilver-[a-z0-9-]+://; s/^releases\/download\/v([^/]*)\/$/\1/; s/^kuicksilver-swift", \.upToNextMinor\(from: "([^"]*)"$/\1/; s/ is on Maven Central$//' | sort -u | tr '\n' ' ' || true)
     [ "$have" = "$version " ] || refuse "$f names ${have:-no version }instead of $version (the commit that prepares $version sets the coordinates)"
   done
   # while a version is prepared on main, the README says so; the release commit of that version removes it (docs/release.md)
@@ -170,6 +177,14 @@ if [ "$base" = "$version" ]; then
     refuse "README.md still calls $version the release in preparation (\"release in preparation\" or \"Until $version is on Maven Central\"): the release commit removes that note"
   fi
 fi
+# the Swift package (tools/release/swift-package.sh): what could fail at the end of the release fails now instead, before
+# hours of building: the clone, a tag <version> already there, the manifest rendered and read back by SwiftPM (a dry run
+# may be offline: a new repository, warnings)
+swift_prep=("$version"); [ "$dry" = 1 ] && swift_prep+=(--dry-run)
+if swift_out=$(bash tools/release/swift-package.sh prepare "${swift_prep[@]}" 2>&1); then
+  grep -E 'WARN|prepared:' <<< "$swift_out" | sed 's/^ */  Swift package: /'
+  problems=$((problems + $(grep -c 'WARN' <<< "$swift_out" || true)))
+else refuse "the Swift package cannot be prepared: $( (grep -E 'REFUSED|FAIL' <<< "$swift_out" || printf '%s\n' "$swift_out") | tail -1 | sed 's/^REFUSED: //')"; fi
 # the local gate: tools/ci/local-matrix.sh writes build/ci/gate/<commit>.stamp at its end
 stamp="build/ci/gate/$head.stamp"
 gate() { sed -n "s/^$1=//p" "$stamp" 2>/dev/null | head -1; }
@@ -231,6 +246,14 @@ for t in macos-arm64 macos-x64 ios-arm64 ios-sim-arm64 android-arm64 android-x86
   step "openssl: no-sslkeylog ($t)"                            bash tools/check/keylog-disabled.sh "build/openssl/$t/include"
   step "openssl: no FIPS provider ($t)"                        bash tools/check/openssl-no-fips.sh "$t"
 done
+
+# SwiftPM: the release asset the Swift package points at, from the OpenSSL just built
+echo "-- Kuicksilver.xcframework (SwiftPM)"
+xcf="$out/Kuicksilver.xcframework.zip"
+step "xcframework: build, layout, SwiftPM checksum"            bash tools/release/xcframework.sh "$version"
+xcf_sum=$(sed -n 's/^checksum \([0-9a-f]\{64\}\)$/\1/p' "$logs/$(printf '%02d' $n).log" | tail -1)
+[[ "$xcf_sum" =~ ^[0-9a-f]{64}$ ]] || { echo "FAIL: no checksum in the xcframework log" >&2; exit 1; }
+echo "     $xcf: $(wc -c < "$xcf" | tr -d ' ') bytes, checksum $xcf_sum"
 
 # ------------------------------------------------------------------------------------------------------- 3. JNI libraries
 echo "-- JNI libraries (ksl ABI $abi)"
@@ -380,19 +403,47 @@ echo "     local repository for consumer checks: $m2 (bash tools/check/consumer-
 
 # supply chain: for the GitHub release, never uploaded to Central (the count above stays what Central receives)
 echo "-- SBOM and provenance (GitHub release files, not part of the Central deployment)"
-sbom_zip="$out/kuicksilver-$version-sbom.zip"; prov="$out/kuicksilver-$version.intoto.json"
-rm -f "$sbom_zip" "$sbom_zip.asc" "$prov" "$prov.asc"
+sbom_zip="$out/kuicksilver-$version-sbom.zip"; prov="$out/kuicksilver-$version.intoto.jsonl"
+stmt="$out/provenance/statement.json"; payload="$out/provenance/payload.json"; pae="$out/provenance/payload.pae"
+rm -rf "$out/provenance"; mkdir -p "$out/provenance"
+rm -f "$sbom_zip" "$sbom_zip.asc" "$prov" "$prov.asc" "$xcf.asc"
 step "sbom: CycloneDX per publication, schema 1.6, archive"      "${G[@]}" "${P[@]}" sbomZip
 echo "     $sbom_zip: $(unzip -Z1 "$sbom_zip" | wc -l | tr -d ' ') documents, sha256 $(sha "$sbom_zip")"
-prov_args=(--version "$version" --m2 "$m2" --out "$prov" --started "$started" --sbom-zip "$sbom_zip" --options "$given" --gate "$stamp")
+prov_args=(--version "$version" --m2 "$m2" --out "$stmt" --started "$started" --sbom-zip "$sbom_zip" --extra-subject "$xcf"
+  --options "$given" --gate "$stamp")
 [ "$dry" = 1 ] && prov_args+=(--dry-run); [ "$signed" = 1 ] && prov_args+=(--signed)
 step "provenance: in-toto statement, SLSA provenance v1"         python3 tools/release/provenance.py "${prov_args[@]}"
 tail -1 "$logs/$(printf '%02d' $n).log" | sed 's/^/     /'
+# the in-toto bundle (.intoto.jsonl, the name OpenSSF Scorecard recognises as provenance): one DSSE envelope whose
+# signature is the release key's over the envelope's PAE
+step "provenance: DSSE payload and PAE"                          python3 tools/release/dsse.py payload "$stmt" "$payload" "$pae"
 if [ "$signed" = 1 ]; then
-  step "sign: provenance and SBOM archive (release key)"         "${G[@]}" "${P[@]}" signReleaseFiles -Pkuicksilver.release.sign="$prov,$sbom_zip"
-  step "sign: signatures by 22C1F2E4…C8D0EC68"                   bash tools/release/verify-signature.sh "$prov" "$sbom_zip"
+  step "sign: provenance envelope (release key, over the PAE)"   "${G[@]}" "${P[@]}" signReleaseFiles -Pkuicksilver.release.sign="$pae"
+  step "sign: envelope signature by 22C1F2E4…C8D0EC68"           bash tools/release/verify-signature.sh "$pae"
+  step "provenance: in-toto bundle, signed DSSE envelope"        python3 tools/release/dsse.py envelope "$payload" "$prov" --sig "$pae.asc" --keyid 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
+  step "sign: provenance, SBOM archive, xcframework (release key)" "${G[@]}" "${P[@]}" signReleaseFiles -Pkuicksilver.release.sign="$prov,$sbom_zip,$xcf"
+  step "sign: signatures by 22C1F2E4…C8D0EC68"                   bash tools/release/verify-signature.sh "$prov" "$sbom_zip" "$xcf"
 else
-  echo "     not signed (no key, or --unsigned): a release signs both with the release key"
+  step "provenance: in-toto bundle, unsigned DSSE envelope"      python3 tools/release/dsse.py envelope "$payload" "$prov"
+  echo "     not signed (no key, or --unsigned): a release signs the envelope and the three files with the release key"
+fi
+
+# the Swift package: its next commit, naming the zip above; signed, tagged and pushed by hand after the GitHub release
+# (docs/release.md, step 6). Never fatal: the release is complete without it, and it can be made again by hand.
+echo "-- Swift package kuicksilver/kuicksilver-swift (committed, not signed, tagged or pushed)"
+swift_args=("$version" "$xcf_sum" --source-commit "$head"); [ "$dry" = 1 ] && swift_args+=(--dry-run)
+swift_manual="tools/release/swift-package.sh finish $version $xcf_sum --source-commit $head"
+n=$((n+1)); swift_log="$logs/$(printf '%02d' $n).log"
+if bash tools/release/swift-package.sh finish "${swift_args[@]}" > "$swift_log" 2>&1; then
+  printf '[%2d] %-58s%s\n' "$n" "swift package: commit $version" "ok"
+  grep -E ' on (main|release/)|WARN' "$swift_log" | sed 's/^ */     /'
+  swift_next=$(sed -n '/^  Swift package, once/,$p' "$swift_log")
+else
+  printf '[%2d] %-58s%s\n' "$n" "swift package: commit $version" "FAILED (not fatal, see $swift_log)"
+  tail -5 "$swift_log" | sed 's/^/     | /'
+  swift_next="  Swift package: its commit failed ($swift_log). After fixing the cause, run
+    $swift_manual
+  and follow the commands it prints."
 fi
 
 # --------------------------------------------------------------------------------------------------------------- 6. upload
@@ -411,6 +462,9 @@ Deployment uploaded; nothing is released yet. Next, by hand:
   3. Consumer check from Central: samples/realtime-telemetry against io.kuicksilver:kuicksilver-bom:$version from
      mavenCentral() only (docs/release.md, "Every release", step 5).
   4. Then, and only then: git tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
-     and the GitHub release from the tag with the CHANGELOG section, with these four files attached:
-     $sbom_zip(.asc) and $prov(.asc).
+     and the GitHub release from the tag with the CHANGELOG section, with these six files attached:
+     $sbom_zip(.asc), $prov(.asc) and $xcf(.asc)
+     (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum).
+  5. Once the GitHub release is published (the zip's URL resolves now), the Swift package:
+$swift_next
 NEXT

@@ -39,8 +39,12 @@ bad or missing signature, a missing file, a build that failed). It exits 1 on an
    download is a `FAIL`, as is any name from the server (an artifact id in the BOM, a module file's URL, a file in a
    directory listing) that is not a plain name: it is never downloaded.
 2. **SBOM and provenance.** Both on the GitHub release and signed by the release key; every subject digest of the
-   provenance equal to the file from Central, no Central file missing from the subjects, and the source commit equal to
-   the commit of the verified tag. Every release from 0.2.1 has them, so their absence is a `FAIL`; for 0.2.0 and older
+   provenance equal to the file from Central or the GitHub release, no Central file missing from the subjects, and the
+   source commit equal to the commit of the verified tag. From 0.3.0 the provenance is an in-toto bundle whose DSSE
+   envelope must carry its own good signature by the release key, and `Kuicksilver.xcframework.zip` must be on the
+   release, signed, a subject of the provenance, and the file whose URL and checksum the Swift package's `Package.swift`
+   names at its tag `<version>` ([The Swift package](#the-swift-package); a mismatch is a `DIFF`, a missing tag a
+   `FAIL`). Every release from 0.2.1 has them, so their absence is a `FAIL`; for 0.2.0 and older
    the step is `SKIPPED`. No answer from GitHub (as opposed to a 404) is a `FAIL` for any version. When the provenance's
    own signature fails, its subjects are not read.
 3. **Rebuild.** The verified tag's `tools`, `gradle` and `kuicksilver-native/src` are exported with `git archive`, the
@@ -118,14 +122,40 @@ you checked once (for example with the script above).
 ## SBOM and provenance
 
 From 0.2.1, each GitHub release carries `kuicksilver-<version>-sbom.zip` (CycloneDX 1.6, one document per publication,
-with the statically linked OpenSSL and the `ksl` shim as components) and `kuicksilver-<version>.intoto.json` (an in-toto
-statement with a SLSA provenance v1 predicate: the source commit, the toolchain and OpenSSL pins, the SHA-256 of every
-file of the deployment), each with an `.asc` by the release key. What they contain and how they are made is in
+with the statically linked OpenSSL and the `ksl` shim as components) and the build provenance (an in-toto statement
+with a SLSA provenance v1 predicate: the source commit, the toolchain and OpenSSL pins, the SHA-256 of every file of the
+deployment), each with an `.asc` by the release key. From 0.3.0 the provenance is `kuicksilver-<version>.intoto.jsonl`,
+an in-toto attestation bundle (JSON Lines) with one DSSE envelope, itself signed by the release key, and its subjects
+include `Kuicksilver.xcframework.zip`, the Swift package's binary, also on the release with an `.asc`; 0.2.1 has the bare
+statement `kuicksilver-0.2.1.intoto.json`. What they contain and how they are made is in
 [release.md, Supply chain](release.md#supply-chain-sbom-and-provenance).
 
-`verify-release.sh` checks both signatures and every subject. What the provenance is worth: SLSA Build Level 1. The
+`verify-release.sh` checks the signatures (the envelope's too) and every subject. What the provenance is worth: SLSA Build Level 1. The
 same machine and the same person build the artifacts, write the statement and hold the key, so the statement records
 what the maintainer says was built; the rebuild is what checks a part of it independently.
+
+## The Swift package
+
+Swift apps take the xcframework through [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift)
+([iOS guide](guide/ios.md#swift-only-kuicksilverxcframework-and-swiftpm)). SwiftPM itself only checks that the zip's
+SHA-256 is the `checksum` of that repository's `Package.swift`; that the zip is the one the project released comes from
+the release. `verify-release.sh` (from 0.3.0) checks the chain: the zip on the GitHub release has a good signature by
+the release key and is a subject of the provenance with the same SHA-256, and `Package.swift` at the package's tag
+`<version>` names exactly that release asset and that SHA-256. By hand:
+
+```
+curl -sLO https://github.com/kuicksilver/kuicksilver/releases/download/v0.3.0/Kuicksilver.xcframework.zip
+curl -sLO https://github.com/kuicksilver/kuicksilver/releases/download/v0.3.0/Kuicksilver.xcframework.zip.asc
+tools/release/verify-signature.sh Kuicksilver.xcframework.zip                      # good, by 22C1...EC68
+shasum -a 256 Kuicksilver.xcframework.zip
+curl -sL https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift/refs/tags/0.3.0/Package.swift | grep -E 'url:|checksum:'
+```
+
+The `checksum:` line must be the `shasum` output, the `url:` line the release asset above, and the same SHA-256 must be
+the provenance's subject `Kuicksilver.xcframework.zip` ([SBOM and provenance](#sbom-and-provenance)). The package's tags
+and commits are signed with the release key (in a clone of it: `git verify-tag 0.3.0`), and its rulesets forbid moving
+or deleting a tag; but the check above does not rely on them: a changed `Package.swift` either names a zip with another
+SHA-256, which no longer matches the signed asset, or SwiftPM refuses the download.
 
 ## Which native libraries are reproducible
 
@@ -172,7 +202,10 @@ it says nothing about the files below.
   the jars are written with fixed timestamps (Gradle 9 defaults) and `local-release.sh --repro` rebuilds the native jar on
   the same machine, but no tool or record shows that a second machine produces the same bytes. They are covered by the
   signatures and, from 0.2.1, the provenance digests only. You can still rebuild the Kotlin code from the tag and compare
-  behaviour, but not bytes.
+  behaviour, but not bytes. `Kuicksilver.xcframework.zip` (from 0.3.0) is one of them: two clean builds of one commit
+  in two checkout directories gave the same bytes, and `tools/release/xcframework.sh <version>` rebuilds it from a
+  checkout of the tag, but no independent machine has been compared with it yet, and its Kotlin code depends on the
+  Kotlin/Native compiler as well as on Xcode.
 - **Toolchain drift.** The macOS and iOS libraries depend on the Xcode version (it is written into the Mach-O load
   commands), the Android ones on the NDK. With another Xcode or NDK installed, the script skips those targets unless you
   pass `--allow-toolchain-drift`, and then a `DIFF` is expected, not a finding. The Kotlin/Native LLVM is not pinned in
