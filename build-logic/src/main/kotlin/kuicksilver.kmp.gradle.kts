@@ -117,7 +117,10 @@ kotlin {
     mingwX64()
     // klibs record source paths relative to the checkout: in their debug information and in the names Kotlin/Native derives
     // from file paths (ObjC block bridges), so the published klibs and Kuicksilver.xcframework do not depend on, or reveal,
-    // where the checkout was (tools/release/xcframework.sh relies on it for the SwiftPM checksum)
+    // where the checkout was (tools/release/xcframework.sh relies on it for the SwiftPM checksum). The cost: the absolute
+    // base is part of freeCompilerArgs, a task input, so a Kotlin/Native compilation is no longer taken from the build
+    // cache of another checkout directory (another worktree); KotlinNativeCompile has no argument provider that could
+    // hide it, and the compiler wants an absolute base. Before, such a hit would have brought the other path along.
     targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
         compilations.configureEach {
             compileTaskProvider.configure { compilerOptions.freeCompilerArgs.add("-Xklib-relative-path-base=${rootDir.canonicalPath}") }

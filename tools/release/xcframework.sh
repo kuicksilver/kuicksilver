@@ -55,7 +55,7 @@ check_layout() {
   done
   # anything outside the xcframework (a stray file, an absolute or parent path) would be extracted next to the package
   s=$(grep -vE '^Kuicksilver\.xcframework/' <<< "$list" || true)
-  [ -z "$s" ] || { echo "FAIL: entries outside Kuicksilver.xcframework/: $(echo $s)" >&2; rc=1; }
+  [ -z "$s" ] || { echo "FAIL: entries outside Kuicksilver.xcframework/: $(tr '\n' ' ' <<< "$s")" >&2; rc=1; }
   ! grep -qE '(^|/)\.\.(/|$)' <<< "$list" || { echo "FAIL: a '..' entry in the zip" >&2; rc=1; }
   plist=$(mktemp); unzip -p "$built" Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/Info.plist > "$plist"
   v=$(plutil -extract CFBundleShortVersionString raw -o - "$plist" 2>/dev/null || true); rm -f "$plist"

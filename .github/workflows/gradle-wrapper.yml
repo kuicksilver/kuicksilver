@@ -8,6 +8,9 @@
 # A workflow of its own, a single fast job, on purpose: OpenSSF Scorecard (Binary-Artifacts) accepts the checked-in jar
 # only when a workflow using gradle/actions/wrapper-validation has a successful run for the newest commit of main, and
 # the build workflow's run is long and is cancelled by a newer push. Read-only, no secrets; actions pinned by commit SHA.
+# The Scorecard run of the same push may look before this job has finished and score Binary-Artifacts 9 once; the next
+# scan sees the run. scorecard.yml cannot wait for it: scorecard-action supports publishing from push and schedule
+# triggers only (pull_request and workflow_dispatch experimental), not workflow_run.
 name: gradle-wrapper
 on:
   push:
