@@ -312,25 +312,34 @@ experimental in 0.3.0:
   name the server's certificate and the issuer the verifier trusted, be signed by that issuer or by a responder the
   issuer delegated (id-kp-OCSPSigning), and be inside its validity interval (5 minutes of clock skew). A response saying
   revoked fails with `VerifyReason.Revoked`; one that fails a check fails with `VerifyReason.InvalidStatusResponse`; both
-  send `bad_certificate_status_response`. A server that staples nothing, or a response saying "unknown", passes under
+  send `bad_certificate_status_response` (113), also with `genericAlerts` (OpenSSL chooses that alert). A delegated
+  responder must also carry no unknown critical extension, meet the security level, and not be listed on a configured CRL
+  of the issuer. A server that staples nothing, or a response saying "unknown", passes under
   `StapledIfPresent` (OCSP clients "typically 'soft-fail'", RFC 9325 section 7.5) and fails under `RequireStapled`
-  (`VerifyReason.UnknownRevocationStatus`); a certificate marked must-staple (RFC 7633) fails without one under every
-  policy but `Off`. The check runs where `ksl` verifies the chain: `AnchoredCa`, and `Platform` on Linux Native, also
-  inside `Pinned` and `ExpectedName`. Elsewhere `Platform` keeps the platform verifier's own revocation behaviour (Apple
-  and Windows check revocation; the JDK only when the application enables it; Android's default trust manager does not),
-  and a `Custom` or `Tofu` verifier decides alone; `RequireStapled` with them is refused (`TlsException.Config`). A
+  (`VerifyReason.UnknownRevocationStatus`, alert 113); a certificate marked must-staple (RFC 7633) fails without one
+  under every policy but `Off`, and so does a required staple for a leaf that is itself the trust anchor (no issuer to
+  check a response against). The check runs where `ksl` verifies the chain: `AnchoredCa`, and `Platform` on Linux Native, also
+  inside `Pinned` and `ExpectedName`. Elsewhere under `Platform` the OS verifier decides: Apple and Windows apply their
+  own revocation policy, while on Android (its blocklist only) and the JVM (off unless the application enables it, e.g.
+  `com.sun.net.ssl.checkRevocation`) nothing checks revocation; use `AnchoredCa` where that matters. A `Custom` or `Tofu`
+  verifier decides alone; `RequireStapled` with them is refused (`TlsException.Config`). A
   session resumes only while the response its full handshake checked is fresh.
 - **CRLs (clients and servers).** `TrustConfig.AnchoredCa(roots, crls)` checks every certificate on the verified path
   against its issuer's CRL when one of `crls` is from that issuer (`CertificateRevocationList.parsePem` reads
-  `X509 CRL` blocks). Revoked fails with `VerifyReason.Revoked`; a CRL that expired or does not verify fails with
-  `VerifyReason.UnknownRevocationStatus`, so replace CRLs before their nextUpdate. On a server, a
+  `X509 CRL` blocks). Revoked fails with `VerifyReason.Revoked` (alert 44); a CRL that expired fails with
+  `VerifyReason.UnknownRevocationStatus` (alert 45), so replace CRLs before their nextUpdate; a CRL whose signature does
+  not verify, or a configured CRL of the issuer that does not cover the certificate (a distribution point it does not
+  name), fails with `VerifyReason.UnknownRevocationStatus` as well (alert 48 or 42, as OpenSSL maps it). A certificate
+  whose issuer has none of the configured CRLs is not checked. Only complete, direct CRLs are supported: delta CRLs,
+  indirect CRLs and CRLs limited to some revocation reasons are refused when the trust is made (`TlsException.Config`). On a server, a
   `TrustConfig.ReloadableCa` reload to the same roots with new CRLs applies them to the next handshakes, as a CA reload
   does (tickets authenticated under the old CRLs resume nothing).
 - **Stapling (servers).** `TlsConfig.ocspStapling` (or `ocspStapling` of the Ktor TLS connector) holds the OCSP
   response for the server's certificate, fetched by the application from its CA's responder. It is stapled over TCP and
   QUIC only to clients that ask, and only when it is for the leaf the handshake presents (the chain must include the
   issuer) and fresh at that moment; a stale response is silently not sent. Call `update` with a fresh response before
-  the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled.
+  the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled. An identity chosen
+  by `sniSelector` is another certificate: the response for the default identity is not stapled for it.
 
 ```kotlin
 // guide:tls:revocation

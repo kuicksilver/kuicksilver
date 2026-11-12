@@ -158,6 +158,53 @@ class RevocationTest {
         assertFailsWith<TlsException.Config> { KslQuicCrypto.newSession(client(RevocationPolicy.RequireStapled, custom)).close() }
     }
 
+    /** The tickets a QUIC client receives from a handshake against [server] (0-RTT sessions, the ones that issue tickets). */
+    private fun quicTickets(
+        client: QuicTlsSession,
+        server: QuicTlsSession,
+    ): List<QuicSessionTicket> {
+        assertTrue(server.enableEarlyData(byteArrayOf(1), null))
+        client.setTransportParameters(Fixtures.tp)
+        server.setTransportParameters(Fixtures.tp)
+        val got = ArrayList<QuicSessionTicket>()
+        val p = Pump(client, server)
+        p.onEvent = { fromClient, ev -> if (fromClient && ev is TlsEvent.SessionTicket) got += ev.ticket }
+        try {
+            p.run()
+            assertTrue(p.cs.done && p.ss.done, "the handshake completes: ${p.cs.last}")
+        } finally {
+            p.close()
+        }
+        return got
+    }
+
+    /**
+     * A resumption the server declines runs a full handshake: the new ticket carries that handshake's chain and staple bound,
+     * not the declined ticket's.
+     */
+    @Test fun negative_declinedResumptionTicketCarriesTheNewStaple() {
+        val first = quicTickets(KslQuicCrypto.newSession(client(), earlyData = true), KslQuicCrypto.newSession(server(), earlyData = true))
+        val old = first.last()
+        first.dropLast(1).forEach { it.close() }
+        assertEquals(0L, old.entry.stapleUntil, "no staple on the first server")
+        // another server with its own ticket keys: it cannot decrypt the ticket and runs a full handshake, stapling this time
+        val keys = listOf(ByteArray(80) { (it * 7 + 3).toByte() })
+        val other =
+            Fixtures.server(listOf(RevocationCerts.rvLeaf, RevocationCerts.rvMid), RevocationCerts.rvLeafKey) {
+                ocspStapling = good
+                sessionTickets = SessionTicketConfig(keys)
+            }
+        val c = KslQuicCrypto.newSession(client(), earlyData = true)
+        assertTrue(c.resume(old), "the client offers the ticket")
+        val fresh = quicTickets(c, KslQuicCrypto.newSession(other, earlyData = true))
+        try {
+            assertTrue(fresh.isNotEmpty())
+            assertTrue(fresh.all { it.entry.stapleUntil > nowSeconds() }, "the staple the full handshake checked bounds the new ticket")
+        } finally {
+            fresh.forEach { it.close() }
+        }
+    }
+
     // ---- TCP ----
 
     private suspend fun tcp(
@@ -271,6 +318,37 @@ class RevocationTest {
     @Test fun negative_expiredCrlFails() {
         val stale = TrustConfig.AnchoredCa(listOf(root), listOf(CertificateRevocationList(RevocationCerts.crlMidStale)))
         assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.Off, stale), server(), 45))
+    }
+
+    @Test fun negative_unsupportedCrlsRefusedWhenTheTrustIsMade() {
+        for (der in listOf(RevocationCerts.crlMidDelta, RevocationCerts.crlMidIndirect)) {
+            assertFailsWith<TlsException.Config> { TrustConfig.AnchoredCa(listOf(root), listOf(CertificateRevocationList(der))) }
+        }
+    }
+
+    @Test fun negative_crlThatDoesNotVerifyFails() {
+        val tampered = RevocationCerts.crlMid.copyOf().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 1).toByte() }
+        for (der in listOf(tampered, RevocationCerts.crlMidImpostor)) {
+            val trust = TrustConfig.AnchoredCa(listOf(root), listOf(CertificateRevocationList(der)))
+            val p = quic(client(RevocationPolicy.Off, trust), server())
+            try {
+                val f = assertIs<DriveResult.Failed>(p.cs.last, "a CRL whose signature does not verify fails closed")
+                assertEquals(VerifyReason.UnknownRevocationStatus, assertIs<TlsException.Verify>(f.exception).reason)
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    @Test fun negative_crlNotCoveringTheLeafFails() {
+        val trust = TrustConfig.AnchoredCa(listOf(root), listOf(CertificateRevocationList(RevocationCerts.crlMidPartitioned)))
+        val p = quic(client(RevocationPolicy.Off, trust), server())
+        try {
+            val f = assertIs<DriveResult.Failed>(p.cs.last)
+            assertEquals(VerifyReason.UnknownRevocationStatus, assertIs<TlsException.Verify>(f.exception).reason)
+        } finally {
+            p.close()
+        }
     }
 
     @Test fun crlsChangeTheTrustKey() {

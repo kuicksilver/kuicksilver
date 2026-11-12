@@ -312,7 +312,8 @@ public class TlsConfig private constructor(
         public var handshakeTimeout: Duration = 10.seconds
 
         /**
-         * Send every verification failure as `handshake_failure` instead of the specific alert. Default false; true hides
+         * Send every verification failure as `handshake_failure` instead of the specific alert, except a failed stapled OCSP
+         * check, which OpenSSL always ends with `bad_certificate_status_response` (113). Default false; true hides
          * from the peer why it was rejected at the cost of harder diagnosis on its side. The local [TlsException.Verify]
          * keeps the real reason either way.
          */

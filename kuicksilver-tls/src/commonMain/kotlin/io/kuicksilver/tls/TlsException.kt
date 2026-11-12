@@ -50,7 +50,15 @@ public expect sealed class TlsException(
     ) : TlsException
 }
 
-/** The TLS alert code that [TlsException.Verify] produces (RFC 9846 section 6.2). */
+/**
+ * The TLS alert code that [TlsException.Verify] produces (RFC 9846 section 6.2) when the reason comes from a verifier that
+ * chooses the alert (a [CertificateVerifier], the platform, pins). Where `ksl` decides, the alert sent follows OpenSSL: a failed
+ * stapled OCSP check is always `bad_certificate_status_response` (113, RFC 6066 section 8), whatever the reason ([VerifyReason.Revoked],
+ * [VerifyReason.InvalidStatusResponse], [VerifyReason.UnknownRevocationStatus]) and also with [TlsConfig.genericAlerts]; a
+ * certificate revoked by a configured CRL is `certificate_revoked` (44); a CRL that is expired or not valid yet is
+ * `certificate_expired` (45); other CRL failures (a bad signature, not covering the certificate) are `unknown_ca` (48) or
+ * `bad_certificate` (42) as OpenSSL maps them.
+ */
 @OptIn(ExperimentalKuicksilverApi::class)
 public val VerifyReason.alertCode: Int
     get() =

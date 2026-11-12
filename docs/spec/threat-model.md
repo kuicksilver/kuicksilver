@@ -93,8 +93,9 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
   is bounded by the nextUpdate of the response its full handshake checked. Application CRLs (`AnchoredCa(roots, crls)`)
   are checked on handshakes and resumption, an expired CRL fails closed. A server staples only a response for its own
   leaf that is fresh.
-- **Not covered:** `Platform` off Linux Native (the platform's own revocation behaviour), `Custom` and `Tofu` (the
-  application's), intermediates' status by OCSP, OCSP fetched by the client, CRL distribution points.
+- **Not covered:** `Platform` off Linux Native, where the OS verifier decides: Apple and Windows apply their own revocation
+  policy, while on Android (its blocklist only) and the JVM (off unless the application enables it) nothing checks
+  revocation; `Custom` and `Tofu` (the application's); delta, indirect and reason-partitioned CRLs (refused); intermediates' status by OCSP, OCSP fetched by the client, CRL distribution points.
 - **Verification:** C `revocation_ocsp_check`, `revocation_stapling`, `revocation_crls`; `RevocationTest`
   (`negative_quicStapledRevokedFails`, `negative_tcpStapledRevokedFails`, `negative_quicRequiredStapleMissing`,
   `negative_quicMustStapleLeafWithoutStaple`, `negative_serverStaplesNoStaleOrForeignResponse`,

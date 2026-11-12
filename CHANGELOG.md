@@ -22,9 +22,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   staple. Servers staple a configured response over TCP and QUIC (`TlsConfig.ocspStapling`, `OcspStapling` with
   `update`; the Ktor TLS connector's `ocspStapling`) only when it is for the leaf sent and fresh. Application CRLs:
   `TrustConfig.AnchoredCa(roots, crls)` with `CertificateRevocationList` (also as a `ReloadableCa` bundle on servers).
-  `TrustConfig.Platform` off Linux Native keeps the platform verifier's own revocation behaviour; `Custom` and `Tofu`
-  decide alone. `ksl` gains `ksl_ctx_set_crls` and `ksl_ocsp_check` (ABI 7, additive). Docs: tls.md, "Certificate
-  revocation".
+  Under `TrustConfig.Platform` off Linux Native the OS verifier decides: Apple and Windows apply their own revocation
+  policy, while on Android (its blocklist only) and the JVM (off unless the application enables it) nothing checks
+  revocation; `Custom` and `Tofu` decide alone. Delta, indirect and reason-partitioned CRLs are refused. `ksl` gains
+  `ksl_ctx_set_crls` and `ksl_ocsp_check` (ABI 7, additive). Docs: `docs/guide/tls.md`, "Certificate revocation".
 - SwiftPM: Kuicksilver is a Swift package, [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift),
   a repository without source code whose binary target is `Kuicksilver.xcframework.zip`, attached to every GitHub
   release from 0.3.0 and signed with the release key. A Swift-only app adds
@@ -486,6 +487,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Clients that verify with `ksl` (`TrustConfig.AnchoredCa`, and `Platform` on Linux Native, also inside `Pinned` and
+  `ExpectedName`) now send `status_request` and check a stapled OCSP response by default
+  (`RevocationPolicy.StapledIfPresent`): a server that staples a revoked, unverifiable, foreign or stale response, which
+  0.2.x accepted, now fails the handshake with `bad_certificate_status_response`, and a must-staple certificate (RFC 7633)
+  without a staple fails too. `TlsConfig.revocation = RevocationPolicy.Off` restores the 0.2.x behaviour.
 - The bundled OpenSSL now includes its `http` and `ocsp` modules (`no-http` dropped from
   `tools/openssl/configure-flags.txt`; Configure turns `ocsp` off with `http`), for OCSP stapling. `ksl` calls no HTTP
   client code. Every OpenSSL build cache is rebuilt once, since the cache key hashes the configure flags.

@@ -632,7 +632,7 @@ internal fun verifyReasonOf(
         }
 
         // issuer / self-signed / untrusted family; 22 CERT_CHAIN_TOO_LONG (also ksl's chain walk past its bounds), unknown_ca on the wire
-        7, 8 -> {
+        7 -> {
             VerifyReason.BadSignature
         }
 
@@ -650,9 +650,10 @@ internal fun verifyReasonOf(
             VerifyReason.InvalidStatusResponse
         }
 
-        // OCSP_VERIFY_NEEDED, OCSP_CERT_UNKNOWN (a required staple missing or "unknown"); a configured CRL not valid yet, expired,
-        // with a bad time field, from an issuer without cRLSign, with an unknown critical extension or of another scope
-        73, 75, 11, 12, 15, 16, 35, 36, 44 -> {
+        // OCSP_VERIFY_NEEDED, OCSP_CERT_UNKNOWN (a required staple missing or "unknown"); a configured CRL that does not cover the
+        // certificate (3), whose signature does not decrypt or verify (5, 8), not valid yet, expired, with a bad time field (11, 12,
+        // 15, 16), whose issuer is not found (33) or has no cRLSign (35), with an unknown critical extension (36) or of another scope (44)
+        73, 75, 3, 5, 8, 11, 12, 15, 16, 33, 35, 36, 44 -> {
             VerifyReason.UnknownRevocationStatus
         }
 
