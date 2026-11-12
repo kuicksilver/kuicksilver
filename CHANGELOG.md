@@ -643,9 +643,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: `QuicStream.priority` set from several threads at once could leave the scheduler on an older value than the
   property read, since each setter handed its own value to the loop and those hand-overs could run in another order.
   The loop now applies the property's current value.
-- HTTP/2 client: a PRIORITY_UPDATE frame (type 0x10) from the server was ignored as an unknown frame; RFC 9218 section
-  7.1 says "If a client receives a PRIORITY_UPDATE frame, it MUST respond with a connection error of type
-  PROTOCOL_ERROR", and the connection now ends that way. A server still ignores the frame, which it does not implement.
+- HTTP/2 PRIORITY_UPDATE (RFC 9218 section 7.1): a server now reads the frame with every check of section 7.1 (stream
+  0 only, no prioritized stream 0, no push stream, idle prioritized streams plus active ones within our
+  SETTINGS_MAX_CONCURRENT_STREAMS, each a PROTOCOL_ERROR connection error) and keeps the latest one for a stream not
+  open yet (section 7); the Ktor server's `call.request.priorityUpdates` follows them over HTTP/2 and the response is
+  rescheduled unless it set its own `Priority` field. The Ktor client's `HttpResponse.updatePriority` sends the frame
+  over HTTP/2 (true) unless the server's SETTINGS left SETTINGS_NO_RFC7540_PRIORITIES at 0 (section 2.1.1). A client
+  that receives the frame ends the connection with PROTOCOL_ERROR, as section 7.1 requires; before, both roles ignored
+  it as an unknown frame type.
+- HTTP/2 client (RFC 9218 section 2.1.1: "until the client receives the SETTINGS frame from the server, the client
+  SHOULD send both the HTTP/2 priority signals and the signals of this prioritization scheme"): the client no longer
+  sends SETTINGS_NO_RFC7540_PRIORITIES = 1, and its request HEADERS carry an RFC 7540 signal (dependency 0, not
+  exclusive, weight 256, 220, 183, 147, 110, 74, 37 or 1 for urgency 0 to 7, Chromium's mapping) next to the `priority`
+  field until the server's SETTINGS say SETTINGS_NO_RFC7540_PRIORITIES = 1. The request's own DATA is scheduled by its
+  priority too.
 - HTTP/2 (RFC 9218 section 10): the connection sent the DATA of its streams round-robin, whatever their priority, so a
   u=0 response got no precedence over a u=7 one and two default responses were interleaved instead of sent in stream
   order. DATA now goes by priority as on HTTP/3: urgency first, non-incremental streams of one urgency in ascending

@@ -754,8 +754,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
 
 - **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c) and WebSockets, which offer `http/1.1` only (WebSockets over
   HTTP/2, RFC 8441, are not supported yet). No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
-  ends the connection), no RFC 7540 priorities (`priority(...)` goes as the end-to-end `priority` field), and no
-  connection coalescing across origins.
+  ends the connection), and no connection coalescing across origins. `priority(...)` goes as the end-to-end `priority`
+  field, with an RFC 7540 weight in the HEADERS until the server says it ignores those (RFC 9218 section 2.1.1).
 - **Repeats.** A request the server did not process, a stream above a GOAWAY's last stream or refused with
   REFUSED_STREAM (RFC 9113 section 8.7), goes again on another stream or connection, at most twice, whatever its
   method; a streamed body already consumed fails the call with `H3BodyConsumed` instead. A server that answers
@@ -1293,10 +1293,10 @@ only read and sent, never used for scheduling.
 
 On the server, `call.request.priority` is the client's current signal (urgency 3, not incremental, when it sent none; a
 malformed parameter reads as its default), and `call.request.priorityUpdates` is the same as a `StateFlow` that follows
-the client's PRIORITY_UPDATE frames over HTTP/3 (over HTTP/2 and HTTP/1.1 it never changes). `call.response.priority(urgency,
+the client's PRIORITY_UPDATE frames over HTTP/3 and HTTP/2 (over HTTP/1.1 it never changes). `call.response.priority(urgency,
 incremental)` sets the response's `Priority` field with only the parameters given: over HTTP/3 and HTTP/2 the engine
 merges them into the client's signal (a parameter left out keeps the client's value, RFC 9218 section 8) and schedules
-the response with the result, and over HTTP/3 later updates from the client no longer change it.
+the response with the result, and later updates from the client no longer change it.
 
 ```kotlin
 // guide:ktor:priority-server
@@ -1309,11 +1309,14 @@ get("/report") {
 
 On the client, `priority(urgency, incremental)` in a request builder gives the request its priority: over HTTP/3 it is
 sent as the `priority` field (no field for the default, u=3 non-incremental) and the request's own stream is scheduled
-with it, a WebSocket over HTTP/3 included; over HTTP/1.1 only the `Priority` field is sent. It replaces a `Priority`
-header set on the same request, so the server sees one signal. `response.updatePriority(urgency, incremental)` sends a
-PRIORITY_UPDATE while the response is still coming (RFC 9218 section 7) and returns true; it returns false over
-HTTP/1.1, which has no such signal (also when a 421 or a failure sent the request again over HTTP/1.1), once the call
-is over or the body was read to the end, and when the connection is gone. The server reschedules
+with it, a WebSocket over HTTP/3 included; over HTTP/2 the same, with an RFC 7540 weight in the request's HEADERS until
+the server's SETTINGS say it ignores those (RFC 9218 section 2.1.1); over HTTP/1.1 only the `Priority` field is sent. It
+replaces a `Priority` header set on the same request, so the server sees one signal.
+`response.updatePriority(urgency, incremental)` sends a PRIORITY_UPDATE while the response is still coming (RFC 9218
+section 7) and returns true; it returns false over HTTP/1.1, which has no such signal (also when a 421 or a failure sent
+the request again over HTTP/1.1), over HTTP/2 when the server did not say SETTINGS_NO_RFC7540_PRIORITIES = 1 (the frame
+would likely be ignored, section 2.1.1), once the call is over or the body was read to the end, and when the connection
+is gone. The server reschedules
 the rest of the response unless it set a priority of its own.
 
 ```kotlin
