@@ -361,9 +361,7 @@ internal class KuicksilverEngine(
             val r = tcp(data, callContext, reason, d, dns = upgradeDns ?: config.newRequestDns(), proxy = proxy)
             // switched off, Auto keeps learning Alt-Svc, so switching back needs no warm-up
             if (disabled && proxy == null && config.http3.discovery == Http3DiscoveryMode.Auto) {
-                altSvcUpdate {
-                    altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
-                }
+                learnAltSvc(url, r, verifiedTls = true)
             }
             return r
         }
@@ -460,6 +458,25 @@ internal class KuicksilverEngine(
             }
         if (changed) httpsRecords?.onNetworkChanged()
         return network
+    }
+
+    /**
+     * Learns the `Alt-Svc` of [r], the response to [url] (RFC 7838 section 3): freshness counts from the response's
+     * generation, its `Age` and the time it took (section 3.1, [AltSvcCache.onResponse]).
+     */
+    private suspend fun learnAltSvc(
+        url: io.ktor.http.Url,
+        r: HttpResponseData,
+        verifiedTls: Boolean,
+    ) = altSvcUpdate {
+        altSvc.onResponse(
+            url,
+            r.statusCode.value,
+            r.headers.getAll("Alt-Svc").orEmpty(),
+            verifiedTls,
+            ageValues = r.headers.getAll(HttpHeaders.Age).orEmpty(),
+            responseDelayMillis = getTimeMillis() - r.requestTime.timestamp,
+        )
     }
 
     /**
@@ -677,7 +694,9 @@ internal class KuicksilverEngine(
         d: ProtocolDiagnostics,
     ): HttpResponseData {
         val url = data.url
-        val alt = altSvcUpdate { altSvc.h3For(url) }
+        val originKey = originKey(url)
+        // a broken alternative is passed over for the next fresh one (RFC 7838 section 2.4)
+        val alt = altSvcUpdate { altSvc.h3For(url) { brokenAltSvc.brokenReason(originKey, "${it.host ?: url.host}:${it.port}") == null } }
         // the origin's HTTPS records (RFC 9460), when looked up: SVCB resolution decides where to connect (section 3)
         val records = httpsRecords
         if (records != null && !isIpLiteral(url.host)) return autoWithRecords(data, callContext, webSocket, network, d, records, alt)
@@ -692,14 +711,7 @@ internal class KuicksilverEngine(
                 // the origin's Alt-Svc on any answer, over HTTP/3 as over HTTP/1.1 (broken alternative, lost race, fallback): a
                 // new list or `clear` replaces the cached one (RFC 7838 section 3); a 421 is not authoritative and changes
                 // nothing (RFC 9110 section 15.5.20), except that one from the alternative removes it (below, RFC 7838 section 6)
-                altSvcUpdate {
-                    altSvc.onResponse(
-                        url,
-                        r.statusCode.value,
-                        r.headers.getAll("Alt-Svc").orEmpty(),
-                        verifiedTls = url.protocol.isSecure(),
-                    )
-                }
+                learnAltSvc(url, r, verifiedTls = url.protocol.isSecure())
                 if (r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
                 altSvcUpdate { altSvc.removeAlternative(url, alt) }
                 if (!data.body.isReplayable()) {
@@ -719,9 +731,7 @@ internal class KuicksilverEngine(
                 if (alt != null && webSocket && !misdirected) ProtocolReason.WebSocket else ProtocolReason.NoAlternative,
                 d,
             ) { if (misdirected && d.fallback != FallbackReason.H2Refused) d.fallback = FallbackReason.MisdirectedRequest }
-        altSvcUpdate {
-            altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
-        }
+        learnAltSvc(url, r, verifiedTls = url.protocol.isSecure())
         return r
     }
 
@@ -894,9 +904,7 @@ internal class KuicksilverEngine(
             if (tcpDns != null) triedTcp += tcpKey!!
             try {
                 val r = attempt(a, h3t, tcpDns, data, callContext, network, d, dns, webSocket, altAuthority)
-                altSvcUpdate {
-                    altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
-                }
+                learnAltSvc(url, r, verifiedTls = true)
                 // a 421 from an Alt-Svc alternative removes it (RFC 7838 section 6); the request goes on without it
                 if (!a.altSvc || alt == null || r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
                 altSvcUpdate { altSvc.removeAlternative(url, alt) }
@@ -919,9 +927,7 @@ internal class KuicksilverEngine(
                 d,
                 dns = dns,
             ) { if (misdirected && d.fallback != FallbackReason.H2Refused) d.fallback = FallbackReason.MisdirectedRequest }
-        altSvcUpdate {
-            altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = true)
-        }
+        learnAltSvc(url, r, verifiedTls = true)
         return r
     }
 

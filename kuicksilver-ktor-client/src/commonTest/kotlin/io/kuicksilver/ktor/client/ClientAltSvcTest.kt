@@ -249,4 +249,31 @@ class ClientAltSvcTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * RFC 7838 section 2.4: a client "SHOULD use that alternative service for all requests to the associated origin as soon as
+     * it is available, provided the alternative service information is fresh", and after a failure "MAY fall back to using
+     * the origin or another alternative service". A broken mark on the first cached alternative sends the request to the
+     * next fresh one that is not broken; before, it went straight to TCP although a second alternative was cached.
+     */
+    @Test fun negative_brokenFirstAlternativeUsesTheNextOne() =
+        h3Test {
+            val (server, port) = testServer(configure = { altSvc = false }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                val origin = "https://127.0.0.1:$port"
+                val far =
+                    io.ktor.util.date
+                        .getTimeMillis() + 3_600_000
+                val store = InMemoryAltSvcStore()
+                store.put(origin, listOf(AltSvcEntry("h3", null, 1, far, false), AltSvcEntry("h3", null, port, far, false)))
+                testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                    (c.engine as KuicksilverEngine).brokenAltSvc.markBroken(origin, "127.0.0.1:1")
+                    val d = c.get("$origin/").kuicksilverDiagnostics!!
+                    assertEquals("127.0.0.1:$port", d.alternative, "$d")
+                    assertEquals(null, d.brokenSince, "$d")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 }

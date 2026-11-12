@@ -20,7 +20,9 @@ class AltSvcTest {
         vararg values: String,
         verified: Boolean = true,
         url: Url = origin,
-    ) = cache.onResponse(url, status, values.toList(), verified)
+        age: List<String> = emptyList(),
+        delayMillis: Long = 0,
+    ) = cache.onResponse(url, status, values.toList(), verified, age, delayMillis)
 
     @Test fun parsesMaAndPersist() {
         val e = AltSvcParser.parse("h3=\":443\"; ma=3600; persist=1, h3-29=\":443\"", now)!!
@@ -59,6 +61,77 @@ class AltSvcTest {
 
     @Test fun clearReturnsNull() {
         assertNull(AltSvcParser.parse("clear", now))
+    }
+
+    /**
+     * RFC 7838 section 3: "A field value containing the special value "clear" indicates that the origin requests all
+     * alternatives for that origin to be invalidated (including those specified in the same response, in case of an invalid
+     * reply containing both "clear" and alternative services)." Before, only a value that was `clear` as a whole cleared, and
+     * `clear, h3=":443"` (two field lines an intermediary folded, or a stale value appended) stored the alternative.
+     */
+    @Test fun negative_clearAmongAlternativesInvalidatesThemAll() {
+        for (value in listOf("clear, h3=\":443\"", "h3=\":443\", clear", "h3=\":443\" ,  clear  , h3=\":8443\"")) {
+            assertNull(AltSvcParser.parse(value, now), value)
+            respond(200, "h3=\":443\"")
+            respond(200, value)
+            assertNull(cache.h3For(origin), value)
+            assertTrue(store.get(cache.originOf(origin)).isEmpty(), value)
+        }
+        // "clear" is case-sensitive and a whole list element: neither of these is the keyword
+        assertEquals(listOf(443), AltSvcParser.parse("CLEAR, h3=\":443\"", now)!!.map { it.port })
+        assertEquals(listOf(443), AltSvcParser.parse("clear=\":1\", h3=\":443\"", now)!!.map { it.port })
+    }
+
+    /**
+     * RFC 7838 section 3: alt-authority is `[ uri-host ] ":" port`, and RFC 3986's `port = *DIGIT`; a sign is no digit, so
+     * `h3=":+443"` is malformed (before, `toIntOrNull` read it as 443).
+     */
+    @Test fun negative_altSvcPortWithSignIsSkipped() {
+        for (port in listOf("+443", "-443", " 443", "443 ", "0x1bb", "")) {
+            assertEquals(emptyList(), AltSvcParser.parse("h3=\":$port\"", now), port)
+        }
+        assertEquals(listOf(443), AltSvcParser.parse("h3=\":0443\"", now)!!.map { it.port })
+    }
+
+    /**
+     * RFC 7838 section 3.1: an alternative "is considered fresh for 24 hours from generation of the message", `ma` counts "the
+     * number of seconds since the response was generated", and the response age is determined as RFC 7234 section 4.2.3
+     * (now RFC 9111 section 4.2.3) says: `corrected_age_value = age_value + response_delay`. The RFC's own example, `Age: 30`
+     * with `ma=60`, is fresh for 30 seconds from receipt (minus the transit time). Before, `Age` was ignored and freshness
+     * counted from receipt.
+     */
+    @Test fun negative_altSvcFreshnessAccountsForAge() {
+        respond(200, "h3=\":443\"; ma=60", age = listOf("30"))
+        assertEquals(now + 30_000, cache.h3For(origin)!!.expiresAtEpochMillis)
+        // the response delay counts too
+        respond(200, "h3=\":443\"; ma=60", age = listOf("30"), delayMillis = 2_000)
+        assertEquals(now + 28_000, cache.h3For(origin)!!.expiresAtEpochMillis)
+        // and without Age (age_value 0)
+        respond(200, "h3=\":443\"; ma=60", delayMillis = 2_000)
+        assertEquals(now + 58_000, cache.h3For(origin)!!.expiresAtEpochMillis)
+        // the default 24 hours from generation, a CDN copy 86000 s old: 400 s left, not 24 hours
+        respond(200, "h3=\":443\"", age = listOf("86000"))
+        assertEquals(now + 400_000, cache.h3For(origin)!!.expiresAtEpochMillis)
+        // older than ma: replaces the cached alternatives (section 3.1) and is not fresh
+        respond(200, "h3=\":443\"; ma=60", age = listOf("61"))
+        assertNull(cache.h3For(origin))
+    }
+
+    /**
+     * RFC 9111 section 5.1: a list-based Age uses its first member, an invalid one is ignored; a value too large to represent
+     * is 2147483648 (section 1.2.2), which makes every alternative stale, not fresh by an overflow.
+     */
+    @Test fun negative_invalidOrListAgeHandledAsRfc9111Says() {
+        respond(200, "h3=\":443\"; ma=60", age = listOf("10, 50"))
+        assertEquals(now + 50_000, cache.h3For(origin)!!.expiresAtEpochMillis)
+        respond(200, "h3=\":443\"; ma=60", age = listOf("10", "50"))
+        assertEquals(now + 50_000, cache.h3For(origin)!!.expiresAtEpochMillis)
+        for (bad in listOf("-5", "+5", "abc", "1.5", "")) {
+            respond(200, "h3=\":443\"; ma=60", age = listOf(bad))
+            assertEquals(now + 60_000, cache.h3For(origin)!!.expiresAtEpochMillis, bad)
+        }
+        respond(200, "h3=\":443\"; ma=99999999999999999999", age = listOf("99999999999999999999"))
+        assertNull(cache.h3For(origin))
     }
 
     @Test fun malformedEntriesSkipped() {

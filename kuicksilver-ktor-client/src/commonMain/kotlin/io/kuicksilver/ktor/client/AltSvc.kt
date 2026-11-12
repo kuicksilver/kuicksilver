@@ -10,7 +10,8 @@ import io.ktor.http.Url
  * @property protocol the ALPN protocol id of the alternative; the engine stores and uses only `h3`.
  * @property host the alternative's host; null when the header left it empty, meaning the origin's own host.
  * @property port the alternative's UDP port, 1..65535.
- * @property expiresAtEpochMillis the end of freshness in epoch milliseconds: receipt time plus `ma` (86400 s by default).
+ * @property expiresAtEpochMillis the end of freshness in epoch milliseconds: the time the response was generated plus `ma`
+ *   (86400 s by default), where the generation time is the receipt time minus the response's age (RFC 7838 section 3.1).
  * @property persist `persist=1`: the entry survives a network change even with [Http3ClientConfig.clearOnNetworkChange].
  *
  * Two entries are equal when they name the same alternative ([protocol], [host], [port], [persist]); the expiry is left
@@ -145,14 +146,21 @@ internal object AltSvcParser {
 
     private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
-    /** The `h3` entries of [value] (other protocols are ignored, malformed entries skipped); null for `clear`. */
+    /**
+     * The `h3` entries of [value] (other protocols are ignored, malformed entries skipped), fresh for `ma` seconds from
+     * [generatedAtMillis]; null when the value contains `clear`. RFC 7838 section 3: "A field value containing the special
+     * value "clear" indicates that the origin requests all alternatives for that origin to be invalidated (including those
+     * specified in the same response, in case of an invalid reply containing both "clear" and alternative services)": any
+     * list element that is exactly `clear` (case-sensitive) clears, whatever else the value lists.
+     */
     fun parse(
         value: String,
-        nowMillis: Long,
+        generatedAtMillis: Long,
     ): List<AltSvcEntry>? {
-        if (value.trim() == "clear") return null
+        val elements = splitTopLevel(value, ',')
+        if (elements.any { it.trim(' ', '\t') == "clear" }) return null
         val out = ArrayList<AltSvcEntry>()
-        for (alt in splitTopLevel(value, ',')) {
+        for (alt in elements) {
             val parts = splitTopLevel(alt, ';').map { it.trim() }
             val head = parts.firstOrNull() ?: continue
             val eq = head.indexOf('=')
@@ -161,7 +169,7 @@ internal object AltSvcParser {
             val authority = unquote(head.substring(eq + 1).trim()) ?: continue
             val colon = authority.lastIndexOf(':')
             if (colon < 0) continue
-            val port = authority.substring(colon + 1).toIntOrNull()?.takeIf { it in 1..65_535 } ?: continue
+            val port = portOf(authority.substring(colon + 1)) ?: continue
             // RFC 7838 section 3: alt-authority is uri-host ":" port, uri-host being RFC 3986's host; anything else (a
             // space, a control character, a bare IPv6 address) makes the alternative malformed. The host reaches
             // connection targets and the engine's diagnostics log line, so it is checked here, not trusted
@@ -202,9 +210,29 @@ internal object AltSvcParser {
                 }
             }
             if (bad || protocol != "h3") continue
-            out += AltSvcEntry(protocol, host, port, nowMillis + minOf(ma, Long.MAX_VALUE / 2000) * 1000, persist)
+            out += AltSvcEntry(protocol, host, port, generatedAtMillis + minOf(ma, Long.MAX_VALUE / 2000) * 1000, persist)
         }
         return out
+    }
+
+    /**
+     * An alt-authority port (RFC 7838 section 3: RFC 3986's `port = *DIGIT`) that can be connected to, 1..65535, or null.
+     * Only digits: `toIntOrNull` alone would take a sign (`+443`).
+     */
+    internal fun portOf(s: String): Int? =
+        s.takeIf { it.isNotEmpty() && it.length <= 5 && it.all { c -> c in '0'..'9' } }?.toInt()?.takeIf { it in 1..65_535 }
+
+    /**
+     * The response's age in seconds from its `Age` field lines (RFC 9111 section 5.1, which RFC 7838 section 3.1 points to
+     * for "determining the response age"): "a cache encountering a message with a list-based Age field value SHOULD use the
+     * first member of the field value, discarding subsequent ones", and "If the field value ... is invalid (e.g., it
+     * contains something other than a non-negative integer), a cache SHOULD ignore the field" (0 then, as `age_value` is
+     * "0, if not available", section 4.2.3). A value too large to represent is 2147483648 (section 1.2.2).
+     */
+    fun ageSeconds(values: List<String>): Long {
+        val first = values.firstOrNull()?.substringBefore(',')?.trim(' ', '\t') ?: return 0
+        if (first.isEmpty() || first.any { it !in '0'..'9' }) return 0
+        return first.toLongOrNull()?.coerceAtMost(MA_OVERFLOW_SECONDS) ?: MA_OVERFLOW_SECONDS
     }
 
     /**
@@ -282,20 +310,29 @@ internal class AltSvcCache(
 ) {
     fun originOf(url: Url): String = originKeyOf(url)
 
+    /**
+     * Learns the `Alt-Svc` field lines [values] of a response to [url]. Freshness counts from the response's generation
+     * (RFC 7838 section 3.1): the receipt time minus `corrected_age_value = age_value + response_delay` (RFC 9111 section
+     * 4.2.3, which "MAY be used as the corrected_initial_age"), [ageValues] being its `Age` field lines and
+     * [responseDelayMillis] the time from sending the request to receiving the response.
+     */
     fun onResponse(
         url: Url,
         status: Int,
         values: List<String>,
         verifiedTls: Boolean,
+        ageValues: List<String> = emptyList(),
+        responseDelayMillis: Long = 0,
     ) {
         if (!verifiedTls) return // threat-model 3.18: never learn an alternative from an unauthenticated response
         val origin = originOf(url)
         if (status == 421 || values.isEmpty()) return
-        val now = clock()
+        val generatedAt = clock() - AltSvcParser.ageSeconds(ageValues) * 1000 - responseDelayMillis.coerceAtLeast(0)
         val entries = ArrayList<AltSvcEntry>()
+        // the field lines are one list (RFC 9110 section 5.3): a `clear` in any of them clears
         for (v in values) {
             val parsed =
-                AltSvcParser.parse(v, now) ?: run {
+                AltSvcParser.parse(v, generatedAt) ?: run {
                     store.remove(origin)
                     return
                 }
@@ -309,13 +346,21 @@ internal class AltSvcCache(
         if (usable.isEmpty()) store.remove(origin) else store.put(origin, usable)
     }
 
-    /** A live `h3` alternative of the origin of [url], or null. */
-    fun h3For(url: Url): AltSvcEntry? {
+    /**
+     * The `h3` alternative of the origin of [url] to use, or null: the first fresh one (in the server's order of
+     * preference, RFC 7838 section 3) that [usable] accepts, else the first fresh one. The engine passes "not marked
+     * broken": RFC 7838 section 2.4 says a client "SHOULD use that alternative service for all requests to the associated
+     * origin as soon as it is available, provided the alternative service information is fresh", and after a failure "MAY
+     * fall back to using the origin or another alternative service"; when every fresh alternative is broken, the first one
+     * comes back and its broken mark sends the request to TCP.
+     */
+    fun h3For(
+        url: Url,
+        usable: (AltSvcEntry) -> Boolean = { true },
+    ): AltSvcEntry? {
         val now = clock()
-        return store.get(originOf(url)).firstOrNull {
-            it.protocol == "h3" &&
-                it.expiresAtEpochMillis > now
-        }
+        val fresh = store.get(originOf(url)).filter { it.protocol == "h3" && it.expiresAtEpochMillis > now }
+        return fresh.firstOrNull(usable) ?: fresh.firstOrNull()
     }
 
     /** Forgets [entry] of the origin of [url] and keeps its other alternatives: a 421 from [entry] (RFC 7838 section 6). */
