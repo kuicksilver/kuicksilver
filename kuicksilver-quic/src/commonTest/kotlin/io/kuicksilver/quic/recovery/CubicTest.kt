@@ -294,4 +294,25 @@ class CubicTest {
         roundOf(cc, t, List(8) { 70.milliseconds } + List(8) { 50.milliseconds })
         assertTrue(!cc.inConservativeSlowStart, "the round's minimum came back to 50 ms: the RTT increase was spurious")
     }
+
+    @Test fun hystartOnlyInTheInitialSlowStart() {
+        // RFC 9406 section 4.3: "An implementation SHOULD use HyStart++ only for the initial slow start (when the ssthresh is at
+        // its initial value of arbitrarily high per [RFC5681]) and fall back to using standard slow start for the remainder of the
+        // connection lifetime." After persistent congestion the window restarts from 2 datagrams below the ssthresh the loss set:
+        // an RTT that rises during that slow start must neither enter Conservative Slow Start nor end slow start below that ssthresh
+        val cc = Cubic(mss)
+        var t = roundOf(cc, t0, List(100) { 50.milliseconds }) // the initial slow start, at 50 ms
+        cc.onPacketSent(t, mss)
+        cc.onLoss(t + 2.seconds, mss, t, persistentCongestion = true)
+        assertEquals(2L * mss, cc.cwnd)
+        val lossSet = cc.ssthresh
+        assertTrue(lossSet in 2L * mss until Long.MAX_VALUE, "ssthresh $lossSet")
+        t += 2.seconds + 10.milliseconds
+        for (rtt in listOf(60, 70, 80, 90, 100, 110)) {
+            t = roundOf(cc, t, List(8) { rtt.milliseconds })
+            assertTrue(!cc.inConservativeSlowStart, "no CSS after persistent congestion (RTT $rtt ms)")
+            assertEquals(lossSet, cc.ssthresh, "ssthresh is still the one the loss set (RTT $rtt ms)")
+        }
+        assertEquals(2L * mss + 6 * 8 * mss, cc.cwnd, "plain slow start: one datagram per acknowledged datagram")
+    }
 }

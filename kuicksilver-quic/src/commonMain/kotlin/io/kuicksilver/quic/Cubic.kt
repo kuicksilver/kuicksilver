@@ -10,9 +10,10 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * CUBIC congestion control (RFC 9438) with HyStart++ (RFC 9406), the default controller. Byte arithmetic throughout:
  * C = 0.4, beta = 0.7, fast convergence, and the Reno-friendly region (alpha = 3(1 - beta)/(1 + beta)) so a short-RTT
- * flow never grows slower than Reno. Slow start ends by HyStart++ (an RTT increase enters Conservative Slow Start, five
- * CSS rounds end slow start, an RTT drop returns to slow start) or by the first congestion event. Pacing and the send
- * quantum are those of [NewReno]. Nothing here allocates after construction.
+ * flow never grows slower than Reno. The initial slow start ends by HyStart++ (an RTT increase enters Conservative Slow
+ * Start, five CSS rounds end slow start, an RTT drop returns to slow start) or by the first congestion event; a later slow
+ * start (after persistent congestion) is plain slow start up to the ssthresh the loss set (RFC 9406 section 4.3). Pacing
+ * and the send quantum are those of [NewReno]. Nothing here allocates after construction.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 public class Cubic(
@@ -66,6 +67,15 @@ public class Cubic(
 
     private val inSlowStart: Boolean get() = cwnd < ssthresh
 
+    /**
+     * RFC 9406 section 4.3: "An implementation SHOULD use HyStart++ only for the initial slow start (when the ssthresh is at its
+     * initial value of arbitrarily high per [RFC5681]) and fall back to using standard slow start for the remainder of the
+     * connection lifetime." Every congestion event sets a finite ssthresh, so the slow start after persistent congestion is
+     * plain slow start. The MAY of the same section (HyStart++ for the restart window after a long idle period) is not taken:
+     * this controller keeps its window across idle periods.
+     */
+    private val inHystart: Boolean get() = hystart && ssthresh == Long.MAX_VALUE
+
     override fun onPacketSent(
         now: TimeMark,
         bytes: Int,
@@ -86,7 +96,7 @@ public class Cubic(
         latest: Duration,
         min: Duration,
     ) {
-        if (hystart && inSlowStart) pendingSample = latest
+        if (inHystart && inSlowStart) pendingSample = latest
     }
 
     /** RFC 9406 section 4.2 for one ACK in slow start: every sample of the round counts; the checks run once N_RTT_SAMPLE arrived. */
@@ -115,6 +125,10 @@ public class Cubic(
     private fun endRound() {
         if (inConservativeSlowStart && ++cssRounds >= CSS_ROUNDS) {
             ssthresh = cwnd
+            // RFC 9438 section 4.10: "When CUBIC uses HyStart++ [RFC9406], it may exit the first slow start without incurring any
+            // packet loss and thus W_max is undefined. In this special case, CUBIC sets cwnd_prior = cwnd and switches to
+            // congestion avoidance" (W_max, K and W_est are set by the first congestion avoidance ACK, as after a timeout)
+            cwndPrior = cwnd
             inConservativeSlowStart = false
         } // section 4.2: CSS_ROUNDS rounds (the partial one it began in counts) end slow start
         lastRttMin = currRttMin
@@ -130,7 +144,7 @@ public class Cubic(
         appLimited: Boolean,
     ) {
         bytesInFlight -= bytes
-        if (hystart &&
+        if (inHystart &&
             inSlowStart
         ) {
             if (roundEndSent == TimeMark.NEVER ||
@@ -195,7 +209,7 @@ public class Cubic(
         recoveryStart = now
         cwndPrior = cwnd
         alpha = ALPHA
-        // fast convergence (section 4.6): W_max = cwnd (1 + beta) / 2
+        // fast convergence (section 4.7): W_max = cwnd (1 + beta) / 2
         wMax = if (cwnd < wMax) cwnd * (BETA_DEN + BETA_NUM) / (2 * BETA_DEN) else cwnd
         cwnd = maxOf(cwnd * BETA_NUM / BETA_DEN, minWindow)
         ssthresh = cwnd
@@ -204,6 +218,7 @@ public class Cubic(
         k = cbrt((wMax - cwnd).toDouble() / mss / C)
         wEst = cwnd.toDouble()
         inConservativeSlowStart = false
+        pendingSample = Duration.INFINITE // HyStart++ is over for good (ssthresh is finite now)
     }
 
     override fun onLoss(
