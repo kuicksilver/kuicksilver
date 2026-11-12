@@ -27,6 +27,7 @@ import kotlin.time.Duration
  * Not thread-safe: [HttpsRecords] locks it.
  */
 internal class HttpsRecordCache(
+    /** Milliseconds on a monotonic clock: a wall clock stepped back would keep records past their TTL. */
     private val nowMillis: () -> Long,
 ) {
     private class Entry<T>(
@@ -154,6 +155,9 @@ internal class HttpsRecords(
 
     private val lock = Mutex()
     private val cache = HttpsRecordCache(nowMillis)
+
+    /** The clock of the cache (tests). */
+    internal val nowMillisForTest: () -> Long = nowMillis
     private val inFlight = HashMap<String, Deferred<DnsAnswer?>>()
     private var generation = 0L
 

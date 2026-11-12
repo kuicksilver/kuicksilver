@@ -102,8 +102,18 @@ internal class KuicksilverEngine(
         minOf(config.connectTimeout, MAX_HTTPS_RECORD_QUERY).let { timeout ->
             config.http3.httpsRecords
                 .lookup(timeout)
-                // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId)
-                ?.let { HttpsRecords(it, engineScope, timeout, ::getTimeMillis, caching = config.http3.networkIdSet) }
+                // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId). TTLs run on
+                // the monotonic clock: a wall clock stepped back must not keep a record past its TTL
+                ?.let {
+                    HttpsRecords(
+                        it,
+                        engineScope,
+                        timeout,
+                        io.kuicksilver.ktor.client.h1
+                            .monotonicMillis(),
+                        caching = config.http3.networkIdSet,
+                    )
+                }
         }
     private val httpsRecords: HttpsRecords? get() = httpsRecordsForTest
 

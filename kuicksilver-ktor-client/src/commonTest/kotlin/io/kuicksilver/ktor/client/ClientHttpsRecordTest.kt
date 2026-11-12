@@ -410,4 +410,13 @@ class ClientHttpsRecordTest {
             QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).build() }.build(),
         )
     }
+
+    @Test fun negative_recordCacheDoesNotReadTheWallClock() {
+        // RFC 1035 section 3.2.1 keeps a record for its TTL: a wall clock stepped back (by NTP, by hand) must not keep a
+        // cached record, a forged one included, past it; the cache counts on a monotonic clock from the engine's start
+        client(Records(emptyMap()).source).use { c ->
+            val now = (c.engine as KuicksilverEngine).httpsRecordsForTest!!.nowMillisForTest()
+            assertTrue(now in 0..<getTimeMillis() / 2, "the record cache reads the time of day: $now")
+        }
+    }
 }
