@@ -1284,7 +1284,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   stand in for the whole address lookup of that name, which a resolver that omitted the other family's RRset (RFC 9460
   section 5.2) left without it, IPv6 on an IPv6-only network say. That family is still used at once (section 5), and
   the name is looked up as well: the other family's addresses join when they come within the 50 ms resolution delay of
-  Happy Eyeballs, IPv6 first. "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it was kept for the
+  Happy Eyeballs, in the family order the platform resolver gave (RFC 8305 section 4: "the client MUST sort the
+  addresses received up to this point using Destination Address Selection"); with no platform answer to go by, the
+  family order of the system's last lookup, or a probe for a source address of each family, decides. "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it was kept for the
   SOA's negative TTL, RFC 2308 section 5, although the negative answer is about "the data field of the last CNAME", RFC
   2308 section 1, and a CNAME "may be cached" only for its TTL, RFC 1035 section 3.2.1). The record cache counts a TTL
   on both the monotonic and the wall clock and expires an entry once either has seen it pass: a wall clock stepped back
@@ -1308,7 +1310,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   other HTTPS RRsets per answer are followed, a record's `mandatory` keys are checked in one merge pass, and the read
   checks the lookup's coroutine every 64 units of work, so the timeout and cancellation stop it. At most 32 ServiceMode
   endpoints of an RRset are tried, so a forged RRset cannot turn one request into thousands of connection attempts, and
-  the record cache holds at most 1 MiB each of records and addresses, and no RRset or address list of over 64 entries.
+  the record cache holds about 1 MiB at most each of records and addresses (an estimate of the objects' size), and no RRset or address list of over 64 entries.
   The `client.svcb` fuzz target checks the parse bounds.
 
 ## [0.2.1] - 2026-11-04

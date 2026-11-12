@@ -23,7 +23,7 @@ import kotlin.time.Duration
 /**
  * The HTTPS records of query names, and addresses of names, by their TTL (RFC 1035 section 3.2.1: the TTL "specifies the
  * time interval that the resource record may be cached"; capped at [MAX_TTL_S]), counted on an [ExpiryClock], so neither a
- * wall clock stepped back nor a device that slept keeps an entry longer. At most [MAX_NAMES] names and [MAX_BYTES] bytes
+ * wall clock stepped back nor a device that slept keeps an entry longer. At most [MAX_NAMES] names and about [MAX_BYTES] bytes
  * each for records and addresses, the least recently used dropped first, and no RRset or address list over [MAX_RECORDS]:
  * the answers come over an untrusted channel (RFC 9460 section 9.2.2). A name without records (NXDOMAIN, NODATA) is remembered for the SOA's negative TTL (RFC 2308 section 5), and not
  * at all without one ("Negative responses without SOA records SHOULD NOT be cached"). A failed lookup is never stored.
@@ -137,7 +137,10 @@ internal class HttpsRecordCache(
         /** Records (or addresses) of one name stored at most: twice what a resolution uses ([MAX_ENDPOINTS]). */
         const val MAX_RECORDS = 2 * MAX_ENDPOINTS
 
-        /** Bytes the records, and the addresses, hold at most each ([bytesOf]); the least recently used go first. */
+        /**
+         * Bytes the records, and the addresses, hold at most each, by the estimate of [bytesOf] (the objects' real overhead
+         * is larger, so about this much); the least recently used go first.
+         */
         const val MAX_BYTES = 1L shl 20
 
         /** What one record or address costs beyond its content: the objects that hold it. */

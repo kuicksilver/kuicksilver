@@ -275,7 +275,7 @@ Status (core review): skipped packet numbers, all CIDs (the client's ODCID/SCID,
   and is marked broken
   (`ClientHttpsRecordTest.negative_wrongCertificateAtTargetFallsBackAndMarksBroken`). Lookups are bounded: one per name
   at a time, each at most the connect timeout (30 s at most), at most 8 AliasMode steps with loop detection
-  (`.negative_aliasLoopStops`), 1000 cached names and 1 MiB each for records and addresses with no RRset or address
+  (`.negative_aliasLoopStops`), 1000 cached names and about 1 MiB each for records and addresses (an estimate of the objects' size) with no RRset or address
   list of over 64 entries stored, so a forged answer cannot fill the memory through the cache
   (`HttpsRecordCacheTest.negative_oversizedRrsetIsNotCached`, `.negative_cacheBytesAreBounded`), and a request waits at most `httpsRecordExtraWait` after its addresses
   resolved (`.negative_hangingSourceDoesNotDelayBeyondExtraWait`). An attacker who drops the HTTPS answers can only make

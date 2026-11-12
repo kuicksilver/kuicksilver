@@ -440,8 +440,8 @@ internal class KuicksilverEngine(
     internal suspend fun closeHttp3Connections() = h3.goAwayAll(engineScope)
 
     /**
-     * A new network (`networkId`) forgets broken marks, QUIC confirmation, the HTTPS records and, if asked, non-persistent
-     * alternatives.
+     * A new network (`networkId`) forgets broken marks, QUIC confirmation, the HTTPS records, the address family order
+     * ([AddressFamilyOrder]) and, if asked, non-persistent alternatives.
      */
     private suspend fun checkNetwork(): String? {
         var changed = false
@@ -459,7 +459,10 @@ internal class KuicksilverEngine(
                 lastNetwork = id
                 id
             }
-        if (changed) httpsRecords?.onNetworkChanged()
+        if (changed) {
+            httpsRecords?.onNetworkChanged()
+            AddressFamilyOrder.system.reset() // the routes and the resolver's sort are the new network's
+        }
         return network
     }
 
