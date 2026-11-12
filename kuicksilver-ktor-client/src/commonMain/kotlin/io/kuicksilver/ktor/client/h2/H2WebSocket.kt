@@ -233,7 +233,8 @@ internal suspend fun h2WebSocket(
                     },
                 ),
                 // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
-                guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression),
+                // its own Close is also seen here, once written, whichever way it was sent (see OwnCloseWatch)
+                guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression, onClose = ::onOwnClose),
                 masking = false,
                 coroutineContext = callContext,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
@@ -251,7 +252,10 @@ internal suspend fun h2WebSocket(
 
 /**
  * [raw] with its outgoing frames watched: [onClose] runs when the session sends its own Close (Ktor's session sends it
- * through [outgoing], its `close()` through [send]), before the Close is queued behind the frames ahead of it.
+ * through [outgoing], its `close()` through [send]), before the Close is queued behind the frames ahead of it. Every send
+ * path of the channel is watched but `onSend`, a select clause, which cannot be wrapped without kotlinx.coroutines'
+ * internal API (Ktor's sessions never select on it). A Close sent that way is still seen when it is written: the output
+ * guard calls [onClose] too, only later if the writer is held behind a frame larger than the lead.
  */
 private class OwnCloseWatch(
     private val raw: WebSocketSession,
@@ -267,6 +271,13 @@ private class OwnCloseWatch(
             override fun trySend(element: Frame): ChannelResult<Unit> {
                 if (element is Frame.Close) onClose()
                 return raw.outgoing.trySend(element)
+            }
+
+            @Deprecated("Use trySend", level = DeprecationLevel.ERROR)
+            @Suppress("DEPRECATION_ERROR", "OVERRIDE_DEPRECATION")
+            override fun offer(element: Frame): Boolean {
+                if (element is Frame.Close) onClose()
+                return raw.outgoing.offer(element)
             }
         }
 

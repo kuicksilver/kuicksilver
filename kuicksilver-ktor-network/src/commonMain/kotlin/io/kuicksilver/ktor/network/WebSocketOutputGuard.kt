@@ -55,6 +55,12 @@ import kotlinx.io.readTo
  * when the writer closes the channel ([ByteWriteChannel.flushAndClose], which Ktor's writers always call last).
  * [onClose] runs once this side's own Close frame was written to [output] (before the flush that sends it): the session
  * is closing, so an engine that holds its writer behind the peer's window can stop holding it.
+ *
+ * After that Close, data frames are discarded (RFC 6455 section 5.5.1: "After sending a Close frame, the application
+ * MUST NOT send any more data frames"): nothing of them reaches [output] and the write does not fail, so a session that
+ * ends in order still does. Ktor's sessions send nothing after their Close; the rule bounds what any other upgrade (an
+ * application's own `ProtocolUpgrade`) can write once its engine stopped holding it at the peer's window. Control frames
+ * still pass.
  */
 @InternalKuicksilverApi
 public fun guardWebSocketOutput(
@@ -108,6 +114,8 @@ private class OutputGuard(
     private val closeBuffer = ByteArray(MAX_CONTROL.toInt())
     private var closeSize = -1 // -1: no Close being collected
     private var closeLength = 0
+    private var closeWritten = false // this side's Close went to the output: data frames are discarded
+    private var discardLeft = -1L // -1: no frame being discarded
 
     // the frame being handed on
     private var payloadLeft = -1L // -1: reading a header
@@ -165,6 +173,7 @@ private class OutputGuard(
         try {
             while (!staged.exhausted()) {
                 when {
+                    discardLeft >= 0 -> discard()
                     closeSize >= 0 -> closeBody()
                     payloadLeft < 0 -> headerByte()
                     else -> payload()
@@ -202,6 +211,11 @@ private class OutputGuard(
             closeSize = length.toInt()
             closeLength = 0
             if (length == 0L) closeBody()
+            return
+        }
+        if (closeWritten && opcode < OPCODE_CLOSE) {
+            // RFC 6455 section 5.5.1: no data frame after this side's Close
+            if (length > 0) discardLeft = length
             return
         }
         var first = b0
@@ -444,7 +458,18 @@ private class OutputGuard(
         if (masking) unmask(body, sent, wireMask, 0)
         if (sent > 0) output.writeFully(body, 0, sent)
         payloadLeft = -1
-        onClose()
+        if (!closeWritten) {
+            closeWritten = true
+            onClose()
+        }
+    }
+
+    /** The payload of a data frame written after this side's Close: dropped. */
+    private fun discard() {
+        val n = minOf(discardLeft, staged.size)
+        staged.skip(n)
+        discardLeft -= n
+        if (discardLeft == 0L) discardLeft = -1
     }
 
     /** Four bytes of OpenSSL's CSPRNG (`RAND_bytes`), drawn [KEY_BATCH] keys at a time. */
