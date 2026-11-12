@@ -321,7 +321,8 @@ class ClientH1Test {
      * A connection that is not made within the request's connect timeout (`HttpTimeout`, shorter than the engine's) fails
      * the call with Ktor's [ConnectTimeoutException]. The connect step that never completes is the TCP connect's address
      * lookup, held by the test, not an address assumed to drop SYNs: such an address (10.255.255.1 before) answers where a
-     * VPN or another route reaches it, and the call then got no timeout at all.
+     * VPN or another route reaches it, and the call then got no timeout at all. The host is a name: an address literal is
+     * never looked up (Happy Eyeballs connects to it at once).
      */
     @Test fun connectTimeoutMapsToKtor() =
         clientTest {
@@ -342,7 +343,7 @@ class ClientH1Test {
                 block = { install(HttpTimeout) { connectTimeoutMillis = 300 } },
             ).use { c ->
                 val started = TimeSource.Monotonic.markNow()
-                assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:443/") }
+                assertFailsWith<ConnectTimeoutException> { c.get("https://connect-timeout.test:443/") }
                 val took = started.elapsedNow()
                 assertTrue(entered.isCompleted, "the call failed before it started connecting")
                 assertTrue(cancelled.isCompleted, "the timed-out connect step was not cancelled")
