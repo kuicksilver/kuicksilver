@@ -6,6 +6,7 @@ package io.kuicksilver.ktor.client
 
 import io.kuicksilver.ktor.client.dns.DnsMessage
 import io.kuicksilver.ktor.network.TcpAddress
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -80,7 +81,8 @@ class Nat64Test {
         fun on(
             v6: TcpAddress?,
             v4: TcpAddress?,
-        ) = Nat64(ExpiryClock { 0L }, sourceFor = { if (it.isIpv6) v6 else v4 }, query = { null }).ipv6OnlyNetwork()
+        ) = Nat64(ExpiryClock { 0L }, sourceFor = { if (it.isIpv6) v6 else v4 }, query = { null }, platformSynthesize = { null })
+            .ipv6OnlyNetwork()
         assertTrue(on(globalV6, null))
         assertTrue(on(globalV6, linkLocal4))
         assertEquals(false, on(globalV6, clat))
@@ -88,22 +90,71 @@ class Nat64Test {
         assertEquals(false, on(TcpAddress(ip6("fe80::1"), 0), null))
     }
 
-    @Test fun discoveryIsCachedForItsTtlAndRefreshedTenSecondsBefore() =
+    /** An IPv6-only host whose IPv6 source is [source] (a test changes it to move to another network). */
+    private class Host(
+        var source: TcpAddress,
+        val routed: Set<List<Byte>> = emptySet(),
+    )
+
+    private fun kotlinx.coroutines.test.TestScope.nat(
+        clock: () -> Long,
+        host: Host = Host(globalV6),
+        query: suspend () -> AddressRecords?,
+    ) = Nat64(
+        ExpiryClock(clock),
+        sourceFor = { d ->
+            if (d.isIpv6) {
+                host.source
+            } else if (d.bytes.toList() in
+                host.routed
+            ) {
+                TcpAddress(byteArrayOf(10, 0, 0, 2), 0)
+            } else {
+                null
+            }
+        },
+        query = query,
+        platformSynthesize = { null },
+        scope = backgroundScope,
+    )
+
+    @Test fun discoveryIsCachedForItsTtlAndRefreshedInTheBackgroundTenSecondsBefore() =
+        runTest {
+            var now = 0L
+            var asked = 0
+            val refresh = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val n =
+                nat({ now }) {
+                    asked++
+                    if (asked == 2) refresh.await()
+                    aaaaAnswer(600)
+                }
+            assertEquals(listOf(Pref64.WELL_KNOWN), n.prefixes())
+            now = 589_999
+            assertEquals(listOf(Pref64.WELL_KNOWN), n.prefixes())
+            assertEquals(1, asked)
+            now = 590_000 // RFC 7050 section 3: "ten seconds before the TTL ... expires": served while the refresh runs
+            assertEquals(listOf(Pref64.WELL_KNOWN), n.prefixes())
+            testScheduler.runCurrent()
+            assertEquals(2, asked)
+            assertEquals(listOf(Pref64.WELL_KNOWN), n.prefixes()) // still served, one refresh in flight
+            assertEquals(2, asked)
+            refresh.complete(Unit)
+        }
+
+    @Test fun negative_aShortTtlIsFloored() =
         runTest {
             var now = 0L
             var asked = 0
             val n =
-                Nat64(ExpiryClock { now }, sourceFor = { if (it.isIpv6) globalV6 else null }, query = {
+                nat({ now }) {
                     asked++
-                    aaaaAnswer(60)
-                })
-            assertEquals(listOf(Pref64.WELL_KNOWN), n.prefixes())
-            now = 49_999
-            assertEquals(listOf(Pref64.WELL_KNOWN), n.prefixes())
-            assertEquals(1, asked)
-            now = 50_000 // RFC 7050 section 3: "ten seconds before the TTL ... expires"
+                    aaaaAnswer(5)
+                }
             n.prefixes()
-            assertEquals(2, asked)
+            now = 30_000 // a 5 s TTL would ask on nearly every request
+            n.prefixes()
+            assertEquals(1, asked)
         }
 
     @Test fun negative_aNegativeAnswerIsNotAskedAgainWithinItsTtl() =
@@ -112,10 +163,10 @@ class Nat64Test {
             var now = 0L
             var asked = 0
             val n =
-                Nat64(ExpiryClock { now }, sourceFor = { if (it.isIpv6) globalV6 else null }, query = {
+                nat({ now }) {
                     asked++
                     AddressRecords(emptyList(), negativeTtl = 300)
-                })
+                }
             assertEquals(emptyList(), n.prefixes())
             now = 299_999
             n.prefixes()
@@ -126,33 +177,129 @@ class Nat64Test {
             // without the SOA (a record list): the negative answer holds NEGATIVE_TTL
             var asked2 = 0
             val m =
-                Nat64(ExpiryClock { now }, sourceFor = { if (it.isIpv6) globalV6 else null }, query = {
+                nat({ now }) {
                     asked2++
                     AddressRecords(emptyList())
-                })
+                }
             m.prefixes()
             now += Nat64.NEGATIVE_TTL.inWholeMilliseconds - 1
             m.prefixes()
             assertEquals(1, asked2)
         }
 
-    @Test fun negative_aFailedDiscoveryIsNotCached() =
+    @Test fun negative_aFailedDiscoveryBacksOff() =
         runTest {
+            // no k x 2 s pile-up: a failure is not asked again for FAILURE_BACKOFF
+            var now = 0L
             var asked = 0
             val n =
-                Nat64(ExpiryClock { 0L }, sourceFor = { if (it.isIpv6) globalV6 else null }, query = {
+                nat({ now }) {
                     asked++
                     null
-                })
+                }
             assertEquals(emptyList(), n.prefixes())
             assertEquals(emptyList(), n.prefixes())
+            assertEquals(1, asked)
+            now = Nat64.FAILURE_BACKOFF.inWholeMilliseconds
+            n.prefixes()
             assertEquals(2, asked)
+        }
+
+    @Test fun concurrentNeedsShareOneQuery() =
+        runTest {
+            var asked = 0
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val n =
+                nat({ 0L }) {
+                    asked++
+                    gate.await()
+                    aaaaAnswer(600)
+                }
+            val waiting = (1..5).map { async { n.prefixes() } }
+            testScheduler.runCurrent()
+            gate.complete(Unit)
+            waiting.forEach { assertEquals(listOf(Pref64.WELL_KNOWN), it.await()) }
+            assertEquals(1, asked)
+        }
+
+    @Test fun negative_aNewIpv6NetworkDropsThePrefix() =
+        runTest {
+            // a network change the engine was not told of: the prefix was learnt on another /64
+            var asked = 0
+            val host = Host(globalV6)
+            val n =
+                nat({ 0L }, host) {
+                    asked++
+                    aaaaAnswer(600)
+                }
+            n.prefixes()
+            host.source = TcpAddress(ip6("2001:db8:77::9"), 0)
+            n.reset() // the 5 s route look is cached; a real change shows after it
+            n.prefixes()
+            assertEquals(2, asked)
+            val m =
+                nat({ 0L }, Host(globalV6)) {
+                    asked++
+                    aaaaAnswer(600)
+                }
+            m.prefixes()
+            m.prefixes()
+            assertEquals(3, asked)
+        }
+
+    @Test fun negative_implausiblePrefixesAreIgnored() {
+        val wka = byteArrayOf(192.toByte(), 0, 0, 170.toByte())
+        assertEquals(emptyList(), Pref64.fromIpv4OnlyArpa(listOf(Pref64(ip6("fe80::"), 96).synthesize(wka))))
+        assertEquals(emptyList(), Pref64.fromIpv4OnlyArpa(listOf(Pref64(ip6("fd00::"), 64).synthesize(wka))))
+        val localUse = Pref64(ip6("64:ff9b:1:2::"), 64)
+        assertEquals(listOf(localUse), Pref64.fromIpv4OnlyArpa(listOf(localUse.synthesize(wka))))
+    }
+
+    private val global4 = byteArrayOf(93, 184.toByte(), 216.toByte(), 34)
+
+    @Test fun synthesizesOnlyWhatHasNoIpv4Route() =
+        runTest {
+            val routed10 = listOf<Byte>(10, 1, 2, 3)
+            val n = nat({ 0L }, Host(globalV6, routed = setOf(routed10))) { aaaaAnswer(600) }
+            assertEquals(listOf("[64:ff9b::5db8:d822]:443"), n.synthesize(global4, 443).map { it.toString() })
+            // a VPN's or LAN's IPv4 route stays in use
+            assertEquals(listOf("10.1.2.3:443"), n.synthesize(routed10.toByteArray(), 443).map { it.toString() })
+        }
+
+    @Test fun negative_loopbackAndNonGlobalAreNotSynthesizedWithTheWellKnownPrefix() =
+        runTest {
+            val n = nat({ 0L }) { aaaaAnswer(600) }
+            assertEquals(listOf("127.0.0.1:80"), n.synthesize(byteArrayOf(127, 0, 0, 1), 80).map { it.toString() })
+            assertEquals(listOf("169.254.1.1:80"), n.synthesize(byteArrayOf(169.toByte(), 254.toByte(), 1, 1), 80).map { it.toString() })
+            // RFC 6052 section 3.1: "The Well-Known Prefix MUST NOT be used to represent non-global IPv4 addresses"
+            assertEquals(listOf("192.168.1.9:80"), n.synthesize(byteArrayOf(192.toByte(), 168.toByte(), 1, 9), 80).map { it.toString() })
+            // a Network-Specific Prefix may carry one
+            val nsp = Pref64(ip6("2001:db8:122:344::"), 96)
+            val m = nat({ 0L }) { AddressRecords(listOf(nsp.synthesize(byteArrayOf(192.toByte(), 0, 0, 170.toByte())) to 600L)) }
+            assertEquals(
+                listOf("[2001:db8:122:344::c0a8:109]:80"),
+                m.synthesize(byteArrayOf(192.toByte(), 168.toByte(), 1, 9), 80).map {
+                    it.toString()
+                },
+            )
         }
 
     @Test fun negative_noDiscoveryOffAnIpv6OnlyNetwork() =
         runTest {
-            val n = Nat64(ExpiryClock { 0L }, sourceFor = { it }, query = { error("asked") })
-            assertEquals(emptyList(), n.prefixes())
+            val n = Nat64(ExpiryClock { 0L }, sourceFor = { it }, query = { error("asked") }, platformSynthesize = { error("asked") })
+            assertEquals(listOf("93.184.216.34:443"), n.synthesize(global4, 443).map { it.toString() })
+        }
+
+    @Test fun thePlatformsOwnSynthesisWins() =
+        runTest {
+            val own = ip6("2001:db8:64::5db8:d822")
+            val n =
+                Nat64(ExpiryClock { 0L }, sourceFor = { d ->
+                    if (d.isIpv6) globalV6 else null
+                }, query = { error("not asked") }, platformSynthesize = {
+                    listOf(own)
+                })
+            assertEquals(listOf("[2001:db8:64::5db8:d822]:443"), n.synthesize(global4, 443).map { it.toString() })
         }
 
     @Test fun addressRecordsAfterCnameAndNegativeTtl() {

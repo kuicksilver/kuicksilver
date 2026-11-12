@@ -12,9 +12,17 @@ import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.sourceAddressFor
 import io.kuicksilver.tls.KslDns
 import io.kuicksilver.tls.KslDnsAnswer
+import io.kuicksilver.tls.KslNet
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
@@ -53,6 +61,19 @@ internal class Pref64(
 
     /** The IPv4 address [a] embeds at this prefix's length (RFC 6052 section 2.3, extraction), or null when "u" is not zero. */
     fun extract(a: ByteArray): ByteArray? = extractAt(a, length)
+
+    /**
+     * Whether this prefix may be used: a global unicast prefix (`2000::/3`), the Well-Known Prefix `64:ff9b::/96` or one
+     * of the local-use `64:ff9b:1::/48` (RFC 8215). A DNS64 answer naming anything else (a link-local or loopback prefix,
+     * IPv4-mapped space) would send IPv4 traffic somewhere no NAT64 is.
+     */
+    fun plausible(): Boolean {
+        val b0 = bytes[0].toInt() and 0xff
+        if (b0 and 0xe0 == 0x20) return true
+        if (this == WELL_KNOWN) return true
+        val localUse = byteArrayOf(0, 0x64, 0xff.toByte(), 0x9b.toByte(), 0, 1)
+        return length >= 48 && (0 until 6).all { bytes[it] == localUse[it] }
+    }
 
     override fun equals(other: Any?): Boolean = other is Pref64 && other.length == length && other.bytes.contentEquals(bytes)
 
@@ -103,7 +124,7 @@ internal class Pref64(
                     if (occurrences(a, wka) > 1) continue
                     val at = LENGTHS.filter { extractAt(a, it)?.contentEquals(wka) == true }
                     if (at.size == 1) {
-                        out += Pref64(a, at.single())
+                        Pref64(a, at.single()).takeIf { it.plausible() }?.let { out += it }
                         break
                     }
                 }
@@ -237,36 +258,45 @@ internal expect suspend fun platformAddressQuery(
  * "On platforms that do not support 464XLAT, the Happy Eyeballs engine SHOULD follow the recommendations in this section
  * to properly support IPv6-only networks with NAT64 and DNS64."
  *
- * - When: "The features described in this section SHOULD only be enabled when the host detects one of these networks. A
- *   simple heuristic to achieve that is to check if the network offers routable IPv6 addressing, does not offer routable
- *   IPv4 addressing, and offers a DNS resolver address." [ipv6OnlyNetwork] asks the system for a source address of a
- *   global destination of each family (no packet sent): a global IPv6 source and no IPv4 one, or only a link-local one.
- *   A platform that does run 464XLAT (Android's clatd, iOS) has an IPv4 address and route for it, so it is not taken for
- *   such a network and its own translation goes on. The resolver is the one that answers the discovery below.
- * - Pref64::/n: RFC 7050 section 3, an AAAA query for `ipv4only.arpa` ([platformAddressQuery]), every prefix of the answer
- *   in its order ([Pref64.fromIpv4OnlyArpa]). "The node SHALL cache the replies it receives during the Pref64::/n
- *   discovery procedure, and it SHOULD repeat the discovery process ten seconds before the TTL of the Well-Known Name's
- *   synthetic AAAA resource record expires"; after a negative answer "the node MUST obey the Time to Live (TTL) [RFC1035]
- *   of the response before resending the AAAA resource record query" (its SOA's, or [NEGATIVE_TTL] when the platform
- *   hands out records without it, as Apple and Windows do: at least as long as resolvers keep a negative answer). A
- *   failed or timed out query is asked again at the next need (its retries are the system resolver's). [reset] forgets
- *   everything: "when a new network interface is connected to a new network".
- * - Synthesis ([synthesize]): RFC 7050 section 3, "IPv6 addresses MUST be synthesized by using all discovered Pref64::/n
- *   prefixes in the received order", each by RFC 6052 section 2.3.
+ * - The network ([ipv6OnlyNetwork]): "The features described in this section SHOULD only be enabled when the host detects
+ *   one of these networks. A simple heuristic to achieve that is to check if the network offers routable IPv6 addressing,
+ *   does not offer routable IPv4 addressing, and offers a DNS resolver address.": a global IPv6 source address for a
+ *   global destination and no IPv4 one (or only a link-local one), asked of the system without sending a packet. A
+ *   platform that runs 464XLAT has an IPv4 address and route and is not taken for such a network.
+ * - The destination ([synthesize]): an IPv4 address is synthesized only when the host has no route to it (a VPN's or a
+ *   LAN's IPv4 routes stay in use), never a loopback, link-local, multicast or "this network" address, and never a
+ *   non-global one with the Well-Known Prefix (RFC 6052 section 3.1: "The Well-Known Prefix MUST NOT be used to represent
+ *   non-global IPv4 addresses"). Without a prefix the address is handed out as it is.
+ * - The prefixes: the platform's own where it synthesizes ([platformSynthesize]: Apple's `getaddrinfo` with
+ *   `AI_DEFAULT`), else RFC 7050 section 3, an AAAA query for `ipv4only.arpa` ([query]), made only when an address needs
+ *   synthesis, one at a time however many requests need it. Every plausible prefix of the answer is used, in its order
+ *   ("IPv6 addresses MUST be synthesized by using all discovered Pref64::/n prefixes in the received order"; section 3.2:
+ *   "simply attempt to use the learned Pref64::/n", which the race does). "The node SHALL cache the replies ... and it
+ *   SHOULD repeat the discovery process ten seconds before the TTL of the Well-Known Name's synthetic AAAA resource record
+ *   expires": the cached prefixes keep serving while a refresh runs in the background, a TTL counts as at least
+ *   [MIN_TTL]; a negative answer is not asked again within its TTL ("MUST obey the Time to Live") or [NEGATIVE_TTL] where
+ *   the platform hands out records without the SOA; a failed or timed out query is not asked again for [FAILURE_BACKOFF].
+ *   The prefixes belong to the network they were learnt on: a change of the host's IPv6 /64 drops them, as does [reset]
+ *   ("when a new network interface is connected to a new network").
  */
 internal class Nat64(
     private val clock: ExpiryClock = ExpiryClock(),
     private val sourceFor: (TcpAddress) -> TcpAddress? = ::sourceAddressFor,
     private val query: suspend () -> AddressRecords? = { platformAddressQuery(WELL_KNOWN_NAME, DnsMessage.TYPE_AAAA, DISCOVERY_TIMEOUT) },
+    private val platformSynthesize: (ByteArray) -> List<ByteArray>? = KslNet::nat64Synthesize,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private class Discovered(
         val prefixes: List<Pref64>,
         val ttlMillis: Long,
         val at: ExpiryClock.Mark,
+        /** The first 64 bits of the host's IPv6 source address when they were learnt. */
+        val network: List<Byte>?,
     )
 
     private class Detected(
         val ipv6Only: Boolean,
+        val network: List<Byte>?,
         val at: ExpiryClock.Mark,
     )
 
@@ -276,71 +306,120 @@ internal class Nat64(
     private var discovered: Discovered? = null
 
     @Volatile
+    private var failedAt: ExpiryClock.Mark? = null
+
+    @Volatile
     private var detected: Detected? = null
+
+    private var inFlight: Deferred<Unit>? = null
 
     /** Forgets the network: a new one. */
     fun reset() {
         discovered = null
         detected = null
+        failedAt = null
     }
 
-    /** Whether this host is on an IPv6-only network (the heuristic of section 7), as of at most [DETECT_MILLIS] ago. */
-    fun ipv6OnlyNetwork(): Boolean {
-        detected?.takeIf { clock.elapsedMillis(it.at) < DETECT_MILLIS }?.let { return it.ipv6Only }
+    private fun detect(): Detected {
+        detected?.takeIf { clock.elapsedMillis(it.at) < DETECT_MILLIS }?.let { return it }
         val v6 = sourceFor(PROBE_V6)
         val v4 = sourceFor(PROBE_V4)
         val routableV6 = v6 != null && isGlobalIpv6(v6)
         val routableV4 = v4 != null && !isLinkLocalOrLoopbackV4(v4)
-        return (routableV6 && !routableV4).also { detected = Detected(it, clock.mark()) }
+        return Detected(routableV6 && !routableV4, v6?.bytes?.copyOf(8)?.toList(), clock.mark()).also { detected = it }
+    }
+
+    /** Whether this host is on an IPv6-only network (the heuristic of section 7), as of at most [DETECT_MILLIS] ago. */
+    fun ipv6OnlyNetwork(): Boolean = detect().ipv6Only
+
+    /**
+     * [v4] (4 bytes) for a connection with [port]: the IPv6 addresses synthesized for it when this is an IPv6-only network
+     * and the host has no route to it, else [v4] itself (also when no prefix is known).
+     */
+    suspend fun synthesize(
+        v4: ByteArray,
+        port: Int,
+    ): List<TcpAddress> {
+        val native = listOf(TcpAddress(v4, port))
+        if (!ipv6OnlyNetwork() || !synthesizable(v4) || sourceFor(TcpAddress(v4, 9)) != null) return native
+        platformSynthesize(v4)?.let { own -> return own.map { TcpAddress(it, port) }.ifEmpty { native } }
+        val global = isGlobalV4(v4)
+        val usable = prefixes().filter { global || it != Pref64.WELL_KNOWN }
+        return usable.map { TcpAddress(it.synthesize(v4), port) }.ifEmpty { native }
     }
 
     /**
-     * The network's Pref64::/n when this is an IPv6-only network with DNS64 ([ipv6OnlyNetwork] and a positive discovery),
-     * empty otherwise: then nothing is synthesized and the IPv4 addresses are used as they are.
+     * The network's Pref64::/n learnt by RFC 7050 discovery (empty: none, or not known yet after a failure). A fresh answer is
+     * used at once; one in its last ten seconds is used while a refresh runs; without one the caller waits for the query
+     * in flight, which no caller's cancellation stops.
      */
     suspend fun prefixes(): List<Pref64> {
-        if (!ipv6OnlyNetwork()) return emptyList()
-        discovered?.takeIf { fresh(it) }?.let { return it.prefixes }
-        return lock.withLock {
-            discovered?.takeIf { fresh(it) }?.let { return@withLock it.prefixes }
-            val answer =
-                try {
-                    query()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    null
+        val wait =
+            lock.withLock {
+                val network = detect().network
+                val d = discovered?.takeIf { it.network == network } ?: null.also { discovered = null }
+                val age = d?.let { clock.elapsedMillis(it.at) }
+                when {
+                    d != null && age!! < d.ttlMillis - (if (d.prefixes.isEmpty()) 0 else REFRESH_BEFORE_MILLIS) -> {
+                        return d.prefixes
+                    }
+
+                    failedAt?.let { clock.elapsedMillis(it) < FAILURE_BACKOFF.inWholeMilliseconds } == true -> {
+                        return d?.takeIf { age!! < it.ttlMillis }?.prefixes.orEmpty()
+                    }
                 }
-            if (answer == null) {
-                // failed or timed out: no caching of a failure; a positive discovery still in its TTL goes on serving
-                return@withLock discovered?.takeIf { clock.elapsedMillis(it.at) < it.ttlMillis }?.prefixes.orEmpty()
+                val job = inFlight ?: scope.async { discover(network) }.also { inFlight = it }
+                // a positive answer still in its TTL serves while the refresh runs
+                if (d != null && d.prefixes.isNotEmpty() && age!! < d.ttlMillis) return d.prefixes
+                job
             }
+        wait.await()
+        return lock.withLock { discovered?.prefixes.orEmpty() }
+    }
+
+    private suspend fun discover(network: List<Byte>?) {
+        val answer =
+            try {
+                query()
+            } catch (e: CancellationException) {
+                withContext(NonCancellable) { lock.withLock { inFlight = null } }
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+        lock.withLock {
+            inFlight = null
+            if (answer == null) {
+                failedAt = clock.mark()
+                return
+            }
+            failedAt = null
             val prefixes = Pref64.fromIpv4OnlyArpa(answer.addresses.map { it.first })
             val ttlSeconds =
                 if (answer.addresses.isEmpty()) {
                     answer.negativeTtl ?: NEGATIVE_TTL.inWholeSeconds
                 } else {
-                    answer.addresses.minOf { it.second }
+                    maxOf(answer.addresses.minOf { it.second }, MIN_TTL.inWholeSeconds)
                 }
-            Discovered(prefixes, ttlSeconds * 1000, clock.mark()).also { discovered = it }.prefixes
+            discovered = Discovered(prefixes, ttlSeconds * 1000, clock.mark(), network)
         }
-    }
-
-    /** Whether [d] is still to be used without asking again: positive until ten seconds before its TTL, negative for its TTL. */
-    private fun fresh(d: Discovered): Boolean {
-        val age = clock.elapsedMillis(d.at)
-        return if (d.prefixes.isEmpty()) age < d.ttlMillis else age < d.ttlMillis - REFRESH_BEFORE_MILLIS
     }
 
     companion object {
         /** RFC 7050 section 2.2, the Well-Known IPv4-only Name. */
         const val WELL_KNOWN_NAME: String = "ipv4only.arpa"
 
-        /** How long the discovery query may take (a request on an IPv6-only network waits for it once per TTL). */
+        /** How long the discovery query may take. */
         val DISCOVERY_TIMEOUT: Duration = 2.seconds
 
         /** A negative answer without its SOA (Apple, Windows) is not asked again within this time (RFC 2308 section 5: "one to three hours"). */
         val NEGATIVE_TTL: Duration = 3.hours
+
+        /** The shortest life of a positive answer: a TTL of a few seconds would otherwise mean a query per request. */
+        val MIN_TTL: Duration = 60.seconds
+
+        /** After a failed or timed out query, no new one for this long (the system resolver already retried it). */
+        val FAILURE_BACKOFF: Duration = 30.seconds
 
         /** "ten seconds before the TTL ... expires" */
         const val REFRESH_BEFORE_MILLIS: Long = 10_000L
@@ -352,7 +431,7 @@ internal class Nat64(
         val system: Nat64 = Nat64()
 
         /** Tests with a resolver of their own: never an IPv6-only network, whatever the machine is on. */
-        fun offForTest(): Nat64 = Nat64(ExpiryClock { 0L }, { null }, { null })
+        fun offForTest(): Nat64 = Nat64(ExpiryClock { 0L }, { null }, { null }, { null })
 
         // global destinations only to ask the routing table: a connected UDP socket sends nothing
         private val PROBE_V6 =
@@ -368,12 +447,33 @@ internal class Nat64(
             val b0 = b[0].toInt() and 0xff
             return b0 == 127 || (b0 == 169 && (b[1].toInt() and 0xff) == 254)
         }
-    }
 
-    /** [v4] (4 bytes) as the IPv6 addresses of [prefixes], in their order, with [port]. */
-    fun synthesize(
-        v4: ByteArray,
-        prefixes: List<Pref64>,
-        port: Int,
-    ): List<TcpAddress> = prefixes.map { TcpAddress(it.synthesize(v4), port) }
+        /** Not "this network" (0/8), loopback (127/8), link-local (169.254/16), multicast or reserved (224/3): never synthesized. */
+        internal fun synthesizable(v4: ByteArray): Boolean {
+            val b0 = v4[0].toInt() and 0xff
+            val b1 = v4[1].toInt() and 0xff
+            return b0 != 0 && b0 != 127 && !(b0 == 169 && b1 == 254) && b0 < 224
+        }
+
+        /**
+         * Whether [v4] is global (RFC 6052 section 3.1 forbids the Well-Known Prefix for the others): not one of the
+         * special-use blocks of RFC 5735 section 3 nor RFC 6598's shared address space.
+         */
+        internal fun isGlobalV4(v4: ByteArray): Boolean {
+            val b0 = v4[0].toInt() and 0xff
+            val b1 = v4[1].toInt() and 0xff
+            val b2 = v4[2].toInt() and 0xff
+            return !(
+                b0 == 0 || b0 == 10 || b0 == 127 || b0 >= 224 ||
+                    (b0 == 100 && b1 in 64..127) ||
+                    (b0 == 169 && b1 == 254) ||
+                    (b0 == 172 && b1 in 16..31) ||
+                    (b0 == 192 && b1 == 0 && (b2 == 0 || b2 == 2)) ||
+                    (b0 == 192 && b1 == 168) ||
+                    (b0 == 198 && (b1 == 18 || b1 == 19)) ||
+                    (b0 == 198 && b1 == 51 && b2 == 100) ||
+                    (b0 == 203 && b1 == 0 && b2 == 113)
+            )
+        }
+    }
 }

@@ -232,55 +232,87 @@ class RequestDnsTest {
 
     // ---- NAT64 (RFC 8305 section 7)
 
-    private fun nat64() =
+    private val wkpAnswer = AddressRecords(listOf(TcpAddressText.v6("64:ff9b::c000:aa") to 600L))
+
+    /** An IPv6-only host with a NAT64 whose only IPv4 route is to 10.0.0.0/8 (a VPN). */
+    private fun kotlinx.coroutines.test.TestScope.nat64() =
         Nat64(
             ExpiryClock { 0L },
-            sourceFor = { d -> if (d.isIpv6) v6(9) else null },
-            query = {
-                AddressRecords(
-                    listOf(
-                        byteArrayOf(
-                            0,
-                            0x64,
-                            0xff.toByte(),
-                            0x9b.toByte(),
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            192.toByte(),
-                            0,
-                            0,
-                            170.toByte(),
-                        ) to 600L,
-                    ),
-                )
+            sourceFor = { d ->
+                if (d.isIpv6) {
+                    v6(9)
+                } else if (d.bytes[0].toInt() == 10) {
+                    TcpAddress(byteArrayOf(10, 0, 0, 2), 0)
+                } else {
+                    null
+                }
             },
+            query = { wkpAnswer },
+            platformSynthesize = { null },
+            scope = backgroundScope,
         )
+
+    private val global = TcpAddress(byteArrayOf(93, 184.toByte(), 216.toByte(), 34), 0)
 
     @Test fun nat64SynthesizesIpv4LiteralsAndAnswers() =
         runTest {
-            val dns = RequestDns(nat64(), dual) { _, v6 -> if (v6) emptyList() else listOf(addr(5)) }
+            val dns = RequestDns(nat64(), dual) { _, v6 -> if (v6) emptyList() else listOf(global) }
             // section 7.1: an IPv4 literal becomes the IPv6 answer
-            val lit = dns.resolution("192.0.2.33", 443)
+            val lit = dns.resolution("93.184.216.34", 443)
             assertTrue(lit.ipv6Only)
-            assertEquals(listOf("[64:ff9b::c000:221]:443"), lit.addresses(true).map { it.toString() })
+            assertEquals(listOf("[64:ff9b::5db8:d822]:443"), lit.addresses(true).map { it.toString() })
             assertEquals(emptyList(), lit.addresses(false))
             // an A answer of a name comes back synthesized
             val name = dns.resolution("a.example", 443)
-            assertEquals(listOf("[64:ff9b::c000:205]:443"), name.addresses(false).map { it.toString() })
+            assertEquals(listOf("[64:ff9b::5db8:d822]:443"), name.addresses(false).map { it.toString() })
+        }
+
+    @Test fun negative_loopbackLiteralOnAnIpv6OnlyNetworkStaysIpv4() =
+        runTest {
+            val dns = RequestDns(nat64(), dual) { _, _ -> error("not looked up") }
+            val lit = dns.resolution("127.0.0.1", 8080)
+            assertEquals(emptyList(), lit.addresses(true))
+            assertEquals(listOf("127.0.0.1:8080"), lit.addresses(false).map { it.toString() })
+        }
+
+    @Test fun negative_aRoutedPrivateIpv4AnswerStaysIpv4() =
+        runTest {
+            val dns = RequestDns(nat64(), dual) { _, v6 -> if (v6) emptyList() else listOf(TcpAddress(byteArrayOf(10, 1, 2, 3), 0)) }
+            assertEquals(listOf("10.1.2.3:443"), dns.resolution("intranet.example", 443).addresses(false).map { it.toString() })
+        }
+
+    @Test fun negative_aNameWithAaaaNeverWaitsForTheNat64Prefix() =
+        runTest {
+            // H2: the discovery runs only when an address needs synthesis
+            var asked = 0
+            val n =
+                Nat64(
+                    ExpiryClock { 0L },
+                    sourceFor = { d -> if (d.isIpv6) v6(9) else null },
+                    query = {
+                        asked++
+                        kotlinx.coroutines.awaitCancellation()
+                    },
+                    platformSynthesize = { null },
+                    scope = backgroundScope,
+                )
+            val dns = RequestDns(n, dual) { _, v6 -> if (v6) listOf(v6(1)) else error("not asked") }
+            assertEquals(listOf("[2001:db8::1]:443"), dns.resolution("a.example", 443).addresses(true).map { it.toString() })
+            assertEquals(0, asked)
         }
 
     @Test fun negative_noSynthesisOnADualStackNetwork() =
         runTest {
-            val n = Nat64(ExpiryClock { 0L }, sourceFor = { d -> if (d.isIpv6) v6(9) else addr(100) }, query = { error("not asked") })
+            val n =
+                Nat64(
+                    ExpiryClock { 0L },
+                    sourceFor = { d -> if (d.isIpv6) v6(9) else addr(100) },
+                    query = { error("not asked") },
+                    platformSynthesize = { error("not asked") },
+                )
             val dns = RequestDns(n, dual) { _, _ -> error("not looked up") }
-            val lit = dns.resolution("192.0.2.33", 443)
+            val lit = dns.resolution("93.184.216.34", 443)
             assertEquals(false, lit.ipv6Only)
-            assertEquals(listOf("192.0.2.33:443"), lit.addresses(false).map { it.toString() })
+            assertEquals(listOf("93.184.216.34:443"), lit.addresses(false).map { it.toString() })
         }
 }

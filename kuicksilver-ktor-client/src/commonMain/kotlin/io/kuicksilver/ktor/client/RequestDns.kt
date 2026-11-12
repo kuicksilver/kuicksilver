@@ -86,9 +86,10 @@ internal class RequestDns private constructor(
 
     /**
      * The resolution of [host] for [port] for a race ([io.kuicksilver.ktor.network.raceAddresses]): a literal answers its
-     * own family at once; a name one family at a time through this request's answers. On an IPv6-only network with NAT64
-     * the IPv4 addresses come back synthesized (RFC 8305 section 7.1 for a literal: "The synthesized addresses are then
-     * inserted into the list of addresses as if they were results from DNS queries").
+     * own family at once; a name one family at a time through this request's answers. On an IPv6-only network ([Nat64])
+     * an IPv4 address the host has no route to comes back synthesized (RFC 8305 section 7.1 for a literal: "The
+     * synthesized addresses are then inserted into the list of addresses as if they were results from DNS queries"), and
+     * the race asks for IPv4 only when it needs to; nothing here waits for the NAT64 prefix unless an address needs it.
      */
     suspend fun resolution(
         host: String,
@@ -96,21 +97,32 @@ internal class RequestDns private constructor(
     ): AddressResolution {
         if (endpoint != null) return root().resolution(endpoint.first, endpoint.second)
         val name = socketHost(host)
-        val prefixes = nat64.prefixes()
+        val ipv6Only = nat64.ipv6OnlyNetwork()
         // an address literal is never looked up
         val literal = if (':' in name || parseIpv4Literal(name) != null) SystemResolution(name, port) else null
         return object : AddressResolution {
-            override val ipv6Only: Boolean = prefixes.isNotEmpty()
+            override val ipv6Only: Boolean = ipv6Only
+            private var literalSynthesized: List<TcpAddress>? = null
 
             override suspend fun addresses(ipv6: Boolean): List<TcpAddress> {
                 if (literal != null) {
-                    if (prefixes.isEmpty()) return literal.addresses(ipv6)
-                    // section 7.1: an IPv4 literal on an IPv6-only network, synthesized as the IPv6 answer
-                    if (!ipv6) return emptyList()
-                    return literal.addresses(true) + literal.addresses(false).flatMap { nat64.synthesize(it.bytes, prefixes, port) }
+                    if (!ipv6Only) return literal.addresses(ipv6)
+                    // section 7.1: an IPv4 literal with no IPv4 route, synthesized as the IPv6 answer; one the host routes
+                    // (a loopback or LAN address) stays the IPv4 answer
+                    val v4 = literal.addresses(false).singleOrNull()
+                    val synthesized =
+                        literalSynthesized ?: (v4?.let { a -> nat64.synthesize(a.bytes, port).filter { it.isIpv6 } }.orEmpty())
+                            .also { literalSynthesized = it }
+                    return if (ipv6) {
+                        literal.addresses(true) + synthesized
+                    } else if (synthesized.isEmpty()) {
+                        literal.addresses(false)
+                    } else {
+                        emptyList()
+                    }
                 }
                 val found = family(name, ipv6)
-                if (!ipv6 && prefixes.isNotEmpty()) return found.flatMap { nat64.synthesize(it.bytes, prefixes, port) }
+                if (!ipv6 && ipv6Only) return found.flatMap { nat64.synthesize(it.bytes, port) }
                 return found.map { it.withPort(port) }
             }
         }
@@ -122,8 +134,8 @@ internal class RequestDns private constructor(
     /**
      * Every address of [host] with [port], both families as this request resolves them (no NAT64 synthesis: these name the
      * host, as a WebSocket key or a SOCKS5 target), sorted by RFC 6724 section 6 unless [sorted] is false: a SOCKS5 proxy
-     * connects to them over its own routes, so this host's say nothing about their order there, and the resolver's order
-     * is kept. [host] is a URL host, an IPv6 literal with or without its brackets.
+     * connects to them over its own routes, so this host's say nothing about their order there: the IPv6 addresses come
+     * first, then the IPv4 ones, each family in the resolver's order. [host] is a URL host, an IPv6 literal with or without its brackets.
      */
     suspend fun lookup(
         host: String,
