@@ -9,11 +9,9 @@
 package io.kuicksilver.ktor.client.h2
 
 import io.ktor.client.plugins.websocket.WEBSOCKETS_KEY
-import io.ktor.client.plugins.websocket.WebSocketException
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HeadersBuilder
-import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSecure
@@ -34,6 +32,7 @@ import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.ktor.network.guardWebSocketOutput
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -77,6 +76,8 @@ internal suspend fun h2WebSocket(
     callContext: CoroutineContext,
     events: EngineEvents,
     closeWaitMillis: Long = H2_WEBSOCKET_CLOSE_WAIT_MILLIS,
+    /** The engine's `webSocketMaxMessageSize` (RFC 6455 section 10.4). */
+    maxMessageSize: Long = io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     onReleased: (kept: Boolean) -> Unit,
 ): HttpResponseData {
     val requestTime = GMTDate()
@@ -134,11 +135,12 @@ internal suspend fun h2WebSocket(
                 callContext,
             )
         }
+
         // RFC 6455 section 4.1 (RFC 8441 section 5 keeps it): an extension or a subprotocol the client did not offer fails
         // the WebSocket connection before a session opens; the stream is reset below
-        checkSubprotocol(data, head.fields.filter { it.first == "sec-websocket-protocol" }.map { it.second })
+        fun values(name: String) = head.fields.filter { it.first == name }.map { it.second }
         val handshake =
-            webSocketAfterHandshake(data, head.fields.filter { it.first == "sec-websocket-extensions" }.map { it.second }, callContext)
+            webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), callContext)
         val output = ByteChannel()
         val sender =
             GlobalScope.launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket")) {
@@ -183,9 +185,13 @@ internal suspend fun h2WebSocket(
                     peerMasks = false,
                     context = callContext,
                     inflate = handshake.inflate,
+                    perMessageDeflate = handshake.perMessageDeflate,
+                    maxMessageSize = maxMessageSize,
+                    checkText = handshake.checkText,
                 ),
-                output,
-                masking = true,
+                // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
+                guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression),
+                masking = false,
                 coroutineContext = callContext,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
             )
@@ -196,35 +202,6 @@ internal suspend fun h2WebSocket(
         if (e.notProcessed) throw H2NotProcessed(e, bodyConsumed = false)
         if (isHttp11Required(e, conn)) throw H2Http11Required(e, bodyConsumed = false, mayRepeat = true)
         throw e
-    }
-}
-
-/**
- * RFC 6455 section 4.1, client step 6: "If the response includes a |Sec-WebSocket-Protocol| header field and this header
- * field indicates the use of a subprotocol that was not present in the client's handshake ..., the client MUST _Fail the
- * WebSocket Connection_"; section 11.3.4: the field "MUST NOT appear more than once in an HTTP response". The offer is
- * the request's Sec-WebSocket-Protocol values, comma-separated tokens; the answer names one of them exactly.
- */
-private fun checkSubprotocol(
-    request: HttpRequestData,
-    answered: List<String>,
-) {
-    if (answered.isEmpty()) return
-    if (answered.size > 1) {
-        throw WebSocketException("Handshake exception: more than one Sec-WebSocket-Protocol in the answer (RFC 6455 section 11.3.4)")
-    }
-    val offered =
-        request.headers
-            .getAll(HttpHeaders.SecWebSocketProtocol)
-            .orEmpty()
-            .flatMap { it.split(',') }
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-    if (answered.single() !in offered) {
-        throw WebSocketException(
-            "Handshake exception: the server chose the subprotocol '${answered.single()}', which the client did not offer " +
-                "(RFC 6455 section 4.1)",
-        )
     }
 }
 

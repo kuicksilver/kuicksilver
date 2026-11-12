@@ -1,7 +1,10 @@
 // Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-// Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationCall.kt (internal there), adapted: TLS scheme, peer certificates, the priority signal.
+// Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationCall.kt (internal there), adapted: TLS scheme, peer certificates, the priority signal,
+// the WebSocket message limit.
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.Headers
@@ -12,6 +15,7 @@ import io.ktor.server.engine.BaseApplicationCall
 import io.ktor.util.network.NetworkAddress
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.RequestPriorityKey
 import io.kuicksilver.ktor.server.h1Priority
@@ -38,11 +42,13 @@ internal class H1Call(
     closing: () -> Boolean = { false },
     endsConnection: CompletableDeferred<Boolean>? = null,
     fields: Headers = CIOHeaders(_request.headers),
+    webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request = H1Request(this, remoteAddress, localAddress, input, _request, scheme, fields)
 
-    override val response = H1Response(this, output, input, engineDispatcher, appDispatcher, upgraded, altSvc, closing, endsConnection)
+    override val response =
+        H1Response(this, output, input, engineDispatcher, appDispatcher, upgraded, altSvc, closing, endsConnection, webSocketMaxMessageSize)
 
     internal fun release() {
         request.release()

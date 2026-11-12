@@ -15,6 +15,8 @@ import io.ktor.websocket.WebSocketExtensionHeader
 import io.ktor.websocket.parseWebSocketExtensions
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.ktor.network.SentCompression
+import io.kuicksilver.ktor.network.Utf8Validator
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
 import kotlin.concurrent.atomics.AtomicInt
@@ -156,6 +158,8 @@ public class PerMessageDeflate internal constructor(
     // outgoing message state: inside a fragmented message, and whether it is compressed
     private var sendingFragments = false
     private var compressingMessage = false
+    private var checkingText = false
+    private val sentText = Utf8Validator()
 
     // an incoming message failed to decompress: the session is failing, no later one is decompressed
     private var inflateFailed = false
@@ -198,7 +202,10 @@ public class PerMessageDeflate internal constructor(
 
     /**
      * Compresses a Text or Binary frame (RSV1 on the first frame of a message, RFC 7692 section 6.1); other frames are
-     * returned unchanged. Called by Ktor's session for each outgoing frame, in order.
+     * returned unchanged. Called by Ktor's session for each outgoing frame, in order. A text message it compresses must be
+     * UTF-8 as a whole (RFC 6455 section 5.6, MUST; once compressed, nothing after the extension can check it): at the
+     * first frame that shows it is not, the frame fails with [ProtocolViolationException], which ends Ktor's session
+     * without sending it.
      */
     override fun processOutgoingFrame(frame: Frame): Frame {
         if (frame !is Frame.Text && frame !is Frame.Binary) return frame
@@ -206,9 +213,14 @@ public class PerMessageDeflate internal constructor(
         val first = !sendingFragments
         if (first) {
             compressingMessage = (!frame.fin || frame.data.size >= config.minSizeToCompress) && config.compressCondition(frame)
+            checkingText = compressingMessage && frame is Frame.Text
+            sentText.reset()
         }
         sendingFragments = !frame.fin
         if (!compressingMessage) return frame
+        if (checkingText && (!sentText.feed(frame.data, 0, frame.data.size) || (frame.fin && !sentText.complete))) {
+            throw ProtocolViolationException("a text message that is not UTF-8 (RFC 6455 section 5.6) was not sent")
+        }
         val data =
             withCodecs {
                 val d =
@@ -367,6 +379,63 @@ public class WebSocketInflate(
     public val noContextTakeover: Boolean,
     public val maxMessageSize: Long,
 )
+
+/**
+ * What the `permessage-deflate` element of a handshake's answer ([responseValues], the `Sec-WebSocket-Extensions` values
+ * of the 101 or of the RFC 9220 2xx) means for the frames that arrive, whichever implementation negotiated it (this
+ * library's [PerMessageDeflate] or Ktor's own `WebSocketDeflateExtension`), so that Kuicksilver's engines decompress
+ * every permessage-deflate message themselves (RFC 7692 section 6: "the payload data portion after decompression is
+ * subject to the constraints for the original data type again"). The peer's `*_no_context_takeover` ([client]: the
+ * server's) decides whether its messages share a window; any window size is read with a 32 KiB one. Null when the
+ * answer has no `permessage-deflate`; one that is repeated or has a malformed or unknown parameter fails with
+ * [ProtocolViolationException] (RFC 7692 section 7: such an answer fails the connection).
+ */
+@InternalKuicksilverApi
+public fun negotiatedWebSocketInflate(
+    responseValues: List<String>,
+    client: Boolean,
+    maxMessageSize: Long,
+): WebSocketInflate? {
+    val accepted =
+        responseValues
+            .flatMap { parseWebSocketExtensions(it) }
+            .filter { it.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true) }
+    if (accepted.isEmpty()) return null
+    if (accepted.size >
+        1
+    ) {
+        throw ProtocolViolationException("Invalid permessage-deflate response: the extension was accepted ${accepted.size} times")
+    }
+    val p =
+        parseParameters(accepted.single(), response = true)
+            ?: throw ProtocolViolationException("Invalid permessage-deflate response: an unknown, repeated or malformed parameter")
+    return WebSocketInflate(if (client) p.serverNoContextTakeover else p.clientNoContextTakeover, maxMessageSize)
+}
+
+/**
+ * Whether [extension] is Ktor's own `WebSocketDeflateExtension` (JVM and Android only; a final class, so an `is` check
+ * that survives R8's renaming in a release build). False on Kotlin/Native, where Ktor has none.
+ */
+internal expect fun isKtorDeflateExtension(extension: WebSocketExtension<*>): Boolean
+
+/**
+ * How the messages this side sends are compressed, for the output guard ([SentCompression]): by this library's
+ * [PerMessageDeflate] (or not at all), by Ktor's `WebSocketDeflateExtension` (a frame at a time), or by another
+ * implementation of the agreed `permessage-deflate` among the [installed] extensions, taken to send RFC 7692 messages.
+ */
+@InternalKuicksilverApi
+public fun sentCompression(
+    installed: List<WebSocketExtension<*>>,
+    perMessageDeflate: Boolean,
+): SentCompression {
+    if (!perMessageDeflate) return SentCompression.Checked
+    val deflate = installed.firstOrNull { e -> e.protocols.any { it.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true) } }
+    return when {
+        deflate is PerMessageDeflate -> SentCompression.Checked
+        deflate != null && isKtorDeflateExtension(deflate) -> SentCompression.PerFrame
+        else -> SentCompression.PerMessage
+    }
+}
 
 /**
  * The WebSocket extensions in [Attributes]: the ones Ktor's client plugin installed for a request, or the ones Ktor's server

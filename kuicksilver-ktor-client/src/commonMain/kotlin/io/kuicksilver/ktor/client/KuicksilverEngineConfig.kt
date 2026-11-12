@@ -360,6 +360,18 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     @ExperimentalKuicksilverApi
     public var proxyResolver: ProxyResolver = ProxyResolvers.System
 
+    /**
+     * The largest WebSocket message, and so frame, the client takes from a server, in bytes (RFC 6455 section 10.4: an
+     * implementation "SHOULD impose a limit on frame sizes and the total message size after reassembly"); 16 MiB by
+     * default, as `PerMessageDeflate`'s `maxInflatedMessageSize`. A frame whose header claims more, or that takes its
+     * message past it, closes the connection with 1009 (message too big) before any of its payload is read; a compressed
+     * message is held to the smaller of this and the extension's limit, counted inflated. Over HTTP/1.1, HTTP/2 and HTTP/3 alike;
+     * Ktor's `WebSockets { maxFrameSize }` applies on top of it. Less than 1 fails the engine's creation with
+     * [IllegalArgumentException].
+     */
+    @ExperimentalKuicksilverApi
+    public var webSocketMaxMessageSize: Long = 16_777_216L // 16 MiB
+
     /** Replaces the system resolver for both pools (tests: names and addresses the test owns). */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     internal var resolverForTest: (suspend (String, Int) -> List<io.kuicksilver.ktor.network.TcpAddress>)? = null

@@ -13,9 +13,12 @@ import io.ktor.server.application.PipelineCall
 import io.ktor.utils.io.ByteChannel
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
-import io.kuicksilver.ktor.server.ServerWebSocketInput
+import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.h1.httpDateNow
+import io.kuicksilver.ktor.server.startServerWebSocket
+import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -39,21 +42,6 @@ import kotlin.time.Duration.Companion.seconds
  */
 internal object WebSocketOverH2 {
     const val PROTOCOL: String = "websocket"
-
-    /**
-     * The answer to an Extended CONNECT whose handshake cannot go on, before Ktor sees it; null for one that can. RFC 8441
-     * section 5: Sec-WebSocket-Version is "used in the CONNECT request ... as defined in RFC 6455", which requires one
-     * field with the value 13 (section 4.2.1: otherwise "return an HTTP response with an appropriate error code (such as
-     * 400 Bad Request)"); a version the server does not understand gets "an appropriate HTTP error code (such as 426
-     * Upgrade Required) and a |Sec-WebSocket-Version| header field indicating the version(s) the server is capable of
-     * understanding" (section 4.2.2). Not 426 here: RFC 9110 section 15.5.22, "The server MUST send an Upgrade header
-     * field in a 426 response", and HTTP/2 forbids Upgrade (RFC 9113 section 8.2.2), so every refusal is a 400 with
-     * `sec-websocket-version: 13`, as on HTTP/3.
-     */
-    fun refusal(r: H2ServerStream): Pair<Int, List<Pair<String, String>>>? {
-        val versions = r.fields.filter { it.first == "sec-websocket-version" }.map { it.second }
-        return if (versions == listOf("13")) null else 400 to listOf("sec-websocket-version" to "13")
-    }
 
     /**
      * How long a session that ended in order waits, after its END_STREAM, for the client's (RFC 8441 section 5: "Orderly
@@ -102,10 +90,18 @@ internal class H2UpgradeResponse(
     sendStallMillis: Long,
     private val engineDispatcher: CoroutineContext,
     private val userDispatcher: CoroutineContext,
+    /** The engine's `webSocketMaxMessageSize`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
+    private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
 ) : H2Response(call, h2, sendStallMillis, altSvc = { null }) {
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
-        // before anything is committed, so the refusal can still be an ordinary error response
-        if (content is OutgoingContent.ProtocolUpgrade) checkWebSocketRsvConflicts(call.attributes)
+        // before anything is committed, so the refusal can still be an ordinary error response: a handshake without one
+        // sec-websocket-version 13 gets 400 with `sec-websocket-version: 13` instead of the upgrade (RFC 8441 section 5,
+        // RFC 6455 section 4.2.1). As over HTTP/3 (`http3 = true`: no key to check, RFC 8441 section 5, and no 426,
+        // whose Upgrade field RFC 9110 section 15.5.22 requires and RFC 9113 section 8.2.2 forbids)
+        if (content is OutgoingContent.ProtocolUpgrade) {
+            webSocketHandshakeRefusal(call.request.headers, http3 = true)?.let { return super.respondOutgoingContent(it.content) }
+            checkWebSocketRsvConflicts(call.attributes)
+        }
         super.respondOutgoingContent(content)
     }
 
@@ -139,12 +135,22 @@ internal class H2UpgradeResponse(
         // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 8441 section 5); the
         // check ends with the upgrade
         val guard = Job()
-        var webSocket: ServerWebSocketInput? = null
+        var webSocket: ServerWebSocket? = null
         try {
             val input =
-                ServerWebSocketInput(h2.body, call.request.headers, headersBuilder, call.attributes, engineDispatcher + guard)
-                    .also { webSocket = it }
-            upgrade.upgrade(input.channel, output, engineDispatcher, userDispatcher).join()
+                startServerWebSocket(
+                    h2.body,
+                    call.request.headers,
+                    headersBuilder,
+                    call.attributes,
+                    engineDispatcher + guard,
+                    webSocketMaxMessageSize,
+                    output,
+                    call.application.environment.log,
+                ) ?: return // a Close with 1011 went out instead (the finally ends the stream after it)
+            webSocket = input
+            // the server's frames go out unmasked, checked as they leave (RFC 6455 section 5.1, the text and compression rules)
+            upgrade.upgrade(input.channel, input.output(output), engineDispatcher, userDispatcher).join()
         } finally {
             webSocket?.done()
             guard.cancel()

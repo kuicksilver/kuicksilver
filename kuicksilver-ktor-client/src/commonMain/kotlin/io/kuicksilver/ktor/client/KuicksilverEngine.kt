@@ -84,6 +84,9 @@ internal class KuicksilverEngine(
         require(extraWait >= MIN_HTTPS_RECORD_EXTRA_WAIT && extraWait <= MAX_HTTPS_RECORD_EXTRA_WAIT) {
             "httpsRecordExtraWait must be 50 ms..1 s, was $extraWait"
         }
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val wsLimit = config.webSocketMaxMessageSize
+        require(wsLimit >= 1) { "webSocketMaxMessageSize must be at least 1, was $wsLimit" }
     }
 
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -132,7 +135,9 @@ internal class KuicksilverEngine(
     /** `proxyResolver`'s answers per route ([proxyFor]). */
     internal val proxies = ProxyRouting(config, events.logger)
     internal val h1 = H1Pool(config, selector, events) // internal for tests (the engine's session cache)
-    internal val h3 = H3Pool(config, events, migrationScope = migrationScope) // internal for tests (0-RTT reconnects)
+
+    // internal for tests (0-RTT reconnects); one WebSocket CONNECTING per host over HTTP/1.1 and HTTP/3 together
+    internal val h3 = H3Pool(config, events, migrationScope = migrationScope, webSocketConnecting = h1.webSocketConnecting)
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
     private val altSvcLock = Mutex()
 

@@ -44,6 +44,8 @@ internal class H2Call(
     webSocket: Boolean,
     engineDispatcher: CoroutineContext,
     userDispatcher: CoroutineContext,
+    /** The engine's `webSocketMaxMessageSize`, for an Extended CONNECT for `websocket`. */
+    webSocketMaxMessageSize: Long,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -59,7 +61,7 @@ internal class H2Call(
         )
     override val response: H2Response =
         if (webSocket) {
-            H2UpgradeResponse(this, h2, sendStallMillis, engineDispatcher, userDispatcher)
+            H2UpgradeResponse(this, h2, sendStallMillis, engineDispatcher, userDispatcher, webSocketMaxMessageSize)
         } else {
             H2Response(this, h2, sendStallMillis, altSvc)
         }

@@ -301,12 +301,6 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
             answered = runCatching { r.respond(501, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
             return
         }
-        if (webSocket) {
-            WebSocketOverH2.refusal(r)?.let { (status, fields) ->
-                answered = runCatching { r.respond(status, fields + ("date" to httpDateNow()), endStream = true) }.isSuccess
-                return
-            }
-        }
         if (r.fields.any { it.first == EARLY_DATA_FIELD.lowercase() } &&
             r.method !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
         ) {
@@ -328,6 +322,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     webSocket,
                     engineDispatcher,
                     userDispatcher,
+                    configuration.webSocketMaxMessageSize,
                 )
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_2_0, call) }
             var failure: Throwable? = null
