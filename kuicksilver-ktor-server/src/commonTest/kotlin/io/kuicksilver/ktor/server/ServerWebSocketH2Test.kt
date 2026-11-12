@@ -59,6 +59,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import io.ktor.client.plugins.websocket.webSocket as clientWebSocket
 import io.ktor.client.request.get as clientGet
@@ -87,6 +88,7 @@ class ServerWebSocketH2Test {
     private suspend fun <T> h2(
         port: Int,
         onChange: () -> Unit = {},
+        settings: Http2Settings = Http2Settings(),
         block: suspend (H2ClientConnection) -> T,
     ): T {
         val selector = SelectorManager(Dispatchers.IO)
@@ -99,7 +101,7 @@ class ServerWebSocketH2Test {
                     H2ClientConnection.start(
                         t.openReadChannel(),
                         t.openWriteChannel(),
-                        Http2Settings(),
+                        settings,
                         scope,
                         Duration.INFINITE,
                         { t.close() },
@@ -502,7 +504,7 @@ class ServerWebSocketH2Test {
                         val head = withTimeout(10.seconds) { s.body.readByteArray(4) }
                         assertEquals(0x88.toByte(), head[0], "a Close frame")
                         assertEquals(1002, ((head[2].toInt() and 0xff) shl 8) or (head[3].toInt() and 0xff))
-                        out.close()
+                        out.flushAndClose()
                     }
                     s.release()
                 }
@@ -726,6 +728,124 @@ class ServerWebSocketH2Test {
                         }
                         assertTrue("permessage-deflate" in withTimeout(5.seconds) { offered.await() }.orEmpty())
                     }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** A client whose stream receive window stays at 64 KiB (no auto-tuning): the server can be ahead of it by that much. */
+    private val smallWindow = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536)
+
+    /**
+     * A route that sends [total] bytes in 16 KiB binary frames, then a text "done", counting into [sent] what the
+     * session took; its outgoing channel holds one frame, so `send` suspends once everything below it is full: the
+     * stream's window (the client's credit), then the engine's channel in front of it.
+     */
+    private fun Application.sender(
+        total: Int,
+        sent: kotlinx.coroutines.flow.MutableStateFlow<Long>,
+        done: CompletableDeferred<Throwable?>,
+    ) {
+        install(WebSockets) { channels { outgoing = bounded(1, io.ktor.websocket.ChannelOverflow.SUSPEND) } }
+        routing {
+            webSocket("/ws") {
+                try {
+                    var n = 0
+                    while (n < total) {
+                        send(Frame.Binary(true, ByteArray(16_384) { (n + it).toByte() }))
+                        n += 16_384
+                        sent.value = n.toLong()
+                    }
+                    send(Frame.Text("done"))
+                    done.complete(null)
+                } catch (e: Throwable) {
+                    done.complete(e)
+                    throw e
+                }
+            }
+        }
+    }
+
+    /**
+     * Backpressure from the client to the server (RFC 9113 section 5.2): a client that reads nothing gives no credit, so
+     * at most its stream window (64 KiB) reaches it and the server's session stops sending once the engine's own channel
+     * in front of the stream is full too: it never gets near the 4 MiB it wants to send. After the send-stall deadline
+     * without window (here 300 ms, `sendStallTimeoutForTest`) the stream is reset with CANCEL and the session fails
+     * (docs/guide/ktor.md, "WebSockets over HTTP/2").
+     */
+    @Test fun negative_clientThatStopsReadingStallsTheServerUntilTheDeadline() =
+        serverTest {
+            val sent =
+                kotlinx.coroutines.flow
+                    .MutableStateFlow(0L)
+            val done = CompletableDeferred<Throwable?>()
+            val total = 4 * 1024 * 1024
+            val (server, port) =
+                h2TlsServer(configure = { sendStallTimeoutForTest = 300.milliseconds }) { sender(total, sent, done) }
+            try {
+                h2(port, settings = smallWindow) { c ->
+                    val s = c.connect()
+                    assertEquals(200, s.response().status)
+                    // nothing is read until the server gave up on the stream: its END_STREAM never comes, its reset does
+                    assertEquals(false, withTimeout(15.seconds) { s.awaitServerEnd() })
+                    val failure = withTimeout(10.seconds) { done.await() }
+                    assertNotNull(failure, "the session cannot have sent everything: it failed with the stream")
+                    assertTrue(sent.value < 2L * 1024 * 1024, "the session stopped at the window and the channel: ${sent.value}")
+                    // what reached the client is within the window it granted (it reads only now)
+                    var read = 0L
+                    val reset =
+                        assertFailsWith<Http2Exception.StreamReset> {
+                            val b = ByteArray(16_384)
+                            while (true) {
+                                val n = s.body.readAvailable(b, 0, b.size)
+                                if (n < 0) break
+                                read += n
+                            }
+                        }
+                    assertEquals(Http2ErrorCode.CANCEL, reset.code)
+                    assertTrue(read <= 65_536, "read $read")
+                    s.release()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The same backpressure, then the client reads: every byte arrives in order and the session ends, the server's window
+     * reopened by the client's WINDOW_UPDATE frames as it consumes (4 MiB through a 64 KiB stream window). Until the
+     * client reads the server cannot be done: 4 MiB is far beyond the window and the channels in front of it.
+     */
+    @Test fun backpressuredSessionResumesWhenTheClientReads() =
+        serverTest {
+            val sent =
+                kotlinx.coroutines.flow
+                    .MutableStateFlow(0L)
+            val done = CompletableDeferred<Throwable?>()
+            val total = 4 * 1024 * 1024
+            val (server, port) = h2TlsServer { sender(total, sent, done) }
+            try {
+                h2(port, settings = smallWindow) { c ->
+                    val s = c.connect()
+                    assertEquals(200, s.response().status)
+                    // the server is 4 x the window ahead of the client's reading: the rest waits for WINDOW_UPDATE
+                    withTimeout(10.seconds) { sent.first { it >= 4L * 65_536 } }
+                    assertTrue(!done.isCompleted, "4 MiB cannot have gone out without the client reading")
+                    coroutineScopeWithJob { scope ->
+                        val (ws, out) = scope.session(s)
+                        var n = 0
+                        while (n < total) {
+                            val f = withTimeout(10.seconds) { ws.incoming.receive() } as Frame.Binary
+                            assertEquals(16_384, f.data.size)
+                            assertEquals((n + 100).toByte(), f.data[100], "in order, intact")
+                            n += 16_384
+                        }
+                        assertEquals("done", (withTimeout(10.seconds) { ws.incoming.receive() } as Frame.Text).readText())
+                        assertEquals(null, withTimeout(10.seconds) { done.await() })
+                        out.flushAndClose()
+                    }
+                    s.release()
+                }
             } finally {
                 server.stop(100, 500)
             }
