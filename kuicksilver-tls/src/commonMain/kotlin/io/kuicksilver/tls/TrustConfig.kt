@@ -134,14 +134,16 @@ public sealed interface TrustConfig {
      * an [AnchoredCa] verifies client certificates (`clientAuth` Optional or Required), alone or as the base of [Pinned];
      * a client configuration with one throws [TlsException.Config].
      *
-     * **One bundle per handshake.** Every TLS handshake (TCP and QUIC alike) takes the [current] bundle when the client's
-     * ClientHello arrives (over TCP its first bytes, not the accept; over QUIC its first Initial) and verifies the client's
-     * certificate against it, whatever [reload] does meanwhile; handshakes in progress and established connections keep the
-     * bundle they started with, and [reload] affects every handshake whose ClientHello arrives after it returns, also on a
-     * connection accepted before, so a client of a dropped CA cannot connect early and send its hello late. The handshakes of
-     * one server configuration share one OpenSSL context per identity and bundle; the first handshake after a [reload] builds
-     * one with the new bundle and drops the old one from the shared contexts, which is freed once that has happened and its
-     * last connection is gone (a handshake that read the old bundle while the new one's context was built gets a context of its
+     * **The rule.** After [reload] returns, no handshake accepts a client certificate that only a removed CA vouches for, over
+     * TCP and QUIC alike and however the client times its flights; connections established before are not affected. A
+     * handshake takes the [current] bundle when the client's ClientHello arrives (over TCP when its first bytes are there,
+     * not at the accept; over QUIC with its first Initial) and OpenSSL verifies the client's certificate against it; when the
+     * handshake completes and a [reload] has replaced that bundle meanwhile, the certificate is verified again against the
+     * bundle current then, and the handshake fails unless it passes (a session resumed across a reload passes only if its
+     * leaf chains to the new bundle on its own). Close connections of a compromised CA yourself. The handshakes of one server
+     * configuration share one OpenSSL context per identity and bundle; the first handshake after a [reload] builds one with
+     * the new bundle and drops the old one from the shared contexts, which is freed once that has happened and its last
+     * connection is gone (a handshake that read the old bundle while the new one's context was built gets a context of its
      * own, freed with it). With `clientAuth` None the bundle plays no part: a reload changes nothing then. The server's
      * CertificateRequest carries no `certificate_authorities` extension (RFC 9846 section 4.3.4: "The server MAY send it"), so
      * no CA list is announced that a reload would have to change.
@@ -170,7 +172,8 @@ public sealed interface TrustConfig {
         public val current: AnchoredCa get() = ref.load()
 
         /**
-         * Makes [next] the bundle of every handshake that starts from now on; running handshakes and connections keep theirs.
+         * Makes [next] the bundle client certificates are verified against: once this returns, no handshake completes with a
+         * certificate that only a CA missing from [next] vouches for; established connections are not affected.
          *
          * @throws TlsException.Config when no certificate of [next] is valid now; [current] stays.
          */

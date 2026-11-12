@@ -4,12 +4,21 @@
 
 package io.kuicksilver.tls
 
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.EmptyCoroutineContext
@@ -36,6 +45,7 @@ class ReloadableCaTest {
 
     private val testCa = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
     private val otherCa = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.otherCa)))
+    private val both = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa), Certificate(TestCerts.otherCa)))
 
     /** A client certificate issued by the test CA. */
     private fun clientA() = TcpFixtures.client { identity = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf()) }
@@ -145,24 +155,134 @@ class ReloadableCaTest {
             withTimeout(20.seconds) { cd.await() }.getOrNull()?.close()
         }
 
-    /** A handshake whose ClientHello arrived before a reload keeps the bundle it started with while the reload happens. */
-    @Test fun handshakeInProgressKeepsItsBundle(): Unit =
-        runBlocking(Dispatchers.Default) {
-            val r = TrustConfig.reloadable(testCa)
-            val server = server(r)
-            val pair = ChannelPair()
-            val cd = async { TlsConnection.client(pair.clientIn, pair.clientOut, clientA(), EmptyCoroutineContext, SessionCache()) }
-            withTimeout(20.seconds) { pair.serverIn.awaitContent(1) } // the ClientHello is on its way
-            // undispatched: with the hello there the server takes its context (and the bundle) before this returns
-            val sd = async(start = CoroutineStart.UNDISPATCHED) { TlsConnection.server(pair.serverIn, pair.serverOut, server) }
-            r.reload(otherCa)
-            val (c, s) = withTimeout(20.seconds) { cd.await() to sd.await() }
-            assertEquals(Certificate(TestCerts.client), s.peerCertificates[0], "verified against the bundle of its ClientHello")
-            exchange(c, s)
-            c.close()
-            s.close()
-            assertIs<VerifyReason.UnknownIssuer>(refused(clientA(), server), "the next handshake uses the new bundle")
+    /**
+     * A transport that holds back the client's second flight (its Certificate, CertificateVerify, Finished): the
+     * ClientHello and the server's flight pass, [serverFlight] completes once the server's first bytes are on their way to
+     * the client (so the server has its context), and nothing more goes from client to server until [gate] completes.
+     */
+    private class GatedPair(
+        scope: CoroutineScope,
+    ) : ChannelPair() {
+        private val clientOutCh = ByteChannel(autoFlush = true)
+        private val serverInCh = ByteChannel(autoFlush = true)
+        private val serverOutCh = ByteChannel(autoFlush = true)
+        private val clientInCh = ByteChannel(autoFlush = true)
+        val serverFlight = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        override val clientIn: ByteReadChannel get() = clientInCh
+        override val clientOut: ByteWriteChannel get() = clientOutCh
+        override val serverIn: ByteReadChannel get() = serverInCh
+        override val serverOut: ByteWriteChannel get() = serverOutCh
+
+        init {
+            scope.launch {
+                val buf = ByteArray(16 * 1024)
+                while (true) {
+                    val n = clientOutCh.readAvailable(buf, 0, buf.size)
+                    if (n < 0) break
+                    if (serverFlight.isCompleted) gate.await() // the client's second flight waits for the gate
+                    serverInCh.writeFully(buf, 0, n)
+                    serverInCh.flush()
+                }
+                serverInCh.flushAndClose()
+            }
+            scope.launch {
+                val buf = ByteArray(16 * 1024)
+                while (true) {
+                    val n = serverOutCh.readAvailable(buf, 0, buf.size)
+                    if (n < 0) break
+                    serverFlight.complete(Unit) // before the client can see it, so before it can answer
+                    clientInCh.writeFully(buf, 0, n)
+                    clientInCh.flush()
+                }
+                clientInCh.flushAndClose()
+            }
         }
+    }
+
+    /** Runs a handshake whose client Certificate reaches the server only after [between] ran (the ClientHello before it). */
+    private suspend fun CoroutineScope.gated(
+        forwarders: CoroutineScope,
+        client: TlsConfig,
+        server: TlsConfig,
+        between: () -> Unit,
+    ): Pair<Result<TlsConnection>, Result<TlsConnection>> {
+        val pair = GatedPair(forwarders)
+        val sd = async { runCatching { TlsConnection.server(pair.serverIn, pair.serverOut, server) } }
+        val cd =
+            async { runCatching { TlsConnection.client(pair.clientIn, pair.clientOut, client, EmptyCoroutineContext, SessionCache()) } }
+        withTimeout(20.seconds) { pair.serverFlight.await() }
+        between()
+        pair.gate.complete(Unit)
+        return withTimeout(20.seconds) { cd.await() to sd.await() }
+    }
+
+    /**
+     * The client's ClientHello arrives before a reload and its Certificate after: the certificate is checked against the
+     * bundle current when the handshake completes, so a client of the removed CA is refused (no timing of its flights gets
+     * it verified against a bundle that was already replaced).
+     */
+    @Test fun negative_certificateArrivingAfterReloadIsCheckedAgainstTheNewBundle(): Unit =
+        runBlocking(Dispatchers.Default) {
+            // the forwarders run until cancelled: outside this test's scope, which would otherwise wait for them
+            val fwd = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val r = TrustConfig.reloadable(testCa)
+                val server = server(r)
+                val (c0, s0) = gated(fwd, clientA(), server) {}
+                assertEquals(Certificate(TestCerts.client), s0.getOrThrow().peerCertificates[0], "control: the gate alone changes nothing")
+                c0.getOrThrow().close()
+                s0.getOrThrow().close()
+                val (c1, s1) = gated(fwd, clientA(), server) { r.reload(otherCa) }
+                val e = assertIs<TlsException.Verify>(s1.exceptionOrNull(), "the removed CA's client is refused")
+                assertIs<VerifyReason.UnknownIssuer>(e.reason)
+                c1.getOrNull()?.close()
+                r.reload(both)
+                val (c2, s2) = gated(fwd, clientA(), server) { r.reload(TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))) }
+                assertEquals(Certificate(TestCerts.client), s2.getOrThrow().peerCertificates[0], "a reload that keeps its CA lets it in")
+                c2.getOrThrow().close()
+                s2.getOrThrow().close()
+            } finally {
+                fwd.cancel()
+            }
+        }
+
+    /** The same over QUIC: the server's flight is out (the ClientHello was processed) when the bundle is reloaded. */
+    @Test fun negative_quicCertificateArrivingAfterReloadIsCheckedAgainstTheNewBundle() {
+        val r = TrustConfig.reloadable(testCa)
+        val config =
+            Fixtures.server {
+                clientAuth = ClientAuth.Required
+                trust = r
+            }
+        val client = Fixtures.client { identity = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf()) }
+
+        fun run(reload: TrustConfig.AnchoredCa?): Pump {
+            val c = KslQuicCrypto.newSession(client)
+            val s = KslQuicCrypto.newSession(config)
+            c.setTransportParameters(Fixtures.tp)
+            s.setTransportParameters(Fixtures.tp)
+            val p = Pump(c, s)
+            var reloaded = false
+            p.onEvent = { fromClient, ev ->
+                // the server's first flight: the ClientHello is in, the client's Certificate not yet
+                if (!fromClient && ev is TlsEvent.CryptoData && !reloaded && reload != null) {
+                    reloaded = true
+                    r.reload(reload)
+                }
+            }
+            p.run()
+            return p
+        }
+        val ok = run(null)
+        assertTrue(ok.ss.done, "control")
+        ok.close()
+        val refused = run(otherCa)
+        val failed = assertIs<DriveResult.Failed>(refused.ss.last, "the removed CA's client is refused")
+        assertIs<VerifyReason.UnknownIssuer>(assertIs<TlsException.Verify>(failed.exception).reason)
+        refused.close()
+        (config.identity as TlsIdentity.InMemory).close()
+    }
 
     /**
      * Sessions are keyed by the bundle's certificates, not only their keys: a CA re-issued on the same key (here with a path

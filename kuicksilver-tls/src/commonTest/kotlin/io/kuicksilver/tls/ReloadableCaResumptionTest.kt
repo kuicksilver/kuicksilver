@@ -210,6 +210,26 @@ class ReloadableCaResumptionTest {
         }
     }
 
+    /**
+     * A TLS 1.2 handshake with a pinned client certificate that matches completes: the explicit post-handshake ticket a
+     * pinned server requests is TLS 1.3 only (OpenSSL refused it on TLS 1.2 and the handshake failed).
+     */
+    @Test fun tls12HandshakeWithMatchingPinnedClientCertificateSucceeds(): Unit =
+        runBlocking {
+            val server =
+                TcpFixtures.server {
+                    versions = TlsVersions.Tls12And13
+                    clientAuth = ClientAuth.Required
+                    trust = TrustConfig.Pinned(setOf(Certificate(TestCerts.client).spkiSha256), base = testCa)
+                }
+            val (_, session, s) = tls12(server)
+            val conn = s.getOrThrow()
+            assertEquals(Certificate(TestCerts.client), conn.peerCertificates[0])
+            assertEquals(TlsVersion.Tls12, conn.protocolVersion)
+            conn.close()
+            if (session != 0L) Ksl.sessionFree(session)
+        }
+
     /** TLS 1.2 tickets (issued in the handshake) are bound to the bundle as TLS 1.3 ones are. */
     @Test fun negative_tls12TicketFromBeforeCaReloadIsNotResumed(): Unit =
         runBlocking {

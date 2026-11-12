@@ -489,6 +489,15 @@ internal class KslQuicTlsSession(
             if (r is VerifyResult.Rejected) {
                 failure =
                     DriveResult.Failed(TlsException.Verify(r.reason, presented), if (config.genericAlerts) 40 else r.reason.alertCode)
+                return
+            }
+        }
+        // a ReloadableCa reloaded since the ClientHello: the client's certificate must pass the bundle current now
+        if (config.role == TlsRole.Server && ctx.trustSnapshot != null) {
+            val chain = presented.ifEmpty { Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate) }
+            ctx.recheckClientChain(chain)?.let { reason ->
+                presented = chain
+                failure = DriveResult.Failed(TlsException.Verify(reason, chain), if (config.genericAlerts) 40 else reason.alertCode)
             }
         }
     }

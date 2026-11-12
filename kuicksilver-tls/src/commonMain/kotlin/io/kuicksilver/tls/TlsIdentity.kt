@@ -98,8 +98,8 @@ public sealed interface TlsIdentity {
      * Made by [TlsIdentity.reloadable]; use it as `TlsConfig.identity` (or a connector's identity) like an [InMemory].
      *
      * **One identity per handshake.** Every TLS handshake (TCP connections and QUIC sessions alike) takes the [current]
-     * snapshot when the client's ClientHello arrives (over TCP its first bytes, not the accept; over QUIC its first Initial)
-     * and runs on an OpenSSL context built from that snapshot's chain and key, so a handshake presents a consistent pair (RFC
+     * snapshot when the client's ClientHello arrives (over TCP when its first bytes are there, not at the accept; over QUIC
+     * with its first Initial) and runs on an OpenSSL context built from that snapshot's chain and key, so a handshake presents a consistent pair (RFC
      * 9846 section 4.5.1, Certificate, and 4.5.2, CertificateVerify, are made from the same identity) whatever [reload] does
      * meanwhile. The handshakes of one server configuration share one context per snapshot: the first handshake after a
      * [reload] builds one from the new identity, and the old one is freed once the identity it was built from is closed (the

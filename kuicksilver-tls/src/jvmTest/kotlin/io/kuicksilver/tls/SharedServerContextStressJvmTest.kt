@@ -137,7 +137,10 @@ class SharedServerContextStressJvmTest {
                 TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.otherCa))),
                 TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa), Certificate(TestCerts.otherCa))),
             )
-        val ca = TrustConfig.reloadable(bundles[0])
+        // every reload installs a bundle object of its own, numbered in reload order: a session reads which it got
+        val order = Collections.synchronizedMap(IdentityHashMap<TrustConfig.AnchoredCa, Int>())
+        val first = TrustConfig.AnchoredCa(bundles[0].roots).also { order[it] = 0 }
+        val ca = TrustConfig.reloadable(first)
         val configs =
             List(10) { i ->
                 tlsConfig(TlsRole.Server) {
@@ -167,7 +170,10 @@ class SharedServerContextStressJvmTest {
                     try {
                         var i = 0
                         while ((i < 400 || reloads.get() < 120) && running()) {
+                            val atLeast = order.getValue(ca.current) // the bundle current before the handshake starts
                             val s = KslQuicCrypto.newSession(configs[(w * 7 + i) % configs.size]) as KslQuicTlsSession
+                            val got = order.getValue(s.context.trustSnapshot!!)
+                            check(got >= atLeast) { "a session built after reload $atLeast got the bundle of reload $got" }
                             seen += s.context
                             built.incrementAndGet()
                             open += s
@@ -191,7 +197,9 @@ class SharedServerContextStressJvmTest {
                             if (done % 2 == 0) {
                                 r.reload(if (done % 4 == 0) identityB() else identityA())
                             } else {
-                                ca.reload(bundles[(done / 2 + 1) % bundles.size])
+                                val next = TrustConfig.AnchoredCa(bundles[(done / 2 + 1) % bundles.size].roots)
+                                order[next] = done / 2 + 1
+                                ca.reload(next)
                             }
                             done++
                             reloads.incrementAndGet()
@@ -211,7 +219,13 @@ class SharedServerContextStressJvmTest {
         }
         assertEquals(emptyList(), failures.toList(), "no failure while the identity is open")
         assertEquals(120, reloads.get(), "all 120 reloads ran while the workers built sessions")
-        assertTrue(seen.map { it.trustSnapshot }.toSet().size == bundles.size, "every bundle got contexts")
+        assertTrue(seen.map { it.trustSnapshot }.toSet().size > bundles.size, "the bundles of many reloads got contexts")
+        // registry retention: with the reloads over, one handshake per configuration under the current bundle leaves the
+        // current identity's registry holding contexts of the current bundle only
+        configs.forEach { (KslQuicCrypto.newSession(it) as KslQuicTlsSession).also { s -> seen += s.context }.close() }
+        val kept = r.current.serverContexts.contextsForTest()
+        assertTrue(kept.isNotEmpty())
+        assertEquals(emptyList(), kept.filter { it.trustSnapshot !== ca.current }, "no context of a replaced bundle is kept")
         r.close()
         assertEquals(emptyList(), seen.filter { !it.isFreed }, "every context is freed once its sessions and the identity are closed")
         val after = Ksl.liveObjects()

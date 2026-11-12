@@ -89,6 +89,42 @@ internal class KslContext private constructor(
         trustSnapshot: TrustConfig.AnchoredCa?,
     ): Boolean = sameKind(config, quic, quicTickets, earlyData) && this.trustSnapshot === trustSnapshot
 
+    /**
+     * The client certificate check at the end of a server handshake under a `TrustConfig.ReloadableCa`: OpenSSL verified
+     * [presented] (leaf first) against [trustSnapshot], the bundle current when the ClientHello arrived; when a reload has
+     * replaced that bundle since, the chain is verified again against the bundle current now, until the bundle it passed is
+     * still the current one. So after `reload` returns no handshake completes with a certificate only a removed CA vouches
+     * for, however its flights were timed. Returns null when it passes (and for a client without a certificate, any other
+     * trust, or a bundle still current), else why it failed. A resumed session (no Certificate message: [presented] holds
+     * the leaf its session kept) is checked the same way, so one resumed across a reload passes only if its leaf chains to
+     * the new bundle on its own.
+     */
+    fun recheckClientChain(presented: List<Certificate>): VerifyReason? {
+        var verifiedUnder = trustSnapshot ?: return null
+        if (presented.isEmpty()) return null
+        while (true) {
+            val now = clientCaSnapshot(config) ?: return null
+            if (now === verifiedUnder) return null
+            val lease =
+                try {
+                    acquire(config, quic, quicTickets, earlyData) // the context of the current identity and bundle
+                } catch (e: IllegalStateException) {
+                    return VerifyReason.Custom("the client CA bundle changed and cannot be checked again: ${e.message}")
+                }
+            try {
+                val under = lease.ctx.trustSnapshot ?: return null
+                val err = Ksl.ctxVerifyChain(lease.ctx.handle, presented.map { it.encoded }, null, 0)
+                if (err != 0) {
+                    return verifyReasonOf(if (err > 0) err else 0, 0, presented)
+                        ?: VerifyReason.Custom("the client certificate does not pass the reloaded CA bundle")
+                }
+                verifiedUnder = under
+            } finally {
+                lease.close()
+            }
+        }
+    }
+
     /** Built for the same configuration and kind as [other], whatever the client CA bundle. */
     fun sameKindAs(other: KslContext): Boolean = sameKind(other.config, other.quic, other.quicTickets, other.earlyData)
 
@@ -414,12 +450,12 @@ internal class SharedServerContexts {
             return it
         }
         val made = build() ?: return null
-        // the bundle was reloaded while this context was built: it serves this handshake (which read the bundle before the
-        // reload) and goes with it, unshared, so the registry never takes a context of a bundle that is already replaced
-        if (ca != null && config.trust.reloadableSnapshot() !== ca) return made
         while (true) {
             // closed meanwhile: the context was built from a key still held, so this handshake goes on with it, unshared
             val list = entries.load() ?: return made
+            // the bundle was reloaded while this context was built or since: it serves this handshake (which read the bundle
+            // before the reload) and goes with it, unshared, so the registry never takes a context of a replaced bundle
+            if (ca != null && config.trust.reloadableSnapshot() !== ca) return made
             find(list, config, quic, quicTickets, earlyData, ca)?.let {
                 made.release() // another session built one first: share that one
                 touch(list, it)
@@ -463,6 +499,9 @@ internal class SharedServerContexts {
         val i = list.indexOfFirst { it === c }
         if (i >= 0 && i < list.size / 2) entries.compareAndSet(list, list.filter { it !== c } + c)
     }
+
+    /** The contexts the registry holds now (tests). */
+    internal fun contextsForTest(): List<KslContext> = entries.load().orEmpty()
 
     /** Drops the registry's references; contexts still in use go with their last session. */
     fun close() {
@@ -508,73 +547,81 @@ internal fun useTicketKeys(
 }
 
 /** Maps a `ksl` failure to the TLS exception model and the alert to send (RFC 9846 section 6.2). */
+
+/** The [VerifyReason] of an X509_V_ERR_* code (null for 0), or, without one, of the TLS alert [code] the failure carries. */
+internal fun verifyReasonOf(
+    x509: Int,
+    code: Int,
+    presented: List<Certificate>,
+): VerifyReason? =
+    when (x509) {
+        62, 64 -> {
+            VerifyReason.HostnameMismatch(
+                "",
+                presented.firstOrNull()?.let { c ->
+                    runCatching {
+                        c.dnsNames +
+                            c.ipAddresses.map { ip -> ip.joinToString(".") { b -> (b.toInt() and 0xff).toString() } }
+                    }.getOrNull()
+                }
+                    ?: emptyList(),
+            )
+        }
+
+        // HOSTNAME_MISMATCH, IP_ADDRESS_MISMATCH; a certificate the walker cannot read reports no names instead of failing
+        9 -> {
+            VerifyReason.NotYetValid
+        }
+
+        10 -> {
+            VerifyReason.Expired
+        }
+
+        23 -> {
+            VerifyReason.Revoked
+        }
+
+        26 -> {
+            VerifyReason.InvalidPurpose
+        }
+
+        2, 18, 19, 20, 21, 22, 24, 27 -> {
+            VerifyReason.UnknownIssuer
+        }
+
+        // issuer / self-signed / untrusted family; 22 CERT_CHAIN_TOO_LONG (also ksl's chain walk past its bounds), unknown_ca on the wire
+        7, 8 -> {
+            VerifyReason.BadSignature
+        }
+
+        // EE_KEY_TOO_SMALL, CA_KEY_TOO_SMALL; CA_MD_TOO_WEAK: below the security level (ksl on the pause path, OpenSSL on its own)
+        66, 67 -> {
+            VerifyReason.WeakKey
+        }
+
+        68 -> {
+            VerifyReason.WeakSignature
+        }
+
+        else -> {
+            when {
+                x509 != 0 -> VerifyReason.Custom("X509 verification error $x509")
+                code == 42 -> VerifyReason.BadSignature
+                code == 43 -> VerifyReason.InvalidPurpose
+                code == 44 -> VerifyReason.Revoked
+                code == 45 -> VerifyReason.Expired
+                code == 48 -> VerifyReason.UnknownIssuer
+                else -> null
+            }
+        }
+    }
+
 internal fun KslException.Internal.toTlsFailure(presented: List<Certificate>): Pair<TlsException, Int?> {
     val received = alert and 0x100 != 0
     val code = alert and 0xff
     val x509 = alert ushr 16 // X509_V_ERR_* of a local verification failure
     if (received && code != 0) return TlsException.AlertReceived(code, alertName(code)) to null
-    val reason: VerifyReason? =
-        when (x509) {
-            62, 64 -> {
-                VerifyReason.HostnameMismatch(
-                    "",
-                    presented.firstOrNull()?.let { c ->
-                        runCatching {
-                            c.dnsNames +
-                                c.ipAddresses.map { ip -> ip.joinToString(".") { b -> (b.toInt() and 0xff).toString() } }
-                        }.getOrNull()
-                    }
-                        ?: emptyList(),
-                )
-            }
-
-            // HOSTNAME_MISMATCH, IP_ADDRESS_MISMATCH; a certificate the walker cannot read reports no names instead of failing
-            9 -> {
-                VerifyReason.NotYetValid
-            }
-
-            10 -> {
-                VerifyReason.Expired
-            }
-
-            23 -> {
-                VerifyReason.Revoked
-            }
-
-            26 -> {
-                VerifyReason.InvalidPurpose
-            }
-
-            2, 18, 19, 20, 21, 22, 24, 27 -> {
-                VerifyReason.UnknownIssuer
-            }
-
-            // issuer / self-signed / untrusted family; 22 CERT_CHAIN_TOO_LONG (also ksl's chain walk past its bounds), unknown_ca on the wire
-            7, 8 -> {
-                VerifyReason.BadSignature
-            }
-
-            // EE_KEY_TOO_SMALL, CA_KEY_TOO_SMALL; CA_MD_TOO_WEAK: below the security level (ksl on the pause path, OpenSSL on its own)
-            66, 67 -> {
-                VerifyReason.WeakKey
-            }
-
-            68 -> {
-                VerifyReason.WeakSignature
-            }
-
-            else -> {
-                when {
-                    x509 != 0 -> VerifyReason.Custom("X509 verification error $x509")
-                    code == 42 -> VerifyReason.BadSignature
-                    code == 43 -> VerifyReason.InvalidPurpose
-                    code == 44 -> VerifyReason.Revoked
-                    code == 45 -> VerifyReason.Expired
-                    code == 48 -> VerifyReason.UnknownIssuer
-                    else -> null
-                }
-            }
-        }
+    val reason: VerifyReason? = verifyReasonOf(x509, code, presented)
     return if (reason != null &&
         !received
     ) {

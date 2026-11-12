@@ -34,8 +34,8 @@ public class KuicksilverTlsConnector private constructor(
     public val clientAuth: ClientAuth,
     /**
      * Verifies client certificates (`TrustConfig.AnchoredCa`, optionally pinned); needed unless [clientAuth][KuicksilverTlsConnector.clientAuth] is None.
-     * A `TrustConfig.ReloadableCa` replaces the CA bundle at run time: each new handshake on TCP or QUIC takes the bundle
-     * current when its ClientHello arrives, running connections keep theirs.
+     * A `TrustConfig.ReloadableCa` replaces the CA bundle at run time: once `reload` returns, no handshake on TCP or QUIC
+     * accepts a certificate only a removed CA vouches for; running connections keep going.
      */
     public val trust: TrustConfig?,
     /** The TLS 1.3 cipher suites in preference order. */
