@@ -396,6 +396,12 @@ public object PriorityField {
     public fun parse(value: String?): StreamPriority = merge(StreamPriority.Default, value)
 
     /**
+     * Whether [value] is a priority signal at all: present and a valid Structured Fields dictionary. A value that fails to
+     * parse counts as absent (RFC 8941 section 4.2: "treated as if the field were not present in the section").
+     */
+    public fun isSignal(value: String?): Boolean = value != null && PriorityDictionary.parse(value) != null
+
+    /**
      * [base] with the parameters [value] gives (RFC 9218 section 8: a parameter left out keeps its value, "disinterest to
      * change"); [base] unchanged for null or blank [value], or one that is not a valid Structured Fields dictionary, and
      * per parameter for an invalid `u` or `i`.

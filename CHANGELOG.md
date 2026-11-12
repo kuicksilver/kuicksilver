@@ -640,6 +640,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 (RFC 8941 section 4.2): a `priority` field that fails to parse now counts as absent wherever its presence
+  mattered. A CONNECT carrying one was not scheduled as a tunnel (on either side), and a server response carrying one
+  stopped the client's later PRIORITY_UPDATEs from rescheduling it, as if the server had chosen a priority.
 - HTTP/3 server: a PRIORITY_UPDATE whose payload was longer than 256 bytes was dropped before any check, so one naming
   a non-request stream or a stream beyond our limit did not close the connection with H3_ID_ERROR (RFC 9218 section
   7.2: "MUST be treated as a connection error of type H3_ID_ERROR"), and a valid long one (extension parameters) was

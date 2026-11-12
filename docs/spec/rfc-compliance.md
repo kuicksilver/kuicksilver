@@ -139,7 +139,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9204 | §2.2.1 — blocked sections stay in the flow-control window | ✅ | 0.3.0 | A field section that waits for inserts is left unread in the stream's flow-control window. | [details](rfc/9204.md#s2-2-1-blocked-sections-in-the-window) |
 | RFC 9218 | priorities (HTTP part) | ✅ | 0.3.0 | HTTP/3 streams are scheduled by RFC 9218 urgency and incremental parameters. | [details](rfc/9218.md#priorities-http-part) |
 | RFC 9218 | §7–8 — PRIORITY_UPDATE | ✅ | 0.2.0 | The server applies the client's PRIORITY_UPDATE, and a server-set priority wins. | [details](rfc/9218.md#s7-priority-update) |
-| RFC 9218 | §4–5 — the `Priority` field | ✅ | 0.2.0 | The `Priority` field is parsed strictly as a Structured Fields dictionary. | [details](rfc/9218.md#s4-the-priority-field) |
+| RFC 9218 | §4–5 — the `Priority` field | ✅ | 0.3.0 | The `Priority` field is parsed strictly as a Structured Fields dictionary. | [details](rfc/9218.md#s4-the-priority-field) |
 | RFC 9218 | §8, §10.1, §11 — local scheduling | 🔶 | 0.3.0 | The client schedules its streams by its own signal, and the server merges the client's field with its own. | [details](rfc/9218.md#s8-local-scheduling) |
 | RFC 9218 | Ktor server | 🔶 | 0.3.0 | The Ktor server exposes the client's priority signal and its updates to the application. | [details](rfc/9218.md#ktor-server) |
 | RFC 9218 | Ktor client | 🔶 | 0.3.0 | The Ktor client sets a request's priority over h3 and h1. | [details](rfc/9218.md#ktor-client) |
@@ -222,7 +222,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9112 | §9.6 — server staged close | ✅ | 0.2.1 | A response that ends the connection while the client may still send closes in stages. | [details](rfc/9112.md#s9-6-server-staged-close) |
 | RFC 9110 | §15.5.9; RFC 9112 §9.5 — server timeouts | ✅ | 0.2.1 | Incomplete request heads and stalled bodies time out. | [details](rfc/9110.md#s15-5-9-server-timeouts) |
 | RFC 9110 | §10.1.1 — `Expect: 100-continue` | ✅ | 0.3.0 | The server sends `100 Continue` at once unless the head alone determines the final status. | [details](rfc/9110.md#s10-1-1-expect-100-continue) |
-| RFC 8941 | §4.2 — Dictionary parsing of the Priority field | ✅ | 0.2.0 | The `Priority` field and PRIORITY_UPDATE values are parsed as RFC 8941 Dictionaries, and a failed parse means the defaults. | [details](rfc/8941.md#s4-2-dictionary-parsing) |
+| RFC 8941 | §4.2 — Dictionary parsing of the Priority field | ✅ | 0.3.0 | The `Priority` field and PRIORITY_UPDATE values are parsed as RFC 8941 Dictionaries, and a failed parse means the defaults. | [details](rfc/8941.md#s4-2-dictionary-parsing) |
 | RFC 9111 | §1.2.2 — delta-seconds in Alt-Svc `ma` | ✅ | 0.2.1 | An Alt-Svc `ma` too large to represent counts as 2147483648 seconds. | [details](rfc/9111.md#s1-2-2-delta-seconds) |
 
 ## How to update

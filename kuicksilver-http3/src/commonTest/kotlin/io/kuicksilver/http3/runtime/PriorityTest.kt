@@ -359,6 +359,47 @@ class PriorityTest {
         }
 
     /**
+     * RFC 8941 section 4.2: a field that fails to parse "MUST be ignored (i.e., treated as if the field were not present in
+     * the section)". A response field with an uppercase key is no server choice: the client's later PRIORITY_UPDATEs still
+     * reschedule the response.
+     */
+    @Test fun negative_garbledResponseFieldKeepsClientUpdates() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val id = raw.request(GET + ("priority" to "u=5, i"))
+                val r = server.acceptRequest()
+                r.respond(200, Http3Headers.of("priority" to "U=1"))
+                assertEquals(StreamPriority(5, true), (r as ServerRequestImpl).stream.priority)
+                raw.priorityUpdate(id, "u=6")
+                withTimeout(5.seconds) { r.priority.first { it == StreamPriority(6) } }
+                assertEquals(StreamPriority(6), r.stream.priority)
+            }
+        }
+
+    /** A CONNECT whose `priority` field fails to parse carries no signal: it is scheduled as a tunnel on both sides. */
+    @Test fun negative_garbledConnectFieldStaysTunnel() =
+        h3Test {
+            H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                val accepted = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
+                launch {
+                    val r = p.server.acceptRequest()
+                    r.acceptConnect()
+                    accepted.complete(r)
+                }
+                val garbled = http3Request("CONNECT", "server.test", "/chat") { headers = Http3Headers.of("priority" to "U=1") }
+                val tunnel = p.client.connect(garbled, "echo")
+                assertEquals(StreamPriority(3, true), tunnel.priority)
+                val r = withTimeout(5.seconds) { accepted.await() }
+                assertEquals(StreamPriority.Default, r.priority.value)
+                assertEquals(StreamPriority(3, true), (r as ServerRequestImpl).stream.priority)
+            }
+        }
+
+    /**
      * Our control and QPACK streams go before every request stream whatever the peer's signal: a client that asks u=0
      * (non-incremental, stream 0 has the lowest id) for a large response must not hold back the QPACK insert its trailers
      * need behind the whole body. The server's packets are held while the body and then the trailers are queued, so what
