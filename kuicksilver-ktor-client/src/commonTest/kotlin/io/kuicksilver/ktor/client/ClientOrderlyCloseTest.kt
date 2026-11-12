@@ -6,6 +6,8 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.ByteReadChannel
@@ -22,6 +24,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -87,6 +90,40 @@ class ClientOrderlyCloseTest {
             }) { port ->
                 testClient().use { c -> assertTrue(runCatching { c.get("https://127.0.0.1:$port/") }.isFailure) }
                 assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
+            }
+        }
+
+    /**
+     * RFC 9846 section 6.1 on first contact (TLS without ALPN, so the OPTIONS probe goes first): the connection a server
+     * closes after its HTTP/1.0 answer to the probe, and the new one on which the request then fails before anything of
+     * it is sent (a body of unknown length over the bound), both end with close_notify. Before, both were closed abruptly.
+     */
+    @Test fun firstContactEndsWithCloseNotify() =
+        clientTest {
+            val clean = List(2) { CompletableDeferred<Boolean>() }
+            tlsWithSilentUdp(emptyList(), silentUdp = false, handler = { index, _, input, output ->
+                if (index == 0) {
+                    readRequest(input)
+                    output.writeStringUtf8("HTTP/1.0 204 No Content\r\n\r\n")
+                    output.flush()
+                }
+                clean.getOrNull(index)?.complete(input.endsCleanly())
+            }) { port ->
+                testClient().use { c ->
+                    val big =
+                        object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                            override suspend fun writeTo(channel: ByteWriteChannel) {
+                                channel.writeFully(ByteArray(io.kuicksilver.ktor.client.h1.FIRST_CONTACT_BODY_LIMIT + 1))
+                            }
+                        }
+                    assertFailsWith<IllegalStateException> { c.post("https://127.0.0.1:$port/") { setBody(big) } }
+                }
+                for (i in clean.indices) {
+                    assertTrue(
+                        withTimeout(10.seconds) { clean[i].await() },
+                        "connection $i saw the client's close_notify",
+                    )
+                }
             }
         }
 

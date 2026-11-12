@@ -43,6 +43,7 @@ import io.kuicksilver.ktor.client.h2.h2Exchange
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.platformCleartextPermitted
+import io.kuicksilver.ktor.client.requestTimeoutMillis
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
@@ -729,6 +730,9 @@ internal class H1Pool(
             var bodyJob: BodySender? = null
             // the whole request went out (headers and a body written in this call); a streamed body says so itself
             val requestOut = CompletableDeferred<Unit>()
+            // nothing of an unfinished request is on the connection: before the request's head, or between a complete
+            // first-contact probe and the request (prepareFirstContact may fail there)
+            var between = true
 
             // RFC 9846 section 6.1: an exchange that failed after the whole request went out (a malformed response head,
             // a timeout, the call cancelled) leaves our write side whole: the connection ends with close_notify (a TLS 1.3
@@ -736,7 +740,9 @@ internal class H1Pool(
             fun closeAfterFailure(e: Throwable?) {
                 val sender = bodyJob
                 val whole =
-                    if (sender == null) {
+                    if (between) {
+                        true
+                    } else if (sender == null) {
                         requestOut.isCompleted
                     } else {
                         @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -767,10 +773,17 @@ internal class H1Pool(
                         if (probeFirst) {
                             // first contact: an OPTIONS on the same connection shows the server's version before the
                             // request needs Transfer-Encoding; an HTTP/1.0 server gets the body framed by Content-Length
+                            between = false
                             probeVersion(data, key, conn, output, input, proxy, tunneled, callContext)
+                            between = true
                         }
-                        // a server that answered the probe with another version: the body framed by Content-Length
-                        if (!configured && !http11Routes.isKnown(key)) prepareFirstContact(data)
+                        // a server that answered the probe with another version: the body framed by Content-Length, once
+                        // it ended within the connect timeout (or the request timeout when that is shorter)
+                        if (!configured && !http11Routes.isKnown(key)) {
+                            val connect = data.connectTimeoutMillis(config)
+                            prepareFirstContact(data, data.requestTimeoutMillis()?.let { minOf(it, connect) } ?: connect)
+                        }
+                        between = false
                         writeHeaders(
                             data,
                             output,
@@ -867,7 +880,7 @@ internal class H1Pool(
                         held?.release()
                     }
                 // RFC 9112 section 6.1: "remembering the version of a prior received response"
-                if (response.version == HttpProtocolVersion.HTTP_1_1) http11Routes.mark(key)
+                if (response.version.handlesHttp11()) http11Routes.mark(key)
                 // a 417 to a request that waited for 100 Continue only says that something on the way does not support
                 // expectations: the request is repeated once without one (RFC 9110 section 10.1.1, as CIO); its body was
                 // never sent, so it can be. The 417's connection was closed: it promised a body it never got
@@ -881,9 +894,10 @@ internal class H1Pool(
                 }
                 return response
             } catch (e: ProbeEndedConnection) {
-                // the server closes the connection after its answer to the probe: the request goes on a new one
+                // the server closes the connection after its answer to the probe: the request goes on a new one; the
+                // probe's exchange is complete, so the connection ends in order (close_notify, RFC 9846 section 6.1)
                 held?.release()
-                conn.close()
+                conn.closeOrderly()
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 continue
             } catch (e: CancellationException) {
@@ -921,7 +935,7 @@ internal class H1Pool(
 
     /**
      * RFC 9112 section 6.1 knowledge on first contact: sends `OPTIONS` for the request's target on [conn] (safe and
-     * idempotent, RFC 9110 sections 9.2.1 and 9.3.7) and reads the answer to its end; its version marks the route as known
+     * idempotent, RFC 9110 sections 9.2.1 and 9.2.2) and reads the answer to its end; its version marks the route as known
      * to handle HTTP/1.1, or as probed (not probed again). A server that does not keep the connection afterwards ends this
      * attempt with [ProbeEndedConnection]; what the route learned stays. Not used for a request that needs no
      * Transfer-Encoding, nor once the route is known or probed.
@@ -955,7 +969,7 @@ internal class H1Pool(
         val response = readResponse(GMTDate(), probe, input, conn.output, callContext, conn.input) { after.complete(it) }
         (response.body as? ByteReadChannel)?.discard()
         val reusable = after.await() == AfterResponse.Reuse
-        if (response.version == HttpProtocolVersion.HTTP_1_1) http11Routes.mark(key) else http11Routes.markProbed(key)
+        if (response.version.handlesHttp11()) http11Routes.mark(key) else http11Routes.markProbed(key)
         if (!reusable) throw ProbeEndedConnection()
     }
 

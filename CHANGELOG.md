@@ -496,8 +496,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   on the route, or ALPN `http/1.1`. On first contact without that knowledge (cleartext, or TLS without ALPN) the engine
   first sends an `OPTIONS` for the request's target on the same connection and reads the version of its answer. A
   server that answers with HTTP/1.0 gets a body of unknown length framed by Content-Length from a buffer of at most
-  1 MiB; a longer body, or a transfer coding of the application, fails that request with IllegalStateException before
-  anything of it is sent. `http11Hints` (servers known to handle HTTP/1.1) and `assumeHttp11` (every server) are the
+  1 MiB, sent once the body ended; a longer body, one that does not end within the connect timeout (or the request
+  timeout when that is shorter: a slow or duplex body), or a transfer coding of the application, fails that request
+  with IllegalStateException before anything of it is sent. `http11Hints` (servers known to handle HTTP/1.1) and `assumeHttp11` (every server) are the
   RFC's "specific user configuration": requests to them go chunked at once, without the probe (experimental).
 
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
