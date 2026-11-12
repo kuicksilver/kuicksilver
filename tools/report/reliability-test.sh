@@ -66,6 +66,25 @@ with_windows=0
 steps=7
 failed=0
 S
+# the newest record says pass, but of a run of some steps (local-matrix.sh --only/--from): never the gate record
+cat > "$fx/gate/dddd.stamp" <<'S'
+commit=dddd
+result=pass
+selection=only=3
+finished=2026-03-01T10:00:00Z
+steps=7
+ran=1
+failed=0
+S
+cat > "$fx/eeee.partial" <<'S'
+commit=eeee
+result=partial-pass
+selection=from=40
+finished=2026-03-02T10:00:00Z
+steps=7
+ran=3
+failed=0
+S
 cat > "$fx/interop.md" <<'S'
 # Interop
 
@@ -138,6 +157,8 @@ sed '/^Run: /,+1d' "$fx/soak/s.md" > "$fx/soak/old.md"
 bash "$script" "${args[@]}" --soak "$fx/soak/old.md" --out "$fx/page3.md" 2>/dev/null
 expect soakRunNotRecorded "run date/commit: not recorded" "$fx/page3.md"
 check checkWarnsOnForeignCommit 0 "warning: the gate record is for cccc" -- bash "$script" --check "${args[@]}"
+if grep -q dddd "$p"; then echo "FAIL negative_partialStampIgnored: a partial run's record was used"; fails=$((fails + 1)); else echo "ok   negative_partialStampIgnored"; fi
+check negative_partialRecordRefused 1 "ran only some steps" -- bash "$script" --check "${args[@]}" --gate "$fx/eeee.partial"
 expect negativeCount "| kuicksilver-a | 2 |" "$p"
 if grep -q "$tmp" "$p"; then echo "FAIL an absolute path is in the page"; fails=$((fails + 1)); else echo "ok   no absolute path"; fi
 

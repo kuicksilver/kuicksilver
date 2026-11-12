@@ -93,6 +93,7 @@ bash tools/check/guide-sync-test.sh                              # negative cont
 bash tools/docs/site.sh 0.3.0-SNAPSHOT build/site                # the documentation site (Dokka API reference + guide as HTML); install lines in the script; fails when the API counts differ from tools/docs/api-baseline.properties
 ./gradlew -Pkuicksilver.docs.reportUndocumented :dokkaGenerate   # the API reference alone, warning on every public declaration without KDoc
 tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them
+tools/ci/local-matrix.sh --only 25,47-48                         # run again only those steps (or --from 40); never a gate
 ```
 
 Kotlin compiler warnings are errors in the main and test compilations of the modules that apply the `kuicksilver.kmp` convention

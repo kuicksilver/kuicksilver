@@ -109,9 +109,24 @@ refuses to start if either fails. What the steps cover:
 | Reproducibility | `tools/check/double-build.sh macos-arm64`: OpenSSL, `libksl` and the JNI library built twice from two paths and compared |
 | Interop | the JVM and Kotlin/Native interop images against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in the QUIC Interop Runner, with the cells of [`tools/interop/required.json`](../tools/interop/required.json) required green (`--with-interop`; hours) |
 
-Every run except a dry run writes a gate record, `build/ci/gate/<commit>.stamp`, with each step's result and
-`result=pass` only when every step passed on a clean tree that stayed on the same commit. The release script accepts only
-a passing record of the release commit run with `--with-interop --with-windows` and without `--skip-*` (stage 8).
+A full run (not a dry run) writes a gate record, `build/ci/gate/<commit>.stamp`, with `selection=all`, each step's
+result and `result=pass` only when every step passed on a clean tree that stayed on the same commit. The release script
+accepts only a passing record of the release commit that ran every step, with `--with-interop --with-windows` and without
+`--skip-*` (stage 8).
+
+After a fix, some steps can be run again without the whole gate: `--only 25,47-48,51` runs the listed steps (numbers
+and ranges), `--from 40` runs step 40 and every later one. The numbers are those of a full run with the same
+`--skip-*` and `--with-*` options, as `--dry-run` with those options lists them and as a failure line (`[25] ...`,
+`build/ci/25.log`) shows them; the steps left out print nothing. Such a run is never a gate: it does not write or change
+the stamp, but `build/ci/gate/<commit>.partial`, with the selection and `result=partial-pass` or `partial-fail`, and the
+release script and the reliability report refuse it. Before anything runs, the script refuses an unknown or malformed
+step number, a number past the last step, an empty list, `--only` together with `--from`, and a selection that leaves
+out a step whose output a selected step reads (the AAR for the Android checks, the linked Linux test executables, the
+interop images, the Linux C test runs for the ICMP check); it names the steps to add. The preflight builds only the
+OpenSSL targets and resolves the dependencies the selected steps read. Steps that check what an earlier part of the gate
+built (the JNI library's exports, the prefixed OpenSSL archives, the Windows dll, the Linux libraries in the JVM
+interop image) build it themselves, or rebuild it when it is not from this run, so a selection never checks a
+leftover of an earlier build.
 
 Not covered by the local gate: running the `mingwX64` test executables and the Windows C tests (`ksl_test.exe`;
 hosted CI only), the C tests under sanitizers

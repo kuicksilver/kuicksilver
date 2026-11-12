@@ -11,7 +11,8 @@
 # Usage: tools/report/reliability.sh [--check] [--stdout] [--out FILE] [--interop FILE] [--fuzz FILE]
 #                                    [--soak FILE]... [--gate STAMP-or-DIR] [--src DIR]
 #   --soak may be repeated (default: kuicksilver-soak/build/soak/*.md); --gate takes a stamp, or a directory of stamps from
-#   which the newest passing one is used; --src is the repository whose modules are searched for negative_* tests.
+#   which the newest passing one is used (never the record of a run of some steps, --only or --from); --src is the
+#   repository whose modules are searched for negative_* tests.
 set -euo pipefail
 export LC_ALL=C
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -43,12 +44,18 @@ problem() { problems+=("$1"); }
 
 # --- gate record: the newest passing stamp ---
 stamp=""
-if [ -f "$gate" ]; then stamp=$gate
+# a run of some steps (tools/ci/local-matrix.sh --only/--from: result=partial-*, a selection other than all) is no gate;
+# a record without a selection line is from before selections existed, when every run was a full one
+partial() { grep -Eq '^result=partial-' "$1" || { grep -q '^selection=' "$1" && ! grep -qx 'selection=all' "$1"; }; }
+if [ -f "$gate" ]; then
+  if partial "$gate"; then problem "the gate record ${gate##*/} is of a run that ran only some steps (local-matrix.sh --only/--from), not a gate"
+  else stamp=$gate; fi
 elif [ -d "$gate" ]; then
   best=""
   for f in "$gate"/*.stamp; do
     [ -f "$f" ] || continue
     grep -qx 'result=pass' "$f" || continue
+    partial "$f" && continue
     fin=$(sed -n 's/^finished=//p' "$f" | head -n 1)
     key="$fin $f"
     if [ -z "$best" ] || [[ "$key" > "$best" ]]; then best=$key; fi
