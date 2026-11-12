@@ -25,11 +25,10 @@ import io.kuicksilver.ktor.server.h1Priority
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlin.concurrent.atomics.AtomicReference
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 
@@ -127,21 +126,20 @@ internal class H2Call(
 /**
  * The client's PRIORITY_UPDATEs as the HTTP/2 engine reads them (RFC 9218 section 7: "a complete set of all priority
  * parameters", a parameter left out meaning its default; a value that fails to parse means the defaults, as on HTTP/3),
- * and [flow], the signal the application sees: it ends on the most recent one (the highest seq) however the calls
+ * and [flow], the signal the application sees. One state flow holds the latest signal with its order (seq) and only ever
+ * moves to a newer one, so neither its value nor its collectors ever go back to an older signal, however the calls
  * interleave.
  */
-@OptIn(ExperimentalAtomicApi::class)
 internal class ClientSignal(
     initial: StreamPriority,
 ) : PriorityPolicy {
-    private class Latest(
+    internal class Latest(
         val seq: Long,
         val priority: StreamPriority,
     )
 
-    private val latest = AtomicReference(Latest(-1, initial))
-    private val state = MutableStateFlow(initial)
-    val flow: StateFlow<StreamPriority> = state.asStateFlow()
+    internal val state = MutableStateFlow(Latest(-1, initial))
+    val flow: StateFlow<StreamPriority> = PriorityView(state)
 
     override fun parse(value: String): Int = PriorityField.parse(value).let { it.urgency * 2 + if (it.incremental) 1 else 0 }
 
@@ -152,15 +150,28 @@ internal class ClientSignal(
     ) {
         val next = Latest(seq, StreamPriority(urgency, incremental))
         while (true) {
-            val cur = latest.load()
+            val cur = state.value
             if (cur.seq >= seq) return // a newer one is in already
-            if (latest.compareAndSet(cur, next)) break
+            if (state.compareAndSet(cur, next)) return
         }
-        // publish what is latest now; a newer signal that came in meanwhile is published again here or by its own call
-        while (true) {
-            val cur = latest.load()
-            state.value = cur.priority
-            if (latest.load() === cur) return
+    }
+
+    /** [state]'s priorities: the value at once, collectors without repeats. */
+    @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+    private class PriorityView(
+        private val state: StateFlow<Latest>,
+    ) : StateFlow<StreamPriority> {
+        override val value: StreamPriority get() = state.value.priority
+        override val replayCache: List<StreamPriority> get() = listOf(value)
+
+        override suspend fun collect(collector: FlowCollector<StreamPriority>): Nothing {
+            var last: StreamPriority? = null
+            state.collect {
+                if (it.priority != last) {
+                    last = it.priority
+                    collector.emit(it.priority)
+                }
+            }
         }
     }
 }
