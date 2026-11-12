@@ -837,6 +837,36 @@ static jbyteArray j_dns_query(JNIEnv *e, jclass c, jstring name, jint type, jbyt
     return a;
 }
 
+/* ksl_resolve: the entries, an empty array for KSL_DNS_NOT_FOUND, null for a failed lookup */
+static jbyteArray j_resolve(JNIEnv *e, jclass c, jstring name, jint family) {
+    (void)c;
+    uint8_t out[KSL_RESOLVE_ENTRY_LEN * 256];
+    const char *n = cstr(e, name);
+    size_t len = 0;
+    int r = n ? ksl_resolve(n, family, out, sizeof out, &len) : KSL_ERROR;
+    cstr_free(e, name, n);
+    return r == KSL_OK ? new_bytes(e, out, len) : r == KSL_DNS_NOT_FOUND ? new_bytes(e, NULL, 0) : NULL;
+}
+/* ksl_addr_info: {prefix length, flags}, an empty array when no interface has the address, null on failure */
+static jintArray j_addr_info(JNIEnv *e, jclass c, jbyteArray addr, jint scope) {
+    (void)c;
+    uint8_t a[16];
+    jsize n = addr ? (*e)->GetArrayLength(e, addr) : 0;
+    if (n != 4 && n != 16)
+        return NULL;
+    (*e)->GetByteArrayRegion(e, addr, 0, n, (jbyte *)a);
+    int plen = -1, flags = 0;
+    int r = ksl_addr_info(a, (size_t)n, (uint32_t)scope, &plen, &flags);
+    if (r != KSL_OK && r != KSL_DNS_NOT_FOUND)
+        return NULL;
+    jintArray out = (*e)->NewIntArray(e, r == KSL_OK ? 2 : 0);
+    if (out && r == KSL_OK) {
+        jint v[2] = {plen, flags};
+        (*e)->SetIntArrayRegion(e, out, 0, 2, v);
+    }
+    return out;
+}
+
 #define S_BB "Ljava/nio/ByteBuffer;"
 #define S_STR "Ljava/lang/String;"
 static const JNINativeMethod methods[] = {
@@ -917,6 +947,8 @@ static const JNINativeMethod methods[] = {
     {"udpEmsgsize", "(J[I)J", (void *)j_udp_emsgsize},
     {"liveObjects", "([J)I", (void *)j_live_objects},
     {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},
+    {"resolve", "(" S_STR "I)[B", (void *)j_resolve},
+    {"addrInfo", "([BI)[I", (void *)j_addr_info},
 };
 
 static jint on_load(JavaVM *vm, jint version) {

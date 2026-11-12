@@ -36,7 +36,7 @@ extern "C" {
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
    ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_sender (send-only clones
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
-   section 9.2.1) */
+   section 9.2.1); ksl_resolve and ksl_addr_info (Happy Eyeballs, RFC 8305 sections 3 and 4) */
 
 /* return codes */
 #define KSL_OK 0
@@ -454,6 +454,25 @@ int ksl_dns_query(const char *name, uint16_t type, const uint8_t *server, int ti
             resolvers, or a KSL_UDP_ADDR_LEN address to ask instead (Linux: IPv4; Windows: IPv4 on port 53; Apple: KSL_DNS_NOT_SUPPORTED);
             for tests. Blocks for about max(timeout_ms, nameservers x 1 s) at most on Linux (every configured nameserver is asked, two tries when the budget allows 2 s per nameserver, one below; a truncated answer retried over TCP may add one more wait; the per-server wait follows glibc send_dg, see ksl_dns.c) and about timeout_ms on Apple; Windows
             takes no timeout, the caller stops waiting. KSL_ERROR when the answer does not fit in cap: no byte is written past it */
+
+/* --- Addresses (additive under ABI 7): one family of a name, and what the system knows of one of its own addresses --- */
+#define KSL_ADDR_V4 4 /* family: IPv4 (getaddrinfo AF_INET) */
+#define KSL_ADDR_V6 6 /* family: IPv6 (getaddrinfo AF_INET6) */
+/* an entry of ksl_resolve: family:1 (KSL_ADDR_V4 or V6) | address:16 (IPv4: the first 4, then zeros) | scope id:4 BE */
+#define KSL_RESOLVE_ENTRY_LEN 21
+int ksl_resolve(const char *name, int family, uint8_t *out, size_t cap, size_t *len);
+/* getaddrinfo(name, AF_INET or AF_INET6 by family, SOCK_STREAM): the name's addresses of that family in the resolver's order,
+            each KSL_RESOLVE_ENTRY_LEN bytes, duplicates left out. KSL_DNS_NOT_FOUND when the name has none of that family or does
+            not exist; KSL_ERROR for a failed lookup, a bad argument (name: as ksl_dns_query's) or an answer over cap. Blocks for as
+            long as the system resolver takes (RFC 8305 section 3: the two families asked on two threads) */
+/* ksl_addr_info flags: a deprecated address (RFC 4862 section 5.5.4); its interface an encapsulating tunnel (RFC 6724 Rule 7) */
+#define KSL_ADDR_DEPRECATED 1
+#define KSL_ADDR_TUNNEL 2
+int ksl_addr_info(const uint8_t *addr, size_t len, uint32_t scope, int *prefix_len, int *flags);
+/* the host's own address addr (4 or 16 bytes; scope: the zone of a link-local IPv6 address, 0 for any): its on-link prefix
+            length (-1 when unknown) and KSL_ADDR_* flags as far as the platform tells (deprecated: Linux /proc/net/if_inet6,
+            macOS SIOCGIFAFLAG_IN6, Windows DadState; tunnel: Linux sit/ipip/ip6tnl/GRE, Apple gif/stf, Windows IF_TYPE_TUNNEL).
+            KSL_DNS_NOT_FOUND when no interface has it; KSL_ERROR for a bad argument or a failed enumeration */
 
 /* --- KslCrypto --- */
 int ksl_rand(uint8_t *out, size_t len);

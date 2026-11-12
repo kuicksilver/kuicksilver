@@ -461,6 +461,26 @@ public expect object Ksl {
         server: ByteArray?,
         timeoutMs: Int,
     ): ByteArray?
+
+    /**
+     * `ksl_resolve` (additive under ABI 7): the addresses of [family] (`KslConst.ADDR_V4` or `ADDR_V6`) of [name] from
+     * `getaddrinfo`, in its order, as `KslConst.RESOLVE_ENTRY_LEN`-byte entries (`family:1 | address:16 | scope id:4`);
+     * empty when the name has none of that family, null when the lookup failed. Blocks for as long as the resolver takes.
+     */
+    public fun resolve(
+        name: String,
+        family: Int,
+    ): ByteArray?
+
+    /**
+     * `ksl_addr_info` (additive under ABI 7): the on-link prefix length (-1 unknown) and `KslConst.ADDR_*` flags of [addr]
+     * (4 or 16 bytes; [scope]: the zone of a link-local IPv6 address, 0 for any), one of this host's own addresses; empty
+     * when no interface has it, null when the interfaces could not be read.
+     */
+    public fun addrInfo(
+        addr: ByteArray,
+        scope: Int,
+    ): IntArray?
 }
 
 /**
