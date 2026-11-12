@@ -35,8 +35,9 @@ public fun Http3ConnectionMigration.Companion.followDefaultNetwork(): Http3Conne
             return NetworkMigrator(connection, nwPathUpdates(), { k -> DatagramIo.open(bindTo, k.interfaceIndex) }, scope)
         }
 
-        // the engine's network: the path's interface, gateways and addresses (in memory only), so a move between two Wi-Fi
-        // networks on one interface is a change too, which the migrator's NwPathKey does not need to see
+        // the engine's network: every raw update of the path (each flushes the HTTPS record cache) with its interface,
+        // gateways and addresses (in memory only), so a move between two Wi-Fi networks on one interface is a change too,
+        // which the migrator's NwPathKey does not need to see
         @OptIn(InternalKuicksilverApi::class)
         override val networks: Flow<Any?> = nwPathIdentities()
     }

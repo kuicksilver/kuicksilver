@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalKuicksilverApi::class)
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class)
 
 package io.kuicksilver.quic
 
@@ -25,7 +25,6 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import platform.Network.nw_endpoint_copy_address_string
 import platform.Network.nw_path_enumerate_gateways
 import platform.Network.nw_path_monitor_cancel
@@ -47,43 +46,73 @@ import platform.posix.sockaddr_in
 import platform.posix.sockaddr_in6
 
 /**
- * The identity of the system's default path as a network, for telling networks apart (iOS, macOS): the interface (as
- * [NwPathKey]), the path's gateways (`nw_path_enumerate_gateways`) and the interface's own addresses (IPv4 with its mask,
- * the /64 prefixes of global IPv6 addresses), so a move from one Wi-Fi network to another on the same interface is a
- * change, which [NwPathKey] alone does not see. Null while the path is not satisfied. When a satisfied path tells neither
- * gateways nor addresses, every update of it is a value of its own, so each counts as a change (the safe side for caches
- * that must be flushed on a network change). The values are opaque text meant for comparison in memory only: they carry
- * local addresses and must be neither stored nor logged. One path monitor per process, shared by the collectors.
+ * The identity of a network the default path runs over (iOS, macOS), from [nwPathIdentities]: equal for the same interface,
+ * gateways and interface addresses. It holds local addresses, so its [toString] shows only a 64-bit hash of them
+ * (`NwPathIdentity(#…)`), distinct for distinct identities in practice, and safe in a log line.
  */
 @InternalKuicksilverApi
-public fun nwPathIdentities(): Flow<String?> = sharedPathIdentities[Unit]
+public class NwPathIdentity internal constructor(
+    private val text: String,
+) {
+    private val digest: Long = fnv1a64(text)
 
-private val sharedPathIdentities = SharedPerKey<Unit, String?> { monitorPathIdentities() }
+    /** Equal when the interface, gateways and addresses are. */
+    override fun equals(other: Any?): Boolean = other is NwPathIdentity && other.text == text
 
-private fun monitorPathIdentities(): Flow<String?> =
+    /** Consistent with [equals]. */
+    override fun hashCode(): Int = text.hashCode()
+
+    /** A hash, never the addresses. */
+    override fun toString(): String = "NwPathIdentity(#${digest.toULong().toString(16).padStart(16, '0')})"
+}
+
+/** FNV-1a, 64 bits, over the UTF-16 code units of [s]. */
+private fun fnv1a64(s: String): Long {
+    var h = -0x340d631b7bdddcdbL // 0xcbf29ce484222325
+    for (c in s) {
+        h = h xor c.code.toLong()
+        h *= 0x100000001b3L
+    }
+    return h
+}
+
+/**
+ * Every update of the system's default path (iOS, macOS), as the network it runs over: the interface (as [NwPathKey]), the
+ * path's gateways (`nw_path_enumerate_gateways`) and the interface's own addresses (IPv4 addresses, the /64 prefixes of
+ * global IPv6 addresses), so a move from one Wi-Fi network to another on the same interface gives another identity, which
+ * [NwPathKey] alone does not. Null while the path is not satisfied. Not deduplicated: each update of the path is a value,
+ * equal to the last when the network is the same, so a collector sees every raw update (a cache that RFC 9460 section 12
+ * says to flush on network changes is flushed on each) and compares the values for a change of network. When a satisfied
+ * path tells neither gateways nor addresses, each of its updates is an identity of its own. Values are compared in memory
+ * only, never stored. One path monitor per process, shared by the collectors.
+ */
+@InternalKuicksilverApi
+public fun nwPathIdentities(): Flow<NwPathIdentity?> = sharedPathIdentities[Unit]
+
+private val sharedPathIdentities = SharedPerKey<Unit, NwPathIdentity?> { monitorPathIdentities() }
+
+private fun monitorPathIdentities(): Flow<NwPathIdentity?> =
     callbackFlow {
         val monitor = nw_path_monitor_create() ?: throw IllegalStateException("nw_path_monitor_create failed")
         var unknown = 0L // updates run on the monitor's serial queue
         nw_path_monitor_set_update_handler(monitor) { path ->
             val key = pathKeyOf(path)
             val id =
-                if (key ==
-                    null
-                ) {
-                    null
-                } else {
-                    pathIdentity(key, gatewaysOf(path), interfaceAddresses(key.interfaceName)) ?: "?${++unknown}"
+                key?.let {
+                    NwPathIdentity(
+                        pathIdentity(it, gatewaysOf(path), interfaceAddresses(it.interfaceName)) ?: "?${++unknown}",
+                    )
                 }
             trySend(id)
         }
         nw_path_monitor_set_queue(monitor, dispatch_queue_create("io.kuicksilver.nw-path-identity", null))
         nw_path_monitor_start(monitor)
         awaitClose { nw_path_monitor_cancel(monitor) }
-    }.buffer(Channel.UNLIMITED).distinctUntilChanged()
+    }.buffer(Channel.UNLIMITED)
 
 /**
- * The identity of a satisfied path on [key]'s interface with [gateways] and [addresses] (any order), or null when neither
- * says anything about the network behind the interface.
+ * The identity text of a satisfied path on [key]'s interface with [gateways] and [addresses] (any order), or null when
+ * neither says anything about the network behind the interface.
  */
 internal fun pathIdentity(
     key: NwPathKey,
@@ -108,7 +137,7 @@ private fun gatewaysOf(path: nw_path_t): List<String> {
     return out
 }
 
-/** The IPv4 addresses with their masks, and the /64 prefixes of the global IPv6 addresses, of interface [name]. */
+/** The IPv4 addresses, and the /64 prefixes of the global IPv6 addresses, of interface [name]. */
 private fun interfaceAddresses(name: String): List<String> =
     memScoped {
         val out = ArrayList<String>()
@@ -123,22 +152,9 @@ private fun interfaceAddresses(name: String): List<String> =
                 if (addr != null && ifa.ifa_name?.toKString() == name) {
                     when (addr.pointed.sa_family.toInt()) {
                         AF_INET -> {
+                            // the address alone: with the gateways it tells the network; the mask adds nothing reliable
                             val a = addr.reinterpret<sockaddr_in>().pointed
-                            val m = ifa.ifa_netmask?.reinterpret<sockaddr_in>()?.pointed
-                            if (inet_ntop(AF_INET, a.sin_addr.ptr, text, INET6_ADDRSTRLEN.toUInt()) != null) {
-                                val ip = text.toKString()
-                                val mask =
-                                    m?.let {
-                                        if (inet_ntop(AF_INET, it.sin_addr.ptr, text, INET6_ADDRSTRLEN.toUInt()) !=
-                                            null
-                                        ) {
-                                            text.toKString()
-                                        } else {
-                                            null
-                                        }
-                                    }
-                                out += "$ip/$mask"
-                            }
+                            if (inet_ntop(AF_INET, a.sin_addr.ptr, text, INET6_ADDRSTRLEN.toUInt()) != null) out += text.toKString()
                         }
 
                         AF_INET6 -> {
