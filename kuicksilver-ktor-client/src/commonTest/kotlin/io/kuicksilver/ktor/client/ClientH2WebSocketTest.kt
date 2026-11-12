@@ -30,6 +30,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -651,7 +652,9 @@ class ClientH2WebSocketTest {
                             second.await()
                         }
                     }
-                    assertEquals(0, e.h1.h2.streamCount)
+                    // A WebSocket's stream is released after its session ends (the close waits for the server's END_STREAM
+                    // off the caller's path), so the count reaches 0 shortly after both sessions returned.
+                    withTimeout(10.seconds) { while (e.h1.h2.streamCount != 0) delay(10) }
                     assertEquals(0, e.h1.webSocketConnecting.size())
                 }
             }
