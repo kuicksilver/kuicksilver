@@ -21,7 +21,9 @@ import kotlinx.coroutines.flow.update
  * The server side of one HTTP/2 connection over a byte stream the engine set up (TCP and TLS with ALPN `h2`; RFC 9113
  * section 3.2): requests arrive on [requests], validated (section 8.3.1; a malformed one is reset with PROTOCOL_ERROR and
  * never delivered, one whose field section is above our SETTINGS_MAX_HEADER_LIST_SIZE is answered 431). Extended CONNECT
- * (RFC 8441) is not offered: SETTINGS_ENABLE_CONNECT_PROTOCOL is never sent, so a request with `:protocol` is malformed.
+ * (RFC 8441) is offered when the connection starts with `enableConnectProtocol` (SETTINGS_ENABLE_CONNECT_PROTOCOL = 1);
+ * otherwise a request with `:protocol` is malformed. A CONNECT answered with a 2xx is a tunnel (RFC 9113 section 8.5):
+ * DATA only, both ways.
  * The flood limits are the core's ([Http2Settings]). For the engines only; its contract may change in any release.
  */
 @InternalKuicksilverApi
@@ -115,7 +117,9 @@ public class H2ServerConnection private constructor(
          * Starts serving on [input] and [output] (our SETTINGS go out at once). [scope] owns the connection's coroutines;
          * [closeTransport] closes the socket under the channels once the connection is over or lost. [clock] gives
          * monotonic nanoseconds. [ownResponseFields] go on the responses the connection makes itself (the 431 for a field
-         * section above the limit): an origin server's `date` (RFC 9110 section 6.6.1), say.
+         * section above the limit): an origin server's `date` (RFC 9110 section 6.6.1), say. [enableConnectProtocol]: our
+         * SETTINGS carry SETTINGS_ENABLE_CONNECT_PROTOCOL = 1 and Extended CONNECT requests are taken (RFC 8441 section 3;
+         * the request's [H2ServerStream.protocol]).
          */
         public fun start(
             input: ByteReadChannel,
@@ -125,6 +129,7 @@ public class H2ServerConnection private constructor(
             closeTransport: () -> Unit,
             clock: () -> Long = monotonicNanos(),
             ownResponseFields: () -> List<Pair<String, String>> = { emptyList() },
+            enableConnectProtocol: Boolean = false,
         ): H2ServerConnection {
             val ch = Channel<H2ServerStream>(Channel.UNLIMITED) // bounded by our SETTINGS_MAX_CONCURRENT_STREAMS in the core
             val c = H2ServerConnection(ch)
@@ -143,13 +148,15 @@ public class H2ServerConnection private constructor(
                     },
                     onChange = {},
                     onRequest = { s, r ->
-                        val stream = H2ServerStream(c, c.rt, s, r.method, r.scheme, r.path ?: "", r.authority, r.fields, r.contentLength)
+                        val stream =
+                            H2ServerStream(c, c.rt, s, r.method, r.scheme, r.path ?: "", r.authority, r.fields, r.contentLength, r.protocol)
                         c.open.update { it + 1 }
                         c.taken.update { it + 1 }
                         // a connection that ended meanwhile takes no request: the stream goes back at once
                         if (ch.trySend(stream).isFailure) stream.release()
                     },
                     ownResponseFields = ownResponseFields,
+                    enableConnectProtocol = enableConnectProtocol,
                 )
             c.rt = rt
             rt.start()
@@ -176,6 +183,11 @@ public class H2ServerStream internal constructor(
     public val fields: List<Pair<String, String>>,
     /** The request's `content-length`, -1 without one; the content is checked against it (RFC 9113 section 8.1.1). */
     public val contentLength: Long,
+    /**
+     * `:protocol` of an Extended CONNECT (RFC 8441 section 4: `websocket`, say), as the client sent it; null for any other
+     * request. Only a connection started with `enableConnectProtocol` receives one.
+     */
+    public val protocol: String? = null,
 ) {
     /** The stream identifier. */
     public val id: Int get() = s.id
@@ -222,7 +234,10 @@ public class H2ServerStream internal constructor(
         stallError: () -> Throwable = { kotlinx.io.IOException("the client took no content for $stallMillis ms") },
     ): Unit = rt.sendBody(s, source, stallMillis, stallError, end)
 
-    /** Sends trailers, which end the stream. */
+    /**
+     * Sends trailers, which end the stream. Not on a CONNECT answered with a 2xx (IllegalStateException): only DATA go on a
+     * tunnel (RFC 9113 section 8.5).
+     */
     public fun trailers(fields: List<Pair<String, String>>): Unit = rt.respondTrailers(s, fields)
 
     /** Resets the stream with [code]. */

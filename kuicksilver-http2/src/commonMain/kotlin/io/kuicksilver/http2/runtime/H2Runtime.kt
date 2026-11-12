@@ -68,7 +68,19 @@ internal class StreamRt(
      * values of section 6.5.2: SETTINGS_MAX_CONCURRENT_STREAMS was not known yet.
      */
     val beforePeerSettings: Boolean = false,
+    /** A CONNECT (classic or Extended, RFC 9113 section 8.5, RFC 8441): a 2xx makes it a tunnel. */
+    val connect: Boolean = false,
 ) {
+    /**
+     * The CONNECT was answered with a 2xx: the stream is a tunnel (RFC 9113 section 8.5, RFC 9110 section 9.3.6). Its
+     * DATA are the tunnel's bytes, not message content (no content-length applies), and no field section follows on it
+     * either way: one received is a stream error PROTOCOL_ERROR, and none is sent.
+     */
+    var tunnel = false
+
+    /** Completed with true at the peer's END_STREAM (after its content), with false when the stream fails first. */
+    val remoteEnd = CompletableDeferred<Boolean>()
+
     /** Content delivered by the core and not yet pulled by [body]. */
     val chunks = ArrayDeque<ByteArray>()
 
@@ -145,10 +157,12 @@ internal class H2Runtime(
      * [closeTransport]. A transport that failed or was lost is always closed with [closeTransport].
      */
     private val closeTransportGracefully: (() -> Unit)? = null,
+    /** A server that accepts Extended CONNECT (RFC 8441): SETTINGS_ENABLE_CONNECT_PROTOCOL = 1, and `:protocol` is valid. */
+    private val enableConnectProtocol: Boolean = false,
 ) {
     private val client = role == Role.CLIENT
     val lock = SpinLock()
-    val core = H2ConnectionCore(role, settings, clock())
+    val core = H2ConnectionCore(role, settings, clock(), enableConnectProtocol)
     private val streams = HashMap<Int, StreamRt>()
     private val pending = ArrayDeque<H2Event>()
     private var dispatching = false
@@ -399,6 +413,14 @@ internal class H2Runtime(
             return
         }
         val first = lock.withLock { !s.headReceived }
+        // RFC 9113 section 8.5: after the initial HEADERS of each side only DATA (and stream management frames) go on a
+        // connected stream, "and MUST be treated as a stream error (Section 5.4.2) if received"; a CONNECT request has no
+        // content (RFC 9110 section 9.3.6), so a server takes no trailers on one either
+        if (!first &&
+            (s.tunnel || (!client && s.connect))
+        ) {
+            return malformed(s, "a field section on a CONNECT stream (RFC 9113 section 8.5)")
+        }
         if (first) {
             val r =
                 try {
@@ -410,10 +432,14 @@ internal class H2Runtime(
                 s.answered.complete(Unit) // 100 Continue, 103 Early Hints...: the core refused 101 and 1xx with END_STREAM
                 return
             }
+            // RFC 9110 section 9.3.6: a 2xx to CONNECT switches to tunnel mode right after the header section, and "A client
+            // MUST ignore any Content-Length or Transfer-Encoding header fields received in a successful response to CONNECT"
+            val tunnel = s.connect && r.status in 200..299
             lock.withLock {
                 s.headReceived = true
-                s.contentLength = r.contentLength
-                s.noContent = s.responseHasNoContent(r.status)
+                s.tunnel = tunnel
+                s.contentLength = if (tunnel) -1 else r.contentLength
+                s.noContent = !tunnel && s.responseHasNoContent(r.status)
             }
             s.answered.complete(Unit)
             s.head.complete(H2ResponseHead(r.status, r.fields))
@@ -433,7 +459,7 @@ internal class H2Runtime(
 
     private fun newRequest(e: H2Event.HeadersReceived) {
         val handler = onRequest ?: return
-        val s = StreamRt(this, e.streamId, headRequest = false)
+        val s = StreamRt(this, e.streamId, headRequest = false, connect = isConnect(e.fields))
         lock.withLock { streams[e.streamId] = s }
         if (e.tooLarge) {
             // RFC 9113 section 8.2 and the core's contract: a server answers 431. The stream may no longer be sendable by now
@@ -456,15 +482,18 @@ internal class H2Runtime(
             }
             return
         }
-        val r =
+        val parsed =
             try {
-                H2Messages.parseRequest(e.fields, connectProtocolEnabled = false)
+                H2Messages.parseRequest(e.fields, connectProtocolEnabled = enableConnectProtocol)
             } catch (m: MalformedMessage) {
                 malformed(s, m.reason)
                 withCore { release(s.id) }
                 lock.withLock { streams.remove(s.id) }
                 return
             }
+        // RFC 9110 section 9.3.6: "A CONNECT request message does not have content"; what the client sends after its head
+        // is the tunnel's (RFC 9113 section 8.5), so a content-length it carried is not held against those bytes
+        val r = if (parsed.method == "CONNECT") parsed.withoutContentLength() else parsed
         if (e.endStream && r.contentLength > 0) {
             // RFC 9113 section 8.1.1: no DATA can follow, so the content cannot match its content-length; never delivered
             malformed(s, "content-length ${r.contentLength} on a request without content")
@@ -535,6 +564,7 @@ internal class H2Runtime(
                 }
             }
         if (bad != null) return malformed(s, bad)
+        s.remoteEnd.complete(true)
         s.readable.trySend(Unit)
         s.writable.trySend(Unit)
     }
@@ -637,6 +667,7 @@ internal class H2Runtime(
                 }
             }
         if (!set) return
+        s.remoteEnd.complete(false)
         s.failed.complete(cause)
         s.head.completeExceptionally(cause)
         s.answered.completeExceptionally(cause)
@@ -834,10 +865,11 @@ internal class H2Runtime(
         headRequest: Boolean,
     ): StreamRt {
         var s: StreamRt? = null
+        val connect = isConnect(fields)
         try {
             withCore {
                 val id = openStream(fields, endStream)
-                val rt = StreamRt(this@H2Runtime, id, headRequest, beforePeerSettings = !peerPrefaceReceived)
+                val rt = StreamRt(this@H2Runtime, id, headRequest, beforePeerSettings = !peerPrefaceReceived, connect = connect)
                 rt.localEnded = endStream
                 this@H2Runtime.streams[id] = rt
                 s = rt
@@ -860,6 +892,9 @@ internal class H2Runtime(
         }
         return s!!
     }
+
+    /** Waits until the peer ended its side of [s] in order (true) or the stream failed (false). */
+    suspend fun awaitRemoteEnd(s: StreamRt): Boolean = s.remoteEnd.await()
 
     /** RFC 9110 section 10.1.1: waits until the peer answered (an interim or final response), at most [millis]. */
     suspend fun awaitAnswer(
@@ -1074,9 +1109,22 @@ internal class H2Runtime(
         fields: List<Pair<String, String>>,
         endStream: Boolean,
     ) {
-        checkOwnSection(s, if (status in 100..599 && status != 101) null else "status $status", fields)
+        val fault =
+            when {
+                status !in 100..599 || status == 101 -> "status $status"
+
+                // RFC 9110 section 9.3.6: "A server MUST NOT send any Transfer-Encoding or Content-Length header fields in
+                // a 2xx (Successful) response to CONNECT"
+                s.connect && status in 200..299 && fields.any { it.first == "content-length" } -> "content-length in a 2xx to CONNECT"
+
+                else -> null
+            }
+        checkOwnSection(s, fault, fields)
         guarded(s) { sendHeaders(s.id, listOf(":status" to status.toString()) + fields, endStream) }
-        if (endStream) lock.withLock { s.localEnded = true }
+        lock.withLock {
+            if (endStream) s.localEnded = true
+            if (s.connect && status in 200..299) s.tunnel = true // RFC 9110 section 9.3.6
+        }
     }
 
     /** Trailers on [s] (RFC 9113 section 8.1): they end our side. */
@@ -1084,6 +1132,8 @@ internal class H2Runtime(
         s: StreamRt,
         fields: List<Pair<String, String>>,
     ) {
+        // RFC 9113 section 8.5: nothing but DATA on a connected stream (the client would treat a HEADERS as a stream error)
+        check(!lock.withLock { s.tunnel }) { "no trailers on the tunnel of stream ${s.id} (RFC 9113 section 8.5)" }
         checkOwnSection(s, null, fields)
         guarded(s) { sendHeaders(s.id, fields, endStream = true) }
         lock.withLock { s.localEnded = true }
@@ -1210,6 +1260,9 @@ internal class H2Runtime(
         const val SEND_CHUNK = 16_384
     }
 }
+
+/** Whether a request field section is a CONNECT (classic or Extended): its `:method` pseudo-header field. */
+private fun isConnect(fields: List<Pair<String, String>>): Boolean = fields.firstOrNull { it.first == ":method" }?.second == "CONNECT"
 
 /** A response head (RFC 9113 section 8.3.2): the status and the regular fields, validated. */
 @io.kuicksilver.annotations.InternalKuicksilverApi

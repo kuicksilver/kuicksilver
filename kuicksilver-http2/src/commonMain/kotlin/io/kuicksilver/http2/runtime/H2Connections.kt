@@ -79,6 +79,21 @@ public class H2ClientConnection private constructor(
     public val serverSettingsReceived: Boolean get() = rt.peerPrefaceReceived
 
     /**
+     * The server's SETTINGS enabled Extended CONNECT (SETTINGS_ENABLE_CONNECT_PROTOCOL = 1, RFC 8441 section 3): [open] may
+     * carry a `protocol`. False until those SETTINGS arrived ([awaitServerSettings]); a server never takes it back (that
+     * ends the connection with PROTOCOL_ERROR).
+     */
+    public val serverAllowsExtendedConnect: Boolean get() = rt.lock.withLock { rt.core.peerEnableConnectProtocol }
+
+    /**
+     * Suspends until the server's preface (its SETTINGS, RFC 9113 section 3.4) arrived, so what they allow is known
+     * ([serverAllowsExtendedConnect]); throws when the connection ended first. The caller bounds the wait.
+     */
+    public suspend fun awaitServerSettings() {
+        rt.prefaceReceived.await()
+    }
+
+    /**
      * Takes a stream slot within the peer's limit; false when the connection is full or not usable. Before the server's
      * SETTINGS arrive ([serverSettingsReceived]) it grants one slot only: the server's SETTINGS_MAX_CONCURRENT_STREAMS is not
      * known yet, and streams beyond it would be refused (RFC 9113 section 5.1.2: with REFUSED_STREAM or PROTOCOL_ERROR).
@@ -92,8 +107,11 @@ public class H2ClientConnection private constructor(
     /**
      * Opens a request stream on a slot of [tryReserve]: the control data (RFC 9113 section 8.3.1) and the regular
      * [fields] (lowercase, no connection-specific fields), checked as the server would check them
-     * (IllegalArgumentException otherwise). [endStream]: there is no content. `head`: a HEAD request, whose response has no
-     * content (RFC 9110 section 9.3.2). Throws [Http2Exception] with `notProcessed` when this connection can take no new
+     * (IllegalArgumentException otherwise). [endStream]: there is no content. [protocol]: the `:protocol` of an Extended
+     * CONNECT (RFC 8441 section 4; `method` CONNECT), allowed once the server's SETTINGS enabled it
+     * ([serverAllowsExtendedConnect]); a 2xx answer then makes the stream a tunnel (RFC 9113 section 8.5: DATA only, no
+     * content-length holds them, a HEADERS frame on it is a stream error). A HEAD request's response has no content (RFC
+     * 9110 section 9.3.2). Throws [Http2Exception] with `notProcessed` when this connection can take no new
      * stream; the slot is used up either way, and comes back with [H2ClientStream.release] or here on a failure.
      */
     public fun open(
@@ -103,8 +121,9 @@ public class H2ClientConnection private constructor(
         path: String,
         fields: List<Pair<String, String>>,
         endStream: Boolean,
+        protocol: String? = null,
     ): H2ClientStream {
-        val all = H2Messages.buildRequest(method, scheme, authority, path, fields)
+        val all = H2Messages.buildRequest(method, scheme, authority, path, fields, protocol)
         try {
             H2Messages.requireValidRequest(all, connectProtocolEnabled = rt.lock.withLock { rt.core.peerEnableConnectProtocol })
             return H2ClientStream(rt, rt.open(all, endStream, headRequest = method == "HEAD"))
@@ -215,6 +234,13 @@ public class H2ClientStream internal constructor(
         stallMillis: Long?,
         stallError: () -> Throwable,
     ): Unit = rt.sendBody(s, source, stallMillis, stallError)
+
+    /**
+     * Suspends until the server ended its side of the stream in order (its END_STREAM, after the content it sent was
+     * delivered to [body]): true then; false when the stream failed instead (a reset, the connection). The caller bounds
+     * the wait.
+     */
+    public suspend fun awaitServerEnd(): Boolean = rt.awaitRemoteEnd(s)
 
     /** Resets the stream with CANCEL (the application gave up on it). */
     public fun cancel() {

@@ -28,8 +28,9 @@ internal class RawH2Peer(
     role: Role,
     settings: Http2Settings = Http2Settings(),
     var now: Long = 0,
+    enableConnectProtocol: Boolean = false,
 ) {
-    val core = H2ConnectionCore(role, settings, now)
+    val core = H2ConnectionCore(role, settings, now, enableConnectProtocol)
     private val clientCore = role == Role.CLIENT
     private val dec = FrameDecoder(H2.MAX_MAX_FRAME_SIZE)
     private var prefaceLeft = if (clientCore) H2.PREFACE.size else 0

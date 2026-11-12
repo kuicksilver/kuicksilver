@@ -83,6 +83,55 @@ class SettingsTest {
         s.assertConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR) // section 6.5.2
     }
 
+    /**
+     * RFC 8441 section 3: a server that accepts Extended CONNECT says so with SETTINGS_ENABLE_CONNECT_PROTOCOL = 1 in its
+     * SETTINGS; without it the parameter is not sent at all (its initial value, 0, holds). A client never sends it.
+     */
+    @Test
+    fun extendedConnectAdvertisedOnlyWhenEnabled() {
+        fun sent(
+            role: Role,
+            enabled: Boolean,
+        ): Long? {
+            val p = RawH2Peer(role, enableConnectProtocol = enabled)
+            val ours = p.handshake().filterIsInstance<Frame.Settings>().first { !it.ack }
+            return ours.ids
+                .indexOf(SettingId.ENABLE_CONNECT_PROTOCOL)
+                .takeIf { it >= 0 }
+                ?.let { ours.values[it] }
+        }
+        assertEquals(1L, sent(Role.SERVER, enabled = true))
+        assertEquals(null, sent(Role.SERVER, enabled = false))
+        assertEquals(null, sent(Role.CLIENT, enabled = false))
+        assertFailsWith<IllegalArgumentException> { H2ConnectionCore(Role.CLIENT, Http2Settings(), 0, enableConnectProtocol = true) }
+    }
+
+    /**
+     * RFC 8441 section 3: "A sender MUST NOT send a SETTINGS_ENABLE_CONNECT_PROTOCOL parameter with the value of 0 after
+     * previously sending a value of 1." A client that sees a server take it back ends the connection with PROTOCOL_ERROR
+     * (as nghttp2 does): the Extended CONNECT streams it may have opened meanwhile would otherwise be malformed. A server is
+     * not affected by the parameter ("Receipt of this parameter by a server does not have any impact").
+     */
+    @Test
+    fun negative_serverWithdrawingExtendedConnectIsAProtocolError() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake(settings(SettingId.ENABLE_CONNECT_PROTOCOL to 1))
+        c.send(settings(SettingId.ENABLE_CONNECT_PROTOCOL to 0))
+        c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+
+        val again = RawH2Peer(Role.CLIENT)
+        again.handshake(settings(SettingId.ENABLE_CONNECT_PROTOCOL to 1))
+        again.send(settings(SettingId.ENABLE_CONNECT_PROTOCOL to 1)) // the same value again is fine
+        assertEquals(false, again.core.isClosed)
+        assertTrue(again.core.peerEnableConnectProtocol)
+
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake(settings(SettingId.ENABLE_CONNECT_PROTOCOL to 1))
+        s.send(settings(SettingId.ENABLE_CONNECT_PROTOCOL to 0))
+        s.read()
+        assertEquals(false, s.core.isClosed)
+    }
+
     @Test
     fun negative_booleanSettingsOtherThanZeroOrOne() {
         for (id in listOf(SettingId.ENABLE_CONNECT_PROTOCOL, SettingId.NO_RFC7540_PRIORITIES)) {
