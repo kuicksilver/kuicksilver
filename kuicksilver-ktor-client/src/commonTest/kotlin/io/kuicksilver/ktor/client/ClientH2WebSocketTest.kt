@@ -515,6 +515,100 @@ class ClientH2WebSocketTest {
         }
 
     /**
+     * A close the client starts (its own Close) to a server that stops reading and never answers: RFC 6455 section 7.1.1
+     * lets the client close "at any time after sending ... a Close message" when the server does not close "in a
+     * reasonable time period". The close wait starts when the session sends its Close; when neither the server's Close nor
+     * its END_STREAM came by then, the stream is reset with CANCEL and the call ends (OkHttp gives up the same way, 60 s
+     * after its Close). Before, Ktor's session waited for the server's Close for good, and the call with it.
+     */
+    private fun ownCloseIsBounded(lastFrame: Int) =
+        clientTest {
+            val failure = CompletableDeferred<Throwable>()
+            tlsH2WithSilentUdp(
+                settings = Http2Settings(initialStreamWindow = 1_024),
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.invokeOnFailure { failure.complete(it) }
+                    r.respond(200)
+                    kotlinx.coroutines.awaitCancellation() // reads nothing (no WINDOW_UPDATE), answers nothing
+                },
+            ) { port, _ ->
+                client().use { c ->
+                    engine(c).h1.h2WebSocketCloseWaitMillis = 200
+                    c.get("https://127.0.0.1:$port/")
+                    withTimeout(10.seconds) {
+                        c.webSocket("wss://127.0.0.1:$port/ws") {
+                            outgoing.send(Frame.Binary(true, ByteArray(lastFrame)))
+                            // the block ends: Ktor sends the client's Close and waits for the server's
+                        }
+                    }
+                    val reset = assertIs<Http2Exception.StreamReset>(withTimeout(10.seconds) { failure.await() })
+                    assertEquals(Http2ErrorCode.CANCEL, reset.code)
+                    assertEquals(0, engine(c).h1.h2.streamCount)
+                }
+            }
+        }
+
+    @Test fun negative_ownCloseIsBoundedWhenTheServerNeverAnswers() = ownCloseIsBounded(8_192)
+
+    /** The same behind a last frame far beyond the server's window and the engine's 64 KiB lead (300 000 bytes). */
+    @Test fun negative_ownCloseIsBoundedBehindALastFrameBeyondTheLead() = ownCloseIsBounded(300_000)
+
+    /**
+     * The client's own Close releases the lead (as the server's Close does): a writer held behind a frame larger than the
+     * lead stops waiting at once, so the Close and the stream's end go out as soon as the server opens its window, without
+     * waiting for the close wait (60 s here). The server then reads everything, the Close among it, and answers it.
+     */
+    @Test fun negative_ownCloseReleasesTheLead() =
+        clientTest {
+            val gate = CompletableDeferred<Unit>()
+            val serverSawClose = CompletableDeferred<Unit>()
+            tlsH2WithSilentUdp(
+                settings = Http2Settings(initialStreamWindow = 1_024),
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.respond(200)
+                    gate.await() // reads nothing until the client's writer was seen released
+                    val out = ByteChannel()
+                    val sender = launch { runCatching { r.sendBody(out) } }
+                    val ws = RawWebSocket(r.body, out, masking = false, coroutineContext = coroutineContext)
+                    try {
+                        for (frame in ws.incoming) {
+                            if (frame is Frame.Close) {
+                                serverSawClose.complete(Unit)
+                                ws.outgoing.send(Frame.Close())
+                            }
+                        }
+                    } finally {
+                        ws.outgoing.close()
+                        sender.join()
+                    }
+                },
+            ) { port, _ ->
+                client().use { c ->
+                    val output = CompletableDeferred<H2StreamOutput>()
+                    engine(c).h1.h2WebSocketOutputForTest = { output.complete(it) }
+                    engine(c).h1.h2WebSocketCloseWaitMillis = 60_000
+                    c.get("https://127.0.0.1:$port/")
+                    withTimeout(20.seconds) {
+                        c.webSocket("wss://127.0.0.1:$port/ws") {
+                            val out = output.await()
+                            outgoing.send(Frame.Binary(true, ByteArray(300_000)))
+                            out.writerWaiting.first { it } // held behind the lead
+                            outgoing.send(Frame.Close())
+                            // released by the Close, long before the close wait (60 s) could end anything
+                            withTimeout(10.seconds) { out.writerWaiting.first { !it } }
+                            gate.complete(Unit)
+                            withTimeout(10.seconds) { serverSawClose.await() }
+                        }
+                    }
+                }
+            }
+        }
+
+    /**
      * The client's writer is held at the server's window plus the engine's lead (RFC 9113 section 5.2): against a server
      * that reads nothing (a 64 KiB window), the session's output waits in its flush with at most 64 KiB and one piece
      * flushed and not taken by the stream, however much the application sends.

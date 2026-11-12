@@ -17,7 +17,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSecure
 import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.InternalAPI
+import io.ktor.websocket.Frame
 import io.ktor.websocket.RawWebSocket
+import io.ktor.websocket.WebSocketSession
 import io.kuicksilver.http2.runtime.H2ClientStream
 import io.kuicksilver.http2.runtime.H2StreamOutput
 import io.kuicksilver.http2.runtime.Http2Exception
@@ -33,12 +35,16 @@ import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.ChannelResult
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
 
@@ -65,7 +71,8 @@ internal const val H2_WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
  * control follows the session's reading, RFC 9113 section 5.2). When the call ends, a session that ended in order has its
  * END_STREAM out and waits up to [closeWaitMillis] (5 s) for its last frames to go out and the server's; anything else (a failed or cancelled call, a handshake
  * refused here) resets the stream with CANCEL (section 5: "RST exceptions are represented with the RST_STREAM frame ...
- * with the CANCEL error code").
+ * with the CANCEL error code"). A close the client starts is bounded as well: [closeWaitMillis] from the session's own
+ * Close, a server that sent neither its Close nor END_STREAM has the stream reset with CANCEL (RFC 6455 section 7.1.1).
  *
  * Throws [H2NotProcessed] when the server provably did not process the CONNECT, [H2Http11Required] for
  * HTTP_1_1_REQUIRED (the caller then opens the WebSocket over HTTP/1.1), as [h2Exchange] does.
@@ -156,6 +163,33 @@ internal suspend fun h2WebSocket(
             }
         onOutput(output)
         val sender = output.done
+        // the server's Close arrived (the input ends there) or its side of the stream ended
+        val serverClosing = CompletableDeferred<Unit>()
+        val ownClose = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+        // RFC 6455 section 7.1.1: once the client sent its Close it may close "at any time after sending ... a Close
+        // message" when the server does not close "in a reasonable time period": the close wait starts with the session's
+        // own Close, and a server that answers neither with its Close nor with END_STREAM by then has the stream reset with
+        // CANCEL, which ends the session's input and the call (OkHttp cancels its WebSocket 60 s after its Close). The lead
+        // is released as at the server's Close: the Close must not wait behind a window the server may never open again
+        fun onOwnClose() {
+            if (!ownClose.compareAndSet(false, true)) return
+            output.releaseLead()
+            if (serverClosing.isCompleted) return
+            GlobalScope.launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket-close")) {
+                val answered =
+                    withTimeoutOrNull(closeWaitMillis) {
+                        select {
+                            serverClosing.onAwait { true }
+                            job.onJoin { true } // the call ended: its own handler decides
+                        }
+                    }
+                if (answered == null) {
+                    sender.cancel()
+                    release()
+                }
+            }
+        }
         job.invokeOnCompletion { cause ->
             // a session that ended in order closed its output: its last frames and END_STREAM go out, and the server's
             // END_STREAM is waited for (RFC 6455 section 7.1.1); a call that failed or was cancelled (its output may still
@@ -178,7 +212,7 @@ internal suspend fun h2WebSocket(
                 }
             }
         }
-        val session =
+        val raw =
             RawWebSocket(
                 // the input ends at the server's Close (or with the stream): the session is closing, and its last frames, its
                 // Close reply among them, must not wait for a window the server may never open again; the close wait bounds
@@ -193,7 +227,10 @@ internal suspend fun h2WebSocket(
                     perMessageDeflate = handshake.perMessageDeflate,
                     maxMessageSize = maxMessageSize,
                     checkText = handshake.checkText,
-                    onEnd = { output.releaseLead() },
+                    onEnd = {
+                        output.releaseLead()
+                        serverClosing.complete(Unit)
+                    },
                 ),
                 // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
                 guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression),
@@ -201,6 +238,7 @@ internal suspend fun h2WebSocket(
                 coroutineContext = callContext,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
             )
+        val session = OwnCloseWatch(raw, ::onOwnClose)
         return HttpResponseData(HttpStatusCode.SwitchingProtocols, requestTime, headers, HttpProtocolVersion.HTTP_2_0, session, callContext)
     } catch (e: Throwable) {
         release()
@@ -208,6 +246,32 @@ internal suspend fun h2WebSocket(
         if (e.notProcessed) throw H2NotProcessed(e, bodyConsumed = false)
         if (isHttp11Required(e, conn)) throw H2Http11Required(e, bodyConsumed = false, mayRepeat = true)
         throw e
+    }
+}
+
+/**
+ * [raw] with its outgoing frames watched: [onClose] runs when the session sends its own Close (Ktor's session sends it
+ * through [outgoing], its `close()` through [send]), before the Close is queued behind the frames ahead of it.
+ */
+private class OwnCloseWatch(
+    private val raw: WebSocketSession,
+    private val onClose: () -> Unit,
+) : WebSocketSession by raw {
+    override val outgoing: SendChannel<Frame> =
+        object : SendChannel<Frame> by raw.outgoing {
+            override suspend fun send(element: Frame) {
+                if (element is Frame.Close) onClose()
+                raw.outgoing.send(element)
+            }
+
+            override fun trySend(element: Frame): ChannelResult<Unit> {
+                if (element is Frame.Close) onClose()
+                return raw.outgoing.trySend(element)
+            }
+        }
+
+    override suspend fun send(frame: Frame) {
+        outgoing.send(frame)
     }
 }
 
