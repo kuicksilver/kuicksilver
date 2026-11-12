@@ -173,7 +173,7 @@ and "server-bye".
 | Chrome 155 (macOS, headless) | draft-02 | `ChromeWebTransportTest.chromeDraft02` (opt-in: `-Pkuicksilver.browserTests=true`) | ✅ all steps, 100 of 100 datagrams echoed |
 | Chrome 155 with `EnableWebTransportDraft07` | draft-02 (we announce no draft-07 SETTINGS) | `ChromeWebTransportTest.chromeWithDraft07EnabledFallsBackToDraft02` | ✅ |
 | Firefox 158 (neqo) | draft-02 | manual, `tools/interop/wt-firefox-manual.sh` (2026-10-23) | ✅ every step of the page (the script prints PASS only when all are ok); the server saw the page's `WT_CLOSE_SESSION` with code 7 and "bye"; Firefox closes the QUIC connection with code 256 right after the session ends |
-| Safari 26.4 | draft-14 (second-hand) | manual | not yet run; from 0.3.0 a draft-14 session needs `reset_stream_at` on both sides (draft-14 section 3.1), which WebKit bugs 303152 and 305006 suggest Safari 26.4 and later sends; a Safari that also announces draft-02 without it gets a draft-02 session |
+| Safari 26.4 | draft-14 (second-hand) | manual | not yet run; from 0.3.0 a draft-14 session needs `reset_stream_at` on both sides (draft-14 section 3.1), which WebKit bugs 303152 and 305006 suggest Safari 26.4 and later sends; a Safari that also announces draft-02 without it gets a draft-02 session when its CONNECT is a draft-02 request (our reading of draft-16 section 7.1, not text of the draft), its draft-14 CONNECT is refused |
 
 webtransport-go's client requires `reset_stream_at`, which the Ktor server now advertises with `webTransport`; neither
 direction against webtransport-go is run here (it belongs to the gate's interop image).

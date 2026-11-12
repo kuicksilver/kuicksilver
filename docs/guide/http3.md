@@ -356,8 +356,11 @@ or, for draft-14 and later, without `reset_stream_at` on both sides, the request
 `H3_MESSAGE_ERROR`, and `acceptWebTransport` throws `Http3Exception.Settings`), and a 4xx from `respond` refuses the
 session. A client throws `Http3Exception.Settings` before its CONNECT when the server lacks one of them; draft-02,
 which Chrome and Firefox speak, predates `reset_stream_at` and goes without it. The draft is the highest both sides
-announce (a client of ours announces draft-16 and draft-02); a peer that announces a newer draft without
-`reset_stream_at` but also draft-02 gets a draft-02 session, one that announces only the newer draft is refused.
+announce (a client of ours announces draft-16 and draft-02). A peer that announces a newer draft without
+`reset_stream_at` but also draft-02 gets a draft-02 session when its CONNECT is a draft-02 request (`:protocol
+webtransport` with `sec-webtransport-http3-draft02: 1`, which our client then sends): this is our reading of section 7.1
+("the highest version supported by both endpoints" taken as the highest both can actually run), not something the
+draft says. Its draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft, are refused.
 Interop note: Safari speaks draft-14, which needs `reset_stream_at`; WebKit bugs 303152 and 305006 suggest Safari 26.4
 and later sends it, but that is not verified here ([interop](../spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)). The client waits
 ten seconds for the server's SETTINGS and ten more for the answer to its CONNECT (`WebTransportException.Timeout`). Check the `origin` field before accepting a browser's session. The client offers application
@@ -402,8 +405,10 @@ session (section 4.4); a session of draft-14 or later exists only with `reset_st
 `Http3Endpoint` and the Ktor engines turn on with `webTransport` (a draft-02 browser without it gets a plain
 RESET_STREAM, as its draft has it). A session's streams are sent at the priority of its CONNECT stream (the request's
 `priority`, else its `priority` field, else urgency 3 incremental) and follow the client's PRIORITY_UPDATE for it
-(section 3.4); its datagrams, like every HTTP datagram, go with the urgency of their request stream: never ahead of
-more urgent streams' data, ahead of the rest.
+(section 3.4); its datagrams, like every HTTP datagram, go with the urgency of their request stream, strictly in both
+directions: more urgent streams' data goes first, so a bulk download at a more urgent level holds the datagrams back
+(a request is urgency 3 by default, a WebTransport session too unless its CONNECT carries a `priority`), and a datagram
+goes ahead of streams of the same or a lower urgency, so a flood of datagrams can starve those streams.
 
 ```kotlin
 // guide:http3:webtransport-echo (server)

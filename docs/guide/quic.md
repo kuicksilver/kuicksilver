@@ -1058,9 +1058,12 @@ on either side you get `Unsupported` / `DatagramUnsupported`. `datagrams` reads 
 what nobody collected in time is dropped there and counted in `stats.datagramsDropped` (beside the UDP datagrams the
 connection discarded unprocessed). Datagrams go ahead of stream data; *experimental*: `sendDatagram(data, policy,
 priority)` and `trySendDatagram(data, policy, priority)` schedule one by RFC 9218 urgency instead, so it does not go
-ahead of strictly more urgent streams' data (the sans-IO hook is `DatagramSender.nextUrgency`); datagrams still leave in
-the order they were queued. HTTP/3 sends every HTTP datagram at its request stream's priority this way (WebTransport,
-draft-ietf-webtrans-http3-16 section 3.4).
+ahead of strictly more urgent streams' data (the sans-IO hook is `DatagramSender.nextUrgency`). The urgency is strict
+both ways: more urgent bulk streams hold such datagrams back, and the datagrams go ahead of streams of the same or a
+lower urgency, so a flood of them starves those. The send queue keeps one FIFO per urgency: a datagram never waits
+behind a less urgent one, and datagrams of one urgency leave in the order they were queued (all RFC 9221 asks). HTTP/3
+sends every HTTP datagram at its request stream's priority this way (WebTransport, draft-ietf-webtrans-http3-16
+section 3.4).
 
 ## Testing your application
 
