@@ -333,8 +333,8 @@ internal class ConnectionLossListener(
             path.pmtud?.let { m ->
                 if (p.frames.flags and SentFrames.PMTU_PROBE == 0) m.onPacketLost(p.size, p.pn) else m.onProbeDeclaredLost(p.pn, core.now)
             }
-        } // RFC 8899: a lost probe is not congestion, and fails only when its PROBE_TIMER expires (Pmtud.onTimeout); the black-hole
-        // verdict waits for the end of the ACK (checkPmtuBlackHoles)
+        } // RFC 8899: a lost probe is not congestion, and fails at the later of the loss verdict and 1 s after it was sent
+        // (processed in Pmtud.onTimeout); the black-hole verdict waits for the end of the ACK (checkPmtuBlackHoles)
         val f = p.frames
         for (i in 0 until f.cryptoCount) core.cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
         if (f.streamCount > 0 || f.idCount > 0 || f.flags and SentFrames.STREAM_CONTROL != 0) core.streams.onFramesLost(f)
