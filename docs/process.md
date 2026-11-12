@@ -86,8 +86,8 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **67 steps**; a release needs `--with-interop --with-windows`, which makes **72** (and `--with-browser`
-adds a Chrome WebTransport run, 73). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
+default it has **68 steps**; a release needs `--with-interop --with-windows`, which makes **73** (and `--with-browser`
+adds a Chrome WebTransport run, 74). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
 refuses to start if either fails. What the steps cover:
 
 | Area | Steps (names as the script prints them) |
@@ -105,7 +105,7 @@ refuses to start if either fails. What the steps cover:
 | Fuzzing | the committed fuzz inputs of the Jazzer targets as regression tests |
 | Simulation | `MonteCarloTest`: 200 seeded QUIC transfers through the network simulator on random links (delay, loss, reordering, MTU), each required to finish without violating the simulator's invariants |
 | Performance | the allocation gate of `kuicksilver-bench` |
-| Release checks | the negative controls of `tools/check/native-release.sh`, of `tools/release/local-release.sh` and of `tools/verify/verify-release.sh`; OpenSSL built without key logging |
+| Release checks | the negative controls of `tools/check/native-release.sh`, of `tools/release/local-release.sh` and of `tools/verify/verify-release.sh`; the refusals of the gate's own step selection (`tools/ci/local-matrix-test.sh`); OpenSSL built without key logging |
 | Reproducibility | `tools/check/double-build.sh macos-arm64`: OpenSSL, `libksl` and the JNI library built twice from two paths and compared |
 | Interop | the JVM and Kotlin/Native interop images against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in the QUIC Interop Runner, with the cells of [`tools/interop/required.json`](../tools/interop/required.json) required green (`--with-interop`; hours) |
 
@@ -114,7 +114,7 @@ result and `result=pass` only when every step passed on a clean tree that stayed
 accepts only a passing record of the release commit that ran every step, with `--with-interop --with-windows` and without
 `--skip-*` (stage 8).
 
-After a fix, some steps can be run again without the whole gate: `--only 25,47-48,51` runs the listed steps (numbers
+After a fix, some steps can be run again without the whole gate: `--only 25,48-49,52` runs the listed steps (numbers
 and ranges), `--from 44` runs step 44 and every later one. The numbers are those of a full run with the same
 `--skip-*` and `--with-*` options, as `--dry-run` with those options lists them and as a failure line (`[25] ...`,
 `build/ci/25.log`) shows them; the steps left out print nothing. Such a run is never a gate: it does not write or change

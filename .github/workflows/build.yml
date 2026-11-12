@@ -80,6 +80,8 @@ jobs:
           bash tools/interop/environment-test.sh
       - name: 'lint: reliability report (fixtures)'
         run: bash tools/report/reliability-test.sh
+      - name: 'check: local-matrix step selection'
+        run: bash tools/ci/local-matrix-test.sh   # --dry-run only: no Gradle, Docker, OpenSSL or emulator
       - name: 'lint: RFC compliance summary table'
         run: bash tools/check/rfc-table.sh
       - name: 'lint: HPACK tables and vectors (http2 and http3 agree)'
