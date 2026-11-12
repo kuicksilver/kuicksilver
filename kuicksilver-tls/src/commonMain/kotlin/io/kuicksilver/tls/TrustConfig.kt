@@ -37,11 +37,16 @@ public sealed interface TrustConfig {
             require(roots.isNotEmpty()) { "AnchoredCa needs at least one root" }
         }
 
-        /** The SHA-256 of each root's DER, hex, in order: what session caches and server session contexts key this trust by. */
+        /**
+         * The SHA-256 of each root's DER, hex, sorted and without repeats (the roots are a set of anchors: order and duplicates
+         * change nothing): what session caches, server session contexts and the shared contexts key this trust by.
+         */
         internal val derKey: String by lazy {
-            this.roots.joinToString(
-                ",",
-            ) { c -> Ksl.sha2(256, c.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') } }
+            this.roots
+                .map { c -> Ksl.sha2(256, c.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') } }
+                .distinct()
+                .sorted()
+                .joinToString(",")
         }
     }
 

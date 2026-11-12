@@ -248,6 +248,32 @@ class ReloadableCaTest {
             }
         }
 
+    /**
+     * A bundle is a set of anchors: the same certificates in another order or repeated are the same bundle, so a reload to
+     * such a bundle keeps the tickets (the session ID context is the same) and the shared context.
+     */
+    @Test fun reorderedOrRepeatedCertificatesAreTheSameBundle(): Unit =
+        runBlocking {
+            val a = Certificate(TestCerts.testCa)
+            val b = Certificate(TestCerts.otherCa)
+            assertTrue(sameBundle(TrustConfig.AnchoredCa(listOf(a, b)), TrustConfig.AnchoredCa(listOf(b, a, a))))
+            assertFalse(sameBundle(TrustConfig.AnchoredCa(listOf(a, b)), TrustConfig.AnchoredCa(listOf(a))), "control")
+            val r = TrustConfig.reloadable(TrustConfig.AnchoredCa(listOf(a, b)))
+            val server = server(r)
+            val cache = SessionCache()
+            val (c0, s0) = open(clientA(), server, cache)
+            exchange(c0, s0)
+            val ctx = s0.contextForTest
+            c0.close()
+            s0.close()
+            r.reload(TrustConfig.AnchoredCa(listOf(b, a, b)))
+            val (c1, s1) = open(clientA(), server, cache)
+            assertTrue(c1.sessionReused && s1.sessionReused, "the ticket resumes under the reordered bundle")
+            assertSame(ctx, s1.contextForTest, "and the shared context serves it")
+            c1.close()
+            s1.close()
+        }
+
     /** Runs [block] with a scope for the gated transports' forwarders, cancelled afterwards. */
     private fun withForwarders(block: suspend CoroutineScope.(CoroutineScope) -> Unit): Unit =
         runBlocking(Dispatchers.Default) {
@@ -296,9 +322,10 @@ class ReloadableCaTest {
         }
 
     /**
-     * Pins over a ReloadableCa are checked on the path built under the new bundle: a client whose intermediate is signed by
-     * the pinned root X passes under {X}; a reload to the same intermediate cross-signed by Y (an unpinned CA, trusted as an
-     * anchor) gives a path without X, and the client is refused with PinMismatch although its chain verifies.
+     * Pins over a ReloadableCa are checked on the path built under the new bundle. The client's intermediate is signed by the
+     * pinned root X, and the client passes under {X}. The reload makes the bundle {the same intermediate, cross-signed by an
+     * unpinned root Y}: that intermediate certificate itself is the new bundle's only anchor, so the path built under it is
+     * the client's leaf and that anchor, without X, and the client is refused with PinMismatch although its chain verifies.
      */
     @Test fun negative_recheckChecksCaPinsOnTheNewPath(): Unit =
         withForwarders { fwd ->

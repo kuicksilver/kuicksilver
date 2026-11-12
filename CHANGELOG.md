@@ -236,8 +236,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   bundle (security level and the pins of a `Pinned` on the new path included). A reload to the same certificates changes
   nothing. Established connections are not affected. A bundle with no certificate valid now is refused and the old one
   stays. A session authenticated under the old bundle is not resumed, TLS 1.3 and TLS 1.2 tickets and QUIC's alike (the
-  server's session ID context covers the bundle's certificates, so a CA re-issued on its key counts as another bundle),
-  so a client of a dropped CA cannot come back with a ticket. Shared server contexts are kept per identity snapshot and
+  server's session ID context covers the bundle's certificates as a set, so a CA re-issued on its key counts as another
+  bundle while reordered or repeated certificates do not), so a client of a dropped CA cannot come back with a ticket. Shared server contexts are kept per identity snapshot and
   bundle; the first handshake under the new bundle replaces the old bundle's context, which is freed with its last
   connection. With `clientAuth` None the bundle plays no part and a reload changes nothing. A client configuration with a
   `ReloadableCa` throws `TlsException.Config`.
