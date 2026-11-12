@@ -276,6 +276,34 @@ internal class ConnectionLossListener(
         (cc as? io.kuicksilver.quic.Bbr)?.onSpuriousLoss(now, declaredAt)
     }
 
+    /**
+     * A PMTU probe that loss detection declared lost and the peer acknowledged after all confirms its size like any acknowledged
+     * probe (RFC 8899 section 4.1; section 5.2 fails only a probe "not acknowledged within the period of the PROBE_TIMER"). Lost
+     * probes are kept by their path's [Pmtud], not in the spurious-loss memory (their loss is no congestion signal), so the ACK
+     * ranges are matched here; nothing is done while no probe of the path is declared lost.
+     */
+    override fun onAckRanges(
+        space: SpaceId,
+        ack: io.kuicksilver.quic.wire.AckFrameView,
+        now: TimeMark,
+    ) {
+        if (space != SpaceId.Application) return
+        val all = core.paths.all
+        for (i in all.indices) {
+            val path = all[i]
+            val m = path.pmtud ?: continue
+            if (!m.hasLostProbes) continue
+            for (r in 0 until ack.rangeCount) {
+                while (true) {
+                    val size = m.takeLostProbeIn(ack.smallest(r), ack.largest(r))
+                    if (size == 0) break
+                    m.onProbeAcked(size, now)
+                    if (size > path.mtu) core.setMtu(path, size)
+                }
+            }
+        }
+    }
+
     override fun onLossSettled(
         cc: io.kuicksilver.quic.CongestionController?,
         now: TimeMark,
@@ -303,15 +331,10 @@ internal class ConnectionLossListener(
         }
         core.paths.byId(PathId(p.pathId))?.let { path ->
             path.pmtud?.let { m ->
-                if (p.frames.flags and SentFrames.PMTU_PROBE !=
-                    0
-                ) {
-                    if (m.onProbeLost(p.size, core.now)) core.setMtu(path, m.current) // a Packet Too Big confirmed by lost probes
-                } else {
-                    m.onPacketLost(p.size, p.pn)
-                }
+                if (p.frames.flags and SentFrames.PMTU_PROBE == 0) m.onPacketLost(p.size, p.pn) else m.onProbeDeclaredLost(p.pn, core.now)
             }
-        } // RFC 8899: a lost probe is not congestion; the black-hole verdict waits for the end of the ACK (checkPmtuBlackHoles)
+        } // RFC 8899: a lost probe is not congestion, and fails at the later of the loss verdict and 1 s after it was sent
+        // (processed in Pmtud.onTimeout); the black-hole verdict waits for the end of the ACK (checkPmtuBlackHoles)
         val f = p.frames
         for (i in 0 until f.cryptoCount) core.cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
         if (f.streamCount > 0 || f.idCount > 0 || f.flags and SentFrames.STREAM_CONTROL != 0) core.streams.onFramesLost(f)

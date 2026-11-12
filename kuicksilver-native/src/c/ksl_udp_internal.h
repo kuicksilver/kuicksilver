@@ -50,6 +50,9 @@
 #ifndef IPV6_DONTFRAG
 #define IPV6_DONTFRAG 62
 #endif
+#if defined(__linux__) && !defined(IPV6_AUTOFLOWLABEL)
+#define IPV6_AUTOFLOWLABEL 70 /* Linux 3.17 (with net.ipv6.auto_flowlabels); older C libraries lack the name */
+#endif
 #ifdef __linux__
 #include <linux/errqueue.h>
 #endif
@@ -98,6 +101,7 @@ struct ksl_udp {
     /* ICMP hints (ADR-0006): recverr is on with DF on Linux; the receiver fills the Packet Too Big ring, ksl_udp_take_ptb empties it
        (ptb_mu); the sender counts EMSGSIZE (atomics) */
     int recverr;
+    int autoflowlabel; /* IPV6_AUTOFLOWLABEL was set on the socket (RFC 9000 section 9.7) */
     pthread_mutex_t ptb_mu;
     struct ksl_ptb {
         uint8_t quote[KSL_UDP_PTB_QUOTE];

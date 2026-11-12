@@ -25,7 +25,7 @@ import kotlin.time.Duration.Companion.hours
 
 /**
  * Client side of a connection: TLS plus transport settings. [Builder.build] throws `TlsException.Config` for a TLS config QUIC cannot use
- * (TLS 1.2, empty ALPN, CCM_8, `sniSelector`; RFC 9001 section 4); build one with `quicClientConfig(tls) { }`.
+ * (TLS 1.2, empty ALPN, a cipher suite other than AES-GCM or ChaCha20-Poly1305, `sniSelector`; RFC 9001 section 4); build one with `quicClientConfig(tls) { }`.
  *
  * @property tls The client's TLS settings: the server name to verify, trust, ALPN.
  * @property quic The transport settings of the connection.

@@ -9,7 +9,12 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * Datagram Packetization Layer PMTU Discovery of one path (RFC 8899; RFC 9000 section 14.3): a binary
  * search between the 1200-byte base and [upperBound] with PING+PADDING probes of [step]-byte granularity, [maxProbes]
- * attempts per size, one final probe of the top of the range; the search repeats every [research]; three lost packets
+ * attempts per size, one final probe of the top of the range; the search repeats every [research]. A probe fails when QUIC's
+ * loss detection declares it lost (RFC 9000 section 14.3: "DPLPMTUD relies on tracking loss or acknowledgment of QUIC packets
+ * that are carried in PMTU probes"), but never before [minProbeTimer] after it was sent (RFC 8899 section 5.1.1: PROBE_TIMER
+ * "MUST NOT be smaller than 1 second"), or when [probeTimer] passed with neither verdict; only then does the next probe go
+ * (section 5.2). The SHOULD of the same section ("larger than 15 seconds") is not followed for the loss-detection verdict:
+ * docs/spec/rfc/8899.md records why. An acknowledgment that comes after all still confirms the size. Three lost packets
  * larger than the base with no full-size packet sent after the first of them acknowledged mean a black hole: back to
  * 1200 and no probe for [blackHolePause]. The verdict waits for [takeBlackHole], after the whole ACK was processed:
  * loss detection reports the losses of an ACK before its newly acknowledged packets, and a congestion burst is exactly
@@ -31,6 +36,10 @@ internal class Pmtud(
     private val maxProbes: Int = 3,
     private val research: Duration = 600.seconds,
     private val blackHolePause: Duration = 60.seconds,
+    /** RFC 8899 section 5.1.1 PROBE_TIMER for a probe loss detection never judged (at least 3 PTO, see [nextProbeSize]). */
+    private val probeTimer: Duration = PROBE_TIMER,
+    /** The earliest a probe may fail after it was sent, whatever loss detection says (RFC 8899 section 5.1.1: at least 1 s). */
+    private val minProbeTimer: Duration = MIN_PROBE_TIMER,
     /** The size in use at the start: the base, or the MTU a NAT-rebound path inherited (black-hole detection covers it, RFC 8899 section 4.3). */
     start: Int = base,
 ) {
@@ -43,6 +52,22 @@ internal class Pmtud(
     private var probeSize = 0
     private var probeLosses = 0
     private var probeInFlight = false
+    private var probeDeadline: TimeMark = TimeMark.NEVER // when the probe in flight has failed unless acknowledged before
+    private var probeSentAt: TimeMark = TimeMark.NEVER
+    private var probePn = -1L // the packet number of the probe in flight, once sent
+
+    /**
+     * The packet numbers and sizes of the last [SENT_PROBES] probes sent ([onProbeSent]), and which of them loss detection declared
+     * lost ([onProbeDeclaredLost]), so an acknowledgment that comes after all is known ([takeLostProbeIn]).
+     */
+    private val sentPn = LongArray(SENT_PROBES) { -1L }
+    private val sentSize = IntArray(SENT_PROBES)
+    private val sentLost = BooleanArray(SENT_PROBES)
+    private var sentNext = 0
+    private var lostProbes = 0
+
+    /** Some probe of the last [SENT_PROBES] was declared lost and not acknowledged since. */
+    val hasLostProbes: Boolean get() = lostProbes > 0
     private var finalProbe = false
     var searchDone: Boolean = false
         private set
@@ -74,7 +99,7 @@ internal class Pmtud(
     /**
      * A validated Packet Too Big reporting [payload] bytes of UDP payload (already at least the base: the caller drops smaller
      * ones). At or above [current]: the probes above it are settled at once (RFC 8899 section 4.6.2), the one in flight included.
-     * Below [current]: nothing is lowered; probes of [current] confirm the size ([onProbeAcked], [onProbeLost]).
+     * Below [current]: nothing is lowered; probes of [current] confirm the size ([onProbeAcked]) or fail at their PROBE_TIMER.
      */
     fun onPtb(
         payload: Int,
@@ -131,16 +156,23 @@ internal class Pmtud(
      */
     fun deferProbe() {
         probeInFlight = false
+        probeDeadline = TimeMark.NEVER
     }
 
-    /** The size of the probe to send now, 0 when none is due (one in flight, search done, or paused). */
-    fun nextProbeSize(now: TimeMark): Int {
+    /**
+     * The size of the probe to send now, 0 when none is due (one in flight, search done, or paused). Its PROBE_TIMER runs from [now]
+     * for [probeTimer], or 3 x [pto] when that is longer.
+     */
+    fun nextProbeSize(
+        now: TimeMark,
+        pto: Duration = Duration.ZERO,
+    ): Int {
         if (probeInFlight) return 0
         if (confirmPtb > 0) {
             // a PTB below the size in use: a probe of that size, before anything else and whatever the search state
             confirming = true
             probeSize = current
-            probeInFlight = true
+            startProbe(now, pto)
             return current
         }
         if (searchDone) return 0
@@ -162,8 +194,18 @@ internal class Pmtud(
             }
         probeSize = if (size <= low) low + step else size
         if (probeSize > high) probeSize = high
-        probeInFlight = true
+        startProbe(now, pto)
         return probeSize
+    }
+
+    private fun startProbe(
+        now: TimeMark,
+        pto: Duration,
+    ) {
+        probeInFlight = true
+        probeSentAt = now
+        probePn = -1L
+        probeDeadline = now + maxOf(probeTimer, pto * 3)
     }
 
     fun onProbeAcked(
@@ -195,12 +237,69 @@ internal class Pmtud(
         } // one more try at the top
     }
 
-    /** A probe of [size] was lost; true when [current] changed (a confirmed PTB lowered it). */
-    fun onProbeLost(
+    /** The probe [nextProbeSize] gave went out as 1-RTT packet [pn] of [size] bytes. */
+    fun onProbeSent(
+        pn: Long,
         size: Int,
+    ) {
+        if (probeInFlight && size == probeSize) probePn = pn
+        if (sentLost[sentNext]) lostProbes--
+        sentPn[sentNext] = pn
+        sentSize[sentNext] = size
+        sentLost[sentNext] = false
+        sentNext = (sentNext + 1) % SENT_PROBES
+    }
+
+    /**
+     * Loss detection declared the probe sent as packet [pn] lost at [now]: the probe in flight fails then, or [minProbeTimer] after it
+     * was sent when that is later ([onTimeout]); an acknowledgment may still come and confirm its size ([takeLostProbeIn]).
+     */
+    fun onProbeDeclaredLost(
+        pn: Long,
         now: TimeMark,
-    ): Boolean {
-        if (confirming && size == probeSize) {
+    ) {
+        if (probeInFlight && pn == probePn) {
+            val floor = probeSentAt + minProbeTimer
+            val at = if (floor > now) floor else now
+            if (at < probeDeadline) probeDeadline = at
+        }
+        for (i in 0 until SENT_PROBES) {
+            if (sentPn[i] == pn && !sentLost[i]) {
+                sentLost[i] = true
+                lostProbes++
+            }
+        }
+    }
+
+    /**
+     * The size of a probe declared lost whose packet number is in [smallest]..[largest] (an ACK range), forgotten as lost; 0 when
+     * there is none. A probe declared lost leaves the sent-packet history, but its acknowledgment after all (RFC 9002 section 6.1)
+     * confirms its size ([onProbeAcked]): RFC 8899 section 5.2 fails only a probe "not acknowledged within the period of the
+     * PROBE_TIMER".
+     */
+    fun takeLostProbeIn(
+        smallest: Long,
+        largest: Long,
+    ): Int {
+        for (i in 0 until SENT_PROBES) {
+            if (sentLost[i] && sentPn[i] in smallest..largest) {
+                sentLost[i] = false
+                lostProbes--
+                return sentSize[i]
+            }
+        }
+        return 0
+    }
+
+    /**
+     * The PROBE_TIMER of the probe in flight expired before it was acknowledged (RFC 8899 section 5.2: "When a probe packet is sent and
+     * not acknowledged within the period of the PROBE_TIMER, the PROBE_COUNT is incremented"); true when [current] changed (a
+     * confirmed PTB lowered it).
+     */
+    private fun onProbeTimerExpired(now: TimeMark): Boolean {
+        val size = probeSize
+        probeDeadline = TimeMark.NEVER
+        if (confirming) {
             probeInFlight = false
             confirming = false
             if (++confirmLosses < maxProbes) return false
@@ -218,8 +317,6 @@ internal class Pmtud(
             probeLosses = 0
             return true
         }
-        // a probe a hint settled, or one that is not the probe in flight: its loss is already accounted
-        if (!probeInFlight || size != probeSize) return false
         probeInFlight = false
         probeLosses++
         if (probeLosses < maxProbes) return false
@@ -301,6 +398,10 @@ internal class Pmtud(
         now: TimeMark,
         disprovedAfterPn: Long,
     ) {
+        // probes declared lost before the verdict: a late acknowledgment of one is about the path before it (as onPacketAcked takes a
+        // late full-size packet only after the packets the verdict rested on), so it raises nothing ([takeLostProbeIn])
+        for (i in 0 until SENT_PROBES) sentLost[i] = false
+        lostProbes = 0
         // a validated Packet Too Big under confirmation tells where the path stands: fall to its size, not the base, and without the
         // pause; a black hole there too falls to the base next time (the hint is used once)
         val hinted = if (confirmPtb >= base) base + (confirmPtb - base) / step * step else 0
@@ -353,10 +454,15 @@ internal class Pmtud(
         researchAt = TimeMark.NEVER
     }
 
-    /** When the core must call [onTimeout]: the end of a pause or the re-search time. */
-    fun timeout(): TimeMark = if (pausedUntil != TimeMark.NEVER) pausedUntil else researchAt
+    /** When the core must call [onTimeout]: the PROBE_TIMER of the probe in flight, the end of a pause or the re-search time. */
+    fun timeout(): TimeMark {
+        val t = if (pausedUntil != TimeMark.NEVER) pausedUntil else researchAt
+        return if (probeInFlight && probeDeadline < t) probeDeadline else t
+    }
 
-    fun onTimeout(now: TimeMark) {
+    /** Runs the timers due at [now]; true when [current] changed (a confirmed PTB lowered it). */
+    fun onTimeout(now: TimeMark): Boolean {
+        val changed = probeInFlight && probeDeadline <= now && onProbeTimerExpired(now)
         // also on a path that is no longer active: its deadline must not stay in the past
         if (pausedUntil != TimeMark.NEVER && pausedUntil <= now) pausedUntil = TimeMark.NEVER
         if (searchDone && researchAt != TimeMark.NEVER &&
@@ -368,6 +474,7 @@ internal class Pmtud(
             high = upperBound
             researchAt = TimeMark.NEVER
         }
+        return changed
     }
 
     private fun finish(now: TimeMark) {
@@ -376,3 +483,12 @@ internal class Pmtud(
         researchAt = now + research
     }
 }
+
+/** Probes whose packet numbers [Pmtud] keeps for their late acknowledgments: more than are sent within a PROBE_TIMER after one fails. */
+private const val SENT_PROBES = 4
+
+/** RFC 8899 section 5.1.1: PROBE_TIMER "MUST NOT be smaller than 1 second and SHOULD be larger than 15 seconds". */
+private val PROBE_TIMER: Duration = 16.seconds
+
+/** RFC 8899 section 5.1.1's floor: no probe fails earlier than this after it was sent. */
+private val MIN_PROBE_TIMER: Duration = 1.seconds

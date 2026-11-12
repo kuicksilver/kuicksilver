@@ -60,6 +60,41 @@ static ksl_udp *open_lo(int flags, uint8_t local[KSL_UDP_ADDR_LEN]) {
           "local address");
     return u;
 }
+/* The IPV6_AUTOFLOWLABEL value of [u]'s socket, -1 when it cannot be read. */
+static int autoflowlabel_of(ksl_udp *u) {
+    uint8_t fd8[4];
+    size_t n = 0;
+    if (ksl_udp_get(u, KSL_UDP_GET_FD, fd8, 4, &n) != KSL_OK || n != 4)
+        return -1;
+    return ksl_udp_autoflowlabel_for_test(
+        (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]));
+}
+/* udp_ipv6_flow_label: RFC 9000 section 9.7, "Endpoints that send data using IPv6 SHOULD apply an IPv6 flow label in compliance
+   with [RFC6437]". Linux labels each datagram with a keyed hash of its addresses and ports, Darwin each socket with a random label,
+   where IPV6_AUTOFLOWLABEL is on; a host may leave it off by default (Linux net.ipv6.auto_flowlabels = 2, Darwin
+   net.inet6.ip6.auto_flowlabel = 0), so every IPv6 socket ksl opens asks for it. 0 when both a ::1 socket and a dual-stack wildcard
+   socket asked (ksl_udp_autoflowlabel_asked_for_test: the setsockopt succeeded, whatever the host's default) and have the option on,
+   else the failed step. The option's value alone cannot tell on a host whose default labels anyway (Linux auto_flowlabels = 1,
+   Darwin auto_flowlabel = 1, both the defaults); flow_label_child sets Linux to 2 where /proc/sys is writable. */
+static int flow_label_cases(void) {
+    uint8_t lo6[KSL_UDP_ADDR_LEN] = {6}, any[KSL_UDP_ADDR_LEN] = {4};
+    lo6[18] = 1;
+    uint32_t err = 0;
+    char msg[128] = {0};
+    ksl_udp *u = ksl_udp_open(lo6, 0, &err, msg, sizeof msg), *w = ksl_udp_open(any, 0, &err, msg, sizeof msg);
+    int r = !u                                         ? 20
+            : !w                                       ? 21
+            : !ksl_udp_autoflowlabel_asked_for_test(u) ? 24
+            : !ksl_udp_autoflowlabel_asked_for_test(w) ? 25
+            : autoflowlabel_of(u) != 1                 ? 22
+            : autoflowlabel_of(w) != 1                 ? 23
+                                                       : 0;
+    if (u)
+        ksl_udp_close(u);
+    if (w)
+        ksl_udp_close(w);
+    return r;
+}
 /* Lets a burst sent to u's port reach its receive queue. No portable call counts the datagrams queued (FIONREAD sizes the first
    one on Linux and counts buffer bytes, address records included, on Darwin), so this is a pause: 200 ms, four times what a
    loaded ASan runner was seen to need (50 ms failed under load), and the reads after it retry for seconds */
@@ -284,6 +319,23 @@ static int inject_ptb(const uint8_t from[KSL_UDP_ADDR_LEN]) {
     close(raw);
     return w == (ssize_t)sizeof pkt ? 0 : -1;
 }
+#ifdef __linux__
+/* flow_label_cases in a fresh user and network namespace whose net.ipv6.auto_flowlabels is 2 (labels only on request). Exit 0 pass,
+   77 skip (no user namespace), 78 skip (/proc/sys read-only, as Docker mounts it), else the failed step. */
+static int flow_label_child(void) {
+    if (unshare(CLONE_NEWUSER | CLONE_NEWNET) != 0)
+        return 77;
+    if (lo_set(1, 0) != 0)
+        return 77;
+    FILE *f = fopen("/proc/sys/net/ipv6/auto_flowlabels", "w");
+    if (!f)
+        return 78;
+    int ok = fputs("2", f) >= 0;
+    if (fclose(f) != 0 || !ok)
+        return 78;
+    return flow_label_cases();
+}
+#endif
 /* In a child inside a fresh user and network namespace (no root needed where unprivileged user namespaces are allowed):
    (1) a datagram over the interface MTU with DF is a local EMSGSIZE: counted by ksl_udp_emsgsize, its SO_EE_ORIGIN_LOCAL entry drained
        and never a Packet Too Big; (2) an ICMP "fragmentation needed" (MTU 1300) quoting a datagram of our socket, injected through a raw
@@ -2007,6 +2059,24 @@ void run_udp(void) {
                 printf("    ptb child failed at step %d\n", code);
         }
 #endif
+#ifdef __linux__
+        {
+            pid_t pid = fork();
+            if (pid == 0)
+                _exit(flow_label_child());
+            int st = 0;
+            waitpid(pid, &st, 0);
+            int code = WIFEXITED(st) ? WEXITSTATUS(st) : 100;
+            if (code == 77 || code == 78)
+                printf("udp_ipv6_flow_label (auto_flowlabels = 2): SKIP (%s)\n",
+                       code == 77 ? "no unprivileged user namespace" : "/proc/sys is read-only");
+            else
+                CHECK(
+                    code == 0,
+                    "udp_ipv6_flow_label: IPV6_AUTOFLOWLABEL asked for under auto_flowlabels = 2 (child exit = failed step)");
+        }
+#endif
+        CHECK(flow_label_cases() == 0, "udp_ipv6_flow_label: IPV6_AUTOFLOWLABEL on for IPv6 sockets");
         udp_pktinfo_cases();
         udp_sender_cases();
         udp_close_waits_for_a_slow_receiver();

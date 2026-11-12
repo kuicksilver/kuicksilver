@@ -113,6 +113,16 @@ internal interface LossListener {
     /** An ACK frame is about to be processed: what the controllers have in flight now is their state "before the ACK". */
     fun onAckFrameStart() {}
 
+    /**
+     * The ranges of an ACK frame of [space], after its newly acknowledged packets were delivered: for packets that left the sent
+     * history without being remembered as lost (PMTU probes), whose acknowledgment after all still means something.
+     */
+    fun onAckRanges(
+        space: SpaceId,
+        ack: AckFrameView,
+        now: TimeMark,
+    ) {}
+
     /** One ACK frame newly acknowledged packets and every one of them was reported: per-ACK controllers (BBR) update their model now. */
     fun onAckProcessed(now: TimeMark) {}
 
@@ -232,7 +242,7 @@ internal class LossDetection(
         val prevLargestAcked = sp.largestAcked
         if (ack.largest > sp.largestAcked) sp.largestAcked = ack.largest
         acked.clear()
-        // RFC 9002 appendix A.7 without a pass over everything in flight (RFC 9000 section 21.6): ranges come in descending order,
+        // RFC 9002 appendix A.7 without a pass over everything in flight (RFC 9000 section 21.9): ranges come in descending order,
         // each is found by binary search and walked downwards, so the first match is the largest newly acknowledged packet
         val sent = sp.sent
         for (r in 0 until ack.rangeCount) {
@@ -255,6 +265,7 @@ internal class LossDetection(
         for (k in acked.indices) listener.onDelivered(acked[k], now)
         settleLost(sp, now)
         if (sp.lostCount > 0) findSpurious(sp, space, ack, now)
+        listener.onAckRanges(space, ack, now)
         if (acked.isEmpty()) return
         visitedForTest += sent.trim()
         pruneAcked(sp)

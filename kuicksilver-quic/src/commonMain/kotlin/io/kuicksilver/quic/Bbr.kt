@@ -171,6 +171,12 @@ public class Bbr(
     private var cwndLimitedThisRound = false
     private var cwndLimitedLastRound = false
     private var ackPending = false
+
+    /**
+     * RFC 9002 section 7.8: an ACK of the frame being processed came while the window was in use (the core's judgement, passed to
+     * [onAck]); cleared at the end of the frame. Only such an ACK may raise the window ([setCwnd]).
+     */
+    private var ackCwndLimited = false
     private var jitter: Long = 0x9E3779B97F4A7C15uL.toLong()
 
     /** BBR.MinPipeCwnd: 4 datagrams (section 5.6.4.3). */
@@ -237,10 +243,13 @@ public class Bbr(
         appLimited: Boolean,
     ) {
         bytesInFlight -= bytes
+        if (!appLimited) ackCwndLimited = true
     }
 
     /** The end of one ACK frame: UpdateOnACK (section 5.2.3) with the rate sample of the packets it acknowledged. */
     internal fun onAckProcessed(now: TimeMark) {
+        val grow = ackCwndLimited
+        ackCwndLimited = false
         if (cePending) {
             cePending = false
             noteLoss()
@@ -262,7 +271,7 @@ public class Bbr(
             probeRttMinStamp = now
         }
         updateModelAndState(now)
-        updateControlParameters()
+        updateControlParameters(grow)
     }
 
     /** One lost packet (HandleLostPacket, section 5.5.10.2); the window itself follows in [onLoss]. */
@@ -457,10 +466,10 @@ public class Bbr(
         bw = minOf(maxBw, bwShortterm) // BoundBWForModel
     }
 
-    private fun updateControlParameters() {
+    private fun updateControlParameters(grow: Boolean) {
         setPacingRateWithGain(pacingGain)
         updateQuantum()
-        setCwnd()
+        setCwnd(grow)
     }
 
     /** SetSendQuantum (section 5.6.3): 1 ms at the pacing rate, at most 64 KiB, at least 2 datagrams (which wins for jumbo datagrams). */
@@ -907,9 +916,16 @@ public class Bbr(
         cwnd = maxOf(cwnd, priorCwnd)
     }
 
-    private fun setCwnd() {
+    /**
+     * SetCwnd (section 5.6.4.6). RFC 9002 section 7.8: "When bytes in flight is smaller than the congestion window and sending is
+     * not pacing limited, the congestion window is underutilized ... the congestion window SHOULD NOT be increased in either slow
+     * start or congestion avoidance": an ACK frame that came while the window was not in use ([grow] false: none of its ACKs was
+     * cwnd-limited) adds nothing; the window may still fall to BBR.max_inflight and the bounds below. Draft-06 adds the delivered
+     * bytes on every ACK (Linux's tcp_bbr does the same), so a trickle sender grew its window toward BBR.max_inflight.
+     */
+    private fun setCwnd(grow: Boolean) {
         maxInflight = quantizationBudget(sat(bdpMultiple(cwndGain), extraAcked))
-        val acked = sampler.newlyAcked
+        val acked = if (grow) sampler.newlyAcked else 0L
         if (fullBwReached) {
             cwnd = minOf(sat(cwnd, acked), maxInflight)
         } else if (cwnd < maxInflight || sampler.delivered < initialCwnd) {

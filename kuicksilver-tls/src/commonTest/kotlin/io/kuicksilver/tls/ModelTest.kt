@@ -243,6 +243,27 @@ class TlsConfigTest {
         c.validateFor(quic = false)
     }
 
+    @Test fun negative_ccmRejectedInQuic() {
+        // RFC 9001 section 5.3 allows TLS_AES_128_CCM_SHA256, but the QUIC packet protection here has no AES-CCM (ksl maps 0x1301-0x1303
+        // only, and no CCM limits of section 6.6): a QUIC config that offered it passed and the handshake failed once the suite was
+        // chosen. TCP keeps every TLS 1.3 suite OpenSSL accepts
+        for (suites in listOf(listOf("TLS_AES_128_CCM_SHA256"), listOf(CipherSuites.AES_128_GCM, "TLS_AES_128_CCM_SHA256"))) {
+            val c =
+                tlsConfig(TlsRole.Client) {
+                    cipherSuites = CipherSuites(suites)
+                    alpn = listOf("h3")
+                }
+            assertFailsWith<TlsException.Config>("$suites") { c.validateFor(quic = true) }
+            c.validateFor(quic = false)
+        }
+        for (suite in CipherSuites.Default.suites) {
+            tlsConfig(TlsRole.Client) {
+                cipherSuites = CipherSuites(listOf(suite))
+                alpn = listOf("h3")
+            }.validateFor(quic = true)
+        }
+    }
+
     @Test fun emptyAlpnInQuicIsConfigError() {
         assertFailsWith<TlsException.Config> { tlsConfig(TlsRole.Client) { }.validateFor(quic = true) }
     }

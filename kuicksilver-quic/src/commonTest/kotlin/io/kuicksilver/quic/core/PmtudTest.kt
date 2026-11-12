@@ -169,7 +169,9 @@ class PmtudTest {
         val (p, c) = pair(linkMtu = 1400)
         try {
             transfer(p, c)
-            assertTrue(p.runUntil(30.seconds) { c.pmtudSearchDoneForTest }, "search done: mtu ${c.stats.pathMtu}")
+            // two sizes above the link, three probes each about a second apart: done within seconds (a 16 s PROBE_TIMER per probe
+            // took about 100 s here)
+            assertTrue(p.runUntil(10.seconds) { c.pmtudSearchDoneForTest }, "search done: mtu ${c.stats.pathMtu}")
             assertTrue(c.stats.pathMtu in 1380..1400, "mtu ${c.stats.pathMtu}")
         } finally {
             p.close()
@@ -187,6 +189,44 @@ class PmtudTest {
         } finally {
             p.close()
         }
+    }
+
+    @Test fun negative_aLostProbeFailsNoEarlierThanOneSecondAfterItWasSent() {
+        // RFC 8899 section 5.1.1: the PROBE_TIMER "MUST NOT be smaller than 1 second". On a 1400-byte link the probes above it are lost
+        // and loss detection declares each within a few 10 ms RTTs; the next probe still waits until a second after the lost one was
+        // sent (before 0.3.0 it went at once, about 30 ms later), and not the 15 s of the section's SHOULD (see the RFC 8899 row)
+        val (p, c) = pair(linkMtu = 1400)
+        try {
+            val lost = ArrayList<Pair<io.kuicksilver.quic.TimeMark, Int>>()
+            p.filterToServer = { _, b ->
+                if (b.size > 1400) lost += p.now to b.size
+                true
+            }
+            transfer(p, c)
+            assertTrue(p.runUntil(30.seconds) { lost.size >= 3 }, "lost probes: $lost")
+            for (i in 1 until lost.size) {
+                val gap = lost[i].first - lost[i - 1].first
+                assertTrue(gap >= 1.seconds && gap < 5.seconds, "probe ${i + 1} (${lost[i].second} B) after $gap: $lost")
+            }
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_aLateAckOfAProbeSentBeforeABlackHoleVerdictRaisesNothing() {
+        // a probe declared lost, then a black-hole verdict (back to 1200 and a 60 s pause): an acknowledgment of that probe arriving
+        // later is about the path before the verdict, as `Pmtud.onPacketAcked` judges a late full-size packet only after the packets
+        // the verdict rested on; it must not raise the MTU during the pause
+        val m = Pmtud(upperBound = 1452)
+        val t = io.kuicksilver.quic.TimeMark(1_000_000_000L)
+        val size = m.nextProbeSize(t)
+        assertTrue(size > 1200)
+        m.onProbeSent(10, size)
+        m.onProbeDeclaredLost(10, t + 50.milliseconds)
+        m.onBlackHole(t + 100.milliseconds)
+        assertEquals(0, m.takeLostProbeIn(10, 10), "the probe sent before the verdict is no longer matched")
+        assertTrue(!m.hasLostProbes)
+        assertEquals(1200, m.current)
     }
 
     @Test fun probeLossNotCongestion() {

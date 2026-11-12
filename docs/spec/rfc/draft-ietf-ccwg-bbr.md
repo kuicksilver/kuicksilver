@@ -9,7 +9,7 @@ Details of the rows of the [RFC compliance summary](../rfc-compliance.md) for th
 
 ## <a id="bbr-bbrv3"></a>BBR (BBRv3)
 
-Status: ✅ since 0.2.0 · [summary](../rfc-compliance.md#quic)
+Status: ✅ since 0.3.0 · [summary](../rfc-compliance.md#quic)
 
 Original row: draft-ietf-ccwg-bbr-06.
 
@@ -34,6 +34,7 @@ Quoted: "MUST treat any CE marks as congestion"; "MUST conform to the congestion
 - §5.4 restart from idle paces at BBR.bw (the pacer bucket caps the first burst at the 1 ms quantum; BBR is paced below 1 ms srtt) and ends a finished ProbeRTT
 - send quantum max(min(1 ms, 64 KiB), 2 datagrams) (§5.6.3) for the quantization budget (§5.6.4.2); the burst handed to the pacer is capped at RFC 9002's initial window ("Senders SHOULD limit bursts to the initial congestion window", [§7.7](9002.md#s7-7-pacing); 0.3.0, it used to be the whole quantum, up to 64 KiB)
 - persistent congestion (RFC 9002 §7.6.2 MUST, 0.3.0) collapses the window to BBR.MinPipeCwnd, 4 datagrams, BBR's minimum window (SetCwnd never goes below it; RFC 9002's RECOMMENDED 2 datagrams is its own controller's), instead of `OnEnterRTO`'s inflight + 1 datagram
+- RFC 9002 §7.8 ("the congestion window SHOULD NOT be increased in either slow start or congestion avoidance" while it is underutilized; 0.3.0): SetCwnd (§5.6.4.6) adds the delivered bytes only for an ACK frame the core judged cwnd-limited ([RFC 9002 §7.8](9002.md#s7-8-underutilizing-the-congestion-window)); for an application-limited one it adds nothing and still applies BBR.max_inflight and the model's bounds. Draft-06, like Linux `tcp_bbr`, grows on every ACK; until 0.3.0 so did this controller — `recovery.BbrTest.applicationLimitedAcksDoNotGrowTheWindow`
 - C.is_cwnd_limited is set by the packet that leaves less than a datagram of room in the window (the sender never takes bytes in flight above it, RFC 9002 §7, so a window is full before bytes in flight reach it; 0.3.0); a PTO probe past a full window is not cwnd-limited
 - RFC 9000 §9.4: a new peer address gets a fresh controller, a NAT rebinding keeps it
 - the model moves once per ACK frame (`LossListener.onAckProcessed`)
@@ -43,7 +44,7 @@ Quoted: "MUST treat any CE marks as congestion"; "MUST conform to the congestion
 **Tests that pin it.**
 
 - nothing allocates per ACK (`CoreAllocationTest.steadyStateBbrAllocatesZero`)
-- `recovery.BbrTest.*` (29, among them `startupEndsOnSustainedCeMarks`, `aLargerDatagramSizeNeverRaisesTheWindow`, `aWindowWithLessThanADatagramLeftIsCwndLimited`, `theBurstStaysWithinTheInitialWindowAtAHighRate`), `recovery.BbrPropertyTest.*` (3: random streams keep the invariants, 10-100 Gbit/s × 100 µs-2 s without overflow), `fuzz.BbrInvariantFuzzTest.bbrInvariants` (Jazzer), `recovery.LossDetectionTest.*Spurious*`/`*Settle*`/`anAckReportsItsPacketsDeliveredBeforeItsLosses`, `recovery.PacerTest.aLongIdleGapAtTenGbitPerSecondRefillsTheBucket`, `recovery.PacerTest.bbrIsPacedEvenBelow1msSrtt`, `core.PathTest.bbrStartsAFreshModelOnANewAddress`, `core.PathTest.bbrKeepsItsModelAcrossANatRebinding`, `recovery.DeliveryRateSamplerTest.*`, `recovery.WindowedMaxFilterTest.*`, `testing.BbrSimulationTest.*`, `testing.BbrHarshScenarioTest.*`, `testing.BbrHighRateScenarioTest.*`
+- `recovery.BbrTest.*` (30, among them `startupEndsOnSustainedCeMarks`, `aLargerDatagramSizeNeverRaisesTheWindow`, `aWindowWithLessThanADatagramLeftIsCwndLimited`, `theBurstStaysWithinTheInitialWindowAtAHighRate`), `recovery.BbrPropertyTest.*` (3: random streams keep the invariants, 10-100 Gbit/s × 100 µs-2 s without overflow), `fuzz.BbrInvariantFuzzTest.bbrInvariants` (Jazzer), `recovery.LossDetectionTest.*Spurious*`/`*Settle*`/`anAckReportsItsPacketsDeliveredBeforeItsLosses`, `recovery.PacerTest.aLongIdleGapAtTenGbitPerSecondRefillsTheBucket`, `recovery.PacerTest.bbrIsPacedEvenBelow1msSrtt`, `core.PathTest.bbrStartsAFreshModelOnANewAddress`, `core.PathTest.bbrKeepsItsModelAcrossANatRebinding`, `recovery.DeliveryRateSamplerTest.*`, `recovery.WindowedMaxFilterTest.*`, `testing.BbrSimulationTest.*`, `testing.BbrHarshScenarioTest.*`, `testing.BbrHighRateScenarioTest.*`
 - numbers in [the QUIC guide](../../guide/quic.md#choosing-a-congestion-controller)
 
 **Peer interop notes.**
