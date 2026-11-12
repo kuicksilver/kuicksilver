@@ -307,9 +307,11 @@ public final class io/kuicksilver/tls/RevocationPolicy : java/lang/Enum {
 public final class io/kuicksilver/tls/ServerTlsOverride {
 	public fun <init> (Lio/kuicksilver/tls/TlsIdentity;Ljava/util/List;Lio/kuicksilver/tls/ClientAuth;Lio/kuicksilver/tls/TrustConfig;)V
 	public synthetic fun <init> (Lio/kuicksilver/tls/TlsIdentity;Ljava/util/List;Lio/kuicksilver/tls/ClientAuth;Lio/kuicksilver/tls/TrustConfig;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lio/kuicksilver/tls/TlsIdentity;Ljava/util/List;Lio/kuicksilver/tls/ClientAuth;Lio/kuicksilver/tls/TrustConfig;Lio/kuicksilver/tls/OcspStapling;)V
 	public final fun getAlpn ()Ljava/util/List;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getOcspStapling ()Lio/kuicksilver/tls/OcspStapling;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 }
 

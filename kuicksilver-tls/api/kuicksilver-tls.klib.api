@@ -627,6 +627,7 @@ final class io.kuicksilver.tls/QuicSessionTicket : kotlin/AutoCloseable { // io.
 
 final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerTlsOverride|null[0]
     constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>? = ..., io.kuicksilver.tls/ClientAuth? = ..., io.kuicksilver.tls/TrustConfig? = ...) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?){}[0]
+    constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>?, io.kuicksilver.tls/ClientAuth?, io.kuicksilver.tls/TrustConfig?, io.kuicksilver.tls/OcspStapling?) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?;io.kuicksilver.tls.OcspStapling?){}[0]
 
     final val alpn // io.kuicksilver.tls/ServerTlsOverride.alpn|{}alpn[0]
         final fun <get-alpn>(): kotlin.collections/List<kotlin/String>? // io.kuicksilver.tls/ServerTlsOverride.alpn.<get-alpn>|<get-alpn>(){}[0]
@@ -636,6 +637,9 @@ final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerT
         final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity // io.kuicksilver.tls/ServerTlsOverride.identity.<get-identity>|<get-identity>(){}[0]
     final val trust // io.kuicksilver.tls/ServerTlsOverride.trust|{}trust[0]
         final fun <get-trust>(): io.kuicksilver.tls/TrustConfig? // io.kuicksilver.tls/ServerTlsOverride.trust.<get-trust>|<get-trust>(){}[0]
+
+    final var ocspStapling // io.kuicksilver.tls/ServerTlsOverride.ocspStapling|{}ocspStapling[0]
+        final fun <get-ocspStapling>(): io.kuicksilver.tls/OcspStapling? // io.kuicksilver.tls/ServerTlsOverride.ocspStapling.<get-ocspStapling>|<get-ocspStapling>(){}[0]
 }
 
 final class io.kuicksilver.tls/SessionTicketConfig { // io.kuicksilver.tls/SessionTicketConfig|null[0]

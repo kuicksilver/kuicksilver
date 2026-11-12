@@ -281,6 +281,51 @@ class RevocationTest {
             runCatching { withTimeout(20.seconds) { sd.await() }.close() }
         }
 
+    /** TCP: the outcome of a RequireStapled client against [server]; null when it passed, else the reason. */
+    private suspend fun requiredStapleOutcome(server: TlsConfig): VerifyReason? {
+        val (cd, sd) = connect(tcpClient(RevocationPolicy.RequireStapled), server, clientCache = SessionCache())
+        return try {
+            val c = withTimeout(20.seconds) { cd.await() }
+            c.close()
+            runCatching { withTimeout(20.seconds) { sd.await() }.close() }
+            null
+        } catch (e: TlsException.Verify) {
+            runCatching { withTimeout(20.seconds) { sd.await() }.close() }
+            e.reason
+        }
+    }
+
+    private fun sniServer(override: () -> ServerTlsOverride) =
+        TcpFixtures.server {
+            identity = TlsIdentity.fromDer(listOf(RevocationCerts.rvLeaf, RevocationCerts.rvMid), RevocationCerts.rvLeafKey.copyOf())
+            ocspStapling = good
+            sniSelector = { override() }
+        }
+
+    private fun overrideIdentity(
+        leaf: ByteArray,
+        key: ByteArray,
+    ) = TlsIdentity.fromDer(listOf(leaf, RevocationCerts.rvMid), key.copyOf())
+
+    /** An identity chosen by sniSelector staples its own response, and never the default identity's (TCP; QUIC has no sniSelector). */
+    @Test fun negative_sniOverrideStaplesItsOwnResponseOnly(): Unit =
+        runBlocking {
+            val own =
+                sniServer {
+                    ServerTlsOverride(
+                        overrideIdentity(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey),
+                        null,
+                        null,
+                        null,
+                        OcspStapling(RevocationCerts.ocspMustStaple),
+                    )
+                }
+            assertEquals(null, requiredStapleOutcome(own), "the override's own response is stapled")
+            // the same certificate as the default identity, without a response of its own: the default's is not stapled
+            val none = sniServer { ServerTlsOverride(overrideIdentity(RevocationCerts.rvLeaf, RevocationCerts.rvLeafKey)) }
+            assertEquals(VerifyReason.UnknownRevocationStatus, requiredStapleOutcome(none))
+        }
+
     /** A session resumes only while the response its full handshake checked is fresh, and never without one when required. */
     @Test fun negative_staleCachedStapleIsNotResumed() {
         val now = nowSeconds()
@@ -328,16 +373,25 @@ class RevocationTest {
 
     @Test fun negative_crlThatDoesNotVerifyFails() {
         val tampered = RevocationCerts.crlMid.copyOf().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 1).toByte() }
-        for (der in listOf(tampered, RevocationCerts.crlMidImpostor)) {
+        // OpenSSL's alerts (statem_lib.c ssl_x509err2alert): CRL_SIGNATURE_FAILURE decrypt_error (51), UNABLE_TO_GET_CRL unknown_ca (48)
+        for ((der, alert) in listOf(tampered to 51, RevocationCerts.crlMidImpostor to 48)) {
             val trust = TrustConfig.AnchoredCa(listOf(root), listOf(CertificateRevocationList(der)))
             val p = quic(client(RevocationPolicy.Off, trust), server())
             try {
                 val f = assertIs<DriveResult.Failed>(p.cs.last, "a CRL whose signature does not verify fails closed")
                 assertEquals(VerifyReason.UnknownRevocationStatus, assertIs<TlsException.Verify>(f.exception).reason)
+                assertEquals(alert, f.alert)
             } finally {
                 p.close()
             }
         }
+    }
+
+    /** A configured CRL whose issuer is not among the roots or on the path: that issuer's certificates fail closed. */
+    @Test fun negative_crlIssuerOutsideThePathFails() {
+        val trust =
+            TrustConfig.AnchoredCa(listOf(Certificate(RevocationCerts.rvMid)), listOf(CertificateRevocationList(RevocationCerts.crlRoot)))
+        assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.Off, trust), server(), 51))
     }
 
     @Test fun negative_crlNotCoveringTheLeafFails() {
@@ -346,6 +400,7 @@ class RevocationTest {
         try {
             val f = assertIs<DriveResult.Failed>(p.cs.last)
             assertEquals(VerifyReason.UnknownRevocationStatus, assertIs<TlsException.Verify>(f.exception).reason)
+            assertEquals(46, f.alert, "DIFFERENT_CRL_SCOPE: certificate_unknown (OpenSSL's default)")
         } finally {
             p.close()
         }

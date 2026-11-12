@@ -328,9 +328,12 @@ experimental in 0.3.0:
   against its issuer's CRL when one of `crls` is from that issuer (`CertificateRevocationList.parsePem` reads
   `X509 CRL` blocks). Revoked fails with `VerifyReason.Revoked` (alert 44); a CRL that expired fails with
   `VerifyReason.UnknownRevocationStatus` (alert 45), so replace CRLs before their nextUpdate; a CRL whose signature does
-  not verify, or a configured CRL of the issuer that does not cover the certificate (a distribution point it does not
-  name), fails with `VerifyReason.UnknownRevocationStatus` as well (alert 48 or 42, as OpenSSL maps it). A certificate
-  whose issuer has none of the configured CRLs is not checked. Only complete, direct CRLs are supported: delta CRLs,
+  not verify (alert 51), a configured CRL of the issuer that OpenSSL cannot use for the certificate (alert 48) or that does
+  not cover it (a distribution point it does not name, alert 46) fails with `VerifyReason.UnknownRevocationStatus` as
+  well. So does a configured CRL whose issuer is neither among the roots nor on the path: with
+  `AnchoredCa(roots = [intermediate], crls = [the root's CRL, ...])` the intermediate's own status cannot be verified,
+  and its certificates fail (fail closed; leave that CRL out, or anchor at the root). A certificate whose issuer has none
+  of the configured CRLs is not checked. Only complete, direct CRLs are supported: delta CRLs,
   indirect CRLs and CRLs limited to some revocation reasons are refused when the trust is made (`TlsException.Config`). On a server, a
   `TrustConfig.ReloadableCa` reload to the same roots with new CRLs applies them to the next handshakes, as a CA reload
   does (tickets authenticated under the old CRLs resume nothing).
@@ -339,7 +342,8 @@ experimental in 0.3.0:
   QUIC only to clients that ask, and only when it is for the leaf the handshake presents (the chain must include the
   issuer) and fresh at that moment; a stale response is silently not sent. Call `update` with a fresh response before
   the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled. An identity chosen
-  by `sniSelector` is another certificate: the response for the default identity is not stapled for it.
+  by `sniSelector` staples the response of its own `ServerTlsOverride(identity, alpn, clientAuth, trust, ocspStapling)`,
+  and never the default identity's (TCP; QUIC has no `sniSelector`).
 
 ```kotlin
 // guide:tls:revocation

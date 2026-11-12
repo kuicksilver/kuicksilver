@@ -314,7 +314,13 @@ public class TlsConnection private constructor(
             override != null -> {
                 val o = KslContext.create(config.withOverride(override), quic = false)
                 overrideCtx = o
-                lock.withLock { Ksl.sslSniResume(s(), o.ctx.handle, 0) }
+                lock.withLock {
+                    // the override's identity staples its own response, never the default identity's
+                    if (config.ocspStapling != null || override.ocspStapling != null) {
+                        Ksl.sslSet(s(), KslConst.SET_OCSP_RESPONSE, override.ocspStapling?.currentForSession ?: ByteArray(0))
+                    }
+                    Ksl.sslSniResume(s(), o.ctx.handle, 0)
+                }
             }
 
             info.serverName != null -> {
