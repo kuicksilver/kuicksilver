@@ -518,10 +518,23 @@ internal class KuicksilverEngine(
      */
     internal suspend fun clearAlternativeServices(origin: io.ktor.http.Url?) {
         val key = origin?.let(::originKey)
-        altSvcUpdate {
-            altSvc.clear(key)
-            brokenAltSvc.clear(key)
-            if (key == null) srtt.clear() else srtt.remove(key)
+        val complete =
+            altSvcUpdate {
+                brokenAltSvc.clear(key)
+                if (key == null) srtt.clear() else srtt.remove(key)
+                altSvc.clear(key)
+            }
+        if (!complete) {
+            runCatching {
+                if (events.logger.isEnabled(LogLevel.Warn)) {
+                    events.logger.log(
+                        LogLevel.Warn,
+                        "clearAlternativeServices: the AltSvcStore does not implement clear(); the origins seen since the client " +
+                            "started were removed, entries of other origins it kept from earlier may remain (RFC 7838 section 9.4)",
+                        null,
+                    )
+                }
+            }
         }
     }
 

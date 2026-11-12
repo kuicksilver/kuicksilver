@@ -300,4 +300,32 @@ class AltSvcTest {
         assertFalse(isAltSvcFrameOrigin("https://example.com", Url("https://example.com:8443/")))
         assertTrue(isAltSvcFrameOrigin("https://[2001:db8::1]", Url("https://[2001:db8::1]/")))
     }
+
+    /**
+     * A store written before `clear()` existed (it keeps the default, which throws) still works: a full clear removes the
+     * origins seen during this run one by one and reports that it could do no more; the store's other entries remain.
+     */
+    @Test fun negative_storeWithoutClearFallsBackToTheOriginsSeen() {
+        val inner = InMemoryAltSvcStore()
+        val legacy =
+            object : AltSvcStore {
+                override fun get(origin: String) = inner.get(origin)
+
+                override fun put(
+                    origin: String,
+                    entries: List<AltSvcEntry>,
+                ) = inner.put(origin, entries)
+
+                override fun remove(origin: String) = inner.remove(origin)
+
+                override fun clearNonPersistent() = inner.clearNonPersistent()
+            }
+        val c = AltSvcCache(legacy) { now }
+        inner.put("https://earlier.example:443", listOf(AltSvcEntry("h3", null, 443, now + 60_000, true)))
+        c.onResponse(origin, 200, listOf("h3=\":443\"; persist=1"), true)
+        assertFalse(c.clear(null), "not complete")
+        assertNull(c.h3For(origin))
+        assertEquals(1, inner.get("https://earlier.example:443").size, "an origin not seen this run remains")
+        assertTrue(c.clear(c.originOf(origin)))
+    }
 }

@@ -62,9 +62,13 @@ public interface AltSvcStore {
      * [clearAlternativeServices][io.ktor.client.HttpClient.clearAlternativeServices] without an origin, so alternative
      * service information goes when origin-specific data is cleared (RFC 7838 section 9.4: it "MUST be removed when
      * origin-specific data is cleared"). A store kept across restarts removes them there too.
+     *
+     * The default throws [UnsupportedOperationException], so a store written before this member existed keeps working:
+     * the engine then removes, one by one, the origins it has seen during this run (at most the 1000 most recent) and logs a
+     * warning that entries of other origins the store kept from earlier may remain. Override it to meet section 9.4 fully.
      */
     @ExperimentalKuicksilverApi
-    public fun clear()
+    public fun clear(): Unit = throw UnsupportedOperationException("this AltSvcStore does not implement clear()")
 
     /**
      * The network ([Http3ClientConfig.networkId]) the stored entries were learned on, as the engine last set it; null when
@@ -359,7 +363,7 @@ internal class AltSvcCache(
     private val store: AltSvcStore,
     private val clock: () -> Long,
 ) {
-    fun originOf(url: Url): String = originKeyOf(url)
+    fun originOf(url: Url): String = originKeyOf(url).also(::saw)
 
     /**
      * Learns the `Alt-Svc` field lines [values] of a response to [url]. Freshness counts from the response's generation
@@ -461,8 +465,36 @@ internal class AltSvcCache(
         }
 
     /** Forgets the alternatives of [origin] (an [originOf] key), or of every origin when null (RFC 7838 section 9.4). */
-    fun clear(origin: String?) {
-        if (origin == null) store.clear() else store.remove(origin)
+
+    /**
+     * Forgets the alternatives of [origin] (an [originOf] key), or of every origin when null (RFC 7838 section 9.4); false
+     * when the store has no `clear()` of its own ([AltSvcStore.clear]) and only the origins seen during this run were removed.
+     */
+    fun clear(origin: String?): Boolean {
+        if (origin != null) {
+            store.remove(origin)
+            seen.remove(origin)
+            return true
+        }
+        val complete =
+            try {
+                store.clear()
+                true
+            } catch (_: UnsupportedOperationException) {
+                for (o in seen) store.remove(o)
+                false
+            }
+        seen.clear()
+        return complete
+    }
+
+    /** The origins this cache asked the store about during this run, most recent last: what [clear] can remove one by one. */
+    private val seen = LinkedHashSet<String>()
+
+    private fun saw(origin: String) {
+        seen.remove(origin)
+        seen += origin
+        while (seen.size > MAX_ORIGINS) seen.remove(seen.first())
     }
 
     init {

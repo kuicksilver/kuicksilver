@@ -16,7 +16,7 @@ public final class io/kuicksilver/ktor/client/AltSvcKt {
 }
 
 public abstract interface class io/kuicksilver/ktor/client/AltSvcStore {
-	public abstract fun clear ()V
+	public fun clear ()V
 	public abstract fun clearNonPersistent ()V
 	public abstract fun get (Ljava/lang/String;)Ljava/util/List;
 	public fun getNetworkId ()Ljava/lang/String;
@@ -26,6 +26,7 @@ public abstract interface class io/kuicksilver/ktor/client/AltSvcStore {
 }
 
 public final class io/kuicksilver/ktor/client/AltSvcStore$DefaultImpls {
+	public static fun clear (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public static fun getNetworkId (Lio/kuicksilver/ktor/client/AltSvcStore;)Ljava/lang/String;
 	public static fun setNetworkId (Lio/kuicksilver/ktor/client/AltSvcStore;Ljava/lang/String;)V
 }

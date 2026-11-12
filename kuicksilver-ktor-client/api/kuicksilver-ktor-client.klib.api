@@ -100,11 +100,11 @@ abstract interface io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.kt
         open fun <get-networkId>(): kotlin/String? // io.kuicksilver.ktor.client/AltSvcStore.networkId.<get-networkId>|<get-networkId>(){}[0]
         open fun <set-networkId>(kotlin/String?) // io.kuicksilver.ktor.client/AltSvcStore.networkId.<set-networkId>|<set-networkId>(kotlin.String?){}[0]
 
-    abstract fun clear() // io.kuicksilver.ktor.client/AltSvcStore.clear|clear(){}[0]
     abstract fun clearNonPersistent() // io.kuicksilver.ktor.client/AltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
     abstract fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/AltSvcStore.get|get(kotlin.String){}[0]
     abstract fun put(kotlin/String, kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry>) // io.kuicksilver.ktor.client/AltSvcStore.put|put(kotlin.String;kotlin.collections.List<io.kuicksilver.ktor.client.AltSvcEntry>){}[0]
     abstract fun remove(kotlin/String) // io.kuicksilver.ktor.client/AltSvcStore.remove|remove(kotlin.String){}[0]
+    open fun clear() // io.kuicksilver.ktor.client/AltSvcStore.clear|clear(){}[0]
 }
 
 sealed interface io.kuicksilver.ktor.client/HttpsRecordSource { // io.kuicksilver.ktor.client/HttpsRecordSource|null[0]
