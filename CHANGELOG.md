@@ -475,6 +475,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
+  as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a
+  rolling upgrade whose nodes share `SessionTicketConfig` keys, a client resuming across versions does one full handshake.
 - Kotlin/Native klibs record source paths relative to the repository (`-Xklib-relative-path-base`) instead of the
   absolute paths of the machine that built them, in their debug information and in the symbol names Kotlin/Native
   derives from file paths, so a build no longer depends on (or reveals) the checkout directory.
