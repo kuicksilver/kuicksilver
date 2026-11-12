@@ -133,7 +133,7 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 - The client follows a server's preferred address (RFC 9000 §9.6).
 - NEW_TOKEN: the server issues tokens, the client stores and returns them (RFC 9000 §8.1.3).
 - The Capsule Protocol on CONNECT streams (RFC 9297 §3).
-- HTTP/3 priorities exposed in the Ktor engines (RFC 9218).
+- HTTP/3 priorities exposed in the Ktor engines (RFC 9218) (done; the HTTP/2 server schedules its responses by them too).
 - PMTUD from ICMP Packet Too Big as a hint (RFC 8899 §4.6).
 - Clients: SOCKS and system proxy settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692).
   The Ktor client gets a `proxyResolver` setting whose default is the system proxy (HTTP/3 is not used through a proxy).
