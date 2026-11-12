@@ -52,6 +52,7 @@ internal class ServerWebSocket(
     attributes: Attributes,
     context: CoroutineContext,
     maxMessageSize: Long,
+    onPeerClose: () -> Unit = {},
 ) {
     private val deflate: PerMessageDeflate? = attributes.perMessageDeflate()
     private val checkText: Boolean
@@ -79,6 +80,8 @@ internal class ServerWebSocket(
                 perMessageDeflate = perMessageDeflate,
                 maxMessageSize = maxMessageSize,
                 checkText = checkText,
+                onEnd = onPeerClose,
+                onClose = onPeerClose,
             )
     }
 
@@ -109,9 +112,10 @@ internal suspend fun startServerWebSocket(
     maxMessageSize: Long,
     output: ByteWriteChannel,
     log: io.ktor.util.logging.Logger,
+    onPeerClose: () -> Unit = {},
 ): ServerWebSocket? =
     try {
-        ServerWebSocket(input, request, response, attributes, context, maxMessageSize)
+        ServerWebSocket(input, request, response, attributes, context, maxMessageSize, onPeerClose)
     } catch (e: ProtocolViolationException) {
         log.warn("WebSocket upgrade: the answer's Sec-WebSocket-Extensions cannot be read (${e.message}); closing with 1011")
         output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xF3.toByte()))
