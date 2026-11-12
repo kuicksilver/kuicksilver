@@ -1283,6 +1283,10 @@ internal class H2Runtime(
     ): Boolean = withCore { priorityUpdate(s.id, value, urgency) }
 
     /** Sends the DATA of [s] with this RFC 9218 priority from now on (see the core's DataScheduler). */
+
+    /** See [H2ConnectionCore.isTunnel]. */
+    fun scheduledAsTunnel(s: StreamRt): Boolean = withCore { isTunnel(s.id) }
+
     fun setPriority(
         s: StreamRt,
         urgency: Int,

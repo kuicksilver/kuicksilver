@@ -13,6 +13,7 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.request.httpVersion
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -137,6 +138,81 @@ class ServerWebSocketH2Test {
         launch { runCatching { s.sendBody(out, stallMillis = null) { error("no stall") } } }
         return RawWebSocket(s.body, out, masking = true, coroutineContext = coroutineContext) to out
     }
+
+    /**
+     * RFC 9218 section 10.1 with RFC 8441: an HTTP/2 WebSocket is an Extended CONNECT stream (`:method` CONNECT, while Ktor
+     * sees a GET), so the server schedules it as a tunnel: incremental by default (sections 10.1, 11) and with one frame in
+     * 16 even behind more urgent streams. Next to a u=0 response streaming megabytes on the same connection its answer
+     * comes while that response is still going.
+     */
+    @Test fun webSocketKeepsItsTunnelShareNextToAnUrgentResponse() =
+        serverTest {
+            val total = 32L * 1024 * 1024 // within the client's windows: the response never waits for credit
+            val scheduled = CompletableDeferred<Triple<Boolean, Int, Boolean>>()
+            val (server, port) =
+                h2TlsServer {
+                    install(WebSockets)
+                    routing {
+                        webSocket("/ws") {
+                            val engineCall = (call as io.ktor.server.routing.RoutingCall).pipelineCall.engineCall
+                            val h2 = (engineCall as io.kuicksilver.ktor.server.h2.H2Call).h2
+                            scheduled.complete(Triple(h2.scheduledAsTunnel, h2.urgency, h2.incremental))
+                            for (frame in incoming) {
+                                if (frame is Frame.Text) {
+                                    send(
+                                        Frame.Text("${call.request.httpVersion}:" + frame.readText()),
+                                    )
+                                }
+                            }
+                        }
+                        // the whole body at hand, so its writer always holds the next frame
+                        get("/big") { call.respondBytes(ByteArray(total.toInt())) }
+                    }
+                }
+            try {
+                val windows =
+                    Http2Settings(
+                        initialStreamWindow = 1 shl 26,
+                        maxStreamWindow = 1 shl 26,
+                        initialConnectionWindow = 1 shl 27,
+                        maxConnectionWindow =
+                            1 shl 27,
+                    )
+                h2(port, settings = windows) { c ->
+                    val ws = c.connect()
+                    assertEquals(200, ws.response().status)
+                    assertEquals(Triple(true, 3, true), withTimeout(10.seconds) { scheduled.await() }, "(tunnel, urgency, incremental)")
+                    coroutineScopeWithJob { scope ->
+                        val (session, _) = scope.session(ws)
+                        assertTrue(c.tryReserve())
+                        val big = c.open("GET", "https", "server.test", "/big", listOf("priority" to "u=0"), endStream = true)
+                        assertEquals(200, big.response().status)
+                        val received = kotlinx.coroutines.flow.MutableStateFlow(0L)
+                        val reader =
+                            scope.launch {
+                                val buf = ByteArray(65_536)
+                                while (true) {
+                                    val n = big.body.readAvailable(buf, 0, buf.size)
+                                    if (n < 0) break
+                                    received.value += n
+                                }
+                            }
+                        withTimeout(20.seconds) { received.first { it >= 1L shl 20 } } // the response is streaming
+                        session.outgoing.send(Frame.Text("ping"))
+                        assertEquals("HTTP/2:ping", (withTimeout(20.seconds) { session.incoming.receive() } as Frame.Text).readText())
+                        val atAnswer = received.value
+                        assertTrue(atAnswer < total / 2, "$atAnswer of $total bytes of the u=0 response came before the WebSocket's answer")
+                        withTimeout(60.seconds) { reader.join() } // read to its end: the stream ends in order, no reset
+                        assertEquals(total, received.value)
+                        big.release()
+                        session.outgoing.send(Frame.Close(CloseReason(CloseReason.Codes.NORMAL, "bye")))
+                    }
+                    ws.release()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 
     @Test fun echoOverExtendedConnect() =
         serverTest {

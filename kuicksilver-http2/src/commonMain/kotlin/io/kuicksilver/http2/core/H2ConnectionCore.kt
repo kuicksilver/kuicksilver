@@ -758,6 +758,10 @@ internal class H2ConnectionCore(
      * [incremental] to share bandwidth with the other incremental streams of its urgency. Streams start at urgency 3, not
      * incremental (section 4). Ignored for a stream that is gone.
      */
+
+    /** Whether stream [streamId] gets the tunnel share of the DATA ([H2Stream.tunnel], RFC 9218 section 10.1). */
+    fun isTunnel(streamId: Int): Boolean = streams[streamId]?.tunnel == true
+
     fun setPriority(
         streamId: Int,
         urgency: Int,

@@ -234,6 +234,12 @@ public class H2ServerStream internal constructor(
         stallError: () -> Throwable = { kotlinx.io.IOException("the client took no content for $stallMillis ms") },
     ): Unit = rt.sendBody(s, source, stallMillis, stallError, end)
 
+    /**
+     * The stream carries a tunnel (a CONNECT, an RFC 8441 WebSocket among them): its DATA gets one frame in 16 whatever its
+     * urgency (RFC 9218 section 10.1). False once the stream is gone.
+     */
+    public val scheduledAsTunnel: Boolean get() = rt.scheduledAsTunnel(s)
+
     /** The RFC 9218 urgency (0 most urgent to 7) the response's DATA is sent with; 3 until [setPriority]. */
     public val urgency: Int get() = s.urgency
 
