@@ -13,7 +13,8 @@
 #endif
 
 /* fopen(path, "w") with mode 0600 instead of 0666 & ~umask, refusing a symbolic link at path. An existing file is
-   truncated, as fopen does (the tests rewrite their files). Windows: the file gets the directory's ACL. */
+   truncated, as fopen does (the tests rewrite their files), and set to 0600 as well. Windows: _S_IREAD | _S_IWRITE (no
+   mode bits for others there); the file gets the directory's ACL. */
 static inline FILE *fopen_private(const char *path) {
 #ifdef _WIN32
     int fd = _open(path, _O_WRONLY | _O_CREAT | _O_TRUNC | _O_TEXT, _S_IREAD | _S_IWRITE);
@@ -22,6 +23,10 @@ static inline FILE *fopen_private(const char *path) {
         _close(fd);
 #else
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd >= 0 && fchmod(fd, 0600) != 0) {
+        close(fd);
+        return NULL;
+    }
     FILE *f = fd < 0 ? NULL : fdopen(fd, "w");
     if (fd >= 0 && !f)
         close(fd);

@@ -7,6 +7,8 @@
    input to <artifact_prefix>crash-<hash>, a hang past -timeout to timeout-<hash>.
    Flags (libFuzzer's names): -max_total_time=S -runs=N -timeout=S -artifact_prefix=P -merge=1 -seed=N; others ignored.
    With libFuzzer (clang -fsanitize=fuzzer on Linux) build.sh links the harness without this file. */
+#define _POSIX_C_SOURCE 200809L /* open, fdopen, O_NOFOLLOW, O_CLOEXEC under -std=c11 with glibc */
+#define _DARWIN_C_SOURCE        /* O_NOFOLLOW, which _POSIX_C_SOURCE hides on macOS */
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -53,8 +55,9 @@ static void save(const char *dir_or_prefix, const char *kind, const uint8_t *d, 
     /* 0600, a new file only (the name is the content's hash: an existing one already holds it), never through a link */
     int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) { if (errno == EEXIST && !is_dir) fprintf(stderr, "==ksl_fuzz== %s already in %s\n", kind, path); return; }
-    for (size_t off = 0; off < n;) { ssize_t w = write(fd, d + off, n - off); if (w <= 0) break; off += (size_t)w; }
-    close(fd);
+    size_t off = 0;
+    while (off < n) { ssize_t w = write(fd, d + off, n - off); if (w <= 0) break; off += (size_t)w; }
+    if (close(fd) != 0 || off < n) { unlink(path); fprintf(stderr, "==ksl_fuzz== %s not written to %s\n", kind, path); return; }   /* no truncated file under a hash name */
     if (!is_dir) fprintf(stderr, "==ksl_fuzz== %s written to %s\n", kind, path);
 }
 static void on_death(void) { if (cur) save(prefix, "crash", cur, curlen, 0); }
