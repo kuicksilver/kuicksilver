@@ -78,7 +78,8 @@ public class H2StreamOutput(
                     if (n == 0) continue
                     // a session cancelled after its flushAndClose: what is left is not sent, nor the end
                     if (cause != null) return@launch
-                    // sendBody reads its source to the end before it returns: the chunk is free again then
+                    // a ByteReadChannel over a range copies that range (at most one 16 KiB slice here) into its own
+                    // buffer, so the chunk is free again at once; sendBody reads that copy to its end before it returns
                     send(ByteReadChannel(chunk, 0, n), false)
                     handed.update { if (it == Long.MAX_VALUE) it else it + n }
                 }

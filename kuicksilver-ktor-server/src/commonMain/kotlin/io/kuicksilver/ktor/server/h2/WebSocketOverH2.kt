@@ -84,7 +84,6 @@ internal object WebSocketOverH2 {
  * cancelled or failed meanwhile resets the stream with CANCEL ("RST exceptions are represented with the RST_STREAM frame
  * ... with the CANCEL error code").
  */
-
 internal class H2UpgradeResponse(
     call: PipelineCall,
     h2: H2ServerStream,
