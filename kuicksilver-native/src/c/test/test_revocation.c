@@ -6,6 +6,9 @@
 #include "ksl_internal.h" /* the test server that staples whatever it is given, past ksl's own checks */
 #include <time.h>
 #include <openssl/ocsp.h>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 
 #define RV "revocation/"
 
@@ -110,6 +113,13 @@ static void test_ocsp_check(void) {
           "negative_weak_responder: an RSA-1024 responder key, below security level 2");
     CHECK(check_file("ocsp-critical-responder", "rv-leaf", "rv-mid", 0, NULL) == KSL_OCSP_INVALID,
           "negative_critical_responder: a responder certificate with an unknown critical extension");
+    {
+        int64_t u = 0;
+        CHECK(check_file("ocsp-short-responder", "rv-leaf", "rv-mid", 0, &u) == KSL_OCSP_GOOD && u == 1893456000LL,
+              "negative_responder_bounds_until: valid_until is the delegated responder's notAfter (2030-01-01)");
+        CHECK(check_file("ocsp-short-responder", "rv-leaf", "rv-mid", 1924992000LL, NULL) == KSL_OCSP_INVALID,
+              "negative_responder_expired: after the responder's notAfter");
+    }
     CHECK(check_file("ocsp-revoked-responder", "rv-leaf", "rv-mid", 0, NULL) == KSL_OCSP_GOOD,
           "a delegated responder is not checked for revocation without configured CRLs");
     blob g = file_of("ocsp-good"), ch = framed(2, "rv-leaf", "rv-mid");
@@ -402,7 +412,8 @@ static void test_stapling(void) {
     ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_TCP), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
     blob b = file_of("ocsp-good");
     CHECK(ksl_ssl_set(c, KSL_SET_OCSP_RESPONSE, b.buf, b.len) == KSL_ERROR, "negative: a client staples nothing");
-    CHECK(ksl_ssl_set(s, KSL_SET_OCSP_RESPONSE, b.buf, 0) == KSL_ERROR, "negative: empty response");
+    CHECK(ksl_ssl_set(s, KSL_SET_OCSP_RESPONSE, b.buf, 0) == KSL_OK && s->ocsp_staple == NULL,
+          "an empty response clears");
     CHECK(ksl_ctx_set_option(sc, KSL_OPT_REVOCATION, 1) == KSL_ERROR, "negative: revocation is client-only");
     CHECK(ksl_ctx_set_option(cc, KSL_OPT_REVOCATION, 3) == KSL_ERROR, "negative: unknown policy");
     ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
@@ -467,10 +478,22 @@ static void test_crls(void) {
           "negative_crl_not_covering: the issuer's configured CRL does not cover the leaf (fail closed)");
     if (!(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_DIFFERENT_CRL_SCOPE))
         printf("  got rc=%d done=%d alert=%d x509=%d\n", o.rc, o.done, o.alert, o.x509);
+    /* a configured CRL whose issuer is not among the roots or on the path: the certificates of that issuer fail closed */
+    client_root = "rv-mid";
+    o = handshake_with(&good, "crl-root");
+    CHECK(
+        o.rc == KSL_ERROR && o.x509 == X509_V_ERR_CRL_SIGNATURE_FAILURE && o.alert == 51,
+        "negative_crl_issuer_outside_path: roots = [rv-mid], crls = [rv-root's]: rv-mid's CRL cannot be verified (fail "
+        "closed, decrypt_error)");
+    if (!(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_CRL_SIGNATURE_FAILURE))
+        printf("  got rc=%d done=%d alert=%d x509=%d\n", o.rc, o.done, o.alert, o.x509);
+    client_root = "rv-root";
     o = handshake_with(&good, "crl-mid-impostor");
-    CHECK(o.rc == KSL_ERROR && (o.x509 == X509_V_ERR_CRL_SIGNATURE_FAILURE || o.x509 == X509_V_ERR_UNABLE_TO_GET_CRL),
-          "negative_crl_other_key: a CRL under the issuer's name signed by another key");
-    if (o.rc != KSL_ERROR)
+    CHECK(
+        o.rc == KSL_ERROR && o.x509 == X509_V_ERR_UNABLE_TO_GET_CRL && o.alert == 48,
+        "negative_crl_other_key: a CRL under the issuer's name and another key's identifier: no issuer for it, the issuer's "
+        "status is unknown (fail closed, unknown_ca)");
+    if (!(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_UNABLE_TO_GET_CRL))
         printf("  got rc=%d done=%d alert=%d x509=%d\n", o.rc, o.done, o.alert, o.x509);
     {
         ksl_ctx *cc = rv_client(0, 0, 0, NULL), *sc = rv_server("rv-leaf", 0);
@@ -544,13 +567,20 @@ static void test_crls(void) {
     l.buf[l.len - 1] ^= 0xff;
     uint8_t junk[] = {0, 0, 0, 3, 1, 2, 3};
     CHECK(ksl_ctx_set_crls(own, junk, sizeof junk) == KSL_ERROR, "negative: not a CRL");
-    const char *unsupported[] = {"crl-mid-delta", "crl-mid-indirect"};
-    for (int i = 0; i < 2; i++) {
+    const char *unsupported[] = {"crl-mid-delta", "crl-mid-indirect", "crl-mid-reasons",
+                                 "crl-mid-attr",  "crl-mid-userca",   "crl-mid-badidp"};
+    const char *unsupported_msg[] = {"negative_delta_crl: refused",
+                                     "negative_indirect_crl: refused",
+                                     "negative_reasons_crl: an onlySomeReasons CRL refused",
+                                     "negative_attr_crl: an onlyAttributeCerts CRL refused",
+                                     "negative_userca_crl: onlyUser and onlyCA together refused",
+                                     "negative_bad_idp_crl: an issuingDistributionPoint that does not decode refused"};
+    for (int i = 0; i < 6; i++) {
         blob u = framed(1, unsupported[i]);
         uint32_t code = 0;
         CHECK(ksl_ctx_set_crls(own, u.buf, u.len) == KSL_ERROR &&
                   (ksl_ctx_last_error(own, &code, NULL, 0), code == KSL_E_BAD_ARG),
-              i == 0 ? "negative_delta_crl: refused" : "negative_indirect_crl: refused");
+              unsupported_msg[i]);
         free(u.buf);
     }
     CHECK(ksl_ctx_set_crls(own, l.buf, l.len - 1) == KSL_ERROR, "negative: bad framing");
@@ -560,10 +590,84 @@ static void test_crls(void) {
     END();
 }
 
+#ifndef OPENSSL_NO_OCSP
+extern int64_t ksl_test_ocsp_clock_skew;
+extern int ksl_test_ocsp_server_checks;
+/* One TCP handshake against the shared server context `sc` whose session staples `staple`: the client's KSL_GET_OCSP_STATUS
+   status byte (0xee: the handshake failed), and the until it reports */
+static int staple_status(ksl_ctx *sc, const char *staple, int64_t *until) {
+    ksl_ctx *cc = rv_client(KSL_REVOCATION_STAPLED_IF_PRESENT, 0, 0, NULL);
+    ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_TCP), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+    blob b = file_of(staple);
+    ksl_ssl_set(s, KSL_SET_OCSP_RESPONSE, b.buf, b.len);
+    free(b.buf);
+    uint8_t st[9] = {0xee};
+    size_t n = 0;
+    if (tcp_pump(c, s) == KSL_OK)
+        ksl_ssl_get(c, KSL_GET_OCSP_STATUS, st, sizeof st, &n);
+    if (until) {
+        *until = 0;
+        for (int i = 1; i < 9; i++)
+            *until = (*until << 8) | st[i];
+    }
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    return st[0];
+}
+#ifndef _WIN32
+static void *stapling_thread(void *arg) {
+    for (int i = 0; i < 8; i++)
+        if (staple_status(arg, "ocsp-good", NULL) != KSL_OCSP_GOOD)
+            return arg;
+    return NULL;
+}
+#endif
+static void test_staple_cache(void) {
+    SECTION("revocation_server_staple_cache");
+    ksl_ctx *sc = rv_server("rv-leaf", 0);
+    int before = ksl_test_ocsp_server_checks;
+    CHECK(staple_status(sc, "ocsp-good", NULL) == KSL_OCSP_GOOD, "first handshake staples");
+    CHECK(staple_status(sc, "ocsp-good", NULL) == KSL_OCSP_GOOD && ksl_test_ocsp_server_checks == before + 1,
+          "a second handshake staples from the context's verdict (checked once)");
+    CHECK(staple_status(sc, "ocsp-stale", NULL) == 0xff,
+          "negative_cache_other_response: a stale response after a good one is checked and not stapled");
+    CHECK(staple_status(sc, "ocsp-good", NULL) == KSL_OCSP_GOOD, "and the good one again");
+    int checks = ksl_test_ocsp_server_checks;
+    ksl_test_ocsp_clock_skew = 101LL * 366 * 86400; /* past the good response's nextUpdate (2126) */
+    CHECK(staple_status(sc, "ocsp-good", NULL) == 0xff && ksl_test_ocsp_server_checks == checks + 1,
+          "negative_cache_after_until: a verdict past its interval is not used, the response is not stapled");
+    ksl_test_ocsp_clock_skew = 0;
+    /* RFC 6960 section 4.2.2.2: a delegated responder's certificate bounds the interval too */
+    int64_t until = 0;
+    ksl_ctx *sc2 = rv_server("rv-leaf", 0);
+    CHECK(staple_status(sc2, "ocsp-short-responder", &until) == KSL_OCSP_GOOD && until == 1893456000LL,
+          "the client's bound is the responder's notAfter (2030-01-01), not nextUpdate");
+    ksl_test_ocsp_clock_skew = 1924992000LL - (int64_t)time(NULL); /* 2031 */
+    CHECK(staple_status(sc2, "ocsp-short-responder", NULL) == 0xff,
+          "negative_cache_responder_expired: after the responder's notAfter the cached verdict is not used");
+    ksl_test_ocsp_clock_skew = 0;
+    ksl_ctx_free(sc2);
+#ifndef _WIN32
+    pthread_t t[2];
+    void *res[2] = {NULL, NULL};
+    for (int i = 0; i < 2; i++)
+        pthread_create(&t[i], NULL, stapling_thread, sc);
+    for (int i = 0; i < 2; i++)
+        pthread_join(t[i], &res[i]);
+    CHECK(res[0] == NULL && res[1] == NULL, "two threads staple through one context's verdict");
+#endif
+    ksl_ctx_free(sc);
+    END();
+}
+#endif
+
 void run_revocation(void) {
 #ifndef OPENSSL_NO_OCSP
     test_ocsp_check();
     test_stapling();
+    test_staple_cache();
 #else
     test_without_ocsp();
 #endif

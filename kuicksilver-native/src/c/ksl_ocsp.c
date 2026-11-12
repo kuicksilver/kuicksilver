@@ -87,6 +87,18 @@ static int responder_authorized(X509 *signer, X509 *issuer, int64_t at, X509_STO
 /* Clock skew allowed on thisUpdate and nextUpdate, and how long a response without nextUpdate counts as fresh (RFC 6960 section
    4.2.2.1: "If nextUpdate is not set, the responder is indicating that newer revocation information is available all the time"). */
 #define OCSP_SKEW 300
+/* The clock of the status checks during handshakes; test builds can move it (ksl_test_ocsp_clock_skew) to age a cached verdict. */
+#ifdef KSL_TEST
+int64_t ksl_test_ocsp_clock_skew = 0;
+int ksl_test_ocsp_server_checks = 0; /* responses server_status parsed and verified (not taken from the cache) */
+static int64_t ocsp_now(void) {
+    return (int64_t)time(NULL) + ksl_test_ocsp_clock_skew;
+}
+#else
+static int64_t ocsp_now(void) {
+    return (int64_t)time(NULL);
+}
+#endif
 #define OCSP_NO_NEXT_UPDATE_TTL 86400
 
 /* The RFC 6960 section 3.2 checks of one DER response for `leaf` issued by `issuer` at `at` (ksl_ocsp_check); `crls`: the store
@@ -152,10 +164,22 @@ static int ksl_ocsp_check_x509(const uint8_t *der, size_t len, X509 *leaf, X509 
         r = KSL_OCSP_STALE;
         goto done;
     }
+    /* the interval the response passes in; a delegated responder's certificate bounds it too (responder_authorized checks it at
+       `at`, so a verdict kept for later - the server's cache, a client's resumption bound - must not outlive it) */
+    int64_t from = t_this - OCSP_SKEW, until = t_next + OCSP_SKEW;
+    if (EVP_PKEY_eq(X509_get0_pubkey(signer), X509_get0_pubkey(issuer)) != 1) {
+        int64_t nb = 0, na = 0;
+        if (!asn1_epoch(X509_get0_notBefore(signer), &nb) || !asn1_epoch(X509_get0_notAfter(signer), &na))
+            goto done;
+        if (nb > from)
+            from = nb;
+        if (na < until)
+            until = na;
+    }
     if (valid_until)
-        *valid_until = t_next + OCSP_SKEW;
+        *valid_until = until;
     if (valid_from)
-        *valid_from = t_this - OCSP_SKEW;
+        *valid_from = from;
     r = status == V_OCSP_CERTSTATUS_GOOD      ? KSL_OCSP_GOOD
         : status == V_OCSP_CERTSTATUS_REVOKED ? KSL_OCSP_REVOKED
         : status == V_OCSP_CERTSTATUS_UNKNOWN ? KSL_OCSP_UNKNOWN
@@ -240,7 +264,7 @@ static int client_status(SSL *ssl, ksl_ssl *s) {
     }
     int64_t until = 0;
     X509_STORE *crls = s->owner->has_crls ? SSL_CTX_get_cert_store(s->owner->ctx) : NULL;
-    int r = ksl_ocsp_check_x509(resp, (size_t)len, leaf, issuer, (int64_t)time(NULL), crls, NULL, &until);
+    int r = ksl_ocsp_check_x509(resp, (size_t)len, leaf, issuer, ocsp_now(), crls, NULL, &until);
     switch (r) {
     case KSL_OCSP_GOOD:
         s->ocsp_status = r;
@@ -326,9 +350,12 @@ static int server_status(SSL *ssl, ksl_ssl *s) {
     if (issuer == NULL)
         return SSL_TLSEXT_ERR_NOACK;
     uint8_t hash[32];
-    int64_t now = (int64_t)time(NULL), from = 0, until = 0;
+    int64_t now = ocsp_now(), from = 0, until = 0;
     int hashed = ksl_sha2(256, s->ocsp_staple, s->ocsp_staple_len, hash) == KSL_OK;
     if (!hashed || !staple_cached(s->owner, hash, leaf, now)) {
+#ifdef KSL_TEST
+        __atomic_add_fetch(&ksl_test_ocsp_server_checks, 1, __ATOMIC_RELAXED);
+#endif
         int r = ksl_ocsp_check_x509(s->ocsp_staple, s->ocsp_staple_len, leaf, issuer, now, NULL, &from, &until);
         if (r != KSL_OCSP_GOOD && r != KSL_OCSP_REVOKED && r != KSL_OCSP_UNKNOWN)
             return SSL_TLSEXT_ERR_NOACK;

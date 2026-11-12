@@ -131,7 +131,8 @@ extern "C" {
 #define KSL_SET_EARLY_DATA 5 /* 1 byte before the first drive. Client: 1 = send 0-RTT with the session set by ksl_ssl_set_session
                                       (KSL_E_NOT_SUPPORTED when its ticket does not allow early data). Server: 1 = the transport admits early
                                       data for this hello (replay register), 0 = refuse; KSL_E_NOT_SUPPORTED without KSL_OPT_EARLY_DATA */
-#define KSL_SET_OCSP_RESPONSE 6 /* server, before the first drive: a DER OCSPResponse (RFC 6960) to staple when the client sends
+#define KSL_SET_OCSP_RESPONSE 6 /* server, before the first drive or during the SNI pause (KSL_WANT_SNI: the response for the
+                                      override's identity), empty to clear: a DER OCSPResponse (RFC 6960) to staple when the client sends
                                       status_request; copied. Sent only when it is for the leaf the handshake presents (the issuer: the
                                       certificate of the configured chain that issued it), verifies, and is inside its validity interval
                                       at that moment (ksl_ocsp_check rules); otherwise nothing is stapled. Additive in ABI 7 */
@@ -307,7 +308,9 @@ int ksl_ocsp_check(const uint8_t *resp, size_t resp_len, const uint8_t *chain, s
    checked against the CRL of its issuer (X509_V_FLAG_CRL_CHECK_ALL), in handshakes and in ksl_ctx_verify_chain alike: revoked
    fails (X509_V_ERR_CERT_REVOKED), so does a CRL that is expired, not yet valid or does not verify; a certificate whose issuer
    has no configured CRL is not checked, while one whose issuer has a configured CRL that does not cover it fails (a distribution
-   point it does not name: X509_V_ERR_DIFFERENT_CRL_SCOPE; a CRL OpenSSL cannot use for it: X509_V_ERR_UNABLE_TO_GET_CRL). A list that does not parse, or holds a delta, indirect or
+   point it does not name: X509_V_ERR_DIFFERENT_CRL_SCOPE; a CRL OpenSSL cannot use for it: X509_V_ERR_UNABLE_TO_GET_CRL). So does a
+   certificate whose issuer has a configured CRL that cannot be verified because that issuer is not among the roots or the
+   path (AnchoredCa roots = [an intermediate] with the root's CRL configured: the intermediate fails, fail closed). A list that does not parse, or holds a delta, indirect or
    reason-limited CRL or an issuingDistributionPoint that does not decode, is refused whole (KSL_E_BAD_ARG). On a client the
    CRLs also apply to a delegated OCSP responder (ksl_ocsp_check rules). */
 int ksl_ctx_set_crls(ksl_ctx *, const uint8_t *crls, size_t crls_len);

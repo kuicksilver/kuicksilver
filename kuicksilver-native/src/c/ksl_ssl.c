@@ -212,24 +212,29 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
         }
         return KSL_OK;
     case KSL_SET_OCSP_RESPONSE: {
-        if (s->owner->role != KSL_SERVER || !data || len == 0 || len > (1u << 24) - 1) {
-            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: an OCSP response is server-only, 1..2^24-1 bytes");
+        if (s->owner->role != KSL_SERVER || (len > 0 && !data) || len > (1u << 24) - 1) {
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: an OCSP response is server-only, 0..2^24-1 bytes");
             return KSL_ERROR;
         }
 #ifdef OPENSSL_NO_OCSP
         ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: built without OCSP (OpenSSL no-ocsp)");
         return KSL_ERROR;
 #endif
-        if (SSL_in_before(s->ssl) != 1) {
-            ksl_ssl_set_error(s, KSL_E_TOO_LATE, "ksl: the OCSP response is set before the handshake");
+        /* before the handshake, or during the SNI pause: the identity an override brings gets its own response */
+        if (SSL_in_before(s->ssl) != 1 && s->sni_pending != 1) {
+            ksl_ssl_set_error(s, KSL_E_TOO_LATE,
+                              "ksl: the OCSP response is set before the handshake or during the SNI pause");
             return KSL_ERROR;
         }
-        uint8_t *copy = malloc(len);
-        if (!copy) {
-            ksl_ssl_set_error(s, KSL_E_NO_MEMORY, "ksl: no memory for the OCSP response");
-            return KSL_ERROR;
+        uint8_t *copy = NULL;
+        if (len > 0) {
+            copy = malloc(len);
+            if (!copy) {
+                ksl_ssl_set_error(s, KSL_E_NO_MEMORY, "ksl: no memory for the OCSP response");
+                return KSL_ERROR;
+            }
+            memcpy(copy, data, len);
         }
-        memcpy(copy, data, len);
         free(s->ocsp_staple);
         s->ocsp_staple = copy;
         s->ocsp_staple_len = len;
