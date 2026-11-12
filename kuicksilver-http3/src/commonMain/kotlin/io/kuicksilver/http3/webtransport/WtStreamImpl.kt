@@ -33,7 +33,8 @@ import kotlin.concurrent.atomics.decrementAndFetch
  * [WebTransportException.StreamStopped], with the application code mapped back from the HTTP/3 space (section 4.4).
  * Each direction buffers what ktor-io's `ByteChannel` holds before a writer suspends (1 MiB) plus one 16 KiB chunk, on
  * top of the transport's stream window, which holds the peer back once that buffer is full. The application cancelling
- * [input] sends STOP_SENDING, and cancelling [output] RESET_STREAM, with application code 0.
+ * [input] sends STOP_SENDING, and cancelling [output] RESET_STREAM_AT keeping our header (section 4.4), with application
+ * code 0.
  */
 internal class WtStreamImpl(
     scope: CoroutineScope,
