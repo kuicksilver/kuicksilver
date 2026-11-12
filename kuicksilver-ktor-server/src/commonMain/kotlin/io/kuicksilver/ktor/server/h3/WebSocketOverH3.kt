@@ -12,8 +12,11 @@ import io.ktor.utils.io.cancel
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
+import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.server.ServerWebSocketInput
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
+import io.kuicksilver.ktor.server.serverWebSocketOutput
+import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -37,8 +40,8 @@ internal object WebSocketOverH3 {
         if (b["host"] == null) r.authority?.let { b.append("host", it) }
         b["connection"] = "Upgrade"
         b["upgrade"] = PROTOCOL
-        if (b["sec-websocket-version"] == null) b.append("sec-websocket-version", "13")
-        // RFC 9220 has no key: Ktor's handshake needs one
+        // the client's sec-websocket-version is used as defined in RFC 6455 (RFC 8441 section 5): none, or one other than
+        // 13, is refused (webSocketHandshakeRefusal), never made up here. RFC 9220 has no key: Ktor's handshake needs one
         if (b["sec-websocket-key"] == null) b.append("sec-websocket-key", Base64.encode(Random.nextBytes(16)))
         return b.build()
     }
@@ -58,10 +61,16 @@ internal class H3UpgradeResponse(
     private val engineDispatcher: CoroutineContext,
     private val userDispatcher: CoroutineContext,
     private val beforeUpgradeForTest: (() -> Unit)? = null,
+    /** The engine's `webSocketMaxMessageSize`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
+    private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
 ) : H3Response(call, h3) {
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
-        // before anything is committed, so the refusal can still be an ordinary error response
-        if (content is OutgoingContent.ProtocolUpgrade) checkWebSocketRsvConflicts(call.attributes)
+        // before anything is committed, so the refusal can still be an ordinary error response: a handshake without
+        // sec-websocket-version 13 gets 400 instead of the upgrade (RFC 8441 section 5, RFC 6455 section 4.2.1)
+        if (content is OutgoingContent.ProtocolUpgrade) {
+            webSocketHandshakeRefusal(call.request.headers, http3 = true)?.let { return super.respondOutgoingContent(it.content) }
+            checkWebSocketRsvConflicts(call.attributes)
+        }
         super.respondOutgoingContent(content)
     }
 
@@ -70,15 +79,21 @@ internal class H3UpgradeResponse(
         val headers = Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED })
         val stream = h3.acceptConnect(headers)
         answered = true
-        // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 9220 section 3); the
-        // check ends with the upgrade
+        // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 9220 section 3) and the
+        // limits; the check ends with the upgrade. The server's frames go out unmasked (RFC 6455 section 5.1)
         val guard = Job()
         var webSocket: ServerWebSocketInput? = null
         try {
             val input =
-                ServerWebSocketInput(stream.input, call.request.headers, headersBuilder, call.attributes, engineDispatcher + guard)
-                    .also { webSocket = it }
-            upgrade.upgrade(input.channel, stream.output, engineDispatcher, userDispatcher).join()
+                ServerWebSocketInput(
+                    stream.input,
+                    call.request.headers,
+                    headersBuilder,
+                    call.attributes,
+                    engineDispatcher + guard,
+                    webSocketMaxMessageSize,
+                ).also { webSocket = it }
+            upgrade.upgrade(input.channel, serverWebSocketOutput(stream.output), engineDispatcher, userDispatcher).join()
         } finally {
             webSocket?.done()
             guard.cancel()

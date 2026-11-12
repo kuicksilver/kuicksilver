@@ -305,6 +305,23 @@ public class KuicksilverApplicationEngine(
         public var webSocketsOverHttp3: Boolean = true
 
         /**
+         * The largest WebSocket message, and so frame, the server takes from a client, in bytes (RFC 6455 section 10.4: an
+         * implementation "SHOULD impose a limit on frame sizes and the total message size after reassembly"); 16 MiB by
+         * default, as `PerMessageDeflate`'s `maxInflatedMessageSize`. A frame whose header claims more, or that takes its
+         * message past it, closes the connection with 1009 (message too big) before any of its payload is read; a
+         * compressed message is held to the smaller of this and the extension's limit, counted inflated. Over HTTP/1.1
+         * and HTTP/3 alike; Ktor's `WebSockets { maxFrameSize }` applies on top of it.
+         *
+         * @throws IllegalArgumentException when set below 1.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var webSocketMaxMessageSize: Long = 16_777_216L // 16 MiB
+            set(value) {
+                require(value >= 1) { "webSocketMaxMessageSize must be at least 1" }
+                field = value
+            }
+
+        /**
          * Serve WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) to `webTransport(path) { }` routes: turns on
          * `Http3Settings.webTransport` and `enableConnectProtocol`; false by default. Needs QUIC datagrams (the default
          * `quic` has them): the engine refuses to start otherwise.

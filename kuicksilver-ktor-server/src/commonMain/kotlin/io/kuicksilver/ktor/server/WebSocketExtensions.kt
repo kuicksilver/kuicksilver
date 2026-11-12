@@ -4,38 +4,36 @@
 
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HeadersBuilder
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
+import io.ktor.http.headersOf
+import io.ktor.http.withCharset
 import io.ktor.util.Attributes
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.charsets.Charsets
 import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.ktor.network.guardWebSocketOutput
+import io.kuicksilver.ktor.network.negotiatedPerMessageDeflate
 import io.kuicksilver.ktor.network.negotiatedWebSocketRsv
 import io.kuicksilver.ktor.network.webSocketExtensionNames
+import io.kuicksilver.ktor.network.webSocketTextCheckable
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.network.websocket.perMessageDeflate
 import io.kuicksilver.ktor.network.websocket.webSocketExtensions
 import io.kuicksilver.ktor.network.websocket.webSocketRsvConflict
 import kotlin.coroutines.CoroutineContext
-
-/**
- * The RSV bits a client's WebSocket frames may set: the extensions of its upgrade [request] that Ktor's `WebSockets`
- * plugin accepted in the [response] (both `Sec-WebSocket-Extensions`); none without extensions (RFC 6455 section 5.2).
- */
-internal fun webSocketRsv(
-    request: Headers,
-    response: HeadersBuilder,
-): Int =
-    negotiatedWebSocketRsv(
-        webSocketExtensionNames(request.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty()),
-        webSocketExtensionNames(response.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty()),
-    )
+import kotlin.io.encoding.Base64
 
 /**
  * The input of a WebSocket upgrade, checked frame by frame against what the handshake ([request] and [response])
- * negotiated (RFC 6455 section 5.2), and decompressed there when the call's [attributes] hold a negotiated
- * [PerMessageDeflate] (RFC 7692 section 7.2.2, a message over its limit closed with 1009). [done] frees that extension's
- * zlib state when the session has ended.
+ * negotiated (RFC 6455 section 5.2) and against [maxMessageSize] (section 10.4), its text and Close reasons checked as
+ * UTF-8 (section 8.1), and decompressed there when the call's [attributes] hold a negotiated [PerMessageDeflate] (RFC
+ * 7692 section 7.2.2); see `guardWebSocketInput`. [done] frees that extension's zlib state when the session has ended.
  */
 internal class ServerWebSocketInput(
     input: ByteReadChannel,
@@ -43,23 +41,41 @@ internal class ServerWebSocketInput(
     response: HeadersBuilder,
     attributes: Attributes,
     context: CoroutineContext,
+    maxMessageSize: Long,
 ) {
     private val deflate: PerMessageDeflate? = attributes.perMessageDeflate()
 
-    val channel: ByteReadChannel =
-        guardWebSocketInput(
-            input,
-            webSocketRsv(request, response),
-            untilClose = false,
-            peerMasks = true,
-            context = context,
-            inflate = deflate?.serverInflate(),
-        )
+    val channel: ByteReadChannel
+
+    init {
+        val offered = webSocketExtensionNames(request.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty())
+        val accepted = webSocketExtensionNames(response.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty())
+        val inflate = deflate?.serverInflate()
+        channel =
+            guardWebSocketInput(
+                input,
+                negotiatedWebSocketRsv(offered, accepted, attributes.webSocketExtensions()),
+                untilClose = false,
+                peerMasks = true,
+                context = context,
+                inflate = inflate,
+                perMessageDeflate = negotiatedPerMessageDeflate(offered, accepted),
+                maxMessageSize = maxMessageSize,
+                checkText = webSocketTextCheckable(offered, accepted, inflating = inflate != null),
+            )
+    }
 
     fun done() {
         deflate?.dispose()
     }
 }
+
+/**
+ * The output of a WebSocket upgrade: no frame of the server is masked, whatever Ktor's `WebSockets { masking }` says (RFC
+ * 6455 section 5.1: "A server MUST NOT mask any frames that it sends to the client"), and no Close goes out with a code
+ * an endpoint must not send (section 7.4.1); see `guardWebSocketOutput`.
+ */
+internal fun serverWebSocketOutput(output: ByteWriteChannel): ByteWriteChannel = guardWebSocketOutput(output, masking = false)
 
 /**
  * Refuses a WebSocket upgrade whose negotiated extensions (in the call's [attributes]) claim the same RSV bit, before
@@ -75,3 +91,63 @@ internal fun checkWebSocketRsvConflicts(attributes: Attributes) {
         )
     }
 }
+
+/**
+ * The error response that replaces the application's WebSocket upgrade when the client's opening handshake [request] does
+ * not match RFC 6455 section 4.2.1, or null when it does. "The server MUST stop processing the client's handshake and
+ * return an HTTP response with an appropriate error code (such as 400 Bad Request)": over HTTP/1.1, unless there is
+ * exactly one `Sec-WebSocket-Key` (section 11.3.1: it MUST NOT appear more than once) whose value decodes from base64 to
+ * 16 bytes (item 5); and, on both protocols, unless there is exactly one `Sec-WebSocket-Version` (section 11.3.5).
+ * A version other than 13 is one this server does not understand (section 4.2.2, /version/): it "MUST abort the
+ * WebSocket handshake ... and instead send an appropriate HTTP error code (such as 426 Upgrade Required) and a
+ * |Sec-WebSocket-Version| header field indicating the version(s) the server is capable of understanding": 426 over
+ * HTTP/1.1 ([upgradeRequired]; RFC 9110 section 15.5.22 then needs an `Upgrade` field, which the engine adds), 400 over
+ * HTTP/3, which has no `Upgrade` (RFC 9114 section 4.2). Every refusal carries `Sec-WebSocket-Version: 13`. Over HTTP/3
+ * ([http3], RFC 9220 with RFC 8441 section 5) the key is not processed; the version is used "as defined in [RFC6455]".
+ */
+internal fun webSocketHandshakeRefusal(
+    request: Headers,
+    http3: Boolean,
+): WebSocketRefusal? {
+    if (!http3) {
+        val keys = request.getAll(HttpHeaders.SecWebSocketKey).orEmpty()
+        if (keys.size != 1) return WebSocketRefusal(HttpStatusCode.BadRequest, "${keys.size} Sec-WebSocket-Key fields, not one")
+        val decoded = runCatching { Base64.decode(keys[0].trim()) }.getOrNull()
+        if (decoded?.size != 16) {
+            return WebSocketRefusal(HttpStatusCode.BadRequest, "a Sec-WebSocket-Key that is not 16 bytes in base64")
+        }
+    }
+    val versions = request.getAll(HttpHeaders.SecWebSocketVersion).orEmpty()
+    if (versions.size != 1) return WebSocketRefusal(HttpStatusCode.BadRequest, "${versions.size} Sec-WebSocket-Version fields, not one")
+    if (versions[0].trim() != WEBSOCKET_VERSION) {
+        return WebSocketRefusal(
+            if (http3) HttpStatusCode.BadRequest else HttpStatusCode.UpgradeRequired,
+            "WebSocket version ${versions[0].trim()}; this server speaks version $WEBSOCKET_VERSION",
+        )
+    }
+    return null
+}
+
+/** A WebSocket opening handshake the server refuses with [status] ([webSocketHandshakeRefusal]) because of [problem]. */
+internal class WebSocketRefusal(
+    val status: HttpStatusCode,
+    problem: String,
+) {
+    /** A 426 names the protocol to upgrade to in an `Upgrade` field (RFC 9110 section 15.5.22). */
+    val upgradeRequired: Boolean get() = status == HttpStatusCode.UpgradeRequired
+
+    /** The response: [status], `Sec-WebSocket-Version: 13`, and a short text. */
+    val content: OutgoingContent =
+        object : OutgoingContent.ByteArrayContent() {
+            private val text = "Invalid WebSocket handshake (RFC 6455 section 4.2.1): $problem\n".encodeToByteArray()
+            override val status: HttpStatusCode = this@WebSocketRefusal.status
+            override val headers: Headers = headersOf(HttpHeaders.SecWebSocketVersion, WEBSOCKET_VERSION)
+            override val contentType: ContentType = ContentType.Text.Plain.withCharset(Charsets.UTF_8)
+            override val contentLength: Long = text.size.toLong()
+
+            override fun bytes(): ByteArray = text
+        }
+}
+
+/** RFC 6455 section 4.1: the version of the protocol this server speaks. */
+private const val WEBSOCKET_VERSION = "13"
