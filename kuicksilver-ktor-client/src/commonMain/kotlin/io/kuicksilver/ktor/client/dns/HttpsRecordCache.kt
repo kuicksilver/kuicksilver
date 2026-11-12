@@ -23,8 +23,9 @@ import kotlin.time.Duration
 /**
  * The HTTPS records of query names, and addresses of names, by their TTL (RFC 1035 section 3.2.1: the TTL "specifies the
  * time interval that the resource record may be cached"; capped at [MAX_TTL_S]), counted on an [ExpiryClock], so neither a
- * wall clock stepped back nor a device that slept keeps an entry longer: at most [MAX_NAMES] names each, the least recently used dropped
- * first. A name without records (NXDOMAIN, NODATA) is remembered for the SOA's negative TTL (RFC 2308 section 5), and not
+ * wall clock stepped back nor a device that slept keeps an entry longer. At most [MAX_NAMES] names and [MAX_BYTES] bytes
+ * each for records and addresses, the least recently used dropped first, and no RRset or address list over [MAX_RECORDS]:
+ * the answers come over an untrusted channel (RFC 9460 section 9.2.2). A name without records (NXDOMAIN, NODATA) is remembered for the SOA's negative TTL (RFC 2308 section 5), and not
  * at all without one ("Negative responses without SOA records SHOULD NOT be cached"). A failed lookup is never stored.
  * Not thread-safe: [HttpsRecords] locks it.
  */
@@ -35,61 +36,117 @@ internal class HttpsRecordCache(
         val value: T,
         val stored: ExpiryClock.Mark,
         val ttlMillis: Long,
+        val bytes: Long,
     )
 
-    private val map = LinkedHashMap<String, Entry<List<SvcbRecord>>>()
-    private val addresses = LinkedHashMap<String, Entry<List<ByteArray>>>()
+    /** One map of entries with the bytes they hold, least recently used first. */
+    private class Store<T> {
+        val map = LinkedHashMap<String, Entry<T>>()
+        var bytes = 0L
 
-    val size: Int get() = map.size
+        fun remove(name: String): Entry<T>? = map.remove(name)?.also { bytes -= it.bytes }
+
+        fun put(
+            name: String,
+            e: Entry<T>,
+        ) {
+            remove(name)
+            map[name] = e
+            bytes += e.bytes
+        }
+
+        fun clear() {
+            map.clear()
+            bytes = 0
+        }
+    }
+
+    private val records = Store<List<SvcbRecord>>()
+    private val addresses = Store<List<ByteArray>>()
+
+    val size: Int get() = records.map.size
+
+    /** The bytes the entries hold, by [bytesOf] (tests). */
+    internal val bytesForTest: Long get() = records.bytes + addresses.bytes
 
     /** The fresh records of [name] (empty: known to have none), or null when nothing fresh is stored. */
-    fun get(name: String): List<SvcbRecord>? = map.fresh(name)
+    fun get(name: String): List<SvcbRecord>? = records.fresh(name)
 
     /** The fresh A/AAAA addresses of [name] from an earlier answer's sections (RFC 9460 section 5), or null. */
     fun addressesOf(name: String): List<ByteArray>? = addresses.fresh(name)
 
+    /**
+     * Stores [records] for [name]; not an RRset over [MAX_RECORDS] records (a later request asks again: no more than
+     * [MAX_ENDPOINTS] of it would be used anyway).
+     */
     fun put(
         name: String,
         records: List<SvcbRecord>,
         negativeTtl: Long?,
     ) {
+        if (records.size > MAX_RECORDS) {
+            this.records.remove(name) // the answer is newer than what is stored
+            return
+        }
         val ttl = if (records.isEmpty()) negativeTtl ?: return else records.minOf { it.ttlSeconds }
-        map.store(name, records, ttl)
+        this.records.store(name, records, ttl, name.length + records.sumOf { bytesOf(it) })
     }
 
+    /** Stores [list] for [name]; not over [MAX_RECORDS] addresses. */
     fun putAddresses(
         name: String,
         list: List<ByteArray>,
         ttl: Long,
-    ) = addresses.store(name, list, ttl)
+    ) {
+        if (list.size > MAX_RECORDS) {
+            addresses.remove(name)
+            return
+        }
+        addresses.store(name, list, ttl, name.length + list.sumOf { it.size.toLong() + ENTRY_OVERHEAD })
+    }
 
     fun clear() {
-        map.clear()
+        records.clear()
         addresses.clear()
     }
 
-    private fun <T> LinkedHashMap<String, Entry<T>>.fresh(name: String): T? {
+    private fun <T> Store<T>.fresh(name: String): T? {
         val e = remove(name) ?: return null
         if (clock.elapsedMillis(e.stored) >= e.ttlMillis) return null
-        this[name] = e
+        put(name, e)
         return e.value
     }
 
-    private fun <T> LinkedHashMap<String, Entry<T>>.store(
+    private fun <T> Store<T>.store(
         name: String,
         value: T,
         ttlSeconds: Long,
+        bytes: Long,
     ) {
         val ttl = ttlSeconds.coerceAtMost(MAX_TTL_S)
         remove(name)
         if (ttl <= 0) return
-        this[name] = Entry(value, clock.mark(), ttl * 1000)
-        while (size > MAX_NAMES) remove(keys.first())
+        put(name, Entry(value, clock.mark(), ttl * 1000, bytes))
+        while (map.size > MAX_NAMES || this.bytes > MAX_BYTES) remove(map.keys.first())
     }
 
     companion object {
         const val MAX_NAMES = 1000
         const val MAX_TTL_S = 86_400L
+
+        /** Records (or addresses) of one name stored at most: twice what a resolution uses ([MAX_ENDPOINTS]). */
+        const val MAX_RECORDS = 2 * MAX_ENDPOINTS
+
+        /** Bytes the records, and the addresses, hold at most each ([bytesOf]); the least recently used go first. */
+        const val MAX_BYTES = 1L shl 20
+
+        /** What one record or address costs beyond its content: the objects that hold it. */
+        private const val ENTRY_OVERHEAD = 64L
+
+        /** About what [r] holds in memory: its strings, ALPN ids and hints, and [ENTRY_OVERHEAD]. */
+        fun bytesOf(r: SvcbRecord): Long =
+            ENTRY_OVERHEAD + r.target.length + r.owner.length + r.alpn.sumOf { it.length + 16L } +
+                r.ipv4Hints.size * (4 + 16L) + r.ipv6Hints.size * (16 + 16L)
     }
 }
 

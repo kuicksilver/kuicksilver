@@ -16,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** The HTTPS record cache and lookups of the engine (bounds, TTLs, one lookup per name) and the DoH exchange's query. */
@@ -49,6 +50,28 @@ class HttpsRecordCacheTest {
         assertEquals(HttpsRecordCache.MAX_NAMES, cache.size)
         assertNull(cache.get("o0.example")) // the least recently used went first
         assertEquals(1, cache.get("o1499.example")?.size)
+    }
+
+    @Test fun negative_oversizedRrsetIsNotCached() { // a forged answer cannot fill the cache through one name
+        val cache = HttpsRecordCache(ExpiryClock { 0L })
+        cache.put("a.example", List(HttpsRecordCache.MAX_RECORDS) { rec("a.example", 300) }, null)
+        assertEquals(HttpsRecordCache.MAX_RECORDS, cache.get("a.example")?.size)
+        cache.put("a.example", List(HttpsRecordCache.MAX_RECORDS + 1) { rec("a.example", 300) }, null)
+        assertNull(cache.get("a.example")) // not stored, and the older answer it replaces is gone
+        cache.putAddresses("b.example", List(HttpsRecordCache.MAX_RECORDS + 1) { ByteArray(16) }, 300)
+        assertNull(cache.addressesOf("b.example"))
+    }
+
+    @Test fun negative_cacheBytesAreBounded() {
+        // records of long ALPN ids and many hints, under the per-name cap: the byte budget drops the least recently used
+        val cache = HttpsRecordCache(ExpiryClock { 0L })
+        val big =
+            SvcbRecord(1, ".", List(16) { "x".repeat(255) }, false, null, List(32) { ByteArray(4) }, List(32) { ByteArray(16) }, 300, "o")
+        for (i in 0 until 1000) cache.put("n$i.example", List(HttpsRecordCache.MAX_RECORDS) { big }, null)
+        assertTrue(cache.bytesForTest <= HttpsRecordCache.MAX_BYTES, "${cache.bytesForTest} bytes")
+        assertTrue(cache.size < 1000)
+        assertNull(cache.get("n0.example"))
+        assertEquals(HttpsRecordCache.MAX_RECORDS, cache.get("n999.example")?.size)
     }
 
     @Test fun negative_wallClockAloneExpiresAnEntry() {
