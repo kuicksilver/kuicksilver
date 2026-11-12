@@ -15,6 +15,7 @@ import io.ktor.websocket.WebSocketExtensionHeader
 import io.ktor.websocket.parseWebSocketExtensions
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.ktor.network.Utf8Validator
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
 import kotlin.concurrent.atomics.AtomicInt
@@ -156,6 +157,8 @@ public class PerMessageDeflate internal constructor(
     // outgoing message state: inside a fragmented message, and whether it is compressed
     private var sendingFragments = false
     private var compressingMessage = false
+    private var checkingText = false
+    private val sentText = Utf8Validator()
 
     // an incoming message failed to decompress: the session is failing, no later one is decompressed
     private var inflateFailed = false
@@ -198,7 +201,10 @@ public class PerMessageDeflate internal constructor(
 
     /**
      * Compresses a Text or Binary frame (RSV1 on the first frame of a message, RFC 7692 section 6.1); other frames are
-     * returned unchanged. Called by Ktor's session for each outgoing frame, in order.
+     * returned unchanged. Called by Ktor's session for each outgoing frame, in order. A text message it compresses must be
+     * UTF-8 as a whole (RFC 6455 section 5.6, MUST; once compressed, nothing after the extension can check it): at the
+     * first frame that shows it is not, the frame fails with [ProtocolViolationException], which ends Ktor's session
+     * without sending it.
      */
     override fun processOutgoingFrame(frame: Frame): Frame {
         if (frame !is Frame.Text && frame !is Frame.Binary) return frame
@@ -206,9 +212,14 @@ public class PerMessageDeflate internal constructor(
         val first = !sendingFragments
         if (first) {
             compressingMessage = (!frame.fin || frame.data.size >= config.minSizeToCompress) && config.compressCondition(frame)
+            checkingText = compressingMessage && frame is Frame.Text
+            sentText.reset()
         }
         sendingFragments = !frame.fin
         if (!compressingMessage) return frame
+        if (checkingText && (!sentText.feed(frame.data, 0, frame.data.size) || (frame.fin && !sentText.complete))) {
+            throw ProtocolViolationException("a text message that is not UTF-8 (RFC 6455 section 5.6) was not sent")
+        }
         val data =
             withCodecs {
                 val d =
