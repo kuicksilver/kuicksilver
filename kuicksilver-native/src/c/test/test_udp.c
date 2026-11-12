@@ -73,14 +73,22 @@ static int autoflowlabel_of(ksl_udp *u) {
    with [RFC6437]". Linux labels each datagram with a keyed hash of its addresses and ports, Darwin each socket with a random label,
    where IPV6_AUTOFLOWLABEL is on; a host may leave it off by default (Linux net.ipv6.auto_flowlabels = 2, Darwin
    net.inet6.ip6.auto_flowlabel = 0), so every IPv6 socket ksl opens asks for it. 0 when both a ::1 socket and a dual-stack wildcard
-   socket have it on, else the failed step. */
+   socket asked (ksl_udp_autoflowlabel_asked_for_test: the setsockopt succeeded, whatever the host's default) and have the option on,
+   else the failed step. The option's value alone cannot tell on a host whose default labels anyway (Linux auto_flowlabels = 1,
+   Darwin auto_flowlabel = 1, both the defaults); flow_label_child sets Linux to 2 where /proc/sys is writable. */
 static int flow_label_cases(void) {
     uint8_t lo6[KSL_UDP_ADDR_LEN] = {6}, any[KSL_UDP_ADDR_LEN] = {4};
     lo6[18] = 1;
     uint32_t err = 0;
     char msg[128] = {0};
     ksl_udp *u = ksl_udp_open(lo6, 0, &err, msg, sizeof msg), *w = ksl_udp_open(any, 0, &err, msg, sizeof msg);
-    int r = !u ? 20 : !w ? 21 : autoflowlabel_of(u) != 1 ? 22 : autoflowlabel_of(w) != 1 ? 23 : 0;
+    int r = !u                                         ? 20
+            : !w                                       ? 21
+            : !ksl_udp_autoflowlabel_asked_for_test(u) ? 24
+            : !ksl_udp_autoflowlabel_asked_for_test(w) ? 25
+            : autoflowlabel_of(u) != 1                 ? 22
+            : autoflowlabel_of(w) != 1                 ? 23
+                                                       : 0;
     if (u)
         ksl_udp_close(u);
     if (w)

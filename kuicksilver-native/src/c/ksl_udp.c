@@ -230,12 +230,12 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     int one = 1, v4 = u->family == AF_INET || u->dual, v6 = u->family == AF_INET6;
     /* RFC 9000 section 9.7: "Endpoints that send data using IPv6 SHOULD apply an IPv6 flow label in compliance with [RFC6437]". Neither
        system lets an unconnected socket choose the label of one datagram without more state (Darwin not at all; Linux only through
-       IPV6_FLOWINFO_SEND, which kernels before 4.20 refuse without a lease per label), but both label on their own once asked: Linux
+       IPV6_FLOWINFO_SEND, which kernels before 5.6 refuse without a lease per label), but both label on their own once asked: Linux
        with a keyed hash of each datagram's addresses and ports (a new path, a new label), Darwin with one random label per socket.
-       A host may leave that off by default (Linux net.ipv6.auto_flowlabels = 2, Darwin net.inet6.ip6.auto_flowlabel = 0): ask for it.
-       Best effort: an older kernel without the option keeps its default */
+       A host may leave that off by default (Linux net.ipv6.auto_flowlabels = 2, since 4.3; Darwin net.inet6.ip6.auto_flowlabel = 0):
+       ask for it. Best effort: a kernel before 3.17 has neither the option nor automatic labels */
     if (v6)
-        (void)setsockopt(u->fd, IPPROTO_IPV6, IPV6_AUTOFLOWLABEL, &one, sizeof one);
+        u->autoflowlabel = setsockopt(u->fd, IPPROTO_IPV6, IPV6_AUTOFLOWLABEL, &one, sizeof one) == 0;
     /* 7 MB; Darwin refuses more than kern.ipc.maxsockbuf (8 MB less overhead by default), so halve until the kernel takes it */
     for (int rcv = 7 * 1024 * 1024;
          rcv >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv) != 0; rcv /= 2) {
@@ -582,6 +582,9 @@ void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) {
 }
 void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) {
     set_err(u, e, what);
+}
+int ksl_udp_autoflowlabel_asked_for_test(ksl_udp *u) {
+    return u->autoflowlabel;
 }
 int ksl_udp_autoflowlabel_for_test(int fd) {
     int v = -1;
