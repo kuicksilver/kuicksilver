@@ -28,7 +28,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   in the xcframework is now the version it was built as, not the `-SNAPSHOT` fallback.
 - CI: `.github/workflows/gradle-wrapper.yml` validates `gradle/wrapper/gradle-wrapper.jar` against the official Gradle
   releases (Gradle's wrapper-validation action) on every push and pull request to `main` and `release/**`.
-
+- WebSockets over HTTP/2 (RFC 8441, Extended CONNECT; `docs/guide/ktor.md`, "WebSockets over HTTP/2"), in both Ktor
+  engines. Server: with `http2 = true`, the new experimental `webSocketsOverHttp2` (`EngineMain` key
+  `kuicksilver.webSocketsOverHttp2`; on by default, as `webSocketsOverHttp3`) advertises SETTINGS_ENABLE_CONNECT_PROTOCOL
+  and serves `webSocket {}` routes over an Extended CONNECT with `:protocol = websocket`, answered `:status 200`; another
+  protocol or a classic CONNECT gets 501, a Sec-WebSocket-Version other than 13 gets 400 or 426 (RFC 6455 section
+  4.2), and a route that is not a WebSocket one cannot answer the CONNECT with a 2xx (501). Client: a `wss://`
+  WebSocket goes over an HTTP/2 connection to its origin that is there already and whose server allows Extended CONNECT,
+  once that server's SETTINGS arrived (RFC 8441 section 3); otherwise it opens a connection of its own with `http/1.1`
+  only, as before. Its handshake answer's extensions and subprotocol are checked against the offer (RFC 6455 section
+  4.1); the session's frames go within the stream's flow-control windows and through the same frame guard as over
+  HTTP/1.1 and HTTP/3; an orderly close is the stream's END_STREAM, anything else a RST_STREAM CANCEL. In
+  `kuicksilver-http2` (internal API): `H2ServerConnection.start(enableConnectProtocol)`, `H2ServerStream.protocol`,
+  `H2ClientConnection.open(protocol)`, `serverAllowsExtendedConnect`, `awaitServerSettings()` and
+  `H2ClientStream.awaitServerEnd()`; a CONNECT answered with a 2xx is a tunnel (RFC 9113 section 8.5: a HEADERS frame on
+  it is a stream error PROTOCOL_ERROR, no trailers are sent on it, a content-length does not apply), a server that takes
+  SETTINGS_ENABLE_CONNECT_PROTOCOL back ends the connection with PROTOCOL_ERROR, and `:protocol` must be a token.
 - Documentation site: the API reference of the published modules (Dokka HTML, with module and package descriptions,
   source links to the release tag and links into the kotlinx-coroutines, kotlinx-io and Ktor references) and the guide
   as HTML, per version, at <https://kuicksilver.github.io/kuicksilver/> (`/<version>/api/`, `/<version>/guide/`,
@@ -172,7 +187,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   that stream only, and the server never answers a client's RST_STREAM with one. The client's preface and field blocks are
   bounded by `requestHeaderTimeoutSeconds`, request content and idle connections by `connectionIdleTimeoutSeconds`; a
   client's RST_STREAM cancels its handler, and a stop sends the two-step GOAWAY (RFC 9113 section 6.8). TLS 1.3 only, no
-  h2c, no RFC 8441 (`:protocol` is refused), no server push. The event listener reports `HTTP_2_0`, and the soak probe
+  h2c, no server push; WebSockets over HTTP/2 (RFC 8441), below. The event listener reports `HTTP_2_0`, and the soak probe
   counts `server.h2Connections` and `server.h2Streams`. Flood defences in the engine on top of the per-connection limits
   of `Http2Settings`: a reset stream's handler is cancelled and counts toward SETTINGS_MAX_CONCURRENT_STREAMS until it
   returns (Rapid Reset, MadeYouReset); a connection that is over gets the send-stall deadline for what it still has to
@@ -184,7 +199,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`tools/interop/h2spec.sh`).
 - Ktor client: HTTP/2 over TLS (RFC 9113; `docs/guide/ktor.md`, "HTTP/2 on the client"). Every `https://` connection
   over TCP offers `h2` and `http/1.1` in ALPN (also through HTTP CONNECT and SOCKS5 proxies; never for `http://`, no h2c,
-  and never for WebSockets, RFC 8441 is not supported yet); a server that picks `h2` gets one multiplexed connection per
+  and never on a WebSocket's own connection; WebSockets over HTTP/2, RFC 8441, below); a server that picks `h2` gets one multiplexed connection per
   route while it has a free stream under its SETTINGS_MAX_CONCURRENT_STREAMS, a second one when it is full, within
   `maxConnectionsPerRoute`. Requests that start together toward a new origin open one connection: one connects while the others wait for it
   (RFC 9113 section 9.1). A request the

@@ -337,8 +337,8 @@ a client on HTTP/2 learns HTTP/3 too. Requests are checked against RFC 9113 sect
 a malformed one (an uppercase or invalid field name, a connection-specific field, `te` other than `trailers`, a missing,
 repeated or unknown pseudo-header field, `host` that differs from `:authority`, content that does not match
 `content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
-answered 431. A CONNECT is answered 501 (the engine has no tunnels). WebSockets over HTTP/2 (RFC 8441, planned for 0.3.0) are not offered yet:
-the engine never sends SETTINGS_ENABLE_CONNECT_PROTOCOL, so a request with `:protocol` is malformed. A request with
+answered 431. A CONNECT is answered 501 (the engine has no tunnels), and so is an Extended CONNECT for a protocol other
+than `websocket`; WebSockets come over HTTP/2 too ([WebSockets over HTTP/2](#websockets-over-http2)). A request with
 `Expect: 100-continue` gets an interim 100 as the handler starts (RFC 9110 §10.1.1: immediate), unless the request has no
 content; another expectation is answered 417 when the handler reads the body. Content that does not match the
 response's `Content-Length` is never sent as a complete response (the stream is reset); a 1xx as the final status goes
@@ -468,6 +468,24 @@ with `webSocketsOverHttp3 = false`, also when `webTransport = true` advertises E
 tunnel nobody accepted (RFC 9110 section 9.3.6), and `call.response.status()` reports the 501. An accepted upgrade
 reports 101, as on HTTP/1.1, while `:status 200` goes out. A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
 section 4.5) and gets 501 too.
+
+### WebSockets over HTTP/2
+
+With `http2 = true`, `webSocketsOverHttp2 = true` (the default) has the HTTP/2 connections advertise
+`SETTINGS_ENABLE_CONNECT_PROTOCOL` and accept Extended CONNECT with `:protocol = websocket` (RFC 8441), as over HTTP/3:
+the request reaches Ktor's pipeline as the HTTP/1.1 upgrade request the `WebSockets` plugin knows, ordinary
+`webSocket("/path") {}` routes serve it unchanged (`call.request.httpVersion` is `"HTTP/2"`), and the upgrade is answered
+with `:status 200` (no `Sec-WebSocket-Accept`, RFC 8441 section 5). The frames travel as DATA on the stream, within the
+client's flow-control windows (a client that takes none for the send-stall deadline has its stream reset), and the
+session's frames are checked against the negotiated extensions as over HTTP/1.1. The session's end is the stream's
+END_STREAM; a call cancelled or failed meanwhile resets the stream with CANCEL (RFC 8441 section 5), and a client's
+RST_STREAM ends the session. The request must carry `sec-websocket-version: 13` (RFC 6455 section 4.2.1): without it the
+answer is 400, with another version 426 with `sec-websocket-version: 13`. A route that is not a WebSocket one answering
+the CONNECT with a 2xx gets 501 instead (no session was accepted), an Extended CONNECT for another protocol 501, and
+a HEADERS frame on the stream after its request (RFC 9113 section 8.5) a stream error PROTOCOL_ERROR. A WebSocket stream
+counts toward `Http2Settings.maxConcurrentStreams` while it is open, and keeps its connection from being idle. With
+`webSocketsOverHttp2 = false` the parameter is not sent and a `:protocol` request is malformed: clients keep opening their
+WebSockets over HTTP/1.1 on the same port.
 
 ### WebTransport over HTTP/3 (experimental)
 
@@ -683,6 +701,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
 | `kuicksilver.altSvc` | send `Alt-Svc` on HTTP/1.1 responses (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
+| `kuicksilver.webSocketsOverHttp2` | accept RFC 8441 WebSockets on HTTP/2 connections (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
 
@@ -793,8 +812,8 @@ This holds directly, through an HTTP CONNECT tunnel and through SOCKS5 (ALPN is 
 as with OkHttp), in every `http3 { discovery }` mode but `H3Only`, and whatever `http3Allowed` says: the HTTP/3 kill
 switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1.1`, as in 0.2.
 
-- **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c) and WebSockets, which offer `http/1.1` only (WebSockets over
-  HTTP/2, RFC 8441, are not supported yet). No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
+- **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c). A WebSocket opens no HTTP/2 connection of its own: see
+  WebSockets below. No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
   ends the connection), no RFC 7540 priorities (`priority(...)` goes as the end-to-end `priority` field), and no
   connection coalescing across origins.
 - **Repeats.** A request the server did not process, a stream above a GOAWAY's last stream or refused with
@@ -838,6 +857,21 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
 - **Events and diagnostics.** `protocolSelected` comes once the connection is in hand and names its protocol
   (`HTTP_2_0`), then `connectionAcquired(HTTP_2_0, reused)`; the race reports `raceEnded(winner = HTTP_2_0)`; and
   `ProtocolDiagnostics.protocol` is `HTTP_2_0` (its `fallback` still says why HTTP/3 was not used).
+- **WebSockets** (RFC 8441). A `wss://` WebSocket goes over HTTP/2 when its origin has an HTTP/2 connection already
+  (opened by an earlier request, as in Chromium) whose server enabled Extended CONNECT (SETTINGS_ENABLE_CONNECT_PROTOCOL
+  = 1, section 3): an Extended CONNECT with `:protocol = websocket` on a new stream, without `Sec-WebSocket-Key`,
+  `Connection` and `Upgrade` (section 5); the session's `call.response.version` is `HTTP_2_0`. A connection whose
+  server's SETTINGS have not arrived yet is waited for, within the connect timeout, before the WebSocket decides (section
+  3: the client "MUST NOT" use `:protocol` before the setting arrives). Otherwise (no HTTP/2 connection, a server without
+  the setting, a connection without a free stream, HTTP_1_1_REQUIRED) the WebSocket opens a connection of its own that
+  offers `http/1.1` only and upgrades as in 0.2; a WebSocket never opens an HTTP/2 connection. A 2xx answer opens the
+  session after its `Sec-WebSocket-Extensions` and `Sec-WebSocket-Protocol` were checked against the offer (an extension
+  or a subprotocol not offered fails the handshake with `WebSocketException`, RFC 6455 section 4.1); any other answer
+  fails it as an HTTP/1.1 answer without 101 does. The frames go within the server's flow-control windows (a send stall
+  is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order ends the
+  stream with END_STREAM and waits up to 5 s for the server's; a handshake refused here, or a call that failed or was
+  cancelled before the session closed, resets the stream with CANCEL. As over HTTP/1.1, one WebSocket per remote host
+  is in its handshake at a time (RFC 6455 section 4.1).
 
 ### Connection pool
 

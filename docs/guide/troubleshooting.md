@@ -519,7 +519,7 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 | `BrokenAlternative` | HTTP/3 to this origin failed while HTTP/1.1 worked (UDP blocked, a QUIC error), so the alternative is skipped for 5 minutes, doubling per repeat up to 2 days; `altSvcMarkedBroken` reported it. Set `networkId` so a network change forgets the marks |
 | `Race` | the race went to HTTP/1.1: QUIC did not finish within its head start (1.5 x the origin's smoothed RTT, 250 ms without history, 100 ms..2 s; `hardDelay` overrides it), and (since 0.3.0) on a network where QUIC was never seen working HTTP/1.1 starts after 10 ms. The QUIC setup goes on and serves the next requests |
 | `ExistingConnection` | an HTTP/3 connection to the origin was already open and carries the call |
-| `WebSocket` | a WebSocket starts on HTTP/1.1 until the origin has an HTTP/3 connection that allows Extended CONNECT (RFC 9220) |
+| `WebSocket` | a WebSocket goes over TCP until the origin has an HTTP/3 connection that allows Extended CONNECT (RFC 9220): over an HTTP/2 connection of the origin that is open already and whose server allows Extended CONNECT (RFC 8441; `response.version` is `HTTP_2_0`), else over HTTP/1.1 |
 | `Fallback` | HTTP/3 failed for this request and it is repeated over TCP; `fallback` says why ([the `FallbackReason` table](#the-ktor-client-never-uses-http3-or-stops-using-it)) |
 | `HttpsRecord` | an endpoint of the origin's HTTPS record (`http3 { httpsRecords }`) that offers one transport only: TCP (its ALPN set has no `h3`), or HTTP/3 without TCP (`no-default-alpn`), so nothing raced |
 

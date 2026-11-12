@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver — interop results
 
-Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors.
+Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server, WebSockets over HTTP/2 against Node.js and Chrome, and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors.
 
 ## Interop matrix (0.2.0, QUIC Interop Runner 740c05a, 2026-10-13)
 
@@ -160,6 +160,20 @@ with RST_STREAM STREAM_CLOSED, h2spec expects a connection error of that type, w
 | JVM (macOS arm64 host; h2spec in Docker Desktop, amd64 under emulation, reaching the host as `host.docker.internal`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
 | macosArm64 executable (same host) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
 | linuxX64 executable (one linux/amd64 container with the h2spec binary) | — | — | — | release gate (`tools/ci/local-matrix.sh`) |
+
+## WebSockets over HTTP/2 (RFC 8441, 2026-11-12)
+
+Against independent implementations, both directions; each run opens one TLS connection with ALPN `h2`, a WebSocket as
+an Extended CONNECT on it, one text message echoed, and a close with 1000 (the tests print what each side saw).
+
+| peer | role of the peer | how | result |
+|---|---|---|---|
+| Node.js 24.15 `http2` (nghttp2) | client of our server | `NodeH2WebSocketInteropTest.nodeClientAgainstOurServer` (runs when `node` is found; `KSL_NODE`) | ✅ SETTINGS_ENABLE_CONNECT_PROTOCOL = 1 seen, `:status 200` without `sec-websocket-accept`, echo `HTTP/2:node`, our Close 1000 and END_STREAM, the stream closed without a reset |
+| Node.js 24.15 `http2` (nghttp2) | server of our client | `NodeH2WebSocketInteropTest.ourClientAgainstNodeServer` | ✅ our client's CONNECT with `:protocol websocket`, `:scheme https`, the path with its query, `sec-websocket-version 13` and no `sec-websocket-key`, `connection`, `upgrade` or `host`; the subprotocol accepted; masked frames; both END_STREAMs, no reset |
+| Chrome 157 (macOS, headless, QUIC off) | client of our server | `ChromeWebSocketH2Test.chromeWebSocketOverH2` (opt-in: `-Pkuicksilver.browserTests=true`) | ✅ Chrome sent the page's `wss://` WebSocket on the page's HTTP/2 connection (the route saw `HTTP/2`), echo and close 1000 |
+
+Our client against our server: `ServerWebSocketH2Test.kuicksilverClientOverH2`. OkHttp has no RFC 8441, and the
+pinned Docker images at hand (nginx, Caddy) were not run: nginx has no RFC 8441, and Node.js covers nghttp2.
 
 ## Interop WebTransport (browsers, 2026-10-22 and 2026-10-23)
 
