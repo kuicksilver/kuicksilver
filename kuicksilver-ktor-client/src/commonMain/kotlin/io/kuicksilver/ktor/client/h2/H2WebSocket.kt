@@ -16,10 +16,10 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSecure
 import io.ktor.util.date.GMTDate
-import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http2.runtime.H2ClientStream
+import io.kuicksilver.http2.runtime.H2StreamOutput
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.h3.H3Pool
@@ -34,6 +34,7 @@ import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
@@ -51,6 +52,12 @@ private const val WEBSOCKET = "websocket"
  * receiving a Close message, e.g., if it has not received a TCP Close from the server in a reasonable time period".
  */
 internal const val H2_WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
+
+/**
+ * How far a WebSocket session's writer may be ahead of its HTTP/2 stream: the bytes it flushed that were not handed to the
+ * stream yet (the stream holds at most the server's window more). Beyond it the writer waits (RFC 9113 section 5.2).
+ */
+internal const val H2_WEBSOCKET_OUTPUT_AHEAD: Int = 65_536
 
 /**
  * A WebSocket over HTTP/2 (RFC 8441) on a stream of [conn], reserved by the caller on a connection whose server enabled
@@ -141,19 +148,20 @@ internal suspend fun h2WebSocket(
         fun values(name: String) = head.fields.filter { it.first == name }.map { it.second }
         val handshake =
             webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), callContext)
-        val output = ByteChannel()
-        val sender =
-            GlobalScope.launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket")) {
-                try {
-                    stream.sendBody(output, data.socketTimeoutMillis()) {
-                        io.ktor.client.plugins
-                            .SocketTimeoutException(data, null)
-                    }
-                } catch (e: Throwable) {
-                    // the stream failed under the session (a reset, the connection): the session's writes fail with it
-                    output.cancel(e)
+        // the frames go out within the server's windows, at most H2_WEBSOCKET_OUTPUT_AHEAD bytes ahead of the stream (the
+        // session's writer waits beyond that, RFC 9113 section 5.2); a stream that fails under the session (a reset, the
+        // connection, the socket timeout while it waits for window) fails the session's writes with it
+        val output =
+            H2StreamOutput(
+                CoroutineScope(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket")),
+                H2_WEBSOCKET_OUTPUT_AHEAD,
+            ) { source, end ->
+                stream.sendBody(source, data.socketTimeoutMillis(), end) {
+                    io.ktor.client.plugins
+                        .SocketTimeoutException(data, null)
                 }
             }
+        val sender = output.done
         job.invokeOnCompletion { cause ->
             // a session that ended in order closed its output: its last frames and END_STREAM go out, and the server's
             // END_STREAM is waited for (RFC 6455 section 7.1.1); a call that failed or was cancelled (its output may still

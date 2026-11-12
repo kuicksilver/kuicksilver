@@ -235,15 +235,17 @@ public class H2ClientStream internal constructor(
     public val hasResponse: Boolean get() = s.head.isCompleted
 
     /**
-     * Sends [source] as the request content and ends the stream, within the server's flow-control windows; a wait for
-     * window longer than [stallMillis] (null: none) fails the stream with [stallError]'s exception. Returns quietly when
-     * the server stopped the request after a complete response (RFC 9113 section 8.1).
+     * Sends [source] as the request content and ends the stream ([end], the default; false leaves it open for more),
+     * within the server's flow-control windows; a wait for window longer than [stallMillis] (null: none) fails the stream
+     * with [stallError]'s exception. Returns quietly when the server stopped the request after a complete response (RFC
+     * 9113 section 8.1).
      */
     public suspend fun sendBody(
         source: ByteReadChannel,
         stallMillis: Long?,
+        end: Boolean = true,
         stallError: () -> Throwable,
-    ): Unit = rt.sendBody(s, source, stallMillis, stallError)
+    ): Unit = rt.sendBody(s, source, stallMillis, stallError, end)
 
     /**
      * Suspends until the server ended its side of the stream in order (its END_STREAM, after the content it sent was

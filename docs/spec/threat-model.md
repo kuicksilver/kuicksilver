@@ -508,7 +508,9 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   SETTINGS_MAX_CONCURRENT_STREAMS while open (a client cannot open more sessions on a connection than the server's limit,
   and the server's per-connection limits all hold), its memory is bounded by the stream and connection windows in both
   directions (credit only as the session reads; a peer that reads nothing stalls the sender, bounded by the send-stall
-  deadline on the server and the socket timeout on the client), and its frames pass the same guard as over HTTP/1.1
+  deadline on the server and the socket timeout on the client), the engine holding at most 64 KiB of a session's
+  frames ahead of its stream (`H2StreamOutput`; before, a Ktor ByteChannel in front of the stream took up to about
+  3 MiB, 3.7 MB seen on an Android 10 emulator), and its frames pass the same guard as over HTTP/1.1
   and HTTP/3 (§3.20.1). The server takes `:protocol` only when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL
   (`webSocketsOverHttp2`), serves only `websocket` (another protocol or a classic CONNECT: 501; no tunnel to the
   `:authority` is ever made, RFC 8441 §4), checks the version before the application sees the request (400), never

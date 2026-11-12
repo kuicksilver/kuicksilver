@@ -887,9 +887,52 @@ class ServerWebSocketH2Test {
     }
 
     /**
+     * The engine's own buffering, without Ktor's session between (whose channels and serializer hold frames of their own,
+     * as the application configures them): an upgrade that writes [total] bytes as 16 KiB binary frames straight into the
+     * engine's output, flushing each, counting into [sent] what each flush let through.
+     */
+    private fun Application.rawSender(
+        total: Int,
+        sent: kotlinx.coroutines.flow.MutableStateFlow<Long>,
+        done: CompletableDeferred<Throwable?>,
+    ) {
+        install(WebSockets)
+        routing {
+            get("/ws") {
+                call.respond(
+                    object : OutgoingContent.ProtocolUpgrade() {
+                        override suspend fun upgrade(
+                            input: ByteReadChannel,
+                            output: ByteWriteChannel,
+                            engineContext: CoroutineContext,
+                            userContext: CoroutineContext,
+                        ): Job =
+                            CoroutineScope(engineContext).launch {
+                                try {
+                                    var n = 0L
+                                    while (n < total) {
+                                        // FIN, binary, a 16-bit length of 16 384, unmasked (a server's frame)
+                                        output.writeFully(byteArrayOf(0x82.toByte(), 126, 0x40, 0x00))
+                                        output.writeFully(ByteArray(16_384))
+                                        output.flush()
+                                        n += 16_384 + 4
+                                        sent.value = n
+                                    }
+                                    done.complete(null)
+                                } catch (e: Throwable) {
+                                    done.complete(e)
+                                }
+                            }
+                    },
+                )
+            }
+        }
+    }
+
+    /**
      * Backpressure from the client to the server (RFC 9113 section 5.2): a client that reads nothing gives no credit, so
-     * at most its stream window (64 KiB) reaches it and the server's session stops sending once the engine's own channel
-     * in front of the stream is full too: it never gets near the 4 MiB it wants to send. After the send-stall deadline
+     * at most its stream window (64 KiB) reaches it and the upgrade's writer is held once it is 64 KiB more ahead of the
+     * stream (`WEBSOCKET_OUTPUT_AHEAD`): it never gets near the 4 MiB it wants to send. After the send-stall deadline
      * without window (here 300 ms, `sendStallTimeoutForTest`) the stream is reset with CANCEL and the session fails
      * (docs/guide/ktor.md, "WebSockets over HTTP/2").
      */
@@ -901,7 +944,7 @@ class ServerWebSocketH2Test {
             val done = CompletableDeferred<Throwable?>()
             val total = 4 * 1024 * 1024
             val (server, port) =
-                h2TlsServer(configure = { sendStallTimeoutForTest = 300.milliseconds }) { sender(total, sent, done) }
+                h2TlsServer(configure = { sendStallTimeoutForTest = 300.milliseconds }) { rawSender(total, sent, done) }
             try {
                 h2(port, settings = smallWindow) { c ->
                     val s = c.connect()
@@ -910,7 +953,14 @@ class ServerWebSocketH2Test {
                     assertEquals(false, withTimeout(15.seconds) { s.awaitServerEnd() })
                     val failure = withTimeout(10.seconds) { done.await() }
                     assertNotNull(failure, "the session cannot have sent everything: it failed with the stream")
-                    assertTrue(sent.value < 2L * 1024 * 1024, "the session stopped at the window and the channel: ${sent.value}")
+                    // what the engine can have taken from the upgrade's writer: the client's window (64 KiB) on the stream,
+                    // the engine's lead over the stream (WEBSOCKET_OUTPUT_AHEAD), the frame whose flush went past that lead and
+                    // the piece the engine was handing to the stream when the window ran out. Before, a Ktor ByteChannel stood
+                    // in front of the stream and took up to about 3 MiB (2.7 MB seen on Android, 2.0 MB on the JVM)
+                    val frame = 16_384L + 4
+                    val bound = 65_536L + io.kuicksilver.ktor.server.h2.WEBSOCKET_OUTPUT_AHEAD + 2 * frame
+                    println("server WebSocket over HTTP/2 stalled after ${sent.value} bytes (bound $bound)")
+                    assertTrue(sent.value <= bound, "the session stopped at the window and the engine's lead: ${sent.value} > $bound")
                     // what reached the client is within the window it granted (it reads only now)
                     var read = 0L
                     val reset =
@@ -948,8 +998,9 @@ class ServerWebSocketH2Test {
                 h2(port, settings = smallWindow) { c ->
                     val s = c.connect()
                     assertEquals(200, s.response().status)
-                    // the server is 4 x the window ahead of the client's reading: the rest waits for WINDOW_UPDATE
-                    withTimeout(10.seconds) { sent.first { it >= 4L * 65_536 } }
+                    // the server is twice the window ahead of the client's reading (the window and the engine's lead): the rest
+                    // waits for WINDOW_UPDATE
+                    withTimeout(10.seconds) { sent.first { it >= 2L * 65_536 } }
                     assertTrue(!done.isCompleted, "4 MiB cannot have gone out without the client reading")
                     coroutineScopeWithJob { scope ->
                         val (ws, out) = scope.session(s)
