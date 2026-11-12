@@ -276,4 +276,69 @@ class ClientAltSvcTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * RFC 7838 section 9.4: "In a user agent, any alternative service information MUST be removed when origin-specific data
+     * is cleared (typically, when cookies [RFC6265] are cleared)." `clearAlternativeServices(origin)` forgets that origin's
+     * alternatives (in the store, on disk too), its broken marks and its RTT; without an origin, everything. Before, there
+     * was no supported way: the store was mutated under the engine's lock only.
+     */
+    @Test fun negative_clearAlternativeServicesRemovesOriginData() =
+        clientTest {
+            val (server, port) =
+                testServer(configure = { http3 = false }) {
+                    routing {
+                        get("/") {
+                            call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"; persist=1")
+                            call.respondText("h1")
+                        }
+                    }
+                }
+            val path = kotlinx.io.files.Path(kotlinx.io.files.SystemTemporaryDirectory, "altsvc-${kotlin.random.Random.nextLong()}.tsv")
+            try {
+                val origin = "https://127.0.0.1:$port"
+                val other = "https://other.example:443"
+                val store = FileAltSvcStore(path)
+                store.put(
+                    other,
+                    listOf(
+                        AltSvcEntry(
+                            "h3",
+                            null,
+                            443,
+                            io.ktor.util.date
+                                .getTimeMillis() + 60_000,
+                            true,
+                        ),
+                    ),
+                )
+                testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    c.get("$origin/").bodyAsText()
+                    assertEquals(listOf(port), engine.altSvcSnapshot(io.ktor.http.Url("$origin/")).map { it.port })
+                    engine.brokenAltSvc.markBroken(origin, "127.0.0.1:$port")
+                    engine.brokenAltSvc.markBroken(other, "other.example:443")
+                    engine.rememberSrtt(origin, 10.milliseconds)
+                    engine.rememberSrtt(other, 10.milliseconds)
+
+                    c.clearAlternativeServices(io.ktor.http.Url("$origin/"))
+                    assertTrue(engine.altSvcSnapshot(io.ktor.http.Url("$origin/")).isEmpty())
+                    assertTrue(FileAltSvcStore(path).get(origin).isEmpty(), "removed on disk too")
+                    assertEquals(1, FileAltSvcStore(path).get(other).size, "another origin is kept")
+                    assertEquals(null, engine.brokenAltSvc.brokenReason(origin, "127.0.0.1:$port"))
+                    assertTrue(engine.brokenAltSvc.brokenReason(other, "other.example:443") != null)
+                    assertEquals(1, engine.srttOrigins)
+
+                    c.clearAlternativeServices()
+                    assertTrue(FileAltSvcStore(path).get(other).isEmpty(), "everything removed on disk")
+                    assertTrue(store.get(other).isEmpty())
+                    assertEquals(0, engine.brokenAltSvc.size)
+                    assertEquals(0, engine.srttOrigins)
+                }
+            } finally {
+                server.stop(100, 500)
+                kotlinx.io.files.SystemFileSystem
+                    .delete(path, mustExist = false)
+            }
+        }
 }

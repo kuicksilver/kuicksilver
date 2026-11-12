@@ -208,4 +208,16 @@ class FileAltSvcStoreTest {
         }
         assertTrue(FileAltSvcStore(p) { now }.get("https://a:443").isEmpty())
     }
+
+    /** `clear()` (RFC 7838 section 9.4: alternative service information removed with origin-specific data) reaches the disk. */
+    @Test fun negative_clearRemovesEveryOriginOnDisk() {
+        val p = tmp()
+        val s = FileAltSvcStore(p) { now }
+        s.put("https://a:443", listOf(entry(443, persist = true)))
+        s.put("https://b:443", listOf(entry(444)))
+        s.clear()
+        assertTrue(s.get("https://a:443").isEmpty() && s.get("https://b:443").isEmpty())
+        val again = FileAltSvcStore(p) { now }
+        assertTrue(again.get("https://a:443").isEmpty() && again.get("https://b:443").isEmpty())
+    }
 }

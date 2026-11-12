@@ -79,6 +79,12 @@ public class FileAltSvcStore(
         if (map.remove(origin) != null) changed()
     }
 
+    override fun clear() {
+        if (map.isEmpty() && persisted.isEmpty()) return
+        map.clear()
+        changed()
+    }
+
     override fun clearNonPersistent() {
         var changed = false
         for (k in map.keys.toList()) {

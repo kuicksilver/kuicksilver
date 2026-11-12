@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.HttpClient
 import io.ktor.http.Url
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 
 /**
  * One alternative service of an origin (RFC 7838 section 3): `protocol="host:port"`, valid until [expiresAtEpochMillis][AltSvcEntry.expiresAtEpochMillis].
@@ -54,6 +56,14 @@ public interface AltSvcStore {
 
     /** Drops every entry without `persist=1` (a network change, RFC 7838 section 2.2). */
     public fun clearNonPersistent()
+
+    /**
+     * Forgets every entry of every origin, persistent ones included: the engine's
+     * [clearAlternativeServices][io.ktor.client.HttpClient.clearAlternativeServices] without an origin, so alternative
+     * service information goes when origin-specific data is cleared (RFC 7838 section 9.4: it "MUST be removed when
+     * origin-specific data is cleared"). A store kept across restarts removes them there too.
+     */
+    public fun clear()
 }
 
 /**
@@ -78,6 +88,10 @@ public class InMemoryAltSvcStore : AltSvcStore {
 
     override fun remove(origin: String) {
         map.remove(origin)
+    }
+
+    override fun clear() {
+        map.clear()
     }
 
     override fun clearNonPersistent() {
@@ -406,6 +420,11 @@ internal class AltSvcCache(
         if (clearNonPersistent) store.clearNonPersistent()
     }
 
+    /** Forgets the alternatives of [origin] (an [originOf] key), or of every origin when null (RFC 7838 section 9.4). */
+    fun clear(origin: String?) {
+        if (origin == null) store.clear() else store.remove(origin)
+    }
+
     init {
         (store as? FileAltSvcStore)?.deferWrites = true
     }
@@ -423,6 +442,21 @@ internal class AltSvcCache(
         /** Origins kept by the built-in stores and broken marks; the least recently used go first. */
         const val MAX_ORIGINS: Int = 1000
     }
+}
+
+/**
+ * Forgets what this client learned about the alternative services of [origin] (any URL of it: `https://host:port`), or of
+ * every origin when [origin] is null: the cached `Alt-Svc` alternatives in [Http3ClientConfig.altSvcStore] (persistent ones
+ * too, and from the store file of a [FileAltSvcStore] before this returns), the alternatives marked broken, and the RTTs
+ * kept for the HTTP/3 head start; without an origin also the networks where QUIC was seen working. RFC 7838 section 9.4:
+ * "In a user agent, any alternative service information MUST be removed when origin-specific data is cleared (typically,
+ * when cookies [RFC6265] are cleared)": call it wherever the application clears cookies or other site data. Open HTTP/3
+ * connections are not closed (`closeHttp3Connections()` does that); the next `Alt-Svc` the origin sends is learned again.
+ * Does nothing when the client's engine is not Kuicksilver.
+ */
+@ExperimentalKuicksilverApi
+public suspend fun HttpClient.clearAlternativeServices(origin: Url? = null) {
+    (engine as? KuicksilverEngine)?.clearAlternativeServices(origin)
 }
 
 /** Moves [key] to the most recently used end of this insertion-ordered map and returns its value. */

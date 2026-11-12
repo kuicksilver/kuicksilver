@@ -10,7 +10,13 @@ public final class io/kuicksilver/ktor/client/AltSvcEntry {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class io/kuicksilver/ktor/client/AltSvcKt {
+	public static final fun clearAlternativeServices (Lio/ktor/client/HttpClient;Lio/ktor/http/Url;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun clearAlternativeServices$default (Lio/ktor/client/HttpClient;Lio/ktor/http/Url;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public abstract interface class io/kuicksilver/ktor/client/AltSvcStore {
+	public abstract fun clear ()V
 	public abstract fun clearNonPersistent ()V
 	public abstract fun get (Ljava/lang/String;)Ljava/util/List;
 	public abstract fun put (Ljava/lang/String;Ljava/util/List;)V
@@ -56,6 +62,7 @@ public final class io/kuicksilver/ktor/client/FallbackReason : java/lang/Enum {
 public final class io/kuicksilver/ktor/client/FileAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
 	public fun <init> (Lkotlinx/io/files/Path;Lkotlin/jvm/functions/Function0;)V
 	public synthetic fun <init> (Lkotlinx/io/files/Path;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun clear ()V
 	public fun clearNonPersistent ()V
 	public fun get (Ljava/lang/String;)Ljava/util/List;
 	public fun put (Ljava/lang/String;Ljava/util/List;)V
@@ -196,6 +203,7 @@ public final class io/kuicksilver/ktor/client/HttpsRecordSource$System : io/kuic
 
 public final class io/kuicksilver/ktor/client/InMemoryAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
 	public fun <init> ()V
+	public fun clear ()V
 	public fun clearNonPersistent ()V
 	public fun get (Ljava/lang/String;)Ljava/util/List;
 	public fun put (Ljava/lang/String;Ljava/util/List;)V

@@ -93,6 +93,7 @@ abstract fun interface io.kuicksilver.ktor.client/ProxyResolver { // io.kuicksil
 }
 
 abstract interface io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/AltSvcStore|null[0]
+    abstract fun clear() // io.kuicksilver.ktor.client/AltSvcStore.clear|clear(){}[0]
     abstract fun clearNonPersistent() // io.kuicksilver.ktor.client/AltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
     abstract fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/AltSvcStore.get|get(kotlin.String){}[0]
     abstract fun put(kotlin/String, kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry>) // io.kuicksilver.ktor.client/AltSvcStore.put|put(kotlin.String;kotlin.collections.List<io.kuicksilver.ktor.client.AltSvcEntry>){}[0]
@@ -171,6 +172,7 @@ final class io.kuicksilver.ktor.client/AltSvcEntry { // io.kuicksilver.ktor.clie
 final class io.kuicksilver.ktor.client/FileAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/FileAltSvcStore|null[0]
     constructor <init>(kotlinx.io.files/Path, kotlin/Function0<kotlin/Long> = ...) // io.kuicksilver.ktor.client/FileAltSvcStore.<init>|<init>(kotlinx.io.files.Path;kotlin.Function0<kotlin.Long>){}[0]
 
+    final fun clear() // io.kuicksilver.ktor.client/FileAltSvcStore.clear|clear(){}[0]
     final fun clearNonPersistent() // io.kuicksilver.ktor.client/FileAltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
     final fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/FileAltSvcStore.get|get(kotlin.String){}[0]
     final fun put(kotlin/String, kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry>) // io.kuicksilver.ktor.client/FileAltSvcStore.put|put(kotlin.String;kotlin.collections.List<io.kuicksilver.ktor.client.AltSvcEntry>){}[0]
@@ -274,6 +276,7 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
 final class io.kuicksilver.ktor.client/InMemoryAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/InMemoryAltSvcStore|null[0]
     constructor <init>() // io.kuicksilver.ktor.client/InMemoryAltSvcStore.<init>|<init>(){}[0]
 
+    final fun clear() // io.kuicksilver.ktor.client/InMemoryAltSvcStore.clear|clear(){}[0]
     final fun clearNonPersistent() // io.kuicksilver.ktor.client/InMemoryAltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
     final fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/InMemoryAltSvcStore.get|get(kotlin.String){}[0]
     final fun put(kotlin/String, kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry>) // io.kuicksilver.ktor.client/InMemoryAltSvcStore.put|put(kotlin.String;kotlin.collections.List<io.kuicksilver.ktor.client.AltSvcEntry>){}[0]
@@ -429,6 +432,7 @@ final val io.kuicksilver.ktor.client/priority // io.kuicksilver.ktor.client/prio
 
 final fun (io.ktor.client.request/HttpRequestBuilder).io.kuicksilver.ktor.client/priority(kotlin/Int = ..., kotlin/Boolean = ...) // io.kuicksilver.ktor.client/priority|priority@io.ktor.client.request.HttpRequestBuilder(kotlin.Int;kotlin.Boolean){}[0]
 final suspend fun (io.ktor.client.statement/HttpResponse).io.kuicksilver.ktor.client/updatePriority(kotlin/Int, kotlin/Boolean): kotlin/Boolean // io.kuicksilver.ktor.client/updatePriority|updatePriority@io.ktor.client.statement.HttpResponse(kotlin.Int;kotlin.Boolean){}[0]
+final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/clearAlternativeServices(io.ktor.http/Url? = ...) // io.kuicksilver.ktor.client/clearAlternativeServices|clearAlternativeServices@io.ktor.client.HttpClient(io.ktor.http.Url?){}[0]
 final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/closeHttp3Connections() // io.kuicksilver.ktor.client/closeHttp3Connections|closeHttp3Connections@io.ktor.client.HttpClient(){}[0]
 final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/webTransport(kotlin/String, kotlin.collections/List<kotlin/String> = ..., io.kuicksilver.http3/Http3Headers = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.ktor.client/webTransport|webTransport@io.ktor.client.HttpClient(kotlin.String;kotlin.collections.List<kotlin.String>;io.kuicksilver.http3.Http3Headers){}[0]
 

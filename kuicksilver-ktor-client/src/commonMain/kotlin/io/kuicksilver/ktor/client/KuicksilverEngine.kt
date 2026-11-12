@@ -437,6 +437,19 @@ internal class KuicksilverEngine(
     internal suspend fun closeHttp3Connections() = h3.goAwayAll(engineScope)
 
     /**
+     * `HttpClient.clearAlternativeServices(origin)` (RFC 7838 section 9.4): the cached alternatives, broken marks and RTT of
+     * the origin of [origin], or of every origin; the store's file is written before this returns.
+     */
+    internal suspend fun clearAlternativeServices(origin: io.ktor.http.Url?) {
+        val key = origin?.let(::originKey)
+        altSvcUpdate {
+            altSvc.clear(key)
+            brokenAltSvc.clear(key)
+            if (key == null) srtt.clear() else srtt.remove(key)
+        }
+    }
+
+    /**
      * A new network (`networkId`) forgets broken marks, QUIC confirmation, the HTTPS records and, if asked, non-persistent
      * alternatives.
      */

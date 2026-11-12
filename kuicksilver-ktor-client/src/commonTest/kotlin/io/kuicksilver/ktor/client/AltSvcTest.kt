@@ -266,4 +266,13 @@ class AltSvcTest {
             assertEquals("alt.example.com", cache.h3For(origin)?.host, "$bad")
         }
     }
+
+    /** `clear()` forgets every origin, persistent alternatives included (RFC 7838 section 9.4). */
+    @Test fun negative_inMemoryStoreClearForgetsEverything() {
+        respond(200, "h3=\":443\"; persist=1")
+        respond(200, "h3=\":443\"", url = Url("https://other.example/"))
+        store.clear()
+        assertNull(cache.h3For(origin))
+        assertNull(cache.h3For(Url("https://other.example/")))
+    }
 }

@@ -66,6 +66,16 @@ internal class BrokenAltSvc(
         confirmed.clear()
     }
 
+    /** Forgets the marks of [origin]'s alternatives, or every mark and confirmed network when null (RFC 7838 section 9.4). */
+    fun clear(origin: String?) {
+        if (origin == null) {
+            marks.clear()
+            confirmed.clear()
+        } else {
+            marks.keys.removeAll { it.startsWith("$origin|") }
+        }
+    }
+
     fun quicConfirmedOn(networkId: String?): Boolean = networkId in confirmed
 
     fun confirmQuic(networkId: String?) {
