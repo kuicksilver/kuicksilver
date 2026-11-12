@@ -1701,6 +1701,9 @@ Header compression uses the static table always and the dynamic table only when 
   literals until the peer catches up, so a peer that never acknowledges sections cannot grow the encoder's state.
 - `authorization`, `proxy-authorization`, `cookie` and `set-cookie` are never inserted into the dynamic table and are
   sent with the never-index bit (RFC 9204 section 7.1); neither are values longer than a quarter of the table.
+- The 'N' bit (RFC 9204 section 4.5.4, experimental): a received section's `Http3Headers.neverIndexed` lists the field
+  lines that carried it, and `headers.withNeverIndexed("x-api-key")` sends the named fields as literals with it, never
+  inserted nor referenced; a received section forwarded as it is keeps the bit (section 7.1.3).
 - The decoder rejects, before allocating, integers longer than 62 bits and string literals above a ceiling, and counts
   the decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
   `maxFieldSectionSize`. In a field section the ceiling is `maxFieldSectionSize` itself and a longer string makes the
@@ -2389,7 +2392,8 @@ request fields the client sent as literals never indexed, and `call.response.nev
 response fields so (neither into the HPACK table nor from it). An application that forwards a field it received never
 indexed must keep that representation: pass its name to `neverIndex` on the message it sends on, as the client's
 `neverIndex` and `neverIndexedHeaders` allow the other way. The engine sends `set-cookie` never indexed on its own.
-Over HTTP/1.1 and HTTP/3 the list is empty and `neverIndex` changes nothing.
+Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the list is empty and
+`neverIndex` changes nothing.
 
 `http2Settings` (`Http2Settings`) holds the windows, SETTINGS_MAX_CONCURRENT_STREAMS (100) and the field-section and
 flood limits of the core ([configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-server-engine)). The engine's deadlines apply:
@@ -2857,7 +2861,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   builder sends the named fields as literals never indexed (the engine does so on its own for `authorization`,
   `proxy-authorization` and `cookie` values under 20 bytes), and `response.neverIndexedHeaders` lists the response fields
   the server sent so. A proxy built on both engines keeps the representation by passing those names to `neverIndex` on
-  the message it forwards. Over HTTP/1.1 and HTTP/3 the list is empty and `neverIndex` changes nothing.
+  the message it forwards. Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the
+  list is empty and `neverIndex` changes nothing.
 - **Responses** are checked against RFC 9113 section 8: a malformed one (an invalid field, a content-length that does
   not match the content) fails with `Http2Exception.MalformedMessage`. A response field section above
   `settings.maxHeaderListSize` (64 KiB) fails its call, not the connection.
@@ -4916,6 +4921,8 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `tls` | `TlsConfig.Builder.() -> Unit` | `{}` |  | 0.2.0 | further TLS settings, applied after `trust` and `identity` (which it can therefore replace); `alpn` and `serverName` come from the request and are set after it, so the block cannot change them (use `TrustConfig.ExpectedName` to verify another name) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | its `connectionIdLength` and `http3.endpoint.connectionIdLength` agree: the one left at 8 follows the other; two different explicit values fail the engine's creation | 0.2.0 | QUIC transport of HTTP/3 connections |
 | `maxIdleConnectionsPerRoute` | `Int` | 4 | at least 0 | 0.2.0 | idle HTTP/1.1 keep-alive connections kept per route; not a connection limit |
+| `http11Hints` (*experimental*) | `Set<HostPort>` | empty |  | 0.3.0 | servers known to handle HTTP/1.1 (RFC 9112 section 6.1 user configuration): chunked request bodies go to them at once, without the first-contact `OPTIONS` probe; the origin, or for plain `http` through an HTTP proxy the proxy |
+| `assumeHttp11` (*experimental*) | `Boolean` | `false` |  | 0.3.0 | every server is known to handle HTTP/1.1: no first-contact `OPTIONS` probe anywhere |
 | `maxConnectionsCount` (*experimental*) | `Int` | 1000 | at least 1 | 0.2.0 | TCP connections (HTTP/1.1 and HTTP/2) of the engine, idle ones included; requests beyond it wait (FIFO, within the connect timeout) |
 | `maxConnectionsPerRoute` (*experimental*) | `Int` | 100 | at least 1 | 0.2.0 | TCP connections to one route (scheme, host, port, proxy); an HTTP/2 connection counts once however many requests it carries |
 | `idleTimeout` (*experimental*) | `Duration` | 5 min | positive | 0.2.0 | idle HTTP/1.1 connections, and HTTP/2 and HTTP/3 connections without requests, are closed after this |
