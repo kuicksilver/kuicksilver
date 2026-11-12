@@ -27,6 +27,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** How an HTTP/3 WebSocket session ends (RFC 9220), the same with Ktor's JVM and common (Native) WebSocket readers. */
@@ -229,6 +230,65 @@ class ClientH3WebSocketTest {
                         secondArrivedAfterFirstAnswer,
                         "the second CONNECT reached the server only after the first was answered",
                     )
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * A server that never answers the Extended CONNECT holds the host's lock for at most the connect timeout, as over
+     * HTTP/1.1: the first WebSocket fails with `ConnectTimeoutException`, and the second one, which waited for the
+     * host, then connects. Before, the CONNECT waited without a bound while holding the lock, so every later WebSocket
+     * to the address, over HTTP/1.1 too, waited forever.
+     */
+    @Test fun negative_stalledHandshakeTimesOutAndFreesTheHostH3() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply { this.server = QuicServerConfig.Builder(serverTls).build() }
+                        .build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            val firstArrived = CompletableDeferred<Unit>()
+            coroutineScope {
+                val served =
+                    async {
+                        val conn = ep.accept()
+                        conn.acceptRequest() // never answered
+                        firstArrived.complete(Unit)
+                        val s = conn.acceptRequest().acceptConnect()
+                        s.output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte()))
+                        s.output.flush()
+                    }
+                try {
+                    testClient(
+                        Http3DiscoveryMode.H3Only,
+                        engine = { connectTimeout = 500.milliseconds },
+                        block = { install(WebSockets) },
+                    ).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        val url = "wss://127.0.0.1:${ep.localAddress.port}/ws"
+                        coroutineScope {
+                            val first = async { runCatching { c.webSocket(url) { for (f in incoming) continue } } }
+                            firstArrived.await()
+                            val second = async { withTimeout(10.seconds) { c.webSocket(url) { for (f in incoming) continue } } }
+                            val failure = withTimeout(10.seconds) { first.await() }.exceptionOrNull()
+                            assertTrue(failure is io.ktor.client.network.sockets.ConnectTimeoutException, "the first: $failure")
+                            second.await()
+                        }
+                        assertEquals(0, engine.h1.webSocketConnecting.size(), "the host is free again")
+                    }
+                    withTimeout(5.seconds) { served.await() }
                 } finally {
                     served.cancel()
                     ep.close()

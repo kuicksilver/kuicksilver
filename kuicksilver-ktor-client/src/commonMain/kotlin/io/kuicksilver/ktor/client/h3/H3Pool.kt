@@ -1013,8 +1013,8 @@ internal class H3Pool(
      * RFC 9220: Extended CONNECT with `:protocol = websocket`; the 2xx is reported as 101 so Ktor's plugin accepts it.
      * The handshake is a WebSocket CONNECTING (RFC 6455 section 4.1 step 2: "There MUST be no more than one connection in
      * a CONNECTING state"): it holds every address the target's name resolves to ([dns], as over HTTP/1.1) from before
-     * the CONNECT goes out until the server answered it or the attempt failed, so a second WebSocket to the host, over
-     * either protocol, waits for it.
+     * the CONNECT goes out until the server answered it, the attempt failed, or the connect timeout passed (then
+     * `ConnectTimeoutException`), so a second WebSocket to the host, over either protocol, waits for it at most that long.
      */
     @OptIn(InternalAPI::class)
     private suspend fun webSocket(
@@ -1028,14 +1028,24 @@ internal class H3Pool(
         val requestTime = GMTDate()
         val headers = Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders)
         val held = webSocketConnecting.acquire(dns.lookup(t.host, t.port).map { WebSocketConnecting.addressKey(it) })
+        // the answer must come within the connect timeout, as over HTTP/1.1: a server that never answers holds the host's
+        // other WebSockets back for at most that long (cancelling the CONNECT resets its stream)
+        val millis = data.connectTimeoutMillis(config)
         val stream =
             try {
-                conn.connect(
-                    http3Request("CONNECT", data.url.authority(), data.url.h3Path()) {
-                        this.headers = headers
-                        priority = data.priority
-                    },
-                    "websocket",
+                withTimeout(millis) {
+                    conn.connect(
+                        http3Request("CONNECT", data.url.authority(), data.url.h3Path()) {
+                            this.headers = headers
+                            priority = data.priority
+                        },
+                        "websocket",
+                    )
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw io.ktor.client.network.sockets.ConnectTimeoutException(
+                    "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
+                    e,
                 )
             } finally {
                 held.release()
