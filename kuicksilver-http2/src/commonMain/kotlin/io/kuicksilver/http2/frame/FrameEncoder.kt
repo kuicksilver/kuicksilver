@@ -42,7 +42,12 @@ internal object FrameEncoder {
     fun priority(
         streamId: Int,
         dependency: Int,
-    ): ByteArray = frame(FrameType.PRIORITY, 0, streamId, 5).also { putInt(it, 9, dependency) }
+        weight: Int = 16,
+    ): ByteArray =
+        frame(FrameType.PRIORITY, 0, streamId, 5).also {
+            putInt(it, 9, dependency) // not exclusive
+            it[13] = (weight - 1).toByte()
+        }
 
     /** PRIORITY_UPDATE (RFC 9218 section 7.1) on stream 0 for [prioritizedStreamId], with an ASCII Priority Field Value. */
     fun priorityUpdate(

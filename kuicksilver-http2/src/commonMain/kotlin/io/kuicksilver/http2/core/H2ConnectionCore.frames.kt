@@ -362,12 +362,19 @@ internal fun H2ConnectionCore.onSettings(
 
             SettingId.NO_RFC7540_PRIORITIES -> {
                 if (v > 1) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_NO_RFC7540_PRIORITIES = $v")
+                // RFC 9218 section 2.1: "Senders MUST NOT change the SETTINGS_NO_RFC7540_PRIORITIES value after the first
+                // SETTINGS frame. Receivers that detect a change MAY treat it as a connection error of type PROTOCOL_ERROR";
+                // one the first SETTINGS left out is 0 from then on (as nghttp2 does)
+                if (peerNoRfc7540PrioritiesFixed && (v == 1L) != peerNoRfc7540Priorities) {
+                    throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_NO_RFC7540_PRIORITIES changed to $v")
+                }
                 peerNoRfc7540Priorities = v == 1L
             }
 
             else -> {} // section 6.5.2: unknown settings are ignored
         }
     }
+    peerNoRfc7540PrioritiesFixed = true
     queueSettingsAck(windowShrank) // section 6.5.3: immediately, behind DATA already taken from a larger window
     emit(H2Event.SettingsChanged)
 }

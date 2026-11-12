@@ -27,7 +27,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.io.IOException
-import kotlin.concurrent.Volatile
 
 /**
  * Fields that are connection-specific in HTTP/2 (RFC 9113 section 8.2.2: an endpoint MUST NOT generate them) and `te`, a
@@ -49,10 +48,6 @@ internal class H2Response(
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK
 
-    /** The response's own Priority field set the scheduling (RFC 9218 section 8): the client's later updates no longer change it. */
-    @Volatile
-    var priorityChosen: Boolean = false
-        private set
     private val headersBuilder = HeadersBuilder()
 
     /** The head went out: the engine resets a stream left unanswered at the end of the call. */
@@ -118,10 +113,11 @@ internal class H2Response(
         declaredLength = if (endStream) -1 else declaredLengthOf()
         // RFC 9218 section 8: the response's own Priority field merges into the client's signal for the DATA that follows (a
         // parameter it leaves out keeps the client's value); one that fails to parse is no choice (RFC 8941 section 4.2)
-        headersBuilder.getAll("Priority")?.joinToString(", ")?.takeIf { PriorityField.isSignal(it) }?.let {
-            priorityChosen = true
-            val p = PriorityField.merge(StreamPriority(h2.urgency, h2.incremental), it)
-            h2.setPriority(p.urgency, p.incremental)
+        // (under the connection's lock, so a PRIORITY_UPDATE arriving meanwhile is merged first or no longer applies)
+        headersBuilder.getAll("Priority")?.joinToString(", ")?.takeIf { PriorityField.isSignal(it) }?.let { field ->
+            h2.choosePriority { urgency, incremental ->
+                PriorityField.merge(StreamPriority(urgency, incremental), field).let { it.urgency * 2 + if (it.incremental) 1 else 0 }
+            }
         }
         h2.respond(statusCode.value, fields(), endStream)
         answered = true

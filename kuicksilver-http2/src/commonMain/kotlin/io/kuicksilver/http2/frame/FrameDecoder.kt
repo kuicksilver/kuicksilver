@@ -156,6 +156,11 @@ internal class FrameDecoder(
             FrameType.PRIORITY_UPDATE -> {
                 // RFC 9113 section 4.2: too small for its mandatory Prioritized Stream ID
                 if (length < 4) connError(Http2ErrorCode.FRAME_SIZE_ERROR, "PRIORITY_UPDATE length $length")
+                // a Priority Field Value is bounded as HTTP/3 bounds a control frame (4096 bytes), before anything is
+                // buffered: the values kept for idle streams stay small whatever SETTINGS_MAX_FRAME_SIZE allows
+                if (length > 4 + MAX_PRIORITY_FIELD_VALUE) {
+                    connError(Http2ErrorCode.ENHANCE_YOUR_CALM, "PRIORITY_UPDATE length $length above ${4 + MAX_PRIORITY_FIELD_VALUE}")
+                }
             }
         }
     }
@@ -211,7 +216,7 @@ internal class FrameDecoder(
 
             FrameType.PRIORITY -> {
                 if (n != 5) throw H2StreamError(id, Http2ErrorCode.FRAME_SIZE_ERROR, "PRIORITY length $n")
-                Frame.Priority(id, readInt31(p, 0))
+                Frame.Priority(id, readInt31(p, 0), (p[4].toInt() and 0xff) + 1)
             }
 
             FrameType.RST_STREAM -> {
@@ -299,3 +304,6 @@ internal class FrameDecoder(
                 (b[at + 3].toLong() and 0xff)
     }
 }
+
+/** The longest Priority Field Value a PRIORITY_UPDATE may carry (RFC 9218 section 7.1), as HTTP/3's 4096-byte control frames. */
+internal const val MAX_PRIORITY_FIELD_VALUE = 4096

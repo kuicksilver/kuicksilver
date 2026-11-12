@@ -62,10 +62,11 @@ public val HttpRequestBuilder.priority: StreamPriority? get() = attributes.getOr
 
 /**
  * Sends a new priority for this response (a PRIORITY_UPDATE frame, RFC 9218 section 7) and applies it to the request's
- * own stream; the server reschedules the rest of the response unless it set a priority of its own. True when the frame
- * was sent; false over HTTP/1.1, which has no such signal, over HTTP/2 when the server's SETTINGS did not say
- * SETTINGS_NO_RFC7540_PRIORITIES = 1 (section 2.1.1: the frame is "likely to be ignored"), once the call is over or its
- * body was read to the end, and when the connection is gone.
+ * own stream; the server reschedules the rest of the response unless it set a priority of its own. Over HTTP/2 the
+ * signals follow section 2.1.1: PRIORITY_UPDATE unless the server's SETTINGS left SETTINGS_NO_RFC7540_PRIORITIES at 0, and
+ * an RFC 7540 PRIORITY frame unless they said 1 (both before those SETTINGS). True when a signal was sent; false over
+ * HTTP/1.1, which has no such signal, once the call is over or its body was read to the end, and when the connection is
+ * gone.
  *
  * @throws IllegalArgumentException when [urgency] is outside 0..7.
  */

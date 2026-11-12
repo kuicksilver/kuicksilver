@@ -306,9 +306,9 @@ class PriorityUpdateTest {
         val c = RawH2Peer(Role.CLIENT)
         val id = c.core.openStream(GET, endStream = true)
         c.read()
-        assertTrue(c.core.priorityUpdate(id, "u=1"))
+        assertTrue(c.core.priorityUpdate(id, "u=1", urgency = 1))
         c.handshake(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(1)))
-        assertTrue(c.core.priorityUpdate(id, "u=2"))
+        assertTrue(c.core.priorityUpdate(id, "u=2", urgency = 2))
         val sent = c.read().filterIsInstance<Frame.PriorityUpdate>().map { it.prioritizedStreamId to it.value }
         assertEquals(
             listOf(id to "u=1", id to "u=2"),
@@ -320,10 +320,139 @@ class PriorityUpdateTest {
         assertTrue(sent.isNotEmpty())
         c.send(c.headers(id, OK, endStream = true))
         c.events()
-        assertEquals(false, c.core.priorityUpdate(id, "u=3")) // closed: no more data comes
+        assertEquals(false, c.core.priorityUpdate(id, "u=3", urgency = 3)) // closed: no more data comes
         val legacy = RawH2Peer(Role.CLIENT)
         legacy.handshake()
         val id2 = legacy.core.openStream(GET, endStream = true)
-        assertEquals(false, legacy.core.priorityUpdate(id2, "u=1"))
+        legacy.core.priorityUpdate(id2, "u=1", urgency = 1) // an RFC 7540 PRIORITY frame only (PriorityEdgeTest)
+        legacy.read()
+        assertTrue(legacy.written.none { it is Frame.PriorityUpdate })
+    }
+}
+
+/** Review follow-ups: bounds, window-limited transfers, the tunnel share at the top urgency, signals on update. */
+class PriorityEdgeTest {
+    private val frame = 16_384
+
+    /**
+     * A Priority Field Value is bounded as on HTTP/3 (the 4096-byte ceiling of a control frame): a longer PRIORITY_UPDATE
+     * is ENHANCE_YOUR_CALM (RFC 9113 section 7, excessive load) before its payload is buffered, so the values kept for idle
+     * streams stay small however large SETTINGS_MAX_FRAME_SIZE is.
+     */
+    @Test
+    fun negative_priorityUpdateAboveTheValueCeiling() {
+        val s = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(maxFrameSize = 1 shl 20))
+        s.handshake()
+        s.send(FrameEncoder.priorityUpdate(1, "u=1, x=\"" + "a".repeat(4096) + "\""))
+        s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+        val ok = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(maxFrameSize = 1 shl 20))
+        ok.handshake()
+        ok.send(FrameEncoder.priorityUpdate(1, "u=1, x=\"" + "a".repeat(4000) + "\""))
+        ok.read()
+        assertTrue(!ok.core.isClosed)
+    }
+
+    /**
+     * A more urgent stream whose writer finds the connection window empty holds nobody up: the frame a less urgent stream
+     * already queued (its window taken) goes out at once, not after the 2 ms wait for the urgent writer. Streams 5 and 7
+     * take the rest of the connection window between the urgent stream's wake-up and its next frame.
+     */
+    @Test
+    fun emptyConnectionWindowDoesNotHoldBackQueuedFrames() {
+        val peer = RawH2Peer(Role.SERVER)
+        peer.handshake(FrameEncoder.settings(intArrayOf(SettingId.INITIAL_WINDOW_SIZE), longArrayOf(1L shl 24)))
+        for (id in listOf(1, 3, 5, 7)) peer.send(peer.headers(id))
+        peer.events()
+        for (id in listOf(1, 3, 5, 7)) {
+            peer.core.sendHeaders(id, OK, endStream = false)
+            peer.core.setPriority(id, urgency = if (id == 1) 0 else 7, incremental = false)
+        }
+        peer.read()
+        val big = ByteArray(1 shl 20)
+        assertEquals(frame, peer.core.sendData(3, big, 0, frame, endStream = false)) // the window: 65 535 - 16 384
+        assertEquals(frame, peer.core.sendData(1, big, 0, 4 * frame, endStream = false))
+        assertEquals(listOf(1), peer.read().filterIsInstance<Frame.Data>().map { it.streamId }) // stream 3 waits for 1's next
+        assertEquals(listOf(1), peer.events().filterIsInstance<H2Event.WindowAvailable>().map { it.streamId })
+        assertEquals(frame, peer.core.sendData(5, big, 0, frame, endStream = false))
+        assertEquals(65_535 - 3 * frame, peer.core.sendData(7, big, 0, frame, endStream = false)) // the window is empty now
+        assertEquals(0, peer.core.sendData(1, big, 0, 3 * frame, endStream = false))
+        // no time passed: the urgent writer has nothing to hand over, so the queued frames go
+        assertEquals(listOf(3, 5, 7), peer.read().filterIsInstance<Frame.Data>().map { it.streamId })
+    }
+
+    /** RFC 9218 section 10.1: one frame in 16 for a tunnel whatever its urgency, the most urgent one included. */
+    @Test
+    fun tunnelShareAtTheTopUrgency() {
+        val peer = RawH2Peer(Role.SERVER)
+        peer.handshake(FrameEncoder.settings(intArrayOf(SettingId.INITIAL_WINDOW_SIZE), longArrayOf(1L shl 24)))
+        peer.send(FrameEncoder.windowUpdate(0, (1 shl 24) - 65_535))
+        peer.send(
+            peer.headers(1, endStream = false),
+            peer.headers(3, listOf(":method" to "CONNECT", ":authority" to "example.com:443"), endStream = false),
+        )
+        peer.events()
+        peer.core.sendHeaders(1, OK, endStream = false)
+        peer.core.sendHeaders(3, OK, endStream = false)
+        val left = mutableMapOf(1 to 40 * frame, 3 to 2 * frame) // both u=3, not incremental: stream 1 goes first by id
+        val big = ByteArray(40 * frame)
+
+        fun offer(id: Int) {
+            left[id] = left.getValue(id) - peer.core.sendData(id, big, 0, left.getValue(id), endStream = false)
+        }
+        offer(1)
+        offer(3)
+        val order = ArrayList<Int>()
+        repeat(200) {
+            peer.read().filterIsInstance<Frame.Data>().forEach { order += it.streamId }
+            peer.events().filterIsInstance<H2Event.WindowAvailable>().forEach { offer(it.streamId) }
+        }
+        assertEquals(DataScheduler.TUNNEL_TURN - 1, order.indexOf(3), "$order")
+    }
+
+    /**
+     * RFC 9218 section 2.1.1: before the server's SETTINGS a reprioritization goes as both signals, PRIORITY_UPDATE and an
+     * RFC 7540 PRIORITY frame; with a server that left SETTINGS_NO_RFC7540_PRIORITIES at 0 only the PRIORITY frame (the
+     * RFC 7540 signals go on, PRIORITY_UPDATE stops); after 1 only PRIORITY_UPDATE.
+     */
+    @Test
+    fun updateCarriesTheSignalsTheServerUses() {
+        fun sent(
+            settings: ByteArray?,
+            urgency: Int,
+        ): List<Frame> {
+            val c = RawH2Peer(Role.CLIENT)
+            if (settings != null) c.handshake(settings)
+            val id = c.core.openStream(GET, endStream = false)
+            c.read()
+            val before = c.written.size
+            assertTrue(c.core.priorityUpdate(id, "u=$urgency", urgency))
+            c.read()
+            return c.written.drop(before).filter { it is Frame.PriorityUpdate || it is Frame.Priority }
+        }
+        val early = sent(null, 0)
+        assertEquals(1, early.filterIsInstance<Frame.PriorityUpdate>().size)
+        assertEquals(256, early.filterIsInstance<Frame.Priority>().single().weight)
+        val legacy = sent(FrameEncoder.settings(IntArray(0), LongArray(0)), 7)
+        assertEquals(listOf(1), legacy.filterIsInstance<Frame.Priority>().map { it.weight })
+        assertTrue(legacy.none { it is Frame.PriorityUpdate })
+        val modern = sent(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(1)), 2)
+        assertEquals(1, modern.size)
+        assertTrue(modern.single() is Frame.PriorityUpdate)
+    }
+
+    /** RFC 9218 section 2.1: "Senders MUST NOT change the SETTINGS_NO_RFC7540_PRIORITIES value after the first SETTINGS frame" (MAY: PROTOCOL_ERROR). */
+    @Test
+    fun negative_noRfc7540PrioritiesChanged() {
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(1)))
+        s.send(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(1))) // the same value: fine
+        s.read()
+        assertTrue(!s.core.isClosed)
+        s.send(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(0)))
+        s.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        val absent = RawH2Peer(Role.SERVER)
+        absent.handshake() // left out: 0 from now on
+        absent.send(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(1)))
+        absent.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
     }
 }

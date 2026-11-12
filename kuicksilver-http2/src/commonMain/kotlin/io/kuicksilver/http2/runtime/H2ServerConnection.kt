@@ -240,12 +240,24 @@ public class H2ServerStream internal constructor(
     ): Unit = rt.setPriority(s, urgency, incremental)
 
     /**
-     * Calls [handler] with the raw Priority Field Value of each PRIORITY_UPDATE the client sends for this request (RFC 9218
-     * section 7.1), and at once with the latest one that came earlier, also before the request itself (section 7: it
-     * overrides the request's `priority` field). It runs on the connection's event dispatch and must not block. The
-     * engine parses the value and reschedules the response ([setPriority]) unless the response chose its own priority.
+     * Schedules the response by the client's RFC 9218 signal: [urgency] and [incremental] (from the request's `priority`
+     * field) from now on, then each PRIORITY_UPDATE the client sends (section 7.1), also one that came before the request
+     * (section 7: it overrides the field), as [policy] parses it; once the response chose its own priority
+     * ([choosePriority], section 8) the updates no longer change the scheduling. The changes apply in the order the
+     * frames arrived, whatever threads the calls come from.
      */
-    public fun onPriorityUpdate(handler: (String) -> Unit): Unit = rt.onPriorityUpdate(s, handler)
+    public fun schedule(
+        urgency: Int,
+        incremental: Boolean,
+        policy: PriorityPolicy,
+    ): Unit = rt.schedule(s, urgency, incremental, policy)
+
+    /**
+     * The response's own priority (RFC 9218 section 8): [merge] turns the current priority (the client's signal so far)
+     * into the response's, as urgency * 2 + (1 if incremental); later PRIORITY_UPDATEs no longer change the scheduling.
+     * [merge] runs under the connection's lock and must not call into it.
+     */
+    public fun choosePriority(merge: (urgency: Int, incremental: Boolean) -> Int): Unit = rt.choosePriority(s, merge)
 
     /** Sends trailers, which end the stream. */
     public fun trailers(fields: List<Pair<String, String>>): Unit = rt.respondTrailers(s, fields)
@@ -261,4 +273,24 @@ public class H2ServerStream internal constructor(
     public fun release() {
         if (rt.release(s)) conn.released()
     }
+}
+
+/** How a server engine reads the client's PRIORITY_UPDATE frames for [H2ServerStream.schedule] (RFC 9218 section 7.1). */
+@InternalKuicksilverApi
+public interface PriorityPolicy {
+    /**
+     * The Priority Field Value [value] as urgency * 2 + (1 if incremental): a complete set, a parameter left out being its
+     * default (RFC 9218 section 7). Runs under the connection's lock: quick, and no calls into the connection.
+     */
+    public fun parse(value: String): Int
+
+    /**
+     * The client's new signal, after the scheduling followed it. [seq] grows in the order the frames arrived; calls run
+     * outside the lock and may overtake each other, so one with a smaller [seq] than an earlier call is stale.
+     */
+    public fun signal(
+        urgency: Int,
+        incremental: Boolean,
+        seq: Long,
+    )
 }

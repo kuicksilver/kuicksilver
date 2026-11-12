@@ -86,9 +86,15 @@ internal class StreamRt(
 
     @Volatile var incremental = false
 
-    /** Server: the raw value of the client's latest PRIORITY_UPDATE (RFC 9218 section 7.1), and who wants each one (under the lock). */
+    /** Server: the raw value of the client's latest PRIORITY_UPDATE not applied yet (RFC 9218 section 7.1), and its number. */
     var priorityUpdate: String? = null
-    var onPriorityUpdate: ((String) -> Unit)? = null
+    var priorityUpdateSeq = 0L
+
+    /** Server: the engine's [H2Runtime.schedule] (under the lock). */
+    var priorityPolicy: PriorityPolicy? = null
+
+    /** Server: the response chose its own priority (RFC 9218 section 8): the client's updates no longer reschedule it. */
+    var priorityChosen = false
 
     /** The final field section arrived (on a client: the response head; on a server: the request head). */
     var headReceived = false
@@ -368,9 +374,8 @@ internal class H2Runtime(
             }
 
             is H2Event.PriorityUpdate -> {
-                val (s, handler) = lock.withLock { streams[e.streamId]?.let { it to it.onPriorityUpdate } } ?: return
-                lock.withLock { s.priorityUpdate = e.value }
-                handler?.invoke(e.value)
+                val s = lock.withLock { streams[e.streamId] } ?: return
+                applyPriorityUpdate(s, e.value)
             }
 
             is H2Event.WindowAvailable -> {
@@ -449,8 +454,11 @@ internal class H2Runtime(
     private fun newRequest(e: H2Event.HeadersReceived) {
         val handler = onRequest ?: return
         val s = StreamRt(this, e.streamId, headRequest = false)
-        s.priorityUpdate = e.priorityUpdate
-        lock.withLock { streams[e.streamId] = s }
+        lock.withLock {
+            s.priorityUpdate = e.priorityUpdate
+            if (e.priorityUpdate != null) s.priorityUpdateSeq = ++priorityUpdates
+            streams[e.streamId] = s
+        }
         if (e.tooLarge) {
             // RFC 9113 section 8.2 and the core's contract: a server answers 431. The stream may no longer be sendable by now
             // (the peer's RST_STREAM, a stream or connection error later in the same read): nothing goes then, and a 431 head
@@ -1135,27 +1143,94 @@ internal class H2Runtime(
 
     /** Resets [s] with [code] (tests and the server's handlers). */
 
+    /** PRIORITY_UPDATEs received on this connection (under the lock): their order, for [PriorityPolicy.signal]. */
+    private var priorityUpdates = 0L
+
     /**
-     * Server: [handler] gets the raw value of each PRIORITY_UPDATE for [s] from now on, and at once the latest one that
-     * came before (also one that came before the request). It runs on the connection's event dispatch: no suspension.
+     * Server: schedules [s] by the client's RFC 9218 signal: [urgency] and [incremental] from now on, then each
+     * PRIORITY_UPDATE (one that came before included) as [policy] parses it, unless the response chose its own priority
+     * ([choosePriority]). The scheduling state changes under the connection's lock, so updates, the response's choice and
+     * this call apply in one order; [PriorityPolicy.signal] runs outside the lock and carries that order.
      */
-    fun onPriorityUpdate(
+    fun schedule(
         s: StreamRt,
-        handler: (String) -> Unit,
+        urgency: Int,
+        incremental: Boolean,
+        policy: PriorityPolicy,
     ) {
-        val latest =
-            lock.withLock {
-                s.onPriorityUpdate = handler
-                s.priorityUpdate
+        require(urgency in 0..7) { "urgency must be 0..7, was $urgency" }
+        var seq = 0L
+        val signal =
+            withCore {
+                s.priorityPolicy = policy
+                setStreamPriority(s, urgency, incremental)
+                seq = s.priorityUpdateSeq
+                s.priorityUpdate?.let { applyLocked(s, it) } ?: -1
             }
-        latest?.let(handler)
+        if (signal >= 0) policy.signal(signal shr 1, signal and 1 == 1, seq)
+    }
+
+    /** A PRIORITY_UPDATE value for [s] that just arrived: kept until [schedule], else applied (see there). */
+    private fun applyPriorityUpdate(
+        s: StreamRt,
+        value: String,
+    ) {
+        var seq = 0L
+        var policy: PriorityPolicy? = null
+        val signal =
+            withCore {
+                s.priorityUpdate = value
+                seq = ++priorityUpdates
+                s.priorityUpdateSeq = seq
+                policy = s.priorityPolicy
+                if (policy == null) -1 else applyLocked(s, value)
+            }
+        if (signal >= 0) policy?.signal(signal shr 1, signal and 1 == 1, seq)
+    }
+
+    /** Under the lock: [value] parsed by the stream's policy; the scheduling follows it unless the response chose its own. */
+    private fun H2ConnectionCore.applyLocked(
+        s: StreamRt,
+        value: String,
+    ): Int {
+        s.priorityUpdate = null
+        val signal = s.priorityPolicy!!.parse(value)
+        if (!s.priorityChosen) setStreamPriority(s, signal shr 1, signal and 1 == 1)
+        return signal
+    }
+
+    /**
+     * Server: the response chose its priority (RFC 9218 section 8): [merge] turns the current one into it (urgency * 2 +
+     * incremental), and the client's later updates no longer change the scheduling.
+     */
+    fun choosePriority(
+        s: StreamRt,
+        merge: (urgency: Int, incremental: Boolean) -> Int,
+    ) {
+        withCore {
+            s.priorityChosen = true
+            val p = merge(s.urgency, s.incremental)
+            setStreamPriority(s, p shr 1, p and 1 == 1)
+        }
+    }
+
+    /** Under the lock: the stream's priority and the core's in one step. */
+    private fun H2ConnectionCore.setStreamPriority(
+        s: StreamRt,
+        urgency: Int,
+        incremental: Boolean,
+    ) {
+        s.urgency = urgency
+        s.incremental = incremental
+        setPriority(s.id, urgency, incremental)
     }
 
     /** Client: a PRIORITY_UPDATE for [s] (see the core's priorityUpdate); false when it cannot go. */
     fun priorityUpdate(
         s: StreamRt,
         value: String,
-    ): Boolean = withCore { priorityUpdate(s.id, value) }
+        urgency: Int,
+    ): Boolean = withCore { priorityUpdate(s.id, value, urgency) }
 
     /** Sends the DATA of [s] with this RFC 9218 priority from now on (see the core's DataScheduler). */
     fun setPriority(
@@ -1164,9 +1239,7 @@ internal class H2Runtime(
         incremental: Boolean,
     ) {
         require(urgency in 0..7) { "urgency must be 0..7, was $urgency" }
-        s.urgency = urgency
-        s.incremental = incremental
-        withCore { setPriority(s.id, urgency, incremental) }
+        withCore { setStreamPriority(s, urgency, incremental) }
     }
 
     fun reset(

@@ -222,12 +222,15 @@ public class H2ClientStream internal constructor(
     ): Unit = rt.sendBody(s, source, stallMillis, stallError)
 
     /**
-     * Sends a PRIORITY_UPDATE with the Priority Field Value [value] for this request (RFC 9218 section 7.1) and returns
-     * true; false when the response can no longer change (the stream received everything or ended), the connection is
-     * ending, or the server's SETTINGS did not say SETTINGS_NO_RFC7540_PRIORITIES = 1 (section 2.1.1: the frames "are
-     * likely to be ignored").
+     * Sends this request's new priority as the server can use it (RFC 9218 section 2.1.1): a PRIORITY_UPDATE with the
+     * Priority Field Value [value] (section 7.1) unless the server's SETTINGS left SETTINGS_NO_RFC7540_PRIORITIES at 0, and
+     * an RFC 7540 PRIORITY frame with the weight of [urgency] unless they said 1. True when a signal went; false when the
+     * response can no longer change (the stream received everything or ended) or the connection is ending.
      */
-    public fun priorityUpdate(value: String): Boolean = rt.priorityUpdate(s, value)
+    public fun priorityUpdate(
+        value: String,
+        urgency: Int,
+    ): Boolean = rt.priorityUpdate(s, value, urgency)
 
     /** Schedules the request's own DATA with this RFC 9218 priority from now on (section 9); see [H2ClientConnection.open]. */
     public fun setPriority(

@@ -141,11 +141,13 @@ internal suspend fun h2Exchange(
         }
     // the stream (and its reservation) goes back once: when the call ends, or at once when this attempt fails, so a
     // repeat never waits for the stream or the connection its own first attempt still holds
-    // for HttpResponse.updatePriority: a PRIORITY_UPDATE (RFC 9218 section 7.1) that also reschedules our own DATA
+    // for HttpResponse.updatePriority: our own DATA follows the new priority in any case (as over HTTP/3), and the server
+    // gets the signals it uses (RFC 9218 section 2.1.1: PRIORITY_UPDATE, an RFC 7540 PRIORITY frame, or both)
     data.attributes.put(
         PriorityUpdaterKey,
         PriorityUpdater { p ->
-            stream.priorityUpdate(PriorityField.format(p) ?: "u=3").also { if (it) stream.setPriority(p.urgency, p.incremental) }
+            stream.setPriority(p.urgency, p.incremental)
+            stream.priorityUpdate(PriorityField.format(p) ?: "u=3", p.urgency)
         },
     )
     val released = kotlin.concurrent.atomics.AtomicBoolean(false)

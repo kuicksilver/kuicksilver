@@ -35,6 +35,8 @@ internal sealed interface Frame {
     class Priority(
         override val streamId: Int,
         val dependency: Int,
+        /** The RFC 7540 weight, 1 to 256. */
+        val weight: Int = 16,
     ) : Frame
 
     /** RST_STREAM (section 6.4); [errorCode] is the raw code (unknown codes stay as they came). */

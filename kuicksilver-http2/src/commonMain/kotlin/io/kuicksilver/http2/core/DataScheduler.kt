@@ -61,7 +61,7 @@ internal class DataScheduler {
             if (s.urgency < urgency) urgency = s.urgency
             if (s.tunnel && (tunnel == null || s.servedAt < tunnel.servedAt)) tunnel = s
         }
-        if (tunnel != null && tunnel.urgency != urgency && sinceTunnel >= TUNNEL_TURN - 1) return tunnel
+        if (tunnel != null && sinceTunnel >= TUNNEL_TURN - 1) return tunnel
         var nonIncremental: H2Stream? = null
         var incremental: H2Stream? = null
         for (s in ready) {

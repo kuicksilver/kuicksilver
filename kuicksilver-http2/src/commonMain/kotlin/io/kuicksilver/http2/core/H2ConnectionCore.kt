@@ -128,6 +128,9 @@ internal class H2ConnectionCore(
     /** The peer sent SETTINGS_NO_RFC7540_PRIORITIES = 1: it uses no RFC 7540 priority signals (RFC 9218 section 2.1). */
     internal var peerNoRfc7540Priorities = false
 
+    /** The peer's first SETTINGS were processed: SETTINGS_NO_RFC7540_PRIORITIES may not change any more (section 2.1). */
+    internal var peerNoRfc7540PrioritiesFixed = false
+
     /** The peer allows Extended CONNECT (RFC 8441 section 3). */
     var peerEnableConnectProtocol: Boolean = false
         internal set
@@ -418,6 +421,8 @@ internal class H2ConnectionCore(
         }
         val n = minOf(len.toLong(), connSendWindow, s.sendWindow, H2.MIN_MAX_FRAME_SIZE.toLong()).toInt().coerceAtLeast(0)
         if (n == 0 && len > 0) {
+            // no window: the writer hands nothing over now, so the less urgent streams' frames must not wait for it
+            s.refillBy = -1
             want(s)
             tryWake(s) // file it as blocked on its own or on the connection window
             return 0
@@ -718,21 +723,25 @@ internal class H2ConnectionCore(
     }
 
     /**
-     * Client: sends a PRIORITY_UPDATE (RFC 9218 section 7.1) with Priority Field Value [value] for [streamId], our request,
-     * and returns true; false when the stream can receive nothing more (§7.1: the frame refers to a stream "where data
-     * might still be received"), the connection is ending, or the server's SETTINGS left SETTINGS_NO_RFC7540_PRIORITIES at
-     * 0 ("it SHOULD stop sending PRIORITY_UPDATE frames", section 2.1.1).
+     * Client: sends the new priority of [streamId], our request, as the server can use it (RFC 9218 section 2.1.1): a
+     * PRIORITY_UPDATE (section 7.1) with Priority Field Value [value] unless the server's SETTINGS left
+     * SETTINGS_NO_RFC7540_PRIORITIES at 0 ("it SHOULD stop sending PRIORITY_UPDATE frames"), and an RFC 7540 PRIORITY
+     * frame with the weight of [urgency] unless those SETTINGS said 1 (before them "the client SHOULD send both"). True
+     * when a signal went; false when the stream can receive nothing more (§7.1: the frame refers to a stream "where data
+     * might still be received") or the connection is ending.
      */
     fun priorityUpdate(
         streamId: Int,
         value: String,
+        urgency: Int,
     ): Boolean {
         check(client) { "only a client sends PRIORITY_UPDATE" }
+        require(urgency in 0..7) { "urgency must be 0..7" }
         if (closed || goAwaySentLastId >= 0) return false
-        if (peerSettingsSeen && !peerNoRfc7540Priorities) return false
         val s = streams[streamId] ?: return false
         if (s.state != StreamState.OPEN && s.state != StreamState.HALF_CLOSED_LOCAL) return false
-        queueControl(FrameEncoder.priorityUpdate(streamId, value))
+        if (!peerSettingsSeen || peerNoRfc7540Priorities) queueControl(FrameEncoder.priorityUpdate(streamId, value))
+        if (!peerNoRfc7540Priorities) queueControl(FrameEncoder.priority(streamId, 0, rfc7540Weight(urgency)))
         return !closed
     }
 

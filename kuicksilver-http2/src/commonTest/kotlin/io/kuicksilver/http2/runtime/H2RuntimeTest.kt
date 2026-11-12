@@ -123,6 +123,50 @@ class H2RuntimeTest {
         }
 
     /**
+     * RFC 9218 sections 7, 7.1, 8 through the runtime: an update that came before the request applies when the engine
+     * schedules the stream, later ones follow in order, and once the response chose its priority they still reach the
+     * engine as the client's signal but no longer change the scheduling.
+     */
+    @Test fun priorityUpdatesFollowTheClientUntilTheResponseChooses() =
+        runTest {
+            val (client, server, _) = pair()
+            val signals = ArrayList<Pair<Int, Long>>()
+            val policy =
+                object : PriorityPolicy {
+                    override fun parse(value: String): Int = value.removePrefix("u=").toInt() * 2
+
+                    override fun signal(
+                        urgency: Int,
+                        incremental: Boolean,
+                        seq: Long,
+                    ) {
+                        signals += urgency to seq
+                    }
+                }
+            val got = CompletableDeferred<H2ServerStream>()
+            backgroundScope.launch { got.complete(server.requests.receive()) }
+            assertTrue(client.tryReserve())
+            val s = client.open("GET", "https", "example.com", "/", get, endStream = false)
+            assertTrue(s.priorityUpdate("u=5", 5)) // a control frame: it reaches the server ahead of the request's HEADERS
+            val r = got.await()
+            r.schedule(3, false, policy)
+            assertEquals(5, r.urgency)
+            assertTrue(s.priorityUpdate("u=6", 6))
+            runCurrent()
+            assertEquals(6, r.urgency)
+            r.choosePriority { _, incremental -> if (incremental) 1 else 0 } // u=0, the incremental parameter kept
+            assertEquals(0, r.urgency)
+            assertTrue(s.priorityUpdate("u=7", 7))
+            runCurrent()
+            assertEquals(0, r.urgency, "the response's choice stays")
+            assertEquals(listOf(5, 6, 7), signals.map { it.first })
+            assertEquals(signals.map { it.second }.sorted(), signals.map { it.second })
+            s.cancel()
+            s.release()
+            r.release()
+        }
+
+    /**
      * RFC 9113 sections 8.2.1, 8.2.2, 8.3.2: a response head or trailers the server would generate against the rules are
      * never sent (a character above U+00FF would reach HPACK as its low byte: U+010D as CR); the stream is reset with
      * INTERNAL_ERROR and the handler's call fails with IllegalArgumentException.

@@ -15,6 +15,7 @@ import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.response.respond
 import io.ktor.util.pipeline.PipelinePhase
 import io.kuicksilver.http2.runtime.H2ServerStream
+import io.kuicksilver.http2.runtime.PriorityPolicy
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
 import io.kuicksilver.ktor.server.PeerCertificatesKey
@@ -25,7 +26,10 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 
@@ -57,17 +61,12 @@ internal class H2Call(
         // response chose its own (section 8, [H2Response]); a CONNECT without a signal is a tunnel, incremental as on
         // HTTP/3 (sections 10.1, 11)
         val field = request.headers.getAll("Priority")
-        val signal = MutableStateFlow(h1Priority(field).value)
-        attributes.put(RequestPriorityKey, signal.asStateFlow())
+        val signal = ClientSignal(h1Priority(field).value)
+        attributes.put(RequestPriorityKey, signal.flow)
+        // an Extended CONNECT stream (a WebSocket over HTTP/2 with RFC 8441) carries a tunnel
         val p =
-            if (h2.method == "CONNECT" && !PriorityField.isSignal(field?.joinToString(", "))) TUNNEL_PRIORITY else signal.value
-        if (p != StreamPriority.Default) h2.setPriority(p.urgency, p.incremental)
-        h2.onPriorityUpdate { value ->
-            // a complete set of parameters: one left out is its default; a value that fails to parse means the defaults
-            val update = PriorityField.parse(value)
-            signal.value = update
-            if (!response.priorityChosen) runCatching { h2.setPriority(update.urgency, update.incremental) }
-        }
+            if (h2.method == "CONNECT" && !PriorityField.isSignal(field?.joinToString(", "))) TUNNEL_PRIORITY else signal.flow.value
+        h2.schedule(p.urgency, p.incremental, signal)
         // a gateway forwarded it from early data (RFC 8470 section 5.1)
         if (h2.fields.any { it.first == EARLY_DATA_FIELD.lowercase() }) {
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -104,6 +103,40 @@ internal class H2Call(
     /** The call is over: the response's content has gone out (or failed), then the stream goes back to the connection. */
     suspend fun finish() {
         response.awaitContentSent()
+    }
+
+    /**
+     * The client's PRIORITY_UPDATEs as the engine reads them (RFC 9218 section 7: "a complete set of all priority
+     * parameters", a parameter left out meaning its default; a value that fails to parse means the defaults, as on
+     * HTTP/3), and [flow], the signal the application sees: it keeps the most recent one however the calls interleave.
+     */
+    @OptIn(ExperimentalAtomicApi::class)
+    private class ClientSignal(
+        initial: StreamPriority,
+    ) : PriorityPolicy {
+        private val state = MutableStateFlow(initial)
+        val flow: StateFlow<StreamPriority> = state.asStateFlow()
+        private val busy = AtomicInt(0)
+        private var seq = -1L // under [busy]
+
+        override fun parse(value: String): Int = PriorityField.parse(value).let { it.urgency * 2 + if (it.incremental) 1 else 0 }
+
+        override fun signal(
+            urgency: Int,
+            incremental: Boolean,
+            seq: Long,
+        ) {
+            while (!busy.compareAndSet(0, 1)) {
+                // another signal is being recorded: a few instructions
+            }
+            try {
+                if (seq <= this.seq) return // a newer one is in already
+                this.seq = seq
+                state.value = StreamPriority(urgency, incremental)
+            } finally {
+                busy.store(0)
+            }
+        }
     }
 
     companion object {
