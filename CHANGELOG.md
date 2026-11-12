@@ -1554,8 +1554,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - Ktor client, WebSockets over HTTP/3 (RFC 6455 section 4.1 step 2: "There MUST be no more than one connection in a
   CONNECTING state"): the per-host lock HTTP/1.1 WebSockets take was not taken over HTTP/3, so two Extended CONNECT
   handshakes to one host ran at once. A WebSocket over HTTP/3 now holds the lock (shared with HTTP/1.1, keyed by the
-  addresses of the families the host's lookup answered with, never waiting past the 50 ms Resolution Delay for one that
-  stalls, all within the connect timeout) from before its CONNECT until the server answered it or the attempt failed; the
+  URL's host name and the address of the QUIC connection it uses) from before its CONNECT until the server answered it or
+  the attempt failed; over HTTP/1.1 the keys are the name, the addresses of the families the lookup answered with (one
+  that stalls is not waited for past the 50 ms Resolution Delay) and, once the connection is up, its own address, so two
+  WebSockets to one name, or to one address under any names, are never CONNECTING together; the
   answer must come within the connect timeout (`ConnectTimeoutException`), as over HTTP/1.1.
 - Ktor engines, WebSockets (RFC 6455 section 5.2): a payload length not in its minimal encoding (126 with a 16-bit length
   below 126, 127 with a 64-bit length up to 65 535) was accepted; it now closes the connection with 1002.

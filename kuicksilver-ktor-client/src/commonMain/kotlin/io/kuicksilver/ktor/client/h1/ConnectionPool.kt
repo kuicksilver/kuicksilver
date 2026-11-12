@@ -42,6 +42,9 @@ internal abstract class PooledConnection(
     private val closedFlag = AtomicInt(0)
     private val slotFlag = AtomicInt(0)
 
+    /** The IP address (4 or 16 bytes) of the peer its socket is connected to (a proxy's, through one); null when unknown. */
+    open val remoteIp: ByteArray? get() = null
+
     /** Set by [ConnectionPool.adopt]; null for a connection no pool accounts for. */
     internal var pool: ConnectionPool<*>? = null
 

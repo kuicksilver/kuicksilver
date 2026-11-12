@@ -86,6 +86,8 @@ internal class H1Connection(
     /** Ends the TLS session in order (close_notify) and then the socket, bounded; null: as [closeTransport]. */
     private val orderly: (() -> Unit)? = null,
 ) : PooledConnection(key, createdAt) {
+    override val remoteIp: ByteArray? get() = (socket.remoteAddress as? io.ktor.network.sockets.InetSocketAddress)?.resolveAddress()
+
     /** What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). */
     val input: HeadLimitedInput = HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES)
 
@@ -625,8 +627,8 @@ internal class H1Pool(
     internal val webSocketConnecting = WebSocketConnecting()
 
     /**
-     * The remote hosts [data] may connect to, as [WebSocketConnecting] keys: the IP addresses of the origin, without the
-     * port, when the engine resolves its name (the families of the request's own resolution that answered, the other
+     * The remote hosts [data] may connect to, as [WebSocketConnecting] keys: the origin's name and its IP addresses, without
+     * the port, when the engine resolves its name (the families of the request's own resolution that answered, the other
      * waited for only during the Resolution Delay, under the connect timeout: [RequestDns.answered]), else (an HTTP proxy, a SOCKS5 proxy that resolves names) the origin's name; each in one form per
      * host ([WebSocketConnecting.addressKey], [WebSocketConnecting.nameKey]).
      */
@@ -642,12 +644,13 @@ internal class H1Pool(
         val addresses =
             try {
                 // the families that answered: one that stalls (dropped AAAA queries) holds back neither the keys nor the
-                // connection, which the race makes with what came (RFC 8305 section 3)
+                // connection, which the race makes with what came (RFC 8305 section 3); the connection's own address is
+                // added once it is up (exchange)
                 withTimeout(data.connectTimeoutMillis(config)) { dns.answered(url.host, url.port) }
             } catch (e: TimeoutCancellationException) {
                 throw ConnectTimeoutException(data, e)
             }
-        return addresses.map { WebSocketConnecting.addressKey(it) }
+        return listOf(WebSocketConnecting.nameKey(url.host)) + addresses.map { WebSocketConnecting.addressKey(it) }
     }
 
     /**
@@ -664,7 +667,7 @@ internal class H1Pool(
         preopened: Opened?,
         dns: RequestDns,
         proxy: ResolvedProxy?,
-        webSocketKeys: List<String>?,
+        webSocketKeysAsked: List<String>?,
         onSelected: ((HttpProtocolVersion) -> Unit)?,
         resolvedMillis: Long = 0,
     ): HttpResponseData {
@@ -692,6 +695,7 @@ internal class H1Pool(
 
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val diagnostics = data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)
+        var webSocketKeys = webSocketKeysAsked
         while (true) {
             // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does.
             // A WebSocket takes its keys before it holds a connection (RFC 6455 section 4.1): a connection the race opened is
@@ -711,6 +715,20 @@ internal class H1Pool(
                     // the resolution counts once, against the first connection (a repeat gets a connect timeout of its own)
                     obtain(data, key, dns, proxy, webSocketKeys, if (attempt == 1) resolvedMillis else 0)
                 }
+            // a WebSocket holds the address its connection actually goes to (RFC 6455 section 4.1): one its keys did not
+            // name (a family that answered late, a pooled or race connection) is taken now, without waiting; when another
+            // WebSocket holds it, the connection goes back and this one waits for every key, that one too
+            val wsHeld = obtained.held
+            if (webSocketKeys != null && proxy == null && wsHeld != null) {
+                val peer = (obtained.connection ?: obtained.h2)?.remoteIp?.let { WebSocketConnecting.ipKey(it) }
+                if (peer != null && !wsHeld.tryAdd(peer)) {
+                    obtained.connection?.let { pool.release(it) }
+                    obtained.h2?.client?.unreserve()
+                    wsHeld.release()
+                    webSocketKeys = webSocketKeys + peer
+                    continue
+                }
+            }
             val h2c = obtained.h2
             val protocol = if (h2c != null) HttpProtocolVersion.HTTP_2_0 else HttpProtocolVersion.HTTP_1_1
             // HTTP/1.1 where HTTP/2 would have been offered, but the route answered HTTP_1_1_REQUIRED lately
@@ -1193,7 +1211,12 @@ internal class H1Pool(
                                 tls.close()
                                 throw e
                             }
-                        return H2Conn(client, key, clock())
+                        return H2Conn(
+                            client,
+                            key,
+                            clock(),
+                            (tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress)?.resolveAddress(),
+                        )
                     }
                     H1Connection(tcp, tls, tls.input, tls.output, key, clock(), orderly = { closeOrderly(tls, rawOut, tcp) })
                 } else {
@@ -1221,8 +1244,9 @@ internal class H1Pool(
         val name = socketHost(host)
         val literal = ':' in name || parseIpv4(name) != null
         if (!literal && remoteDns) return listOf(Socks5Target.Domain(name))
+        // the families that answered, as the WebSocket keys have them (remoteHosts): a stalled family holds nothing back
         return dns
-            .lookup(name, 0, sorted = false)
+            .answered(name, 0)
             .map { it.bytes }
             .distinctBy { it.toList() }
             .map { Socks5Target.Address(it) }

@@ -27,6 +27,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
@@ -81,6 +82,61 @@ class ClientWebSocketConnectingTest {
                     assertEquals(0, engine.h1.webSocketConnecting.size(), "an entry outlived its WebSocket")
                 }
             }
+        }
+
+    /**
+     * Two WebSockets to one name whose resolutions answered differently (the first got the A records only, the second the
+     * AAAA ones while A stalls) share no address key, but they share the name's: the second waits for the first. Before,
+     * the keys were the answered addresses alone, so both were CONNECTING at once (RFC 6455 section 4.1 step 2).
+     */
+    @Test fun negative_twoWebSocketsToOneNameWithDifferentAnswersAreSerialized() =
+        clientTest {
+            val firstHead = CompletableDeferred<Unit>()
+            val decided = CompletableDeferred<Unit>()
+            val secondAccepted = CompletableDeferred<Unit>()
+            val never = CompletableDeferred<Unit>()
+            val v4Calls = kotlinx.coroutines.flow.MutableStateFlow(0)
+            val v6Calls = kotlinx.coroutines.flow.MutableStateFlow(0)
+            rawServer({ index, input, output ->
+                val key = input.readWebSocketKey()
+                if (index == 0) {
+                    firstHead.complete(Unit)
+                    decided.await()
+                }
+                answer(key, input, output)
+            }, onAccept = { if (it == 1) secondAccepted.complete(Unit) }) { port ->
+                testClient(
+                    engine = {
+                        connectTimeout = 5.seconds
+                        familyResolverForTest = { _, v6 ->
+                            if (v6) {
+                                if (v6Calls.updateAndGet { it + 1 } == 1) {
+                                    emptyList()
+                                } else {
+                                    listOf(TcpAddress(ByteArray(16).also { it[15] = 1 }, 0))
+                                }
+                            } else {
+                                if (v4Calls.updateAndGet { it + 1 } > 1) never.await()
+                                listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), 0))
+                            }
+                        }
+                    },
+                    block = { install(WebSockets) },
+                ).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    coroutineScope {
+                        val opened = CompletableDeferred<Unit>()
+                        launch { c.webSocket("ws://same.test:$port/") { opened.await() } }
+                        firstHead.await()
+                        val second = launch { runCatching { c.webSocket("ws://same.test:$port/") { opened.complete(Unit) } } }
+                        assertEquals("waited", waitedOrConnected(engine, secondAccepted), "the second WebSocket to the name")
+                        decided.complete(Unit)
+                        opened.complete(Unit)
+                        second.cancel()
+                    }
+                }
+            }
+            never.complete(Unit)
         }
 
     /**

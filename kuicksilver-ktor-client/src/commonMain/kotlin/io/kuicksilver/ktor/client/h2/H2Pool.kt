@@ -23,6 +23,7 @@ internal class H2Conn(
     val client: H2ClientConnection,
     route: String,
     createdAt: Long,
+    override val remoteIp: ByteArray? = null,
 ) : PooledConnection(route, createdAt) {
     /** REFUSED_STREAM answers so far: the second retires the connection (OkHttp's `RealConnection.trackFailure`). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)

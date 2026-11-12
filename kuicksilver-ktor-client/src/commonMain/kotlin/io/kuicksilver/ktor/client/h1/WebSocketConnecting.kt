@@ -18,11 +18,18 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * no more than one connection in a CONNECTING state. If multiple connections to the same IP address are attempted
  * simultaneously, the client MUST serialize them", and a client with a connection to the remote host "MUST wait until
  * that connection has been established or for that connection to have failed", "even if the remote host is known by
- * another name"). The remote host is the IP address, whatever the port: a key is the address alone, for each address
- * the name resolves to when the engine resolves it (a WebSocket holds every address it may connect to, so two names that
- * share one wait for each other), else the name alone when a proxy resolves it ("the client MUST assume for the purposes
- * of this step that each host name refers to a distinct remote host"). Keys are taken in sorted order, so two
- * WebSockets never wait for each other's keys; an entry lives only while a WebSocket holds or waits for it.
+ * another name").
+ *
+ * The invariant: while a WebSocket is CONNECTING it holds the key of its URL's host name ([nameKey]) and the key of the IP
+ * address its connection actually goes to ([addressKey], whatever the port), so two WebSockets to one name, or to one
+ * address under any names, never are CONNECTING together. Over HTTP/1.1 a WebSocket first takes the name and the
+ * addresses its resolution answered with (the families that answered, [io.kuicksilver.ktor.client.RequestDns.answered]),
+ * then, once it has its connection, the connection's own address ([Held.tryAdd]: when another WebSocket holds that one, it
+ * gives the connection back and waits for every key); over HTTP/3 it takes the name and the address of the QUIC
+ * connection it uses. Through a proxy that resolves the name, the name alone ("the client MUST assume for the purposes of
+ * this step that each host name refers to a distinct remote host"). Keys are taken in sorted order and an added key is
+ * never waited for, so two WebSockets never wait for each other's keys; an entry lives only while a WebSocket holds or
+ * waits for it.
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class WebSocketConnecting {
@@ -41,10 +48,31 @@ internal class WebSocketConnecting {
 
     /** The keys one WebSocket holds from [acquire]; [release] gives them back, once, however often it is called. */
     inner class Held internal constructor(
-        private val keys: List<String>,
-        private val taken: List<Entry>,
+        keys: List<String>,
+        taken: List<Entry>,
     ) {
+        private val keys = keys.toMutableList()
+        private val taken = taken.toMutableList()
         private val released = AtomicInt(0)
+
+        /** The keys held. */
+        val held: List<String> get() = keys.toList()
+
+        /**
+         * Holds [key] too when no other WebSocket holds it, without waiting (a key added while others are held is never
+         * waited for, so no two WebSockets wait for each other); false, and nothing more held, when another one does.
+         */
+        fun tryAdd(key: String): Boolean {
+            if (key in keys) return true
+            val e = lock.withLock { entries.getOrPut(key) { Entry() }.also { it.users++ } }
+            if (!e.mutex.tryLock()) {
+                forget(listOf(key), listOf(e))
+                return false
+            }
+            keys += key
+            taken += e
+            return true
+        }
 
         fun release() {
             if (!released.compareAndSet(0, 1)) return
@@ -128,10 +156,14 @@ internal class WebSocketConnecting {
         }
 
         /**
-         * The key of the remote host named [host] when a proxy resolves it: DNS names compare without case (RFC 4343),
-         * and a final dot (an absolute name) names the same host; an IPv6 literal loses its brackets.
+         * The key of the remote host named [host] (every WebSocket holds its URL's; through a proxy that resolves names, the
+         * only one): DNS names compare without case (RFC 4343), and a final dot (an absolute name) names the same host; an
+         * IPv6 literal loses its brackets.
          */
         fun nameKey(host: String): String = "name ${socketHost(host).lowercase().removeSuffix(".")}"
+
+        /** The key of the remote host at [ip] (a socket's or QUIC path's peer, 4 or 16 bytes), or null for anything else. */
+        fun ipKey(ip: ByteArray): String? = if (ip.size == 4 || ip.size == 16) addressKey(TcpAddress(ip, 0)) else null
 
         private const val FF: Byte = -1
     }

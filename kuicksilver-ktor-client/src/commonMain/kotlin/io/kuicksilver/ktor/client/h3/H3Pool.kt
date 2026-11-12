@@ -946,7 +946,7 @@ internal class H3Pool(
                             WEBSOCKETS_KEY,
                         )
                     ) {
-                        webSocket(conn, data, callContext, extraHeaders, t, dns)
+                        webSocket(conn, data, callContext, extraHeaders)
                     } else {
                         exchange(conn, data, callContext, extraHeaders)
                     }
@@ -1033,7 +1033,7 @@ internal class H3Pool(
     /**
      * RFC 9220: Extended CONNECT with `:protocol = websocket`; the 2xx is reported as 101 so Ktor's plugin accepts it.
      * The handshake is a WebSocket CONNECTING (RFC 6455 section 4.1 step 2: "There MUST be no more than one connection in
-     * a CONNECTING state"): it holds the target's addresses ([RequestDns.answered], as over HTTP/1.1) from before
+     * a CONNECTING state"): it holds the URL's name and the address of the connection it uses, shared with HTTP/1.1, from before
      * the CONNECT goes out until the server answered it, the attempt failed, or the connect timeout passed (then
      * `ConnectTimeoutException`), so a second WebSocket to the host, over either protocol, waits for it at most that long.
      */
@@ -1043,22 +1043,18 @@ internal class H3Pool(
         data: HttpRequestData,
         callContext: CoroutineContext,
         extraHeaders: List<Pair<String, String>>,
-        t: H3Target,
-        dns: RequestDns,
     ): HttpResponseData {
         val requestTime = GMTDate()
         val headers = Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders)
         val millis = data.connectTimeoutMillis(config)
-        // the keys from the families that answered (a stalled one never holds them back), within the connect timeout
+        // the keys of the remote host: the URL's name and the address the QUIC connection actually goes to (no lookup)
+        val quic = conn.quic
+        val path = quic.paths.firstOrNull { it.id == quic.stats.currentPath } ?: quic.paths.firstOrNull()
         val keys =
-            try {
-                withTimeout(millis) { dns.answered(t.host, t.port) }.map { WebSocketConnecting.addressKey(it) }
-            } catch (e: TimeoutCancellationException) {
-                throw io.ktor.client.network.sockets.ConnectTimeoutException(
-                    "The WebSocket's host was not resolved within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
-                    e,
-                )
-            }
+            listOfNotNull(
+                WebSocketConnecting.nameKey(data.url.host),
+                path?.remoteAddress?.resolveAddress()?.let { WebSocketConnecting.ipKey(it) },
+            )
         val held = webSocketConnecting.acquire(keys)
         // the answer must come within the connect timeout, as over HTTP/1.1: a server that never answers holds the host's
         // other WebSockets back for at most that long (cancelling the CONNECT resets its stream)

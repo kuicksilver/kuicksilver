@@ -135,4 +135,46 @@ class ClientHappyEyeballsTest {
 
     /** Over HTTP/3: the keys came from both families outside any timeout, so a stalled AAAA held the WebSocket for good. */
     @Test fun negative_aWebSocketOverH3DoesNotWaitForAStalledAaaa() = h3Test { webSocketWithAStalledAaaa(Http3DiscoveryMode.H3Only) }
+
+    /**
+     * A WebSocket over HTTP/3 keys its CONNECTING lock by the URL's name and the address of the connection it uses, with no
+     * lookup: here the name no longer resolves at all once the connection is up, and the WebSocket still goes through.
+     * Before, it resolved the name again for its keys and waited for the lookup until the connect timeout.
+     */
+    @Test fun negative_aWebSocketOverH3TakesTheConnectionsAddressWithoutALookup() =
+        h3Test {
+            val (server, port) =
+                testServer {
+                    install(ServerWebSockets)
+                    routing {
+                        get("/") { call.respondText("up") }
+                        serverWebSocket("/ws") {
+                            for (f in incoming) if (f is Frame.Text) send(Frame.Text("echo:" + f.readText()))
+                        }
+                    }
+                }
+            val stalled = MutableStateFlow(false)
+            val never = CompletableDeferred<Unit>()
+            try {
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    connectTimeout = 20.seconds
+                    familyResolverForTest = { _, v6 ->
+                        if (stalled.value) never.await()
+                        if (v6) emptyList() else listOf(loopback4)
+                    }
+                }, block = { install(WebSockets) }).use { c ->
+                    assertEquals("up", c.get("https://server.test:$port/").bodyAsText())
+                    stalled.value = true
+                    val start = TimeSource.Monotonic.markNow()
+                    c.webSocket("wss://server.test:$port/ws") {
+                        send(Frame.Text("hi"))
+                        assertEquals("echo:hi", (incoming.receive() as Frame.Text).readText())
+                    }
+                    assertTrue(start.elapsedNow() < 10.seconds, "${start.elapsedNow()}")
+                }
+            } finally {
+                never.complete(Unit)
+                server.stop(100, 500)
+            }
+        }
 }
