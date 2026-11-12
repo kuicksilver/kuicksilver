@@ -50,6 +50,9 @@
 #ifndef IPV6_DONTFRAG
 #define IPV6_DONTFRAG 62
 #endif
+#if defined(__linux__) && !defined(IPV6_AUTOFLOWLABEL)
+#define IPV6_AUTOFLOWLABEL 70 /* Linux 4.10; older C libraries lack the name */
+#endif
 #ifdef __linux__
 #include <linux/errqueue.h>
 #endif

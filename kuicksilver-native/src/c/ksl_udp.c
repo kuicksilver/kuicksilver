@@ -228,6 +228,14 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
                                                        : KSL_E_BAD_ARG,
                            step, errno, err, msg, msglen);
     int one = 1, v4 = u->family == AF_INET || u->dual, v6 = u->family == AF_INET6;
+    /* RFC 9000 section 9.7: "Endpoints that send data using IPv6 SHOULD apply an IPv6 flow label in compliance with [RFC6437]". Neither
+       system lets an unconnected socket choose the label of one datagram without more state (Darwin not at all; Linux only through
+       IPV6_FLOWINFO_SEND, which kernels before 4.20 refuse without a lease per label), but both label on their own once asked: Linux
+       with a keyed hash of each datagram's addresses and ports (a new path, a new label), Darwin with one random label per socket.
+       A host may leave that off by default (Linux net.ipv6.auto_flowlabels = 2, Darwin net.inet6.ip6.auto_flowlabel = 0): ask for it.
+       Best effort: an older kernel without the option keeps its default */
+    if (v6)
+        (void)setsockopt(u->fd, IPPROTO_IPV6, IPV6_AUTOFLOWLABEL, &one, sizeof one);
     /* 7 MB; Darwin refuses more than kern.ipc.maxsockbuf (8 MB less overhead by default), so halve until the kernel takes it */
     for (int rcv = 7 * 1024 * 1024;
          rcv >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv) != 0; rcv /= 2) {
@@ -574,6 +582,11 @@ void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) {
 }
 void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) {
     set_err(u, e, what);
+}
+int ksl_udp_autoflowlabel_for_test(int fd) {
+    int v = -1;
+    socklen_t l = sizeof v;
+    return getsockopt(fd, IPPROTO_IPV6, IPV6_AUTOFLOWLABEL, &v, &l) == 0 ? v : -1;
 }
 #ifdef __APPLE__
 int ksl_udp_df_mode_for_test(int fd) {

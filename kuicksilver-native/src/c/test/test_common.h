@@ -184,6 +184,7 @@ uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *);
 void ksl_udp_fail_next_gso_for_test(ksl_udp *, int err);
 void ksl_udp_fail_next_send_for_test(ksl_udp *, int err);
 int ksl_udp_df_mode_for_test(int fd);
+int ksl_udp_autoflowlabel_for_test(int fd); /* Linux and Apple: IPV6_AUTOFLOWLABEL of the socket, -1 when unreadable */
 int ksl_udp_close_wakes_for_test(ksl_udp *);
 void ksl_udp_no_ipv6_for_test(int on);
 void ksl_udp_set_err_for_test(ksl_udp *, int e, const char *what);
