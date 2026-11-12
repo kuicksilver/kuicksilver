@@ -213,6 +213,18 @@ class PseudoHeadersTest {
         )
     }
 
+    /**
+     * RFC 8441 section 4 (RFC 9220 section 3): `:protocol` "contains a value from the 'Hypertext Transfer Protocol (HTTP)
+     * Upgrade Token Registry'", whose names are tokens (RFC 9110 section 16.7); an empty or non-token value is malformed.
+     */
+    @Test fun negative_protocolIsAToken() {
+        fun ext(p: String) = listOf(":method" to "CONNECT", ":protocol" to p, ":scheme" to "https", ":authority" to "a", ":path" to "/")
+        for (p in listOf("", "web socket", "a/b", "a,b", "\"ws\"", "ws\t")) bad(ext(p), connect = true)
+        for (p in listOf("websocket", "WebSocket", "webtransport-h3", "connect-udp", "x!#$%&'*+-.^_`|~1")) {
+            assertEquals(p, PseudoHeaders.parseRequest(ext(p), true).protocol)
+        }
+    }
+
     @Test fun authorityHostMismatch() {
         bad(base + ("host" to "other.com"))
         PseudoHeaders.parseRequest(base + ("host" to "example.com"), false)

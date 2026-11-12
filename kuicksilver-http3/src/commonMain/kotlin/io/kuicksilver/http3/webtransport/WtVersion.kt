@@ -68,5 +68,9 @@ internal object WtTokens {
     const val DRAFT02_RESPONSE_FIELD: String = "sec-webtransport-http3-draft"
     const val DRAFT02_RESPONSE_VALUE: String = "draft02"
 
-    fun isWebTransport(protocol: String?): Boolean = protocol == H3 || protocol == LEGACY
+    /**
+     * Whether `:protocol` [protocol] names WebTransport, in any case: RFC 9110 section 7.8, "recipients SHOULD use
+     * case-insensitive comparison when matching each protocol-name to supported protocols" (RFC 8441 section 4).
+     */
+    fun isWebTransport(protocol: String?): Boolean = protocol.equals(H3, ignoreCase = true) || protocol.equals(LEGACY, ignoreCase = true)
 }

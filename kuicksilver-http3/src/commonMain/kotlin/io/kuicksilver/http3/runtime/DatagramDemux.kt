@@ -276,7 +276,10 @@ internal class DatagramDemux(
  * MUST only be sent with an association to an HTTP request that explicitly supports them"; one received for a request
  * without them aborts it). Only an Extended CONNECT does: a classic CONNECT is a TCP tunnel (RFC 9110 section 9.3.6) and
  * RFC 9220's `websocket` defines none, so neither does; other protocols (WebTransport, `connect-udp`, an application's own,
- * which the application serves through [Http3Stream]) do (review 2026-10-28 h3.md H3R-4).
+ * which the application serves through [Http3Stream]) do (review 2026-10-28 h3.md H3R-4). `websocket` matches in any case
+ * (RFC 9110 section 7.8). The same requests are the ones whose stream may speak the Capsule Protocol: it "only applies to
+ * definitions of new HTTP upgrade tokens" (RFC 9297 section 3.2), which a classic CONNECT has not and `websocket` does not
+ * use.
  */
 internal fun hasDatagramSemantics(
     method: String,
@@ -301,7 +304,10 @@ internal class Http3StreamImpl(
     internal val localHeaders: Http3Headers,
     internal val isClient: Boolean,
     private val onReset: () -> Unit = {},
-    /** False for a CONNECT whose protocol has no datagram semantics ([hasDatagramSemantics]): none are sent on it. */
+    /**
+     * False for a CONNECT whose protocol has no datagram semantics ([hasDatagramSemantics]): no datagrams are sent on it,
+     * and it does not speak the Capsule Protocol.
+     */
     internal val datagramsAllowed: Boolean = true,
 ) : Http3Stream {
     /** The connection's scope, on its dispatcher: the capsule reader and writer run there. */
@@ -317,6 +323,11 @@ internal class Http3StreamImpl(
 
     @ExperimentalKuicksilverApi
     override fun useCapsuleProtocol(config: CapsuleConfig): CapsuleStream {
+        // RFC 9297 section 3.2: no upgrade token that uses capsules, so no capsules either (and no DATAGRAM capsules, the
+        // HTTP datagrams section 2 forbids on a request without datagram semantics)
+        check(datagramsAllowed) {
+            "stream ${st.id} is a CONNECT whose protocol does not use the Capsule Protocol (classic CONNECT, websocket): RFC 9297 section 3.2"
+        }
         val (peerStatus, localStatus) = if (isClient) status to null else null to status
         CapsuleRules.violation(localHeaders, localStatus)?.let { throw IllegalStateException("our own message: $it") }
         check(

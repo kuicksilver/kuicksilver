@@ -261,6 +261,9 @@ internal object PseudoHeaders {
         if (protocol != null) {
             if (!connectProtocolEnabled) throw MalformedMessage(":protocol without SETTINGS_ENABLE_CONNECT_PROTOCOL")
             if (method != "CONNECT") throw MalformedMessage(":protocol with $method")
+            // RFC 8441 section 4 (RFC 9220 section 3): "a value from the 'Hypertext Transfer Protocol (HTTP) Upgrade Token
+            // Registry'", whose names are tokens (RFC 9110 sections 7.8, 16.7)
+            if (!FieldValidator.isToken(protocol)) throw MalformedMessage(":protocol is not a token")
             if (scheme.isNullOrEmpty() || path.isNullOrEmpty() ||
                 authority.isNullOrEmpty()
             ) {

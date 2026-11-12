@@ -4,21 +4,28 @@
 
 package io.kuicksilver.http3.runtime
 
+import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Capsule
 import io.kuicksilver.http3.CapsuleConfig
 import io.kuicksilver.http3.CapsuleProtocol
 import io.kuicksilver.http3.H3Pair
+import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.Http3Stream
+import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.capsuleConfig
+import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
+import io.kuicksilver.http3.webtransport.readHeaders
+import io.kuicksilver.http3.webtransport.resetCode
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
@@ -477,6 +484,146 @@ class CapsuleStreamTest {
                 assertTrue(outcome!!.isFailure, "the sender finished all $offered bytes though the peer read nothing")
                 assertTrue(accepted.value <= bound, "${accepted.value} bytes accepted, above the bound of $bound")
                 assertFails("close() succeeded after the reset") { withTimeout(10.seconds) { c.close() } }
+            }
+        }
+
+    /**
+     * RFC 9297 section 3.2: "The Capsule Protocol only applies to definitions of new HTTP upgrade tokens"; RFC 9220's
+     * `websocket` defines no capsules and no datagram semantics (section 2), so neither side speaks it on a WebSocket
+     * stream, and no DATAGRAM capsule goes into the WebSocket's bytes even with HTTP/3 datagrams off. Before, both sides
+     * took the Capsule Protocol and the client sent a DATAGRAM capsule there.
+     */
+    @Test fun negative_noCapsuleProtocolOnAWebSocketStream() =
+        h3Test {
+            H3Pair.open(serverSettings = noH3Datagrams).useScoped { p ->
+                val server = async { p.server.acceptRequest().acceptConnect() }
+                val c = p.client.connect(connectReq(), "websocket")
+                assertFailsWith<IllegalStateException> { c.useCapsuleProtocol() }
+                val s = withTimeout(5.seconds) { server.await() }
+                assertFailsWith<IllegalStateException> { s.useCapsuleProtocol() }
+                // the streams are left as they were: their bytes still flow
+                c.output.writeFully("frame".encodeToByteArray())
+                c.output.flushAndClose()
+                assertEquals("frame", withTimeout(5.seconds) { s.input.readAllBytes() }.decodeToString())
+                s.output.flushAndClose()
+            }
+        }
+
+    /** A classic CONNECT carries no upgrade token at all (RFC 9110 section 9.3.6): the server cannot speak capsules on it either. */
+    @Test fun negative_noCapsuleProtocolOnAClassicConnect() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val server = async { p.server.acceptRequest().acceptConnect() }
+                val body = ByteChannel()
+                val r = p.client.request(http3Request("CONNECT", "server.test:443", null) { this.body = body })
+                assertEquals(200, r.status)
+                val s = withTimeout(5.seconds) { server.await() }
+                assertFailsWith<IllegalStateException> { s.useCapsuleProtocol() }
+                body.flushAndClose()
+                s.output.flushAndClose()
+                withTimeout(5.seconds) { r.body.readAllBytes() }
+            }
+        }
+
+    /**
+     * RFC 9297 section 3.4: "The Capsule-Protocol header field MUST NOT be used on HTTP responses with a status code that
+     * is both different from 101 (Switching Protocols) and outside the 2xx (Successful) range", and section 3.2: a
+     * message using the Capsule Protocol carries no content-type and is no 204. Our server refuses such a response head
+     * with IllegalArgumentException, as any other invalid response field; before, it went out.
+     */
+    @Test fun negative_capsuleProtocolFieldRefusedOnOwnResponses() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val refused =
+                    listOf<suspend (Http3ServerRequest) -> Unit>(
+                        { it.sendInformational(103, Http3Headers.of(CapsuleProtocol.Enabled)) },
+                        { it.respond(404, Http3Headers.of(CapsuleProtocol.Enabled)) },
+                        { it.respond(200, Http3Headers.of(CapsuleProtocol.Enabled, "content-type" to "text/plain")) },
+                        { it.respond(204, Http3Headers.of(CapsuleProtocol.Enabled)) },
+                    )
+                for ((i, answer) in refused.withIndex()) {
+                    val client = launch { runCatching { p.client.connect(connectReq(), "test-capsules") } }
+                    val r = withTimeout(5.seconds) { p.server.acceptRequest() }
+                    assertFailsWith<IllegalArgumentException>("answer $i") { answer(r) }
+                    runCatching { r.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                    withTimeout(5.seconds) { client.join() }
+                }
+                // a 2xx that enables it is what section 3.4 allows
+                launch { p.server.acceptRequest().acceptConnect(Http3Headers.of(CapsuleProtocol.Enabled)) }
+                val c = p.client.connect(connectReq(), "test-capsules")
+                assertTrue(CapsuleProtocol.isEnabled(c.headers))
+                c.useCapsuleProtocol().close()
+            }
+        }
+
+    /**
+     * RFC 9297 section 3.2: a request that enables the Capsule Protocol (`Capsule-Protocol: ?1`) and carries content-type
+     * is malformed ("A receiver that observes a violation of these requirements MUST treat the HTTP message as
+     * malformed"). acceptConnect finds it before any 2xx: the client gets a 400 and STOP_SENDING H3_MESSAGE_ERROR (RFC 9114
+     * section 4.1.2), never a tunnel. Before, the 200 went out and the check waited for useCapsuleProtocol.
+     */
+    @Test fun negative_capsuleRequestBreakingSection32IsRefusedBeforeAny200() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                val req =
+                    listOf(
+                        ":method" to "CONNECT",
+                        ":protocol" to "test-capsules",
+                        ":scheme" to "https",
+                        ":authority" to "server.test",
+                        ":path" to "/chat",
+                        "capsule-protocol" to "?1",
+                        "content-type" to "text/plain",
+                    )
+                st.output.writeFully(raw.headers(st.id, req))
+                st.output.flush()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                assertFailsWith<Http3Exception.MessageError> { r.acceptConnect() }
+                assertEquals("400", readHeaders(st)[":status"])
+                peerStopped(Http3ErrorCode.MESSAGE_ERROR) {
+                    awaitOutputStopped(st)
+                    st.output.writeFully(raw.data("x".encodeToByteArray()))
+                    st.output.flush()
+                }
+            }
+        }
+
+    /** The client side: a request enabling the Capsule Protocol with content-type is refused before a stream is opened. */
+    @Test fun negative_ownCapsuleRequestBreakingSection32IsRefused() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val req =
+                    http3Request("CONNECT", "server.test", "/chat") {
+                        headers = Http3Headers.of(CapsuleProtocol.Enabled, "content-type" to "text/plain")
+                    }
+                assertFailsWith<IllegalArgumentException> { withTimeout(5.seconds) { p.client.connect(req, "test-capsules") } }
+            }
+        }
+
+    /**
+     * A 2xx that enables the Capsule Protocol and carries content-type is a malformed response (RFC 9297 section 3.2):
+     * connect() fails with [Http3Exception.MessageError] and aborts the stream with H3_MESSAGE_ERROR (RFC 9114 section
+     * 4.1.2), instead of handing out a tunnel whose check waits for useCapsuleProtocol.
+     */
+    @Test fun negative_capsuleResponseBreakingSection32FailsTheConnect() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L))
+                val connect = async { runCatching { client.connect(connectReq(), "test-capsules") } }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                val head = listOf(":status" to "200", "capsule-protocol" to "?1", "content-type" to "text/plain")
+                st.output.writeFully(raw.headers(st.id, head))
+                st.output.flush()
+                assertIs<Http3Exception.MessageError>(withTimeout(5.seconds) { connect.await() }.exceptionOrNull())
+                assertEquals(Http3ErrorCode.MESSAGE_ERROR, resetCode(st))
             }
         }
 

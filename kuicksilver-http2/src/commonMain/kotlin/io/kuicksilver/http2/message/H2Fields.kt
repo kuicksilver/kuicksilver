@@ -269,6 +269,8 @@ internal object H2Messages {
             // RFC 8441 section 4: only with the setting, only on CONNECT, and with :scheme and :path
             if (!connectProtocolEnabled) throw MalformedMessage(":protocol without SETTINGS_ENABLE_CONNECT_PROTOCOL")
             if (method != "CONNECT") throw MalformedMessage(":protocol with $method")
+            // "a value from the 'Hypertext Transfer Protocol (HTTP) Upgrade Token Registry'": a token (RFC 9110 section 16.7)
+            if (!H2Fields.isToken(protocol)) throw MalformedMessage(":protocol is not a token")
             if (scheme.isNullOrEmpty() || path.isNullOrEmpty() || authority.isNullOrEmpty()) {
                 throw MalformedMessage("Extended CONNECT needs :scheme, :path and :authority")
             }

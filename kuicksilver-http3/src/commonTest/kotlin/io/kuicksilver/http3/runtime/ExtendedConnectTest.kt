@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.runtime
 
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
@@ -348,6 +349,73 @@ class ExtendedConnectTest {
                     st.output.flushAndClose()
                     val tunnel = server.acceptRequest().acceptConnect()
                     assertContentEquals("hello".encodeToByteArray(), withTimeout(5.seconds) { tunnel.input.readAllBytes() })
+                }
+            }
+        }
+
+    /**
+     * RFC 9114 section 4.4: "Once the CONNECT method has completed, only DATA frames are permitted to be sent on the
+     * stream." Trailers are a HEADERS frame: finish() refuses them on a tunnel before anything is sent, and the tunnel
+     * still ends with a FIN. Before, they went out and the client closed the connection with H3_FRAME_UNEXPECTED.
+     */
+    @Test fun negative_serverTrailersOnAnEstablishedTunnelAreRefused() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val served =
+                    async {
+                        val w = p.server.acceptRequest().respond(200)
+                        w.output.writeFully("tunnel".encodeToByteArray())
+                        val refused = runCatching { w.finish(Http3Headers.of("x-after" to "tunnel")) }.exceptionOrNull()
+                        w.finish()
+                        refused
+                    }
+                val s = p.client.connect(connectReq(), "echo")
+                assertIs<IllegalArgumentException>(withTimeout(5.seconds) { served.await() })
+                assertEquals("tunnel", withTimeout(5.seconds) { s.input.readAllBytes() }.decodeToString())
+                assertFalse(p.client.closed.isCompleted, "the client saw a frame other than DATA on the tunnel")
+                s.output.flushAndClose()
+            }
+        }
+
+    /**
+     * The client side of the same rule: a CONNECT, classic or Extended, has no content, and once it completed only DATA
+     * may follow, so a CONNECT with trailers is refused before a stream is opened. Before, the trailers went out and a
+     * server that had already answered 2xx closed the connection with H3_FRAME_UNEXPECTED.
+     */
+    @Test fun negative_connectRequestWithTrailersIsRefused() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val trailers: suspend () -> Http3Headers? = { Http3Headers.of("x-after" to "tunnel") }
+                val classic =
+                    http3Request("CONNECT", "server.test:443", null) {
+                        body = ByteReadChannel("x".encodeToByteArray())
+                        this.trailers = trailers
+                    }
+                val extended =
+                    http3Request("CONNECT", "server.test", "/chat") {
+                        protocol = "echo"
+                        body = ByteReadChannel("x".encodeToByteArray())
+                        this.trailers = trailers
+                    }
+                for (r in listOf(classic, extended)) {
+                    assertFailsWith<IllegalArgumentException>(r.protocol ?: "classic") { withTimeout(5.seconds) { p.client.request(r) } }
+                }
+                assertFalse(p.client.closed.isCompleted)
+            }
+        }
+
+    /**
+     * RFC 8441 section 4 (RFC 9220 section 3): `:protocol` "contains a value from the 'Hypertext Transfer Protocol (HTTP)
+     * Upgrade Token Registry'", a token (RFC 9110 sections 5.6.2, 16.7). An empty or non-token protocol is refused before
+     * a stream is opened. Before, it went out and the server reset the stream with H3_MESSAGE_ERROR.
+     */
+    @Test fun negative_connectProtocolMustBeAToken() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                for (protocol in listOf("", "web socket", "a/b")) {
+                    assertFailsWith<IllegalArgumentException>(
+                        "'$protocol'",
+                    ) { withTimeout(5.seconds) { p.client.connect(connectReq(), protocol) } }
                 }
             }
         }
