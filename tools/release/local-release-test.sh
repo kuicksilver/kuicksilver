@@ -29,6 +29,9 @@ new_repo() { # <dir>: a repository with what the script reads before the gate, a
   mkdir -p tools/release tools/check kuicksilver-native/src/c gradle
   cp "$root/tools/check/llvm-tool.sh" tools/check/
   cp "$root/kuicksilver-native/src/c/ksl.h" kuicksilver-native/src/c/; cp "$root/gradle/openssl.toml" gradle/
+  mkdir -p tools/release/swift-package licenses; cp "$root/tools/release/swift-package.sh" tools/release/
+  cp "$root"/tools/release/swift-package/*.in tools/release/swift-package/; cp "$root/LICENSE" "$root/NOTICE" .
+  cp "$root/licenses/LICENSE.openssl.txt" licenses/
   awk -v m="$marker" '$0 ~ m {print "echo \"STOPPED-BEFORE-GATE push_branch=$push_branch problems=$problems\"; exit 0"} {print}' \
     "$root/tools/release/local-release.sh" > tools/release/local-release.sh
   printf 'build/\n' > .gitignore
@@ -112,11 +115,12 @@ t "release/0.7.x, 0.7.0, BOM fallback 0.3.0-SNAPSHOT"    "refuse:kuicksilver-bom
 t "release/0.8.x, 0.8.0, BOM fallback missing"           "refuse:kuicksilver-bom"       release/0.8.x 0.8.0
 t "release/0.9.x, 0.9.0, README 'in preparation'"        "refuse:in preparation"        release/0.9.x 0.9.0
 t "release/0.10.x, 0.10.0, README 'Until ... on Central'" "refuse:Until 0.10.0 is on Maven Central" release/0.10.x 0.10.0
-# the Swift package repository (release mode only): a tag of the version there means it is released already
-KSL_SWIFT_REPO="$tmp/swift-tagged.git" t "Swift package already tagged 0.2.1" "refuse:already has the tag 0.2.1" release/0.2.x 0.2.1
-KSL_SWIFT_REPO="$tmp/no-such.git" t "Swift package repository unreadable" "refuse:cannot read the tags of" release/0.2.x 0.2.1
-KSL_SWIFT_REPO="$tmp/no-such.git" t "dry run: Swift package repository not asked" "ok:push_branch=release/0.2.x" release/0.2.x 0.2.1 --dry-run
-t "Swift package without the tag: noted"                 "ok:has no tag 0.2.1 yet"     release/0.2.x 0.2.1
+# the Swift package (swift-package.sh prepare, before the gate): a tag of the version there means it is released already
+KSL_SWIFT_REPO="$tmp/swift-tagged.git" t "Swift package already tagged 0.2.1" "refuse:tag 0.2.1 is already in" release/0.2.x 0.2.1
+KSL_SWIFT_REPO="$tmp/no-such.git" t "Swift package repository unreachable" "refuse:Swift package cannot be prepared: cannot clone" release/0.2.x 0.2.1
+KSL_SWIFT_REPO="$tmp/no-such.git" t "dry run: Swift package repository unreachable" "ok:WARN.*cannot clone" release/0.2.x 0.2.1 --dry-run
+KSL_SWIFT_REPO="$tmp/swift-tagged.git" t "dry run: Swift package already tagged" "ok:WARN.*tag 0.2.1 is already in" release/0.2.x 0.2.1 --dry-run
+t "Swift package prepared"                               "ok:prepared: .*no tag 0.2.1 yet" release/0.2.x 0.2.1
 # the iOS guide's Swift package line names the version like its other coordinates
 t "release/0.15.x, 0.15.0, iOS guide SwiftPM line 0.3.0" "refuse:docs/guide/ios.md names 0.15.0 0.3.0" release/0.15.x 0.15.0
 # dry runs: refusals are warnings
@@ -155,48 +159,76 @@ t "CHANGELOG without 0.2.7"                              "refuse:has no '## \[0.
 t "dry run: placeholder date (warning only)"             ok:WARN                        release/0.2.x 0.2.9 --dry-run
 git checkout -q main
 
-# tools/release/swift-package.sh: the Swift package's next commit and tag, against a local package repository
+# tools/release/swift-package.sh against a local package repository; the maintainer's signing, tagging and pushing are
+# done here as a plain tag and push (ptag)
 sp_pass() { pass=$((pass+1)); printf 'ok   %s\n' "$1"; }
 sp_fail() { fail=$((fail+1)); printf 'FAIL %s: %s\n' "$1" "$2"; }
-sp() { # <label> <ok|refuse> <pattern|-> <args...>: runs swift-package.sh (output in $sp_out, checkout in $tmp/sp)
+sp() { # <label> <ok|refuse> <pattern|-> <prepare|finish> <args...>: runs swift-package.sh (output in $sp_out, checkout in $tmp/sp)
   local label="$1" exp="$2" pat="$3" rc; shift 3
   sp_out=$(KSL_SWIFT_REPO="${SP_REPO:-$tmp/sp.git}" bash "$root/tools/release/swift-package.sh" "$@" --out "$tmp/sp" 2>&1); rc=$?
   if [ "$([ $rc = 0 ] && echo ok || echo refuse)" != "$exp" ]; then sp_fail "$label" "exit $rc: $(tr '\n' ' ' <<< "$sp_out" | cut -c1-200)"
   elif [ "$pat" != - ] && ! grep -qE -- "$pat" <<< "$sp_out"; then sp_fail "$label" "no '$pat' in: $(tr '\n' ' ' <<< "$sp_out" | cut -c1-200)"
   else return 0; fi; return 1
 }
+ptag() { # <version> <branch>: what the maintainer does after finish (here unsigned)
+  git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t tag -a "$1" -m "Kuicksilver $1" && git -C "$tmp/sp" push -q "$tmp/sp.git" "$2" "refs/tags/$1"
+}
 git init -q --bare -b main "$tmp/sp.git"
 S1=$(printf a | shasum -a 256 | cut -d' ' -f1); S2=$(printf b | shasum -a 256 | cut -d' ' -f1)
 pkg_line() { sed -n "s/^ *$1: \"\(.*\)\",\{0,1\}$/\1/p" "$tmp/sp/Package.swift"; }
-if sp "swift package: first version into the empty repository" ok "commit [0-9a-f]+ on main, tag 0.3.0" 0.3.0 "$S1" --source-commit 1234567; then
+L="swift package: prepare leaves nothing committed"
+if sp "$L" ok "prepared: .*branch main, no tag 0.3.0 yet" prepare 0.3.0; then
+  if ! git -C "$tmp/sp" rev-parse -q --verify HEAD >/dev/null && [ -n "$(pkg_line checksum)" ]; then sp_pass "$L"; else sp_fail "$L" "a commit, or no rendered Package.swift"; fi
+fi
+L="swift package: first version into the empty repository"
+if sp "$L" ok "commit [0-9a-f]+ on main, checksum $S1 \(unsigned, no tag yet\)" finish 0.3.0 "$S1" --source-commit 1234567; then
   if [ "$(pkg_line url)" = https://github.com/kuicksilver/kuicksilver/releases/download/v0.3.0/Kuicksilver.xcframework.zip ] && [ "$(pkg_line checksum)" = "$S1" ] \
-      && [ "$(git -C "$tmp/sp" rev-parse '0.3.0^{commit}')" = "$(git -C "$tmp/sp" rev-parse main)" ] && [ -f "$tmp/sp/LICENSE" ] && [ -f "$tmp/sp/licenses/LICENSE.openssl.txt" ] \
+      && ! git -C "$tmp/sp" rev-parse -q --verify refs/tags/0.3.0 >/dev/null && [ -f "$tmp/sp/LICENSE" ] && [ -f "$tmp/sp/licenses/LICENSE.openssl.txt" ] \
       && grep -q 'upToNextMinor(from: "0.3.0")' "$tmp/sp/README.md" && grep -q 'kuicksilver/kuicksilver@1234567' <<< "$(git -C "$tmp/sp" log -1 --format=%B)" \
-      && [ "$(git -C "$tmp/sp" log -1 --format='%an <%ae>')" = "kinchpik <339333647+kinchpik@users.noreply.github.com>" ] \
-      && grep -q "push https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/0.3.0" <<< "$sp_out"
-  then sp_pass "swift package: first version into the empty repository"
-  else sp_fail "swift package: first version into the empty repository" "files, tag, author or push line wrong"; fi
+      && [ "$(git -C "$tmp/sp" log -1 --format='%an <%ae> %G?')" = "kinchpik <339333647+kinchpik@users.noreply.github.com> N" ] \
+      && grep -q 'git commit --amend --no-edit -S22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68' <<< "$sp_out" \
+      && grep -q 'git tag -s -u 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68 0.3.0 -m "Kuicksilver 0.3.0"' <<< "$sp_out" \
+      && grep -q "push https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/0.3.0" <<< "$sp_out" \
+      && grep -q "swift-package.sh finish 0.3.0 $S1 --source-commit 1234567" <<< "$sp_out"
+  then sp_pass "$L"; else sp_fail "$L" "files, tag, author, signing or push lines wrong"; fi
 fi
-git -C "$tmp/sp" push -q "$tmp/sp.git" main refs/tags/0.3.0
-if sp "swift package: next version on top of the published one" ok "tag 0.3.1" 0.3.1 "$S2"; then
-  if [ "$(git -C "$tmp/sp" rev-list --count main)" = 2 ] && [ "$(pkg_line checksum)" = "$S2" ]; then sp_pass "swift package: next version on top of the published one"
-  else sp_fail "swift package: next version on top of the published one" "history or checksum wrong"; fi
+ptag 0.3.0 main
+L="swift package: next version on top of the published one"
+if sp "$L" ok "on main" finish 0.3.1 "$S2"; then
+  if [ "$(git -C "$tmp/sp" rev-list --count main)" = 2 ] && [ "$(pkg_line checksum)" = "$S2" ]; then sp_pass "$L"; else sp_fail "$L" "history or checksum wrong"; fi
 fi
-sp "swift package: version already tagged" refuse "tag 0.3.0 is already in" 0.3.0 "$S2" && sp_pass "swift package: version already tagged"
-if sp "dry run: version already tagged (warning, no new tag)" ok "WARN.*tag 0.3.0 is already in" 0.3.0 "$S2" --dry-run; then
-  [ "$(git -C "$tmp/sp" rev-parse '0.3.0^{commit}')" != "$(git -C "$tmp/sp" rev-parse main)" ] && sp_pass "dry run: version already tagged (warning, no new tag)" \
-    || sp_fail "dry run: version already tagged (warning, no new tag)" "the tag moved"
+ptag 0.3.1 main
+sp "swift package: version already tagged" refuse "tag 0.3.0 is already in" finish 0.3.0 "$S2" && sp_pass "swift package: version already tagged"
+sp "swift package: prepare refuses a tagged version" refuse "tag 0.3.1 is already in" prepare 0.3.1 && sp_pass "swift package: prepare refuses a tagged version"
+sp "dry run: version already tagged (warning)" ok "WARN.*tag 0.3.0 is already in" finish 0.3.0 "$S2" --dry-run && sp_pass "dry run: version already tagged (warning)"
+# an older line after a newer one: main stays on 0.3.x, 0.2.3 goes on release/0.2 (a new branch, then on top of it)
+git -C "$tmp/sp" checkout -q --orphan old && git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m "0.2.2" \
+  && git -C "$tmp/sp" tag 0.2.2 && git -C "$tmp/sp" push -q "$tmp/sp.git" refs/tags/0.2.2
+L="swift package: older line on release/0.2 from its newest tag"
+if sp "$L" ok "branch release/0.2 \(an older line than 0.3: main stays on the newest\)" finish 0.2.3 "$S1"; then
+  if [ "$(git -C "$tmp/sp" rev-parse HEAD~1)" = "$(git -C "$tmp/sp" rev-parse '0.2.2^{commit}')" ] && grep -q "push https://github.com/kuicksilver/kuicksilver-swift.git release/0.2 refs/tags/0.2.3" <<< "$sp_out" \
+      && [ "$(git -C "$tmp/sp.git" rev-parse main)" = "$(git -C "$tmp/sp.git" rev-parse '0.3.1^{commit}')" ]
+  then sp_pass "$L"; else sp_fail "$L" "base, push line or main wrong"; fi
 fi
-sp "swift package: all-zero checksum" refuse "not the SHA-256" 0.3.2 0000000000000000000000000000000000000000000000000000000000000000 && sp_pass "swift package: all-zero checksum"
-sp "swift package: short checksum" refuse "not the SHA-256" 0.3.2 c9e7447 && sp_pass "swift package: short checksum"
-sp "swift package: malformed version" refuse "is not X.Y.Z" v0.3.2 "$S1" && sp_pass "swift package: malformed version"
-SP_REPO="$tmp/no-such.git" sp "swift package: repository unreachable" refuse "cannot clone" 0.3.2 "$S1" && sp_pass "swift package: repository unreachable"
-if SP_REPO="$tmp/no-such.git" sp "dry run: repository unreachable (a new one)" ok "WARN.*cannot clone" 0.3.2 "$S1" --dry-run; then
-  [ "$(git -C "$tmp/sp" rev-list --count main)" = 1 ] && sp_pass "dry run: repository unreachable (a new one)" || sp_fail "dry run: repository unreachable (a new one)" "not a fresh history"
+ptag 0.2.3 release/0.2
+L="swift package: older line again on top of release/0.2"
+if sp "$L" ok "on release/0.2" finish 0.2.4 "$S2"; then
+  [ "$(git -C "$tmp/sp" rev-parse HEAD~1)" = "$(git -C "$tmp/sp" rev-parse '0.2.3^{commit}')" ] && sp_pass "$L" || sp_fail "$L" "not on top of 0.2.3"
 fi
-if sp "swift package: prerelease" ok "tag 0.4.0-rc1" 0.4.0-rc1 "$S1"; then
-  grep -q 'exact: "0.4.0-rc1"' <<< "$sp_out" && [ "$(pkg_line url)" = https://github.com/kuicksilver/kuicksilver/releases/download/v0.4.0-rc1/Kuicksilver.xcframework.zip ] \
-    && sp_pass "swift package: prerelease" || sp_fail "swift package: prerelease" "push hint or URL wrong"
+sp "swift package: a newer line moves main" ok "on main" finish 0.4.0 "$S1" && sp_pass "swift package: a newer line moves main"
+sp "swift package: all-zero checksum" refuse "not the SHA-256" finish 0.3.2 0000000000000000000000000000000000000000000000000000000000000000 && sp_pass "swift package: all-zero checksum"
+sp "swift package: short checksum" refuse "not the SHA-256" finish 0.3.2 c9e7447 && sp_pass "swift package: short checksum"
+sp "swift package: malformed version" refuse "is not X.Y.Z" finish v0.3.2 "$S1" && sp_pass "swift package: malformed version"
+SP_REPO="$tmp/no-such.git" sp "swift package: repository unreachable" refuse "cannot clone" prepare 0.3.2 && sp_pass "swift package: repository unreachable"
+L="dry run: repository unreachable (a new one)"
+if SP_REPO="$tmp/no-such.git" sp "$L" ok "WARN.*cannot clone" finish 0.3.2 "$S1" --dry-run; then
+  [ "$(git -C "$tmp/sp" rev-list --count main)" = 1 ] && sp_pass "$L" || sp_fail "$L" "not a fresh history"
+fi
+L="swift package: prerelease (exact:)"
+if sp "$L" ok "on main" finish 0.4.0-rc1 "$S1"; then
+  grep -q 'exact: "0.4.0-rc1"' <<< "$sp_out" && grep -q 'exact: "0.4.0-rc1"' "$tmp/sp/README.md" && ! grep -q upToNextMinor "$tmp/sp/README.md" \
+    && [ "$(pkg_line url)" = https://github.com/kuicksilver/kuicksilver/releases/download/v0.4.0-rc1/Kuicksilver.xcframework.zip ] \
+    && sp_pass "$L" || sp_fail "$L" "requirement or URL wrong"
 fi
 
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the

@@ -63,7 +63,18 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    never served as a branch.
 8. **Swift package repository** `kuicksilver/kuicksilver-swift` (created 2026-11-12, public, empty until 0.3.0): the
    package Swift apps depend on ([below](#swiftpm-the-kuicksilver-swift-repository)). Only the maintainer pushes to it,
-   the commit and tag `local-release.sh` prepares (step 6); its default branch is `main`.
+   the commit `local-release.sh` prepares, signed and tagged with the release key (step 6); its default branch is
+   `main`. Its rulesets (*Settings → Rules → Rulesets*, applied 2026-11-12) keep what SwiftPM users have resolved from
+   changing under them:
+   - **Tags are immutable**: every tag, update and deletion blocked, no bypass. SwiftPM records the version and the
+     commit it resolved (`Package.resolved`); a moved tag would make those builds fail or silently take other bytes.
+     A wrong tag is fixed with a new version, never by moving it.
+   - **Only maintainers create tags**: tag creation restricted, with a bypass for repository administrators, so a
+     version exists only when the maintainer makes it.
+   - **Protect main**: the default branch cannot be deleted or force-pushed (non-fast-forward blocked, no bypass), so
+     the history behind every tag on it stays. A release of an older line goes on `release/<X.Y>` instead of moving
+     `main` back ([below](#swiftpm-the-kuicksilver-swift-repository)); nothing in the release needs a force push or a
+     moved tag.
 
 ## Every release
 
@@ -113,8 +124,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    its `origin` counterpart (pull first; a `--release-commit` may be older on purpose), a version already on Maven
    Central (a release asks `repo1.maven.org` for the BOM's POM and refuses on 200, or when it gets no 200 or 404; a dry
    run does not ask), a tree whose version fallbacks or (final versions) README and iOS
-   guide coordinates do not name the version (step 2), a Swift package repository that already has the tag `<version>`
-   or cannot be read (release mode; `git ls-remote --tags`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
+   guide coordinates do not name the version (step 2), a Swift package that cannot be prepared (release mode: the
+   repository does not clone, already has the tag `<version>`, or its rendered `Package.swift` does not read back in
+   `swift package dump-package`; `tools/release/swift-package.sh prepare`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
    `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version and its date (`## [0.2.0] - 2026-10-18`), an NDK or Xcode other
    than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key
    (`tools/release/local-release-test.sh` runs the branch, origin, Central, CHANGELOG, version and Swift package refusals in a
@@ -151,12 +163,14 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      the CycloneDX 1.6 schema) and `build/release/kuicksilver-<version>.intoto.jsonl` (the build provenance, an in-toto
      bundle whose one DSSE envelope is signed by the release key), each signed with the release key (`.asc`) like
      `Kuicksilver.xcframework.zip`, and the signatures checked. A dry run without a key leaves them unsigned.
-   - The Swift package's next commit and tag, not pushed (`tools/release/swift-package.sh`,
-     [below](#swiftpm-the-kuicksilver-swift-repository)): a clone of `kuicksilver/kuicksilver-swift` in
+   - The Swift package's next commit, not signed, tagged or pushed (`tools/release/swift-package.sh finish`,
+     [below](#swiftpm-the-kuicksilver-swift-repository)): a fresh clone of `kuicksilver/kuicksilver-swift` in
      `build/release/kuicksilver-swift` with `Package.swift` naming
      `https://github.com/kuicksilver/kuicksilver/releases/download/v<version>/Kuicksilver.xcframework.zip` and the
-     checksum of the zip just built, its README for the version, the licence files, committed on `main` and tagged
-     `<version>`. A dry run that cannot reach the repository prepares it in a new one.
+     checksum of the zip just built, its README for the version, the licence files, committed on `main` (or
+     `release/<X.Y>` for an older line). A failure here does not stop the release, which is complete without it: the
+     script prints the command to make it again (step 6). A dry run that cannot reach the repository prepares it in a
+     new one.
    - `publishToMavenCentral`: **one Gradle invocation, one deployment** (several would produce several deployments and
      inconsistent root metadata), signed, `automaticRelease = false`:
      ```
@@ -178,9 +192,21 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
    `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
    Signed-Releases check recognises the provenance by the `.intoto.jsonl` suffix. **Then, once the GitHub release is
-   published** (before that the zip's URL does not resolve), push the Swift package's prepared commit and tag, the
-   command the script printed last: `git -C build/release/kuicksilver-swift push
-   https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/<version>`. Check it from an empty Swift package:
+   published** (before that the zip's URL does not resolve), the Swift package, in a terminal with the release key,
+   exactly as the script printed (step 5 of its last lines):
+   ```
+   cd build/release/kuicksilver-swift
+   export GPG_TTY=$(tty)
+   git commit --amend --no-edit -S22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
+   git tag -s -u 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68 <version> -m "Kuicksilver <version>"
+   git verify-commit HEAD && git verify-tag <version>
+   git push https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/<version>   # release/<X.Y> for an older line
+   ```
+   If the script reported the Swift package step as failed, or the push is rejected because the branch moved (never
+   force it: `main` refuses non-fast-forward pushes anyway), make the commit again from a fresh clone with
+   `tools/release/swift-package.sh finish <version> <checksum> --source-commit <release commit>` (the script prints it
+   with the zip's checksum; `swift package compute-checksum build/release/Kuicksilver.xcframework.zip` gives it too)
+   and repeat the commands it prints. Check it from an empty Swift package:
    `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "<version>"))` (a prerelease:
    `exact: "<version>"`), `swift package resolve`, and `tools/verify/verify-release.sh <version> --no-rebuild`, which
    checks the package against the release. The version is passed to
@@ -350,13 +376,23 @@ version of the documentation site. The package repository is a few kilobytes. An
 release has built the zip, after the release commit and its gate, so it cannot be in this repository's tagged commit
 without building the zip before the commit; in the package repository it is simply the next commit.
 
-The order at a release: `local-release.sh` builds the zip (reproducibly: the same commit and Xcode give the same
-checksum in any checkout directory), signs it, lists it in the provenance and prepares the package's commit and tag
-naming its checksum; the GitHub release attaches the zip; only then is the package pushed, so its URL resolves from the
-first moment the tag exists. A tag in the package repository is never moved (the script refuses a version that already
-has one): SwiftPM caches resolved versions, and a moved tag with another checksum fails every build that resolved it
-before. Its tags are not signed; what makes the zip trustworthy is the release's signature and provenance, which
-`verify-release.sh` checks together with the package's `Package.swift` ([verifying.md](verifying.md#the-swift-package)).
+The order at a release. With its preconditions, `local-release.sh` runs `swift-package.sh prepare`: the clone, no tag
+`<version>` there yet, the manifest rendered and read back by `swift package dump-package`, so whatever could fail at
+the end fails before hours of building. After building, signing and listing the zip in the provenance (reproducibly:
+the same commit and Xcode give the same checksum in any checkout directory), `swift-package.sh finish` commits the
+package on a fresh clone, unsigned and untagged; its failure is reported, not fatal. The GitHub release attaches the
+zip; only then does the maintainer sign the commit, make the signed tag `<version>` with the release key and push, so
+the zip's URL resolves from the first moment the tag exists.
+
+Which branch: the newest line (the highest X.Y among the package's tags, or a higher one) moves `main`, so `main` always
+names the newest version. A release of an older line (0.2.3 after 0.3.0) goes on `release/<X.Y>` of the package
+repository, created from that line's newest tag (or from `main` if the line has none) and continued by its later
+patches. SwiftPM resolves tags wherever their commits are, and every tag stays on a branch. Nothing moves `main`
+backwards or rewrites a tag, which the rulesets forbid anyway ([Once, step 8](#once-accounts-keys-dns)).
+
+The tags and commits are signed with the release key, like this repository's tags (`git verify-tag <version>`). What
+makes the zip itself trustworthy is still the release's signature and provenance, which `verify-release.sh` checks
+together with the package's `Package.swift` at the tag ([verifying.md](verifying.md#the-swift-package)).
 
 ## Alternative: the `release` workflow (not used)
 

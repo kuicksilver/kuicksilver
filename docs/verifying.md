@@ -148,13 +148,14 @@ curl -sLO https://github.com/kuicksilver/kuicksilver/releases/download/v0.3.0/Ku
 curl -sLO https://github.com/kuicksilver/kuicksilver/releases/download/v0.3.0/Kuicksilver.xcframework.zip.asc
 tools/release/verify-signature.sh Kuicksilver.xcframework.zip                      # good, by 22C1...EC68
 shasum -a 256 Kuicksilver.xcframework.zip
-curl -sL https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift/0.3.0/Package.swift | grep -E 'url:|checksum:'
+curl -sL https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift/refs/tags/0.3.0/Package.swift | grep -E 'url:|checksum:'
 ```
 
 The `checksum:` line must be the `shasum` output, the `url:` line the release asset above, and the same SHA-256 must be
 the provenance's subject `Kuicksilver.xcframework.zip` ([SBOM and provenance](#sbom-and-provenance)). The package's tags
-are not signed, so the package repository proves nothing by itself: a changed `Package.swift` either names a zip with
-another SHA-256, which no longer matches the signed asset, or SwiftPM refuses the download.
+and commits are signed with the release key (in a clone of it: `git verify-tag 0.3.0`), and its rulesets forbid moving
+or deleting a tag; but the check above does not rely on them: a changed `Package.swift` either names a zip with another
+SHA-256, which no longer matches the signed asset, or SwiftPM refuses the download.
 
 ## Which native libraries are reproducible
 

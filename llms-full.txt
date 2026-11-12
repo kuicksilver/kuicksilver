@@ -5630,12 +5630,13 @@ exactly that zip ([Verifying a release](https://github.com/kuicksilver/kuicksilv
 calls the API directly (`import Kuicksilver`; suspend functions are `async`); `KuicksilverInfo.VERSION` names the
 version you got.
 
-The framework is dynamic, so its dSYMs travel with it and Apple finds its privacy manifest in its own bundle:
+The framework is dynamic, so its dSYMs travel with it and Apple finds its privacy manifest in its own bundle; the
+licences (Kuicksilver's and OpenSSL's, both Apache-2.0) are in the framework too, so they ship with your app:
 
 ```
 Kuicksilver.xcframework
-  ios-arm64/Kuicksilver.framework (+ PrivacyInfo.xcprivacy)   ios-arm64/dSYMs/Kuicksilver.framework.dSYM
-  ios-arm64-simulator/…                                       ios-arm64-simulator/dSYMs/…
+  ios-arm64/Kuicksilver.framework (+ PrivacyInfo.xcprivacy, LICENSE, NOTICE, licenses/)   ios-arm64/dSYMs/…
+  ios-arm64-simulator/…                                                                ios-arm64-simulator/dSYMs/…
 ```
 
 It is the small umbrella module `samples/ios/kuicksilver-swift`, which exports the public API of `kuicksilver-tls`,

@@ -9,8 +9,8 @@
 #      release/<X.Y>.x of the version's own X.Y (or the commit named by --release-commit, contained in main or in that
 #      branch), and not main once that branch exists (release mode fetches origin first), nor a branch behind origin; the
 #      version is not on Maven Central yet (release mode); every version fallback of the tree is <X.Y.Z>-SNAPSHOT of the version
-#      and, for a final version, the README and the iOS guide name it; the Swift package repository has no tag <version>
-#      yet (release mode); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
+#      and, for a final version, the README and the iOS guide name it; the Swift package repository clones, has no tag
+#      <version> yet and its rendered manifest reads back (swift-package.sh prepare); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
 #      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version
 #      with its date; the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
 #   2. OpenSSL: fetch and verify the pinned tarball; rebuild all twelve targets from it, never from build/openssl or the build
@@ -32,8 +32,10 @@
 #      the SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball, digests of every file of the
 #      publication, the SBOM archive and the xcframework zip) as a signed DSSE envelope in the in-toto bundle
 #      build/release/kuicksilver-<v>.intoto.jsonl; the bundle, the SBOM archive and the xcframework zip signed with the
-#      release key as the artifacts (.asc, checked). The next commit and tag <version> of the Swift package repository
-#      kuicksilver/kuicksilver-swift in build/release/kuicksilver-swift (tools/release/swift-package.sh), not pushed.
+#      release key as the artifacts (.asc, checked). The next commit of the Swift package repository
+#      kuicksilver/kuicksilver-swift in build/release/kuicksilver-swift (tools/release/swift-package.sh finish), not
+#      signed, tagged or pushed (that is by hand); prepared in step 1 already, so it fails early; its failure here is
+#      not fatal and the script prints the command to make it again.
 #   6. publishToMavenCentral (skipped by --dry-run), then the portal steps and the checks after publishing.
 #
 # Usage: tools/release/local-release.sh <version> [--dry-run [--unsigned]] [--resume] [--repro] [--release-commit <sha>]
@@ -175,15 +177,14 @@ if [ "$base" = "$version" ]; then
     refuse "README.md still calls $version the release in preparation (\"release in preparation\" or \"Until $version is on Maven Central\"): the release commit removes that note"
   fi
 fi
-# the Swift package repository (tools/release/swift-package.sh tags <version> there at the end): a version it already has
-# would be refused after hours of building, so ask now (release mode; a dry run may be offline)
-swift_repo="${KSL_SWIFT_REPO:-https://github.com/kuicksilver/kuicksilver-swift.git}"
-if [ "$dry" = 0 ]; then
-  if ! swift_tags=$(git ls-remote --tags "$swift_repo" 2>/dev/null); then refuse "cannot read the tags of $swift_repo (the Swift package repository)"
-  elif grep -qE "refs/tags/$(printf '%s' "$version" | sed 's/\./\\./g')(\^\{\})?$" <<< "$swift_tags"; then
-    refuse "$swift_repo already has the tag $version: that Swift package version is released (never moved)"
-  else echo "  Swift package: $swift_repo has no tag $version yet"; fi
-fi
+# the Swift package (tools/release/swift-package.sh): what could fail at the end of the release fails now instead, before
+# hours of building: the clone, a tag <version> already there, the manifest rendered and read back by SwiftPM (a dry run
+# may be offline: a new repository, warnings)
+swift_prep=("$version"); [ "$dry" = 1 ] && swift_prep+=(--dry-run)
+if swift_out=$(bash tools/release/swift-package.sh prepare "${swift_prep[@]}" 2>&1); then
+  grep -E 'WARN|prepared:' <<< "$swift_out" | sed 's/^ */  Swift package: /'
+  problems=$((problems + $(grep -c 'WARN' <<< "$swift_out" || true)))
+else refuse "the Swift package cannot be prepared: $( (grep -E 'REFUSED|FAIL' <<< "$swift_out" || printf '%s\n' "$swift_out") | tail -1 | sed 's/^REFUSED: //')"; fi
 # the local gate: tools/ci/local-matrix.sh writes build/ci/gate/<commit>.stamp at its end
 stamp="build/ci/gate/$head.stamp"
 gate() { sed -n "s/^$1=//p" "$stamp" 2>/dev/null | head -1; }
@@ -427,12 +428,23 @@ else
   echo "     not signed (no key, or --unsigned): a release signs the envelope and the three files with the release key"
 fi
 
-# the Swift package: its next commit and tag, naming the zip above; pushed by hand after the GitHub release (step 6)
-echo "-- Swift package kuicksilver/kuicksilver-swift (prepared, not pushed)"
+# the Swift package: its next commit, naming the zip above; signed, tagged and pushed by hand after the GitHub release
+# (docs/release.md, step 6). Never fatal: the release is complete without it, and it can be made again by hand.
+echo "-- Swift package kuicksilver/kuicksilver-swift (committed, not signed, tagged or pushed)"
 swift_args=("$version" "$xcf_sum" --source-commit "$head"); [ "$dry" = 1 ] && swift_args+=(--dry-run)
-step "swift package: commit and tag $version"                     bash tools/release/swift-package.sh "${swift_args[@]}"
-grep -E 'commit [0-9a-f]+ on main|WARN' "$logs/$(printf '%02d' $n).log" | sed 's/^ */     /'
-swift_push=$(grep -E '^ +git -C .* push ' "$logs/$(printf '%02d' $n).log" | sed 's/^ *//')
+swift_manual="tools/release/swift-package.sh finish $version $xcf_sum --source-commit $head"
+n=$((n+1)); swift_log="$logs/$(printf '%02d' $n).log"
+if bash tools/release/swift-package.sh finish "${swift_args[@]}" > "$swift_log" 2>&1; then
+  printf '[%2d] %-58s%s\n' "$n" "swift package: commit $version" "ok"
+  grep -E ' on (main|release/)|WARN' "$swift_log" | sed 's/^ */     /'
+  swift_next=$(sed -n '/^  Swift package, once/,$p' "$swift_log")
+else
+  printf '[%2d] %-58s%s\n' "$n" "swift package: commit $version" "FAILED (not fatal, see $swift_log)"
+  tail -5 "$swift_log" | sed 's/^/     | /'
+  swift_next="  Swift package: its commit failed ($swift_log). After fixing the cause, run
+    $swift_manual
+  and follow the commands it prints."
+fi
 
 # --------------------------------------------------------------------------------------------------------------- 6. upload
 if [ "$dry" = 1 ]; then
@@ -453,6 +465,6 @@ Deployment uploaded; nothing is released yet. Next, by hand:
      and the GitHub release from the tag with the CHANGELOG section, with these six files attached:
      $sbom_zip(.asc), $prov(.asc) and $xcf(.asc)
      (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum).
-  5. Once the GitHub release is published, the Swift package (its URL resolves now):
-     $swift_push
+  5. Once the GitHub release is published (the zip's URL resolves now), the Swift package:
+$swift_next
 NEXT

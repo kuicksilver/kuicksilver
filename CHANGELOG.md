@@ -20,9 +20,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0"))` instead of building
   the xcframework from a checkout (docs/guide/ios.md, "Swift only"). `tools/release/xcframework.sh` builds the zip
   reproducibly (the same checksum from any checkout directory); `local-release.sh` builds it, signs it, lists it in the
-  provenance and prepares the package repository's next commit and tag `<version>` with its checksum
-  (`tools/release/swift-package.sh`, from `tools/release/swift-package/`), pushed by hand after the GitHub release;
-  `verify-release.sh` checks that the package's `Package.swift` names the signed release asset. `KuicksilverInfo.VERSION`
+  provenance and prepares the package repository's next commit with its checksum (`tools/release/swift-package.sh`,
+  from `tools/release/swift-package/`), which the maintainer signs, tags `<version>` with the release key and pushes
+  after the GitHub release;
+  `verify-release.sh` checks that the package's `Package.swift` names the signed release asset. Each framework of the
+  xcframework carries Kuicksilver's `LICENSE` and `NOTICE` and OpenSSL's licence. `KuicksilverInfo.VERSION`
   in the xcframework is now the version it was built as, not the `-SNAPSHOT` fallback.
 - CI: `.github/workflows/gradle-wrapper.yml` validates `gradle/wrapper/gradle-wrapper.jar` against the official Gradle
   releases (Gradle's wrapper-validation action) on every push and pull request to `main` and `release/**`.

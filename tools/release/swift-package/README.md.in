@@ -9,19 +9,19 @@ The Swift package of [Kuicksilver](https://github.com/kuicksilver/kuicksilver), 
 This repository holds no source code. It is the binary distribution of Kuicksilver: `Package.swift` declares one binary
 target, `Kuicksilver.xcframework.zip` of the matching
 [GitHub release of kuicksilver/kuicksilver](https://github.com/kuicksilver/kuicksilver/releases), with its SHA-256. Each
-tag here (`@VERSION@`, ...) is made by the release of that version and names the release's commit
-(`@COMMIT@` for @VERSION@). Issues and pull requests go to the main repository.
+tag here (`@VERSION@`, ...) is made by the release of that version, names the release's commit (`@COMMIT@` for
+@VERSION@) and is signed, like its commit, with the release key. Issues and pull requests go to the main repository.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "@VERSION@")),
+    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", @REQUIREMENT@),
 ],
 targets: [
     .target(name: "App", dependencies: [.product(name: "Kuicksilver", package: "kuicksilver-swift")]),
 ]
 ```
 
-iOS 15 or newer. Before 1.0 a minor version may break the API, hence `.upToNextMinor`. How to use it from Swift, the
+iOS 15 or newer. @REQUIREMENT_NOTE@ How to use it from Swift, the
 privacy manifest the framework carries and what App Store submission needs:
 [Kuicksilver on iOS](https://github.com/kuicksilver/kuicksilver/blob/v@VERSION@/docs/guide/ios.md).
 
@@ -40,7 +40,8 @@ then check the `.asc` against the release key (fingerprint `22C1 F2E4 FCE9 4B28 
 zip is a subject of the release's build provenance, as
 [Verifying a release](https://github.com/kuicksilver/kuicksilver/blob/v@VERSION@/docs/verifying.md) describes;
 `tools/verify/verify-release.sh @VERSION@` in a clone of the main repository does all of it, including this
-repository's `Package.swift`.
+repository's `Package.swift`. This repository's tags and commits are signed with the same key: after importing it,
+`git verify-tag @VERSION@`.
 
 ## License
 

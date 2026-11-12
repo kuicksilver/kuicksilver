@@ -56,7 +56,7 @@ fpr=22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
 key="$root/tools/release/kuicksilver-release-key.asc"
 repo="$root"
 central="${KSL_VERIFY_CENTRAL:-https://repo1.maven.org/maven2}"; github="${KSL_VERIFY_GITHUB:-https://github.com/kuicksilver/kuicksilver/releases/download}"
-swift="${KSL_VERIFY_SWIFT:-https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift}"   # <swift>/<tag>/Package.swift
+swift="${KSL_VERIFY_SWIFT:-https://raw.githubusercontent.com/kuicksilver/kuicksilver-swift}"   # <swift>/refs/tags/<tag>/Package.swift
 first_with_provenance=0.2.1   # docs/release.md, "Supply chain": every release from 0.2.1 has both files
 first_with_bundle=0.3.0       # from 0.3.0: kuicksilver-<v>.intoto.jsonl (DSSE envelope) and Kuicksilver.xcframework.zip
 
@@ -225,6 +225,7 @@ else prov="kuicksilver-$version.intoto.json"; fi
 noanswer=""
 if [ -z "$offline" ]; then
   for f in "$prov" "$prov.asc" "$sbom" "$sbom.asc" ${xcf:+"$xcf" "$xcf.asc"}; do
+    rm -f "$ghd/$f"   # a file from an earlier run of the work directory must not stand in for a 404 now
     fetch "$github/v$version/$f" "$ghd/$f"; [ $? != 2 ] || noanswer="$noanswer $f"
   done
 fi
@@ -330,11 +331,14 @@ PY
   if [ -n "$xcf" ] && [ -f "$ghd/$xcf" ]; then
     want_url="https://github.com/kuicksilver/kuicksilver/releases/download/v$version/$xcf"
     pkgf="${offline:+$offline/swift/Package.swift}"; pkgf="${pkgf:-$work/swift/Package.swift}"; prc=0
-    [ -n "$offline" ] || { fetch "$swift/$version/Package.swift" "$pkgf"; prc=$?; }
+    # the tag, never a branch of that name; a manifest from an earlier run must not stand in for a 404 now
+    [ -n "$offline" ] || { rm -f "$pkgf"; fetch "$swift/refs/tags/$version/Package.swift" "$pkgf"; prc=$?; }
     if [ "$prc" = 2 ]; then res FAIL swiftpm "kuicksilver-swift $version" "no answer from $swift"
-    elif [ ! -f "$pkgf" ]; then res FAIL swiftpm "kuicksilver-swift $version" "no Package.swift at the tag $version of the Swift package"
+    elif [ "$prc" = 1 ] || [ ! -f "$pkgf" ]; then res FAIL swiftpm "kuicksilver-swift $version" "no tag $version in the Swift package (no Package.swift there)"
     else
-      p_url=$(sed -n 's/^ *url: "\(.*\)",$/\1/p' "$pkgf"); p_sum=$(sed -n 's/^ *checksum: "\([^"]*\)"$/\1/p' "$pkgf")
+      # strings from the manifest are printed: no control characters (a terminal escape in a crafted Package.swift), bounded
+      p_url=$(sed -n 's/^ *url: "\(.*\)",$/\1/p' "$pkgf" | head -1 | LC_ALL=C tr -d '[:cntrl:]' | cut -c1-300)
+      p_sum=$(sed -n 's/^ *checksum: "\([^"]*\)"$/\1/p' "$pkgf" | head -1 | LC_ALL=C tr -d '[:cntrl:]' | cut -c1-64)
       have=$( (sha256sum "$ghd/$xcf" 2>/dev/null || shasum -a 256 "$ghd/$xcf") | cut -d' ' -f1)
       if [ "$p_url" != "$want_url" ]; then res DIFF swiftpm "kuicksilver-swift $version" "Package.swift names ${p_url:-no url}, not $want_url"
       elif [ "$p_sum" = "$have" ]; then res OK swiftpm "kuicksilver-swift $version" "Package.swift names github/$xcf, checksum ${have:0:16}"

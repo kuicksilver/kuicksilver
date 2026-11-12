@@ -19,7 +19,7 @@ trap 'for h in "$tmp"/gpg-*; do gpgconf --homedir "$h" --kill all >/dev/null 2>&
 sha1() { (sha1sum "$1" 2>/dev/null || shasum -a 1 "$1") | cut -d' ' -f1; }
 
 # curl: https://central.invalid/maven2/<path> is $STUB_CENTRAL/<path> (a directory gives an HTML listing),
-# https://github.invalid/dl/v<version>/<file> is $STUB_GITHUB/<file>, https://swift.invalid/<tag>/<file> is $STUB_SWIFT/<file>; a URL matching $STUB_NOANSWER gets no answer (000,
+# https://github.invalid/dl/v<version>/<file> is $STUB_GITHUB/<file>, https://swift.invalid/refs/tags/<tag>/<file> is $STUB_SWIFT/<file>; a URL matching $STUB_NOANSWER gets no answer (000,
 # exit 7), one matching $STUB_404 a 404; $STUB_LISTING_EXTRA is added to every listing; anything else is a test bug and gets no answer
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/curl" <<'PY'
@@ -48,6 +48,7 @@ for prefix, base, flat in (("https://central.invalid/maven2/", os.environ.get("S
                            ("https://swift.invalid/", os.environ.get("STUB_SWIFT"), True)):
     if base and url.startswith(prefix):
         rel = url[len(prefix):]
+        if prefix == "https://swift.invalid/" and not rel.startswith("refs/tags/"): answer("404")   # tags only, never a branch
         p = os.path.join(base, os.path.basename(rel) if flat else rel)
         if rel.endswith("/") and os.path.isdir(p):
             extra = [os.environ["STUB_LISTING_EXTRA"]] if os.environ.get("STUB_LISTING_EXTRA") else []
@@ -229,7 +230,7 @@ t "xcframework differs from the Swift package's checksum" 1 "printf 'other\\\\n'
 t "xcframework missing"                1 "rm $xcf $xcf.asc" \
   '+^FAIL +provenance +github/Kuicksilver.xcframework.zip +\(not on the GitHub release v9.9.9\)' '-swiftpm'
 t "Swift package not tagged 9.9.9"      1 "rm -r repo/swift" \
-  '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no Package.swift at the tag 9.9.9' '+^OK +provenance +Kuicksilver.xcframework.zip'
+  '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no tag 9.9.9 in the Swift package' '+^OK +provenance +Kuicksilver.xcframework.zip'
 t "Swift package names another release's zip" 1 "sed -i.bak 's#/v9.9.9/#/v9.9.8/#' repo/swift/Package.swift; rm repo/swift/Package.swift.bak" \
   '+^DIFF +swiftpm +kuicksilver-swift 9.9.9 +\(Package.swift names https://github.com/kuicksilver/kuicksilver/releases/download/v9.9.8/'
 V=0.2.5 t "0.2.x: the plain statement, no xcframework" 0 ':' \
@@ -264,9 +265,17 @@ PINNED=1 t "the pinned key, not the fixture's" 1 ':' '+^FAIL +signature +io/kuic
 
 # online, through the curl stub
 ONLINE=1 STUB_404='^https://swift\.invalid/' t "online: Swift package without the tag" 1 ':' \
-  '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no Package.swift at the tag' '+^OK +signature +github/Kuicksilver.xcframework.zip'
+  '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no tag 9.9.9 in the Swift package' '+^OK +signature +github/Kuicksilver.xcframework.zip'
 ONLINE=1 STUB_NOANSWER='^https://swift\.invalid/' t "online: Swift package host does not answer" 1 ':' \
   '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no answer from https://swift.invalid'
+ONLINE=1 STUB_404='^https://swift\.invalid/' t "online: a stale Package.swift of an earlier run is not used" 1 \
+  "mkdir -p work/swift && cp repo/swift/Package.swift work/swift/" '+^FAIL +swiftpm +kuicksilver-swift 9.9.9 +\(no tag 9.9.9' '-^OK +swiftpm'
+ONLINE=1 STUB_404='^https://github\.invalid/.*intoto' t "online: a stale provenance of an earlier run is not used" 1 \
+  "mkdir -p work/github && cp repo/github/kuicksilver-9.9.9.intoto.jsonl* work/github/" \
+  '+^FAIL +provenance +github/kuicksilver-9.9.9.intoto.jsonl +\(not on the GitHub release' '-^OK +signature +github/kuicksilver-9.9.9.intoto.jsonl'
+t "control characters in the Swift package's URL are not printed" 1 \
+  "python3 -c 'import sys; p=sys.argv[1]; t=open(p).read(); open(p,\"w\").write(t.replace(\"/v9.9.9/K\", \"/v9.9.9/\\x1b[2JK\"))' repo/swift/Package.swift" \
+  '+^DIFF +swiftpm +kuicksilver-swift 9.9.9 +\(Package.swift names https://github.com/kuicksilver/kuicksilver/releases/download/v9.9.9/\[2JKuicksilver'
 ONLINE=1 t "online: good release"       0 ':' '+5 files of 5 publications' '+^OK +signature +io/kuicksilver/kuicksilver-native-macosarm64/' \
   '+^OK +provenance +source commit' '+^OK +rebuild +klib/macos_arm64/libssl.a' '-^(DIFF|FAIL)'
 ONLINE=1 STUB_NOANSWER='kuicksilver-native-android-9\.9\.9\.aar$' t "online: a listed file does not download" 1 ':' \
