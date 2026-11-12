@@ -2500,7 +2500,7 @@ Ktor's `WebSockets` plugin and `webSocket("/path") {}` routes work as on Ktor's 
 (RFC 8441) and HTTP/3, with the checks RFC 6455 asks of a server that Ktor leaves out:
 
 - A handshake is upgraded only when it is one (section 4.2.1): over HTTP/1.1 exactly one `Sec-WebSocket-Key` that is 16
-  bytes in base64, and on both protocols exactly one `Sec-WebSocket-Version: 13`. Otherwise the route's answer becomes
+  bytes in base64, and on every protocol exactly one `Sec-WebSocket-Version: 13`. Otherwise the route's answer becomes
   `400 Bad Request`, or for another version `426 Upgrade Required` over HTTP/1.1 (400 over HTTP/2 and HTTP/3), with
   `Sec-WebSocket-Version: 13`; the handler does not run.
 - A client's uncompressed frame or message larger than the engine's `webSocketMaxMessageSize` (16 MiB by default,
@@ -3928,7 +3928,7 @@ for a fresh client's handshake on a loaded host (comments in the file). Left out
   HTTP/3 would also have no `Connection`/`Upgrade`/`Sec-WebSocket-Key` to compare — RFC 9220 drops them);
 - `testWebsocketWithDefaultRequest` over HTTP/3 only: `defaultRequest` sets host and port, so the URL stays `ws://`;
 - `ServerSentEventsTest` and `HeadersTest`: they need serialization, logging and auth plugins (SSE is covered by the
-  engine's own tests over both protocols).
+  engine's own tests over all three protocols).
 
 The contract found and fixed: a closed client kept its UDP socket (the engine's cleanup waited for its own parent
 job), the socket timeout did not cover response bodies, an HTTP/3 body cancelled by the call reported the stream reset
