@@ -1024,7 +1024,8 @@ within the peer's flow control (draft-11 section 4): with little credit the rese
 reliable bytes. Both codepoints of the parameter are sent and accepted, 0x1d and the pre-IANA one Chrome and quiche use.
 A server that accepts 0-RTT but drops a remembered `reset_stream_at` is treated like one that lowers a limit
 (PROTOCOL_VIOLATION). Once RESET_STREAM_AT is in play on a stream, a later reset with another error code is STREAM_STATE_ERROR. A peer that sends RESET_STREAM_AT without our parameter, or with a reliable size
-above its final size, closes the connection with FRAME_ENCODING_ERROR. WebTransport uses it to keep a stream's header.
+above its final size, closes the connection with FRAME_ENCODING_ERROR. `QuicConnection.resetStreamAtEnabled` tells
+whether both sides advertised the parameter. WebTransport uses it to keep a stream's header.
 
 ## Datagrams (RFC 9221)
 

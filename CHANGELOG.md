@@ -393,6 +393,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still delivering its first bytes when the peer advertised it too, and fall back to RESET_STREAM otherwise. WebTransport
   resets the streams it opened this way, keeping their header (draft-ietf-webtrans-http3-16 section 4.4), and the Ktor
   server advertises it with `webTransport`.
+  `QuicConnection.resetStreamAtEnabled` tells whether both sides advertised it.
 - Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on a
   dedicated HTTP/3 connection of the Kuicksilver engine, outside the pool, closed with the session
   (`docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused under `H1Only` and through a proxy unless
@@ -584,6 +585,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   second (`docs/benchmarks.md`, "0.3.0 work in progress").
 - WebTransport: `drain()` also sets the session's own `drainRequested` (draft-ietf-webtrans-http3 section 4.7: the
   side that asks winds down too); before, it reflected only the peer's drain or GOAWAY.
+- WebTransport needs the transport parameters and settings of draft-ietf-webtrans-http3-16 section 3.1 from the peer:
+  for draft-14 and later `reset_stream_at` on both sides and the peer's `max_datagram_frame_size` above 0. A client
+  throws `Http3Exception.Settings` before its CONNECT when the server lacks one ("A client MUST NOT establish
+  WebTransport sessions if ..."); a server also requires the client's own WebTransport setting (`SETTINGS_WT_ENABLED`,
+  draft-14 `SETTINGS_WT_MAX_SESSIONS`, draft-02 `SETTINGS_ENABLE_WEBTRANSPORT`) and treats a CONNECT without them as
+  malformed: 400, STOP_SENDING `H3_MESSAGE_ERROR`, and `acceptWebTransport` throws `Http3Exception.Settings` (before,
+  only `H3_DATAGRAM` was checked, and the 400 came without the stream error). Draft-02 sessions, which Chrome and
+  Firefox open, need no `reset_stream_at`, as that draft predates it. `Http3Endpoint` turns `QuicConfig.resetStreamAt`
+  on with `webTransport`, as the Ktor engines already did, and a reset of a WebTransport stream is always a
+  RESET_STREAM_AT keeping its header (section 4.4; before, a plain RESET_STREAM without the parameter). With
+  `webTransport`, `SETTINGS_ENABLE_WEBTRANSPORT` other than 0 or 1 closes the connection with `H3_SETTINGS_ERROR`
+  (draft-02 section 3.1).
+- WebTransport: a session's streams are sent at the RFC 9218 priority of its CONNECT stream and follow the client's
+  PRIORITY_UPDATE for it (draft-ietf-webtrans-http3-16 section 3.4); before, they had the default priority.
 - Ktor client: a `wss` WebSocket belongs to the `https` origin (RFC 8441 section 5 via RFC 9220; RFC 7838 section 2.4):
   it uses the alternatives, broken marks and RTTs learned from `https` responses, and Alt-Svc on its HTTP/1.1 answer is
   filed under `https`; `ws` likewise under `http`. Before, `wss` was an origin of its own and never found an alternative.
