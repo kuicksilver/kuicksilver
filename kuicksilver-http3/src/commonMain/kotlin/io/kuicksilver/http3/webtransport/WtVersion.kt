@@ -103,7 +103,8 @@ internal fun wtClientVersion(h3: io.kuicksilver.http3.runtime.H3Session): Pair<W
  * cannot carry it (section 3.1: the request is then malformed). So a client that announces draft-16 or draft-14 without
  * `reset_stream_at` and also draft-02 is served only when its CONNECT is a draft-02 request (our reading of section 7.1,
  * as for [wtClientVersion]); its draft-16 or draft-14 CONNECT is refused, never run as a draft-16 session that broke
- * section 3.1 and could not reset as section 4.4 requires.
+ * section 3.1 and could not reset as section 4.4 requires. A request in draft-02 form runs draft-02 even when a higher
+ * common version could run, because the client asked for draft-02.
  */
 internal fun wtServerVersion(
     h3: io.kuicksilver.http3.runtime.H3Session,

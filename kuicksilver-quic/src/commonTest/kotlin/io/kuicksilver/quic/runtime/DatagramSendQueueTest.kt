@@ -78,6 +78,31 @@ class DatagramSendQueueTest {
         assertFalse(q.hasPending())
     }
 
+    /**
+     * LatestWins replaces the queued datagram of its key whatever the urgency of either: the old u=7 one is gone, its FIFO
+     * empty, the counters exact, and only the new u=0 one is sent.
+     */
+    @Test fun negative_latestWinsReplacesAcrossUrgencies() {
+        val q = DatagramSendQueue(32, 1_048_576)
+        q.offer(ByteArray(100) { 7 }, DatagramPolicy.LatestWins("k"), 7)
+        q.applyCommands()
+        assertEquals(7, q.nextUrgency())
+        q.offer(ByteArray(10) { 0 }, DatagramPolicy.LatestWins("k"), 0)
+        q.applyCommands()
+        assertEquals(1, q.count.load(), "one datagram of key k is queued")
+        assertEquals(10L, q.bytes.load())
+        assertEquals(0, q.nextUrgency())
+        val out = Sink(1000)
+        q.onTransmit(out)
+        assertEquals(listOf(List<Byte>(10) { 0 }), out.out.map { it.toList() })
+        // nothing left at u=7: its FIFO's bit is clear
+        assertEquals(-1, q.nextUrgency())
+        assertFalse(q.hasPending())
+        assertTrue(q.isEmpty)
+        assertEquals(0, q.count.load())
+        assertEquals(0L, q.bytes.load())
+    }
+
     /** Eviction under DropOldest drops the oldest datagram of all urgencies, not the head of the most urgent queue. */
     @Test fun evictionDropsTheOldestOfAllUrgencies() {
         val q = DatagramSendQueue(2, 1_048_576)
