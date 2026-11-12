@@ -213,6 +213,57 @@ class DnsMessageTest {
         assertTrue(a.inBailiwick("www.a.example"))
     }
 
+    @Test fun targetOnAnotherTargetsCnamePathIsFiledToo() {
+        // a.example has AliasMode records to t1 and t2 (one is picked at random, RFC 9460 section 2.4.2), and t1 is a
+        // CNAME to t2, a CNAME to cdn: both targets have cdn's RRset, whichever is walked first
+        fun alias(t: String) = SvcbTestEncoder.encode(SvcbRecord(0, t, emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response(
+                "a.example",
+                listOf(
+                    rr("a.example", 65, 300, alias("t1.example")),
+                    rr("a.example", 65, 300, alias("t2.example")),
+                    rr("t1.example", 5, 300, SvcbTestEncoder.name("t2.example")),
+                    rr("t2.example", 5, 300, SvcbTestEncoder.name("cdn.example")),
+                ),
+            ).let { it.copyOf().also { m -> m[11] = 1 } } + rr("cdn.example", 65, 300, h3Here)
+        val a = DnsMessage.read(msg, "a.example")
+        // (and cdn.example itself, the TargetName "." of its ServiceMode record)
+        assertEquals(setOf("t1.example", "t2.example", "cdn.example"), a.related.keys)
+        assertEquals(a.related["t1.example"], a.related["t2.example"])
+    }
+
+    @Test fun negative_rrsetReachedByManyTargetsIsParsedOnce() {
+        // 16 ServiceMode targets, each a CNAME to cdn.example with 300 records: those are read once, not once per target
+        val targets = (0 until 16).map { "t$it.example" }
+        val service =
+            targets.map {
+                rr(
+                    "a.example",
+                    65,
+                    300,
+                    SvcbTestEncoder.encode(SvcbRecord(1, it, listOf("h3"), false, null, emptyList(), emptyList(), 0, "x")),
+                )
+            }
+        val cnames = targets.map { rr(it, 5, 300, SvcbTestEncoder.name("cdn.example")) }
+        val big = List(300) { rr("cdn.example", 65, 300, h3Here) }
+        val msg =
+            response("a.example", service + cnames).let {
+                it.copyOf().also { m ->
+                    m[10] = (300 shr 8).toByte()
+                    m[11] = 300.toByte()
+                }
+            } +
+                big.reduce { x, y -> x + y }
+        var checkpoints = 0
+        val a = DnsMessage.read(msg, "a.example") { checkpoints++ }
+        assertEquals(targets.toSet(), a.related.keys)
+        assertTrue(a.related.values.all { it.size == 300 })
+        // about 650 units of work (records read and parsed, CNAME steps), a checkpoint every 64; parsing cdn's RRset per
+        // target would be 16 x 300 more
+        assertTrue(checkpoints <= 15, "$checkpoints checkpoints")
+    }
+
     @Test fun negative_recordsOfUnrelatedNamesAreNotKept() { // RFC 2181 section 5.4.1: only what the answer leads to
         val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
         val msg =

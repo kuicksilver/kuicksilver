@@ -236,10 +236,12 @@ internal object DnsMessage {
         val records = if (ends && rcode != RCODE_NXDOMAIN) rrset(name, chainTtl) else emptyList()
         // RFC 2181 section 5.4.1: of the other records only those the answer leads to are kept, the CNAME chain and the
         // TargetNames (and theirs, in turn); anything else in the sections could plant records for unrelated names. Each
-        // TargetName is looked at once (a work list), and at most MAX_RELATED RRsets are followed. A TargetName that is a
-        // CNAME has the records at the end of its chain, as a query for it would ("after following CNAMEs as normal", RFC
-        // 9460 section 3, step 3): they are filed under the TargetName, which is the name SVCB resolution asks for next
+        // TargetName is looked at once (a work list), each owner's RRset is parsed once however many TargetNames lead to it,
+        // and at most MAX_RELATED RRsets are followed. A TargetName that is a CNAME has the records at the end of its chain,
+        // as a query for it would ("after following CNAMEs as normal", RFC 9460 section 3, step 3): they are filed under the
+        // TargetName, which is the name SVCB resolution asks for next
         val allowed = HashSet<String>(chain)
+        val targets = HashSet<String>() // apart from [allowed]: a TargetName on another one's CNAME path is a target too
         val work = ArrayDeque<String>()
         val chainEnd = HashMap<String, Pair<String, Long>>() // TargetName -> the end of its CNAME chain and the chain's TTL
         val via = HashMap<String, List<String>>() // TargetName -> the names its CNAME chain went to
@@ -247,7 +249,8 @@ internal object DnsMessage {
         fun admit(rs: List<SvcbRecord>) {
             for (rec in rs) {
                 val target = if (rec.isAlias) rec.target else rec.serviceHost
-                if (target == "." || !allowed.add(target)) continue
+                if (target == "." || !targets.add(target)) continue
+                allowed += target
                 work += target
                 var n = target
                 var ttl = Long.MAX_VALUE
@@ -266,6 +269,9 @@ internal object DnsMessage {
             }
         }
         admit(records)
+        // each owner's RRset as parsed, with the records' own TTLs; null: malformed, rejected (section 2.2), which does not
+        // spoil the RRset asked for
+        val parsed = HashMap<String, List<SvcbRecord>?>()
         val related = LinkedHashMap<String, List<SvcbRecord>>()
         var followed = 0
         while (work.isNotEmpty() && followed < MAX_RELATED) {
@@ -273,14 +279,19 @@ internal object DnsMessage {
             val (owner, ttl) = chainEnd.getValue(target)
             if (owner == name || owner !in found) continue
             followed++
-            try {
-                rrset(owner, ttl).also {
-                    related[target] = it
-                    admit(it)
-                }
-            } catch (_: SvcbMalformedException) {
-                // section 2.2: that RRset is rejected; it does not spoil the one asked for
-            }
+            val first = owner !in parsed
+            val rs =
+                if (first) {
+                    try {
+                        rrset(owner, Long.MAX_VALUE)
+                    } catch (_: SvcbMalformedException) {
+                        null
+                    }.also { parsed[owner] = it }
+                } else {
+                    parsed[owner]
+                } ?: continue
+            related[target] = if (rs.all { it.ttlSeconds <= ttl }) rs else rs.map { it.withTtlAtMost(ttl) }
+            if (first) admit(rs)
         }
         // the addresses of the names the answer leads to, whichever families came (RequestDns.seed looks up a missing
         // one); a TargetName that is a CNAME gets those at the end of its chain, no longer than the chain's TTL

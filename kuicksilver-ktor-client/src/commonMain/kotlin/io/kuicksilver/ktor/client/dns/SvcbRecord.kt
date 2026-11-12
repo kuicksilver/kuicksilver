@@ -52,6 +52,10 @@ internal class SvcbRecord(
     /** The host of a ServiceMode endpoint: [target], or [owner] when it is "." (RFC 9460 section 2.5.2). */
     val serviceHost: String get() = if (target == ".") owner else target
 
+    /** This record with a TTL of at most [cap] (the smallest TTL of the CNAMEs that led to it). */
+    fun withTtlAtMost(cap: Long): SvcbRecord =
+        if (ttlSeconds <= cap) this else SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4Hints, ipv6Hints, cap, owner)
+
     override fun equals(other: Any?): Boolean =
         other is SvcbRecord && priority == other.priority && target == other.target && alpn == other.alpn &&
             noDefaultAlpn == other.noDefaultAlpn && port == other.port && ttlSeconds == other.ttlSeconds && owner == other.owner &&
