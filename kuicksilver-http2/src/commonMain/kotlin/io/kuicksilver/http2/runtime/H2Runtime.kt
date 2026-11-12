@@ -6,6 +6,7 @@ package io.kuicksilver.http2.runtime
 
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -968,17 +969,24 @@ internal class H2Runtime(
         val buf = s.sendBuffer
         try {
             while (true) {
-                val n = source.readAvailable(buf, 0, buf.size)
+                val n = fill(source, buf)
                 if (n < 0) {
                     source.closedCause?.let { throw it } // a body that failed is not a body that ended
                     break
                 }
+                // a source whose end is known with its last bytes (read to its end and closed without a cause, such as a
+                // byte array) ends on its last DATA frame; the core sets END_STREAM only on the frame that takes the rest
+                val last = end && source.isClosedForRead && source.closedCause == null
                 var off = 0
                 while (off < n) {
                     if (!sendable(s)) return
-                    val k = sendStep(s) { sendData(s.id, buf, off, n - off, endStream = false) } ?: continue
+                    val k = sendStep(s) { sendData(s.id, buf, off, n - off, endStream = last) } ?: continue
                     off += k
                     if (k == 0) awaitWindow(s, stallMillis, stallError)
+                }
+                if (last && n > 0) {
+                    lock.withLock { s.localEnded = true }
+                    return
                 }
             }
             if (!end) return
@@ -1003,6 +1011,23 @@ internal class H2Runtime(
             abandon(s, e)
             throw e
         }
+    }
+
+    /**
+     * Reads what [source] has into [buf], up to its size, suspending only while nothing is there: one DATA frame of the
+     * default size per round, not one per segment of the source's buffer (8 KiB in ktor-io). -1 at the source's end.
+     */
+    private suspend fun fill(
+        source: ByteReadChannel,
+        buf: ByteArray,
+    ): Int {
+        var n = source.readAvailable(buf, 0, buf.size)
+        while (n in 1 until buf.size && source.availableForRead > 0) {
+            val k = source.readAvailable(buf, n, buf.size - n)
+            if (k <= 0) break
+            n += k
+        }
+        return n
     }
 
     /**
