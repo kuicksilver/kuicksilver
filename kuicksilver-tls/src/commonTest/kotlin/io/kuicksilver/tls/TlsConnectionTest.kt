@@ -654,6 +654,12 @@ class TlsConnectionTest {
                     c.await() to s.await()
                 }
             try {
+                // a round trip first: the server's post-handshake records (TLS 1.3 NewSessionTicket) are fed before its
+                // first data, so the hook below meets the record of the byte under test, not a late ticket (on a slow host
+                // the ticket could still be on its way and the transport failed before that byte was ever read)
+                s.output.writeFully(byteArrayOf(0))
+                s.output.flush()
+                assertEquals(1, withTimeout(5.seconds) { c.input.readExactly(1) }.size)
                 // the transport fails while the client's reader pump is busy with a record, not waiting on it: its next read
                 // then answers -1 (ktor-io reads a channel failed with a cause as one that ended); a reader already waiting
                 // gets the failure thrown instead
