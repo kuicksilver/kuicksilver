@@ -83,8 +83,8 @@ public class Http3ClientConfig {
      * [Http3DiscoveryMode.H3Only], [quicHints], IP addresses, requests through a proxy, or while [http3Allowed] says no.
      * An `http://` request (in every discovery mode) first asks for the records of its `https` URL and, when the origin has
      * any usable one, gets a `307` to that URL from the engine instead (RFC 9460 section 9.5). Answers are cached for their TTL (at most
-     * 1 day; "no records" for the SOA's negative TTL, not at all without one; at most 1000 names) until [networkId] changes, and only when [networkId] is set
-     * (RFC 9460 section 12); a failed lookup is not cached.
+     * 1 day; "no records" for the SOA's negative TTL, not at all without one; at most 1000 names) until the network changes, and only when the engine sees
+     * the network: [networkId] is set, or [connectionMigration] follows one (RFC 9460 section 12); a failed lookup is not cached.
      */
     @ExperimentalKuicksilverApi
     public var httpsRecords: HttpsRecordSource = HttpsRecordSource.Off
@@ -99,8 +99,10 @@ public class Http3ClientConfig {
     public var httpsRecordExtraWait: Duration = 50.milliseconds
 
     /**
-     * Forget alternatives without `persist=1` when [networkId] reports a new network, as RFC 7838 section 2.2 says a client
-     * SHOULD; true by default (before 0.2.1, false). False keeps them across networks.
+     * Forget alternatives without `persist=1` when the network changes, as RFC 7838 section 2.2 says a client SHOULD; true by
+     * default (before 0.2.1, false). False keeps them across networks. The network is [networkId], or the networks
+     * [connectionMigration] follows while [networkId] is not set; a change is also seen across restarts, against the network
+     * the store's entries were learned on ([AltSvcStore.networkId]). Without either source the engine sees no change.
      */
     public var clearOnNetworkChange: Boolean = true
 
@@ -114,9 +116,11 @@ public class Http3ClientConfig {
     public var hardDelay: Duration? = null
 
     /**
-     * Identifies the current network; a change resets "broken" marks, QUIC confirmation and the HTTPS record cache. null:
-     * one network. While it is not set the engine keeps no HTTPS records of its own ([httpsRecords]): RFC 9460 section 12
-     * requires that cache to be flushed on network changes, which the engine cannot see then.
+     * Identifies the current network; a change resets "broken" marks, QUIC confirmation and the HTTPS record cache, and drops
+     * alternatives without `persist=1` ([clearOnNetworkChange]). null: one network. While it is not set, the networks
+     * [connectionMigration] follows ([Http3ConnectionMigration.networks]) are the network, when it has them (the
+     * `followDefaultNetwork` factories do); without either, the engine sees no network change and keeps no HTTPS records of
+     * its own ([httpsRecords]): RFC 9460 section 12 requires that cache to be flushed on network changes.
      */
     public var networkId: () -> String? = { null }
         set(value) {
@@ -209,7 +213,8 @@ public class Http3ClientConfig {
      * socket over the new network and the server takes it as a NAT rebinding, and may die at its idle timeout otherwise.
      * `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android and `Http3ConnectionMigration.followDefaultNetwork()`
      * on iOS and macOS follow the system's default network; see [Http3ConnectionMigration] for other platforms and the rules.
-     * [networkId] is not derived from it: give it the same source to reset broken marks on a network change.
+     * While [networkId] is not set, the networks the hook follows ([Http3ConnectionMigration.networks]) are the engine's
+     * network: a change resets broken marks and drops non-persistent alternatives as a [networkId] change does.
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var connectionMigration: Http3ConnectionMigration? = null

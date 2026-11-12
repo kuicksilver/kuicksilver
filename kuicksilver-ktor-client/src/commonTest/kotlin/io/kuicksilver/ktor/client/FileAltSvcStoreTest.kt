@@ -220,4 +220,26 @@ class FileAltSvcStoreTest {
         val again = FileAltSvcStore(p) { now }
         assertTrue(again.get("https://a:443").isEmpty() && again.get("https://b:443").isEmpty())
     }
+
+    /**
+     * The network the alternatives were learned on is kept with them (RFC 7838 section 2.2), so an engine started later can
+     * tell whether the network changed meanwhile; a file without it (an older version's) or with a damaged one has none.
+     */
+    @Test fun negative_networkIdSurvivesANewInstance() {
+        val p = tmp()
+        val s = FileAltSvcStore(p) { now }
+        s.put("https://a:443", listOf(entry(443)))
+        s.networkId = "wifi\t\"7\"\n"
+        assertEquals("wifi\t\"7\"\n", FileAltSvcStore(p) { now }.networkId)
+        assertEquals(1, FileAltSvcStore(p) { now }.get("https://a:443").size)
+        s.networkId = null
+        assertNull(FileAltSvcStore(p) { now }.networkId)
+        val old = tmp()
+        SystemFileSystem.sink(old).buffered().use { it.writeString("https://a:443\th3\t\t443\t${now + 5000}\t0\n") }
+        assertNull(FileAltSvcStore(old) { now }.networkId)
+        val damaged = tmp()
+        SystemFileSystem.sink(damaged).buffered().use { it.writeString("network\tzz\nhttps://a:443\th3\t\t443\t${now + 5000}\t0\n") }
+        assertNull(FileAltSvcStore(damaged) { now }.networkId)
+        assertEquals(1, FileAltSvcStore(damaged) { now }.get("https://a:443").size)
+    }
 }

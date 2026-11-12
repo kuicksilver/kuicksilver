@@ -63,7 +63,24 @@ public interface AltSvcStore {
      * service information goes when origin-specific data is cleared (RFC 7838 section 9.4: it "MUST be removed when
      * origin-specific data is cleared"). A store kept across restarts removes them there too.
      */
+    @ExperimentalKuicksilverApi
     public fun clear()
+
+    /**
+     * The network ([Http3ClientConfig.networkId]) the stored entries were learned on, as the engine last set it; null when
+     * not known. A store kept across restarts keeps it with the entries: at its first request the engine compares it with
+     * the current network and, when they differ, drops the entries without `persist=1` (RFC 7838 section 2.2: "clients
+     * SHOULD remove from cache all alternative services that lack the "persist" flag with the value "1" when they detect
+     * such a change"). The default keeps nothing and answers null, which never matches a network the engine knows: an
+     * application's store that does not implement it loses its non-persistent entries at each start where the engine knows
+     * the network. Used only while the engine knows the network (`networkId` set, or a `connectionMigration` that follows one).
+     */
+    @ExperimentalKuicksilverApi
+    public var networkId: String?
+        get() = null
+        set(value) {
+            // not kept
+        }
 }
 
 /**
@@ -72,6 +89,9 @@ public interface AltSvcStore {
  */
 public class InMemoryAltSvcStore : AltSvcStore {
     private val map = LinkedHashMap<String, List<AltSvcEntry>>()
+
+    @ExperimentalKuicksilverApi
+    override var networkId: String? = null
 
     override fun get(origin: String): List<AltSvcEntry> = map.touch(origin).orEmpty()
 
@@ -90,6 +110,7 @@ public class InMemoryAltSvcStore : AltSvcStore {
         map.remove(origin)
     }
 
+    @ExperimentalKuicksilverApi
     override fun clear() {
         map.clear()
     }
@@ -332,6 +353,7 @@ internal object AltSvcParser {
  * authoritative for the origin (RFC 9110 section 15.5.20), so its `Alt-Svc` is not learned, and only a 421 from an
  * alternative removes that alternative (RFC 7838 section 6), which the engine does as it knows where the 421 came from.
  */
+@OptIn(ExperimentalKuicksilverApi::class)
 internal class AltSvcCache(
     private val store: AltSvcStore,
     private val clock: () -> Long,
@@ -419,6 +441,13 @@ internal class AltSvcCache(
     fun onNetworkChanged(clearNonPersistent: Boolean) {
         if (clearNonPersistent) store.clearNonPersistent()
     }
+
+    /** The network the store's entries were learned on ([AltSvcStore.networkId]). */
+    var network: String?
+        get() = store.networkId
+        set(value) {
+            if (store.networkId != value) store.networkId = value
+        }
 
     /** Forgets the alternatives of [origin] (an [originOf] key), or of every origin when null (RFC 7838 section 9.4). */
     fun clear(origin: String?) {

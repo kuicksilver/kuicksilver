@@ -83,6 +83,9 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
 }
 
 abstract fun interface io.kuicksilver.ktor.client/Http3ConnectionMigration { // io.kuicksilver.ktor.client/Http3ConnectionMigration|null[0]
+    open val networks // io.kuicksilver.ktor.client/Http3ConnectionMigration.networks|{}networks[0]
+        open fun <get-networks>(): kotlinx.coroutines.flow/Flow<kotlin/Any?>? // io.kuicksilver.ktor.client/Http3ConnectionMigration.networks.<get-networks>|<get-networks>(){}[0]
+
     abstract fun start(io.kuicksilver.quic/QuicConnection, kotlinx.coroutines/CoroutineScope): io.kuicksilver.quic/NetworkMigrator<*> // io.kuicksilver.ktor.client/Http3ConnectionMigration.start|start(io.kuicksilver.quic.QuicConnection;kotlinx.coroutines.CoroutineScope){}[0]
 
     final object Companion // io.kuicksilver.ktor.client/Http3ConnectionMigration.Companion|null[0]
@@ -93,6 +96,10 @@ abstract fun interface io.kuicksilver.ktor.client/ProxyResolver { // io.kuicksil
 }
 
 abstract interface io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/AltSvcStore|null[0]
+    open var networkId // io.kuicksilver.ktor.client/AltSvcStore.networkId|{}networkId[0]
+        open fun <get-networkId>(): kotlin/String? // io.kuicksilver.ktor.client/AltSvcStore.networkId.<get-networkId>|<get-networkId>(){}[0]
+        open fun <set-networkId>(kotlin/String?) // io.kuicksilver.ktor.client/AltSvcStore.networkId.<set-networkId>|<set-networkId>(kotlin.String?){}[0]
+
     abstract fun clear() // io.kuicksilver.ktor.client/AltSvcStore.clear|clear(){}[0]
     abstract fun clearNonPersistent() // io.kuicksilver.ktor.client/AltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
     abstract fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/AltSvcStore.get|get(kotlin.String){}[0]
@@ -171,6 +178,10 @@ final class io.kuicksilver.ktor.client/AltSvcEntry { // io.kuicksilver.ktor.clie
 
 final class io.kuicksilver.ktor.client/FileAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/FileAltSvcStore|null[0]
     constructor <init>(kotlinx.io.files/Path, kotlin/Function0<kotlin/Long> = ...) // io.kuicksilver.ktor.client/FileAltSvcStore.<init>|<init>(kotlinx.io.files.Path;kotlin.Function0<kotlin.Long>){}[0]
+
+    final var networkId // io.kuicksilver.ktor.client/FileAltSvcStore.networkId|{}networkId[0]
+        final fun <get-networkId>(): kotlin/String? // io.kuicksilver.ktor.client/FileAltSvcStore.networkId.<get-networkId>|<get-networkId>(){}[0]
+        final fun <set-networkId>(kotlin/String?) // io.kuicksilver.ktor.client/FileAltSvcStore.networkId.<set-networkId>|<set-networkId>(kotlin.String?){}[0]
 
     final fun clear() // io.kuicksilver.ktor.client/FileAltSvcStore.clear|clear(){}[0]
     final fun clearNonPersistent() // io.kuicksilver.ktor.client/FileAltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
@@ -275,6 +286,10 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
 
 final class io.kuicksilver.ktor.client/InMemoryAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/InMemoryAltSvcStore|null[0]
     constructor <init>() // io.kuicksilver.ktor.client/InMemoryAltSvcStore.<init>|<init>(){}[0]
+
+    final var networkId // io.kuicksilver.ktor.client/InMemoryAltSvcStore.networkId|{}networkId[0]
+        final fun <get-networkId>(): kotlin/String? // io.kuicksilver.ktor.client/InMemoryAltSvcStore.networkId.<get-networkId>|<get-networkId>(){}[0]
+        final fun <set-networkId>(kotlin/String?) // io.kuicksilver.ktor.client/InMemoryAltSvcStore.networkId.<set-networkId>|<set-networkId>(kotlin.String?){}[0]
 
     final fun clear() // io.kuicksilver.ktor.client/InMemoryAltSvcStore.clear|clear(){}[0]
     final fun clearNonPersistent() // io.kuicksilver.ktor.client/InMemoryAltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]

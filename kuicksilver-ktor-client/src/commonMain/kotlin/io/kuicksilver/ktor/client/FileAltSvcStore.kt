@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.util.date.getTimeMillis
 import io.ktor.util.logging.KtorSimpleLogger
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -31,6 +32,7 @@ import kotlin.random.Random
  * @param path the store file; it need not exist yet, and an unreadable file starts an empty store.
  * @param clock the current time in epoch milliseconds, used to drop expired records on load.
  */
+@OptIn(ExperimentalKuicksilverApi::class)
 public class FileAltSvcStore(
     private val path: Path,
     private val clock: () -> Long = { getTimeMillis() },
@@ -79,6 +81,19 @@ public class FileAltSvcStore(
         if (map.remove(origin) != null) changed()
     }
 
+    /**
+     * Kept in the file as its first line (`network`, a tab, the id's UTF-8 bytes in hex); a file without that line, or with a
+     * damaged one, has none.
+     */
+    @ExperimentalKuicksilverApi
+    override var networkId: String? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            if (map.isNotEmpty() || persisted.isNotEmpty()) changed()
+        }
+
+    @ExperimentalKuicksilverApi
     override fun clear() {
         if (map.isEmpty() && persisted.isEmpty()) return
         map.clear()
@@ -118,6 +133,7 @@ public class FileAltSvcStore(
         persisted = LinkedHashMap(map)
         val text =
             buildString {
+                networkId?.let { append("$NETWORK_RECORD\t${it.encodeToByteArray().toHexString()}\n") }
                 for ((origin, entries) in map) {
                     for (e in entries) {
                         append(
@@ -146,6 +162,10 @@ public class FileAltSvcStore(
         } catch (_: Exception) {
             return
         } // an unreadable file is an empty store
+        lines.firstOrNull()?.let { first ->
+            val f = first.split('\t')
+            if (f.size == 2 && f[0] == NETWORK_RECORD) networkId = networkOf(f[1])
+        }
         for (line in lines) {
             val (origin, e) = recordOf(line) ?: continue
             if (e.expiresAtEpochMillis <= now) continue
@@ -221,6 +241,15 @@ public class FileAltSvcStore(
 
         /** RFC 9110 section 5.6.2 `tchar`. */
         private fun Char.isTchar(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9' || this in "!#$%&'*+-.^_`|~"
+
+        /** The first field of the line that keeps [networkId]: no origin, so a version that does not know it skips it. */
+        private const val NETWORK_RECORD = "network"
+
+        /** The network id of its hex form, or null when [hex] is not one (lowercase digits, whole bytes, valid UTF-8). */
+        private fun networkOf(hex: String): String? {
+            if (hex.length % 2 != 0 || hex.any { it !in '0'..'9' && it !in 'a'..'f' }) return null
+            return runCatching { hex.hexToByteArray().decodeToString(throwOnInvalidSequence = true) }.getOrNull()
+        }
 
         /** The largest store file that is read. */
         internal const val MAX_FILE_BYTES: Int = 8 shl 20

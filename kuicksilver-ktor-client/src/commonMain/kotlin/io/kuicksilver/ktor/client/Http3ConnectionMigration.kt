@@ -7,6 +7,7 @@ import io.kuicksilver.quic.MigrationEvent
 import io.kuicksilver.quic.NetworkMigrator
 import io.kuicksilver.quic.QuicConnection
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 
 /**
  * How the client engine's HTTP/3 connections follow the device's network (connection migration, RFC 9000 section 9;
@@ -23,8 +24,8 @@ import kotlinx.coroutines.CoroutineScope
  * The QUIC rules hold whatever the hook does: the transport refuses a new path before the handshake is confirmed, towards a
  * server that sent `disable_active_migration` or uses zero-length connection IDs (a [MigrationEvent.Failed] then, no packet
  * leaves the new socket), validates every new path before the connection sends on it, and keeps the connection on its
- * path when validation fails. A migration neither marks an alternative broken nor clears marks: give
- * [Http3ClientConfig.networkId] the same source for that (on Android `networkId = { connectivity.activeNetwork?.toString() }`).
+ * path when validation fails. A migration itself neither marks an alternative broken nor clears marks; the network the hook
+ * follows does ([networks]).
  *
  * The factories `Http3ConnectionMigration.followDefaultNetwork(connectivity)` (Android, `ConnectivityManager`) and
  * `Http3ConnectionMigration.followDefaultNetwork()` (iOS and macOS, `NWPathMonitor`) follow the system's default network.
@@ -46,6 +47,16 @@ public fun interface Http3ConnectionMigration {
         connection: QuicConnection,
         scope: CoroutineScope,
     ): NetworkMigrator<*>
+
+    /**
+     * The networks this hook follows, as the engine's network when [Http3ClientConfig.networkId] is not set: the engine
+     * collects it while the client is open, and each value different from the last (by `toString()`) is a network change,
+     * which resets broken marks, QUIC confirmation and the HTTPS record cache, and drops the `Alt-Svc` alternatives without
+     * `persist=1` (RFC 7838 section 2.2, [Http3ClientConfig.clearOnNetworkChange]); null is "no network". The factories
+     * (`followDefaultNetwork`) return their system source; null (the default, for a hook of your own) leaves the engine
+     * without network information unless `networkId` is set. A source that fails is logged at `Info` and no longer followed.
+     */
+    public val networks: Flow<Any?>? get() = null
 
     /** Holds the platform factories (`followDefaultNetwork`). */
     public companion object

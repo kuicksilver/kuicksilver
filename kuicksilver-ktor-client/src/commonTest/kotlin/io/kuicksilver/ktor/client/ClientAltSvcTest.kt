@@ -11,6 +11,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -339,6 +340,100 @@ class ClientAltSvcTest {
                 server.stop(100, 500)
                 kotlinx.io.files.SystemFileSystem
                     .delete(path, mustExist = false)
+            }
+        }
+
+    /** A server whose first response to each client advertises one alternative without `persist` and one with it. */
+    private suspend fun advertisingOnce() =
+        testServer(configure = { http3 = false }) {
+            var served = 0
+            routing {
+                get("/") {
+                    if (served++ == 0) {
+                        val p = call.request.local.localPort
+                        call.response.header("Alt-Svc", "h3=\":$p\", h3=\":${p + 1}\"; persist=1")
+                    }
+                    call.respondText("h1")
+                }
+            }
+        }
+
+    /**
+     * RFC 7838 section 2.2: "clients SHOULD remove from cache all alternative services that lack the "persist" flag with the
+     * value "1" when they detect such a change, when information about network state is available"; section 3.1: "By
+     * default, cached alternative services will be cleared when the client detects a network change." A [FileAltSvcStore]
+     * keeps the network its alternatives were learned on: an engine started on another network forgets the non-persistent
+     * ones at its first request, one on the same network keeps them. Before, every reloaded entry was used until `ma`.
+     */
+    @Test fun negative_networkChangeAcrossRestartForgetsNonPersistent() =
+        clientTest {
+            val (server, port) = advertisingOnce()
+            val path = kotlinx.io.files.Path(kotlinx.io.files.SystemTemporaryDirectory, "altsvc-${kotlin.random.Random.nextLong()}.tsv")
+            try {
+                val url = io.ktor.http.Url("https://127.0.0.1:$port/")
+
+                fun client(network: String) =
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        http3 {
+                            altSvcStore = FileAltSvcStore(path)
+                            networkId = { network }
+                        }
+                    })
+                client("wifi").use { c ->
+                    c.get(url).bodyAsText()
+                    assertEquals(2, (c.engine as KuicksilverEngine).altSvcSnapshot(url).size)
+                }
+                client("wifi").use { c ->
+                    c.get(url).bodyAsText()
+                    assertEquals(2, (c.engine as KuicksilverEngine).altSvcSnapshot(url).size, "same network: both kept")
+                }
+                client("cellular").use { c ->
+                    c.get(url).bodyAsText()
+                    assertEquals(listOf(port + 1), (c.engine as KuicksilverEngine).altSvcSnapshot(url).map { it.port })
+                }
+                assertEquals(listOf(port + 1), FileAltSvcStore(path).get("https://127.0.0.1:$port").map { it.port })
+            } finally {
+                server.stop(100, 500)
+                kotlinx.io.files.SystemFileSystem
+                    .delete(path, mustExist = false)
+            }
+        }
+
+    /**
+     * With `connectionMigration` the engine has information about network state (RFC 7838 section 2.2): when `networkId` is
+     * not set, the hook's own source of networks is the network, and a change forgets the non-persistent alternatives (and
+     * broken marks) as a `networkId` change does. Before, a migration reached nothing but the connections.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_connectionMigrationNetworkChangeForgetsNonPersistent() =
+        clientTest {
+            val (server, port) = advertisingOnce()
+            try {
+                val url = io.ktor.http.Url("https://127.0.0.1:$port/")
+                val networks = kotlinx.coroutines.flow.MutableStateFlow<Any?>("wifi")
+                val migration =
+                    object : Http3ConnectionMigration {
+                        override fun start(
+                            connection: io.kuicksilver.quic.QuicConnection,
+                            scope: kotlinx.coroutines.CoroutineScope,
+                        ) = error("no HTTP/3 connection in this test")
+
+                        override val networks = networks
+                    }
+                testClient(Http3DiscoveryMode.Auto, engine = { http3 { connectionMigration = migration } }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.followedNetworkUpdates.first { it >= 1 }
+                    c.get(url).bodyAsText()
+                    assertEquals(2, engine.altSvcSnapshot(url).size)
+                    engine.brokenAltSvc.markBroken("https://127.0.0.1:$port", "127.0.0.1:$port")
+                    networks.value = "cellular"
+                    engine.followedNetworkUpdates.first { it >= 2 }
+                    assertEquals(listOf(port + 1), engine.altSvcSnapshot(url).map { it.port })
+                    assertEquals(null, engine.brokenAltSvc.brokenReason("https://127.0.0.1:$port", "127.0.0.1:$port"))
+                }
+            } finally {
+                server.stop(100, 500)
             }
         }
 }

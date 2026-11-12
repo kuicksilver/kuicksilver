@@ -94,6 +94,24 @@ internal class KuicksilverEngine(
     private val engineScope = CoroutineScope(coroutineContext + engineJob)
 
     /**
+     * The networks `connectionMigration` follows ([Http3ConnectionMigration.networks]), the engine's network while `networkId`
+     * is not set; null when there is no such source.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val followedNetworks: kotlinx.coroutines.flow.Flow<Any?>? =
+        if (config.http3.networkIdSet) null else config.http3.connectionMigration?.networks
+
+    /** The last network [followedNetworks] reported (`toString()`), once it reported one ([followedNetworkKnown]). */
+    @kotlin.concurrent.Volatile
+    private var followedNetwork: String? = null
+
+    @kotlin.concurrent.Volatile
+    private var followedNetworkKnown = false
+
+    /** How many values of [followedNetworks] the engine has processed; internal for tests. */
+    internal val followedNetworkUpdates = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    /**
      * The HTTPS record lookups (`http3.httpsRecords`, RFC 9460), null when off; a lookup lives at most the connect timeout
      * (30 s when that is longer), so a resolver that never answers holds nothing for long. Internal for tests.
      */
@@ -102,8 +120,18 @@ internal class KuicksilverEngine(
         minOf(config.connectTimeout, MAX_HTTPS_RECORD_QUERY).let { timeout ->
             config.http3.httpsRecords
                 .lookup(timeout)
-                // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId)
-                ?.let { HttpsRecords(it, engineScope, timeout, ::getTimeMillis, caching = config.http3.networkIdSet) }
+                // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId, or the
+                // networks connectionMigration follows)
+                ?.let {
+                    HttpsRecords(
+                        it,
+                        engineScope,
+                        timeout,
+                        ::getTimeMillis,
+                        caching =
+                            followedNetworks != null || config.http3.networkIdSet,
+                    )
+                }
         }
     private val httpsRecords: HttpsRecords? get() = httpsRecordsForTest
 
@@ -153,6 +181,32 @@ internal class KuicksilverEngine(
     private val reaper: Job = engineScope.launch(CoroutineName("kuicksilver-pool-reaper")) { reapIdleConnections(h1, h3, config) }
 
     init {
+        followedNetworks?.let { networks ->
+            migrationScope.launch(CoroutineName("kuicksilver-network-follower")) {
+                try {
+                    networks.collect { n ->
+                        followedNetwork = n?.toString()
+                        followedNetworkKnown = true
+                        checkNetwork()
+                        followedNetworkUpdates.value++
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // the source failed (on Android, no more network callbacks): the engine knows the network no longer
+                    followedNetworkKnown = false
+                    runCatching {
+                        if (events.logger.isEnabled(LogLevel.Info)) {
+                            events.logger.log(
+                                LogLevel.Info,
+                                "the network source of connectionMigration failed; network changes are no longer seen",
+                                e,
+                            )
+                        }
+                    }
+                }
+            }
+        }
         val requests = coroutineContext[Job]!!
         cleanup =
             GlobalScope.launch(super.coroutineContext, start = CoroutineStart.ATOMIC) {
@@ -450,23 +504,31 @@ internal class KuicksilverEngine(
     }
 
     /**
-     * A new network (`networkId`) forgets broken marks, QUIC confirmation, the HTTPS records and, if asked, non-persistent
-     * alternatives.
+     * A new network (`networkId`, else the networks `connectionMigration` follows) forgets broken marks, QUIC confirmation,
+     * the HTTPS records and, if asked, non-persistent alternatives (RFC 7838 section 2.2). The first network the engine sees
+     * is compared with the one the store's entries were learned on ([AltSvcStore.networkId], kept across restarts by
+     * [FileAltSvcStore]). Without either source the engine knows no network: null, and nothing is compared.
      */
     private suspend fun checkNetwork(): String? {
+        if (!config.http3.networkIdSet && !followedNetworkKnown) return null
         var changed = false
         val network =
             altSvcUpdate {
-                val id = config.http3.networkId()
-                if (networkSeen &&
-                    id != lastNetwork
-                ) {
-                    brokenAltSvc.onNetworkChanged()
+                val id = if (config.http3.networkIdSet) config.http3.networkId() else followedNetwork
+                if (networkSeen) {
+                    if (id != lastNetwork) {
+                        brokenAltSvc.onNetworkChanged()
+                        altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
+                        changed = true
+                    }
+                } else if (id != altSvc.network) {
+                    // learned on another network, or on one nobody recorded (RFC 7838 section 3.1: "cached alternative
+                    // services will be cleared when the client detects a network change")
                     altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
-                    changed = true
                 }
                 networkSeen = true
                 lastNetwork = id
+                altSvc.network = id
                 id
             }
         if (changed) httpsRecords?.onNetworkChanged()

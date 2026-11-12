@@ -19,8 +19,15 @@ public abstract interface class io/kuicksilver/ktor/client/AltSvcStore {
 	public abstract fun clear ()V
 	public abstract fun clearNonPersistent ()V
 	public abstract fun get (Ljava/lang/String;)Ljava/util/List;
+	public fun getNetworkId ()Ljava/lang/String;
 	public abstract fun put (Ljava/lang/String;Ljava/util/List;)V
 	public abstract fun remove (Ljava/lang/String;)V
+	public fun setNetworkId (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/ktor/client/AltSvcStore$DefaultImpls {
+	public static fun getNetworkId (Lio/kuicksilver/ktor/client/AltSvcStore;)Ljava/lang/String;
+	public static fun setNetworkId (Lio/kuicksilver/ktor/client/AltSvcStore;Ljava/lang/String;)V
 }
 
 public final class io/kuicksilver/ktor/client/AlternativeSource : java/lang/Enum {
@@ -65,8 +72,10 @@ public final class io/kuicksilver/ktor/client/FileAltSvcStore : io/kuicksilver/k
 	public fun clear ()V
 	public fun clearNonPersistent ()V
 	public fun get (Ljava/lang/String;)Ljava/util/List;
+	public fun getNetworkId ()Ljava/lang/String;
 	public fun put (Ljava/lang/String;Ljava/util/List;)V
 	public fun remove (Ljava/lang/String;)V
+	public fun setNetworkId (Ljava/lang/String;)V
 }
 
 public final class io/kuicksilver/ktor/client/H3BodyConsumed : java/lang/IllegalStateException {
@@ -140,10 +149,15 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 
 public abstract interface class io/kuicksilver/ktor/client/Http3ConnectionMigration {
 	public static final field Companion Lio/kuicksilver/ktor/client/Http3ConnectionMigration$Companion;
+	public fun getNetworks ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun start (Lio/kuicksilver/quic/QuicConnection;Lkotlinx/coroutines/CoroutineScope;)Lio/kuicksilver/quic/NetworkMigrator;
 }
 
 public final class io/kuicksilver/ktor/client/Http3ConnectionMigration$Companion {
+}
+
+public final class io/kuicksilver/ktor/client/Http3ConnectionMigration$DefaultImpls {
+	public static fun getNetworks (Lio/kuicksilver/ktor/client/Http3ConnectionMigration;)Lkotlinx/coroutines/flow/Flow;
 }
 
 public final class io/kuicksilver/ktor/client/Http3ConnectionMigration_androidKt {
@@ -206,8 +220,10 @@ public final class io/kuicksilver/ktor/client/InMemoryAltSvcStore : io/kuicksilv
 	public fun clear ()V
 	public fun clearNonPersistent ()V
 	public fun get (Ljava/lang/String;)Ljava/util/List;
+	public fun getNetworkId ()Ljava/lang/String;
 	public fun put (Ljava/lang/String;Ljava/util/List;)V
 	public fun remove (Ljava/lang/String;)V
+	public fun setNetworkId (Ljava/lang/String;)V
 }
 
 public final class io/kuicksilver/ktor/client/Kuicksilver : io/ktor/client/engine/HttpClientEngineFactory {
