@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** The client's priority signal of a Kuicksilver call: live over HTTP/3, the parsed field over HTTP/2 and HTTP/1.1. */
+/** The client's priority signal of a Kuicksilver call: live over HTTP/3 and HTTP/2, the parsed field over HTTP/1.1. */
 internal val RequestPriorityKey: AttributeKey<StateFlow<StreamPriority>> = AttributeKey("io.kuicksilver.ktor.server.RequestPriority")
 
 private const val PRIORITY_FIELD = "Priority"
@@ -26,8 +26,8 @@ internal fun h1Priority(values: List<String>?): StateFlow<StreamPriority> =
     if (values.isNullOrEmpty()) DefaultPriority else MutableStateFlow(PriorityField.parse(values.joinToString(", "))).asStateFlow()
 
 /**
- * The client's current priority signal for this request (RFC 9218): over HTTP/3 the `priority` field and the
- * PRIORITY_UPDATE frames that followed it, over HTTP/2 and HTTP/1.1 the `Priority` field; urgency 3, not incremental, when
+ * The client's current priority signal for this request (RFC 9218): over HTTP/3 and HTTP/2 the `priority` field and the
+ * PRIORITY_UPDATE frames that followed it, over HTTP/1.1 the `Priority` field; urgency 3, not incremental, when
  * the client sent none or another engine serves the call. A malformed or out-of-range parameter reads as its default
  * (section 4). Over HTTP/3 and HTTP/2 the engine schedules the response by this signal (section 10); over HTTP/1.1 it is
  * advisory, since one connection carries one response at a time.
@@ -36,10 +36,9 @@ internal fun h1Priority(values: List<String>?): StateFlow<StreamPriority> =
 public val ApplicationRequest.priority: StreamPriority get() = priorityUpdates.value
 
 /**
- * [priority] as it changes: over HTTP/3 each PRIORITY_UPDATE from the client (RFC 9218 section 7) is a new value, also
- * while the response is sent; over HTTP/2 (where the engine reads no PRIORITY_UPDATE), HTTP/1.1 and other engines the
- * value never changes. The engine keeps one value per
- * request whatever the client sends.
+ * [priority] as it changes: over HTTP/3 and HTTP/2 each PRIORITY_UPDATE from the client (RFC 9218 section 7) is a new
+ * value, also while the response is sent; over HTTP/1.1 and other engines the value never changes. The engine keeps one
+ * value per request whatever the client sends.
  */
 @ExperimentalKuicksilverApi
 public val ApplicationRequest.priorityUpdates: StateFlow<StreamPriority>
@@ -48,8 +47,8 @@ public val ApplicationRequest.priorityUpdates: StateFlow<StreamPriority>
 /**
  * Sets the response's `Priority` field (RFC 9218 section 5) with only the given parameters: one left null keeps the
  * client's value (section 8, "disinterest to change"). Over HTTP/3 and HTTP/2 the engine also schedules the response by
- * the client's signal merged with these parameters (over HTTP/3 later PRIORITY_UPDATEs from the client no longer change
- * it); over HTTP/1.1 only the field is sent. Call it before the response starts.
+ * the client's signal merged with these parameters, and later PRIORITY_UPDATEs from the client no longer change it;
+ * over HTTP/1.1 only the field is sent. Call it before the response starts.
  *
  * @throws IllegalArgumentException when [urgency] is outside 0..7, or both parameters are null.
  * @throws IllegalStateException when the response already has a `Priority` field.

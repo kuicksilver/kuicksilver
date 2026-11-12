@@ -24,6 +24,8 @@ import io.kuicksilver.ktor.server.h1Priority
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 
@@ -50,14 +52,22 @@ internal class H2Call(
     init {
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
-        // the Priority field (RFC 9218 section 5) is end to end: read as on HTTP/1.1 (PRIORITY_UPDATE is not used on HTTP/2)
+        // the client's signal (RFC 9218): the Priority field, then each PRIORITY_UPDATE (section 7.1), one that came before
+        // the request included (it overrides the field, section 7); the response's DATA goes by it (section 10) until the
+        // response chose its own (section 8, [H2Response]); a CONNECT without a signal is a tunnel, incremental as on
+        // HTTP/3 (sections 10.1, 11)
         val field = request.headers.getAll("Priority")
-        val signal = h1Priority(field)
-        attributes.put(RequestPriorityKey, signal)
-        // the response's DATA goes by it (section 10); a CONNECT without one is a tunnel, incremental as on HTTP/3 (11)
+        val signal = MutableStateFlow(h1Priority(field).value)
+        attributes.put(RequestPriorityKey, signal.asStateFlow())
         val p =
             if (h2.method == "CONNECT" && !PriorityField.isSignal(field?.joinToString(", "))) TUNNEL_PRIORITY else signal.value
         if (p != StreamPriority.Default) h2.setPriority(p.urgency, p.incremental)
+        h2.onPriorityUpdate { value ->
+            // a complete set of parameters: one left out is its default; a value that fails to parse means the defaults
+            val update = PriorityField.parse(value)
+            signal.value = update
+            if (!response.priorityChosen) runCatching { h2.setPriority(update.urgency, update.incremental) }
+        }
         // a gateway forwarded it from early data (RFC 8470 section 5.1)
         if (h2.fields.any { it.first == EARLY_DATA_FIELD.lowercase() }) {
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)

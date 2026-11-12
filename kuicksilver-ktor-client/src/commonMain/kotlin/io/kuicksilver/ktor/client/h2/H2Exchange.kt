@@ -26,6 +26,8 @@ import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
+import io.kuicksilver.ktor.client.PriorityUpdater
+import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.h1.CONTINUE_TIMEOUT
 import io.kuicksilver.ktor.client.h1.expectsContinue
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.authority
@@ -39,6 +41,7 @@ import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
+import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -72,11 +75,20 @@ internal class H2Http11Required(
 private fun isStreamHttp11Required(e: Http2Exception): Boolean =
     e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.HTTP_1_1_REQUIRED
 
+/** The request's priority: [priority] (the builder's), else a valid raw `Priority` header, else the defaults. */
+private fun localPriority(data: HttpRequestData): StreamPriority =
+    data.priority
+        ?: data.headers
+            .getAll("Priority")
+            ?.joinToString(", ")
+            ?.takeIf { PriorityField.isSignal(it) }
+            ?.let { PriorityField.parse(it) }
+        ?: StreamPriority.Default
+
 /**
  * The request's regular fields for HTTP/2 (RFC 9113 section 8.2): lowercase names, no connection-specific fields and no
  * `host` (`:authority` carries it, section 8.3.1), `content-length` when the body knows its length; the request's own
- * priority as the end-to-end `priority` field (RFC 9218 section 5; ADR-0017: no PRIORITY_UPDATE and no RFC 7540
- * priorities on HTTP/2).
+ * priority as the end-to-end `priority` field (RFC 9218 section 5; the core adds the RFC 7540 signal of section 2.1.1).
  */
 private fun h2Fields(data: HttpRequestData): List<Pair<String, String>> {
     val fields = headersOf(data, data.body.unwrap()).fields
@@ -105,9 +117,20 @@ internal suspend fun h2Exchange(
     val url = data.url
     val body = data.body.unwrap()
     val hasBody = body !is io.ktor.http.content.OutgoingContent.NoContent && body !is io.ktor.http.content.OutgoingContent.ProtocolUpgrade
+    // the request's own priority: its DATA (RFC 9218 section 9) and the RFC 7540 signal before the server's SETTINGS (2.1.1)
+    val local = localPriority(data)
     val stream: H2ClientStream =
         try {
-            conn.client.open(data.method.value, url.protocol.name, url.authority(), url.h3Path(), h2Fields(data), endStream = !hasBody)
+            conn.client.open(
+                data.method.value,
+                url.protocol.name,
+                url.authority(),
+                url.h3Path(),
+                h2Fields(data),
+                endStream = !hasBody,
+                urgency = local.urgency,
+                incremental = local.incremental,
+            )
         } catch (e: Http2Exception) {
             onReleased(conn.client.isUsable)
             if (e.notProcessed) throw H2NotProcessed(e, bodyConsumed = false)
@@ -118,6 +141,13 @@ internal suspend fun h2Exchange(
         }
     // the stream (and its reservation) goes back once: when the call ends, or at once when this attempt fails, so a
     // repeat never waits for the stream or the connection its own first attempt still holds
+    // for HttpResponse.updatePriority: a PRIORITY_UPDATE (RFC 9218 section 7.1) that also reschedules our own DATA
+    data.attributes.put(
+        PriorityUpdaterKey,
+        PriorityUpdater { p ->
+            stream.priorityUpdate(PriorityField.format(p) ?: "u=3").also { if (it) stream.setPriority(p.urgency, p.incremental) }
+        },
+    )
     val released = kotlin.concurrent.atomics.AtomicBoolean(false)
     var sender: Job? = null
 

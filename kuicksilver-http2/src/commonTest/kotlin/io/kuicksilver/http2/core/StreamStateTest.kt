@@ -476,7 +476,8 @@ class StreamStateTest {
         assertTrue(H2Event.SettingsChanged in s)
         val settings = assertIs<Frame.Settings>(peer.read().first())
         assertEquals(false, settings.ack) // the server's preface
-        // the client's SETTINGS: no push (section 6.5.2) and no RFC 7540 priorities (RFC 9218 section 2.1)
+        // the client's SETTINGS: no push (section 6.5.2); no SETTINGS_NO_RFC7540_PRIORITIES, since the client sends RFC
+        // 7540 signals until the server says it ignores them (RFC 9218 section 2.1.1)
         val decoded =
             io.kuicksilver.http2.frame
                 .FrameDecoder()
@@ -484,7 +485,7 @@ class StreamStateTest {
         val cs = assertIs<Frame.Settings>(decoded.next())
         val map = cs.ids.indices.associate { cs.ids[it] to cs.values[it] }
         assertEquals(0L, map[SettingId.ENABLE_PUSH])
-        assertEquals(1L, map[SettingId.NO_RFC7540_PRIORITIES])
+        assertEquals(null, map[SettingId.NO_RFC7540_PRIORITIES])
         assertEquals(524_288L, map[SettingId.INITIAL_WINDOW_SIZE])
         decoded.feed(out, 24 + 9 + cs.ids.size * 6, n - 24 - 9 - cs.ids.size * 6)
         assertEquals(786_432 - 65_535, assertIs<Frame.WindowUpdate>(decoded.next()).increment) // the connection window

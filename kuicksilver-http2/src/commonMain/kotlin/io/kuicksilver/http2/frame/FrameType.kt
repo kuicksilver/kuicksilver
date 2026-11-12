@@ -15,7 +15,7 @@ internal object FrameType {
     const val WINDOW_UPDATE: Int = 0x8
     const val CONTINUATION: Int = 0x9
 
-    /** RFC 9218 section 7.1; not implemented, except that a client refuses it. */
+    /** RFC 9218 section 7.1: a client's new priority for a request; on stream 0 only. */
     const val PRIORITY_UPDATE: Int = 0x10
 }
 

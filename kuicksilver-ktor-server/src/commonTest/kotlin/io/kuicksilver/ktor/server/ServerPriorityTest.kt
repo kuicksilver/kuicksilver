@@ -6,6 +6,7 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
@@ -21,6 +22,7 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.priority
+import io.kuicksilver.ktor.client.updatePriority
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.tls.Certificate
@@ -197,6 +199,52 @@ class ServerPriorityTest {
                     assertEquals(3 to false, withTimeout(5.seconds) { seen.receive() })
                     call("/garbled", StreamPriority(5, true)) // a field that fails to parse is no choice (RFC 8941 section 4.2)
                     assertEquals(5 to true, withTimeout(5.seconds) { seen.receive() })
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /**
+     * Over HTTP/2 the Ktor client's `updatePriority` sends a PRIORITY_UPDATE (RFC 9218 section 7.1, our server's SETTINGS
+     * say SETTINGS_NO_RFC7540_PRIORITIES = 1), the handler sees it through [priorityUpdates], and the response's DATA is
+     * rescheduled with it.
+     */
+    @Test fun h2PriorityUpdateReachesHandler() =
+        serverTest {
+            val scheduled = kotlinx.coroutines.CompletableDeferred<Pair<Int, Boolean>>()
+            val (server, port) =
+                tlsServer(configure = {
+                    http2 = true
+                    http3 = false
+                }) {
+                    routing {
+                        get("/u") {
+                            call.respondBytesWriter {
+                                flush() // the head goes out, so the client holds a response to update
+                                val p = withTimeout(5.seconds) { call.request.priorityUpdates.first { it.urgency == 6 } }
+                                val h2 = (call.pipelineCall.engineCall as io.kuicksilver.ktor.server.h2.H2Call).h2
+                                scheduled.complete(h2.urgency to h2.incremental)
+                                writeStringUtf8("${p.urgency}")
+                            }
+                        }
+                    }
+                }
+            try {
+                val client =
+                    HttpClient(KuicksilverClient) {
+                        engine {
+                            trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
+                            http3 { discovery = Http3DiscoveryMode.H1Only }
+                        }
+                    }
+                client.use { c ->
+                    c.prepareGet("https://127.0.0.1:$port/u") { priority(2) }.execute { resp ->
+                        assertEquals(HttpProtocolVersion.HTTP_2_0, resp.version)
+                        assertTrue(resp.updatePriority(6, incremental = true))
+                        assertEquals("6", withTimeout(5.seconds) { resp.bodyAsText() })
+                    }
+                    assertEquals(6 to true, withTimeout(5.seconds) { scheduled.await() })
                 }
             } finally {
                 server.stopSuspend(100, 1000)

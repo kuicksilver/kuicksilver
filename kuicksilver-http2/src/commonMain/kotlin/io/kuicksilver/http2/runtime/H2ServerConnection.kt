@@ -239,6 +239,14 @@ public class H2ServerStream internal constructor(
         incremental: Boolean,
     ): Unit = rt.setPriority(s, urgency, incremental)
 
+    /**
+     * Calls [handler] with the raw Priority Field Value of each PRIORITY_UPDATE the client sends for this request (RFC 9218
+     * section 7.1), and at once with the latest one that came earlier, also before the request itself (section 7: it
+     * overrides the request's `priority` field). It runs on the connection's event dispatch and must not block. The
+     * engine parses the value and reschedules the response ([setPriority]) unless the response chose its own priority.
+     */
+    public fun onPriorityUpdate(handler: (String) -> Unit): Unit = rt.onPriorityUpdate(s, handler)
+
     /** Sends trailers, which end the stream. */
     public fun trailers(fields: List<Pair<String, String>>): Unit = rt.respondTrailers(s, fields)
 

@@ -140,6 +140,7 @@ internal fun H2ConnectionCore.onHeaders(
             return
         }
         lastPeerStreamId = id
+        val early = takeEarlyPriority(id)
         if (goAwaySentLastId in 0 until id) {
             rememberClosed(id, weReset = true) // after our GOAWAY: discarded, its frames too; the block fed HPACK (section 6.8)
             return
@@ -169,7 +170,7 @@ internal fun H2ConnectionCore.onHeaders(
         ns.tunnel = isConnect(fields)
         streams[id] = ns
         peerStreams++
-        emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true))
+        emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true, priorityUpdate = early))
         return
     }
     if (s.state == StreamState.CLOSED) {
@@ -450,4 +451,51 @@ internal fun H2ConnectionCore.onWindowUpdate(
     s.sendWindow += f.increment
     if (s.sendWindow > H2.MAX_WINDOW) return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "stream window above 2^31 - 1", now)
     tryWake(s)
+}
+
+/**
+ * RFC 9218 section 7.1. A client "MUST respond with a connection error of type PROTOCOL_ERROR". A server checks the
+ * prioritized stream: 0 and push streams (we never push: every one is idle) are PROTOCOL_ERROR; an open request takes
+ * the value; an idle one keeps the latest (section 7: "Servers SHOULD buffer the most recently received PRIORITY_UPDATE
+ * frame and apply it once the referenced stream is opened") as long as those and the active streams stay within our
+ * SETTINGS_MAX_CONCURRENT_STREAMS, else PROTOCOL_ERROR; a stream that can send nothing more ("half-closed (local)" or
+ * "closed") drops it. Each frame spends a glitch token, as PRIORITY does. The frame's stream 0 and length were checked
+ * by the decoder.
+ */
+internal fun H2ConnectionCore.onPriorityUpdate(
+    f: Frame.PriorityUpdate,
+    now: Long,
+) {
+    if (client) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE from the server")
+    glitch(now, "PRIORITY_UPDATE")
+    val id = f.prioritizedStreamId
+    if (id == 0) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE for stream 0")
+    if (!peerInitiated(id)) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE for idle push stream $id")
+    val s = streams[id]
+    if (s != null) {
+        if (s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE) emit(H2Event.PriorityUpdate(id, f.value))
+        return
+    }
+    if (!isIdle(id)) return // closed
+    if (id !in earlyPriority) {
+        var active = 0
+        for (o in streams.values) if (!o.local && o.state != StreamState.CLOSED) active++
+        if (active + earlyPriority.size + 1 > settings.maxConcurrentStreams) {
+            throw H2ConnectionError(
+                Http2ErrorCode.PROTOCOL_ERROR,
+                "PRIORITY_UPDATE: ${earlyPriority.size + 1} prioritized idle and $active active streams above ${settings.maxConcurrentStreams}",
+            )
+        }
+    }
+    earlyPriority.remove(id) // the latest one, in the order of arrival
+    earlyPriority[id] = f.value
+}
+
+/** Server: stream [id] opened: its early PRIORITY_UPDATE value, and the idle streams below it are closed now (RFC 9113 section 5.1.1). */
+internal fun H2ConnectionCore.takeEarlyPriority(id: Int): String? {
+    if (earlyPriority.isEmpty()) return null
+    val v = earlyPriority.remove(id)
+    val it = earlyPriority.keys.iterator()
+    while (it.hasNext()) if (it.next() < id) it.remove()
+    return v
 }

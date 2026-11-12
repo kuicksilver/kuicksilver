@@ -95,6 +95,9 @@ public class H2ClientConnection private constructor(
      * (IllegalArgumentException otherwise). [endStream]: there is no content. `head`: a HEAD request, whose response has no
      * content (RFC 9110 section 9.3.2). Throws [Http2Exception] with `notProcessed` when this connection can take no new
      * stream; the slot is used up either way, and comes back with [H2ClientStream.release] or here on a failure.
+     * [urgency] and [incremental] are the request's RFC 9218 priority: they schedule its own DATA (section 9), and the
+     * urgency gives the weight of the RFC 7540 signal its HEADERS carry until the server's SETTINGS say it ignores those
+     * (section 2.1.1). The `priority` field among [fields] is the end-to-end signal and stays the caller's.
      */
     public fun open(
         method: String,
@@ -103,11 +106,13 @@ public class H2ClientConnection private constructor(
         path: String,
         fields: List<Pair<String, String>>,
         endStream: Boolean,
+        urgency: Int = 3,
+        incremental: Boolean = false,
     ): H2ClientStream {
         val all = H2Messages.buildRequest(method, scheme, authority, path, fields)
         try {
             H2Messages.requireValidRequest(all, connectProtocolEnabled = rt.lock.withLock { rt.core.peerEnableConnectProtocol })
-            return H2ClientStream(rt, rt.open(all, endStream, headRequest = method == "HEAD"))
+            return H2ClientStream(rt, rt.open(all, endStream, headRequest = method == "HEAD", urgency, incremental))
         } catch (e: Throwable) {
             rt.unreserve()
             throw e
@@ -215,6 +220,20 @@ public class H2ClientStream internal constructor(
         stallMillis: Long?,
         stallError: () -> Throwable,
     ): Unit = rt.sendBody(s, source, stallMillis, stallError)
+
+    /**
+     * Sends a PRIORITY_UPDATE with the Priority Field Value [value] for this request (RFC 9218 section 7.1) and returns
+     * true; false when the response can no longer change (the stream received everything or ended), the connection is
+     * ending, or the server's SETTINGS did not say SETTINGS_NO_RFC7540_PRIORITIES = 1 (section 2.1.1: the frames "are
+     * likely to be ignored").
+     */
+    public fun priorityUpdate(value: String): Boolean = rt.priorityUpdate(s, value)
+
+    /** Schedules the request's own DATA with this RFC 9218 priority from now on (section 9); see [H2ClientConnection.open]. */
+    public fun setPriority(
+        urgency: Int,
+        incremental: Boolean,
+    ): Unit = rt.setPriority(s, urgency, incremental)
 
     /** Resets the stream with CANCEL (the application gave up on it). */
     public fun cancel() {

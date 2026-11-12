@@ -86,6 +86,10 @@ internal class StreamRt(
 
     @Volatile var incremental = false
 
+    /** Server: the raw value of the client's latest PRIORITY_UPDATE (RFC 9218 section 7.1), and who wants each one (under the lock). */
+    var priorityUpdate: String? = null
+    var onPriorityUpdate: ((String) -> Unit)? = null
+
     /** The final field section arrived (on a client: the response head; on a server: the request head). */
     var headReceived = false
 
@@ -363,6 +367,12 @@ internal class H2Runtime(
                 onChange()
             }
 
+            is H2Event.PriorityUpdate -> {
+                val (s, handler) = lock.withLock { streams[e.streamId]?.let { it to it.onPriorityUpdate } } ?: return
+                lock.withLock { s.priorityUpdate = e.value }
+                handler?.invoke(e.value)
+            }
+
             is H2Event.WindowAvailable -> {
                 lock.withLock { streams[e.streamId] }?.writable?.trySend(Unit)
             }
@@ -439,6 +449,7 @@ internal class H2Runtime(
     private fun newRequest(e: H2Event.HeadersReceived) {
         val handler = onRequest ?: return
         val s = StreamRt(this, e.streamId, headRequest = false)
+        s.priorityUpdate = e.priorityUpdate
         lock.withLock { streams[e.streamId] = s }
         if (e.tooLarge) {
             // RFC 9113 section 8.2 and the core's contract: a server answers 431. The stream may no longer be sendable by now
@@ -837,12 +848,16 @@ internal class H2Runtime(
         fields: List<Pair<String, String>>,
         endStream: Boolean,
         headRequest: Boolean,
+        urgency: Int = 3,
+        incremental: Boolean = false,
     ): StreamRt {
         var s: StreamRt? = null
         try {
             withCore {
-                val id = openStream(fields, endStream)
+                val id = openStream(fields, endStream, urgency, incremental)
                 val rt = StreamRt(this@H2Runtime, id, headRequest, beforePeerSettings = !peerPrefaceReceived)
+                rt.urgency = urgency
+                rt.incremental = incremental
                 rt.localEnded = endStream
                 this@H2Runtime.streams[id] = rt
                 s = rt
@@ -1119,6 +1134,28 @@ internal class H2Runtime(
     }
 
     /** Resets [s] with [code] (tests and the server's handlers). */
+
+    /**
+     * Server: [handler] gets the raw value of each PRIORITY_UPDATE for [s] from now on, and at once the latest one that
+     * came before (also one that came before the request). It runs on the connection's event dispatch: no suspension.
+     */
+    fun onPriorityUpdate(
+        s: StreamRt,
+        handler: (String) -> Unit,
+    ) {
+        val latest =
+            lock.withLock {
+                s.onPriorityUpdate = handler
+                s.priorityUpdate
+            }
+        latest?.let(handler)
+    }
+
+    /** Client: a PRIORITY_UPDATE for [s] (see the core's priorityUpdate); false when it cannot go. */
+    fun priorityUpdate(
+        s: StreamRt,
+        value: String,
+    ): Boolean = withCore { priorityUpdate(s.id, value) }
 
     /** Sends the DATA of [s] with this RFC 9218 priority from now on (see the core's DataScheduler). */
     fun setPriority(

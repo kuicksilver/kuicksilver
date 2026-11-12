@@ -98,7 +98,7 @@ internal class FrameDecoder(
         }
         checkHeader()
         have = 0
-        skipping = type > FrameType.CONTINUATION
+        skipping = type > FrameType.CONTINUATION && type != FrameType.PRIORITY_UPDATE
         if (!skipping && length > 0) {
             val first = minOf(length, H2.MIN_MAX_FRAME_SIZE)
             payload = ByteArray(first)
@@ -127,7 +127,7 @@ internal class FrameDecoder(
                 if (streamId == 0) connError(Http2ErrorCode.PROTOCOL_ERROR, "frame type $type on stream 0")
             }
 
-            FrameType.SETTINGS, FrameType.PING, FrameType.GOAWAY -> {
+            FrameType.SETTINGS, FrameType.PING, FrameType.GOAWAY, FrameType.PRIORITY_UPDATE -> {
                 if (streamId != 0) connError(Http2ErrorCode.PROTOCOL_ERROR, "frame type $type on stream $streamId")
             }
         }
@@ -151,6 +151,11 @@ internal class FrameDecoder(
 
             FrameType.WINDOW_UPDATE -> {
                 if (length != 4) connError(Http2ErrorCode.FRAME_SIZE_ERROR, "WINDOW_UPDATE length $length")
+            }
+
+            FrameType.PRIORITY_UPDATE -> {
+                // RFC 9113 section 4.2: too small for its mandatory Prioritized Stream ID
+                if (length < 4) connError(Http2ErrorCode.FRAME_SIZE_ERROR, "PRIORITY_UPDATE length $length")
             }
         }
     }
@@ -199,6 +204,8 @@ internal class FrameDecoder(
                     flags and FrameFlags.END_STREAM != 0,
                     flags and FrameFlags.END_HEADERS != 0,
                     dep,
+                    exclusive = prio && p[start - 5].toInt() and 0x80 != 0,
+                    weight = if (prio) (p[start - 1].toInt() and 0xff) + 1 else 16,
                 )
             }
 
@@ -239,6 +246,10 @@ internal class FrameDecoder(
 
             FrameType.CONTINUATION -> {
                 Frame.Continuation(id, p.copyOfRange(0, n), flags and FrameFlags.END_HEADERS != 0)
+            }
+
+            FrameType.PRIORITY_UPDATE -> {
+                Frame.PriorityUpdate(readInt31(p, 0), p.decodeToString(4, n))
             }
 
             else -> {
