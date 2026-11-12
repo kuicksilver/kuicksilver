@@ -71,10 +71,10 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      A wrong tag is fixed with a new version, never by moving it.
    - **Only maintainers create tags**: tag creation restricted, with a bypass for repository administrators, so a
      version exists only when the maintainer makes it.
-   - **Protect main**: the default branch cannot be deleted or force-pushed (non-fast-forward blocked, no bypass), so
-     the history behind every tag on it stays. A release of an older line goes on `release/<X.Y>` instead of moving
-     `main` back ([below](#swiftpm-the-kuicksilver-swift-repository)); nothing in the release needs a force push or a
-     moved tag.
+   - **Protect main and release branches**: `main` and `refs/heads/release/*` cannot be deleted or force-pushed
+     (non-fast-forward blocked, no bypass), so the history behind every tag stays. A release of an older line goes on
+     `release/<X.Y>.x` instead of moving `main` back ([below](#swiftpm-the-kuicksilver-swift-repository)); nothing in
+     the release needs a force push or a moved tag.
 
 ## Every release
 
@@ -168,7 +168,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      `build/release/kuicksilver-swift` with `Package.swift` naming
      `https://github.com/kuicksilver/kuicksilver/releases/download/v<version>/Kuicksilver.xcframework.zip` and the
      checksum of the zip just built, its README for the version, the licence files, committed on `main` (or
-     `release/<X.Y>` for an older line). A failure here does not stop the release, which is complete without it: the
+     `release/<X.Y>.x` for an older line). A failure here does not stop the release, which is complete without it: the
      script prints the command to make it again (step 6). A dry run that cannot reach the repository prepares it in a
      new one.
    - `publishToMavenCentral`: **one Gradle invocation, one deployment** (several would produce several deployments and
@@ -200,13 +200,15 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    git commit --amend --no-edit -S22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
    git tag -s -u 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68 <version> -m "Kuicksilver <version>"
    git verify-commit HEAD && git verify-tag <version>
-   git push https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/<version>   # release/<X.Y> for an older line
+   git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/<version>   # release/<X.Y>.x for an older line
    ```
-   If the script reported the Swift package step as failed, or the push is rejected because the branch moved (never
-   force it: `main` refuses non-fast-forward pushes anyway), make the commit again from a fresh clone with
-   `tools/release/swift-package.sh finish <version> <checksum> --source-commit <release commit>` (the script prints it
-   with the zip's checksum; `swift package compute-checksum build/release/Kuicksilver.xcframework.zip` gives it too)
-   and repeat the commands it prints. Check it from an empty Swift package:
+   `--atomic` pushes the branch and the tag together or not at all: without it a rejected branch would still leave the
+   tag, which the rulesets make immutable, and the version could never be made again. If the script reported the
+   Swift package step as failed, or the push is rejected because the branch moved (never force it: the branch refuses
+   non-fast-forward pushes anyway), make the commit again from a fresh clone with
+   `<checkout>/tools/release/swift-package.sh finish <version> <checksum> --source-commit <release commit>` (the script
+   prints it with its absolute path and the zip's checksum; `swift package compute-checksum
+   build/release/Kuicksilver.xcframework.zip` gives the checksum too) and repeat the commands it prints. Check it from an empty Swift package:
    `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "<version>"))` (a prerelease:
    `exact: "<version>"`), `swift package resolve`, and `tools/verify/verify-release.sh <version> --no-rebuild`, which
    checks the package against the release. The version is passed to
@@ -385,9 +387,10 @@ zip; only then does the maintainer sign the commit, make the signed tag `<versio
 the zip's URL resolves from the first moment the tag exists.
 
 Which branch: the newest line (the highest X.Y among the package's tags, or a higher one) moves `main`, so `main` always
-names the newest version. A release of an older line (0.2.3 after 0.3.0) goes on `release/<X.Y>` of the package
-repository, created from that line's newest tag (or from `main` if the line has none) and continued by its later
-patches. SwiftPM resolves tags wherever their commits are, and every tag stays on a branch. Nothing moves `main`
+names the newest version. A release of an older line (0.2.3 after 0.3.0) goes on `release/<X.Y>.x` of the package
+repository (named like this repository's maintenance branches), created from that line's newest tag and continued by
+its later patches; the first package release of a line that has no tag yet starts from the newest final version below
+it, never from `main` (the newer line's history), and is refused if there is none. SwiftPM resolves tags wherever their commits are, and every tag stays on a branch. Nothing moves `main`
 backwards or rewrites a tag, which the rulesets forbid anyway ([Once, step 8](#once-accounts-keys-dns)).
 
 The tags and commits are signed with the release key, like this repository's tags (`git verify-tag <version>`). What

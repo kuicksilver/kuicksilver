@@ -171,7 +171,7 @@ sp() { # <label> <ok|refuse> <pattern|-> <prepare|finish> <args...>: runs swift-
   else return 0; fi; return 1
 }
 ptag() { # <version> <branch>: what the maintainer does after finish (here unsigned)
-  git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t tag -a "$1" -m "Kuicksilver $1" && git -C "$tmp/sp" push -q "$tmp/sp.git" "$2" "refs/tags/$1"
+  git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t tag -a "$1" -m "Kuicksilver $1" && git -C "$tmp/sp" push -q --atomic "$tmp/sp.git" "$2" "refs/tags/$1"
 }
 git init -q --bare -b main "$tmp/sp.git"
 S1=$(printf a | shasum -a 256 | cut -d' ' -f1); S2=$(printf b | shasum -a 256 | cut -d' ' -f1)
@@ -188,8 +188,9 @@ if sp "$L" ok "commit [0-9a-f]+ on main, checksum $S1 \(unsigned, no tag yet\)" 
       && [ "$(git -C "$tmp/sp" log -1 --format='%an <%ae> %G?')" = "kinchpik <339333647+kinchpik@users.noreply.github.com> N" ] \
       && grep -q 'git commit --amend --no-edit -S22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68' <<< "$sp_out" \
       && grep -q 'git tag -s -u 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68 0.3.0 -m "Kuicksilver 0.3.0"' <<< "$sp_out" \
-      && grep -q "push https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/0.3.0" <<< "$sp_out" \
-      && grep -q "swift-package.sh finish 0.3.0 $S1 --source-commit 1234567" <<< "$sp_out"
+      && grep -q "git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/0.3.0" <<< "$sp_out" \
+      && grep -qx "    cd $tmp/sp" <<< "$sp_out" \
+      && grep -qx "    $root/tools/release/swift-package.sh finish 0.3.0 $S1 --source-commit 1234567" <<< "$sp_out"
   then sp_pass "$L"; else sp_fail "$L" "files, tag, author, signing or push lines wrong"; fi
 fi
 ptag 0.3.0 main
@@ -201,21 +202,29 @@ ptag 0.3.1 main
 sp "swift package: version already tagged" refuse "tag 0.3.0 is already in" finish 0.3.0 "$S2" && sp_pass "swift package: version already tagged"
 sp "swift package: prepare refuses a tagged version" refuse "tag 0.3.1 is already in" prepare 0.3.1 && sp_pass "swift package: prepare refuses a tagged version"
 sp "dry run: version already tagged (warning)" ok "WARN.*tag 0.3.0 is already in" finish 0.3.0 "$S2" --dry-run && sp_pass "dry run: version already tagged (warning)"
-# an older line after a newer one: main stays on 0.3.x, 0.2.3 goes on release/0.2 (a new branch, then on top of it)
+sp "swift package: older line with nothing below it" refuse "0.2.0 is older than every version" finish 0.2.0 "$S1" \
+  && sp_pass "swift package: older line with nothing below it"
+# an older line after a newer one: main stays on 0.3.x, 0.2.3 goes on release/0.2.x (a new branch, then on top of it)
 git -C "$tmp/sp" checkout -q --orphan old && git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m "0.2.2" \
   && git -C "$tmp/sp" tag 0.2.2 && git -C "$tmp/sp" push -q "$tmp/sp.git" refs/tags/0.2.2
-L="swift package: older line on release/0.2 from its newest tag"
-if sp "$L" ok "branch release/0.2 \(an older line than 0.3: main stays on the newest\)" finish 0.2.3 "$S1"; then
-  if [ "$(git -C "$tmp/sp" rev-parse HEAD~1)" = "$(git -C "$tmp/sp" rev-parse '0.2.2^{commit}')" ] && grep -q "push https://github.com/kuicksilver/kuicksilver-swift.git release/0.2 refs/tags/0.2.3" <<< "$sp_out" \
+L="swift package: older line on release/0.2.x from its newest tag"
+if sp "$L" ok "branch release/0.2.x \(an older line than 0.3: main stays on the newest\)" finish 0.2.3 "$S1"; then
+  if [ "$(git -C "$tmp/sp" rev-parse HEAD~1)" = "$(git -C "$tmp/sp" rev-parse '0.2.2^{commit}')" ] && grep -q "push --atomic https://github.com/kuicksilver/kuicksilver-swift.git release/0.2.x refs/tags/0.2.3" <<< "$sp_out" \
       && [ "$(git -C "$tmp/sp.git" rev-parse main)" = "$(git -C "$tmp/sp.git" rev-parse '0.3.1^{commit}')" ]
   then sp_pass "$L"; else sp_fail "$L" "base, push line or main wrong"; fi
 fi
-ptag 0.2.3 release/0.2
-L="swift package: older line again on top of release/0.2"
-if sp "$L" ok "on release/0.2" finish 0.2.4 "$S2"; then
+ptag 0.2.3 release/0.2.x
+L="swift package: older line again on top of release/0.2.x"
+if sp "$L" ok "on release/0.2.x" finish 0.2.4 "$S2"; then
   [ "$(git -C "$tmp/sp" rev-parse HEAD~1)" = "$(git -C "$tmp/sp" rev-parse '0.2.3^{commit}')" ] && sp_pass "$L" || sp_fail "$L" "not on top of 0.2.3"
 fi
-sp "swift package: a newer line moves main" ok "on main" finish 0.4.0 "$S1" && sp_pass "swift package: a newer line moves main"
+sp "swift package: a newer line moves main" ok "on main" finish 1.0.0 "$S1" && sp_pass "swift package: a newer line moves main"
+ptag 1.0.0 main
+# the first package release of an older line without a tag of its own: from the newest final version below it, not main
+L="swift package: first release of an older line from the version below it"
+if sp "$L" ok "on release/0.5.x" finish 0.5.0 "$S2"; then
+  [ "$(git -C "$tmp/sp" rev-parse HEAD~1)" = "$(git -C "$tmp/sp" rev-parse '0.3.1^{commit}')" ] && sp_pass "$L" || sp_fail "$L" "not based on 0.3.1"
+fi
 sp "swift package: all-zero checksum" refuse "not the SHA-256" finish 0.3.2 0000000000000000000000000000000000000000000000000000000000000000 && sp_pass "swift package: all-zero checksum"
 sp "swift package: short checksum" refuse "not the SHA-256" finish 0.3.2 c9e7447 && sp_pass "swift package: short checksum"
 sp "swift package: malformed version" refuse "is not X.Y.Z" finish v0.3.2 "$S1" && sp_pass "swift package: malformed version"
@@ -225,9 +234,9 @@ if SP_REPO="$tmp/no-such.git" sp "$L" ok "WARN.*cannot clone" finish 0.3.2 "$S1"
   [ "$(git -C "$tmp/sp" rev-list --count main)" = 1 ] && sp_pass "$L" || sp_fail "$L" "not a fresh history"
 fi
 L="swift package: prerelease (exact:)"
-if sp "$L" ok "on main" finish 0.4.0-rc1 "$S1"; then
-  grep -q 'exact: "0.4.0-rc1"' <<< "$sp_out" && grep -q 'exact: "0.4.0-rc1"' "$tmp/sp/README.md" && ! grep -q upToNextMinor "$tmp/sp/README.md" \
-    && [ "$(pkg_line url)" = https://github.com/kuicksilver/kuicksilver/releases/download/v0.4.0-rc1/Kuicksilver.xcframework.zip ] \
+if sp "$L" ok "on main" finish 1.1.0-rc1 "$S1"; then
+  grep -q 'exact: "1.1.0-rc1"' <<< "$sp_out" && grep -q 'exact: "1.1.0-rc1"' "$tmp/sp/README.md" && ! grep -q upToNextMinor "$tmp/sp/README.md" \
+    && [ "$(pkg_line url)" = https://github.com/kuicksilver/kuicksilver/releases/download/v1.1.0-rc1/Kuicksilver.xcframework.zip ] \
     && sp_pass "$L" || sp_fail "$L" "requirement or URL wrong"
 fi
 

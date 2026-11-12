@@ -16,8 +16,10 @@
 #            afresh (the manual way after a failed or rejected push).
 #
 # Which branch: the newest line (the highest X.Y among the package's tags, or a higher one) moves main; a release of an
-# older line (0.2.3 after 0.3.0) goes on release/<X.Y> of the package repository, made from that line's newest tag, so
-# main keeps naming the newest version and every tag stays on a branch. SwiftPM resolves tags only, wherever they are.
+# older line (0.2.3 after 0.3.0) goes on release/<X.Y>.x of the package repository (named like this repository's
+# maintenance branches), made from that line's newest tag, or for its first package release from the newest final
+# version below it (refused when there is none), so main keeps naming the newest version and every tag stays on a branch.
+# SwiftPM resolves tags only, wherever they are.
 #
 # Refuses (exit 1): a malformed version or checksum (64 hex digits, not all zero); a tag <version> already in the package
 # repository (a released Swift package version is never moved); a repository that cannot be cloned; a manifest SwiftPM
@@ -63,24 +65,30 @@ else
   git init -q "$out"; echo "  $out: a new repository (dry run without $repo)"
 fi
 G=(git -C "$out")
+if "${G[@]}" rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+  problem "tag $version is already in $repo ($("${G[@]}" rev-parse --short "$version^{commit}")): a released Swift package version is never moved"
+fi
 semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
 line="${version%.*}"; line="${line%%-*}"   # X.Y
 newest=$("${G[@]}" tag -l | grep -E "$semver" | sed -E 's/^([0-9]+\.[0-9]+)\..*/\1/' | sort -uV | tail -1 || true)
 if [ -z "$newest" ] || [ "$(printf '%s\n%s\n' "$newest" "$line" | sort -V | tail -1)" = "$line" ]; then branch=main
-else branch="release/$line"; fi
+else branch="release/$line.x"; fi
 if [ "$branch" = main ]; then
   if "${G[@]}" rev-parse -q --verify HEAD >/dev/null; then "${G[@]}" checkout -q main
   else "${G[@]}" symbolic-ref HEAD refs/heads/main; fi   # an empty repository (the first release): the commit starts main
 elif "${G[@]}" rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null; then
   "${G[@]}" checkout -q -B "$branch" "origin/$branch"
-else   # the first package release of an older line since the newer one: from that line's newest tag, else from main
+else   # the first package release of an older line since the newer one: from that line's newest tag, else from the newest
+  # final version below it (0.2.0 after 0.3.0 with no 0.2 tag: from 0.1.x), never from main (the newer line's history)
   base=$("${G[@]}" tag -l | grep -E "$semver" | grep -E "^$(printf '%s' "$line" | sed 's/\./\\./g')\." | sort -V | tail -1 || true)
-  "${G[@]}" checkout -q -b "$branch" "${base:-main}"
+  if [ -z "$base" ]; then
+    base=$( { "${G[@]}" tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'; echo "$version"; } | sort -V | grep -B1 -xF "$version" | head -1 || true)
+    [ "$base" != "$version" ] || base=""
+  fi
+  [ -n "$base" ] || { echo "REFUSED: $version is older than every version of $repo and its line $line has none: no branch to put it on (release a newer version instead)" >&2; exit 1; }
+  "${G[@]}" checkout -q -b "$branch" "$base"
 fi
 echo "  branch $branch ($([ "$branch" = main ] && echo "the newest line" || echo "an older line than ${newest}: main stays on the newest"))"
-if "${G[@]}" rev-parse -q --verify "refs/tags/$version" >/dev/null; then
-  problem "tag $version is already in $repo ($("${G[@]}" rev-parse --short "$version^{commit}")): a released Swift package version is never moved"
-fi
 
 # ---------------------------------------------------------------------------------------------------- render, check
 if [[ "$version" == *-* ]]; then
@@ -114,18 +122,20 @@ if [ "$cmd" = prepare ]; then echo "  prepared: $repo, branch $branch, no tag $v
 "${G[@]}" -c "user.name=$name" -c "user.email=$email" -c core.hooksPath=/dev/null commit -q --no-gpg-sign \
   -m "Kuicksilver $version" -m "Kuicksilver.xcframework.zip of https://github.com/kuicksilver/kuicksilver/releases/tag/v$version
 (SHA-256 $sum), built from kuicksilver/kuicksilver@$commit."
+out_abs=$(cd "$out" && pwd)
 echo "  $out: commit $("${G[@]}" rev-parse --short HEAD) on $branch, checksum $sum (unsigned, no tag yet)"
 cat <<NEXT
   Swift package, once the GitHub release v$version is published (SwiftPM downloads $url),
   in a terminal with the release key, as the main tag is made:
-    cd $out
+    cd $out_abs
     export GPG_TTY=\$(tty)
     git commit --amend --no-edit -S$fpr
     git tag -s -u $fpr $version -m "Kuicksilver $version"
     git verify-commit HEAD && git verify-tag $version
-    git push https://github.com/kuicksilver/kuicksilver-swift.git $branch refs/tags/$version
-  If the push is rejected ($branch moved since the clone: not a fast-forward), never force it: run
-    tools/release/swift-package.sh finish $version $sum --source-commit $commit
+    git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git $branch refs/tags/$version
+  --atomic: both or neither, so a rejected branch never leaves the (immutable) tag behind. If the push is rejected
+  ($branch moved since the clone: not a fast-forward), never force it: run
+    $root/tools/release/swift-package.sh finish $version $sum --source-commit $commit
   again (it clones afresh) and repeat the commands above.
   Then from an empty package: .package(url: "https://github.com/kuicksilver/kuicksilver-swift", $req), swift package resolve.
 NEXT
