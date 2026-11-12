@@ -8,15 +8,22 @@ package io.kuicksilver.ktor.client
  * changes. Also remembers the networks where QUIC was seen working (no HTTP/3 head start elsewhere). Both lists keep at
  * most [AltSvcCache.MAX_ORIGINS] keys, dropping the least recently marked (threat-model 3.18). A mark keeps why the
  * alternative broke as a [FallbackReason] (not the failure itself, which would outlive its call), for the diagnostics of
- * the calls it sends to HTTP/1.1. The engine gives it a monotonic [clock] (`monotonicMillis()`): the marks live in memory
- * only, so a step of the wall clock neither extends nor cuts a mark's backoff.
+ * the calls it sends to HTTP/1.1.
+ *
+ * A mark ends on whichever of two clocks gets there first: the monotonic [clock] (`monotonicMillis()`; the marks live in
+ * memory only), so a backward step of the wall clock cannot extend a backoff, and the [wallClock], which goes on while a
+ * device sleeps: on Android and iOS the monotonic clock stops in deep sleep, and a backoff must not stretch over hours of
+ * it. A forward step of the wall clock ends marks early, the safe side. (A sleep-aware clock helper is being added on
+ * another branch for the HTTPS record cache; the two are to be unified.)
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal class BrokenAltSvc(
     internal val clock: () -> Long,
+    private val wallClock: () -> Long = clock,
 ) {
     private class Mark(
         val until: Long,
+        val untilWall: Long,
         val level: Int,
         val reason: FallbackReason,
     )
@@ -40,20 +47,23 @@ internal class BrokenAltSvc(
         val level = marks[key(origin, alt)]?.let { it.level + 1 } ?: 0
         val duration = (BASE_MILLIS shl minOf(level, 20)).coerceAtMost(MAX_MILLIS)
         marks.remove(key(origin, alt))
-        marks[key(origin, alt)] = Mark(clock() + duration, level, reason)
+        marks[key(origin, alt)] = Mark(clock() + duration, wallClock() + duration, level, reason)
         marks.evictEldest(AltSvcCache.MAX_ORIGINS)
     }
 
     fun isBroken(
         origin: String,
         alt: String,
-    ): Boolean = (marks[key(origin, alt)]?.until ?: return false) > clock()
+    ): Boolean = marks[key(origin, alt)]?.let(::live) ?: false
+
+    /** Neither clock has passed the mark's end. */
+    private fun live(m: Mark): Boolean = m.until > clock() && m.untilWall > wallClock()
 
     /** Why [alt] of [origin] is broken, or null when it is not (never marked, or the mark expired). */
     fun brokenReason(
         origin: String,
         alt: String,
-    ): FallbackReason? = marks[key(origin, alt)]?.takeIf { it.until > clock() }?.reason
+    ): FallbackReason? = marks[key(origin, alt)]?.takeIf(::live)?.reason
 
     fun markWorking(
         origin: String,

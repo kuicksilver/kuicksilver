@@ -199,7 +199,26 @@ class ProtocolRaceTest {
 
 class BrokenAltSvcTest {
     private var now = 0L
-    private val broken = BrokenAltSvc { now }
+    private val broken = BrokenAltSvc({ now })
+
+    /**
+     * A mark ends on whichever clock gets there first: the monotonic one (a backward step of the wall clock does not
+     * extend it) or the wall clock (a device asleep, whose monotonic clock stopped, does not get the backoff stretched over
+     * the sleep). Before, the engine gave the marks the wall clock alone, and then the monotonic clock alone.
+     */
+    @Test fun negative_markEndsOnEitherClock() {
+        var mono = 0L
+        var wall = 1_000_000_000L
+        val b = BrokenAltSvc({ mono }, { wall })
+        b.markBroken("o", "a") // 5 minutes
+        wall += 3_600_000 // an hour asleep: the monotonic clock did not move
+        assertFalse(b.isBroken("o", "a"), "the sleep counts")
+        b.markBroken("o", "a") // 10 minutes
+        wall -= 86_400_000 // the wall clock stepped back a day
+        mono += 600_000
+        assertFalse(b.isBroken("o", "a"), "the step back does not extend it")
+        assertEquals(null, b.brokenReason("o", "a"))
+    }
 
     @Test fun backoffDoublesTo2Days() {
         val expected = listOf(5.minutes, 10.minutes, 20.minutes, 40.minutes)
