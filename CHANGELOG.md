@@ -1283,29 +1283,32 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - Ktor client, HTTPS records (new in this release): the A or AAAA records of one family alone in an answer no longer
   stand in for the whole address lookup of that name, which a resolver that omitted the other family's RRset (RFC 9460
   section 5.2) left without it, IPv6 on an IPv6-only network say. That family is still used at once (section 5), and
-  the name is looked up as well: the other family's addresses join when they come within the 50 ms resolution delay
-  of Happy Eyeballs. "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it
-  was kept for the SOA's negative TTL, RFC 2308 section 5, although the negative answer is about "the data field of the
-  last CNAME", RFC 2308 section 1, and a CNAME "may be cached" only for its TTL, RFC 1035 section 3.2.1). The record cache counts a TTL on both the monotonic and the
-  wall clock and expires an entry once either has seen it pass: a wall clock stepped back no longer keeps a record, a
-  forged one included, past its TTL, and neither does a device that slept (the monotonic clock stops in sleep on most
-  platforms). The KDoc of
-  `HttpsRecordSource.Exchange` and the guide now say that the engine matches a response by its question, not its ID (the
-  queries carry ID 0), so an exchange over plain UDP or TCP must set and check a random ID of its own. An alias
-  target that is a CNAME is now resolved from the answer's own records (the RRset and addresses at the end of its
-  chain), without a follow-up query; they were filed under the CNAME's target before, which resolution never asks for.
+  the name is looked up as well: the other family's addresses join when they come within the 50 ms resolution delay of
+  Happy Eyeballs. "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it was kept for the
+  SOA's negative TTL, RFC 2308 section 5, although the negative answer is about "the data field of the last CNAME", RFC
+  2308 section 1, and a CNAME "may be cached" only for its TTL, RFC 1035 section 3.2.1). The record cache counts a TTL
+  on both the monotonic and the wall clock and expires an entry once either has seen it pass: a wall clock stepped back
+  no longer keeps a record, a forged one included, past its TTL, and neither does a device that slept (the monotonic
+  clock stops in sleep on most platforms). A TTL with the top bit set in the record lists of Apple and Windows counts as
+  0 (RFC 2181 section 8), as in a whole message; it was taken as 2^31 - 1. An alias target that is a CNAME is now
+  resolved from the answer's own records (the RRset and addresses at the end of its chain), without a follow-up query;
+  they were filed under the CNAME's target before, which resolution never asks for, and a TargetName on another
+  TargetName's CNAME path was not filed at all. The KDoc of `HttpsRecordSource.Exchange` and the guide now say that the
+  engine matches a response by its question, not its ID (the queries carry ID 0), so an exchange over plain UDP or TCP
+  must set and check a random ID of its own.
 
 ### Security
 
 - Ktor client, HTTPS records (new in this release): reading a DNS answer took time cubic in the number of its records
   with distinct TargetNames, and nothing interrupted it: one answer of 64 KiB from a hostile or spoofed resolver (the
   system resolver over plain DNS, or an `HttpsRecordSource.Exchange` server, with no size limit there) held a thread
-  for over a minute per lookup, and the lookup's timeout could not stop it. The read is now linear in the message
-  (every name looked at once), a message over 65535 bytes is refused (RFC 8484 section 6: "This media type restricts
-  the maximum size of the DNS message to 65535 bytes"), at most 16 CNAMEs per name and 16 other HTTPS
-  RRsets per answer are followed, and the read checks the lookup's coroutine every 64 records, so the timeout and
-  cancellation stop it. At most 32 ServiceMode endpoints of an RRset are tried, so a forged RRset cannot turn one
-  request into thousands of connection attempts. The `client.svcb` fuzz target checks these bounds.
+  for over a minute per lookup, and the lookup's timeout could not stop it. The read is now linear in the message: each
+  TargetName is walked once and each owner's RRset parsed once, a message over 65535 bytes is refused (RFC 8484 section
+  6: "This media type restricts the maximum size of the DNS message to 65535 bytes"), at most 16 CNAMEs per name and 16
+  other HTTPS RRsets per answer are followed, a record's `mandatory` keys are checked in one merge pass, and the read
+  checks the lookup's coroutine every 64 units of work, so the timeout and cancellation stop it. At most 32 ServiceMode
+  endpoints of an RRset are tried, so a forged RRset cannot turn one request into thousands of connection attempts. The
+  `client.svcb` fuzz target checks these bounds.
 
 ## [0.2.1] - 2026-11-04
 

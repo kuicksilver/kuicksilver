@@ -110,16 +110,21 @@ resolver or a DNS-over-HTTPS exchange, which may be on the attacker's path: ever
 at most 128 compression pointers and each must point back, names are at most 255 bytes, and nothing is allocated beyond
 the message's length. The work is linear in the message and bounded: a message over 65535 bytes is refused (RFC 8484
 section 6: "This media type restricts the maximum size of the DNS message to 65535 bytes"; RFC 1035 section 4.2.2 gives
-a message over TCP "a two byte length field"), every name is looked at once when the records' TargetNames are followed
-(a work list, not a rescan per target), at most 16 CNAMEs are followed per name and at most 16 other HTTPS RRsets per answer, and the read stops at
-the lookup's timeout or cancellation (it checks the coroutine every 64 records), so a hostile resolver or DNS-over-HTTPS
-server cannot pin a thread with one answer (0.3.0 review: before, an answer of a few thousand ServiceMode records
-with distinct TargetNames took time cubic in their number, over a minute at 64 KiB and unbounded through
-`HttpsRecordSource.Exchange`, and the timeout could not interrupt it;
-`DnsMessageTest.negative_hostileLargestAnswerIsReadInLinearTime`, `.negative_readStopsAtACheckpoint`). At most 32
-ServiceMode endpoints of an RRset are tried, so a forged RRset cannot turn one request into thousands of connection
-attempts. New fuzz target `client.svcb` (`SvcbFuzzTest.svcbMessage`, seeds from `tools/fuzz/gen-svcb-seeds.py`), which
-also reads the other RRsets and addresses of an answer and checks the bounds above.
+a message over TCP "a two byte length field"); the records' TargetNames are followed with a work list, each TargetName
+walked once (at most 16 CNAMEs) and each owner's RRset parsed once however many TargetNames lead to it, at most 16
+other HTTPS RRsets per answer; a record's `mandatory` keys are checked against its keys in one merge pass; and the read
+stops at the lookup's timeout or cancellation (it checks the coroutine every 64 units of work), so a hostile resolver or
+DNS-over-HTTPS server cannot pin a thread with one answer (0.3.0 review: before, an answer of a few thousand
+ServiceMode records with distinct TargetNames took time cubic in their number, over a minute at 64 KiB and unbounded
+through `HttpsRecordSource.Exchange`, and the timeout could not interrupt it;
+`DnsMessageTest.negative_hostileLargestAnswerIsReadInLinearTime`, `.negative_readStopsAtACheckpoint`,
+`.negative_rrsetReachedByManyTargetsIsParsedOnce`). At most 32 ServiceMode endpoints of an RRset are tried, so a forged
+RRset cannot turn one request into thousands of connection attempts. Records of other names are kept beyond the
+resolution only within the bailiwick of the query (RFC 2181 section 5.4.1), anchored on the name asked and its CNAME
+chain; a lying resolver can stretch that anchor with a CNAME to a public suffix (`com`), but such a resolver can forge
+any answer anyway, and the cache is per network (RFC 9460 section 12). New fuzz target `client.svcb`
+(`SvcbFuzzTest.svcbMessage`, seeds from `tools/fuzz/gen-svcb-seeds.py`), which also reads the other RRsets and addresses
+of an answer and checks the bounds above.
 
 0.2.0 status (fuzzing campaigns, 2026-10-13/14): local campaigns replace ClusterFuzzLite (`tools/fuzz/campaign.sh`,
 CONTRIBUTING "Fuzzing"): every target runs in slices of at most 20 minutes at background priority, one at a time, and the

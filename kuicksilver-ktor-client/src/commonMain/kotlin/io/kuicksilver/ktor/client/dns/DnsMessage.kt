@@ -111,11 +111,12 @@ internal object DnsMessage {
      * the SOA record's TTL and its MINIMUM, and no longer than a CNAME that led to the name without them; null without
      * an SOA in the authority section), and the other records of [type] and the A/AAAA records the answer and additional
      * sections carry for other names (RFC 9460 section 5: they "SHOULD be placed in cache before performing any follow-up
-     * queries"; an RRset of [type] that is malformed is left out, section 2.2). Throws as [answers], and [DnsFormatException] for a message over [MAX_MESSAGE] bytes.
+     * queries"; an RRset of [type] that is malformed is left out, section 2.2). Throws as [answers], and
+     * [DnsFormatException] for a message over [MAX_MESSAGE] bytes.
      *
      * The work is linear in the message (the DNS is "an untrusted channel that might be controlled by an attacker", RFC
-     * 9460 section 9.2.2): every name is looked at once, at most 16 CNAMEs are followed from one name and at most
-     * [MAX_RELATED] other RRsets. [checkpoint] is called every few records; a lookup passes its coroutine's `ensureActive`,
+     * 9460 section 9.2.2): each TargetName is walked once (at most 16 CNAMEs) and each owner's RRset parsed once, and at
+     * most [MAX_RELATED] other RRsets are followed. [checkpoint] is called every 64 units of work; a lookup passes its coroutine's `ensureActive`,
      * so its timeout or cancellation stops a read in progress (whatever it throws ends the read).
      */
     fun read(
