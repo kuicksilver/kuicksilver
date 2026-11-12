@@ -243,7 +243,7 @@ class ProxyResolverTest {
         val ran = ArrayList<String?>()
         val warnings = ArrayList<String>()
         val viaPac =
-            pickCfProxy(listOf(pac), {
+            pickCfProxyWithPac(listOf(pac), {
                 ran += it.pacUrl
                 listOf(CfProxy(CfProxy.Type.Http, "pac.test", 3128))
             }) { warnings += it }
@@ -251,11 +251,13 @@ class ProxyResolverTest {
         assertEquals(listOf<String?>("http://wpad/wpad.dat"), ran)
         assertEquals(emptyList(), warnings)
         // "DIRECT"
-        assertNull(pickCfProxy(listOf(pac, CfProxy(CfProxy.Type.Http, "p", 1)), { listOf(CfProxy(CfProxy.Type.None, null, null)) }) {})
+        assertNull(
+            pickCfProxyWithPac(listOf(pac, CfProxy(CfProxy.Type.Http, "p", 1)), { listOf(CfProxy(CfProxy.Type.None, null, null)) }) {},
+        )
         // SOCKS from the script
         assertEquals(
             ResolvedProxy.socks5("s.test", 1080),
-            pickCfProxy(listOf(pac), { listOf(CfProxy(CfProxy.Type.Socks, "s.test", 1080)) }) {},
+            pickCfProxyWithPac(listOf(pac), { listOf(CfProxy(CfProxy.Type.Socks, "s.test", 1080)) }) {},
         )
     }
 
@@ -264,10 +266,10 @@ class ProxyResolverTest {
         val warnings = ArrayList<String>()
         assertEquals(
             ResolvedProxy.http("next", 8080),
-            pickCfProxy(listOf(pac, CfProxy(CfProxy.Type.Http, "next", 8080)), { null }) { warnings += it },
+            pickCfProxyWithPac(listOf(pac, CfProxy(CfProxy.Type.Http, "next", 8080)), { null }) { warnings += it },
         )
         assertEquals(listOf(PAC_FAILED), warnings)
-        assertNull(pickCfProxy(listOf(pac), { null }) {}, "nothing after the failed script: direct")
+        assertNull(pickCfProxyWithPac(listOf(pac), { null }) {}, "nothing after the failed script: direct")
     }
 
     /** Windows: WPAD and the PAC URL first (WinHTTP's order), the fixed proxy when neither is set or the script failed. */

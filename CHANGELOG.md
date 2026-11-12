@@ -485,10 +485,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Changed
 
 - Ktor client, proxy auto-configuration (RFC 6455 section 4.1 step 3): `ProxyResolvers.System` runs a PAC script or
-  WPAD as the system does: on macOS and iOS with CFNetwork's PAC engine (`CFNetworkExecuteProxyAutoConfigurationURL`),
-  on Windows with WinHTTP's (`WinHttpGetProxyForUrl`, automatic detection by DHCP and DNS, then the PAC URL). A
-  WebSocket's lookup passes its `ws://`/`wss://` URI with the resource name (RFC 6455 section 4.1; on Apple platforms
-  CFNetwork drops the path and query before the script runs). A script that cannot be fetched or run within 5 seconds
+  WPAD: on Windows with WinHTTP's PAC engine (`WinHttpGetProxyForUrl`, automatic detection by DHCP and DNS, then the PAC URL). A
+  WebSocket's lookup passes its `ws://`/`wss://` URI with the resource name (RFC 6455 section 4.1). On Apple platforms
+  the engine runs PAC itself, as CFNetwork's engine drops the path and query before the script runs: the script of the
+  settings' PAC URL (downloaded directly, `http`, `https` or `file`, at most 1 MiB, kept 30 minutes) or given inline,
+  or WPAD's when the settings say "auto discover" (DHCP option 252 on macOS, then `wpad.<domain>` down to two labels),
+  run on JavaScriptCore with the PAC utility functions (`…Ex` included) in a context without network, file or timer
+  APIs, each run limited to 2 seconds (threat model 3.20.3). A script that cannot be fetched or run within 5 seconds
   gives the next setting (on Windows the fixed proxy), else a direct connection, with one warning. Before, those
   requests connected directly.
 - Ktor client, HTTP/1.1 request framing (RFC 9112 section 6.1 MUST NOT): Transfer-Encoding (a body of unknown length,

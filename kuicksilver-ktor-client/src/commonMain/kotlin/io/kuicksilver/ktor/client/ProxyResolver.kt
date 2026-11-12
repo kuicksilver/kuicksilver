@@ -57,11 +57,11 @@ public object ProxyResolvers {
      * `java.net.useSystemProxies`, Android's per-network proxy and PAC); on Apple platforms the system's proxy settings
      * (`CFNetworkCopyProxiesForURL`, with its exceptions list); on Windows the user's Internet settings
      * (`WinHttpGetIEProxyConfigForCurrentUser`, with its bypass list); on Linux, which has no system API, [Environment].
-     * A proxy auto-configuration on Apple platforms (a PAC URL or script, `CFNetworkExecuteProxyAutoConfigurationURL`)
-     * and Windows (automatic detection, WPAD, or a PAC URL, `WinHttpGetProxyForUrl`) is run as the system runs it, within
-     * 5 seconds; for a WebSocket the engine passes the `ws://` or `wss://` URI with the resource name (RFC 6455 section
-     * 4.1; CFNetwork drops the path and query before the script runs), for anything else `http://` or `https://`, host
-     * and port. A script that cannot be fetched or run means the next setting (on Windows the fixed proxy, if any) or a
+     * A proxy auto-configuration is run on Apple platforms by the engine itself (a PAC URL or script of the settings, or
+     * WPAD when they say "auto discover"; the script downloaded by the engine and run on JavaScriptCore, sandboxed and
+     * time-limited) and on Windows by WinHTTP (automatic detection, WPAD, or a PAC URL, `WinHttpGetProxyForUrl`), within
+     * 5 seconds; for a WebSocket the script gets the `ws://` or `wss://` URI with the resource name (RFC 6455 section
+     * 4.1), for anything else `http://` or `https://`, host and port. A script that cannot be fetched or run means the next setting (on Windows the fixed proxy, if any) or a
      * direct connection, and the engine logs one warning.
      */
     public val System: ProxyResolver get() = platformSystemProxyResolver
@@ -426,19 +426,67 @@ internal class CfProxy(
     /** For [Type.AutoConfiguration]: the PAC script's URL, or the script itself. */
     val pacUrl: String? = null,
     val pacScript: String? = null,
+    /** For [Type.AutoConfiguration]: the script is found by WPAD's discovery (the system's "auto discover" setting). */
+    val wpad: Boolean = false,
 ) {
     enum class Type { None, Http, Https, Socks, AutoConfiguration, Other }
 }
 
 /**
- * The proxy to use from [proxies]: the first HTTP(S) or SOCKS entry, null for "none" first. A PAC entry is run by
- * [runPac] and its answer picked the same way; a script that could not be fetched or run ([runPac] gives null) is
- * skipped with a [warn]ing, so the next entry counts, as in CFNetwork's own list. Without [runPac] a PAC entry means a
- * direct connection and a warning.
+ * [pickCfProxy] where a PAC entry is run by [runPac] and its answer picked the same way; a script that could not be
+ * fetched or run ([runPac] gives null) is skipped with a [warn]ing, so the next entry counts, as in CFNetwork's own list.
+ */
+internal inline fun pickCfProxyWithPac(
+    proxies: List<CfProxy>,
+    runPac: (CfProxy) -> List<CfProxy>?,
+    noinline warn: (String) -> Unit,
+): ResolvedProxy? {
+    for ((i, p) in proxies.withIndex()) {
+        if (p.type != CfProxy.Type.AutoConfiguration) {
+            val fixed = proxies.subList(i, proxies.size).takeWhile { it.type != CfProxy.Type.AutoConfiguration }
+            // the fixed entries up to the next PAC entry: the first usable one, or "none", decides
+            pickFixed(fixed)?.let { return it.proxy }
+            continue
+        }
+        val answer = runPac(p)
+        if (answer != null) return pickCfProxy(answer.filter { it.type != CfProxy.Type.AutoConfiguration }, warn)
+        warn(PAC_FAILED)
+    }
+    return null
+}
+
+/** What a run of fixed entries decides: a proxy, or a direct connection ("none"); null when no entry decides. */
+internal class FixedPick(
+    val proxy: ResolvedProxy?,
+)
+
+internal fun pickFixed(proxies: List<CfProxy>): FixedPick? {
+    for (p in proxies) {
+        when (p.type) {
+            CfProxy.Type.None -> {
+                return FixedPick(null)
+            }
+
+            CfProxy.Type.Http, CfProxy.Type.Https -> {
+                if (p.host != null) return FixedPick(ResolvedProxy.http(p.host, p.port ?: 8080))
+            }
+
+            CfProxy.Type.Socks -> {
+                if (p.host != null) return FixedPick(ResolvedProxy.socks5(p.host, p.port ?: 1080))
+            }
+
+            else -> {}
+        }
+    }
+    return null
+}
+
+/**
+ * The proxy to use from [proxies]: the first HTTP(S) or SOCKS entry, null for "none" first. A PAC entry (a script not
+ * run here) means a direct connection and a [warn]ing; [pickCfProxyWithPac] runs it.
  */
 internal fun pickCfProxy(
     proxies: List<CfProxy>,
-    runPac: ((CfProxy) -> List<CfProxy>?)? = null,
     warn: (String) -> Unit,
 ): ResolvedProxy? {
     for (p in proxies) {
@@ -456,13 +504,8 @@ internal fun pickCfProxy(
             }
 
             CfProxy.Type.AutoConfiguration -> {
-                if (runPac == null) {
-                    warn(PAC_WARNING)
-                    return null
-                }
-                val answer = runPac(p)
-                if (answer != null) return pickCfProxy(answer.filter { it.type != CfProxy.Type.AutoConfiguration }, null, warn)
-                warn(PAC_FAILED)
+                warn(PAC_WARNING)
+                return null
             }
 
             CfProxy.Type.Other -> {}
