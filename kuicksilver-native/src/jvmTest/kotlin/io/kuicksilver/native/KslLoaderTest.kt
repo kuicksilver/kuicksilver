@@ -252,6 +252,23 @@ class KslLoaderTest {
         assertTrue(File(target, "keep").isFile, "nothing is deleted through a link")
     }
 
+    /** Below a directory others may write to without the sticky bit nothing is swept: a directory could be swapped for a link. */
+    @Test fun negative_noSweepUnderRiskyParent() {
+        if (!unix) return
+        val tmp = Files.createTempDirectory("ksl-sweep-risky").toFile().apply { deleteOnExit() }
+        val old = File(tmp, "kuicksilver-native-t-1").apply { mkdir() }.apply { deleteOnExit() }
+        File(old, "libksl.so").apply { writeText("x") }.deleteOnExit()
+        val now = System.currentTimeMillis()
+        old.setLastModified(now - 3_600_000)
+        chmod("777", tmp)
+        val primary = File(tmp, "kuicksilver-native-t").toPath()
+        JvmLoader.sweepStaleFreshDirs(primary, tmp.toPath(), now)
+        assertTrue(File(old, "libksl.so").isFile, "nothing removed below a risky parent")
+        chmod("700", tmp)
+        JvmLoader.sweepStaleFreshDirs(primary, tmp.toPath(), now)
+        assertTrue(!old.exists(), "removed once the parent is private")
+    }
+
     /** A home directory path that is a regular file: nothing can be created below it, not even by root (the Docker JVM steps). */
     private fun noHome(): File = Files.createTempFile("ksl-no-home", null).toFile().apply { deleteOnExit() }
 
@@ -516,17 +533,15 @@ class LoaderInstallTest {
         val out = File(dir, lib.name).apply { deleteOnExit() }
         File(out, "busy").apply { parentFile.mkdirs() }.apply { writeText("x") }.deleteOnExit() // the plain name cannot be replaced
         val hashed = File(dir, JvmLoader.hashedName(lib.name, lib.readBytes())).apply { deleteOnExit() }
-        JvmLoader.moveHookForTest = { _, target ->
+        val otherJvmWins: (java.nio.file.Path, java.nio.file.Path) -> Unit = { from, target ->
             if (target.fileName.toString() == hashed.name) {
                 lib.copyTo(hashed) // the other JVM's copy, verified and in place
                 throw java.io.IOException("in use by another process")
             }
+            JvmLoader.replaceAtomically(from, target)
         }
-        try {
-            kotlin.test.assertEquals(hashed, JvmLoader.installLibrary(out, lib.readBytes(), manifest))
-        } finally {
-            JvmLoader.moveHookForTest = null
-        }
+        val owner = Files.getOwner(dir.toPath())
+        kotlin.test.assertEquals(hashed, JvmLoader.installLibrary(out, lib.readBytes(), manifest, owner, otherJvmWins))
         kotlin.test.assertTrue(dir.listFiles()!!.none { it.name.endsWith(".tmp") }, "no temp files left")
     }
 }

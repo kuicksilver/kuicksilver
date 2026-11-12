@@ -15,6 +15,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.SecureDirectoryStream
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.AclEntry
@@ -22,6 +23,7 @@ import java.nio.file.attribute.AclEntryFlag
 import java.nio.file.attribute.AclEntryPermission
 import java.nio.file.attribute.AclEntryType
 import java.nio.file.attribute.AclFileAttributeView
+import java.nio.file.attribute.BasicFileAttributeView
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.FileAttribute
 import java.nio.file.attribute.GroupPrincipal
@@ -221,33 +223,70 @@ internal object JvmLoader {
     /**
      * Removes, best effort, the per-process directories `<primary>-*` an earlier process left in [tmp]: owned by this user,
      * real directories, untouched for [STALE_AFTER_MS] (a process that has just created one may be about to load from it),
-     * holding only regular files. On Windows a library still loaded by a running process cannot be deleted: that directory
-     * stays until a later start. Every failure is ignored.
+     * holding only regular files. Nothing is swept when a directory above [primary] lets another user rename entries
+     * ([risk], from [ancestorRisk]): that user could put a link in place of a directory between the checks and the deletion.
+     * Where the file system offers a [SecureDirectoryStream] (Linux) each directory is opened without following a link and
+     * checked, listed and emptied through that descriptor. On Windows a library still loaded by a running process cannot be
+     * deleted: that directory stays until a later start. Every failure is ignored.
      */
     internal fun sweepStaleFreshDirs(
         primary: Path,
         tmp: Path,
         now: Long = System.currentTimeMillis(),
+        risk: String? = ancestorRisk(primary, currentUser(tmp)),
     ) {
+        if (risk != null) return
         val me = currentUser(tmp) ?: return
         runCatching {
             Files.newDirectoryStream(tmp, "${primary.fileName}-*").use { entries ->
+                @Suppress("UNCHECKED_CAST") // a stream over Paths is a SecureDirectoryStream<Path> when it is one at all
+                val secure = entries as? SecureDirectoryStream<Path>
                 for (dir in entries) {
                     runCatching {
-                        val attrs = Files.readAttributes(dir, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
-                        if (!attrs.isDirectory || attrs.isOther) return@runCatching
-                        if (now - attrs.lastModifiedTime().toMillis() < STALE_AFTER_MS) return@runCatching
-                        if (Files.getOwner(dir, LinkOption.NOFOLLOW_LINKS) != me) return@runCatching
-                        Files.newDirectoryStream(dir).use { files ->
-                            for (f in files) {
-                                if (Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)) runCatching { Files.delete(f) }
-                            }
-                        }
-                        Files.delete(dir)
+                        if (secure != null) sweepSecure(secure, dir.fileName, now, me) else sweepPlain(dir, now, me)
                     }
                 }
             }
         }
+    }
+
+    /** One directory of [sweepStaleFreshDirs] through [parent]'s descriptor: opened with `O_NOFOLLOW`, a link fails to open. */
+    private fun sweepSecure(
+        parent: SecureDirectoryStream<Path>,
+        name: Path,
+        now: Long,
+        me: UserPrincipal,
+    ) {
+        parent.newDirectoryStream(name, LinkOption.NOFOLLOW_LINKS).use { dir ->
+            val attrs = dir.getFileAttributeView(PosixFileAttributeView::class.java).readAttributes()
+            if (now - attrs.lastModifiedTime().toMillis() < STALE_AFTER_MS || attrs.owner() != me) return
+            for (f in dir) {
+                runCatching {
+                    val n = f.fileName
+                    val a = dir.getFileAttributeView(n, BasicFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS).readAttributes()
+                    if (a.isRegularFile) dir.deleteFile(n)
+                }
+            }
+        }
+        parent.deleteDirectory(name) // fails unless empty, so a directory swapped in meanwhile loses nothing
+    }
+
+    /** One directory of [sweepStaleFreshDirs] by path, used only below directories no other user can rename in (macOS, Windows). */
+    private fun sweepPlain(
+        dir: Path,
+        now: Long,
+        me: UserPrincipal,
+    ) {
+        val attrs = Files.readAttributes(dir, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        if (!attrs.isDirectory || attrs.isOther) return
+        if (now - attrs.lastModifiedTime().toMillis() < STALE_AFTER_MS) return
+        if (Files.getOwner(dir, LinkOption.NOFOLLOW_LINKS) != me) return
+        Files.newDirectoryStream(dir).use { files ->
+            for (f in files) {
+                if (Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)) runCatching { Files.delete(f) }
+            }
+        }
+        Files.delete(dir)
     }
 
     private const val STALE_AFTER_MS = 10 * 60 * 1000L
@@ -302,7 +341,7 @@ internal object JvmLoader {
     fun privateWorkDir(
         props: Map<String, String> = emptyMap(),
         env: Map<String, String> = System.getenv(),
-        warn: (String) -> Unit = ::warnOnStderr,
+        warn: (String) -> Unit = JvmLoader::warn,
     ): File {
         var failure: Exception? = null
         for (prepare in workDirs(props, env, warn)) {
@@ -318,7 +357,7 @@ internal object JvmLoader {
     }
 
     /** Warnings go to the `System.Logger` "io.kuicksilver.native" (java.util.logging by default, on standard error). */
-    internal fun warnOnStderr(message: String) {
+    internal fun warn(message: String) {
         System.getLogger("io.kuicksilver.native").log(System.Logger.Level.WARNING, message)
     }
 
@@ -388,7 +427,7 @@ internal object JvmLoader {
         dir: Path,
         expectedOwner: UserPrincipal? = currentUser(dir),
         strictAcl: Boolean = true,
-        warn: (String) -> Unit = ::warnOnStderr,
+        warn: (String) -> Unit = JvmLoader::warn,
     ) {
         fun refuse(why: String): Nothing = refuseWorkDir(dir, why)
 
@@ -599,6 +638,7 @@ internal object JvmLoader {
         content: ByteArray,
         manifest: String,
         expectedOwner: UserPrincipal?,
+        move: (Path, Path) -> Unit = ::replaceAtomically,
     ): File {
         val path = out.toPath()
         val posix = hasPosix(path)
@@ -619,7 +659,7 @@ internal object JvmLoader {
                 runCatching { verifyAgainstManifest(f.toFile(), manifest, out.name) }.isSuccess
         if (reusable(path)) return out
         try {
-            writeAndMove(path, content, manifest, out.name, posix)
+            writeAndMove(path, content, manifest, out.name, posix, move)
             return out
         } catch (e: KslException) {
             throw e
@@ -628,7 +668,7 @@ internal object JvmLoader {
             val hashed = path.resolveSibling(hashedName(out.name, content))
             if (reusable(hashed)) return hashed.toFile()
             try {
-                writeAndMove(hashed, content, manifest, out.name, posix)
+                writeAndMove(hashed, content, manifest, out.name, posix, move)
             } catch (e2: IOException) {
                 if (reusable(hashed)) return hashed.toFile() // another JVM wrote and loaded the same copy meanwhile
                 e2.addSuppressed(e)
@@ -645,6 +685,7 @@ internal object JvmLoader {
         manifest: String,
         entryName: String,
         posix: Boolean,
+        move: (Path, Path) -> Unit,
     ) {
         val attrs: Array<FileAttribute<*>> = if (posix) arrayOf(PosixFilePermissions.asFileAttribute(OWNER_ONLY_FILE)) else emptyArray()
         val tmp = target.resolveSibling("${target.fileName}.${java.util.UUID.randomUUID()}.tmp")
@@ -656,23 +697,27 @@ internal object JvmLoader {
                 while (buf.hasRemaining()) ch.write(buf)
             } // fully written and closed before loading
             verifyAgainstManifest(tmp.toFile(), manifest, entryName)
-            moveHookForTest?.invoke(tmp, target)
-            try {
-                Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING)
-            }
+            move(tmp, target)
         } finally {
             Files.deleteIfExists(tmp)
         }
     }
 
     /**
-     * Called with (temp file, target) right before the rename in [installLibrary]; tests set it to act as another process
-     * (a JVM that wins the race, Windows refusing to replace a loaded library), which a POSIX rename cannot reproduce.
+     * Renames [from] to [to], replacing it, atomically where the file system can. Tests give [installLibrary] another
+     * function in its place, to act as another process (a JVM that wins the race, Windows refusing to replace a loaded
+     * library), which a POSIX rename cannot reproduce.
      */
-    @Volatile
-    internal var moveHookForTest: ((Path, Path) -> Unit)? = null
+    internal fun replaceAtomically(
+        from: Path,
+        to: Path,
+    ) {
+        try {
+            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
 
     /** `libksl_7_windows_x86_64.dll` -> `libksl_7_windows_x86_64-<12 hex digits of the content's SHA-256>.dll`. */
     internal fun hashedName(
@@ -792,7 +837,7 @@ internal object JvmLoader {
         props: Map<String, String>,
         cl: ClassLoader,
         env: Map<String, String> = System.getenv(),
-        warn: (String) -> Unit = ::warnOnStderr,
+        warn: (String) -> Unit = JvmLoader::warn,
     ) {
         val name = JvmNativeNames.libraryFileName()
         val urls = cl.getResources(JvmNativeNames.RESOURCE_DIR + name).toList()

@@ -483,7 +483,8 @@ logging framework provides a `System.LoggerFinder` (for example through an SLF4J
 - "work directory <dir> is a symbolic link … ; this process uses the new private directory <dir> instead": the default
   directory exists but is not usable (another user created it, or it is a link); a new private directory for this
   process is used. It is removed at exit, or on Windows, where a loaded library cannot be deleted, by a later start
-  (directories `kuicksilver-native-<user>-*` of this user untouched for ten minutes). Remove the old directory if you
+  (directories `kuicksilver-native-<user>-*` of this user untouched for ten minutes; never below a directory
+  another user could rename them in, and on Linux without following a link). Remove the old directory if you
   created it yourself.
 - "work directory <dir> is owned by <owner>, not by this user; another user may be able to replace the library" (or "is a
   junction", "keeps group/other permissions for <names>"): Windows, a `-Dkuicksilver.native.workdir` that is not private
