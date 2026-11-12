@@ -585,6 +585,9 @@ internal class KslQuicTlsSession(
 
     internal fun newSessionTicket(): Unit = Ksl.sslNewSessionTicket(s())
 
+    /** Whether the handshake resumed a session (tests). */
+    internal val sessionReusedForTest: Boolean get() = Ksl.sslGet(s(), KslConst.GET_SESSION_REUSED)[0].toInt() == 1
+
     override fun close() {
         // a hello closed before TLS decided on its early data never got it: its reservation goes too
         admitted?.let { admission?.release(it) }

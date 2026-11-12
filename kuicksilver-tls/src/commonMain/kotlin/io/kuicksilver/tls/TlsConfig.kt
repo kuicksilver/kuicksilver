@@ -256,7 +256,7 @@ public class TlsConfig private constructor(
          * The chain and private key this side presents: required for a server unless [sniSelector] supplies one per connection,
          * optional for a client (sent when the server asks for a certificate). Default null. A [TlsIdentity.InMemory], or a
          * [TlsIdentity.Reloadable] to replace the certificate at run time: each handshake then takes the identity current
-         * when it starts.
+         * when the ClientHello arrives.
          */
         public var identity: TlsIdentity? = null
 
@@ -295,7 +295,8 @@ public class TlsConfig private constructor(
         @DelicateKuicksilverApi public var keylog: KeylogSink? = null
 
         /**
-         * The deadline of a TLS-over-TCP handshake ([TlsConnection], `Socket.tls`); default 10 seconds. When it passes the
+         * The deadline of a TLS-over-TCP handshake ([TlsConnection], `Socket.tls`); default 10 seconds. A server counts the
+         * wait for the client's ClientHello in it. When it passes the
          * handshake fails with [TlsException.Protocol]. Must be positive; [Duration.INFINITE] waits without a deadline. QUIC
          * connections use their own `QuicConfig.handshakeTimeout`.
          */

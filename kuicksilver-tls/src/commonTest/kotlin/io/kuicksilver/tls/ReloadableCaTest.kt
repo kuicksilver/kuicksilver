@@ -113,23 +113,114 @@ class ReloadableCaTest {
             assertIs<VerifyReason.UnknownIssuer>(refused(clientA(), server), "a client of the dropped CA is refused")
         }
 
-    /** The bundle is fixed when the handshake starts: a reload while it runs does not change what it verifies against. */
-    @Test fun negative_handshakeInFlightKeepsItsBundle(): Unit =
+    /**
+     * A TCP connection accepted before a reload whose ClientHello arrives after it is verified against the new bundle: the
+     * bundle is taken when the ClientHello is there, not at accept, so a client of a dropped CA cannot connect early and
+     * send its hello late.
+     */
+    @Test fun negative_connectionAcceptedBeforeReloadUsesTheBundleOfItsClientHello(): Unit =
         runBlocking(Dispatchers.Default) {
             val r = TrustConfig.reloadable(testCa)
             val server = server(r)
             val pair = ChannelPair()
-            // undispatched: the server takes its context (and the bundle) before this returns, then waits for the ClientHello
+            // undispatched: the server runs until it waits for the ClientHello, which has not been sent
+            val sd =
+                async(start = CoroutineStart.UNDISPATCHED) { runCatching { TlsConnection.server(pair.serverIn, pair.serverOut, server) } }
+            r.reload(otherCa)
+            val cd =
+                async {
+                    runCatching {
+                        TlsConnection.client(
+                            pair.clientIn,
+                            pair.clientOut,
+                            clientA(),
+                            EmptyCoroutineContext,
+                            SessionCache(),
+                        )
+                    }
+                }
+            val e =
+                assertIs<TlsException.Verify>(withTimeout(20.seconds) { sd.await() }.exceptionOrNull(), "the old CA's client is refused")
+            assertIs<VerifyReason.UnknownIssuer>(e.reason)
+            withTimeout(20.seconds) { cd.await() }.getOrNull()?.close()
+        }
+
+    /** A handshake whose ClientHello arrived before a reload keeps the bundle it started with while the reload happens. */
+    @Test fun handshakeInProgressKeepsItsBundle(): Unit =
+        runBlocking(Dispatchers.Default) {
+            val r = TrustConfig.reloadable(testCa)
+            val server = server(r)
+            val pair = ChannelPair()
+            val cd = async { TlsConnection.client(pair.clientIn, pair.clientOut, clientA(), EmptyCoroutineContext, SessionCache()) }
+            withTimeout(20.seconds) { pair.serverIn.awaitContent(1) } // the ClientHello is on its way
+            // undispatched: with the hello there the server takes its context (and the bundle) before this returns
             val sd = async(start = CoroutineStart.UNDISPATCHED) { TlsConnection.server(pair.serverIn, pair.serverOut, server) }
             r.reload(otherCa)
-            val cd = async { TlsConnection.client(pair.clientIn, pair.clientOut, clientA(), EmptyCoroutineContext, SessionCache()) }
             val (c, s) = withTimeout(20.seconds) { cd.await() to sd.await() }
-            assertEquals(Certificate(TestCerts.client), s.peerCertificates[0], "verified against the bundle of its start")
+            assertEquals(Certificate(TestCerts.client), s.peerCertificates[0], "verified against the bundle of its ClientHello")
             exchange(c, s)
             c.close()
             s.close()
             assertIs<VerifyReason.UnknownIssuer>(refused(clientA(), server), "the next handshake uses the new bundle")
         }
+
+    /**
+     * Sessions are keyed by the bundle's certificates, not only their keys: a CA re-issued on the same key (here with a path
+     * length constraint added) is another bundle, so a ticket from before the reload is not resumed under it.
+     */
+    @Test fun negative_caReissuedOnTheSameKeyVoidsTickets(): Unit =
+        runBlocking {
+            val ca1 = Certificate(ReissuedCaCerts.ca1)
+            val ca2 = Certificate(ReissuedCaCerts.ca2)
+            assertEquals(ca1.spkiSha256, ca2.spkiSha256, "control: one key")
+            val r = TrustConfig.reloadable(TrustConfig.AnchoredCa(listOf(ca1)))
+            val server = server(r)
+            val client =
+                TcpFixtures.client { identity = TlsIdentity.fromDer(listOf(ReissuedCaCerts.client), ReissuedCaCerts.clientKey.copyOf()) }
+            val cache = SessionCache()
+            val (c0, s0) = open(client, server, cache)
+            exchange(c0, s0)
+            c0.close()
+            s0.close()
+            val (c1, s1) = open(client, server, cache)
+            assertTrue(c1.sessionReused && s1.sessionReused, "control: the ticket resumes under the same bundle")
+            exchange(c1, s1)
+            c1.close()
+            s1.close()
+            r.reload(TrustConfig.AnchoredCa(listOf(ca2)))
+            val (c2, s2) = open(client, server, cache)
+            assertTrue(!c2.sessionReused && !s2.sessionReused, "the re-issued CA is another bundle")
+            c2.close()
+            s2.close()
+        }
+
+    /** The registry never takes a context of a bundle replaced while it was built: it serves its handshake unshared. */
+    @Test fun contextBuiltAcrossAReloadIsNotShared() {
+        val r = TrustConfig.reloadable(testCa)
+        val config =
+            tlsConfig(TlsRole.Server) {
+                alpn = listOf("h3")
+                identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                clientAuth = ClientAuth.Required
+                trust = r
+            }
+        val registry = SharedServerContexts()
+        val read = r.current // the bundle the handshake read before the reload
+        val made =
+            registry.acquire(config, quic = true, quicTickets = false, earlyData = false, ca = read) {
+                r.reload(otherCa) // lands while the context is built
+                KslContext.create(config, quic = true).ctx // one reference: the builder's
+            }!!
+        val next = registry.acquire(config, true, false, false, r.current) { KslContext.create(config, quic = true).ctx }!!
+        assertNotSame(made, next, "the context built across the reload was not registered")
+        made.release()
+        assertTrue(made.isFreed, "freed with its handshake: the registry holds no reference")
+        next.release()
+        assertFalse(next.isFreed, "the current bundle's context is kept")
+        registry.close()
+        assertTrue(next.isFreed)
+        config.identity.let { (it as TlsIdentity.InMemory).close() }
+    }
 
     /**
      * A ticket from before a reload resumes nothing: the client runs a full handshake and its certificate is verified
@@ -216,6 +307,16 @@ class ReloadableCaTest {
         now = ca.notAfterEpochSeconds + 1
         assertFailsWith<TlsException.Config>("on the clock of the bundle") { r.reload(testCa) }
         assertFailsWith<TlsException.Config>("not a starting point either") { TrustConfig.reloadable(expired) }
+    }
+
+    /** basicConstraints `cA` as the bundle warnings read it: CA certificates true, leaves false. */
+    @Test fun caFlagOfCertificates() {
+        assertTrue(Certificate(TestCerts.testCa).isCa)
+        assertTrue(Certificate(TestCerts.otherCa).isCa)
+        assertTrue(Certificate(TestCerts.intermediate).isCa)
+        assertTrue(Certificate(ReissuedCaCerts.ca2).isCa, "with a path length")
+        assertFalse(Certificate(TestCerts.client).isCa)
+        assertFalse(Certificate(TestCerts.server).isCa)
     }
 
     @Test fun negative_clientConfigurationRefusesReloadableCa() {

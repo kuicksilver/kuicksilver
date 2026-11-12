@@ -121,4 +121,107 @@ class SharedServerContextStressJvmTest {
             "ksl.pkey ${before[KslConst.LIVE_PKEY]} -> ${after[KslConst.LIVE_PKEY]}",
         )
     }
+
+    /**
+     * The same with a client CA bundle that rotates as well (TrustConfig.ReloadableCa): four threads build and close sessions
+     * of ten mTLS configurations while a fifth alternates 60 identity reloads and 60 bundle reloads. Contexts are keyed by both
+     * snapshots, a replaced bundle's context leaves the registry while sessions may still hold it: once everything is closed
+     * every context seen is freed and `ksl.ctx` / `ksl.pkey` are back where they were.
+     */
+    @Test fun sessionsWithIdentityAndClientCaReloadsAtOnce() {
+        val before = Ksl.liveObjects()
+        val r = TlsIdentity.reloadable(identityA())
+        val bundles =
+            listOf(
+                TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))),
+                TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.otherCa))),
+                TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa), Certificate(TestCerts.otherCa))),
+            )
+        val ca = TrustConfig.reloadable(bundles[0])
+        val configs =
+            List(10) { i ->
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity = r
+                    clientAuth = if (i % 2 == 0) ClientAuth.Required else ClientAuth.Optional
+                    trust = ca
+                }
+            }
+        val seen = Collections.synchronizedSet(Collections.newSetFromMap(IdentityHashMap<KslContext, Boolean>()))
+        val failures = Collections.synchronizedList(ArrayList<Throwable>())
+        val start = CountDownLatch(1)
+        val built =
+            java.util.concurrent.atomic
+                .AtomicInteger()
+        val reloads =
+            java.util.concurrent.atomic
+                .AtomicInteger()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+
+        fun running() = System.nanoTime() < deadline && failures.isEmpty()
+        val workers =
+            List(4) { w ->
+                Thread {
+                    start.await()
+                    val open = ArrayDeque<KslQuicTlsSession>()
+                    try {
+                        var i = 0
+                        while ((i < 400 || reloads.get() < 120) && running()) {
+                            val s = KslQuicCrypto.newSession(configs[(w * 7 + i) % configs.size]) as KslQuicTlsSession
+                            seen += s.context
+                            built.incrementAndGet()
+                            open += s
+                            if (open.size > 12) repeat(6) { open.removeFirst().close() }
+                            i++
+                        }
+                    } catch (t: Throwable) {
+                        failures += t
+                    } finally {
+                        open.forEach { it.close() }
+                    }
+                }
+            }
+        val reloader =
+            Thread {
+                start.await()
+                try {
+                    var done = 0
+                    while (done < 120 && running()) {
+                        if (built.get() >= (done + 1) * 12) {
+                            if (done % 2 == 0) {
+                                r.reload(if (done % 4 == 0) identityB() else identityA())
+                            } else {
+                                ca.reload(bundles[(done / 2 + 1) % bundles.size])
+                            }
+                            done++
+                            reloads.incrementAndGet()
+                        } else {
+                            Thread.onSpinWait()
+                        }
+                    }
+                } catch (t: Throwable) {
+                    failures += t
+                }
+            }
+        (workers + reloader).forEach { it.start() }
+        start.countDown()
+        (workers + reloader).forEach {
+            it.join(maxOf(1L, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()) + 5_000))
+            assertTrue(!it.isAlive, "a thread did not finish within the 60 s deadline: ${built.get()} sessions, ${reloads.get()} reloads")
+        }
+        assertEquals(emptyList(), failures.toList(), "no failure while the identity is open")
+        assertEquals(120, reloads.get(), "all 120 reloads ran while the workers built sessions")
+        assertTrue(seen.map { it.trustSnapshot }.toSet().size == bundles.size, "every bundle got contexts")
+        r.close()
+        assertEquals(emptyList(), seen.filter { !it.isFreed }, "every context is freed once its sessions and the identity are closed")
+        val after = Ksl.liveObjects()
+        assertTrue(
+            after[KslConst.LIVE_CTX] <= before[KslConst.LIVE_CTX],
+            "ksl.ctx ${before[KslConst.LIVE_CTX]} -> ${after[KslConst.LIVE_CTX]}",
+        )
+        assertTrue(
+            after[KslConst.LIVE_PKEY] <= before[KslConst.LIVE_PKEY],
+            "ksl.pkey ${before[KslConst.LIVE_PKEY]} -> ${after[KslConst.LIVE_PKEY]}",
+        )
+    }
 }

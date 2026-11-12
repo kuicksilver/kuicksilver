@@ -1,11 +1,12 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalAtomicApi::class)
+@file:OptIn(ExperimentalAtomicApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.Ksl
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.io.encoding.Base64
@@ -34,6 +35,13 @@ public sealed interface TrustConfig {
 
         init {
             require(roots.isNotEmpty()) { "AnchoredCa needs at least one root" }
+        }
+
+        /** The SHA-256 of each root's DER, hex, in order: what session caches and server session contexts key this trust by. */
+        internal val derKey: String by lazy {
+            this.roots.joinToString(
+                ",",
+            ) { c -> Ksl.sha2(256, c.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') } }
         }
     }
 
@@ -126,11 +134,15 @@ public sealed interface TrustConfig {
      * an [AnchoredCa] verifies client certificates (`clientAuth` Optional or Required), alone or as the base of [Pinned];
      * a client configuration with one throws [TlsException.Config].
      *
-     * **One bundle per handshake.** Every TLS handshake (TCP and QUIC alike) takes the [current] bundle when it starts and
-     * verifies the client's certificate against it, whatever [reload] does meanwhile; handshakes in progress and established
-     * connections keep the bundle they started with, and [reload] affects only handshakes that start after it returns. The
-     * handshakes of one server configuration share one OpenSSL context per identity and bundle; the first handshake after a
-     * [reload] builds one with the new bundle, and the old one is freed when its last connection is gone. The server's
+     * **One bundle per handshake.** Every TLS handshake (TCP and QUIC alike) takes the [current] bundle when the client's
+     * ClientHello arrives (over TCP its first bytes, not the accept; over QUIC its first Initial) and verifies the client's
+     * certificate against it, whatever [reload] does meanwhile; handshakes in progress and established connections keep the
+     * bundle they started with, and [reload] affects every handshake whose ClientHello arrives after it returns, also on a
+     * connection accepted before, so a client of a dropped CA cannot connect early and send its hello late. The handshakes of
+     * one server configuration share one OpenSSL context per identity and bundle; the first handshake after a [reload] builds
+     * one with the new bundle and drops the old one from the shared contexts, which is freed once that has happened and its
+     * last connection is gone (a handshake that read the old bundle while the new one's context was built gets a context of its
+     * own, freed with it). With `clientAuth` None the bundle plays no part: a reload changes nothing then. The server's
      * CertificateRequest carries no `certificate_authorities` extension (RFC 9846 section 4.3.4: "The server MAY send it"), so
      * no CA list is announced that a reload would have to change.
      *
@@ -154,7 +166,7 @@ public sealed interface TrustConfig {
 
         private val ref = AtomicReference(initial)
 
-        /** The bundle handshakes that start now verify client certificates against; a snapshot a later [reload] does not change. */
+        /** The bundle handshakes whose ClientHello arrives now verify client certificates against; a snapshot a later [reload] does not change. */
         public val current: AnchoredCa get() = ref.load()
 
         /**

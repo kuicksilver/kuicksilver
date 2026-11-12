@@ -147,7 +147,7 @@ internal class KslContext private constructor(
             quic: Boolean,
             quicTickets: Boolean = false,
             earlyData: Boolean = false,
-        ): Lease = Lease(build(config, quic, quicTickets, earlyData, null, config.trust.reloadableSnapshot())!!)
+        ): Lease = Lease(build(config, quic, quicTickets, earlyData, null, clientCaSnapshot(config))!!)
 
         /**
          * The context for one more session of [config], the caller's to close (one reference, its [Lease]). A server configuration with an
@@ -171,7 +171,7 @@ internal class KslContext private constructor(
         ): Lease {
             if (config.role != TlsRole.Server) return create(config, quic, quicTickets, earlyData)
             // the client CA bundle of this handshake, read once: a reload after this line is for the next handshake
-            val ca = config.trust.reloadableSnapshot()
+            val ca = clientCaSnapshot(config)
             val ctx =
                 when (val id = config.identity) {
                     is TlsIdentity.InMemory -> {
@@ -244,6 +244,14 @@ internal class KslContext private constructor(
                 snapshot?.release()
             }
         }
+
+        /**
+         * The bundle of a `TrustConfig.ReloadableCa` in a server's `config.trust` that this handshake verifies client
+         * certificates against, read once; null for any other trust, and when the server asks for no client certificate (the
+         * bundle then plays no part: a reload neither builds another context nor voids tickets).
+         */
+        fun clientCaSnapshot(config: TlsConfig): TrustConfig.AnchoredCa? =
+            if (config.role == TlsRole.Server && config.clientAuth != ClientAuth.None) config.trust.reloadableSnapshot() else null
 
         /** [identityTag] of [leaf]: the SHA-256 of its DER, hex. */
         private fun certificateTag(leaf: Certificate): String =
@@ -406,6 +414,9 @@ internal class SharedServerContexts {
             return it
         }
         val made = build() ?: return null
+        // the bundle was reloaded while this context was built: it serves this handshake (which read the bundle before the
+        // reload) and goes with it, unshared, so the registry never takes a context of a bundle that is already replaced
+        if (ca != null && config.trust.reloadableSnapshot() !== ca) return made
         while (true) {
             // closed meanwhile: the context was built from a key still held, so this handshake goes on with it, unshared
             val list = entries.load() ?: return made
@@ -415,10 +426,8 @@ internal class SharedServerContexts {
                 return it
             }
             check(made.tryRetain()) // the registry's reference
-            // a context of an older client CA bundle serves no new handshake: dropped when this one is of the current bundle
-            // (a handshake that read the bundle just before a reload must not push out the new one)
-            val stale =
-                if (ca != null && config.trust.reloadableSnapshot() === ca) list.filter { it.sameKindAs(made) } else emptyList()
+            // a context of an older client CA bundle serves no new handshake: the first context of the current one replaces it
+            val stale = if (ca != null) list.filter { it.sameKindAs(made) } else emptyList()
             val grown = list.filter { it !in stale } + made
             val evicted = if (grown.size > MAX) grown[0] else null
             if (entries.compareAndSet(list, if (evicted != null) grown.drop(1) else grown)) {
