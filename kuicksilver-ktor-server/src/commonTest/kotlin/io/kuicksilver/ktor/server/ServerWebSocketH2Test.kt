@@ -994,6 +994,65 @@ class ServerWebSocketH2Test {
         }
 
     /**
+     * The server's own Close releases its writer's lead, as the client's does: an upgrade that writes a frame far beyond
+     * the client's window and the lead (300 000 bytes) and its Close, then flushes, is not held in that flush while the
+     * client reads nothing; the rest is bounded by the send-stall deadline (60 s here, so it plays no part). Before, the
+     * flush waited for the client's window until that deadline.
+     */
+    @Test fun negative_serversOwnCloseReleasesTheLead() =
+        serverTest {
+            val flushed = CompletableDeferred<Throwable?>()
+            val (server, port) =
+                h2TlsServer(configure = { sendStallTimeoutForTest = 60.seconds }) {
+                    install(WebSockets)
+                    routing {
+                        get("/ws") {
+                            call.respond(
+                                object : OutgoingContent.ProtocolUpgrade() {
+                                    override suspend fun upgrade(
+                                        input: ByteReadChannel,
+                                        output: ByteWriteChannel,
+                                        engineContext: CoroutineContext,
+                                        userContext: CoroutineContext,
+                                    ): Job =
+                                        CoroutineScope(engineContext).launch {
+                                            try {
+                                                val size = 300_000
+                                                // FIN, binary, a 64-bit length, unmasked (a server's frame)
+                                                val header = ByteArray(10)
+                                                header[0] = 0x82.toByte()
+                                                header[1] = 127
+                                                for (i in 0 until 8) header[9 - i] = (size.toLong() ushr (8 * i)).toByte()
+                                                output.writeFully(header)
+                                                output.writeFully(ByteArray(size))
+                                                // Close 1000
+                                                output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                                                output.flush()
+                                                flushed.complete(null)
+                                                output.flushAndClose()
+                                            } catch (e: Throwable) {
+                                                flushed.complete(e)
+                                            }
+                                        }
+                                },
+                            )
+                        }
+                    }
+                }
+            try {
+                h2(port, settings = smallWindow) { c ->
+                    val s = c.connect()
+                    assertEquals(200, s.response().status)
+                    // nothing is read: the client's window stays at 64 KiB
+                    assertNull(withTimeout(10.seconds) { flushed.await() }, "the flush after the Close returned")
+                    s.release()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
      * The same backpressure, then the client reads: every byte arrives in order and the session ends, the server's window
      * reopened by the client's WINDOW_UPDATE frames as it consumes (4 MiB through a 64 KiB stream window). Until the
      * client reads the server cannot be done: 4 MiB is far beyond the window and the channels in front of it.

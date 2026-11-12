@@ -514,7 +514,8 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   flush at 1 MiB on their own); before, a Ktor ByteChannel in front of the stream took up to about 3 MiB, 3.7 MB seen on
   an Android 10 emulator. The client stops holding its writer once the server's Close arrived or it sent its own,
   so its closing handshake never waits for a window the server may not open again; the close wait then bounds the
-  stream, also when the client closed first and the server never answers (CANCEL after 5 s). Its frames pass the same guard as over HTTP/1.1
+  stream, also when the client closed first and the server never answers (CANCEL after 5 s); the server stops holding
+  its writer once its own Close is written (the send-stall deadline bounds the rest). Its frames pass the same guard as over HTTP/1.1
   and HTTP/3 (§3.20.1). The server takes `:protocol` only when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL
   (`webSocketsOverHttp2`), serves only `websocket` (another protocol or a classic CONNECT: 501; no tunnel to the
   `:authority` is ever made, RFC 8441 §4), checks the version before the application sees the request (400), never

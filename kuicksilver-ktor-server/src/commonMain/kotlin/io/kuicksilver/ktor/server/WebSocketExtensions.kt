@@ -82,8 +82,11 @@ internal class ServerWebSocket(
             )
     }
 
-    /** The upgrade's [output], as the frames must go out. */
-    fun output(output: ByteWriteChannel): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression)
+    /** The upgrade's [output], as the frames must go out; [onClose] runs once the server's own Close was written. */
+    fun output(
+        output: ByteWriteChannel,
+        onClose: () -> Unit = {},
+    ): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression, onClose)
 
     fun done() {
         deflate?.dispose()

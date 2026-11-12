@@ -53,6 +53,8 @@ import kotlinx.io.readTo
  * its flush returns, so closing or resetting [output] after the session ended loses nothing. Only a frame header (at
  * most 14 bytes) and a Close frame (at most 139) wait for their last byte here. The side inflater's zlib state is freed
  * when the writer closes the channel ([ByteWriteChannel.flushAndClose], which Ktor's writers always call last).
+ * [onClose] runs once this side's own Close frame was written to [output] (before the flush that sends it): the session
+ * is closing, so an engine that holds its writer behind the peer's window can stop holding it.
  */
 @InternalKuicksilverApi
 public fun guardWebSocketOutput(
@@ -60,7 +62,8 @@ public fun guardWebSocketOutput(
     masking: Boolean,
     checkText: Boolean = true,
     compression: SentCompression = SentCompression.Checked,
-): ByteWriteChannel = OutputGuard(output, masking, checkText, compression)
+    onClose: () -> Unit = {},
+): ByteWriteChannel = OutputGuard(output, masking, checkText, compression, onClose)
 
 /** How the extension that compresses what this side sends (permessage-deflate) frames a compressed message. */
 @InternalKuicksilverApi
@@ -95,6 +98,7 @@ private class OutputGuard(
     private val masking: Boolean,
     private val checkText: Boolean,
     private val compression: SentCompression,
+    private val onClose: () -> Unit,
 ) : ByteWriteChannel {
     private val staged = Buffer()
     private val chunk = ByteArray(CHUNK)
@@ -440,6 +444,7 @@ private class OutputGuard(
         if (masking) unmask(body, sent, wireMask, 0)
         if (sent > 0) output.writeFully(body, 0, sent)
         payloadLeft = -1
+        onClose()
     }
 
     /** Four bytes of OpenSSL's CSPRNG (`RAND_bytes`), drawn [KEY_BATCH] keys at a time. */

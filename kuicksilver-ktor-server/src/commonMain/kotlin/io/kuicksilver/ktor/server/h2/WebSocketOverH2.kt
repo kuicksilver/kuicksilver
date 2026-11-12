@@ -146,8 +146,11 @@ internal class H2UpgradeResponse(
                     call.application.environment.log,
                 ) ?: return // a Close with 1011 went out instead (the finally ends the stream after it)
             webSocket = input
-            // the server's frames go out unmasked, checked as they leave (RFC 6455 section 5.1, the text and compression rules)
-            upgrade.upgrade(input.channel, input.output(output), engineDispatcher, userDispatcher).join()
+            // the server's frames go out unmasked, checked as they leave (RFC 6455 section 5.1, the text and compression rules).
+            // Once the server's own Close is written the session is closing: its writer is no longer held at the lead, as
+            // on the client, so the Close and the stream's end do not wait behind a window the client may never open again
+            // (the send-stall deadline bounds them, RFC 6455 section 7.1.1)
+            upgrade.upgrade(input.channel, input.output(output) { output.releaseLead() }, engineDispatcher, userDispatcher).join()
         } finally {
             webSocket?.done()
             guard.cancel()
