@@ -259,7 +259,7 @@ internal class H1Response(
                 "and sends 501 Not Implemented instead",
         )
         tunnelRefused = true
-        statusCode = HttpStatusCode.NotImplemented
+        status(HttpStatusCode.NotImplemented) // the call's status too: listeners and logs see what was sent
         headersBuilder.clear()
         headersBuilder.append(HttpHeaders.ContentType, "text/plain; charset=utf-8")
         headersBuilder.append(HttpHeaders.ContentLength, TUNNEL_NOT_SUPPORTED.size.toString())

@@ -13,17 +13,21 @@ import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.engine.connector
 import io.ktor.server.request.httpVersion
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveText
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
@@ -31,12 +35,14 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -674,6 +680,43 @@ class ServerH2Test {
                     raw.headers(1, RawH2Client.get())
                     assertNotNull(raw.await(within = 15.seconds) { it.stream == 1 && it.endStream }, "served again")
                 }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * An HTTP/1.1 upgrade has no meaning in HTTP/2 (RFC 9113 section 8.6): the engine answers 501, and the call reports
+     * that 501, as listeners and logs read it.
+     */
+    @Test fun upgradeIs501AndReportedSo() =
+        serverTest {
+            lateinit var reported: Channel<HttpStatusCode?>
+            val (server, port) =
+                h2Server {
+                    reported = reportedStatuses()
+                    routing {
+                        get("/up") {
+                            call.respond(
+                                object : OutgoingContent.ProtocolUpgrade() {
+                                    override suspend fun upgrade(
+                                        input: ByteReadChannel,
+                                        output: ByteWriteChannel,
+                                        engineContext: CoroutineContext,
+                                        userContext: CoroutineContext,
+                                    ): Job = Job().also { it.complete() }
+                                },
+                            )
+                        }
+                    }
+                }
+            try {
+                client().use { c ->
+                    val r = withTimeout(10.seconds) { c.get("https://127.0.0.1:$port/up") }
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                    assertEquals(HttpStatusCode.NotImplemented, r.status)
+                }
+                assertEquals(HttpStatusCode.NotImplemented, withTimeout(5.seconds) { reported.receive() })
             } finally {
                 server.stop(100, 500)
             }
