@@ -1280,6 +1280,56 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   Latin-1) reached the application with U+FFFD in place of those bytes, since Ktor's parser decodes field values as
   UTF-8; RFC 9110 §5.5 has a recipient treat obs-text as opaque data. Such a value now arrives byte for byte, each byte
   as the char of the same code (ISO-8859-1); a value that is valid UTF-8 is decoded as UTF-8 as before.
+- Ktor engines, WebSockets (RFC 6455 sections 5.6 and 8.1): text messages and Close reasons were never checked as UTF-8,
+  and 1007 was never sent; a Close reason of 123 invalid bytes failed Ktor's `CloseReason` check inside its session,
+  which then ended with 1006 and sent no Close. A text message that is not UTF-8 as a whole (across fragments, after
+  decompression) and a Close reason that is not now close the connection with 1007. Text messages are handed to Ktor's
+  session in frames of at most 64 KiB. A text message the application builds from bytes that is not UTF-8 is no longer
+  sent: the session fails with `ProtocolViolationException` (by the engines, and by `PerMessageDeflate` on any engine for
+  a message it compresses).
+- Ktor engines, WebSockets (RFC 6455 sections 5.5.1 and 7.4): a Close with 1005, 1015, a code below 1000, 1004 or one
+  no specification defines was echoed with the same code, which no endpoint may send, and a Close with 1006 was not
+  answered at all; a Close with a 1-byte body was answered with 1000. Each now closes the connection with 1002. A Close
+  the application sends with such a code goes out without a code, and one whose reason is not UTF-8 without the reason.
+- Ktor engines, WebSockets (RFC 6455 sections 5.4 and 5.5): a fragmented or oversized control frame and a data frame out
+  of sequence were left to Ktor's readers, whose Kotlin/Native reader closes the session's `incoming` before it queues its
+  1002, so an application closing at that moment sent 1000 first. The engines' guard now closes with 1002 itself.
+- Ktor engines, WebSockets on Kotlin/Native (RFC 6455 section 5.4): Ktor 3.6.1's common writer sends every fragment of a
+  message with the message's opcode, so a peer refused a fragmented message as a new message inside an unfinished one;
+  the engines now send the later fragments as continuations.
+- Ktor server, WebSockets (RFC 6455 section 5.1): `install(WebSockets) { masking = true }` made the server mask its
+  frames, which a server must never do; its frames now always go out unmasked.
+- Ktor engines, WebSockets (RFC 7692 section 6.1): RSV1 on a continuation or control frame was refused only when
+  permessage-deflate was the one extension negotiated; with another extension next to it every bit passed. RSV1 is now
+  checked whenever permessage-deflate is negotiated, and another extension implemented by an installed Ktor extension may
+  use only the bits its factory declares.
+
+### Security
+
+- Ktor client, WebSockets (RFC 6455 section 4.1): the server's answer to the opening handshake was not checked beyond
+  its status and its extensions, so a 101 from something that is no WebSocket server (a wrong or missing
+  `Sec-WebSocket-Accept`, `Upgrade: h2c`, no `Connection: Upgrade`) or one choosing a subprotocol the client never
+  offered opened a session; Ktor's plugin checks only the status and the engines never called its `verify()`. Over
+  HTTP/1.1 the answer now needs `Upgrade: websocket`, a `Connection` with `Upgrade` and exactly one
+  `Sec-WebSocket-Accept` that answers the key; over both protocols at most one `Sec-WebSocket-Extensions` and at most one
+  `Sec-WebSocket-Protocol`, naming only what the request offered. Anything else fails the call with
+  `WebSocketException` ("Handshake exception: …") before a session exists. The key is now the engine's own, 16 bytes from
+  OpenSSL's CSPRNG and new for every connection: before, it was the key of Ktor's request body, sent again on every
+  connection of the request (a followed redirect, a retry).
+- Ktor engines, WebSockets (RFC 6455 section 10.4): uncompressed frames and messages had no size limit (Ktor's defaults:
+  `Long.MAX_VALUE` on the server, `Int.MAX_VALUE` on the client), and Ktor's JVM reader allocates the whole length a
+  frame header claims: a few 14-byte headers claiming 2 GiB each could exhaust a JVM or Android server's heap. Both
+  engines now refuse a frame whose header claims more than `webSocketMaxMessageSize` (new, *experimental*, 16 MiB by
+  default), or that takes its message past it, with 1009 from the header, before any of its payload is read; a
+  compressed message is held to the smaller of that and `PerMessageDeflate`'s `maxInflatedMessageSize`.
+- Ktor client, WebSockets (RFC 6455 section 5.3): the masking keys came from `kotlin.random.Random` (Ktor's writers), which
+  is not a CSPRNG on any platform, so an observer could predict the keys of later frames. Every frame the client sends is
+  now masked with a new key from OpenSSL's CSPRNG.
+- Ktor server, WebSockets (RFC 6455 sections 4.2.1, 4.2.2 and 11.3.1): a handshake without `Sec-WebSocket-Key` was
+  answered 101 without `Sec-WebSocket-Accept`, and one with a key that is not 16 bytes, two keys, or a version other than
+  13 was upgraded too. It now gets 400, or 426 with `Upgrade: websocket` for another version (400 over HTTP/3), with
+  `Sec-WebSocket-Version: 13`, and the handler does not run; over HTTP/3 a missing `sec-websocket-version` is no longer
+  made up as 13 (RFC 8441 section 5).
 
 ## [0.2.1] - 2026-11-04
 

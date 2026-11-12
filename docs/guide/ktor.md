@@ -455,6 +455,24 @@ server.engine.http3Advertising = Http3Advertising.On
 What is left when the deadline passes is a long-lived stream (a WebSocket or WebTransport session over HTTP/3): end it
 in the application, or let the server's [graceful stop](#graceful-stop) cut it.
 
+### WebSockets on the server
+
+Ktor's `WebSockets` plugin and `webSocket("/path") {}` routes work as on Ktor's own engines, over HTTP/1.1 and HTTP/3,
+with the checks RFC 6455 asks of a server that Ktor leaves out:
+
+- A handshake is upgraded only when it is one (section 4.2.1): over HTTP/1.1 exactly one `Sec-WebSocket-Key` that is 16
+  bytes in base64, and on both protocols exactly one `Sec-WebSocket-Version: 13`. Otherwise the route's answer becomes
+  `400 Bad Request`, or for another version `426 Upgrade Required` over HTTP/1.1 (400 over HTTP/3), with
+  `Sec-WebSocket-Version: 13`; the handler does not run.
+- A client's frame or message larger than the engine's `webSocketMaxMessageSize` (16 MiB by default, *experimental*)
+  closes the connection with 1009 from the frame's header, before its payload is read (section 10.4); Ktor's own
+  `maxFrameSize` (unlimited on the server by default) applies on top. A text message or a Close reason that is not
+  UTF-8 closes it with 1007 (section 8.1), and a malformed control frame, fragment or Close frame with 1002.
+- The server's frames are never masked (section 5.1), whatever `WebSockets { masking }` says, and a Close the
+  application sends with a code no endpoint may send (1005, 1006, 1015, below 1000, …) goes out without a code.
+
+The client engine applies the same rules to what servers send ([Client](#client)).
+
 ### WebSockets over HTTP/3
 
 With `webSocketsOverHttp3 = true` (the default) the HTTP/3 listener advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL` and
@@ -719,14 +737,24 @@ val client = HttpClient(Kuicksilver) {
   `extensions { install(...) }` in `Sec-WebSocket-Extensions` and negotiates them, over HTTP/1.1 and HTTP/3 (RFC 9220).
   permessage-deflate on every target is `PerMessageDeflate` ([WebSocket compression](#websocket-compression-experimental));
   Ktor's own `WebSocketDeflateExtension` exists on the JVM and Android only. Both engines check the
-  handshake and the frames (RFC 6455 sections 4.1, 5.2 and 9.1): an answer that accepts an extension the client did not
-  offer fails the call with `WebSocketException` before a session opens, and a frame with an RSV bit that no negotiated
-  extension defines (RSV1 for permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a
-  reserved opcode, or a mask bit in the wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a
-  client's always are) fails the connection with code 1002: the engine hands the session a Close frame with 1002 in place
-  of the bad frame, Ktor's session answers it, so 1002 goes on the wire and is the session's `closeReason`, and
-  `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in `incoming` and answers it
-  itself). An extension the engine does not know (the application's own) may use every RSV bit.
+  handshake and the frames (RFC 6455 sections 4.1, 5, 8.1 and 9.1). The client checks the server's answer before a
+  session opens and fails the call with `WebSocketException` ("Handshake exception: …") unless, over HTTP/1.1, it has
+  `Upgrade: websocket`, a `Connection` with `Upgrade` and exactly one `Sec-WebSocket-Accept` that answers the request's
+  key, and, over HTTP/1.1 and HTTP/3, at most one `Sec-WebSocket-Extensions` with only offered extensions and at most
+  one `Sec-WebSocket-Protocol` naming a subprotocol the request offered (Ktor's plugin checks only the status). The key
+  is the engine's, from OpenSSL's CSPRNG and new for every connection, and every frame the client sends is masked with a
+  new key from the same source. A frame with an RSV bit that no negotiated extension defines (RSV1 for
+  permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a reserved opcode, a mask bit in the
+  wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a client's always are), a malformed
+  control frame, fragment or Close frame fails the connection with code 1002; a text message or a Close reason that is
+  not UTF-8 with 1007; a frame or message over the engine's `webSocketMaxMessageSize` (16 MiB by default,
+  *experimental*) with 1009, from the frame's header, before its payload is read. The engine hands the session a Close
+  frame with that code in place of the bad frame, Ktor's session answers it, so the code goes on the wire and is the
+  session's `closeReason`, and `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in
+  `incoming` and answers it itself). An extension the engine does not know (the application's own) may use every RSV
+  bit; one implemented by an installed Ktor extension the bits its factory declares. A text message the application
+  builds from bytes (`Frame.Text(fin, ByteArray)`) that is not UTF-8 is not sent: the session fails with
+  `ProtocolViolationException`.
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
   and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
 
@@ -1371,7 +1399,8 @@ refuses an upgrade that negotiated two extensions claiming the same bit (Ktor's 
 to `PerMessageDeflate`, say) with 500, and its client engine fails such an answer, as RFC 7692 section 5 requires. Incoming
 messages are always inflated with a 32 KiB window, which reads every smaller one.
 
-Decompression bombs. A compressed message may inflate to at most `maxInflatedMessageSize` bytes. Kuicksilver's engines
+Decompression bombs. A compressed message may inflate to at most `maxInflatedMessageSize` bytes (on Kuicksilver's
+engines, to at most the smaller of that and the engine's `webSocketMaxMessageSize`). Kuicksilver's engines
 decompress the frames as they arrive, in pieces of 64 KiB, and close the connection with 1009 (message too big, RFC 6455
 section 7.4.1) once a message passes the limit, after at most one piece more; malformed compressed data closes it with
 1002 ("Invalid compressed data"). On Kuicksilver's engines Ktor's `maxFrameSize` sees only the decompressed pieces, so
@@ -1794,8 +1823,10 @@ request now contains its own failure.
 - A client that does not mask its frames, or a server that masks them, is closed with 1002, as the RFC requires; Ktor's
   own frame readers accept either.
 - Ktor 3.6.1's WebSocket writer on Kotlin/Native (its common `RawWebSocket`) sends every fragment of a message with the
-  message's opcode instead of 0 (continuation), so a fragmented message sent from Kotlin/Native, through any engine, is
-  refused by the peer as a new message inside an unfinished one; send whole messages there. Its JVM writer is right.
+  message's opcode instead of 0 (continuation), so a fragmented message sent from Kotlin/Native through another engine
+  is refused by the peer as a new message inside an unfinished one. Kuicksilver's engines send the later fragments as
+  continuations on every platform (0.3.0); with another engine on Kotlin/Native, send whole messages. Its JVM writer is
+  right.
 - Ktor 3.6.1's `WebSocketDeflateExtension` fails (`IllegalArgumentException: byteCount: -5 < 0`, the session closes
   with 1011) when it compresses an empty message after an earlier one; it reads an empty message from
   `PerMessageDeflate` (a single 0x00 byte, RFC 7692 section 7.2.3.6) correctly. Otherwise the two interoperate in both
