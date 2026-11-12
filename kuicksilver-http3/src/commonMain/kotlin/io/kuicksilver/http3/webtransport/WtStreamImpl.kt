@@ -39,7 +39,7 @@ internal class WtStreamImpl(
     scope: CoroutineScope,
     internal val st: QuicStream,
     private val readable: Boolean,
-    private val writable: Boolean,
+    internal val writable: Boolean,
     /** Bytes of the stream header we wrote (signal or type, Session ID); 0 for a stream the peer opened. */
     private val headerLength: Int,
     private val onDone: (WtStreamImpl) -> Unit,

@@ -265,6 +265,17 @@ internal class WtSessionImpl(
         }
     }
 
+    /**
+     * The CONNECT stream's priority changed (the client's PRIORITY_UPDATE): the session's streams follow it. Section 3.4: "it
+     * is RECOMMENDED that clients and servers apply the scheduling guidance in both Section 9 of [RFC9218] and Section 10 of
+     * [RFC9218] for all data that they send in the enclosing WebTransport session, including Capsules, WebTransport streams
+     * and datagrams". Session dispatcher only.
+     */
+    fun priorityChanged() {
+        val p = stream.priority
+        for (s in streams) if (s.writable) s.st.priority = p
+    }
+
     private fun goneRaw(
         st: QuicStream,
         bidi: Boolean,
@@ -283,6 +294,8 @@ internal class WtSessionImpl(
         headerLength: Int = 0,
     ): WtStreamImpl =
         withContext(NonCancellable + h3.dispatcher) {
+            // section 3.4: sent at the CONNECT stream's priority, set here on the dispatcher so no update is missed
+            if (writable) st.priority = stream.priority
             val s = WtStreamImpl(h3.scope, st, readable, writable, headerLength) { done -> h3.scope.launch { streams.remove(done) } }
             if (closedInfo.isCompleted) {
                 s.gone()
@@ -300,7 +313,7 @@ internal class WtSessionImpl(
                 val opening =
                     async {
                         try {
-                            if (bidi) h3.quic.openBidi() else h3.quic.openUni()
+                            if (bidi) h3.quic.openBidi(stream.priority) else h3.quic.openUni(stream.priority)
                         } catch (e: QuicException) {
                             throw h3.map(e)
                         }
