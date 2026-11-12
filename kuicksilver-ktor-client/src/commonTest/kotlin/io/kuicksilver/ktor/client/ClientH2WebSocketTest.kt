@@ -30,6 +30,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
@@ -570,6 +571,91 @@ class ClientH2WebSocketTest {
                     }
                 }
             }
+        }
+
+    /**
+     * The HTTP/2 form of the give-back: a WebSocket reserves a stream on its origin's HTTP/2 connection, finds that
+     * connection's address held by another WebSocket (to another name, CONNECTING on its own connection), undoes the
+     * reservation and waits for every key; then it reserves again and goes through. One stream is reserved while it
+     * waits, none at the end.
+     */
+    @Test fun negative_aWebSocketWhoseConnectionsAddressIsHeldUnreservesAndWaits() =
+        clientTest {
+            val firstConnect = CompletableDeferred<Unit>()
+            val decided = CompletableDeferred<Unit>()
+            val webSocketPhase = kotlinx.coroutines.flow.MutableStateFlow(false)
+            val never = CompletableDeferred<Unit>()
+            val loopback4 =
+                io.kuicksilver.ktor.network
+                    .TcpAddress(byteArrayOf(127, 0, 0, 1), 0)
+            val loopback6 =
+                io.kuicksilver.ktor.network
+                    .TcpAddress(ByteArray(16).also { it[15] = 1 }, 0)
+            tlsH2WithSilentUdp(enableConnectProtocol = true, onRequest = { _, r ->
+                if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                if (r.authority?.startsWith("b.wild.test") == true) {
+                    firstConnect.complete(Unit)
+                    decided.await()
+                }
+                echo(r)
+            }) { port, _ ->
+                testClient(
+                    engine = {
+                        familyResolverForTest = { name, v6 ->
+                            when {
+                                name == "b.wild.test" || !webSocketPhase.value -> {
+                                    if (v6) emptyList() else listOf(loopback4)
+                                }
+
+                                v6 -> {
+                                    listOf(loopback6)
+                                }
+
+                                else -> {
+                                    never.await()
+                                    emptyList()
+                                }
+                            }
+                        }
+                    },
+                    block = { install(WebSockets) },
+                ).use { c ->
+                    val e = engine(c)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://a.wild.test:$port/").version)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://b.wild.test:$port/").version)
+                    webSocketPhase.value = true
+                    coroutineScopeOf { scope ->
+                        val first =
+                            scope.async {
+                                c.webSocket("wss://b.wild.test:$port/ws") {
+                                    send(Frame.Text("b"))
+                                    incoming.receive()
+                                }
+                            }
+                        withTimeout(10.seconds) { firstConnect.await() }
+                        val second =
+                            scope.async {
+                                c.webSocket("wss://a.wild.test:$port/ws") {
+                                    send(Frame.Text("a"))
+                                    incoming.receive()
+                                }
+                            }
+                        withTimeout(10.seconds) {
+                            e.h1.webSocketConnecting.waitsForTest
+                                .first { it >= 1 }
+                        }
+                        assertEquals(1, e.h1.h2.streamCount, "the waiting WebSocket kept its stream reserved")
+                        decided.complete(Unit)
+                        withTimeout(10.seconds) {
+                            first.await()
+                            second.await()
+                        }
+                    }
+                    assertEquals(0, e.h1.h2.streamCount)
+                    assertEquals(0, e.h1.webSocketConnecting.size())
+                }
+            }
+            never.complete(Unit)
         }
 }
 

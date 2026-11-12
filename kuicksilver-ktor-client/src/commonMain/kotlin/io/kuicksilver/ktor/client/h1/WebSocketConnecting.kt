@@ -46,6 +46,14 @@ internal class WebSocketConnecting {
     /** How many [acquire] calls so far found a key in use by another WebSocket and waited (tests, no polling). */
     val waitsForTest: StateFlow<Int> get() = waits
 
+    private val acquired = MutableStateFlow(0)
+
+    /** How many [acquire] calls so far got their keys (tests, no polling). */
+    val acquiredForTest: StateFlow<Int> get() = acquired
+
+    /** The keys held or waited for now (tests). */
+    internal fun keysForTest(): Set<String> = lock.withLock { entries.keys.toSet() }
+
     /** The keys one WebSocket holds from [acquire]; [release] gives them back, once, however often it is called. */
     inner class Held internal constructor(
         keys: List<String>,
@@ -109,6 +117,7 @@ internal class WebSocketConnecting {
             forget(sorted, taken)
             throw e
         }
+        acquired.update { it + 1 }
         return Held(sorted, taken)
     }
 
@@ -164,6 +173,59 @@ internal class WebSocketConnecting {
 
         /** The key of the remote host at [ip] (a socket's or QUIC path's peer, 4 or 16 bytes), or null for anything else. */
         fun ipKey(ip: ByteArray): String? = if (ip.size == 4 || ip.size == 16) addressKey(TcpAddress(ip, 0)) else null
+
+        /**
+         * The IP address of a connected socket's peer [address]: its bytes as Ktor resolved them, else (where a platform's
+         * Ktor gives none) the address literal the socket was created with, parsed here and never looked up; null for a
+         * peer that is no IP address.
+         */
+        fun peerIp(address: io.ktor.network.sockets.SocketAddress?): ByteArray? {
+            val inet = address as? io.ktor.network.sockets.InetSocketAddress ?: return null
+            val bytes =
+                try {
+                    inet.resolveAddress()
+                } catch (e: Exception) {
+                    null
+                }
+            return bytes?.takeIf { it.size == 4 || it.size == 16 } ?: parseIpLiteral(inet.hostname)
+        }
+
+        /**
+         * The 4 or 16 bytes of the IP address literal [text] (dotted IPv4; IPv6 in any RFC 4291 section 2.2 form, brackets
+         * and a `%zone` allowed), or null when it is no literal.
+         */
+        internal fun parseIpLiteral(text: String): ByteArray? {
+            val t = text.removePrefix("[").removeSuffix("]").substringBefore('%')
+            io.kuicksilver.ktor.network
+                .parseIpv4Literal(t)
+                ?.let { return it }
+            if (':' !in t) return null
+            var s = t
+            var tail4: ByteArray? = null
+            val last = s.lastIndexOf(':')
+            if ('.' in s.substring(last + 1)) {
+                tail4 = io.kuicksilver.ktor.network
+                    .parseIpv4Literal(s.substring(last + 1)) ?: return null
+                s = s.substring(0, last + 1) + "0:0"
+            }
+            val halves = s.split("::")
+            if (halves.size > 2) return null
+
+            fun groups(x: String) = if (x.isEmpty()) emptyList() else x.split(':')
+            val head = groups(halves[0])
+            val tail = if (halves.size == 2) groups(halves[1]) else emptyList()
+            val n = head.size + tail.size
+            if ((halves.size == 1 && n != 8) || (halves.size == 2 && n > 7)) return null
+            val out = ByteArray(16)
+            for ((i, g) in (head + List(8 - n) { "0" } + tail).withIndex()) {
+                if (g.isEmpty() || g.length > 4) return null
+                val v = g.toIntOrNull(16) ?: return null
+                out[2 * i] = (v shr 8).toByte()
+                out[2 * i + 1] = v.toByte()
+            }
+            tail4?.copyInto(out, 12)
+            return out
+        }
 
         private const val FF: Byte = -1
     }

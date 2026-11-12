@@ -1053,7 +1053,7 @@ internal class H3Pool(
         val keys =
             listOfNotNull(
                 WebSocketConnecting.nameKey(data.url.host),
-                path?.remoteAddress?.resolveAddress()?.let { WebSocketConnecting.ipKey(it) },
+                WebSocketConnecting.peerIp(path?.remoteAddress)?.let { WebSocketConnecting.ipKey(it) },
             )
         val held = webSocketConnecting.acquire(keys)
         // the answer must come within the connect timeout, as over HTTP/1.1: a server that never answers holds the host's

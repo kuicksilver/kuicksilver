@@ -139,6 +139,118 @@ class ClientWebSocketConnectingTest {
             never.complete(Unit)
         }
 
+    private val loopback4 = TcpAddress(byteArrayOf(127, 0, 0, 1), 0)
+    private val loopback6 = TcpAddress(ByteArray(16).also { it[15] = 1 }, 0)
+
+    /**
+     * The address a WebSocket's connection actually goes to is held, also when its keys did not name it: the AAAA answer
+     * ([::1], where nothing listens) comes first and the keys are taken with it, then the A answer comes and the race
+     * connects to 127.0.0.1. On every platform, Kotlin/Native included: the peer address is read from the socket.
+     */
+    @Test fun theConnectionsOwnAddressIsHeld() =
+        clientTest {
+            val head = CompletableDeferred<Unit>()
+            val decided = CompletableDeferred<Unit>()
+            val releaseA = CompletableDeferred<Unit>()
+            rawServer({ _, input, output ->
+                val key = input.readWebSocketKey()
+                head.complete(Unit)
+                decided.await()
+                answer(key, input, output)
+            }) { port ->
+                testClient(
+                    engine = {
+                        familyResolverForTest = { _, v6 ->
+                            if (v6) {
+                                listOf(loopback6)
+                            } else {
+                                releaseA.await()
+                                listOf(loopback4)
+                            }
+                        }
+                    },
+                    block = { install(WebSockets) },
+                ).use { c ->
+                    val connecting = (c.engine as KuicksilverEngine).h1.webSocketConnecting
+                    coroutineScope {
+                        launch { c.webSocket("ws://a.wild.test:$port/") {} }
+                        withTimeout(10.seconds) { connecting.acquiredForTest.first { it >= 1 } }
+                        assertFalse("address 127.0.0.1" in connecting.keysForTest(), "${connecting.keysForTest()}")
+                        releaseA.complete(Unit)
+                        withTimeout(10.seconds) { head.await() }
+                        val keys = connecting.keysForTest()
+                        assertTrue("address 127.0.0.1" in keys && "name a.wild.test" in keys, "$keys")
+                        decided.complete(Unit)
+                    }
+                    assertEquals(0, connecting.size())
+                }
+            }
+        }
+
+    /**
+     * A WebSocket whose connection went to an address another WebSocket holds (here one to another name, CONNECTING to
+     * 127.0.0.1) gives the connection back to the pool and waits for every key, that address too; then it takes the same
+     * connection again. Nothing leaks: two TCP connections in all, the pool empty at the end.
+     */
+    @Test fun negative_aConnectionToAnAddressAnotherWebSocketHoldsGoesBackAndWaits() =
+        clientTest {
+            val firstHead = CompletableDeferred<Unit>()
+            val decided = CompletableDeferred<Unit>()
+            val releaseA = CompletableDeferred<Unit>()
+            val handshakes = kotlinx.coroutines.flow.MutableStateFlow(0)
+            val accepted = kotlinx.coroutines.flow.MutableStateFlow(0)
+            rawServer({ index, input, output ->
+                val key = input.readWebSocketKey()
+                handshakes.updateAndGet { it + 1 }
+                if (index == 0) {
+                    firstHead.complete(Unit)
+                    decided.await()
+                }
+                answer(key, input, output)
+            }, onAccept = { accepted.updateAndGet { it + 1 } }) { port ->
+                testClient(
+                    engine = {
+                        familyResolverForTest = { name, v6 ->
+                            when {
+                                name == "b.wild.test" -> {
+                                    if (v6) emptyList() else listOf(loopback4)
+                                }
+
+                                v6 -> {
+                                    listOf(loopback6)
+                                }
+
+                                else -> {
+                                    releaseA.await()
+                                    listOf(loopback4)
+                                }
+                            }
+                        }
+                    },
+                    block = { install(WebSockets) },
+                ).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val connecting = engine.h1.webSocketConnecting
+                    coroutineScope {
+                        val opened = CompletableDeferred<Unit>()
+                        launch { c.webSocket("ws://b.wild.test:$port/") { opened.await() } }
+                        withTimeout(10.seconds) { firstHead.await() }
+                        launch { c.webSocket("ws://a.wild.test:$port/") { opened.complete(Unit) } }
+                        withTimeout(10.seconds) { connecting.acquiredForTest.first { it >= 2 } }
+                        releaseA.complete(Unit)
+                        withTimeout(10.seconds) { connecting.waitsForTest.first { it >= 1 } }
+                        assertEquals(1, handshakes.value, "the second handshake went out while the address was held")
+                        assertEquals(2, accepted.value)
+                        decided.complete(Unit)
+                    }
+                    assertEquals(2, handshakes.value)
+                    assertEquals(2, accepted.value, "the connection given back was not used again")
+                    assertEquals(0, engine.h1.pool.liveCount, "a connection outlived its WebSocket")
+                    assertEquals(0, connecting.size())
+                }
+            }
+        }
+
     /**
      * The unit is the IP address: "If multiple connections to the same IP address are attempted simultaneously, the client
      * MUST serialize them" (RFC 6455 section 4.1, step 2). A WebSocket to another port of the address waits too. Before,

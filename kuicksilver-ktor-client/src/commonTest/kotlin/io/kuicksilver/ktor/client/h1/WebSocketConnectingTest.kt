@@ -98,4 +98,19 @@ class WebSocketConnectingTest {
             other.release()
             assertEquals(0, c.size())
         }
+
+    /** A peer's address literal, in whatever form a platform writes it, gives the same key as its bytes (no lookup). */
+    @Test fun peerLiteralsParseToTheirAddress() {
+        fun key(text: String) = WebSocketConnecting.parseIpLiteral(text)?.let { WebSocketConnecting.ipKey(it) }
+        assertEquals("address 127.0.0.1", key("127.0.0.1"))
+        assertEquals("address ::1", key("0:0:0:0:0:0:0:1"))
+        assertEquals("address ::1", key("[::1]"))
+        assertEquals("address fe80::1", key("fe80::1%en0"))
+        assertEquals("address 2001:db8::a", key("2001:db8:0:0:0:0:0:a"))
+        assertEquals("address 127.0.0.1", key("::ffff:127.0.0.1")) // IPv4-mapped: that IPv4 host
+        assertEquals(null, key("localhost"))
+        assertEquals(null, key("1::2::3"))
+        assertEquals(null, key("1:2:3:4:5:6:7"))
+        assertEquals(null, key("12345::1"))
+    }
 }

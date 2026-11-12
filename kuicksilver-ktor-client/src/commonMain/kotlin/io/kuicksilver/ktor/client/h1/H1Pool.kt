@@ -86,7 +86,7 @@ internal class H1Connection(
     /** Ends the TLS session in order (close_notify) and then the socket, bounded; null: as [closeTransport]. */
     private val orderly: (() -> Unit)? = null,
 ) : PooledConnection(key, createdAt) {
-    override val remoteIp: ByteArray? get() = (socket.remoteAddress as? io.ktor.network.sockets.InetSocketAddress)?.resolveAddress()
+    override val remoteIp: ByteArray? get() = WebSocketConnecting.peerIp(socket.remoteAddress)
 
     /** What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). */
     val input: HeadLimitedInput = HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES)
@@ -1215,7 +1215,7 @@ internal class H1Pool(
                             client,
                             key,
                             clock(),
-                            (tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress)?.resolveAddress(),
+                            WebSocketConnecting.peerIp(tcp.remoteAddress),
                         )
                     }
                     H1Connection(tcp, tls, tls.input, tls.output, key, clock(), orderly = { closeOrderly(tls, rawOut, tcp) })
