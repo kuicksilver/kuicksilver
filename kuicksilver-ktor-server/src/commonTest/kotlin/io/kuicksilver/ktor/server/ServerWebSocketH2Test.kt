@@ -439,6 +439,50 @@ class ServerWebSocketH2Test {
             }
         }
 
+    /**
+     * An Extended CONNECT answer is the start of a tunnel, not a response of the origin's resources: the engine's `Alt-Svc`
+     * (RFC 7838) goes on neither as a field of the 200 nor as an ALTSVC frame (type 0xa) on its stream, as on HTTP/3, where
+     * WebSocket answers carry no engine `Alt-Svc` either. With HTTP/3 served, the same connection's plain GET gets the frame,
+     * so advertising is on.
+     */
+    @Test fun negative_webSocketAnswerCarriesNoAltSvc() =
+        h3ServerTest {
+            val (server, port) =
+                h2TlsServer(configure = { http3 = true }) {
+                    echo()
+                    routing { get("/") { call.respondText("ok") } }
+                }
+            try {
+                h2(port) { c ->
+                    val s = c.connect()
+                    val head = s.response()
+                    assertEquals(200, head.status)
+                    assertTrue(head.fields.none { it.first == "alt-svc" }, "${head.fields}")
+                    s.cancel()
+                }
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.headers(1, extendedConnect(), endStream = false)
+                    val upToTheAnswer = ArrayList<RawFrame>()
+                    raw.await {
+                        upToTheAnswer += it
+                        it.stream == 1 && it.type == RawFrame.HEADERS
+                    }
+                    assertTrue(upToTheAnswer.none { it.type == 0xa }, "no ALTSVC before the 200: $upToTheAnswer")
+                    raw.headers(3, RawH2Client.get("/"), endStream = true)
+                    val upToTheGet = ArrayList<RawFrame>()
+                    raw.await {
+                        upToTheGet += it
+                        it.stream == 3 && it.type == RawFrame.HEADERS
+                    }
+                    assertTrue(upToTheGet.none { it.type == 0xa && it.stream == 1 }, "none on the WebSocket stream: $upToTheGet")
+                    assertTrue(upToTheGet.any { it.type == 0xa && it.stream == 3 }, "the plain GET gets it: $upToTheGet")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     /** With `webSocketsOverHttp2 = false` no SETTINGS_ENABLE_CONNECT_PROTOCOL is sent, so `:protocol` makes the request malformed. */
     @Test fun negative_extendedConnectRefusedWhenDisabled() =
         serverTest {
