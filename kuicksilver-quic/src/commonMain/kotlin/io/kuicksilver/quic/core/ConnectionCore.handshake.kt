@@ -153,7 +153,13 @@ internal fun ConnectionCore.onAuthenticationFailure(aead: Aead) {
     if (authenticationFailures >= limit) fail(TransportError.AEAD_LIMIT_REACHED, 0, "AEAD integrity limit reached", null)
 }
 
-/** After sealing a 1-RTT packet: updates keys at 7/8 of the confidentiality limit, closes when the limit is hit with no update possible. */
+/**
+ * After sealing a 1-RTT packet: updates keys at 7/8 of the confidentiality limit; with no update possible, closes with
+ * AEAD_LIMIT_REACHED while [CLOSE_RESERVE] packets are still left under the key (RFC 9001 section 6.6: "If the total number of
+ * encrypted packets with the same key exceeds the confidentiality limit for the selected AEAD, the endpoint MUST stop using those
+ * keys"; the CONNECTION_CLOSE and its repetitions are packets under that key too, and [oneRttWriteKeyExhausted] stops them at
+ * the limit).
+ */
 internal fun ConnectionCore.onOneRttPacketSealed(pn: Long) {
     if (++oneRttSinceRotation >= config.limits.cidRotationPackets &&
         state == ConnectionState.Confirmed
@@ -165,14 +171,27 @@ internal fun ConnectionCore.onOneRttPacketSealed(pn: Long) {
     kp.onPacketSent(pn)
     if (kp.write.aead == Aead.CHACHA20_POLY1305) return // 2^62 packets: unreachable in practice (RFC 9001 section 6.6)
     val limit = config.limits.confidentialityLimitAesGcm
-    if (kp.packetsProtected >=
-        limit
-    ) {
-        fail(TransportError.AEAD_LIMIT_REACHED, 0, "AEAD confidentiality limit reached without a possible key update", null)
+    if (kp.packetsProtected >= limit - limit / 8 && kp.canInitiate(state == ConnectionState.Confirmed, now, pto())) {
+        kp.initiate(now, pto())
         return
+    } // a fresh key: its own count starts at 0
+    if (kp.packetsProtected >= limit - minOf(CLOSE_RESERVE, limit / 8)) {
+        fail(TransportError.AEAD_LIMIT_REACHED, 0, "AEAD confidentiality limit reached without a possible key update", null)
     }
-    if (kp.packetsProtected >= limit - limit / 8 && kp.canInitiate(state == ConnectionState.Confirmed, now, pto())) kp.initiate(now, pto())
 }
+
+/**
+ * RFC 9001 section 6.6: the current 1-RTT write key sealed as many packets as its confidentiality limit allows, so nothing more
+ * may be sealed with it (the builder sends nothing in the 1-RTT space then, not even a CONNECTION_CLOSE).
+ */
+internal val ConnectionCore.oneRttWriteKeyExhausted: Boolean
+    get() {
+        val kp = keyPhase ?: return false
+        return kp.write.aead != Aead.CHACHA20_POLY1305 && kp.packetsProtected >= config.limits.confidentialityLimitAesGcm
+    }
+
+/** 1-RTT packets left under a key that can no longer be updated when the connection closes: the CONNECTION_CLOSE and its repetitions. */
+private const val CLOSE_RESERVE = 16L
 
 internal fun ConnectionCore.discardSpace(space: SpaceId) {
     val i = space.ordinal

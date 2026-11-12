@@ -582,6 +582,7 @@ internal class PacketBuilder(
         var ackTo = -1
         val level = spaceLevel(space)
         val key = c.writeKeys[level] ?: return 0
+        if (level == 3 && c.oneRttWriteKeyExhausted) return 0 // RFC 9001 section 6.6: "MUST stop using those keys"
         val sp = c.loss.space(space)
         if (maxLen - 16 - start < 48) return 0 // no room for a header, the sample and a frame
         // RFC 9000 section 12.3: at packet number 2^62-1 the connection closes without a CONNECTION_CLOSE or any further packet.

@@ -211,8 +211,12 @@ class AeadLimitsTest {
         }
     }
 
-    @Test fun confidentialityLimitWithoutPossibleUpdateCloses() {
-        // no ACK ever comes back after our update, so a second update is forbidden (section 6.1): the connection closes with AEAD_LIMIT_REACHED before the 25th packet of the key
+    @Test fun negative_confidentialityLimitWithoutPossibleUpdateCloses() {
+        // no ACK ever comes back after our update, so a second update is forbidden (section 6.1): the connection closes with
+        // AEAD_LIMIT_REACHED, and "If the total number of encrypted packets with the same key exceeds the confidentiality limit
+        // for the selected AEAD, the endpoint MUST stop using those keys": the CONNECTION_CLOSE and its repetitions are packets
+        // under that key too, so no more than 24 short-header packets ever leave under it. Until 0.3.0 the close came at the 24th
+        // packet and went out as the 25th, and again once per PTO while the peer kept sending
         val p =
             CorePair(
                 clientQuic =
@@ -227,20 +231,26 @@ class AeadLimitsTest {
                     },
                 crypto = ksl,
             )
-        ; try {
+        try {
             assertTrue(confirmed(p))
             assertTrue(p.client.initiateKeyUpdate(p.now))
             var sealed = 0
+            var afterClose = 0
             p.filterToServer = { _, b ->
-                if (isShort(b)) sealed++
-                true
+                if (isShort(b)) {
+                    sealed++
+                    if (p.client.state == ConnectionState.Closing) afterClose++
+                }
+                p.client.state != ConnectionState.Closing // the server never hears the close and keeps sending
             }
-            p.filterToClient = { _, _ -> false }
+            p.filterToClient = { _, _ -> p.client.state == ConnectionState.Closing }
             send(p, 1 shl 20, limit = 300_000) // cwnd-limited data, then PTO probes with exponential backoff
             val r = p.closedReason(p.clientEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r, "closed before the limit is exceeded: $r")
             assertEquals(0x0fL, r.code)
-            assertTrue(sealed <= 24 + 3, "at most the limit plus the CONNECTION_CLOSE copies (one per PTO) left under this key: $sealed")
+            p.runUntil(limit = 10.seconds) { false } // the closing period, with the server's retransmissions arriving
+            assertTrue(afterClose >= 1, "the CONNECTION_CLOSE went out under the key")
+            assertTrue(sealed <= 24, "at most the limit under one key, the CONNECTION_CLOSE copies included: $sealed")
         } finally {
             p.close()
         }
