@@ -115,7 +115,7 @@ accepts only a passing record of the release commit that ran every step, with `-
 `--skip-*` (stage 8).
 
 After a fix, some steps can be run again without the whole gate: `--only 25,47-48,51` runs the listed steps (numbers
-and ranges), `--from 40` runs step 40 and every later one. The numbers are those of a full run with the same
+and ranges), `--from 44` runs step 44 and every later one. The numbers are those of a full run with the same
 `--skip-*` and `--with-*` options, as `--dry-run` with those options lists them and as a failure line (`[25] ...`,
 `build/ci/25.log`) shows them; the steps left out print nothing. Such a run is never a gate: it does not write or change
 the stamp, but `build/ci/gate/<commit>.partial`, with the selection and `result=partial-pass` or `partial-fail`, and the
@@ -123,7 +123,8 @@ release script and the reliability report refuse it. Before anything runs, the s
 step number, a number past the last step, an empty list, `--only` together with `--from`, and a selection that leaves
 out a step whose output a selected step reads (the AAR for the Android checks, the linked Linux test executables, the
 interop images, the Linux C test runs for the ICMP check); it names the steps to add. The preflight builds only the
-OpenSSL targets and resolves the dependencies the selected steps read. Steps that check what an earlier part of the gate
+OpenSSL targets (and their build images) that the selected steps read or run in, and resolves the dependencies only
+for the Docker JVM steps. Steps that check what an earlier part of the gate
 built (the JNI library's exports, the prefixed OpenSSL archives, the Windows dll, the Linux libraries in the JVM
 interop image) build it themselves, or rebuild it when it is not from this run, so a selection never checks a
 leftover of an earlier build.

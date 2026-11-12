@@ -12,12 +12,13 @@
 # --with-browser also runs ChromeWebTransportTest against the installed Chrome (headless; skipped by the test itself
 #   when no Chrome or Chromium is installed).
 # --only <steps> runs only the listed steps, a comma list of numbers and ranges (--only 25,47-48,51); --from <n> runs step
-#   n and every later one. The numbers are those of a full run with the same --skip-*/--with-* options (what --dry-run
+#   n and every later one (--from 44). The numbers are those of a full run with the same --skip-*/--with-* options (what --dry-run
 #   with those options prints, the [n] of the output and build/ci/<n>.log), so a failure line maps onto --only n; the
 #   steps left out print nothing. A step that reads what an earlier step produced (the AAR, the linked test executables,
 #   the interop images, the ICMP marker files) refuses a selection without that step; a bad list, a number past the last
 #   step and --only together with --from refuse too, all before the preflight and step 1. The preflight builds only the
-#   OpenSSL and resolves only the dependencies that the selected steps read.
+#   OpenSSL (and its build image) that the selected steps read or run in, and resolves the dependencies only for the
+#   Docker JVM steps.
 # Gate record: every full run but a dry run writes build/ci/gate/<commit>.stamp (commit, options, selection=all, each step's
 # result, result=pass only when every step passed and the tree was clean and on the same commit from start to end).
 # tools/release/local-release.sh releases only a commit whose stamp says pass and selection=all with no --skip-* and with
@@ -35,7 +36,7 @@ while [ $# -gt 0 ]; do
   case "$a" in --only=*|--from=*) set -- "${a#*=}" "$@"; a="${a%%=*}" ;; esac
   case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; --with-browser) with_browser=1 ;;
     --only|--from)
-      [ $# -gt 0 ] && [ "${1#-}" = "$1" ] || refuse_args "$a needs a value: --only <steps> (e.g. 25,47-48,51) or --from <n>"
+      [ $# -gt 0 ] && [ "${1#--}" = "$1" ] || refuse_args "$a needs a value: --only <steps> (e.g. 25,47-48,51) or --from <n>"
       [ -z "$selection" ] || [ "--${selection%%=*}" != "$a" ] || refuse_args "$a given twice (one list per run: --only 25,47-48)"
       [ -z "$selection" ] || refuse_args "--only and --from together (one selection per run; --only n-<last> is --from n)"
       if [ "$a" = --only ]; then only="$1"; selection="only=$1"; else from="$1"; selection="from=$1"; fi; shift ;;
@@ -71,7 +72,9 @@ failed_tests() { # <dir>: one line per failed or errored JUnit test case in the 
 #   --needs <name>  it reads what the earlier step <name> produces: a selection must include that step, and it does not
 #                   run unless that step passed in this run (never an artifact of an earlier run, never one a failed step left)
 #   --after <name>  the same, but the earlier step only has to have run in this run (its marker files are what is read)
-#   --pre <group>   the preflight it needs: macos, linux or mingw (build/openssl/<target> read by a script), deps (the
+#   --pre <groups>  the preflight it needs: macos, linux-x64, linux-arm64 or mingw (build/openssl/<target> read by a
+#                   script, or the kuicksilver-openssl-<target> image it runs in, which the same Gradle task rebuilds when
+#                   its Dockerfile changes), deps (the
 #                   dependency cache of the offline Docker JVM builds)
 # The second walk (mode=run) runs, or with --dry-run lists, the selected steps.
 mode=list; names=(); needs_of=(); after_of=(); pres=(); state=(); pick=(); ran=0
@@ -94,7 +97,7 @@ step() { # [--needs <name>]... [--after <name>]... [--pre <group>]... <name> <co
   for k in $needs; do [ "${state[k]-}" = ok ] || unmet="${unmet}step $k (${names[k]}) did not pass in this run; "; done
   for k in $after; do [ -n "${state[k]-}" ] || unmet="${unmet}step $k (${names[k]}) did not run in this run; "; done
   if [ -n "$unmet" ]; then   # what it would read is missing or left by an earlier run: a failure, never a pass on stale input
-    mkdir -p build/ci; echo "not run: ${unmet}this step reads what that step produces" > "build/ci/$n.log"
+    mkdir -p build/ci; rm -rf "build/ci/$n-reports"; echo "not run: ${unmet}this step reads what that step produces" > "build/ci/$n.log"
     state[n]=FAIL; failed=$((failed+1)); results="${results}step.$n=FAIL $name"$'\n'; echo "FAIL (not run: ${unmet%; })"; return
   fi
   local log="build/ci/$n.log" marker="build/ci/.step-$n.start" reports="build/ci/$n-reports" tests; mkdir -p build/ci
@@ -145,6 +148,11 @@ interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so i
   fi
   bash tools/interop/build-image.sh
 }
+# the Linux OpenSSL build-image.sh reads: that of its platforms (KSL_INTEROP_PLATFORMS, else the Docker server's
+# architecture, which on this Mac is the host's)
+case "${KSL_INTEROP_PLATFORMS:-linux/$(uname -m)}" in
+  *amd64*|*x86_64*) interop_ossl=linux-x64 ;; *) interop_ossl="" ;; esac
+case "${KSL_INTEROP_PLATFORMS:-linux/$(uname -m)}" in *arm64*|*aarch64*) interop_ossl="$interop_ossl linux-arm64" ;; esac
 export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
@@ -186,8 +194,9 @@ step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-tel
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G "${KSL_SIM_ARGS[@]}"
 step "bench: allocation gate"                   $G :kuicksilver-bench:jvmTest
-# the dylib of this commit and this ABI, built here (up to date after the JVM tests; a selection may not run them)
-step "jvm: exports whitelist (dylib)"           bash -c "$G :kuicksilver-native:buildJniHost"' && abi=$(sed -n "s/^#define KSL_ABI_VERSION \([0-9]*\)u/\1/p" kuicksilver-native/src/c/ksl.h) && bash tools/check/exports.sh "kuicksilver-native/build/jni/osx-aarch_64/libksl_${abi}_osx_aarch_64.dylib" macos'
+# the dylib the jar ships (buildJniHost's output) of this commit and this ABI, built here (up to date after the JVM tests;
+# a selection may not run them)
+step "jvm: exports whitelist (dylib)"           bash -c "$G :kuicksilver-native:buildJniHost"' && abi=$(sed -n "s/^#define KSL_ABI_VERSION \([0-9]*\)u/\1/p" kuicksilver-native/src/c/ksl.h) && bash tools/check/exports.sh "kuicksilver-native/build/jni/resources/META-INF/native/libksl_${abi}_osx_aarch_64.dylib" macos'
 step "jvm: JNI library osx-x86_64 (Intel Macs)"  bash -c "$G :kuicksilver-native:opensslBuildMacosX64"' && bash tools/check/keylog-disabled.sh build/openssl/macos-x64/include && bash tools/build-jni.sh osx-x86_64 build/jni-osx-x86_64 && set -- build/jni-osx-x86_64/osx-x86_64/libksl_*_osx_x86_64.dylib && [ "$(lipo -archs "$1")" = x86_64 ] && bash tools/check/exports.sh "$1" macos'
 step "android: AAR"                             $G :kuicksilver-native:bundleAndroidMainAar
 step --needs "android: AAR" "android: size gate"                       bash tools/check/size.sh "$aar" "$SIZE_LIMIT"
@@ -216,17 +225,17 @@ step "native: prefix whitelist (linux/mingw)"   bash -c "$G :kuicksilver-native:
 step --pre macos "repro: double build (macos-arm64)"        bash tools/check/double-build.sh macos-arm64
 if [ "$skip_docker" = 0 ]; then
 [ "$mode" = list ] || [ "$dry" = 1 ] || rm -f build/ci/recverr-ran-*   # the markers of this run only
-step --pre linux "docker: c-tests linux-x64"                docker_ctests linux/amd64 kuicksilver-openssl-linux-x64 linux-x64
-step --pre linux "docker: c-tests linux-arm64"              docker_ctests linux/arm64 kuicksilver-openssl-linux-arm64 linux-arm64
-step --after "docker: c-tests linux-x64" --after "docker: c-tests linux-arm64" "docker: Linux ICMP error-queue tests ran" bash -c 'ls build/ci/recverr-ran-* >/dev/null 2>&1 || { echo "udp_recverr_ptb_parsed skipped on every Linux runner"; exit 1; }' 
+step --pre linux-x64 "docker: c-tests linux-x64"                docker_ctests linux/amd64 kuicksilver-openssl-linux-x64 linux-x64
+step --pre linux-arm64 "docker: c-tests linux-arm64"              docker_ctests linux/arm64 kuicksilver-openssl-linux-arm64 linux-arm64
+step --after "docker: c-tests linux-x64" --after "docker: c-tests linux-arm64" "docker: Linux ICMP error-queue tests ran" bash -c 'ls build/ci/recverr-ran-* >/dev/null 2>&1 || { echo "udp_recverr_ptb_parsed skipped on every Linux runner"; exit 1; }'
 # shellcheck disable=SC2086
-step --needs "native: link linux/mingw tests" "docker: test.kexe linux-x64 (all modules)"  bash tools/ci/run-kexe.sh linux/amd64 kuicksilver-openssl-linux-x64 linuxX64 $KSL_LINK_MODULES
+step --needs "native: link linux/mingw tests" --pre linux-x64 "docker: test.kexe linux-x64 (all modules)"  bash tools/ci/run-kexe.sh linux/amd64 kuicksilver-openssl-linux-x64 linuxX64 $KSL_LINK_MODULES
 # shellcheck disable=SC2086
 step --needs "native: link linux/mingw tests" "docker: test.kexe linux-arm64 (all modules)" bash tools/ci/run-kexe.sh linux/arm64 "$KSL_UBUNTU_IMAGE" linuxArm64 $KSL_LINK_MODULES
-step --pre linux --pre deps "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64
-step --pre linux --pre deps "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
+step --pre linux-x64 --pre deps "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64
+step --pre linux-arm64 --pre deps "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
 step "docker: system OpenSSL mode"              bash tools/ci/system-openssl.sh
-step "docker: h2spec (HTTP/2 server, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0), never pulls it itself
+step --pre linux-x64 "docker: h2spec (HTTP/2 server, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0), never pulls it itself
 step --pre mingw "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-windows.sh build/jni-windows
 step "docker: deployment guide commands"         env KSL_GRADLE="$G" bash tools/check/deployment-guide.sh   # docs/guide/deployment.md "Checking a deployment": curl --http3-only and tcpdump against the engine, one container of the host's architecture
 # CI windows-jvm runs the JVM suites of native, tls, quic, http3, ktor-network, ktor-client and ktor-server on windows-2025
@@ -236,7 +245,7 @@ step "docker: deployment guide commands"         env KSL_GRADLE="$G" bash tools/
 fi
 if [ "$with_interop" = 1 ]; then
 # CI runs one job per image x peer (the same cases and peers); --check-required is scoped to each run's image, peers and cases
-step --pre linux "interop: jvm image"                       interop_jvm_image
+step --pre "$interop_ossl" "interop: jvm image"                       interop_jvm_image
 step "interop: native image"                    bash tools/interop/build-image.sh --native
 # shellcheck disable=SC2086
 step --needs "interop: jvm image" "interop: jvm image vs all peers, required cells"    bash tools/interop/run-local.sh --check-required -t "$KSL_INTEROP_CASES" $KSL_INTEROP_PEERS
@@ -271,11 +280,12 @@ if [ -n "$selection" ]; then
   }
   bad() { refuse_args "--${selection%%=*} '${selection#*=}': $* (steps are 1-$total with these options; --dry-run lists them)"; }
   if [ -n "$from" ] || [ "$selection" = "from=" ]; then
-    [[ "$from" =~ $num_re ]] || bad "not a step number"
+    case "$from" in ''|*[!0-9]*) bad "not a step number" ;; esac
     lo=$(num "$from"); [ "$lo" -ge 1 ] || bad "no step 0"; [ "$lo" -le "$total" ] || bad "past the last step"
     for ((k = lo; k <= total; k++)); do pick[k]=1; done
   else
     [ -n "$only" ] || bad "an empty step list"
+    case "$only" in *[!0-9,-]*) bad "not a step number or a range a-b: only digits, commas and '-' (no spaces, no line breaks)" ;; esac
     case "$only" in ,*|*,|*,,*) bad "an empty item in the list" ;; esac
     IFS=, read -r -a items <<< "$only"
     for item in "${items[@]}"; do
@@ -301,7 +311,8 @@ if [ -n "$selection" ]; then
     for d in $missing; do pick[d]=1; done
     echo "local-matrix.sh: refused before any step ran; select those steps too: --only $(picked_ranges)" >&2; exit 2
   fi
-  echo "selection: --${selection%%=*} ${selection#*=}: steps $(picked_ranges), $(picked | wc -l | tr -d ' ') of $total; a partial run, never a gate (its record: build/ci/gate/<commit>.partial)"
+  cnt=$(picked | wc -l | tr -d ' ')
+  echo "selection: --${selection%%=*} ${selection#*=}: $([ "$cnt" = 1 ] && echo step || echo steps) $(picked_ranges), $cnt of $total; a partial run, never a gate (its record: build/ci/gate/<commit>.partial)"
 fi
 pre_wanted=" "; for k in $(picked); do pre_wanted="$pre_wanted${pres[k]} "; done
 wants() { [[ "$pre_wanted" == *" $1 "* ]]; }
@@ -315,7 +326,8 @@ wants() { [[ "$pre_wanted" == *" $1 "* ]]; }
 # dependencies and need none of this).
 preflight=()
 wants macos && preflight+=(:kuicksilver-native:opensslBuildMacosArm64)
-wants linux && preflight+=(:kuicksilver-native:opensslBuildLinuxX64 :kuicksilver-native:opensslBuildLinuxArm64)
+wants linux-x64 && preflight+=(:kuicksilver-native:opensslBuildLinuxX64)
+wants linux-arm64 && preflight+=(:kuicksilver-native:opensslBuildLinuxArm64)
 wants mingw && preflight+=(:kuicksilver-native:opensslBuildMingwX64)
 if [ ${#preflight[@]} = 0 ]; then
   echo "preflight: no OpenSSL build is read by the selected steps"
@@ -374,6 +386,6 @@ fi
 echo
 if [ "$dry" = 1 ]; then echo "local matrix: dry run, $ran of $total steps listed, none run"
 elif [ -n "$selection" ]; then
-  if [ "$failed" = 0 ]; then echo "local matrix: the $ran selected steps passed (--${selection%%=*} ${selection#*=}; a partial run, not a gate)"
+  if [ "$failed" = 0 ]; then echo "local matrix: $([ "$ran" = 1 ] && echo "the selected step passed" || echo "the $ran selected steps passed") (--${selection%%=*} ${selection#*=}; a partial run, not a gate)"
   else echo "local matrix: $failed of the $ran selected steps failed (--${selection%%=*} ${selection#*=})"; exit 1; fi
 elif [ "$failed" = 0 ]; then echo "local matrix: all $n steps passed"; else echo "local matrix: $failed of $n steps failed"; exit 1; fi

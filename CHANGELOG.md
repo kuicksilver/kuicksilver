@@ -479,7 +479,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   selected step reads is refused before anything runs. The JNI exports and OpenSSL prefix checks now build what they
   check instead of reading what earlier steps or builds left (the iOS archives were checked before the steps that build
   them), the Windows step rebuilds the mingw dll unless this run's mingw step built it, and the JVM interop image
-  rebuilds its Linux libraries unless this run's Docker JVM steps built them.
+  rebuilds its Linux libraries unless this run's Docker JVM steps built them. Behaviour changes of a full run: a step
+  whose input step failed in the same run (the AAR, the link step, an interop image) now fails without running instead
+  of checking what an earlier build left; with `--skip-docker`, `--with-windows` now builds the mingw-x64 OpenSSL in the
+  preflight and the mingw dll in Docker on every run (before, only when it was older than the C sources), so Docker
+  must be running, and `--with-interop` builds the Linux
+  OpenSSL of the host's architecture; a dry run's last line now says how many steps it listed, not that they passed.
 
 ### Changed
 
