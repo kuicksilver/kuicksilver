@@ -176,6 +176,18 @@ class EngineMainTest {
         assertFailsWith<IllegalArgumentException> { http2("-P:kuicksilver.http2=yes") }
     }
 
+    /** `kuicksilver.webSocketsOverHttp2` turns WebSockets over HTTP/2 (RFC 8441) off; on by default, as over HTTP/3. */
+    @Test fun webSocketsOverHttp2Key() {
+        fun enabled(vararg extra: String): Boolean {
+            val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            return server.engine.configuration.webSocketsOverHttp2
+        }
+        assertEquals(true, enabled())
+        assertEquals(false, enabled("-P:kuicksilver.webSocketsOverHttp2=false"))
+        assertFailsWith<IllegalArgumentException> { enabled("-P:kuicksilver.webSocketsOverHttp2=no") }
+    }
+
     /** `kuicksilver.http2RepeatOffenderPenalty` turns the backoff by address on; off by default (threat model 3.23). */
     @Test fun http2RepeatOffenderPenaltyKey() {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
