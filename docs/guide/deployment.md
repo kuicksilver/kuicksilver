@@ -503,8 +503,9 @@ are covered by black-hole detection ([QUIC: Path MTU](quic.md#path-mtu),
 - The CA bundle that verifies client certificates (mTLS) rotates the same way: a `TrustConfig.ReloadableCa` as the
   connector's `trust` and `reload(...)`, or with `EngineMain` the keys `kuicksilver.tls.clientAuth` and
   `kuicksilver.tls.clientCa`, whose file `kuicksilver.tls.reloadInterval` also watches ([TLS: Rotating the client
-  CA](tls.md#rotating-the-client-ca)). A client of a dropped CA is refused from the next ClientHello on, a session ticket
-  does not get it back in, and connections it already holds go on until they close.
+  CA](tls.md#rotating-the-client-ca)). Once the reload returns no handshake accepts a client certificate that only a
+  dropped CA vouches for (one in progress is checked again when it completes), a session ticket does not get such a client
+  back in, and connections it already holds go on until they close.
 
 ## Turning HTTP/3 off without a restart
 

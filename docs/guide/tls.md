@@ -138,12 +138,13 @@ while the server runs (experimental, 0.3.0). Wrap the bundle with `TrustConfig.r
 and use the result as the server's `trust`, alone or as the `base` of `Pinned`. Call `reload(TrustConfig.AnchoredCa(newRoots))`
 when the bundle changes. It follows the rules of the identity above:
 
-- **One bundle per handshake.** Every handshake whose ClientHello arrives after `reload` returns, over TCP and QUIC alike,
-  verifies the client's certificate against the new bundle. The bundle is taken when the ClientHello arrives, not when a
-  TCP connection is accepted, so a client of a dropped CA cannot connect before the reload and send its hello after it.
-  Handshakes in progress and established connections keep the bundle they started with, so a client of a CA you dropped
-  that is already connected stays connected until its connection closes. Close such connections yourself if the CA was
-  compromised.
+- **The rule.** After `reload` returns, no handshake accepts a client certificate that only a removed CA vouches for,
+  over TCP and QUIC alike, however the client times its flights. A handshake takes the bundle current when its ClientHello
+  arrives (over TCP when its first bytes are there, not at the accept) and OpenSSL verifies against it; if a reload replaced
+  that bundle before the handshake completes, the certificate is verified again against the bundle current then, and the
+  handshake fails unless it passes. Connections established before the reload are not affected: a client of a CA you
+  dropped that is already connected stays connected until its connection closes. Close such connections yourself if the
+  CA was compromised.
 - **Shared contexts.** The first handshake under the new bundle replaces the old bundle's shared OpenSSL context, which is
   freed with its last connection. With `clientAuth` `None` the bundle plays no part, and a reload changes nothing.
 - **Non-CA certificates.** Every certificate of the bundle is a trust anchor, also a leaf: a client presenting exactly that

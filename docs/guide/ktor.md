@@ -631,9 +631,9 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 rotate the CA bundle it verifies them with in the same way: give it `trust = TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
 (alone or as the `base` of `Pinned`) and call `reload(TrustConfig.AnchoredCa(newRoots))`. Handshakes whose ClientHello
 arrives after `reload` returns, HTTP/1.1 and HTTP/2 over TCP and HTTP/3 over QUIC, verify client certificates against the
-new bundle, also on a TCP connection accepted before the reload; handshakes in progress and open connections keep the old
-one, and a session ticket from before the reload is not resumed, so a client whose CA was dropped gets in neither with a
-new handshake nor with a ticket. `reload` refuses a bundle in which no certificate is
+new bundle. After `reload` returns, no handshake accepts a certificate that only a removed CA vouches for: one in progress
+is checked again against the new bundle when it completes, a TCP connection accepted before the reload is no way around
+it, and a session ticket from before the reload is not resumed. Open connections are not affected. `reload` refuses a bundle in which no certificate is
 valid now ([Rotating the client CA](tls.md#rotating-the-client-ca)).
 
 ```kotlin

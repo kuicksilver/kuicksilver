@@ -230,9 +230,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `EngineMain` does at startup when reloading is on). A watcher read that never returns no longer holds up the stop.
 - TLS: client CA rotation without a restart (experimental `TrustConfig.ReloadableCa`, `TrustConfig.reloadable`;
   `docs/guide/tls.md`, "Rotating the client CA"). A server's `trust` for client certificates may be a `ReloadableCa`
-  (alone or as the base of `Pinned`). `reload(next)` makes the `AnchoredCa` `next` the bundle of every handshake whose
-  ClientHello arrives afterwards, over TCP and QUIC, also on a TCP connection accepted before the reload; handshakes in
-  progress and established connections keep theirs. A bundle with no certificate valid now is refused and the old one
+  (alone or as the base of `Pinned`). Once `reload(next)` returns, no handshake, over TCP or QUIC, accepts a client
+  certificate that only a CA missing from `next` vouches for: a handshake takes the bundle when its ClientHello arrives,
+  and one that completes after a reload replaced it verifies the client's chain again against the current bundle.
+  Established connections are not affected. A bundle with no certificate valid now is refused and the old one
   stays. A session authenticated under the old bundle is not resumed, TLS 1.3 and TLS 1.2 tickets and QUIC's alike (the
   server's session ID context covers the bundle's certificates, so a CA re-issued on its key counts as another bundle),
   so a client of a dropped CA cannot come back with a ticket. Shared server contexts are kept per identity snapshot and
