@@ -140,9 +140,10 @@ internal fun checkWebSocketRsvConflicts(attributes: Attributes) {
  * A version other than 13 is one this server does not understand (section 4.2.2, /version/): it "MUST abort the
  * WebSocket handshake ... and instead send an appropriate HTTP error code (such as 426 Upgrade Required) and a
  * |Sec-WebSocket-Version| header field indicating the version(s) the server is capable of understanding": 426 over
- * HTTP/1.1 ([upgradeRequired]; RFC 9110 section 15.5.22 then needs an `Upgrade` field, which the engine adds), 400 over
- * HTTP/3, which has no `Upgrade` (RFC 9114 section 4.2). Every refusal carries `Sec-WebSocket-Version: 13`. Over HTTP/3
- * ([http3], RFC 9220 with RFC 8441 section 5) the key is not processed; the version is used "as defined in [RFC6455]".
+ * HTTP/1.1 (`WebSocketRefusal.upgradeRequired`; RFC 9110 section 15.5.22 then needs an `Upgrade` field, which the
+ * engine adds), 400 over HTTP/2 and HTTP/3, which have no `Upgrade` (RFC 9113 section 8.2.2, RFC 9114 section 4.2).
+ * Every refusal carries `Sec-WebSocket-Version: 13`. Over HTTP/2 and HTTP/3 ([http3]; RFC 8441 section 5, RFC 9220)
+ * the key is not processed; the version is used "as defined in RFC 6455".
  */
 internal fun webSocketHandshakeRefusal(
     request: Headers,

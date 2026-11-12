@@ -86,7 +86,7 @@ internal fun checkWebSocketUpgrade(
 /**
  * What the server's frames may carry after the WebSocket handshake of [request], whose answer carried
  * [responseExtensions] and [responseProtocols] (the `Sec-WebSocket-Extensions` and `Sec-WebSocket-Protocol` values of the
- * 101, or of the 2xx of RFC 9220, where RFC 8441 section 5 keeps both "as defined in [RFC6455]"). Fails the handshake
+ * 101, or of the 2xx of RFC 9220, where RFC 8441 section 5 keeps both "as defined in RFC 6455"). Fails the handshake
  * with [WebSocketException] (RFC 6455 section 4.1: the client fails the connection), before a session is opened, when
  * the answer has more than one of either field (section 11.3: they MUST NOT appear more than once in a response), an
  * extension the request did not offer (step 5), or a subprotocol the request did not offer (step 6), more than one
