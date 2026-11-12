@@ -666,24 +666,34 @@ class EarlyDataTest {
                     withTimeout(20.seconds) {
                         f.start()
                         f.warmUp()
-                        H3Session.createdForTest = { if (it.isServer) it.ourSettingsForTest = change }
-                        try {
-                            // the server's SETTINGS can arrive (in 0.5-RTT) while connectEarly is still starting the
-                            // session, which then fails with the connection error itself; otherwise the connection ends with it
-                            val end =
+                    }
+                    H3Session.createdForTest = { if (it.isServer) it.ourSettingsForTest = change }
+                    try {
+                        // the server's SETTINGS can arrive (in 0.5-RTT) while connectEarly is still starting the session,
+                        // which then fails with the connection error itself; otherwise the connection ends with it. Any other
+                        // end (a rejected 0-RTT, a transport failure on a loaded host) fails here with what it was
+                        val end: Throwable =
+                            withTimeout(20.seconds) {
                                 try {
                                     val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
-                                    c.closed.await().also { assertEquals(true, c.quic.earlyDataAccepted) }
-                                } catch (e: io.kuicksilver.http3.Http3Exception.Protocol) {
+                                    // a rejected 0-RTT would leave the connection healthy and closed never complete:
+                                    // say so at once (a handshake that fails instead ends the connection, seen below)
+                                    if (runCatching { c.quic.awaitHandshake() }.isSuccess) {
+                                        assertEquals(true, c.quic.earlyDataAccepted, "the server did not accept 0-RTT")
+                                    }
+                                    c.closed.await()
+                                } catch (e: io.kuicksilver.http3.Http3Exception) {
+                                    e
+                                } catch (e: io.kuicksilver.quic.QuicException) {
                                     e
                                 }
-                            val e = kotlin.test.assertIs<io.kuicksilver.http3.Http3Exception.Protocol>(end, "$end")
-                            assertEquals(io.kuicksilver.http3.Http3ErrorCode.SETTINGS_ERROR, e.h3Code)
-                            // raised by the check of the SETTINGS stored for 0-RTT, which applies only once 0-RTT was accepted
-                            assertTrue("0-RTT" in e.message.orEmpty(), "$e")
-                        } finally {
-                            H3Session.createdForTest = null
-                        }
+                            }
+                        val e = kotlin.test.assertIs<io.kuicksilver.http3.Http3Exception.Protocol>(end, "${end::class.simpleName}: $end")
+                        assertEquals(io.kuicksilver.http3.Http3ErrorCode.SETTINGS_ERROR, e.h3Code, "$e")
+                        // raised by the check of the SETTINGS stored for 0-RTT, which applies only once 0-RTT was accepted
+                        assertTrue("0-RTT" in e.message.orEmpty(), "$e")
+                    } finally {
+                        H3Session.createdForTest = null
                     }
                 }
             }
