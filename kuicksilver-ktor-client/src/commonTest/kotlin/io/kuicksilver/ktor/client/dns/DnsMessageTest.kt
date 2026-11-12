@@ -275,7 +275,7 @@ class DnsMessageTest {
         assertEquals(2, calls)
     }
 
-    @Test fun negative_messageOverTheDnsMaximumIsRejected() { // RFC 1035 section 4.2.2: a two-byte length
+    @Test fun negative_messageOverTheDnsMaximumIsRejected() { // RFC 1035 section 4.2.2, RFC 8484 section 6: 65535 bytes
         val ok = response("a.example", listOf(rr("a.example", 65, 300, h3Here)))
         assertEquals(1, DnsMessage.answers(ok + ByteArray(65_535 - ok.size), "a.example").size)
         assertFailsWith<DnsFormatException> { DnsMessage.answers(ok + ByteArray(65_536 - ok.size), "a.example") }

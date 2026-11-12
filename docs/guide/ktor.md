@@ -952,7 +952,7 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   `Context`: with plain `System` strict Private DNS is not taken into account, so opt in with this builder). Elsewhere no public API
   tells whether the system's DNS is encrypted, so `System` treats failures as "no records";
 - answers are cached for their TTL, never longer (at most a day, on a monotonic clock; "no records" for the negative
-  TTL of the answer's SOA record, RFC 2308, no longer than a CNAME that led there, and not at all without one; at most
+  TTL of the answer's SOA record, RFC 2308 section 5, no longer than a CNAME that led there, and not at all without one; at most
   1000 names), together with the other HTTPS records and the A/AAAA records the answer carried, which spare follow-up
   queries (RFC 9460 section 5; a name's addresses only when both its A and AAAA records came, else it is looked up as
   usual), and forgotten when
@@ -966,10 +966,12 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 `DnsResolver.rawQuery` on the default network (Private DNS included) on Android from API 29. On Android API 24 to 28 there
 is no public way to ask for a record type (and a resolver of the engine's own would bypass Private DNS), so every lookup
 counts as failed there and requests behave as without records. At most four system lookups run at once per process.
-`HttpsRecordSource.Exchange` works everywhere. Its queries carry ID 0 (as RFC 8484 asks for DNS over HTTPS) and the
+`HttpsRecordSource.Exchange` works everywhere. Its queries carry ID 0 (RFC 8484 section 4.1: DoH clients "SHOULD use
+a DNS ID of 0 in every DNS request") and the
 engine checks the question of a response, not its ID, so the exchange must tie each response to its query: DNS over
 HTTPS and DNS over TLS do; an exchange over plain UDP or TCP sets a random ID of its own in the query (its first two
-bytes) and accepts only a response with that ID. An answer is read in time linear in its size, at most 65535 bytes, and
+bytes) and accepts only a response with that ID. An answer is read in time linear in its size, at most 65535 bytes
+(RFC 8484 section 6: "This media type restricts the maximum size of the DNS message to 65535 bytes"), and
 a lookup's timeout stops the read: a hostile resolver cannot hold a thread with one answer.
 
 An `http://` request (not `ws://`, not through a proxy, not to an IP address) first looks up the records of the same URL

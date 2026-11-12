@@ -39,7 +39,11 @@ internal object DnsMessage {
     /** CNAMEs followed at most inside one answer; a longer chain or a loop leaves the name without records. */
     private const val MAX_CNAMES = 16
 
-    /** The largest DNS message: RFC 1035 section 4.2.2 gives a message over TCP a two-byte length. */
+    /**
+     * The largest DNS message: over TCP "The message is prefixed with a two byte length field which gives the message
+     * length" (RFC 1035 section 4.2.2), and for DNS over HTTPS "This media type restricts the maximum size of the DNS
+     * message to 65535 bytes" (RFC 8484 section 6).
+     */
     const val MAX_MESSAGE = 65_535
 
     /**
@@ -52,8 +56,8 @@ internal object DnsMessage {
     private const val CHECKPOINT_EVERY = 64
 
     /**
-     * A recursive query for [name]/[type] in class IN: ID 0 (RFC 8484 section 4.1 asks for it in DNS over HTTPS; a system
-     * resolver sets its own), RD set, one question, no other section. Throws [IllegalArgumentException] for a name that is
+     * A recursive query for [name]/[type] in class IN: ID 0 (RFC 8484 section 4.1: DoH clients "SHOULD use a DNS ID of 0
+     * in every DNS request"; a system resolver sets its own), RD set, one question, no other section. Throws [IllegalArgumentException] for a name that is
      * empty, has an empty label, a label over 63 bytes or is over 255 bytes in wire format.
      */
     fun query(
@@ -111,8 +115,7 @@ internal object DnsMessage {
         type: Int = TYPE_HTTPS,
         checkpoint: () -> Unit = {},
     ): DnsAnswer {
-        // RFC 1035 section 4.2.2 frames a message over TCP with a two-byte length, and DNS over HTTPS carries the same
-        // wire format: anything longer is no DNS message, and the work below is linear in this bound
+        // anything longer is no DNS message over TCP or HTTPS (MAX_MESSAGE), and the work below is linear in this bound
         if (msg.size > MAX_MESSAGE) throw DnsFormatException("a message of ${msg.size} bytes, over the DNS maximum of $MAX_MESSAGE")
         var steps = 0
 
@@ -190,8 +193,11 @@ internal object DnsMessage {
         if (flags and 0x0200 != 0) throw DnsException("truncated response (TC)")
         val rcode = flags and 0xf
         if (rcode != 0 && rcode != RCODE_NXDOMAIN) throw DnsException("RCODE $rcode")
-        // the CNAME chain from the name asked, also for NXDOMAIN and NODATA: what the answer says of the name asked holds
-        // only as long as every CNAME that led there (RFC 1035 section 3.2.1, RFC 2308 section 5)
+        // the CNAME chain from the name asked, also for NXDOMAIN and NODATA. A negative answer is about the end of the
+        // chain (RFC 2308 section 1: "QNAME" is the name asked "or where this resolves to a CNAME, or CNAME chain, the data
+        // field of the last CNAME"), and holds for the name asked only while each CNAME may be cached, its TTL being "the
+        // time interval that the resource record may be cached before the source of the information should again be
+        // consulted" (RFC 1035 section 3.2.1)
         var name = want
         var chainTtl = Long.MAX_VALUE
         var hops = 0
