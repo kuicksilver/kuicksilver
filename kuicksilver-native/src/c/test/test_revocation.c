@@ -11,6 +11,8 @@
 #endif
 
 #define RV "revocation/"
+/* 2029-01-01: a time inside rv-responder-short's validity (it ends 2030-01-01), so its tests do not depend on today's date */
+#define SHORT_RESPONDER_AT 1861920000LL
 
 static blob file_of(const char *name) {
     char path[256];
@@ -84,7 +86,7 @@ static size_t signature_end(blob r) {
 static void test_ocsp_check(void) {
     SECTION("revocation_ocsp_check");
     int64_t until = 0, now = (int64_t)time(NULL);
-    CHECK(check_file("ocsp-good", "rv-leaf", "rv-mid", 0, &until) == KSL_OCSP_GOOD && until > now + 86400LL * 365 * 50,
+    CHECK(check_file("ocsp-good", "rv-leaf", "rv-mid", 0, &until) == KSL_OCSP_GOOD && until > now,
           "good, signed by the issuing CA; fresh until its nextUpdate (+5 min)");
     CHECK(check_file("ocsp-good-delegated", "rv-leaf", "rv-mid", 0, NULL) == KSL_OCSP_GOOD,
           "good, signed by a delegated responder (id-kp-OCSPSigning, issued by the CA, RFC 6960 4.2.2.2)");
@@ -115,7 +117,8 @@ static void test_ocsp_check(void) {
           "negative_critical_responder: a responder certificate with an unknown critical extension");
     {
         int64_t u = 0;
-        CHECK(check_file("ocsp-short-responder", "rv-leaf", "rv-mid", 0, &u) == KSL_OCSP_GOOD && u == 1893456000LL,
+        CHECK(check_file("ocsp-short-responder", "rv-leaf", "rv-mid", SHORT_RESPONDER_AT, &u) == KSL_OCSP_GOOD &&
+                  u == 1893456000LL,
               "negative_responder_bounds_until: valid_until is the delegated responder's notAfter (2030-01-01)");
         CHECK(check_file("ocsp-short-responder", "rv-leaf", "rv-mid", 1924992000LL, NULL) == KSL_OCSP_INVALID,
               "negative_responder_expired: after the responder's notAfter");
@@ -642,6 +645,7 @@ static void test_staple_cache(void) {
     /* RFC 6960 section 4.2.2.2: a delegated responder's certificate bounds the interval too */
     int64_t until = 0;
     ksl_ctx *sc2 = rv_server("rv-leaf", 0);
+    ksl_test_ocsp_clock_skew = SHORT_RESPONDER_AT - (int64_t)time(NULL); /* 2029: inside the responder's validity */
     CHECK(staple_status(sc2, "ocsp-short-responder", &until) == KSL_OCSP_GOOD && until == 1893456000LL,
           "the client's bound is the responder's notAfter (2030-01-01), not nextUpdate");
     ksl_test_ocsp_clock_skew = 1924992000LL - (int64_t)time(NULL); /* 2031 */

@@ -10,7 +10,8 @@
 # The PKI: rv-root <- rv-mid <- the leaves; rv-mid signs its own OCSP responses and CRLs, rv-responder is a delegated
 # responder (id-kp-OCSPSigning) rv-mid issued, rv-responder-root one rv-root issued (not authorized for rv-mid's
 # certificates, RFC 6960 section 4.2.2.2), rv-responder-noeku one rv-mid issued without the OCSPSigning purpose.
-# The "stale" response expires one minute after it is made (stale to ksl six minutes after: five minutes of clock skew), the "stale" CRL expired in 2020; "nonext" has no nextUpdate.
+# The "stale" response and CRL expired in 2020 (made with fixed past dates: the response by tools/certs/ocsp-backdate.c, built
+# here against the bundled OpenSSL, since `openssl ocsp` cannot backdate); "nonext" has no nextUpdate.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 der="$root/kuicksilver-native/src/c/test/testdata/revocation"
@@ -79,7 +80,12 @@ ocsp ocsp-good-delegated rv-leaf rv-responder -ndays $DAYS
 ocsp ocsp-revoked rv-leaf-revoked rv-mid -ndays $DAYS
 ocsp ocsp-unknown rv-leaf-unlisted rv-mid -ndays $DAYS
 ocsp ocsp-must-staple rv-leaf-must-staple rv-mid -ndays $DAYS
-ocsp ocsp-stale rv-leaf rv-mid -nmin 1
+# ocsp-backdate.c against the bundled OpenSSL of this host (tools/openssl/build.sh <host> first)
+host=$( [ "$(uname)" = Darwin ] && echo macos-arm64 || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )
+B="$root/build/openssl/$host"; [ -f "$B/lib/libcrypto.a" ] || { echo "no bundled OpenSSL in $B (tools/openssl/build.sh $host)"; exit 2; }
+# shellcheck disable=SC2046
+"${CC:-cc}" -std=c11 -O1 -I"$B/include" "$root/tools/certs/ocsp-backdate.c" "$B/lib/libcrypto.a" $( [ "$(uname)" = Darwin ] || echo -lpthread -ldl ) -o ocsp-backdate
+./ocsp-backdate rv-leaf.pem rv-mid.pem rv-mid.pem rv-mid.key 20200101000000Z 20200102000000Z "$der/ocsp-stale.der"
 ocsp ocsp-nonext rv-leaf rv-mid
 ocsp ocsp-unauthorized rv-leaf rv-responder-root -ndays $DAYS
 ocsp ocsp-noeku rv-leaf rv-responder-noeku -ndays $DAYS

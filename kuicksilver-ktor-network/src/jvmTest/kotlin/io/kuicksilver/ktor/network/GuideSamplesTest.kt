@@ -196,7 +196,7 @@ class GuideSamplesTest {
 /** crl-root.der of tools/certs/gen-revocation-certs.sh, base64. */
 private val CRL_ROOT_B64 =
     listOf(
-        "MIHHMG8CAQEwCgYIKoZIzj0EAwIwLjEsMCoGA1UEAwwjS3VpY2tzaWx2ZXIgUmV2b2NhdGlvbiBUZXN0IHJ2LXJvb3QXDTI2MTEx",
-        "MjE0MDA0OFoYDzIxMjYxMDE5MTQwMDQ4WqAOMAwwCgYDVR0UBAMCAQswCgYIKoZIzj0EAwIDSAAwRQIgGllIhVnGbrDHzuooidIj",
-        "uiwMQSC5BGJMofnUStMDDTcCIQDsfkprImlqfultZUgsTU/WxdUJbnqnN2LGEVwjVtX+xQ==",
+        "MIHIMG8CAQEwCgYIKoZIzj0EAwIwLjEsMCoGA1UEAwwjS3VpY2tzaWx2ZXIgUmV2b2NhdGlvbiBUZXN0IHJ2LXJvb3QXDTI2MTEx",
+        "MjE0MTg0OFoYDzIxMjYxMDE5MTQxODQ4WqAOMAwwCgYDVR0UBAMCAQswCgYIKoZIzj0EAwIDSQAwRgIhALQsrxAJ0i0d/sMSAemt",
+        "4H4iRlVjWrHj6BWyW99alYPPAiEA7Z6gdHfmQSnRMHU1pL0pdgqbSLLITvGmnR9AHn2FibI=",
     ).joinToString("")
