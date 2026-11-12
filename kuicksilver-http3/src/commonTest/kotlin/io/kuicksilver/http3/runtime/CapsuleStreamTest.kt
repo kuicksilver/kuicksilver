@@ -621,7 +621,8 @@ class CapsuleStreamTest {
                 val st = withTimeout(5.seconds) { s.acceptBidi() }
                 val head = listOf(":status" to "200", "capsule-protocol" to "?1", "content-type" to "text/plain")
                 st.output.writeFully(raw.headers(st.id, head))
-                st.output.flush()
+                // the client's STOP_SENDING H3_MESSAGE_ERROR may land before the flush returns (seen on macosArm64)
+                peerStopped(Http3ErrorCode.MESSAGE_ERROR) { st.output.flush() }
                 assertIs<Http3Exception.MessageError>(withTimeout(5.seconds) { connect.await() }.exceptionOrNull())
                 assertEquals(Http3ErrorCode.MESSAGE_ERROR, resetCode(st))
             }
