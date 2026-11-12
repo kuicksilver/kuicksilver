@@ -24,10 +24,12 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * WebSockets over HTTP/2 (RFC 8441) for Ktor's `webSocket {}` routes, as [io.kuicksilver.ktor.server.h3.WebSocketOverH3]
@@ -44,16 +46,21 @@ internal object WebSocketOverH2 {
      * field with the value 13 (section 4.2.1: otherwise "return an HTTP response with an appropriate error code (such as
      * 400 Bad Request)"); a version the server does not understand gets "an appropriate HTTP error code (such as 426
      * Upgrade Required) and a |Sec-WebSocket-Version| header field indicating the version(s) the server is capable of
-     * understanding" (section 4.2.2).
+     * understanding" (section 4.2.2). Not 426 here: RFC 9110 section 15.5.22, "The server MUST send an Upgrade header
+     * field in a 426 response", and HTTP/2 forbids Upgrade (RFC 9113 section 8.2.2), so every refusal is a 400 with
+     * `sec-websocket-version: 13`, as on HTTP/3.
      */
     fun refusal(r: H2ServerStream): Pair<Int, List<Pair<String, String>>>? {
         val versions = r.fields.filter { it.first == "sec-websocket-version" }.map { it.second }
-        return when {
-            versions == listOf("13") -> null
-            versions.size != 1 -> 400 to emptyList()
-            else -> 426 to listOf("sec-websocket-version" to "13")
-        }
+        return if (versions == listOf("13")) null else 400 to listOf("sec-websocket-version" to "13")
     }
+
+    /**
+     * How long a session that ended in order waits, after its END_STREAM, for the client's (RFC 8441 section 5: "Orderly
+     * TCP-level closures are represented as END_STREAM flags"); only a client that has not ended by then is stopped with
+     * RST_STREAM. As the client engine's wait (RFC 6455 section 7.1.1).
+     */
+    val CLOSE_WAIT: kotlin.time.Duration = 5.seconds
 
     /**
      * The synthetic HTTP/1.1 upgrade headers of an Extended CONNECT: its fields (split `cookie` fields joined, section
@@ -142,9 +149,10 @@ internal class H2UpgradeResponse(
             webSocket?.done()
             guard.cancel()
             // a call cancelled while the session ran cannot end the stream in order: CANCEL both ways (RFC 8441 section 5).
-            // Otherwise the session's output ends the stream: END_STREAM once its last frames went out; the rest of the
-            // client's side is not read, and releasing the stream stops it with NO_ERROR after our END_STREAM (RFC 9113
-            // section 8.1)
+            // Otherwise the session's output ends the stream: END_STREAM once its last frames went out, then the client's
+            // END_STREAM is waited for (CLOSE_WAIT), so an orderly close ends with both flags and no RST_STREAM; a client
+            // that has not ended by then is stopped when the stream is released (RST_STREAM NO_ERROR after our END_STREAM,
+            // RFC 9113 section 8.1)
             if (!currentCoroutineContext().isActive) {
                 sender.cancel()
                 runCatching { h2.reset(Http2ErrorCode.CANCEL) }
@@ -152,6 +160,7 @@ internal class H2UpgradeResponse(
                 runCatching { output.flushAndClose() }
                 try {
                     sender.join()
+                    withTimeoutOrNull(WebSocketOverH2.CLOSE_WAIT) { h2.awaitClientEnd() }
                 } catch (e: CancellationException) {
                     // cancelled while the last frames waited for window
                     withContext(NonCancellable) { runCatching { h2.reset(Http2ErrorCode.CANCEL) } }

@@ -45,6 +45,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -53,6 +54,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -84,6 +86,7 @@ class ServerWebSocketH2Test {
     /** An HTTP/2 client connection to 127.0.0.1:[port] (TLS, ALPN `h2`), its server's SETTINGS in hand, for [block]. */
     private suspend fun <T> h2(
         port: Int,
+        onChange: () -> Unit = {},
         block: suspend (H2ClientConnection) -> T,
     ): T {
         val selector = SelectorManager(Dispatchers.IO)
@@ -100,6 +103,7 @@ class ServerWebSocketH2Test {
                         scope,
                         Duration.INFINITE,
                         { t.close() },
+                        onChange,
                     )
                 withTimeout(10.seconds) { c.awaitServerSettings() }
                 try {
@@ -322,7 +326,8 @@ class ServerWebSocketH2Test {
      * section 4.2.1 requires a version of 13 (otherwise the server "MUST stop processing the client's handshake and
      * return an HTTP response with an appropriate error code (such as 400 Bad Request)"), and section 4.2.2 answers a
      * version the server does not understand with "an appropriate HTTP error code (such as 426 Upgrade Required) and a
-     * |Sec-WebSocket-Version| header field indicating the version(s) the server is capable of understanding".
+     * |Sec-WebSocket-Version| header field indicating the version(s) the server is capable of understanding". The code is
+     * 400 for every case, with `sec-websocket-version: 13`: a 426 needs Upgrade, which HTTP/2 has not.
      */
     @Test fun negative_versionOtherThan13IsRefused() =
         serverTest {
@@ -334,17 +339,21 @@ class ServerWebSocketH2Test {
                 }
             try {
                 h2(port) { c ->
-                    val missing = c.connect(fields = emptyList())
-                    assertEquals(400, missing.response().status)
-                    missing.release()
-                    val eight = c.connect(fields = listOf("sec-websocket-version" to "8"))
-                    val head = eight.response()
-                    assertEquals(426, head.status)
-                    assertEquals(listOf("13"), head.fields.filter { it.first == "sec-websocket-version" }.map { it.second })
-                    eight.release()
-                    val two = c.connect(fields = listOf("sec-websocket-version" to "13", "sec-websocket-version" to "13"))
-                    assertEquals(400, two.response().status)
-                    two.release()
+                    // RFC 9110 section 15.5.22: a 426 MUST carry Upgrade, which HTTP/2 forbids (RFC 9113 section 8.2.2): 400
+                    val cases =
+                        listOf(
+                            emptyList(),
+                            listOf("sec-websocket-version" to "8"),
+                            listOf("sec-websocket-version" to "13", "sec-websocket-version" to "13"),
+                        )
+                    for (fields in cases) {
+                        val s = c.connect(fields = fields)
+                        val head = s.response()
+                        assertEquals(400, head.status, "$fields")
+                        assertEquals(listOf("13"), head.fields.filter { it.first == "sec-websocket-version" }.map { it.second })
+                        assertTrue(head.fields.none { it.first == "upgrade" })
+                        s.release()
+                    }
                 }
                 assertTrue(!reached.isCompleted, "the route never ran")
             } finally {
@@ -545,6 +554,178 @@ class ServerWebSocketH2Test {
                     assertEquals(Http2ErrorCode.CANCEL, failure.code)
                     s.release()
                 }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 8441 section 5: "Orderly TCP-level closures are represented as END_STREAM flags": after the server's Close and
+     * END_STREAM it waits for the client's END_STREAM, and the stream closes with both flags and no RST_STREAM (before,
+     * releasing the stream at once sent RST_STREAM NO_ERROR ahead of the client's END_STREAM).
+     */
+    @Test fun negative_orderlyCloseSendsNoReset() =
+        serverTest {
+            // an upgrade that ends its session at once (its Close, then its output closed), not reading the client's side
+            val (server, port) =
+                h2TlsServer {
+                    routing {
+                        get("/ws") {
+                            call.respond(
+                                object : OutgoingContent.ProtocolUpgrade() {
+                                    override suspend fun upgrade(
+                                        input: ByteReadChannel,
+                                        output: ByteWriteChannel,
+                                        engineContext: CoroutineContext,
+                                        userContext: CoroutineContext,
+                                    ): Job =
+                                        CoroutineScope(engineContext).launch {
+                                            output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                                            output.flushAndClose()
+                                        }
+                                },
+                            )
+                        }
+                    }
+                }
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.headers(1, extendedConnect(), endStream = false)
+                    assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.HEADERS })
+                    // a masked Close 1000 (key 1, 2, 3, 4)
+                    raw.data(1, byteArrayOf(0x88.toByte(), 0x82.toByte(), 1, 2, 3, 4, 0x02, 0xEA.toByte()), endStream = false)
+                    val seen = ArrayList<RawFrame>()
+                    assertNotNull(
+                        raw.await {
+                            seen += it
+                            it.stream == 1 && it.type == RawFrame.DATA && it.endStream
+                        },
+                    )
+                    // the client's END_STREAM is late: a GET round trip first, during which the server must not reset the stream
+                    raw.headers(3, RawH2Client.get("/"), endStream = true)
+                    assertNotNull(
+                        raw.await {
+                            seen += it
+                            it.stream == 3 && it.type == RawFrame.HEADERS
+                        },
+                    )
+                    assertTrue(seen.none { it.stream == 1 && it.type == RawFrame.RST_STREAM }, "$seen")
+                    raw.data(1, ByteArray(0), endStream = true)
+                    raw.headers(5, RawH2Client.get("/"), endStream = true)
+                    assertNotNull(
+                        raw.await {
+                            seen += it
+                            it.stream == 5 && it.type == RawFrame.HEADERS
+                        },
+                    )
+                    assertTrue(seen.none { it.stream == 1 && it.type == RawFrame.RST_STREAM }, "$seen")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A connection that carries only a WebSocket is in use: the stream counts as an open request, which the idle close
+     * (`connectionIdleTimeoutSeconds`) waits to be 0, and the WebSocket keeps it until the session ends.
+     */
+    @Test fun aConnectionCarryingAWebSocketIsNotIdle() =
+        serverTest {
+            val (server, port) = h2TlsServer { echo() }
+            try {
+                h2(port) { c ->
+                    val s = c.connect()
+                    assertEquals(200, s.response().status)
+                    val conn =
+                        server.engine.h2Live
+                            .live()
+                            .single()
+                    assertEquals(1, conn.openRequests.value)
+                    s.cancel()
+                    withTimeout(10.seconds) { conn.openRequests.first { it == 0 } }
+                    s.release()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A graceful stop sends GOAWAY (RFC 9113 section 6.8) and lets the open session go on within the grace period: new
+     * streams are refused, the WebSocket still echoes until it closes.
+     */
+    @Test fun gracefulStopLeavesAnOpenSessionRunning() =
+        serverTest {
+            val (server, port) = h2TlsServer { echo() }
+            var stopped: kotlinx.coroutines.Job? = null
+            val goAway = CompletableDeferred<Unit>()
+            var conn: H2ClientConnection? = null
+            try {
+                h2(port, onChange = { if (conn?.goAwayCode != null) goAway.complete(Unit) }) { c ->
+                    conn = c
+                    val s = c.connect()
+                    assertEquals(200, s.response().status)
+                    coroutineScopeWithJob { scope ->
+                        val (ws, _) = scope.session(s)
+                        ws.outgoing.send(Frame.Text("a"))
+                        assertEquals("HTTP/2:a", (ws.incoming.receive() as Frame.Text).readText())
+                        val stop = scope.launch(Dispatchers.IO) { server.stop(10_000, 20_000) }
+                        stopped = stop
+                        withTimeout(10.seconds) { goAway.await() }
+                        assertTrue(!c.isUsable)
+                        ws.outgoing.send(Frame.Text("b"))
+                        assertEquals("HTTP/2:b", (ws.incoming.receive() as Frame.Text).readText())
+                        ws.outgoing.send(Frame.Close(CloseReason(CloseReason.Codes.NORMAL, "bye")))
+                        assertIs<Frame.Close>(ws.incoming.receive())
+                        withTimeout(15.seconds) { stop.join() }
+                    }
+                    s.release()
+                }
+            } finally {
+                if (stopped == null) server.stop(100, 500)
+            }
+        }
+
+    /** permessage-deflate (RFC 7692) negotiated over HTTP/2 between our two engines; a compressible message both ways. */
+    @Test fun perMessageDeflateOverH2() =
+        serverTest {
+            val offered = CompletableDeferred<String?>()
+            val (server, port) =
+                h2TlsServer {
+                    install(WebSockets) { extensions { install(io.kuicksilver.ktor.network.websocket.PerMessageDeflate) } }
+                    routing {
+                        webSocket("/ws") {
+                            offered.complete(call.request.headers["sec-websocket-extensions"])
+                            for (frame in incoming) if (frame is Frame.Text) send(Frame.Text(frame.readText().uppercase()))
+                        }
+                    }
+                }
+            try {
+                io.ktor.client
+                    .HttpClient(io.kuicksilver.ktor.client.Kuicksilver) {
+                        install(io.ktor.client.plugins.websocket.WebSockets) {
+                            extensions { install(io.kuicksilver.ktor.network.websocket.PerMessageDeflate) }
+                        }
+                        engine {
+                            trust =
+                                io.kuicksilver.tls.TrustConfig
+                                    .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
+                            http3 { discovery = io.kuicksilver.ktor.client.Http3DiscoveryMode.H1Only }
+                        }
+                    }.use { c ->
+                        c.clientGet("https://127.0.0.1:$port/")
+                        val text = "compressible ".repeat(20_000)
+                        withTimeout(20.seconds) {
+                            c.clientWebSocket("wss://127.0.0.1:$port/ws") {
+                                assertEquals(io.ktor.http.HttpProtocolVersion.HTTP_2_0, call.response.version)
+                                assertTrue("permessage-deflate" in call.response.headers["sec-websocket-extensions"].orEmpty())
+                                send(Frame.Text(text))
+                                assertEquals(text.uppercase(), (incoming.receive() as Frame.Text).readText())
+                            }
+                        }
+                        assertTrue("permessage-deflate" in withTimeout(5.seconds) { offered.await() }.orEmpty())
+                    }
             } finally {
                 server.stop(100, 500)
             }

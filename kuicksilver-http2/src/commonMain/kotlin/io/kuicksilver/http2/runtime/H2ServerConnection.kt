@@ -244,6 +244,12 @@ public class H2ServerStream internal constructor(
     public fun reset(code: Http2ErrorCode): Unit = rt.reset(s, code)
 
     /**
+     * Suspends until the client ended its side in order (its END_STREAM, after content that matched its content-length):
+     * true then; false when the stream failed instead (a reset, the connection). The caller bounds the wait.
+     */
+    public suspend fun awaitClientEnd(): Boolean = rt.awaitRemoteEnd(s)
+
+    /**
      * The handler is done with the stream: one not finished both ways is reset with CANCEL, except a complete response
      * whose request is still open, which the core stops with NO_ERROR after the response (RFC 9113 section 8.1); the stream
      * no longer counts toward SETTINGS_MAX_CONCURRENT_STREAMS. Every delivered stream must be released once.
