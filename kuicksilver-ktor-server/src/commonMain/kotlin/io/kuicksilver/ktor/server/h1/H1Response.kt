@@ -27,10 +27,9 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
-import io.kuicksilver.ktor.server.ServerWebSocketInput
+import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.copyContentFrom
-import io.kuicksilver.ktor.server.serverWebSocketOutput
 import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -92,11 +91,11 @@ internal class H1Response(
         // a WebSocket's frames are checked against the extensions negotiated here (RFC 6455 section 5.2) and its limits;
         // the check ends with the upgrade. Its frames go out unmasked (section 5.1)
         val guard = Job()
-        var webSocket: ServerWebSocketInput? = null
+        var webSocket: ServerWebSocket? = null
         try {
             val upgradedInput =
                 if (isWebSocket) {
-                    ServerWebSocketInput(
+                    ServerWebSocket(
                         input,
                         call.request.headers,
                         headersBuilder,
@@ -108,7 +107,7 @@ internal class H1Response(
                 } else {
                     input
                 }
-            val upgradedOutput = if (isWebSocket) serverWebSocketOutput(output) else output
+            val upgradedOutput = webSocket?.output(output) ?: output
             val upgradedJob = upgrade.upgrade(upgradedInput, upgradedOutput, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {

@@ -6,7 +6,9 @@ import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
+import io.ktor.websocket.Frame
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -21,6 +23,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -83,6 +86,74 @@ class ClientH3WebSocketTest {
                         val got = withTimeout(5.seconds) { served.await() }
                         assertTrue(got.isSuccess && got.getOrThrow() >= 6, "the server reads the client's Close reply and FIN, got $got")
                     }
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * RFC 6455 section 5.3 over HTTP/3: the engine gives Ktor's session `masking = false` and masks every frame itself,
+     * each with a new key from the CSPRNG.
+     */
+    @Test fun negative_clientEngineMasksEveryFrameWithANewKeyH3() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply { this.server = QuicServerConfig.Builder(serverTls).build() }
+                        .build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            var sessionMasking: Boolean? = null
+            coroutineScope {
+                val served =
+                    async {
+                        val s = ep.accept().acceptRequest().acceptConnect()
+                        List(3) {
+                            val b1 = s.input.readByteArray(2)[1].toInt() and 0xff
+                            val mask = s.input.readByteArray(4)
+                            val payload = s.input.readByteArray(b1 and 0x7f)
+                            assertTrue(b1 and 0x80 != 0, "masked")
+                            val text =
+                                payload
+                                    .mapIndexed {
+                                        i,
+                                        b,
+                                        ->
+                                        (b.toInt() xor mask[i % 4].toInt()).toByte()
+                                    }.toByteArray()
+                                    .decodeToString()
+                            assertEquals("m$it", text)
+                            mask.toList()
+                        }.also {
+                            runCatching {
+                                s.output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte()))
+                                s.output.flush()
+                            }
+                        }
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                        withTimeout(10.seconds) {
+                            c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") {
+                                sessionMasking = masking
+                                repeat(3) { send(Frame.Text("m$it")) }
+                                for (f in incoming) continue
+                            }
+                        }
+                    }
+                    val keys = withTimeout(5.seconds) { served.await() }
+                    assertEquals(3, keys.toSet().size, "a new key for every frame: $keys")
+                    assertEquals(false, sessionMasking, "Ktor's session does not mask")
                 } finally {
                     served.cancel()
                     ep.close()

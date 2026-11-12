@@ -23,6 +23,7 @@ import io.kuicksilver.ktor.network.negotiatedWebSocketRsv
 import io.kuicksilver.ktor.network.webSocketExtensionNames
 import io.kuicksilver.ktor.network.webSocketTextCheckable
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
+import io.kuicksilver.ktor.network.websocket.negotiatedWebSocketInflate
 import io.kuicksilver.ktor.network.websocket.perMessageDeflate
 import io.kuicksilver.ktor.network.websocket.webSocketExtensions
 import io.kuicksilver.ktor.network.websocket.webSocketRsvConflict
@@ -30,12 +31,17 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
 
 /**
- * The input of a WebSocket upgrade, checked frame by frame against what the handshake ([request] and [response])
- * negotiated (RFC 6455 section 5.2) and against [maxMessageSize] (section 10.4), its text and Close reasons checked as
- * UTF-8 (section 8.1), and decompressed there when the call's [attributes] hold a negotiated [PerMessageDeflate] (RFC
- * 7692 section 7.2.2); see `guardWebSocketInput`. [done] frees that extension's zlib state when the session has ended.
+ * The two directions of a WebSocket upgrade, checked against what the handshake ([request] and [response]) negotiated.
+ * [channel] is the input: checked frame by frame (RFC 6455 section 5.2) and against [maxMessageSize] (section 10.4),
+ * its text and Close reasons checked as UTF-8 (section 8.1), and permessage-deflate messages decompressed there,
+ * whichever extension negotiated it (RFC 7692 section 7.2.2: the call's [attributes] hold this library's
+ * [PerMessageDeflate], or another one such as Ktor's, read from the answer); see `guardWebSocketInput`. [output] wraps
+ * the output: no frame of the server is masked, whatever Ktor's `WebSockets { masking }` says (RFC 6455 section 5.1: "A
+ * server MUST NOT mask any frames that it sends to the client"), no Close goes out with a code an endpoint must not send
+ * (section 7.4.1) and no text that is not UTF-8 (section 5.6); see `guardWebSocketOutput`. [done] frees the extension's
+ * zlib state when the session has ended.
  */
-internal class ServerWebSocketInput(
+internal class ServerWebSocket(
     input: ByteReadChannel,
     request: Headers,
     response: HeadersBuilder,
@@ -44,13 +50,20 @@ internal class ServerWebSocketInput(
     maxMessageSize: Long,
 ) {
     private val deflate: PerMessageDeflate? = attributes.perMessageDeflate()
+    private val checkText: Boolean
+    private val inflateSent: Boolean
 
     val channel: ByteReadChannel
 
     init {
         val offered = webSocketExtensionNames(request.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty())
-        val accepted = webSocketExtensionNames(response.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty())
-        val inflate = deflate?.serverInflate()
+        val answer = response.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty()
+        val accepted = webSocketExtensionNames(answer)
+        val perMessageDeflate = negotiatedPerMessageDeflate(offered, accepted)
+        val own = deflate?.serverInflate()
+        val inflate = own ?: if (perMessageDeflate) negotiatedWebSocketInflate(answer, client = false, Long.MAX_VALUE) else null
+        checkText = webSocketTextCheckable(offered, accepted)
+        inflateSent = perMessageDeflate && own == null
         channel =
             guardWebSocketInput(
                 input,
@@ -59,23 +72,19 @@ internal class ServerWebSocketInput(
                 peerMasks = true,
                 context = context,
                 inflate = inflate,
-                perMessageDeflate = negotiatedPerMessageDeflate(offered, accepted),
+                perMessageDeflate = perMessageDeflate,
                 maxMessageSize = maxMessageSize,
-                checkText = webSocketTextCheckable(offered, accepted, inflating = inflate != null),
+                checkText = checkText,
             )
     }
+
+    /** The upgrade's [output], as the frames must go out. */
+    fun output(output: ByteWriteChannel): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, inflateSent)
 
     fun done() {
         deflate?.dispose()
     }
 }
-
-/**
- * The output of a WebSocket upgrade: no frame of the server is masked, whatever Ktor's `WebSockets { masking }` says (RFC
- * 6455 section 5.1: "A server MUST NOT mask any frames that it sends to the client"), and no Close goes out with a code
- * an endpoint must not send (section 7.4.1); see `guardWebSocketOutput`.
- */
-internal fun serverWebSocketOutput(output: ByteWriteChannel): ByteWriteChannel = guardWebSocketOutput(output, masking = false)
 
 /**
  * Refuses a WebSocket upgrade whose negotiated extensions (in the call's [attributes]) claim the same RSV bit, before

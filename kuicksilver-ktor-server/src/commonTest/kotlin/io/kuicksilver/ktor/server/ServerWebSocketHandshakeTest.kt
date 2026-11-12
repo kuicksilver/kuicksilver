@@ -152,6 +152,33 @@ class ServerWebSocketHandshakeTest {
             }
         }
 
+    /** The same over HTTP/3 (RFC 9220): the server's frames on the CONNECT stream are never masked. */
+    @Test fun negative_serverNeverMasksH3() =
+        h3ServerTest {
+            val (server, port) = tlsServer { webSocketEcho(masking = true) }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                try {
+                    val request =
+                        http3Request("CONNECT", "server.test", "/ws") { headers = Http3Headers.of("sec-websocket-version" to "13") }
+                    val stream = withTimeout(10.seconds) { c.connect(request, "websocket") }
+                    stream.output.writeFully(maskedText("hi"))
+                    stream.output.flush()
+                    withTimeout(10.seconds) {
+                        assertEquals(0x81, stream.input.readByte().toInt() and 0xff)
+                        assertEquals(0x02, stream.input.readByte().toInt() and 0xff, "no mask bit")
+                        assertEquals("hi", stream.input.readByteArray(2).decodeToString())
+                    }
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
     /** RFC 6455 section 10.4: a 14-byte header claiming 2 GiB is refused with 1009 from its header. */
     @Test fun negative_frameOverTheLimitClosesWith1009() =
         frameFails(

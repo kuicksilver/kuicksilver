@@ -452,7 +452,7 @@ internal suspend fun readResponse(
                 val session =
                     RawWebSocket(
                         input = guarded,
-                        output = guardWebSocketOutput(output, masking = true),
+                        output = guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.inflateSent),
                         masking = false,
                         coroutineContext = callContext,
                         channelsConfig = wsConfig.channelsConfig,

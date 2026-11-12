@@ -240,11 +240,15 @@ class ClientWebSocketExtensionsTest {
             }
         }
 
-    /** The RSV1 a negotiated permessage-deflate defines passes on the first frame of a message. */
+    /**
+     * The RSV1 a negotiated permessage-deflate defines passes on the first frame of a message, and the engine decompresses
+     * the message whichever extension negotiated it (here one that only answers to the name): "a" compressed.
+     */
     @Test fun rsv1OnFirstFrameWithDeflateNegotiatedPasses() =
         clientTest {
             var text: String? = null
-            rawH1WebSocketServer(extensions = "permessage-deflate", frames = byteArrayOf(0xC1.toByte(), 0x01, 0x61)) { port ->
+            val compressedA = byteArrayOf(0xC1.toByte(), 0x03, 0x4a, 0x04, 0x00)
+            rawH1WebSocketServer(extensions = "permessage-deflate", frames = compressedA) { port ->
                 testClient(block = { install(WebSockets) { extensions { install(FakeDeflate) } } }).use { c ->
                     c.webSocket("ws://127.0.0.1:$port/ws") { text = (incoming.receive() as Frame.Text).readText() }
                 }

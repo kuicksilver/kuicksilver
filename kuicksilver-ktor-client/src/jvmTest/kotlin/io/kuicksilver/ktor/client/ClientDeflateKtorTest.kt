@@ -13,9 +13,18 @@ import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
+import java.io.ByteArrayOutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import io.ktor.server.websocket.WebSockets as ServerWebSockets
 import io.ktor.server.websocket.webSocket as serverWebSocket
 
@@ -23,6 +32,8 @@ import io.ktor.server.websocket.webSocket as serverWebSocket
  * Ktor's own permessage-deflate (`WebSocketDeflateExtension`, JVM only) on both ends of the Kuicksilver engines: the
  * client engine lets the plugin negotiate it, and both engines let the compressed frames' RSV1 through. Then Kuicksilver's
  * [PerMessageDeflate] against Ktor's, each way round: two implementations of RFC 7692 that must understand each other.
+ * The engines decompress permessage-deflate themselves whichever extension negotiated it, so text Ktor's extension
+ * carries is checked as UTF-8 too (RFC 7692 section 6), both ways.
  */
 class ClientDeflateKtorTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -135,5 +146,90 @@ class ClientDeflateKtorTest {
                 { "wss://127.0.0.1:$it/ws" },
                 plain = false,
             )
+        }
+
+    /**
+     * RFC 7692 section 6: after decompression the payload is "subject to the constraints for the original data type
+     * again". A compressed text message that inflates to C0 AF, with Ktor's extension negotiated, closes with 1007: the
+     * engine inflates it by the extension's name. Before, Ktor's extension inflated it in the session and nothing checked.
+     */
+    @Test fun negative_compressedInvalidUtf8ThroughKtorsExtensionClosesWith1007() =
+        clientTest {
+            // a final stored DEFLATE block holding C0 AF
+            val frame = byteArrayOf(0xC1.toByte(), 0x07, 0x01, 0x02, 0x00, 0xfd.toByte(), 0xff.toByte(), 0xC0.toByte(), 0xAF.toByte())
+            var closeCode: Short? = null
+            val received =
+                rawServer(frame) { port ->
+                    testClient(block = { install(WebSockets) { extensions { install(WebSocketDeflateExtension) } } }).use { c ->
+                        c.webSocket("ws://127.0.0.1:$port/ws") {
+                            runCatching { incoming.receive() }
+                            closeCode = closeReason.await()?.code
+                        }
+                    }
+                }
+            assertEquals(1007.toShort(), closeCode)
+            assertEquals(0x88, received[0].toInt() and 0xff, "the client's Close")
+        }
+
+    /**
+     * RFC 6455 section 5.6: text Ktor's extension compresses is inflated on the side and checked; a message that is not
+     * UTF-8 is not sent whole (the connection is reset after its header at most).
+     */
+    @Test fun negative_invalidUtf8CompressedByKtorsExtensionIsNotSent() =
+        clientTest {
+            val received =
+                rawServer(ByteArray(0)) { port ->
+                    testClient(block = { install(WebSockets) { extensions { install(WebSocketDeflateExtension) } } }).use { c ->
+                        runCatching {
+                            c.webSocket("ws://127.0.0.1:$port/ws") {
+                                send(Frame.Text(true, byteArrayOf(0xC0.toByte(), 0xAF.toByte())))
+                                runCatching { incoming.receive() }
+                            }
+                        }
+                    }
+                }
+            // a masked frame header is 6 bytes; the compressed payload never follows it
+            assertTrue(received.size <= 6, "the server received ${received.size} bytes")
+        }
+
+    /**
+     * A raw HTTP/1.1 server on 127.0.0.1 that accepts one WebSocket with `permessage-deflate`, sends [frames] and returns
+     * what the client sent after the handshake until it closed the connection.
+     */
+    private suspend fun rawServer(
+        frames: ByteArray,
+        block: suspend (Int) -> Unit,
+    ): ByteArray =
+        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { listener ->
+            coroutineScope {
+                val served =
+                    async(Dispatchers.IO) {
+                        listener.accept().use { s ->
+                            val input = s.getInputStream()
+                            val head = StringBuilder()
+                            while (!head.endsWith("\r\n\r\n")) head.append(input.read().toChar())
+                            val key =
+                                head
+                                    .lines()
+                                    .first {
+                                        it.startsWith(
+                                            "Sec-WebSocket-Key:",
+                                            ignoreCase = true,
+                                        )
+                                    }.substringAfter(':')
+                                    .trim()
+                            s.getOutputStream().write(
+                                (
+                                    switchingProtocols(key, "Sec-WebSocket-Extensions: permessage-deflate\r\n")
+                                ).encodeToByteArray() + frames,
+                            )
+                            val out = ByteArrayOutputStream()
+                            runCatching { input.copyTo(out) }
+                            out.toByteArray()
+                        }
+                    }
+                withTimeout(20.seconds) { block(listener.localPort) }
+                withTimeout(10.seconds) { served.await() }
+            }
         }
 }

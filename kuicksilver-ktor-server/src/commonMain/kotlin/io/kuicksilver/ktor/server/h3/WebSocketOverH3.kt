@@ -13,9 +13,8 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
-import io.kuicksilver.ktor.server.ServerWebSocketInput
+import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
-import io.kuicksilver.ktor.server.serverWebSocketOutput
 import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -82,10 +81,10 @@ internal class H3UpgradeResponse(
         // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 9220 section 3) and the
         // limits; the check ends with the upgrade. The server's frames go out unmasked (RFC 6455 section 5.1)
         val guard = Job()
-        var webSocket: ServerWebSocketInput? = null
+        var webSocket: ServerWebSocket? = null
         try {
             val input =
-                ServerWebSocketInput(
+                ServerWebSocket(
                     stream.input,
                     call.request.headers,
                     headersBuilder,
@@ -93,7 +92,7 @@ internal class H3UpgradeResponse(
                     engineDispatcher + guard,
                     webSocketMaxMessageSize,
                 ).also { webSocket = it }
-            upgrade.upgrade(input.channel, serverWebSocketOutput(stream.output), engineDispatcher, userDispatcher).join()
+            upgrade.upgrade(input.channel, input.output(stream.output), engineDispatcher, userDispatcher).join()
         } finally {
             webSocket?.done()
             guard.cancel()

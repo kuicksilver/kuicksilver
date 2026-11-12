@@ -179,6 +179,47 @@ class ClientWebSocketHandshakeTest {
         }
 
     /**
+     * RFC 6455 section 5.3, end to end: the engine gives Ktor's session `masking = false` and masks every frame itself,
+     * each with a new key (Ktor's writer would draw them from `kotlin.random.Random`).
+     */
+    @Test fun negative_clientEngineMasksEveryFrameWithANewKey() =
+        clientTest {
+            var sessionMasking: Boolean? = null
+            var seen: List<List<Byte>> = emptyList()
+            val keys = Channel<List<Byte>>(Channel.UNLIMITED)
+            server({ _, key -> head(upgrade + accept(key)) }, afterUpgrade = { input ->
+                repeat(3) {
+                    val b1 = input.readByteArray(2)[1].toInt() and 0xff
+                    val mask = input.readByteArray(4)
+                    val payload = input.readByteArray(b1 and 0x7f)
+                    assertTrue(b1 and 0x80 != 0, "masked")
+                    assertEquals(
+                        "m$it",
+                        payload
+                            .mapIndexed {
+                                i,
+                                b,
+                                ->
+                                (b.toInt() xor mask[i % 4].toInt()).toByte()
+                            }.toByteArray()
+                            .decodeToString(),
+                    )
+                    keys.send(mask.toList())
+                }
+            }) { port ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    c.webSocket("ws://127.0.0.1:$port/ws") {
+                        sessionMasking = masking
+                        repeat(3) { send(Frame.Text("m$it")) }
+                        seen = withTimeout(10.seconds) { List(3) { keys.receive() } }
+                    }
+                }
+            }
+            assertEquals(false, sessionMasking, "Ktor's session does not mask")
+            assertEquals(3, seen.toSet().size, "a new key for every frame: $seen")
+        }
+
+    /**
      * A raw HTTP/1.1 server on 127.0.0.1: per connection (numbered from 0), reads the request head and writes what
      * [answer] returns for it; after a 101 it sends [frames], reads the client's first frame and puts its close code in
      * [closeCodes] (-1 for none, or one that is not a Close).
@@ -186,6 +227,7 @@ class ClientWebSocketHandshakeTest {
     private suspend fun server(
         answer: (index: Int, key: String?) -> String,
         frames: ByteArray = ByteArray(0),
+        afterUpgrade: suspend (ByteReadChannel) -> Unit = { closeCodes.send(closeCode(it)) },
         block: suspend (Int) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
@@ -204,7 +246,7 @@ class ClientWebSocketHandshakeTest {
                                 output.writeStringUtf8(text)
                                 if (text.startsWith("HTTP/1.1 101")) {
                                     output.writeFully(frames)
-                                    closeCodes.send(closeCode(input))
+                                    afterUpgrade(input)
                                 }
                             }
                         }
