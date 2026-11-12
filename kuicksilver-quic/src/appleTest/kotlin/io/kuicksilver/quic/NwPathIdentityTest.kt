@@ -35,7 +35,11 @@ class NwPathIdentityTest {
         assertNull(pathIdentity(en0, emptyList(), emptyList()))
     }
 
-    /** The identity's text holds local addresses: its toString is a hash, equal for equal identities, never the text. */
+    /**
+     * The identity's text holds local addresses: its toString is a hash keyed with a per-process random salt, equal for equal
+     * identities within the process, never the text, and not the unkeyed FNV-1a of it (which a few private address
+     * combinations would let anyone enumerate back).
+     */
     @Test fun negative_identityToStringRevealsNoAddress() {
         val text = pathIdentity(en0, listOf("192.168.1.1"), listOf("192.168.1.23"))!!
         val a = NwPathIdentity(text)
@@ -44,6 +48,11 @@ class NwPathIdentityTest {
         assertNotEquals(a.toString(), NwPathIdentity(pathIdentity(en0, listOf("10.0.0.1"), listOf("10.0.0.5"))!!).toString())
         assertFalse("192.168" in a.toString() || "en0" in a.toString(), a.toString())
         assertTrue(a.toString().startsWith("NwPathIdentity(#"))
+        var h = -0x340d631b7bdddcdbL
+        for (c in text) {
+            h = (h xor c.code.toLong()) * 0x100000001b3L
+        }
+        assertNotEquals("NwPathIdentity(#${h.toULong().toString(16).padStart(16, '0')})", a.toString(), "salted")
     }
 
     /** The live source answers at once with the current path (null without a satisfied one). */

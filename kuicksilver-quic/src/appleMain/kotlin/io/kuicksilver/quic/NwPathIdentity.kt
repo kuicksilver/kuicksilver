@@ -41,20 +41,23 @@ import platform.darwin.inet_ntop
 import platform.posix.AF_INET
 import platform.posix.AF_INET6
 import platform.posix.INET6_ADDRSTRLEN
+import platform.posix.arc4random_buf
 import platform.posix.free
 import platform.posix.sockaddr_in
 import platform.posix.sockaddr_in6
 
 /**
  * The identity of a network the default path runs over (iOS, macOS), from [nwPathIdentities]: equal for the same interface,
- * gateways and interface addresses. It holds local addresses, so its [toString] shows only a 64-bit hash of them
- * (`NwPathIdentity(#…)`), distinct for distinct identities in practice, and safe in a log line.
+ * gateways and interface addresses. It holds local addresses, so its [toString] shows only a 64-bit hash of them keyed
+ * with a random salt drawn once per process from the system's secure generator (`NwPathIdentity(#…)`): equal identities
+ * give equal strings within a process, distinct ones distinct strings in practice, and without the salt the few private
+ * gateway and address combinations cannot be enumerated back from a log line. Another process gives other strings.
  */
 @InternalKuicksilverApi
 public class NwPathIdentity internal constructor(
     private val text: String,
 ) {
-    private val digest: Long = fnv1a64(text)
+    private val digest: Long = fnv1a64(IDENTITY_SALT, text)
 
     /** Equal when the interface, gateways and addresses are. */
     override fun equals(other: Any?): Boolean = other is NwPathIdentity && other.text == text
@@ -62,13 +65,28 @@ public class NwPathIdentity internal constructor(
     /** Consistent with [equals]. */
     override fun hashCode(): Int = text.hashCode()
 
-    /** A hash, never the addresses. */
+    /** A salted hash, never the addresses. */
     override fun toString(): String = "NwPathIdentity(#${digest.toULong().toString(16).padStart(16, '0')})"
 }
 
-/** FNV-1a, 64 bits, over the UTF-16 code units of [s]. */
-private fun fnv1a64(s: String): Long {
+/** The per-process key of [NwPathIdentity.toString]: 64 bits from `arc4random_buf`, the system's secure generator. */
+private val IDENTITY_SALT: Long =
+    memScoped {
+        val b = allocArray<UByteVar>(8)
+        arc4random_buf(b, 8u)
+        (0 until 8).fold(0L) { acc, i -> (acc shl 8) or b[i].toLong() }
+    }
+
+/** FNV-1a, 64 bits, over the 8 bytes of [salt], then the UTF-16 code units of [s]. */
+private fun fnv1a64(
+    salt: Long,
+    s: String,
+): Long {
     var h = -0x340d631b7bdddcdbL // 0xcbf29ce484222325
+    for (i in 0 until 8) {
+        h = h xor ((salt ushr (8 * i)) and 0xff)
+        h *= 0x100000001b3L
+    }
     for (c in s) {
         h = h xor c.code.toLong()
         h *= 0x100000001b3L
