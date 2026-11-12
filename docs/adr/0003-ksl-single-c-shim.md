@@ -107,3 +107,10 @@ the `ksl_tcp_read` that refused one answers `KSL_OK` with nothing read, as for a
 drains the warning and looks before it reads what the peer sent after it. No function is added: 81 functions. Kotlin:
 `KslConst.GET_RENEGOTIATION`; `TlsConnection` fails the input of an `h2` connection with it, and the HTTP/2 client turns that
 into PROTOCOL_ERROR.
+
+Re-verification path, additive under 7 (client CA rotation, `TrustConfig.ReloadableCa`): `ksl_ctx_verify_chain_path(ctx, chain,
+len, name, at, x509_err, path, cap, path_len)` is `ksl_ctx_verify_chain` that also hands out the path the verifier built
+(leaf first, its trust anchor last, framed as its input; `*path_len` is set on success and the path written when `cap`
+holds it), so a server checks the pins of a `Pinned` on the path built under a reloaded bundle. Both functions now set the
+context's security level as the verification's auth level, as a handshake does (`ssl_cert.c` `ssl_verify_internal`). JNI
+`KslNative.ctxVerifyChainPath`, cinterop `ksl_ctx_verify_chain_path`, Kotlin `Ksl.ctxVerifyChainPath`. 82 functions.

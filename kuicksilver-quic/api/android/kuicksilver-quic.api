@@ -1389,3 +1389,8 @@ public final class io/kuicksilver/quic/qlog/DirectoryQlogSink : io/kuicksilver/q
 	public fun open (Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;)Lio/kuicksilver/quic/QlogTrace;
 }
 
+public final class io/kuicksilver/quic/qlog/QlogDirectory_androidKt {
+	public static final fun qlogDirectory (Landroid/content/Context;Ljava/lang/String;)Lio/kuicksilver/quic/qlog/DirectoryQlogSink;
+	public static synthetic fun qlogDirectory$default (Landroid/content/Context;Ljava/lang/String;ILjava/lang/Object;)Lio/kuicksilver/quic/qlog/DirectoryQlogSink;
+}
+

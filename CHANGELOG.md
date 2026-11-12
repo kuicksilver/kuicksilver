@@ -243,6 +243,36 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (a buffer of its own, wiped), refuses PEM files above 1 MiB, and closes the identity it made when the server stops. The
   watcher reads the files again a second after a reload and refuses a chain file that also holds a private key (as
   `EngineMain` does at startup when reloading is on). A watcher read that never returns no longer holds up the stop.
+- TLS: client CA rotation without a restart (experimental `TrustConfig.ReloadableCa`, `TrustConfig.reloadable`;
+  `docs/guide/tls.md`, "Rotating the client CA"). A server's `trust` for client certificates may be a `ReloadableCa`
+  (alone or as the base of `Pinned`). Once `reload(next)` returns, no handshake, over TCP or QUIC, accepts a client
+  certificate that only a CA missing from `next` vouches for: a handshake takes the bundle when its ClientHello arrives,
+  and one that completes after a reload replaced its certificates verifies the client's chain again against the current
+  bundle (security level and the pins of a `Pinned` on the new path included). A reload to the same certificates changes
+  nothing. Established connections are not affected. A bundle with no certificate valid now is refused and the old one
+  stays. A session authenticated under the old bundle is not resumed, TLS 1.3 and TLS 1.2 tickets and QUIC's alike (the
+  server's session ID context covers the bundle's certificates as a set, so a CA re-issued on its key counts as another
+  bundle while reordered or repeated certificates do not), so a client of a dropped CA cannot come back with a ticket. Shared server contexts are kept per identity snapshot and
+  bundle; the first handshake under the new bundle replaces the old bundle's context, which is freed with its last
+  connection. With `clientAuth` None the bundle plays no part and a reload changes nothing. A client configuration with a
+  `ReloadableCa` throws `TlsException.Config`.
+- Ktor server: `EngineMain` keys `kuicksilver.tls.clientAuth` (`none`, `optional`, `required`) and
+  `kuicksilver.tls.clientCa` (a PEM file of CA certificates) ask for client certificates on the deployment port. With
+  `kuicksilver.tls.reloadInterval` the CA file is watched like the identity's files (two equal reads a second apart,
+  retries with backoff, one warning per distinct failure, a file holding a private key refused) and new handshakes verify
+  against the renewed bundle (`docs/guide/ktor.md`, "Certificate rotation"). A CA file with certificates that are not
+  CA certificates (each would be an anchor) is applied with a warning. On the JVM the keys cannot be combined with a
+  `-sslPort` connector, whose `ktor.security.ssl.trustStore` decides client certificates: the start is refused. A
+  connector's `trust` may be a `TrustConfig.ReloadableCa`, shared by its TCP and QUIC handshakes (HTTP/1.1, HTTP/2 and
+  HTTP/3).
+- Ktor client: experimental `FileAltSvcStore(file: java.io.File)` on the JVM and Android, for an Android app's
+  `File(context.filesDir, "altsvc.tsv")` (`docs/guide/ktor.md`, "Discovery and Alt-Svc"). It works on API 24 and 25 too:
+  nothing on its path uses `java.nio.file` or `File.toPath()`, which arrived in API 26. The `kotlinx.io.files.Path`
+  constructor is unchanged.
+- QUIC: experimental `qlogDirectory(context, name)` on Android (`io.kuicksilver.quic.qlog`), the qlog counterpart of
+  `keylogFile(context, name)`: a `DirectoryQlogSink` for the directory `name` (default `kuicksilver-qlog`) in the app's
+  cache directory, which is private and not backed up. The directory is created owner-only (0700) and checked at once.
+  Below API 26 it throws `IllegalArgumentException`, as `DirectoryQlogSink` refuses there (`docs/guide/quic.md`, "qlog").
 - QUIC: experimental `QuicConnection.peerSupportsDatagrams`, true once the peer advertised `max_datagram_frame_size`
   above 0 (RFC 9221 section 3), exactly when `sendDatagram` does not answer `PeerDoesNotSupport`. `maxDatagramSize` is 0
   without support and also with a limit of 2 (room for an empty datagram only) or 1 (room for none: even an empty datagram is `TooLarge(0)`); this
@@ -571,6 +601,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
   a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
   `NoWhenBranchMatchedException` when it meets a `Reloadable`.
+- TLS: the sealed `TrustConfig` gains a member, `TrustConfig.ReloadableCa`, likewise: a `when` over it without an `else`
+  branch no longer compiles.
 - TLS: resumption is bounded on every server (RFC 9846 section 4.7.1). A ticket resumes only under the leaf certificate it
   was issued under, at most 7 days after the full handshake that authenticated the session (renewed tickets keep that
   time, as BoringSSL's `auth_timeout`) and not past the leaf's notAfter; otherwise the client runs a full handshake.
@@ -666,6 +698,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS: `ksl_ctx_verify_chain`, which re-verifies a client's cached chain before it resumes (ADR-0011), now applies
+  OpenSSL's security level as a handshake does; before, the re-verification was weaker than the handshake it stands for
+  (a client's cached chains come from handshakes at the same level under the same trust, so no weaker chain could resume
+  in practice). The client CA recheck of a server relies on it.
+- TLS: a TCP server takes its identity (and client CA bundle) when the client's ClientHello arrives, not when the
+  connection is accepted. Before, a connection accepted before a `TlsIdentity.Reloadable.reload` whose ClientHello came
+  later (an HTTP server waits up to its request header timeout) was served the replaced certificate and key. The wait
+  for the ClientHello counts toward `handshakeTimeout`.
+- TLS: a TCP server that negotiated TLS 1.2 failed every resumed handshake (and every accepted handshake with pinned
+  client certificates) with "ticket request failed": the explicit ticket request after the handshake is TLS 1.3 only. TLS 1.2
+  keeps the ticket OpenSSL sends in the handshake.
 - HTTP/3 client: `Http3Response.cancel(code)` and a client `Http3Stream`'s `reset`/`stopSending` sent H3_REQUEST_REJECTED
   when the application passed it, a code clients MUST NOT use (RFC 9114 section 4.1.1: it tells that the server did not
   process the request). It now goes out as H3_REQUEST_CANCELLED.

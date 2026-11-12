@@ -117,9 +117,9 @@ val server = tlsConfig(TlsRole.Server) {
 
 A server identity can be replaced while the server runs (experimental, 0.3.0): wrap it with
 `TlsIdentity.reloadable(identity)`, use the result as the `identity`, and call `reload(TlsIdentity.fromPem(...))` when a
-renewed certificate arrives. Every handshake that starts afterwards, over TCP and QUIC alike, presents the new chain and
-key; handshakes in progress and established connections keep the identity they started with, and nothing they hold is
-freed under them.
+renewed certificate arrives. Every handshake whose ClientHello arrives afterwards, over TCP and QUIC alike, presents the new
+chain and key, also on a TCP connection accepted before the reload; handshakes in progress and established connections
+keep the identity they started with, and nothing they hold is freed under them.
 
 - **Bad input never replaces the identity in use.** A key that does not match the leaf already fails in `fromPem` or
   `fromDer`; `reload` refuses a closed identity, a leaf certificate that has expired, and one that is not valid yet
@@ -139,6 +139,57 @@ ticket, but a chain of renewals ends 7 days after the full handshake that authen
 `SSL_DEFAULT_SESSION_AUTH_TIMEOUT`) and at the leaf's notAfter; then the client runs a full handshake.
 
 The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](ktor.md#certificate-rotation).
+
+### Rotating the client CA
+
+The CA bundle a server verifies client certificates with (`clientAuth` `Optional` or `Required`) can also be replaced
+while the server runs (experimental, 0.3.0). Wrap the bundle with `TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
+and use the result as the server's `trust`, alone or as the `base` of `Pinned`. Call `reload(TrustConfig.AnchoredCa(newRoots))`
+when the bundle changes. It follows the rules of the identity above:
+
+- **The rule.** After `reload` returns, no handshake accepts a client certificate that only a removed CA vouches for,
+  over TCP and QUIC alike, however the client times its flights. A handshake takes the bundle current when its ClientHello
+  arrives (over TCP when its first bytes are there, not at the accept) and OpenSSL verifies against it; if a reload replaced
+  that bundle with other certificates before the handshake completes, the certificate is verified again against the bundle
+  current then, as a fresh handshake would (OpenSSL's security level, and the pins of a `Pinned` around the bundle on the
+  path built under it), and the handshake fails unless it passes. A reload to the same certificates changes nothing. One
+  case is refused that a fresh handshake would accept: a session resumed across a reload that changed the certificates
+  holds only the client's leaf, so it passes only if that leaf chains to the new bundle without intermediates (the client
+  then runs a full handshake on its next connection). Connections established before the reload are not affected: a client of a CA you
+  dropped that is already connected stays connected until its connection closes. Close such connections yourself if the
+  CA was compromised.
+- **Shared contexts.** The first handshake under the new bundle replaces the old bundle's shared OpenSSL context, which is
+  freed with its last connection. With `clientAuth` `None` the bundle plays no part, and a reload changes nothing.
+- **Non-CA certificates.** Every certificate of the bundle is a trust anchor, also a leaf: a client presenting exactly that
+  certificate is accepted. `EngineMain` warns about such certificates in its CA file.
+- **Bad input never replaces the bundle in use.** `reload` refuses a bundle in which no certificate is valid now (each
+  expired, or not valid yet beyond 5 minutes of clock skew) with `TlsException.Config`, and the old bundle stays.
+- **Resumption.** A session resumes only under the bundle it was authenticated with. After a reload, a ticket from before
+  it resumes nothing (RFC 9846 section 4.7.1: "A server MAY treat a ticket as valid for a shorter period"). The client
+  runs a full handshake and its certificate is verified against the new bundle, so a ticket never lets a client of a
+  dropped CA back in.
+- **What the client sees.** The server sends no `certificate_authorities` extension in its CertificateRequest (RFC 9846
+  section 4.3.4: "The server MAY send it in the CertificateRequest message"), so clients pick their certificate without a
+  CA list from the server, before and after a reload.
+- **Servers only.** A client configuration with a `ReloadableCa` throws `TlsException.Config`; a client trusts its server
+  through `AnchoredCa`.
+
+```kotlin
+// guide:tls:client-ca-rotation
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+val mtlsServer = tlsConfig(TlsRole.Server) {
+    alpn = listOf("h3")
+    identity = serverIdentity
+    clientAuth = ClientAuth.Required
+    trust = clientCa
+}
+// later, when the bundle changes:
+clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+```
+
+The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tls.clientCa` with
+`kuicksilver.tls.reloadInterval` ([Certificate rotation](ktor.md#certificate-rotation)).
 
 ## Trust
 

@@ -504,8 +504,14 @@ are covered by black-hole detection ([QUIC: Path MTU](quic.md#path-mtu),
 - Renewed certificates can be put in place without a restart: a `TlsIdentity.Reloadable` and `reload(...)`, or with
   `EngineMain` the key `kuicksilver.tls.reloadInterval` that watches the PEM files of `kuicksilver.tls.certificateChain` and
   `kuicksilver.tls.privateKey` ([Ktor: Certificate rotation](ktor.md#certificate-rotation),
-  [TLS: Rotating the server certificate](tls.md#rotating-the-server-certificate)). New handshakes on TCP and QUIC take the
-  new certificate; open connections keep theirs.
+  [TLS: Rotating the server certificate](tls.md#rotating-the-server-certificate)). Handshakes whose ClientHello arrives
+  after the reload, on TCP and QUIC, take the new certificate; open connections keep theirs.
+- The CA bundle that verifies client certificates (mTLS) rotates the same way: a `TrustConfig.ReloadableCa` as the
+  connector's `trust` and `reload(...)`, or with `EngineMain` the keys `kuicksilver.tls.clientAuth` and
+  `kuicksilver.tls.clientCa`, whose file `kuicksilver.tls.reloadInterval` also watches ([TLS: Rotating the client
+  CA](tls.md#rotating-the-client-ca)). Once the reload returns no handshake accepts a client certificate that only a
+  dropped CA vouches for (one in progress is checked again when it completes), a session ticket does not get such a client
+  back in, and connections it already holds go on until they close.
 
 ## Turning HTTP/3 off without a restart
 

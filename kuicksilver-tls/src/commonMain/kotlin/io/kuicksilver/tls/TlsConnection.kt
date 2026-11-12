@@ -37,6 +37,7 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * TLS over any byte transport (docs/guide/tls.md, TLS over any channel): ciphertext moves through `transportIn`/`transportOut`, plaintext through
@@ -193,7 +194,7 @@ public class TlsConnection private constructor(
     // ---- handshake ----
     private var cached: SessionCache.Entry? = null // the entry consumed for this connection (single-use ticket)
 
-    private suspend fun handshake() {
+    private suspend fun handshake(timeout: Duration) {
         cacheKey?.let { key ->
             sessionCache.take(key)?.let { e ->
                 // ADR-0011: the OpenSSL verifier's verdict is not taken from the cache: an expired leaf or a withdrawn anchor runs a full handshake
@@ -217,8 +218,7 @@ public class TlsConnection private constructor(
             }
         }
         // withTimeoutOrNull: our own deadline becomes a TlsException, an outer cancellation stays a CancellationException
-        withTimeoutOrNull(config.handshakeTimeout) { handshakeLoop() }
-            ?: throw TlsException.Protocol(null, "TLS handshake timed out after ${config.handshakeTimeout}", HandshakeTimedOut())
+        withTimeoutOrNull(timeout) { handshakeLoop() } ?: throw handshakeTimedOut(config)
         handshakeCompletedForTest?.invoke(this)
         afterHandshake()
         readerJob = scope.launch { readerPump() }
@@ -356,9 +356,14 @@ public class TlsConnection private constructor(
                 val r = Verification(effective).pinCheck(validated())
                 if (r is VerifyResult.Rejected) abort(TlsException.Verify(r.reason, presented))
             }
+            // a ReloadableCa reloaded since the ClientHello: the certificate must pass the bundle current now. Tickets OpenSSL
+            // already sent in the handshake (not with pinned clients) are bound to the old bundle's session context, so they
+            // resume nothing once it is replaced
+            if (!anonymous) (overrideCtx?.ctx ?: ctx).recheckClientChain(presented)?.let { abort(TlsException.Verify(it, presented)) }
             // explicit tickets: after the pin verdict (never before), six after a full handshake as KslContext's count for the other
-            // servers (RFC 9846 appendix C.4), and one after a resumption (client tickets are single-use)
-            if (pinnedClients || reused) {
+            // servers (RFC 9846 appendix C.4), and one after a resumption (client tickets are single-use). TLS 1.3 only: OpenSSL
+            // refuses the request on TLS 1.2, whose ticket travels in the handshake (renewed there on a resumption)
+            if ((pinnedClients || reused) && protocolVersion == TlsVersion.Tls13) {
                 lock.withLock { repeat(if (reused) 1 else TCP_TICKETS) { Ksl.sslNewSessionTicket(s()) } }
                 drainToTransport()
             }
@@ -1008,6 +1013,10 @@ public class TlsConnection private constructor(
             context: CoroutineContext,
             sessionCache: SessionCache,
         ): TlsConnection {
+            val started = TimeSource.Monotonic.markNow()
+            if (config.role == TlsRole.Server) awaitClientHello(transportIn, transportOut, config)
+            // a server takes its identity and client CA bundle now, when the ClientHello is there, not at accept: a connection
+            // accepted before a reload whose ClientHello arrives after it gets the reloaded ones
             val ctx = KslContext.acquire(config, quic = false)
             val c =
                 try {
@@ -1018,7 +1027,7 @@ public class TlsConnection private constructor(
                 }
             val failure =
                 try {
-                    c.handshake()
+                    c.handshake(config.handshakeTimeout - started.elapsedNow()) // one deadline for the wait and the handshake
                     null
                 } catch (t: Throwable) {
                     t
@@ -1035,6 +1044,35 @@ public class TlsConnection private constructor(
             }
             throw failure
         }
+
+        /**
+         * Waits, within the handshake deadline, for the first bytes of the client's flight (its ClientHello). A transport that
+         * ends or fails first is left to the handshake, which reports it as before; the deadline passing fails here.
+         */
+        private suspend fun awaitClientHello(
+            transportIn: ByteReadChannel,
+            transportOut: ByteWriteChannel,
+            config: TlsConfig,
+        ) {
+            val waited =
+                withTimeoutOrNull(config.handshakeTimeout) {
+                    try {
+                        transportIn.awaitContent(1)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        // a failed transport: the handshake reads it and fails the way it always did
+                    }
+                    true
+                }
+            if (waited == null) {
+                runCatching { transportOut.flushAndClose() }
+                throw handshakeTimedOut(config)
+            }
+        }
+
+        private fun handshakeTimedOut(config: TlsConfig) =
+            TlsException.Protocol(null, "TLS handshake timed out after ${config.handshakeTimeout}", HandshakeTimedOut())
 
         internal fun parseAlpn(wire: ByteArray): List<String> {
             val out = ArrayList<String>()
@@ -1314,10 +1352,19 @@ internal fun KslContext.cachedChainStillTrusted(
 internal fun TrustConfig.cacheKey(): String =
     when (this) {
         is TrustConfig.Platform -> "platform"
-        is TrustConfig.AnchoredCa -> "ca:" + roots.joinToString(",") { it.spkiSha256.toString() }
+
+        is TrustConfig.AnchoredCa -> "ca:$derKey"
+
+        // the certificates, not only their keys: a CA re-issued on its key is another trust
+        is TrustConfig.ReloadableCa -> "reloadable"
+
+        // stable across reloads; a context that verifies with it uses its snapshot
         is TrustConfig.ExpectedName -> "name:$name/" + base.cacheKey()
+
         is TrustConfig.Pinned -> "pin:$scope:" + pins.map { it.toString() }.sorted().joinToString(",") + "/" + base.cacheKey()
+
         is TrustConfig.Tofu -> "tofu:${store.hashCode()}"
+
         is TrustConfig.Custom -> "custom:${verifier.hashCode()}"
     }
 

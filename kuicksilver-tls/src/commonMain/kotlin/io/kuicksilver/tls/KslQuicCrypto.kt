@@ -489,6 +489,15 @@ internal class KslQuicTlsSession(
             if (r is VerifyResult.Rejected) {
                 failure =
                     DriveResult.Failed(TlsException.Verify(r.reason, presented), if (config.genericAlerts) 40 else r.reason.alertCode)
+                return
+            }
+        }
+        // a ReloadableCa reloaded since the ClientHello: the client's certificate must pass the bundle current now
+        if (config.role == TlsRole.Server && ctx.trustSnapshot != null) {
+            val chain = presented.ifEmpty { Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate) }
+            ctx.recheckClientChain(chain)?.let { reason ->
+                presented = chain
+                failure = DriveResult.Failed(TlsException.Verify(reason, chain), if (config.genericAlerts) 40 else reason.alertCode)
             }
         }
     }
@@ -584,6 +593,9 @@ internal class KslQuicTlsSession(
     internal fun validatedChain(): List<Certificate> = Ksl.sslPeerChain(s(), KslConst.CHAIN_VALIDATED).map(::Certificate)
 
     internal fun newSessionTicket(): Unit = Ksl.sslNewSessionTicket(s())
+
+    /** Whether the handshake resumed a session (tests). */
+    internal val sessionReusedForTest: Boolean get() = Ksl.sslGet(s(), KslConst.GET_SESSION_REUSED)[0].toInt() == 1
 
     override fun close() {
         // a hello closed before TLS decided on its early data never got it: its reservation goes too

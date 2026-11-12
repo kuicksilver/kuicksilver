@@ -516,6 +516,7 @@ public final class io/kuicksilver/tls/TrustConfig$AnchoredCa : io/kuicksilver/tl
 }
 
 public final class io/kuicksilver/tls/TrustConfig$Companion {
+	public final fun reloadable (Lio/kuicksilver/tls/TrustConfig$AnchoredCa;)Lio/kuicksilver/tls/TrustConfig$ReloadableCa;
 }
 
 public final class io/kuicksilver/tls/TrustConfig$Custom : io/kuicksilver/tls/TrustConfig {
@@ -540,6 +541,12 @@ public final class io/kuicksilver/tls/TrustConfig$Pinned : io/kuicksilver/tls/Tr
 
 public final class io/kuicksilver/tls/TrustConfig$Platform : io/kuicksilver/tls/TrustConfig {
 	public static final field INSTANCE Lio/kuicksilver/tls/TrustConfig$Platform;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/TrustConfig$ReloadableCa : io/kuicksilver/tls/TrustConfig {
+	public final fun getCurrent ()Lio/kuicksilver/tls/TrustConfig$AnchoredCa;
+	public final fun reload (Lio/kuicksilver/tls/TrustConfig$AnchoredCa;)V
 	public fun toString ()Ljava/lang/String;
 }
 

@@ -1201,6 +1201,13 @@ val qlogDir = "/var/log/kuicksilver/qlog"
 val quicWithQlog = quicConfig { qlog = DirectoryQlogSink(qlogDir) }
 ```
 
+On Android, `qlogDirectory(context, name = "kuicksilver-qlog")` (experimental, 0.3.0, in `io.kuicksilver.quic.qlog`)
+returns a `DirectoryQlogSink` for the directory `name` in the app's cache directory. It creates the directory owner-only
+(0700) at once and checks it like any other. The cache directory is private to the app, is not backed up, and is the
+first thing the system clears when storage runs low. Pull the traces with `adb shell run-as <package> ls cache/kuicksilver-qlog`
+(debuggable builds). The helper works in release builds too, since a trace holds no keys. Below API 26 it throws
+`IllegalArgumentException`: without `java.nio.file` the directory cannot be checked, so qlog is refused there.
+
 A sink is called on the endpoint loop, so a file sink on a slow disk would slow every connection of the loop. Wrap it in
 `AsyncQlogSink`: the loop only queues records, and one writer on `Dispatchers.IO` (one thread at a time) opens, writes and
 closes the files. Its queue holds `queueCapacity` records (8192) over all connections; a record that finds it full is
@@ -1361,9 +1368,9 @@ val server = tlsConfig(TlsRole.Server) {
 
 A server identity can be replaced while the server runs (experimental, 0.3.0): wrap it with
 `TlsIdentity.reloadable(identity)`, use the result as the `identity`, and call `reload(TlsIdentity.fromPem(...))` when a
-renewed certificate arrives. Every handshake that starts afterwards, over TCP and QUIC alike, presents the new chain and
-key; handshakes in progress and established connections keep the identity they started with, and nothing they hold is
-freed under them.
+renewed certificate arrives. Every handshake whose ClientHello arrives afterwards, over TCP and QUIC alike, presents the new
+chain and key, also on a TCP connection accepted before the reload; handshakes in progress and established connections
+keep the identity they started with, and nothing they hold is freed under them.
 
 - **Bad input never replaces the identity in use.** A key that does not match the leaf already fails in `fromPem` or
   `fromDer`; `reload` refuses a closed identity, a leaf certificate that has expired, and one that is not valid yet
@@ -1383,6 +1390,57 @@ ticket, but a chain of renewals ends 7 days after the full handshake that authen
 `SSL_DEFAULT_SESSION_AUTH_TIMEOUT`) and at the leaf's notAfter; then the client runs a full handshake.
 
 The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation).
+
+#### Rotating the client CA
+
+The CA bundle a server verifies client certificates with (`clientAuth` `Optional` or `Required`) can also be replaced
+while the server runs (experimental, 0.3.0). Wrap the bundle with `TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
+and use the result as the server's `trust`, alone or as the `base` of `Pinned`. Call `reload(TrustConfig.AnchoredCa(newRoots))`
+when the bundle changes. It follows the rules of the identity above:
+
+- **The rule.** After `reload` returns, no handshake accepts a client certificate that only a removed CA vouches for,
+  over TCP and QUIC alike, however the client times its flights. A handshake takes the bundle current when its ClientHello
+  arrives (over TCP when its first bytes are there, not at the accept) and OpenSSL verifies against it; if a reload replaced
+  that bundle with other certificates before the handshake completes, the certificate is verified again against the bundle
+  current then, as a fresh handshake would (OpenSSL's security level, and the pins of a `Pinned` around the bundle on the
+  path built under it), and the handshake fails unless it passes. A reload to the same certificates changes nothing. One
+  case is refused that a fresh handshake would accept: a session resumed across a reload that changed the certificates
+  holds only the client's leaf, so it passes only if that leaf chains to the new bundle without intermediates (the client
+  then runs a full handshake on its next connection). Connections established before the reload are not affected: a client of a CA you
+  dropped that is already connected stays connected until its connection closes. Close such connections yourself if the
+  CA was compromised.
+- **Shared contexts.** The first handshake under the new bundle replaces the old bundle's shared OpenSSL context, which is
+  freed with its last connection. With `clientAuth` `None` the bundle plays no part, and a reload changes nothing.
+- **Non-CA certificates.** Every certificate of the bundle is a trust anchor, also a leaf: a client presenting exactly that
+  certificate is accepted. `EngineMain` warns about such certificates in its CA file.
+- **Bad input never replaces the bundle in use.** `reload` refuses a bundle in which no certificate is valid now (each
+  expired, or not valid yet beyond 5 minutes of clock skew) with `TlsException.Config`, and the old bundle stays.
+- **Resumption.** A session resumes only under the bundle it was authenticated with. After a reload, a ticket from before
+  it resumes nothing (RFC 9846 section 4.7.1: "A server MAY treat a ticket as valid for a shorter period"). The client
+  runs a full handshake and its certificate is verified against the new bundle, so a ticket never lets a client of a
+  dropped CA back in.
+- **What the client sees.** The server sends no `certificate_authorities` extension in its CertificateRequest (RFC 9846
+  section 4.3.4: "The server MAY send it in the CertificateRequest message"), so clients pick their certificate without a
+  CA list from the server, before and after a reload.
+- **Servers only.** A client configuration with a `ReloadableCa` throws `TlsException.Config`; a client trusts its server
+  through `AnchoredCa`.
+
+```kotlin
+// guide:tls:client-ca-rotation
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+val mtlsServer = tlsConfig(TlsRole.Server) {
+    alpn = listOf("h3")
+    identity = serverIdentity
+    clientAuth = ClientAuth.Required
+    trust = clientCa
+}
+// later, when the bundle changes:
+clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+```
+
+The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tls.clientCa` with
+`kuicksilver.tls.reloadInterval` ([Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation)).
 
 ### Trust
 
@@ -2531,8 +2589,9 @@ identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyChars))
 ```
 
 `keyChars` and `renewedKeyChars` are the key files read into `CharArray`s (not through a `String`, which would leave the
-key on the heap). Every handshake that starts after `reload` returns, HTTP/1.1 over TCP and HTTP/3 over QUIC, presents
-the new chain and key; handshakes in progress and open connections keep the old ones. A key that does not match its
+key on the heap). Every handshake whose ClientHello arrives after `reload` returns, HTTP/1.1 and HTTP/2 over TCP and
+HTTP/3 over QUIC, presents the new chain and key (also on a TCP connection accepted before the reload); handshakes in
+progress and open connections keep the old ones. A key that does not match its
 certificate fails in `fromPem`, and `reload` refuses an expired leaf and one not valid yet (`TlsException.Config`): the
 identity in use stays. Session tickets are bound to the certificate they were issued under, so after a reload clients
 run one full handshake and see the new certificate (see [Rotating the server certificate](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-server-certificate)
@@ -2612,6 +2671,39 @@ cannot be interrupted). Polling once an hour means a renewed certificate may wai
 files at startup get the same checks as a reload, so an expired or not yet valid certificate fails the start; without
 it, `EngineMain` serves the files as they are, as before. The identity `EngineMain` made is closed when the server stops.
 
+**The client CA.** A connector that asks for client certificates ([Mutual TLS](#mutual-tls-client-certificates)) can
+rotate the CA bundle it verifies them with in the same way: give it `trust = TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
+(alone or as the `base` of `Pinned`) and call `reload(TrustConfig.AnchoredCa(newRoots))`. Handshakes whose ClientHello
+arrives after `reload` returns, HTTP/1.1 and HTTP/2 over TCP and HTTP/3 over QUIC, verify client certificates against the
+new bundle. After `reload` returns, no handshake accepts a certificate that only a removed CA vouches for: one in progress
+is checked again against the new bundle when it completes, a TCP connection accepted before the reload is no way around
+it, and a session ticket from before the reload is not resumed. Open connections are not affected. `reload` refuses a bundle in which no certificate is
+valid now ([Rotating the client CA](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-client-ca)).
+
+```kotlin
+// guide:ktor:client-ca-rotation
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) {
+        port = 443
+        clientAuth = ClientAuth.Required
+        trust = clientCa
+    }
+}, module = Application::module)
+// later: new TCP and QUIC handshakes verify client certificates against the new bundle
+clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+```
+
+With `EngineMain`, `kuicksilver.tls.clientAuth` (`optional` or `required`) and `kuicksilver.tls.clientCa` (a PEM file of
+CA certificates) ask for client certificates on the deployment port. With `kuicksilver.tls.reloadInterval` set, the CA
+file is watched at that interval with the rules above: a changed bundle is used once two reads a second apart agree. A
+file holding a private key, a damaged file and a bundle with no certificate valid now keep the bundle in use, and so do
+they at startup (where they fail the start). A reload is logged at info level, a failure as a warning, and so is a bundle
+holding certificates that are not CA certificates (each is an anchor: a client presenting exactly it is accepted). The
+keys apply to the port of `kuicksilver.tls.certificateChain`; on the JVM, a `-sslPort` connector (`ktor.security.ssl.*`)
+takes client certificates from its `trustStore` instead, and the start is refused when both are configured.
+
 #### EngineMain and configuration keys
 
 `io.kuicksilver.ktor.server.EngineMain` reads the usual `ktor.deployment.*` keys (and on the JVM `-sslPort` with
@@ -2620,7 +2712,9 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | Key | Meaning |
 |---|---|
 | `kuicksilver.tls.certificateChain`, `kuicksilver.tls.privateKey` | PEM files; the deployment port then serves TLS and HTTP/3 |
-| `kuicksilver.tls.reloadInterval` | how often those PEM files are checked for a renewed certificate (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
+| `kuicksilver.tls.reloadInterval` | how often those PEM files, and the `kuicksilver.tls.clientCa` file, are checked for a renewed certificate or CA bundle (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
+| `kuicksilver.tls.clientAuth` | ask for a client certificate on the deployment port: `none` (unset), `optional` or `required`; anything but `none` needs `kuicksilver.tls.clientCa` |
+| `kuicksilver.tls.clientCa` | PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
@@ -2896,6 +2990,24 @@ per origin (the first ones of the header) and 1000 origins, dropping the least r
 the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. Entries
 without `persist=1` are dropped when `networkId()` reports a new network (RFC 7838 section 2.2); `clearOnNetworkChange =
 false` keeps them.
+
+`FileAltSvcStore(path)` takes a `kotlinx.io.files.Path`; on the JVM and Android `FileAltSvcStore(file)` (experimental,
+0.3.0) takes a `java.io.File`. On Android keep the file in the app's private files directory. Do not write
+`File(...).toPath()`: that is a `java.nio.file.Path`, which this API does not take, and `File.toPath()` and
+`java.nio.file` only exist from API 26, while the library supports API 24. The `File` form uses no `java.nio.file`,
+so it works on API 24 and 25 too (there a write replaces the file with `File.renameTo`, which is atomic on one file
+system):
+
+```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val filesDir = context.filesDir                  // android.content.Context
+// guide:ktor:altsvc-store-android
+HttpClient(Kuicksilver) {
+    engine {
+        http3 { altSvcStore = FileAltSvcStore(File(filesDir, "altsvc.tsv")) }
+    }
+}
+```
 
 #### HTTPS records (experimental)
 
@@ -3445,6 +3557,10 @@ HttpClient(Kuicksilver) {
     }
 }
 ```
+
+On Android, `http3 { qlog = AsyncQlogSink(qlogDirectory(context)) }` writes the traces to a directory in the app's
+cache directory, created owner-only (API 26 and up; [QUIC: qlog](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#qlog)). It is the counterpart of
+`keylogFile(context)`.
 
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.
@@ -4324,8 +4440,14 @@ are covered by black-hole detection ([QUIC: Path MTU](https://github.com/kuicksi
 - Renewed certificates can be put in place without a restart: a `TlsIdentity.Reloadable` and `reload(...)`, or with
   `EngineMain` the key `kuicksilver.tls.reloadInterval` that watches the PEM files of `kuicksilver.tls.certificateChain` and
   `kuicksilver.tls.privateKey` ([Ktor: Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation),
-  [TLS: Rotating the server certificate](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-server-certificate)). New handshakes on TCP and QUIC take the
-  new certificate; open connections keep theirs.
+  [TLS: Rotating the server certificate](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-server-certificate)). Handshakes whose ClientHello arrives
+  after the reload, on TCP and QUIC, take the new certificate; open connections keep theirs.
+- The CA bundle that verifies client certificates (mTLS) rotates the same way: a `TrustConfig.ReloadableCa` as the
+  connector's `trust` and `reload(...)`, or with `EngineMain` the keys `kuicksilver.tls.clientAuth` and
+  `kuicksilver.tls.clientCa`, whose file `kuicksilver.tls.reloadInterval` also watches ([TLS: Rotating the client
+  CA](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-client-ca)). Once the reload returns no handshake accepts a client certificate that only a
+  dropped CA vouches for (one in progress is checked again when it completes), a session ticket does not get such a client
+  back in, and connections it already holds go on until they close.
 
 ### Turning HTTP/3 off without a restart
 
@@ -4624,6 +4746,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `Cubic(maxDatagramSize, hystart)`, `NewReno(maxDatagramSize)` | | 1200, `true` | the stable congestion controllers |
 | `Bbr(maxDatagramSize, random)` (*experimental*) | | 1200, `null` (jitter from send and ACK times) | BBRv3 ([Choosing a congestion controller](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#choosing-a-congestion-controller)) |
 | `DirectoryQlogSink(directory)`, `DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes)` (*experimental*) | | 256 open traces, 1 GiB in all | one `<odcid>_<client\|server>_<random>.sqlog` file per connection, created exclusively, never through a link; creates the directory owner-only and refuses one another user could change |
+| `qlogDirectory(context, name)` (Android, *experimental*) | | `name = "kuicksilver-qlog"` | a `DirectoryQlogSink` in the app's cache directory, created owner-only at once; API 26 and up (refused below) |
 | `AsyncQlogSink(delegate, queueCapacity, sampleEvery, dispatcher)` (*experimental*) | | 8192 records, 1 (every connection), `Dispatchers.IO.limitedParallelism(1)` | runs a sink off the endpoint loop; a full queue drops records (`dropped`) |
 | `NetworkMigrator(connection, networks, openIo, scope)` (*experimental*) | | no defaults; client connections only | follows a `Flow` of networks ([Network changes](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#network-changes)) |
 | `QuicConnection.rebind(local, prefer)` (*experimental*) | | `null` (wildcard of the peer's family), `Accelerated` | moves the connection to a fresh socket |
@@ -4642,7 +4765,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | 0.2.0 | TLS 1.3 is the default (RFC 9852); `Tls12And13` allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only); renegotiation is always refused, and on an `h2` connection a peer's attempt ends it (RFC 9113 section 9.2.1) |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) | at least one; QUIC refuses `TLS_AES_128_CCM_8_SHA256` | 0.2.0 | TLS 1.3 suites in preference order |
 | `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | 0.2.0 | certificate chain and key; `TlsIdentity.reloadable(...)` for one replaced at run time ([TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-server-certificate)) |
-| `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([TrustConfig](#trustconfig)) |
+| `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa` or `ReloadableCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([TrustConfig](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | 0.2.0 | `None`, `Optional` or `Required` client certificates |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
 | `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see [SessionTicketConfig](#sessionticketconfig) | 0.2.0 | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
@@ -4674,7 +4797,8 @@ Guide: [TLS: Trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/gu
 | Variant | Parameters (defaults) | Checks | What it does |
 |---|---|---|---|
 | `TrustConfig.Platform` | | Linux Native: a CA store must exist when the client config is built | the operating system's verifier ([Platform trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#platform-trust)) |
-| `TrustConfig.AnchoredCa(roots)` | `roots: List<Certificate>` | at least one root | only these roots, verified inside `ksl`; the only trust for client certificates |
+| `TrustConfig.AnchoredCa(roots)` | `roots: List<Certificate>` | at least one root | only these roots, verified inside `ksl`; with `ReloadableCa`, the only trust for client certificates |
+| `TrustConfig.reloadable(initial)` (*experimental*) | `initial: AnchoredCa` | servers only; `reload` refuses a bundle with no certificate valid now | a `ReloadableCa`: client certificates verified against the `AnchoredCa` current when the handshake starts; `reload(next)` rotates it ([Rotating the client CA](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-client-ca)) |
 | `TrustConfig.ExpectedName(name, base)` | `base = Platform` | non-blank `name`; `base` is `Platform`, `AnchoredCa` or `Custom` | verify another name than the one connected to (proxies) |
 | `TrustConfig.Pinned(pins, scope, base)` | `scope = PinScope.Leaf`, `base = Platform` | at least one pin; not around `Tofu`, `Custom` or another `Pinned` | SPKI pins checked on top of `base`; `PinScope.AnyInValidatedChain` matches any certificate of the validated chain |
 | `TrustConfig.Tofu(store)` | `store: TofuStore` | clients only | trust on first use |
@@ -4812,7 +4936,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 |---|---|---|---|---|
 | `discovery` | `Http3DiscoveryMode` | `Auto` | 0.2.0 | `Auto` (TCP first, HTTP/3 after `Alt-Svc`), `Preferred` (HTTP/3 first, TCP fallback), `H3Only`, `H1Only` (no HTTP/3; TCP is HTTP/1.1 or HTTP/2) |
 | `quicHints` | `Set<HostPort>` | empty | 0.2.0 | origins treated as `Preferred` in `Auto` mode; `HostPort(host, port)` compares the host exactly as in URLs |
-| `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | 0.2.0 | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
+| `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | 0.2.0 | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts (on the JVM and Android also `FileAltSvcStore(file)` with a `java.io.File`, which works from API 24) |
 | `clearOnNetworkChange` | `Boolean` | `true` | 0.2.0 | drop alternatives without `persist=1` when `networkId` changes (RFC 7838 section 2.2); `false` keeps them |
 | `httpsRecords` (*experimental*) | `HttpsRecordSource` | `HttpsRecordSource.Off` | 0.3.0 | HTTPS resource records (RFC 9460) as a source of HTTP/3 in `Auto`: `System` (the OS resolver) or `Exchange { query -> response }` (your DNS-over-HTTPS client) ([HTTPS records](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#https-records-experimental)) |
 | `httpsRecordExtraWait` (*experimental*) | `Duration` | 50 ms | 0.3.0 | how long a request waits for the HTTPS records after the origin's addresses resolved; 50 ms (RFC 9460 section 5.1) to 1 s, else the engine's creation fails with `IllegalArgumentException` |
@@ -4838,7 +4962,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 |---|---|---|---|---|
 | `tlsConnector(identity) { … }` |  |  | 0.2.0 | a TLS connector: HTTP/1.1 (and HTTP/2 with `http2`) over TLS on TCP and HTTP/3 on UDP on the same port ([Ktor: HTTP/3 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http3-on-the-server)) |
 | `identity` | `TlsIdentity?` | `null` | 0.2.0 | turns every plain connector (`port = …`, `connector { }`) into a TLS connector; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation)) |
-| `identityReloadInterval` (*experimental*) | `Duration?` | `null` | 0.3.0 | at least 1 s; how often the PEM files `EngineMain` read are checked for a renewed certificate (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation)) |
+| `identityReloadInterval` (*experimental*) | `Duration?` | `null` | 0.3.0 | at least 1 s; how often the PEM files `EngineMain` read (the identity and `kuicksilver.tls.clientCa`) are checked for a renewed certificate or CA bundle (key `kuicksilver.tls.reloadInterval`); set without those files, the start fails ([Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation)) |
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | 0.2.0 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | 0.2.1 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#server)) |
 | `maxTcpConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n` ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)) |
@@ -4882,13 +5006,15 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `host` | `String` | `"0.0.0.0"` |  | 0.2.0 | bind address for TCP and UDP |
 | `port` | `Int` | 443 | 0..65 535 | 0.2.0 | TCP port and UDP port of HTTP/3; 0 picks a free pair (`resolvedConnectors()`) |
 | `clientAuth` | `ClientAuth` | `None` |  | 0.2.0 | ask for or require client certificates |
-| `trust` | `TrustConfig?` | `null` | `AnchoredCa` (optionally under `Pinned`) when `clientAuth` is not `None` | 0.2.0 | verifies client certificates |
+| `trust` | `TrustConfig?` | `null` | `AnchoredCa` or `ReloadableCa` (optionally under `Pinned`) when `clientAuth` is not `None` | 0.2.0 | verifies client certificates; a `ReloadableCa` rotates for TCP and QUIC alike |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` |  | 0.2.0 | TLS 1.3 suites |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP; the connector then serves no HTTP/3 (warning) |
 
 `EngineMain` keys ([EngineMain and configuration keys](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
-`kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate; off by default),
+`kuicksilver.tls.clientAuth` (`none`, `optional` or `required`) and `kuicksilver.tls.clientCa` (the PEM file of the CAs
+client certificates are verified against; set together),
+`kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
 `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
@@ -4978,7 +5104,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | Connection listener | `QuicEndpointConfig.listener` (Ktor: `http3 { connectionListener }`, server `connectionListener`) | `onOpened`, `onHandshakeCompleted`, `onZeroRtt`, `onPathChanged` and `onClosed` with the `QuicException.ConnectionLost` reason |
 | Endpoint counters | `QuicEndpoint.stats` / `Http3Endpoint.stats` (`EndpointStats`); Ktor server `engine.http3Stats` | refusals (`connectionsRefusedAcceptQueue`, `connectionsRefusedAdmission`, `connectionsRefusedLimits`, `connectionsRefusedShutdown`, `initialsDropped`), failed handshakes (`handshakesFailedTimeout`, `handshakesFailedTls`, `handshakesFailedOther`), 0-RTT, datagrams dropped at the socket or in a queue, path validations, internal failures (`uncaughtFailures`, `sendFailures`, `listenerFailures`) |
 | Connection counters | `QuicConnection.stats` (`ConnectionStats`) | `smoothedRtt`, `minRtt`, `cwnd`, `bytesInFlight`, `lostPackets`, `ptoCount`, `pathMtu`, `ecnState`, `datagramsDropped`, `datagramsDroppedSend`, `datagramsDroppedSocket`, `glitchTokensSpent`, `authenticationFailures`, `invalidResets` |
-| qlog | `quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(dir)) }`; Ktor client `http3 { qlog = … }`; Ktor server `qlog = …` | one `<odcid>_<client\|server>_<random>.sqlog` file (JSON-SEQ) per connection, in a directory only this user can change, readable with qvis; `ConnectionInfo.id` and the logger's `<id>` are the same original destination connection ID |
+| qlog | `quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(dir)) }`; Ktor client `http3 { qlog = … }`; Ktor server `qlog = …`; on Android `qlogDirectory(context)` (API 26 and up) gives a sink in the app's cache directory | one `<odcid>_<client\|server>_<random>.sqlog` file (JSON-SEQ) per connection, in a directory only this user can change, readable with qvis; `ConnectionInfo.id` and the logger's `<id>` are the same original destination connection ID |
 | Ktor client events | `engine { eventListener = object : KuicksilverEventListener() { … } }` | why a protocol was chosen (`protocolSelected` with a `ProtocolReason`), the race (`raceEnded`), `altSvcUsed`, `altSvcMarkedBroken`, `fallback`, `retry`, pool reuse |
 | Ktor client diagnostics | `response.kuicksilverDiagnostics`; the engine logger at `Info` | per response: the protocol, why not HTTP/3 (`FallbackReason`), the alternative, the race; one log line per such call |
 | Ktor server events | `eventListener = object : KuicksilverServerEventListener() { … }` | connections per protocol, `tlsHandshakeFailed`, requests with their failure |

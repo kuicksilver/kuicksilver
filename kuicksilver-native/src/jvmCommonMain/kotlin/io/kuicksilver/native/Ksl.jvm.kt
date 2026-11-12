@@ -115,6 +115,19 @@ public actual object Ksl {
         atEpochSeconds: Long,
     ): Int = KslNative.ctxVerifyChain(ctx, frameDerList(chainDer), name, atEpochSeconds)
 
+    public actual fun ctxVerifyChainPath(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        name: String?,
+        atEpochSeconds: Long,
+        path: MutableList<ByteArray>,
+    ): Int {
+        val out = IntArray(1)
+        val framed = KslNative.ctxVerifyChainPath(ctx, frameDerList(chainDer), name, atEpochSeconds, out)
+        if (out[0] == 0) path += unframeDerList(framed ?: return -1)
+        return out[0]
+    }
+
     public actual fun chainLevel(
         chainDer: List<ByteArray>,
         builtPath: Boolean,

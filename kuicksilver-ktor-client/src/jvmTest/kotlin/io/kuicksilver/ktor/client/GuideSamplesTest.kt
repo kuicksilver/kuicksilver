@@ -186,6 +186,25 @@ class GuideSamplesTest {
         client.close()
     }
 
+    @Test fun altSvcStoreFileSample() {
+        val filesDir =
+            java.nio.file.Files
+                .createTempDirectory("guide-altsvc")
+                .toFile() // Context.filesDir on Android
+        try {
+            // guide:ktor:altsvc-store-android
+            val client =
+                HttpClient(Kuicksilver) {
+                    engine {
+                        http3 { altSvcStore = FileAltSvcStore(File(filesDir, "altsvc.tsv")) }
+                    }
+                }
+            client.close()
+        } finally {
+            filesDir.deleteRecursively()
+        }
+    }
+
     @Test fun webTransportClientSample() =
         h3Test {
             val (server, port) =

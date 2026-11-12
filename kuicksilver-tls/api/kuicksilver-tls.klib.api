@@ -342,6 +342,14 @@ sealed interface io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustCon
             final fun <get-scope>(): io.kuicksilver.tls/PinScope // io.kuicksilver.tls/TrustConfig.Pinned.scope.<get-scope>|<get-scope>(){}[0]
     }
 
+    final class ReloadableCa : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.ReloadableCa|null[0]
+        final val current // io.kuicksilver.tls/TrustConfig.ReloadableCa.current|{}current[0]
+            final fun <get-current>(): io.kuicksilver.tls/TrustConfig.AnchoredCa // io.kuicksilver.tls/TrustConfig.ReloadableCa.current.<get-current>|<get-current>(){}[0]
+
+        final fun reload(io.kuicksilver.tls/TrustConfig.AnchoredCa) // io.kuicksilver.tls/TrustConfig.ReloadableCa.reload|reload(io.kuicksilver.tls.TrustConfig.AnchoredCa){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/TrustConfig.ReloadableCa.toString|toString(){}[0]
+    }
+
     final class Tofu : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.Tofu|null[0]
         constructor <init>(io.kuicksilver.tls/TofuStore) // io.kuicksilver.tls/TrustConfig.Tofu.<init>|<init>(io.kuicksilver.tls.TofuStore){}[0]
 
@@ -349,7 +357,9 @@ sealed interface io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustCon
             final fun <get-store>(): io.kuicksilver.tls/TofuStore // io.kuicksilver.tls/TrustConfig.Tofu.store.<get-store>|<get-store>(){}[0]
     }
 
-    final object Companion // io.kuicksilver.tls/TrustConfig.Companion|null[0]
+    final object Companion { // io.kuicksilver.tls/TrustConfig.Companion|null[0]
+        final fun reloadable(io.kuicksilver.tls/TrustConfig.AnchoredCa): io.kuicksilver.tls/TrustConfig.ReloadableCa // io.kuicksilver.tls/TrustConfig.Companion.reloadable|reloadable(io.kuicksilver.tls.TrustConfig.AnchoredCa){}[0]
+    }
 
     final object Platform : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.Platform|null[0]
         final fun toString(): kotlin/String // io.kuicksilver.tls/TrustConfig.Platform.toString|toString(){}[0]

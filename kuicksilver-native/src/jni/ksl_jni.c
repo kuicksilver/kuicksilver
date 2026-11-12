@@ -175,6 +175,34 @@ static jint j_ctx_verify_chain(JNIEnv *e, jclass c, jlong h, jbyteArray a, jstri
     drop(&b);
     return r == KSL_OK ? 0 : err ? err : -1;
 }
+static jbyteArray j_ctx_verify_chain_path(JNIEnv *e, jclass c, jlong h, jbyteArray a, jstring name, jlong at,
+                                          jintArray out) {
+    (void)c;
+    bytes b = get_bytes(e, a);
+    const char *n = cstr(e, name);
+    int err = 0;
+    size_t need = 0,
+           cap = b.n + 65536; /* the presented certificates plus an anchor; a second call when the anchor is larger */
+    uint8_t *buf = malloc(cap);
+    int r = buf ? ksl_ctx_verify_chain_path(CTX(h), b.p, b.n, n, (int64_t)at, &err, buf, cap, &need) : KSL_ERROR;
+    if (r == KSL_OK && need > cap) {
+        uint8_t *bigger = realloc(buf, need);
+        if (bigger) {
+            buf = bigger;
+            cap = need;
+            r = ksl_ctx_verify_chain_path(CTX(h), b.p, b.n, n, (int64_t)at, &err, buf, cap, &need);
+        } else {
+            r = KSL_ERROR;
+        }
+    }
+    cstr_free(e, name, n);
+    drop(&b);
+    jint code = r == KSL_OK ? 0 : err ? err : -1;
+    (*e)->SetIntArrayRegion(e, out, 0, 1, &code);
+    jbyteArray path = r == KSL_OK && need <= cap ? new_bytes(e, buf, need) : NULL;
+    free(buf);
+    return path;
+}
 static jint j_chain_level(JNIEnv *e, jclass c, jbyteArray a, jboolean built) {
     (void)c;
     bytes b = get_bytes(e, a);
@@ -859,6 +887,7 @@ static const JNINativeMethod methods[] = {
     {"ctxSetOption", "(JII)I", (void *)j_ctx_set_option},
     {"ctxFreeze", "(J)I", (void *)j_ctx_freeze},
     {"ctxVerifyChain", "(J[B" S_STR "J)I", (void *)j_ctx_verify_chain},
+    {"ctxVerifyChainPath", "(J[B" S_STR "J[I)[B", (void *)j_ctx_verify_chain_path},
     {"chainLevel", "([BZ)I", (void *)j_chain_level},
     {"ctxLastError", "(J[I)" S_STR, (void *)j_ctx_last_error},
     {"sslNew", "(JI)J", (void *)j_ssl_new},

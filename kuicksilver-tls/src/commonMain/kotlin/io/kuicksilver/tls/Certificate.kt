@@ -41,6 +41,13 @@ public class Certificate(
      */
     public val notAfterEpochSeconds: Long get() = parsed.notAfter ?: Der.fail()
 
+    /**
+     * Whether the basicConstraints extension marks this a CA certificate (`cA` TRUE, RFC 5280 section 4.2.1.9). A trust
+     * bundle uses it to warn about a leaf among its anchors.
+     */
+    @InternalKuicksilverApi
+    public val isCa: Boolean get() = parsed.isCa
+
     /** Equal when the encoded certificates are. */
     override fun equals(other: Any?): Boolean = other is Certificate && other.encoded.contentEquals(encoded)
 
@@ -97,6 +104,7 @@ internal object Der {
         val notAfter: Long?,
         val dnsNames: List<String>,
         val ipAddresses: List<ByteArray>,
+        val isCa: Boolean,
     ) // null: a time this walker cannot read
 
     private class Tlv(
@@ -169,6 +177,7 @@ internal object Der {
         i++ // subjectPublicKeyInfo
         val dns = ArrayList<String>()
         val ips = ArrayList<ByteArray>()
+        var isCa = false
         val ext = fields.drop(i).firstOrNull { it.tag == 0xa3 }
         if (ext != null) {
             for (e in children(b, tlv(b, ext.start, ext.end))) {
@@ -186,9 +195,21 @@ internal object Der {
                         }
                     }
                 }
+                // basicConstraints (2.5.29.19): SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLenConstraint INTEGER OPTIONAL }
+                if (oid.tag == 0x06 && oid.end - oid.start == 3 && b[oid.start] == 0x55.toByte() && b[oid.start + 1] == 0x1d.toByte() &&
+                    b[oid.start + 2] == 0x13.toByte()
+                ) {
+                    // informational only: an extension this walker cannot read leaves the names and validity readable
+                    isCa =
+                        runCatching {
+                            val value = parts.last()
+                            val first = if (value.tag == 0x04) children(b, tlv(b, value.start, value.end)).firstOrNull() else null
+                            first != null && first.tag == 0x01 && first.end - first.start == 1 && b[first.start] != 0.toByte()
+                        }.getOrDefault(false)
+                }
             }
         }
-        return CertificateFields(notBefore, notAfter, dns, ips)
+        return CertificateFields(notBefore, notAfter, dns, ips, isCa)
     }
 
     private fun timeOrNull(

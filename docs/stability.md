@@ -89,8 +89,9 @@ The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_AB
 identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters, ABI 7 the ICMP
 hints for PMTUD: `ksl_udp_take_ptb`, `ksl_udp_emsgsize`, and a receive that no longer fails on a queued ICMP error; under 7 too,
 additive, `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, `ksl_udp_sender` for
-several sender threads on one socket, and `ksl_chain_level` with
-`KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built). It is bumped on
+several sender threads on one socket, `ksl_chain_level` with
+`KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, and `ksl_ctx_verify_chain_path`
+for the path a chain re-verification built). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
 `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
 "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the
@@ -226,6 +227,7 @@ type is experimental, so are its members.
 
 | API | Feature |
 |---|---|
+| `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`, `TrustConfig.ReloadableCa`, `TrustConfig.reloadable` | rotating the server certificate and the client CA bundle without a restart |
 | `EarlyDataState`, `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT: the client's mode and the plumbing between TLS and QUIC (ADR-0015) |
 
 ### `kuicksilver-quic`
@@ -240,6 +242,7 @@ type is experimental, so are its members.
 | `ConnectionCore`, `EndpointCore`, `QuicConnection.core`, `QuicConfig.toBuilder()`, `QuicEndpointConfig.toBuilder()` | the sans-IO core used directly |
 | `NetworkMigrator`, `MigrationEvent`, `QuicConnection.rebind` | automatic migration (`QuicConnection.migrate`, `addPath`, `probe`, `switchTo` are stable) |
 | Android: `QuicConnection.followDefaultNetwork(connectivityManager, scope)`, `ConnectivityManager.defaultNetworks()`, `DatagramIo.open(local, network, prefer)` | following the default network on Android |
+| Android: `qlogDirectory(context, name)` | a qlog directory in the app's cache directory |
 | Apple: `QuicConnection.followDefaultNetwork(scope)`, `nwPathUpdates()`, `NwPathKey`, `NwInterfaceType`, `DatagramIo.open(local, interfaceIndex, prefer)` | following the default network on iOS and macOS |
 | `PathFailureReason`, `PathValidationException`, the `reason` of `PathEvent.Failed` and `ConnectionEvent.PathFailed` | why a path failed (`NoSpareConnectionId`, …) |
 | `PathEvent.SocketLost`, `SocketDefunctException` | sockets the system took away (suspended iOS apps) |
@@ -271,12 +274,14 @@ the connection core are internal.
 | `maxConnectionsCount`, `maxConnectionsPerRoute`, `idleTimeout`, `maxConnectionLifetime` | connection limits and idle cleanup |
 | `logger`, `eventListener`, `KuicksilverEventListener`, `ProtocolReason`, `http3 { qlog; connectionListener }` | observability |
 | `http2 { enabled; settings; pingInterval }`, `Http2ClientConfig`, `FallbackReason.H2Refused` | HTTP/2 on the TCP path |
+| JVM and Android: `FileAltSvcStore(file)` | the persistent Alt-Svc store from a `java.io.File` (Android API 24 and up) |
 
 ### `kuicksilver-ktor-server`
 
 | API | Feature |
 |---|---|
 | `quicEarlyData`, `ApplicationRequest.receivedEarly` | 0-RTT |
+| `identityReloadInterval` | `EngineMain` watching the certificate and client CA files |
 | `logger`, `qlog`, `connectionListener`, `eventListener`, `KuicksilverServerEventListener` | observability |
 | `http2`, `http2Settings` | HTTP/2 on TLS connectors (opt-in) |
 

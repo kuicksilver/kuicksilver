@@ -95,6 +95,37 @@ class ReloadableIdentityTest {
             r.close()
         }
 
+    /**
+     * A TCP connection accepted before a reload whose ClientHello arrives after it presents the new identity: the identity is
+     * taken when the ClientHello is there, not at accept (so a replaced key is not used for hellos that come later).
+     */
+    @Test fun connectionAcceptedBeforeReloadPresentsTheIdentityOfItsClientHello(): Unit =
+        runBlocking(Dispatchers.Default) {
+            val r = TlsIdentity.reloadable(identityA())
+            val pair = ChannelPair()
+            // undispatched: the server runs until it waits for the ClientHello, which has not been sent
+            val sd =
+                async(
+                    start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED,
+                ) { TlsConnection.server(pair.serverIn, pair.serverOut, server(r)) }
+            r.reload(identityB())
+            val cd =
+                async {
+                    TlsConnection.client(
+                        pair.clientIn,
+                        pair.clientOut,
+                        TcpFixtures.client(),
+                        kotlin.coroutines.EmptyCoroutineContext,
+                        SessionCache(),
+                    )
+                }
+            val (c, s) = withTimeout(20.seconds) { cd.await() to sd.await() }
+            assertEquals(leafB, c.peerCertificates[0], "the identity current when the ClientHello arrived")
+            exchange(c, s)
+            closeAll(c, s)
+            r.close()
+        }
+
     @Test fun liveConnectionKeepsOldIdentityAfterReload(): Unit =
         runBlocking {
             val a = identityA()

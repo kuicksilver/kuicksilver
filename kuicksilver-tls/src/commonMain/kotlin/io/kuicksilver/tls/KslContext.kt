@@ -38,6 +38,11 @@ internal class KslContext private constructor(
     val identityTag: String?,
     private val quicTickets: Boolean,
     private val earlyData: Boolean,
+    /**
+     * The bundle a `TrustConfig.ReloadableCa` in [config] gave when this context was built (its roots are this context's
+     * client-certificate anchors), null for any other trust: a server's handshakes share a context only under the same bundle.
+     */
+    val trustSnapshot: TrustConfig.AnchoredCa?,
 ) {
     /** One holder's reference to [ctx]: [close] gives it back once, so a second close cannot take another holder's reference. */
     class Lease internal constructor(
@@ -77,6 +82,60 @@ internal class KslContext private constructor(
 
     /** Whether this context is the one [acquire] would build for these arguments. */
     fun serves(
+        config: TlsConfig,
+        quic: Boolean,
+        quicTickets: Boolean,
+        earlyData: Boolean,
+        trustSnapshot: TrustConfig.AnchoredCa?,
+    ): Boolean = sameKind(config, quic, quicTickets, earlyData) && sameBundle(this.trustSnapshot, trustSnapshot)
+
+    /**
+     * The client certificate check at the end of a server handshake under a `TrustConfig.ReloadableCa`: OpenSSL verified
+     * [presented] (leaf first) against [trustSnapshot], the bundle current when the ClientHello arrived; when a reload has
+     * replaced that bundle with other certificates since, the chain is verified again (at the context's security level)
+     * against the bundle current now, and the pins of a `TrustConfig.Pinned` around it are checked on the path built under it,
+     * until the bundle it passed is still the current one. So after `reload` returns no handshake completes with a
+     * certificate only a removed CA vouches for, however its flights were timed. Returns null when it passes (and for a client
+     * without a certificate, any other trust, or a bundle whose certificates did not change), else why it failed. A resumed
+     * session (no Certificate message: [presented] holds only the leaf its session kept) whose bundle changed during its
+     * handshake passes only if that leaf chains to the new bundle without intermediates.
+     */
+    fun recheckClientChain(presented: List<Certificate>): VerifyReason? {
+        var verifiedUnder = trustSnapshot ?: return null
+        if (presented.isEmpty()) return null
+        while (true) {
+            val now = clientCaSnapshot(config) ?: return null
+            if (sameBundle(now, verifiedUnder)) return null
+            // a context of its own, never registered: an SNI override's configuration is a copy per connection, and a rare
+            // recheck must not push the shared contexts out of their registry
+            val lease =
+                try {
+                    create(config, quic, quicTickets, earlyData)
+                } catch (e: IllegalStateException) {
+                    return VerifyReason.Custom("the client CA bundle changed and cannot be checked again: ${e.message}")
+                }
+            try {
+                val under = lease.ctx.trustSnapshot ?: return null
+                val path = ArrayList<ByteArray>()
+                val err = Ksl.ctxVerifyChainPath(lease.ctx.handle, presented.map { it.encoded }, null, 0, path)
+                if (err != 0) {
+                    return verifyReasonOf(if (err > 0) err else 0, 0, presented)
+                        ?: VerifyReason.Custom("the client certificate does not pass the reloaded CA bundle")
+                }
+                // pins (CA scope too) hold on the path built under the new bundle, not on the one of the handshake
+                val pinned = Verification(config).pinCheck(path.map(::Certificate))
+                if (pinned is VerifyResult.Rejected) return pinned.reason
+                verifiedUnder = under
+            } finally {
+                lease.close()
+            }
+        }
+    }
+
+    /** Built for the same configuration and kind as [other], whatever the client CA bundle. */
+    fun sameKindAs(other: KslContext): Boolean = sameKind(other.config, other.quic, other.quicTickets, other.earlyData)
+
+    private fun sameKind(
         config: TlsConfig,
         quic: Boolean,
         quicTickets: Boolean,
@@ -131,7 +190,7 @@ internal class KslContext private constructor(
             quic: Boolean,
             quicTickets: Boolean = false,
             earlyData: Boolean = false,
-        ): Lease = Lease(build(config, quic, quicTickets, earlyData, null)!!)
+        ): Lease = Lease(build(config, quic, quicTickets, earlyData, null, clientCaSnapshot(config))!!)
 
         /**
          * The context for one more session of [config], the caller's to close (one reference, its [Lease]). A server configuration with an
@@ -140,8 +199,10 @@ internal class KslContext private constructor(
          * `TlsIdentity.Reloadable` takes its [TlsIdentity.Reloadable.current] snapshot per handshake, as before, so a reload makes
          * the next handshake build a context from the new identity. A context is immutable once built (`ksl_ctx_freeze`), and
          * everything that differs per connection lives in the session (`ksl_ssl`); the process ticket keys are looked up per
-         * ticket, so they rotate under a shared context. Anything else (a client, an SNI override, a server without an identity)
-         * gets a context of its own ([create]).
+         * ticket, so they rotate under a shared context. A `TrustConfig.ReloadableCa` is read once per handshake as well: the
+         * context also carries the client CA bundle, so contexts are shared per identity snapshot and bundle, and the first
+         * handshake after a reload builds one with the new bundle. Anything else (a client, an SNI override, a server without an
+         * identity) gets a context of its own ([create]).
          *
          * @throws IllegalStateException when the identity is closed.
          */
@@ -152,10 +213,14 @@ internal class KslContext private constructor(
             earlyData: Boolean = false,
         ): Lease {
             if (config.role != TlsRole.Server) return create(config, quic, quicTickets, earlyData)
+            // the client CA bundle of this handshake, read once: a reload after this line is for the next handshake
+            val ca = clientCaSnapshot(config)
             val ctx =
                 when (val id = config.identity) {
                     is TlsIdentity.InMemory -> {
-                        id.serverContexts.acquire(config, quic, quicTickets, earlyData) { build(config, quic, quicTickets, earlyData, id) }
+                        id.serverContexts.acquire(config, quic, quicTickets, earlyData, ca) {
+                            build(config, quic, quicTickets, earlyData, id, ca)
+                        }
                             ?: throw IllegalStateException("identity closed")
                     }
 
@@ -166,7 +231,8 @@ internal class KslContext private constructor(
                                 quic,
                                 quicTickets,
                                 earlyData,
-                            ) { build(config, quic, quicTickets, earlyData, cur) }
+                                ca,
+                            ) { build(config, quic, quicTickets, earlyData, cur, ca) }
                         }
                     }
 
@@ -181,6 +247,8 @@ internal class KslContext private constructor(
          * Builds and freezes a context. [snapshot]: the identity to configure instead of resolving `config.identity` (its key
          * taken with [TlsIdentity.InMemory.tryAcquire]); null is returned, and nothing is left behind, when that snapshot's key
          * is already gone (closed and released): the caller retries with the current one or reports the identity closed.
+         * [ca]: the bundle of a `TrustConfig.ReloadableCa` in `config.trust` this context verifies client certificates against
+         * (read once by the caller), null for any other trust.
          */
         private fun build(
             config: TlsConfig,
@@ -188,6 +256,7 @@ internal class KslContext private constructor(
             quicTickets: Boolean,
             earlyData: Boolean,
             snapshot: TlsIdentity.InMemory?,
+            ca: TrustConfig.AnchoredCa?,
         ): KslContext? {
             KslLoader.ensureLoaded()
             config.validateFor(quic)
@@ -200,15 +269,16 @@ internal class KslContext private constructor(
                 try {
                     val tag: String?
                     try {
-                        tag = configure(h, config, quic, snapshot)
-                        if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData)
+                        val trust = config.trust.withSnapshot(ca)
+                        tag = configure(h, config, quic, snapshot, trust)
+                        if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData, trust)
                     } catch (
                         e: KslException.Internal,
                     ) {
                         throw TlsException.Config("invalid TLS configuration: ${e.message}")
                     }
                     Ksl.ctxFreeze(h)
-                    return KslContext(h, config, quic, tag, quicTickets, earlyData)
+                    return KslContext(h, config, quic, tag, quicTickets, earlyData, ca)
                 } catch (t: Throwable) {
                     Ksl.ctxFree(h)
                     throw t
@@ -218,16 +288,28 @@ internal class KslContext private constructor(
             }
         }
 
+        /**
+         * The bundle of a `TrustConfig.ReloadableCa` in a server's `config.trust` that this handshake verifies client
+         * certificates against, read once; null for any other trust, and when the server asks for no client certificate (the
+         * bundle then plays no part: a reload neither builds another context nor voids tickets).
+         */
+        fun clientCaSnapshot(config: TlsConfig): TrustConfig.AnchoredCa? =
+            if (config.role == TlsRole.Server && config.clientAuth != ClientAuth.None) config.trust.reloadableSnapshot() else null
+
         /** [identityTag] of [leaf]: the SHA-256 of its DER, hex. */
         private fun certificateTag(leaf: Certificate): String =
             Ksl.sha2(256, leaf.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
-        /** Returns the [identityTag] of the identity it configured: [snapshot] (whose key the caller holds) when given. */
+        /**
+         * Returns the [identityTag] of the identity it configured: [snapshot] (whose key the caller holds) when given. [trust] is
+         * `config.trust` with a ReloadableCa replaced by the bundle this context was built for.
+         */
         private fun configure(
             h: Long,
             config: TlsConfig,
             quic: Boolean,
             snapshot: TlsIdentity.InMemory?,
+            trust: TrustConfig,
         ): String? {
             if (config.alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(config.alpn))
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
@@ -242,9 +324,9 @@ internal class KslContext private constructor(
             if (config.role ==
                 TlsRole.Client
             ) {
-                rootsOf(config.trust)?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
+                rootsOf(trust)?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
             } else {
-                rootsOf(config.trust)?.takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
+                rootsOf(trust)?.takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
             }
             if (config.role == TlsRole.Client) {
                 val mode = verifyModeFor(config)
@@ -276,7 +358,8 @@ internal class KslContext private constructor(
                     // tickets are issued explicitly after the pin verdict when client certificates are pinned (ADR-0012); with 0, ksl also
                     // suppresses the in-handshake TLS 1.2 ticket, which would precede the verdict
                     // a ticket resumes only under the trust configuration that issued it (and, for pinned clients, only after its verdict)
-                    Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "server|${config.clientAuth}|${config.trust.cacheKey()}".encodeToByteArray()))
+                    // and so, with a ReloadableCa, under the bundle it was authenticated with: a reload makes older tickets resume nothing
+                    Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "server|${config.clientAuth}|${trust.cacheKey()}".encodeToByteArray()))
                     Ksl.ctxSetOption(
                         h,
                         KslConst.OPT_NUM_TICKETS,
@@ -299,6 +382,7 @@ internal class KslContext private constructor(
             h: Long,
             config: TlsConfig,
             earlyData: Boolean,
+            trust: TrustConfig,
         ) {
             useTicketKeys(h, config.sessionTickets)
             Ksl.ctxSetOption(
@@ -308,7 +392,7 @@ internal class KslContext private constructor(
                     .toInt()
                     .coerceAtLeast(1),
             )
-            Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "quic|server|${config.clientAuth}|${config.trust.cacheKey()}".encodeToByteArray()))
+            Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "quic|server|${config.clientAuth}|${trust.cacheKey()}".encodeToByteArray()))
             Ksl.ctxSetOption(h, KslConst.OPT_NUM_TICKETS, 2)
             if (earlyData) Ksl.ctxSetOption(h, KslConst.OPT_EARLY_DATA, 1)
         }
@@ -364,10 +448,11 @@ internal class SharedServerContexts {
         quic: Boolean,
         quicTickets: Boolean,
         earlyData: Boolean,
+        ca: TrustConfig.AnchoredCa?,
         build: () -> KslContext?,
     ): KslContext? {
         val first = entries.load() ?: return null
-        find(first, config, quic, quicTickets, earlyData)?.let {
+        find(first, config, quic, quicTickets, earlyData, ca)?.let {
             touch(first, it)
             return it
         }
@@ -375,15 +460,21 @@ internal class SharedServerContexts {
         while (true) {
             // closed meanwhile: the context was built from a key still held, so this handshake goes on with it, unshared
             val list = entries.load() ?: return made
-            find(list, config, quic, quicTickets, earlyData)?.let {
+            // the bundle was reloaded while this context was built or since: it serves this handshake (which read the bundle
+            // before the reload) and goes with it, unshared, so the registry never takes a context of a replaced bundle
+            if (ca != null && !sameBundle(config.trust.reloadableSnapshot(), ca)) return made
+            find(list, config, quic, quicTickets, earlyData, ca)?.let {
                 made.release() // another session built one first: share that one
                 touch(list, it)
                 return it
             }
             check(made.tryRetain()) // the registry's reference
-            val grown = list + made
+            // a context of an older client CA bundle serves no new handshake: the first context of the current one replaces it
+            val stale = if (ca != null) list.filter { it.sameKindAs(made) && !sameBundle(it.trustSnapshot, ca) } else emptyList()
+            val grown = list.filter { it !in stale } + made
             val evicted = if (grown.size > MAX) grown[0] else null
             if (entries.compareAndSet(list, if (evicted != null) grown.drop(1) else grown)) {
+                stale.forEach { it.release() }
                 evicted?.release()
                 return made
             }
@@ -397,8 +488,9 @@ internal class SharedServerContexts {
         quic: Boolean,
         quicTickets: Boolean,
         earlyData: Boolean,
+        ca: TrustConfig.AnchoredCa?,
     ): KslContext? {
-        for (c in list) if (c.serves(config, quic, quicTickets, earlyData) && c.tryRetain()) return c
+        for (c in list) if (c.serves(config, quic, quicTickets, earlyData, ca) && c.tryRetain()) return c
         return null
     }
 
@@ -415,6 +507,9 @@ internal class SharedServerContexts {
         if (i >= 0 && i < list.size / 2) entries.compareAndSet(list, list.filter { it !== c } + c)
     }
 
+    /** The contexts the registry holds now (tests). */
+    internal fun contextsForTest(): List<KslContext> = entries.load().orEmpty()
+
     /** Drops the registry's references; contexts still in use go with their last session. */
     fun close() {
         entries.exchange(null)?.forEach { it.release() }
@@ -425,6 +520,32 @@ internal class SharedServerContexts {
         const val MAX = 8
     }
 }
+
+/** The bundle a [TrustConfig.ReloadableCa] in this trust (alone or as the base of Pinned) holds now; null for any other trust. */
+internal fun TrustConfig.reloadableSnapshot(): TrustConfig.AnchoredCa? =
+    when (this) {
+        is TrustConfig.ReloadableCa -> current
+        is TrustConfig.Pinned -> (base as? TrustConfig.ReloadableCa)?.current
+        else -> null
+    }
+
+/**
+ * Whether two client CA bundles are the same trust: one object, or the same certificates in the same order (a reload with
+ * unchanged content changes nothing: no other context, no recheck, the tickets stay).
+ */
+internal fun sameBundle(
+    a: TrustConfig.AnchoredCa?,
+    b: TrustConfig.AnchoredCa?,
+): Boolean = a === b || (a != null && b != null && a.derKey == b.derKey)
+
+/** This trust with its [TrustConfig.ReloadableCa] replaced by [ca] (from [reloadableSnapshot]); unchanged when [ca] is null. */
+internal fun TrustConfig.withSnapshot(ca: TrustConfig.AnchoredCa?): TrustConfig =
+    when {
+        ca == null -> this
+        this is TrustConfig.ReloadableCa -> ca
+        this is TrustConfig.Pinned && base is TrustConfig.ReloadableCa -> TrustConfig.Pinned(pins, scope, ca)
+        else -> this
+    }
 
 /**
  * Session ticket keys stay in `ksl` (threat model 1, 3.7): the process-wide generated keys are made and rotated there (current +
@@ -442,73 +563,81 @@ internal fun useTicketKeys(
 }
 
 /** Maps a `ksl` failure to the TLS exception model and the alert to send (RFC 9846 section 6.2). */
+
+/** The [VerifyReason] of an X509_V_ERR_* code (null for 0), or, without one, of the TLS alert [code] the failure carries. */
+internal fun verifyReasonOf(
+    x509: Int,
+    code: Int,
+    presented: List<Certificate>,
+): VerifyReason? =
+    when (x509) {
+        62, 64 -> {
+            VerifyReason.HostnameMismatch(
+                "",
+                presented.firstOrNull()?.let { c ->
+                    runCatching {
+                        c.dnsNames +
+                            c.ipAddresses.map { ip -> ip.joinToString(".") { b -> (b.toInt() and 0xff).toString() } }
+                    }.getOrNull()
+                }
+                    ?: emptyList(),
+            )
+        }
+
+        // HOSTNAME_MISMATCH, IP_ADDRESS_MISMATCH; a certificate the walker cannot read reports no names instead of failing
+        9 -> {
+            VerifyReason.NotYetValid
+        }
+
+        10 -> {
+            VerifyReason.Expired
+        }
+
+        23 -> {
+            VerifyReason.Revoked
+        }
+
+        26 -> {
+            VerifyReason.InvalidPurpose
+        }
+
+        2, 18, 19, 20, 21, 22, 24, 27 -> {
+            VerifyReason.UnknownIssuer
+        }
+
+        // issuer / self-signed / untrusted family; 22 CERT_CHAIN_TOO_LONG (also ksl's chain walk past its bounds), unknown_ca on the wire
+        7, 8 -> {
+            VerifyReason.BadSignature
+        }
+
+        // EE_KEY_TOO_SMALL, CA_KEY_TOO_SMALL; CA_MD_TOO_WEAK: below the security level (ksl on the pause path, OpenSSL on its own)
+        66, 67 -> {
+            VerifyReason.WeakKey
+        }
+
+        68 -> {
+            VerifyReason.WeakSignature
+        }
+
+        else -> {
+            when {
+                x509 != 0 -> VerifyReason.Custom("X509 verification error $x509")
+                code == 42 -> VerifyReason.BadSignature
+                code == 43 -> VerifyReason.InvalidPurpose
+                code == 44 -> VerifyReason.Revoked
+                code == 45 -> VerifyReason.Expired
+                code == 48 -> VerifyReason.UnknownIssuer
+                else -> null
+            }
+        }
+    }
+
 internal fun KslException.Internal.toTlsFailure(presented: List<Certificate>): Pair<TlsException, Int?> {
     val received = alert and 0x100 != 0
     val code = alert and 0xff
     val x509 = alert ushr 16 // X509_V_ERR_* of a local verification failure
     if (received && code != 0) return TlsException.AlertReceived(code, alertName(code)) to null
-    val reason: VerifyReason? =
-        when (x509) {
-            62, 64 -> {
-                VerifyReason.HostnameMismatch(
-                    "",
-                    presented.firstOrNull()?.let { c ->
-                        runCatching {
-                            c.dnsNames +
-                                c.ipAddresses.map { ip -> ip.joinToString(".") { b -> (b.toInt() and 0xff).toString() } }
-                        }.getOrNull()
-                    }
-                        ?: emptyList(),
-                )
-            }
-
-            // HOSTNAME_MISMATCH, IP_ADDRESS_MISMATCH; a certificate the walker cannot read reports no names instead of failing
-            9 -> {
-                VerifyReason.NotYetValid
-            }
-
-            10 -> {
-                VerifyReason.Expired
-            }
-
-            23 -> {
-                VerifyReason.Revoked
-            }
-
-            26 -> {
-                VerifyReason.InvalidPurpose
-            }
-
-            2, 18, 19, 20, 21, 22, 24, 27 -> {
-                VerifyReason.UnknownIssuer
-            }
-
-            // issuer / self-signed / untrusted family; 22 CERT_CHAIN_TOO_LONG (also ksl's chain walk past its bounds), unknown_ca on the wire
-            7, 8 -> {
-                VerifyReason.BadSignature
-            }
-
-            // EE_KEY_TOO_SMALL, CA_KEY_TOO_SMALL; CA_MD_TOO_WEAK: below the security level (ksl on the pause path, OpenSSL on its own)
-            66, 67 -> {
-                VerifyReason.WeakKey
-            }
-
-            68 -> {
-                VerifyReason.WeakSignature
-            }
-
-            else -> {
-                when {
-                    x509 != 0 -> VerifyReason.Custom("X509 verification error $x509")
-                    code == 42 -> VerifyReason.BadSignature
-                    code == 43 -> VerifyReason.InvalidPurpose
-                    code == 44 -> VerifyReason.Revoked
-                    code == 45 -> VerifyReason.Expired
-                    code == 48 -> VerifyReason.UnknownIssuer
-                    else -> null
-                }
-            }
-        }
+    val reason: VerifyReason? = verifyReasonOf(x509, code, presented)
     return if (reason != null &&
         !received
     ) {

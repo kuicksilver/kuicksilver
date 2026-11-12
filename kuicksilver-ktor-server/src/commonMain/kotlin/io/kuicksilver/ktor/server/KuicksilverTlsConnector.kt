@@ -27,12 +27,16 @@ public class KuicksilverTlsConnector private constructor(
     override val port: Int,
     /**
      * The server certificate chain and key, shared by TCP and QUIC. A `TlsIdentity.Reloadable` replaces them at run time:
-     * each new handshake on either takes the identity current when it starts, running connections keep theirs.
+     * each new handshake on either takes the identity current when its ClientHello arrives, running connections keep theirs.
      */
     public val identity: TlsIdentity,
     /** Whether a client certificate is asked for ([ClientAuth.Optional]) or required ([ClientAuth.Required]). */
     public val clientAuth: ClientAuth,
-    /** Verifies client certificates (`TrustConfig.AnchoredCa`, optionally pinned); needed unless [clientAuth][KuicksilverTlsConnector.clientAuth] is None. */
+    /**
+     * Verifies client certificates (`TrustConfig.AnchoredCa`, optionally pinned); needed unless [clientAuth][KuicksilverTlsConnector.clientAuth] is None.
+     * A `TrustConfig.ReloadableCa` replaces the CA bundle at run time: once `reload` returns, no handshake on TCP or QUIC
+     * accepts a certificate only a removed CA vouches for; running connections keep going.
+     */
     public val trust: TrustConfig?,
     /** The TLS 1.3 cipher suites in preference order. */
     public val cipherSuites: CipherSuites,
@@ -89,7 +93,10 @@ public class KuicksilverTlsConnector private constructor(
         /** Ask for ([ClientAuth.Optional]) or require ([ClientAuth.Required]) a client certificate; [ClientAuth.None] by default. */
         public var clientAuth: ClientAuth = ClientAuth.None
 
-        /** Verifies client certificates; required with [clientAuth] other than None. */
+        /**
+         * Verifies client certificates; required with [clientAuth] other than None. A `TrustConfig.ReloadableCa` can be
+         * replaced while the server runs (docs/guide/tls.md, "Rotating the client CA").
+         */
         public var trust: TrustConfig? = null
 
         /** The TLS 1.3 cipher suites in preference order; AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305 by default. */

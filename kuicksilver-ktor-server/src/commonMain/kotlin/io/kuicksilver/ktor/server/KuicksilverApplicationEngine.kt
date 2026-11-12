@@ -23,8 +23,10 @@ import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
@@ -141,7 +143,9 @@ public class KuicksilverApplicationEngine(
          * them once at startup. A new chain is applied once two reads a second apart agree and the key matches it; a failure
          * keeps the identity in use, is logged, and is retried after 1 s, then twice as long each time up to this interval.
          * New handshakes get the new certificate, running connections keep theirs (docs/guide/ktor.md, "Certificate
-         * rotation"). It needs those two keys: the server refuses to start with it set otherwise. At least 1 second.
+         * rotation"). The client CA file of `kuicksilver.tls.clientCa`, when set, is watched at the same interval and by the
+         * same rules: new handshakes verify client certificates against the new bundle. It needs those two keys: the server
+         * refuses to start with it set otherwise. At least 1 second.
          *
          * @throws IllegalArgumentException when set below 1 second.
          */
@@ -163,6 +167,18 @@ public class KuicksilverApplicationEngine(
 
         /** Tests replace how the watcher reads the chain file (a read that never returns, say); null reads the file. */
         internal var identityReadTextForTest: ((String) -> String)? = null
+
+        /** Set by `EngineMain` (`kuicksilver.tls.clientAuth`): whether the connectors [identity] serves ask for a client certificate. */
+        internal var clientAuth: ClientAuth = ClientAuth.None
+
+        /**
+         * Set by `EngineMain` (`kuicksilver.tls.clientCa`): verifies client certificates on the connectors [identity] serves; a
+         * `TrustConfig.ReloadableCa` when [identityReloadInterval] is set.
+         */
+        internal var clientTrust: TrustConfig? = null
+
+        /** The PEM file [clientTrust] was read from, set by `EngineMain`; watched with [identityReloadInterval]. */
+        internal var clientCaFile: String? = null
 
         /** Announce HTTP/3 with `Alt-Svc: h3=":<port>"; ma=86400` on HTTP/1.1 responses over TLS (on by default). */
         public var altSvc: Boolean = true
@@ -543,6 +559,8 @@ public class KuicksilverApplicationEngine(
                             host = c.host
                             port =
                                 c.port
+                            clientAuth = configuration.clientAuth
+                            trust = configuration.clientTrust
                         }.build()
                         .let { Listener(it, it) }
                 }
@@ -550,6 +568,14 @@ public class KuicksilverApplicationEngine(
             }
 
             else -> {
+                // Ktor's sslConnector (JVM `-sslPort`, `ktor.security.ssl.*`) takes client certificates from its own trustStore:
+                // EngineMain's client CA keys would silently not apply to it, so the combination is refused
+                if (configuration.clientTrust != null) {
+                    throw TlsException.Config(
+                        "kuicksilver.tls.clientAuth and kuicksilver.tls.clientCa apply to the port of kuicksilver.tls.certificateChain, " +
+                            "not to $c: use ktor.security.ssl.trustStore there, or serve only the kuicksilver.tls port",
+                    )
+                }
                 platformTlsConnector(c)?.let { Listener(it, it) }
                     ?: throw TlsException.Config(
                         "connector $c is not supported by the Kuicksilver engine: use tlsConnector(identity) or a plain connector",
@@ -657,7 +683,8 @@ public class KuicksilverApplicationEngine(
     }
 
     /**
-     * The PEM file watcher of [Configuration.identityReloadInterval] from startup until the stop begins; null without one. It runs
+     * The PEM file watchers of [Configuration.identityReloadInterval] (the identity's files and the client CA file) from startup
+     * until the stop begins; null without one. It runs
      * outside the server job: a check stuck in a read that cannot be interrupted (a hung network file system, a FIFO at the path)
      * must not keep the server job, and so the stop, from completing.
      */
@@ -667,19 +694,29 @@ public class KuicksilverApplicationEngine(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun startIdentityWatcher() {
         val interval = configuration.identityReloadInterval ?: return
-        val (chain, key) = configuration.identityFiles ?: return
-        val target = configuration.identity as? TlsIdentity.Reloadable ?: return
         val settle = configuration.identitySettleForTest ?: 1.seconds
         val readText = configuration.identityReadTextForTest
-        identityWatcher =
-            CoroutineScope(engineDispatcher).launch {
-                val watcher =
+        val identity =
+            configuration.identityFiles?.let { (chain, key) ->
+                (configuration.identity as? TlsIdentity.Reloadable)?.let { target ->
                     if (readText == null) {
                         IdentityFileWatcher(chain, key, target, environment.log, settle = settle)
                     } else {
                         IdentityFileWatcher(chain, key, target, environment.log, readText = readText, settle = settle)
                     }
-                watcher.run(interval)
+                }
+            }
+        val clientCa =
+            configuration.clientCaFile?.let { path ->
+                (configuration.clientTrust as? TrustConfig.ReloadableCa)?.let { target ->
+                    ClientCaFileWatcher(path, target, environment.log, settle = settle)
+                }
+            }
+        if (identity == null && clientCa == null) return
+        identityWatcher =
+            CoroutineScope(engineDispatcher).launch {
+                identity?.let { launch { it.run(interval) } }
+                clientCa?.let { launch { it.run(interval) } }
             }
     }
 

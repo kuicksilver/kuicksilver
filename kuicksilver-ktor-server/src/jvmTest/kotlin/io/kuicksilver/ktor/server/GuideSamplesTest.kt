@@ -72,6 +72,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
         assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
         assertTrue("guide:ktor:certificate-rotation" in guide, "marker certificate-rotation")
+        assertTrue("guide:ktor:client-ca-rotation" in guide, "marker client-ca-rotation")
         assertTrue("guide:ktor:websocket-deflate-server" in guide, "marker websocket-deflate-server")
         assertTrue("guide:ktor:http3-advertising" in guide, "marker http3-advertising")
         assertTrue("guide:ktor:http2-server" in guide, "marker http2-server")
@@ -183,6 +184,30 @@ class GuideSamplesTest {
                 .single() is KuicksilverTlsConnector,
         ) // ServerIdentityReloadTest serves it
         assertEquals(Certificate(TestCerts.serverViaIntermediate), identity.current.chain[0])
+        identity.close()
+    }
+
+    @Test fun clientCaRotationSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        val caBundlePem = TestCerts.toPem("CERTIFICATE", TestCerts.testCa)
+        val renewedBundlePem = TestCerts.toPem("CERTIFICATE", TestCerts.otherCa)
+        // guide:ktor:client-ca-rotation
+        val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) {
+                    port = 0
+                    clientAuth = ClientAuth.Required
+                    trust = clientCa
+                }
+            }, module = Application::module)
+        // later: new TCP and QUIC handshakes verify client certificates against the new bundle
+        clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+        val connector =
+            server.engine.configuration.connectors
+                .single() as KuicksilverTlsConnector
+        assertTrue(connector.trust === clientCa) // ServerClientCaReloadTest serves it
+        assertEquals(Certificate(TestCerts.otherCa), clientCa.current.roots.single())
         identity.close()
     }
 

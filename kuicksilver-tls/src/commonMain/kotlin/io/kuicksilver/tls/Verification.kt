@@ -161,6 +161,11 @@ internal class Verification(
                     VerifyResult.Accepted(presented)
                 }
 
+                // servers only (TlsConfig refuses it on a client): never trusted on a path that should not exist
+                is TrustConfig.ReloadableCa -> {
+                    return VerifyResult.Rejected(VerifyReason.Custom("ReloadableCa verifies client certificates on servers only"))
+                }
+
                 // not reached: ksl verifies anchored chains itself
                 is TrustConfig.Pinned -> {
                     error("nested Pinned")

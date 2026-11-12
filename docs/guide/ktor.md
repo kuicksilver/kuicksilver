@@ -550,8 +550,9 @@ identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyChars))
 ```
 
 `keyChars` and `renewedKeyChars` are the key files read into `CharArray`s (not through a `String`, which would leave the
-key on the heap). Every handshake that starts after `reload` returns, HTTP/1.1 over TCP and HTTP/3 over QUIC, presents
-the new chain and key; handshakes in progress and open connections keep the old ones. A key that does not match its
+key on the heap). Every handshake whose ClientHello arrives after `reload` returns, HTTP/1.1 and HTTP/2 over TCP and
+HTTP/3 over QUIC, presents the new chain and key (also on a TCP connection accepted before the reload); handshakes in
+progress and open connections keep the old ones. A key that does not match its
 certificate fails in `fromPem`, and `reload` refuses an expired leaf and one not valid yet (`TlsException.Config`): the
 identity in use stays. Session tickets are bound to the certificate they were issued under, so after a reload clients
 run one full handshake and see the new certificate (see [Rotating the server certificate](tls.md#rotating-the-server-certificate)
@@ -631,6 +632,39 @@ cannot be interrupted). Polling once an hour means a renewed certificate may wai
 files at startup get the same checks as a reload, so an expired or not yet valid certificate fails the start; without
 it, `EngineMain` serves the files as they are, as before. The identity `EngineMain` made is closed when the server stops.
 
+**The client CA.** A connector that asks for client certificates ([Mutual TLS](#mutual-tls-client-certificates)) can
+rotate the CA bundle it verifies them with in the same way: give it `trust = TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
+(alone or as the `base` of `Pinned`) and call `reload(TrustConfig.AnchoredCa(newRoots))`. Handshakes whose ClientHello
+arrives after `reload` returns, HTTP/1.1 and HTTP/2 over TCP and HTTP/3 over QUIC, verify client certificates against the
+new bundle. After `reload` returns, no handshake accepts a certificate that only a removed CA vouches for: one in progress
+is checked again against the new bundle when it completes, a TCP connection accepted before the reload is no way around
+it, and a session ticket from before the reload is not resumed. Open connections are not affected. `reload` refuses a bundle in which no certificate is
+valid now ([Rotating the client CA](tls.md#rotating-the-client-ca)).
+
+```kotlin
+// guide:ktor:client-ca-rotation
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) {
+        port = 443
+        clientAuth = ClientAuth.Required
+        trust = clientCa
+    }
+}, module = Application::module)
+// later: new TCP and QUIC handshakes verify client certificates against the new bundle
+clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+```
+
+With `EngineMain`, `kuicksilver.tls.clientAuth` (`optional` or `required`) and `kuicksilver.tls.clientCa` (a PEM file of
+CA certificates) ask for client certificates on the deployment port. With `kuicksilver.tls.reloadInterval` set, the CA
+file is watched at that interval with the rules above: a changed bundle is used once two reads a second apart agree. A
+file holding a private key, a damaged file and a bundle with no certificate valid now keep the bundle in use, and so do
+they at startup (where they fail the start). A reload is logged at info level, a failure as a warning, and so is a bundle
+holding certificates that are not CA certificates (each is an anchor: a client presenting exactly it is accepted). The
+keys apply to the port of `kuicksilver.tls.certificateChain`; on the JVM, a `-sslPort` connector (`ktor.security.ssl.*`)
+takes client certificates from its `trustStore` instead, and the start is refused when both are configured.
+
 ### EngineMain and configuration keys
 
 `io.kuicksilver.ktor.server.EngineMain` reads the usual `ktor.deployment.*` keys (and on the JVM `-sslPort` with
@@ -639,7 +673,9 @@ it, `EngineMain` serves the files as they are, as before. The identity `EngineMa
 | Key | Meaning |
 |---|---|
 | `kuicksilver.tls.certificateChain`, `kuicksilver.tls.privateKey` | PEM files; the deployment port then serves TLS and HTTP/3 |
-| `kuicksilver.tls.reloadInterval` | how often those PEM files are checked for a renewed certificate (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
+| `kuicksilver.tls.reloadInterval` | how often those PEM files, and the `kuicksilver.tls.clientCa` file, are checked for a renewed certificate or CA bundle (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
+| `kuicksilver.tls.clientAuth` | ask for a client certificate on the deployment port: `none` (unset), `optional` or `required`; anything but `none` needs `kuicksilver.tls.clientCa` |
+| `kuicksilver.tls.clientCa` | PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
@@ -915,6 +951,24 @@ per origin (the first ones of the header) and 1000 origins, dropping the least r
 the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. Entries
 without `persist=1` are dropped when `networkId()` reports a new network (RFC 7838 section 2.2); `clearOnNetworkChange =
 false` keeps them.
+
+`FileAltSvcStore(path)` takes a `kotlinx.io.files.Path`; on the JVM and Android `FileAltSvcStore(file)` (experimental,
+0.3.0) takes a `java.io.File`. On Android keep the file in the app's private files directory. Do not write
+`File(...).toPath()`: that is a `java.nio.file.Path`, which this API does not take, and `File.toPath()` and
+`java.nio.file` only exist from API 26, while the library supports API 24. The `File` form uses no `java.nio.file`,
+so it works on API 24 and 25 too (there a write replaces the file with `File.renameTo`, which is atomic on one file
+system):
+
+```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val filesDir = context.filesDir                  // android.content.Context
+// guide:ktor:altsvc-store-android
+HttpClient(Kuicksilver) {
+    engine {
+        http3 { altSvcStore = FileAltSvcStore(File(filesDir, "altsvc.tsv")) }
+    }
+}
+```
 
 ### HTTPS records (experimental)
 
@@ -1464,6 +1518,10 @@ HttpClient(Kuicksilver) {
     }
 }
 ```
+
+On Android, `http3 { qlog = AsyncQlogSink(qlogDirectory(context)) }` writes the traces to a directory in the app's
+cache directory, created owner-only (API 26 and up; [QUIC: qlog](quic.md#qlog)). It is the counterpart of
+`keylogFile(context)`.
 
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.

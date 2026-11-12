@@ -256,18 +256,22 @@ public class TlsConfig private constructor(
          * The chain and private key this side presents: required for a server unless [sniSelector] supplies one per connection,
          * optional for a client (sent when the server asks for a certificate). Default null. A [TlsIdentity.InMemory], or a
          * [TlsIdentity.Reloadable] to replace the certificate at run time: each handshake then takes the identity current
-         * when it starts.
+         * when the ClientHello arrives.
          */
         public var identity: TlsIdentity? = null
 
         /**
          * How the peer is trusted; default [TrustConfig.Platform], the OS trust store. A client checks the server with it; a
          * server checks client certificates with it when [clientAuth] is not [ClientAuth.None], and then v1 accepts only
-         * [TrustConfig.AnchoredCa], optionally inside [TrustConfig.Pinned] (ADR-0012). The host name check is never disabled.
+         * [TrustConfig.AnchoredCa] or [TrustConfig.ReloadableCa] (a bundle that rotates at run time), optionally inside
+         * [TrustConfig.Pinned] (ADR-0012); a client refuses a ReloadableCa. The host name check is never disabled.
          */
         public var trust: TrustConfig = TrustConfig.Platform
 
-        /** Whether a server requests a client certificate; default [ClientAuth.None]. Anything else needs an AnchoredCa [trust]. */
+        /**
+         * Whether a server requests a client certificate; default [ClientAuth.None]. Anything else needs an AnchoredCa or
+         * ReloadableCa [trust].
+         */
         public var clientAuth: ClientAuth = ClientAuth.None
 
         /**
@@ -291,7 +295,8 @@ public class TlsConfig private constructor(
         @DelicateKuicksilverApi public var keylog: KeylogSink? = null
 
         /**
-         * The deadline of a TLS-over-TCP handshake ([TlsConnection], `Socket.tls`); default 10 seconds. When it passes the
+         * The deadline of a TLS-over-TCP handshake ([TlsConnection], `Socket.tls`); default 10 seconds. A server counts the
+         * wait for the client's ClientHello in it. When it passes the
          * handshake fails with [TlsException.Protocol]. Must be positive; [Duration.INFINITE] waits without a deadline. QUIC
          * connections use their own `QuicConfig.handshakeTimeout`.
          */
@@ -307,7 +312,7 @@ public class TlsConfig private constructor(
         /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
          * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
-         * AnchoredCa [trust], and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
+         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
         @OptIn(DelicateKuicksilverApi::class)
@@ -319,6 +324,7 @@ public class TlsConfig private constructor(
                 checkServerAuth(clientAuth, trust)
             } else {
                 if (clientAuth != ClientAuth.None) throw TlsException.Config("clientAuth applies to servers")
+                refuseReloadableOnClient(trust)
                 serverName?.let { HostName.normalize(it) }
             }
             if (trust is TrustConfig.ExpectedName) HostName.normalize((trust as TrustConfig.ExpectedName).name)
@@ -362,8 +368,18 @@ private fun checkServerAuth(
 ) {
     if (clientAuth == ClientAuth.None) return
     val base = if (trust is TrustConfig.Pinned) trust.base else trust
-    if (base !is TrustConfig.AnchoredCa) {
-        throw TlsException.Config("client certificates are verified against AnchoredCa only (optionally with Pinned) in v1")
+    if (base !is TrustConfig.AnchoredCa && base !is TrustConfig.ReloadableCa) {
+        throw TlsException.Config(
+            "client certificates are verified against AnchoredCa or ReloadableCa only (optionally with Pinned) in v1",
+        )
+    }
+}
+
+/** A [TrustConfig.ReloadableCa] verifies client certificates on a server; a client trusts the server through AnchoredCa. */
+private fun refuseReloadableOnClient(trust: TrustConfig) {
+    val base = if (trust is TrustConfig.Pinned) trust.base else trust
+    if (base is TrustConfig.ReloadableCa) {
+        throw TlsException.Config("ReloadableCa verifies client certificates on a server; a client uses AnchoredCa")
     }
 }
 
@@ -394,7 +410,7 @@ public class ClientHelloInfo internal constructor(
  * @property alpn replaces [TlsConfig.alpn] for this connection; null keeps it.
  * @property clientAuth replaces [TlsConfig.clientAuth] for this connection; null keeps it.
  * @property trust replaces [TlsConfig.trust] for client certificates on this connection; null keeps it. The override passes
- *   the checks of [TlsConfig.Builder.build]: with client certificates the trust must be AnchoredCa (optionally inside Pinned)
+ *   the checks of [TlsConfig.Builder.build]: with client certificates the trust must be AnchoredCa or ReloadableCa (optionally inside Pinned)
  *   and ALPN entries are counted in bytes; a failing override aborts that connection's handshake with [TlsException.Config].
  */
 public class ServerTlsOverride(

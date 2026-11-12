@@ -392,9 +392,10 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
     return SSL_CLIENT_HELLO_SUCCESS;
 }
 /* Resumption (ADR-0011): a resumed handshake carries no Certificate, so the chain cached from the full handshake is verified again with
-   the current trust store, time, name and purpose; X509_STORE is safe to share between threads for verification. */
-int ksl_ctx_verify_chain(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const char *name, int64_t at,
-                         int *x509_err) {
+   the current trust store, time, name, purpose and security level; X509_STORE is safe to share between threads for verification. With
+   `built`, the path X509_verify_cert built is handed out on success (the caller frees it). */
+static int verify_chain(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const char *name, int64_t at, int *x509_err,
+                        STACK_OF(X509) * *built) {
     ERR_clear_error();
     if (x509_err)
         *x509_err = 0;
@@ -413,6 +414,8 @@ int ksl_ctx_verify_chain(ksl_ctx *c, const uint8_t *chain, size_t chain_len, con
         int named = 1;
         X509_VERIFY_PARAM_set1(
             p, SSL_CTX_get0_param(c->ctx)); /* the context's flags (PARTIAL_CHAIN for AnchoredCa) and depth */
+        /* the security level, as a handshake sets it (ssl_cert.c ssl_verify_internal): weak keys and signatures on the path fail */
+        X509_VERIFY_PARAM_set_auth_level(p, SSL_CTX_get_security_level(c->ctx));
         if (at > 0)
             X509_VERIFY_PARAM_set_time(p, (time_t)at);
         if (c->role == KSL_CLIENT) {
@@ -426,6 +429,10 @@ int ksl_ctx_verify_chain(ksl_ctx *c, const uint8_t *chain, size_t chain_len, con
         if (named) {
             ok = X509_verify_cert(x) == 1;
             err = ok ? X509_V_OK : X509_STORE_CTX_get_error(x);
+            if (ok && built) {
+                *built = X509_STORE_CTX_get1_chain(x);
+                ok = *built != NULL;
+            }
         }
     }
     X509_STORE_CTX_free(x);
@@ -436,4 +443,47 @@ int ksl_ctx_verify_chain(ksl_ctx *c, const uint8_t *chain, size_t chain_len, con
     if (x509_err)
         *x509_err = err;
     return KSL_ERROR;
+}
+int ksl_ctx_verify_chain(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const char *name, int64_t at,
+                         int *x509_err) {
+    return verify_chain(c, chain, chain_len, name, at, x509_err, NULL);
+}
+int ksl_ctx_verify_chain_path(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const char *name, int64_t at,
+                              int *x509_err, uint8_t *path, size_t cap, size_t *path_len) {
+    if (path_len)
+        *path_len = 0;
+    STACK_OF(X509) *built = NULL;
+    int r = verify_chain(c, chain, chain_len, name, at, x509_err, &built);
+    if (r != KSL_OK)
+        return r;
+    size_t need = 0;
+    int ok = 1;
+    for (int i = 0; ok && i < sk_X509_num(built); i++) {
+        int l = i2d_X509(sk_X509_value(built, i), NULL);
+        ok = l > 0 && ksl_span_fits(need, 4 + (size_t)l, SIZE_MAX);
+        if (ok)
+            need += 4 + (size_t)l;
+    }
+    if (ok && path && cap >= need) {
+        size_t off = 0;
+        for (int i = 0; ok && i < sk_X509_num(built); i++) {
+            unsigned char *q = path + off + 4;
+            int l = i2d_X509(sk_X509_value(built, i), &q);
+            ok = l > 0;
+            if (ok) {
+                path[off] = (uint8_t)(l >> 24);
+                path[off + 1] = (uint8_t)(l >> 16);
+                path[off + 2] = (uint8_t)(l >> 8);
+                path[off + 3] = (uint8_t)l;
+                off += 4 + (size_t)l;
+            }
+        }
+    }
+    sk_X509_pop_free(built, X509_free);
+    ERR_clear_error();
+    if (!ok)
+        return KSL_ERROR; /* *x509_err stays 0: the path could not be encoded */
+    if (path_len)
+        *path_len = need;
+    return KSL_OK;
 }
