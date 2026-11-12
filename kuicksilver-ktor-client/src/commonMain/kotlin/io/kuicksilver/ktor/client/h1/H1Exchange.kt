@@ -32,6 +32,7 @@ import io.ktor.http.fullPath
 import io.ktor.http.hostWithPort
 import io.ktor.http.isSecure
 import io.ktor.http.supportsRequestBody
+import io.ktor.util.AttributeKey
 import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -39,6 +40,7 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.ktor.utils.io.writer
@@ -55,6 +57,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.io.EOFException
+import kotlinx.io.readByteArray
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.seconds
 
@@ -149,6 +152,11 @@ internal suspend fun writeBody(
     val body = request.body.getUnwrapped()
     if (body is OutgoingContent.NoContent) return
     if (body is OutgoingContent.ProtocolUpgrade) throw UnsupportedContentTypeException(body)
+    request.firstContactBody()?.let {
+        output.writeFully(it)
+        output.flush()
+        return
+    }
 
     if (chunkedTransferEncoding(request) == null) {
         // the Content-Length sent is the body's length (RFC 9112 section 6.2; section 6.3: the recipient reads that many
@@ -178,9 +186,102 @@ internal suspend fun writeBody(
 private fun OutgoingContent.getUnwrapped(): OutgoingContent =
     if (this is OutgoingContent.ContentWrapper) delegate().getUnwrapped() else this
 
+/**
+ * The most bytes of a request body of unknown length that are buffered to frame it by Content-Length for a server not
+ * known to handle HTTP/1.1 (RFC 9112 section 6.1, [prepareFirstContact]).
+ */
+internal const val FIRST_CONTACT_BODY_LIMIT: Int = 1 shl 20
+
+/** A request body buffered by [prepareFirstContact]; it holds only while the request still carries [content]. */
+internal class FirstContactBody(
+    val content: OutgoingContent,
+    val bytes: ByteArray,
+)
+
+internal val FirstContactBodyKey: AttributeKey<FirstContactBody> = AttributeKey("kuicksilver.FirstContactBody")
+
+/** The body [prepareFirstContact] buffered for this request, or null. */
+internal fun HttpRequestData.firstContactBody(): ByteArray? =
+    attributes
+        .getOrNull(FirstContactBodyKey)
+        ?.takeIf {
+            it.content === body
+        }?.bytes
+
+/**
+ * RFC 9112 section 6.1: "A client MUST NOT send a request containing Transfer-Encoding unless it knows the server will
+ * handle HTTP/1.1 requests (or later minor revisions); such knowledge might be in the form of specific user configuration
+ * or by remembering the version of a prior received response." Called for a route not known to handle HTTP/1.1 after the
+ * probe ([H1Pool]'s `probeVersion`) was answered with another version: a request that would go out chunked because its
+ * body has no length is buffered (at most [FIRST_CONTACT_BODY_LIMIT] bytes) and goes out with Content-Length instead. A
+ * longer body, or a transfer coding the application applied itself, cannot be framed without Transfer-Encoding:
+ * IllegalStateException, before anything of the request is sent.
+ */
+internal suspend fun prepareFirstContact(request: HttpRequestData) {
+    val body = request.body.getUnwrapped()
+    if (body is OutgoingContent.NoContent || body is OutgoingContent.ProtocolUpgrade) return // no body to frame
+    val te = chunkedTransferEncoding(request) ?: return
+    val codings = transferCodingsOf(listOf(te))
+    if (codings == null || codings.any { !it.name.equals("chunked", ignoreCase = true) }) {
+        throw IllegalStateException(
+            "the request applies the transfer coding $te, but ${request.url.protocol.name}://${request.url.host}:" +
+                "${request.url.port} is not known to handle HTTP/1.1 yet (no HTTP/1.1 response on this route, no ALPN http/1.1): " +
+                "RFC 9112 section 6.1 forbids Transfer-Encoding then; send a request without it first",
+        )
+    }
+    val bytes =
+        bufferBody(body, FIRST_CONTACT_BODY_LIMIT) ?: throw IllegalStateException(
+            "the request body has no length and is longer than $FIRST_CONTACT_BODY_LIMIT bytes, but " +
+                "${request.url.protocol.name}://${request.url.host}:${request.url.port} is not known to handle HTTP/1.1 yet " +
+                "(no HTTP/1.1 response on this route, no ALPN http/1.1): RFC 9112 section 6.1 forbids chunked framing then; " +
+                "give the body a length, or send a request without a body first",
+        )
+    request.attributes.put(FirstContactBodyKey, FirstContactBody(request.body, bytes))
+}
+
+/** Whether [request] would go out with Transfer-Encoding: it has content that its Content-Length does not frame. */
+internal fun needsTransferEncoding(request: HttpRequestData): Boolean {
+    val body = request.body.getUnwrapped()
+    if (body is OutgoingContent.NoContent || body is OutgoingContent.ProtocolUpgrade) return false
+    return chunkedTransferEncoding(request) != null
+}
+
+/** [body]'s bytes, or null when it has more than [limit]. A failing body fails with its own exception. */
+private suspend fun bufferBody(
+    body: OutgoingContent,
+    limit: Int,
+): ByteArray? =
+    coroutineScope {
+        val channel = ByteChannel()
+        val writer =
+            launch {
+                try {
+                    processOutgoingContent(body, channel)
+                    channel.flushAndClose()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    channel.cancel(e)
+                }
+            }
+        val bytes = channel.readBuffer(limit + 1L).readByteArray()
+        channel.closedCause?.let {
+            writer.cancel()
+            throw it
+        }
+        if (bytes.size > limit) {
+            channel.cancel(IllegalStateException("over the first-contact bound"))
+            writer.cancel()
+            null
+        } else {
+            writer.join()
+            bytes
+        }
+    }
+
 /** The Content-Length a request goes out with when it is not chunked: its own field, else its body's length. */
 internal fun declaredContentLength(request: HttpRequestData): String? =
-    request.headers[HttpHeaders.ContentLength] ?: request.body
+    request.firstContactBody()?.size?.toString() ?: request.headers[HttpHeaders.ContentLength] ?: request.body
         .getUnwrapped()
         .contentLength
         ?.toString()
@@ -682,6 +783,7 @@ internal fun HttpHeadersMap.toMap(): Map<String, List<String>> {
  * MUST NOT with Transfer-Encoding).
  */
 internal fun chunkedTransferEncoding(request: HttpRequestData): String? {
+    if (request.firstContactBody() != null) return null
     val body = request.body.getUnwrapped()
     val codings =
         (request.headers.getAll(HttpHeaders.TransferEncoding).orEmpty() + body.headers.getAll(HttpHeaders.TransferEncoding).orEmpty())

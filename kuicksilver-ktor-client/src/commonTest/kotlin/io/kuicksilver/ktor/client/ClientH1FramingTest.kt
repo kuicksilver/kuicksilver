@@ -5,6 +5,7 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
@@ -22,8 +23,10 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.client.h1.FIRST_CONTACT_BODY_LIMIT
 import io.kuicksilver.ktor.client.h1.writeBody
 import io.kuicksilver.ktor.client.h1.writeHeaders
 import io.kuicksilver.ktor.network.bindTcp
@@ -37,6 +40,7 @@ import kotlinx.io.readString
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -425,6 +429,151 @@ class ClientH1FramingTest {
                 assertFalse(head.any { it.startsWith("Content-Length:", ignoreCase = true) }, "$coding/$length: $head")
                 assertEquals("5\r\nhello\r\n0\r\n\r\n", sent.substringAfter("\r\n\r\n"), "$coding/$length")
             }
+        }
+
+    /** A body of unknown length, written as it is produced (the client would chunk it to a server known to speak HTTP/1.1). */
+    private fun streamed(text: String) =
+        object : OutgoingContent.WriteChannelContent() {
+            override suspend fun writeTo(channel: ByteWriteChannel) {
+                channel.writeStringUtf8(text)
+            }
+        }
+
+    /** Reads a request head and its body (by Content-Length or chunked); returns the head's lines and the body. */
+    private suspend fun readRequest(input: ByteReadChannel): Pair<List<String>, String> {
+        val head = ArrayList<String>()
+        while (true) {
+            val line = input.readLine(LineEnding.Lenient) ?: break
+            if (line.isEmpty()) break
+            head += line
+        }
+        val length =
+            head
+                .firstOrNull { it.startsWith("Content-Length:", ignoreCase = true) }
+                ?.substringAfter(':')
+                ?.trim()
+                ?.toInt()
+        val body =
+            when {
+                length != null -> {
+                    val b = ByteArray(length)
+                    input.readFully(b)
+                    b.decodeToString()
+                }
+
+                head.any { it.equals("Transfer-Encoding: chunked", ignoreCase = true) } -> {
+                    buildString {
+                        while (true) {
+                            val size = input.readLine(LineEnding.Lenient)!!.trim().toInt(16)
+                            if (size == 0) {
+                                input.readLine(LineEnding.Lenient)
+                                break
+                            }
+                            val b = ByteArray(size)
+                            input.readFully(b)
+                            append(b.decodeToString())
+                            input.readLine(LineEnding.Lenient)
+                        }
+                    }
+                }
+
+                else -> {
+                    ""
+                }
+            }
+        return head to body
+    }
+
+    /**
+     * RFC 9112 section 6.1: "A client MUST NOT send a request containing Transfer-Encoding unless it knows the server will
+     * handle HTTP/1.1 requests (or later minor revisions); such knowledge might be in the form of specific user
+     * configuration or by remembering the version of a prior received response." On first contact over cleartext an
+     * OPTIONS on the same connection shows the version before a body of unknown length goes out chunked; the route is
+     * remembered, so the next such request goes at once. Before, it went out chunked on first contact.
+     */
+    @Test fun firstContactProbesBeforeTransferEncoding() =
+        clientTest {
+            val heads = ArrayList<List<String>>()
+            val bodies = ArrayList<String>()
+            rawServerPerConnection({ _, input, output ->
+                repeat(3) {
+                    val (head, body) = readRequest(input)
+                    heads += head
+                    bodies += body
+                    output.writeStringUtf8(
+                        if (head[0].startsWith(
+                                "OPTIONS ",
+                            )
+                        ) {
+                            "HTTP/1.1 204 No Content\r\n\r\n"
+                        } else {
+                            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                        },
+                    )
+                }
+            }) { port ->
+                testClient().use { c ->
+                    repeat(2) { assertEquals("ok", c.post("http://127.0.0.1:$port/up") { setBody(streamed("hello")) }.bodyAsText()) }
+                }
+            }
+            assertEquals(listOf("OPTIONS /up HTTP/1.1", "POST /up HTTP/1.1", "POST /up HTTP/1.1"), heads.map { it[0] })
+            assertTrue(heads.drop(1).all { "Transfer-Encoding: chunked" in it }, "$heads")
+            assertEquals(listOf("", "hello", "hello"), bodies)
+        }
+
+    /**
+     * An HTTP/1.0 answer is no knowledge of HTTP/1.1 (RFC 9112 section 6.1): the body is framed by Content-Length from a
+     * buffer, on a new connection as the HTTP/1.0 server closed the probe's, and the route is not probed again.
+     */
+    @Test fun negative_http10ServerGetsContentLength() =
+        clientTest {
+            val heads = ArrayList<List<String>>()
+            rawServerPerConnection({ _, input, output ->
+                val (head, _) = readRequest(input)
+                if (head.isEmpty()) return@rawServerPerConnection
+                heads += head
+                output.writeStringUtf8("HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            }) { port ->
+                testClient().use { c ->
+                    repeat(2) { assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText()) }
+                }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1", "POST / HTTP/1.1", "POST / HTTP/1.1"), heads.map { it[0] })
+            for (h in heads.drop(1)) {
+                assertTrue("Content-Length: 5" in h, "$h")
+                assertFalse(h.any { it.startsWith("Transfer-Encoding", ignoreCase = true) }, "$h")
+            }
+        }
+
+    /**
+     * To a server not known to handle HTTP/1.1, a streamed body above the buffer bound, or a transfer coding the
+     * application applied itself, cannot be sent without Transfer-Encoding: the request fails and nothing of it is sent
+     * (RFC 9112 section 6.1 MUST NOT).
+     */
+    @Test fun negative_unknownServerGetsNoTransferEncoding() =
+        clientTest {
+            val received = ArrayList<String>()
+            rawServerPerConnection({ _, input, output ->
+                val (head, _) = readRequest(input)
+                if (head.isEmpty()) return@rawServerPerConnection
+                received += head[0]
+                output.writeStringUtf8("HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
+            }) { port ->
+                testClient().use { c ->
+                    val big = "x".repeat(FIRST_CONTACT_BODY_LIMIT + 1)
+                    val e1 = assertFailsWith<IllegalStateException> { c.post("http://127.0.0.1:$port/") { setBody(streamed(big)) } }
+                    assertTrue("RFC 9112" in e1.message!!, e1.message)
+                    val coded =
+                        object : OutgoingContent.ByteArrayContent() {
+                            override val headers: Headers = headersOf(HttpHeaders.TransferEncoding, "gzip")
+
+                            override fun bytes() = "hello".encodeToByteArray()
+                        }
+                    val e2 = assertFailsWith<IllegalStateException> { c.post("http://127.0.0.1:$port/") { setBody(coded) } }
+                    assertTrue("RFC 9112" in e2.message!!, e2.message)
+                }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1"), received)
         }
 
     /** Reads a request head; returns its request line ("" at end of stream). */

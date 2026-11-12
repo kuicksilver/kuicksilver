@@ -14,6 +14,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.Url
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.isSecure
+import io.ktor.http.takeFrom
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openWriteChannel
@@ -21,6 +22,7 @@ import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
+import io.ktor.utils.io.discard
 import io.kuicksilver.http2.runtime.H2ClientConnection
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ActivityInput
@@ -31,6 +33,7 @@ import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.ResolvedProxy
 import io.kuicksilver.ktor.client.connectTimeoutMillis
+import io.kuicksilver.ktor.client.evictEldest
 import io.kuicksilver.ktor.client.h2.H2Conn
 import io.kuicksilver.ktor.client.h2.H2Http11Required
 import io.kuicksilver.ktor.client.h2.H2NotProcessed
@@ -181,6 +184,15 @@ internal class H1Pool(
 
     /** Routes that answered HTTP_1_1_REQUIRED; internal for tests. */
     internal val h2Refused = H2RefusedRoutes(clock)
+
+    /** Routes known to handle HTTP/1.1 (RFC 9112 section 6.1); internal for tests. */
+    internal val http11Routes = Http11Routes()
+
+    /** Tests: [data]'s route is known to handle HTTP/1.1, as after an earlier HTTP/1.1 response on it. */
+    internal fun knowsHttp11ForTest(
+        data: HttpRequestData,
+        proxy: ResolvedProxy? = null,
+    ) = http11Routes.mark(keyOf(data, proxy))
 
     init {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -687,6 +699,8 @@ internal class H1Pool(
             val reused = obtained.reused
             var held = obtained.held
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
+            // RFC 9112 section 6.1: no Transfer-Encoding until the route is known to handle HTTP/1.1
+            val probeFirst = needsTransferEncoding(data) && !http11Routes.isKnown(key) && !http11Routes.wasProbed(key)
             var bodyJob: BodySender? = null
             // the whole request went out (headers and a body written in this call); a streamed body says so itself
             val requestOut = CompletableDeferred<Unit>()
@@ -725,6 +739,13 @@ internal class H1Pool(
 
                 suspend fun exchangeOnce(): HttpResponseData =
                     withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterExpiry() }) {
+                        if (probeFirst) {
+                            // first contact: an OPTIONS on the same connection shows the server's version before the
+                            // request needs Transfer-Encoding; an HTTP/1.0 server gets the body framed by Content-Length
+                            probeVersion(data, key, conn, output, input, proxy, tunneled, callContext)
+                        }
+                        // a server that answered the probe with another version: the body framed by Content-Length
+                        if (!http11Routes.isKnown(key)) prepareFirstContact(data)
                         writeHeaders(
                             data,
                             output,
@@ -736,7 +757,7 @@ internal class H1Pool(
                         suspend fun sendBody() {
                             bodySent = true
                             // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
-                            if (data.body.isStreamed()) {
+                            if (data.body.isStreamed() && data.firstContactBody() == null) {
                                 bodyJob = sendBodyConcurrently(data, conn, output, callContext)
                             } else {
                                 writeBody(data, output, callContext)
@@ -820,6 +841,8 @@ internal class H1Pool(
                     } finally {
                         held?.release()
                     }
+                // RFC 9112 section 6.1: "remembering the version of a prior received response"
+                if (response.version == HttpProtocolVersion.HTTP_1_1) http11Routes.mark(key)
                 // a 417 to a request that waited for 100 Continue only says that something on the way does not support
                 // expectations: the request is repeated once without one (RFC 9110 section 10.1.1, as CIO); its body was
                 // never sent, so it can be. The 417's connection was closed: it promised a body it never got
@@ -832,6 +855,12 @@ internal class H1Pool(
                     continue
                 }
                 return response
+            } catch (e: ProbeEndedConnection) {
+                // the server closes the connection after its answer to the probe: the request goes on a new one
+                held?.release()
+                conn.close()
+                events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
+                continue
             } catch (e: CancellationException) {
                 held?.release()
                 closeAfterFailure(e)
@@ -863,6 +892,46 @@ internal class H1Pool(
                 throw e
             }
         }
+    }
+
+    /**
+     * RFC 9112 section 6.1 knowledge on first contact: sends `OPTIONS` for the request's target on [conn] (safe and
+     * idempotent, RFC 9110 sections 9.2.1 and 9.3.7) and reads the answer to its end; its version marks the route as known
+     * to handle HTTP/1.1, or as probed (not probed again). A server that does not keep the connection afterwards ends this
+     * attempt with [ProbeEndedConnection]; what the route learned stays. Not used for a request that needs no
+     * Transfer-Encoding, nor once the route is known or probed.
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    private suspend fun probeVersion(
+        data: HttpRequestData,
+        key: String,
+        conn: H1Connection,
+        output: ByteWriteChannel,
+        input: ByteReadChannel,
+        proxy: ResolvedProxy?,
+        tunneled: Boolean,
+        callContext: CoroutineContext,
+    ) {
+        val probe =
+            io.ktor.client.request
+                .HttpRequestBuilder()
+                .apply {
+                    url.takeFrom(data.url)
+                    method = io.ktor.http.HttpMethod.Options
+                }.build()
+        writeHeaders(
+            probe,
+            output,
+            overProxy = proxy != null && !tunneled,
+            tunneled = tunneled,
+            proxyAuthorization = proxy?.takeIf { !tunneled }?.basicAuthorization,
+        )
+        val after = CompletableDeferred<AfterResponse>()
+        val response = readResponse(GMTDate(), probe, input, conn.output, callContext, conn.input) { after.complete(it) }
+        (response.body as? ByteReadChannel)?.discard()
+        val reusable = after.await() == AfterResponse.Reuse
+        if (response.version == HttpProtocolVersion.HTTP_1_1) http11Routes.mark(key) else http11Routes.markProbed(key)
+        if (!reusable) throw ProbeEndedConnection()
     }
 
     /**
@@ -1063,6 +1132,8 @@ internal class H1Pool(
                             }
                         return H2Conn(client, key, clock())
                     }
+                    // ALPN `http/1.1` (RFC 7301): the server agreed to speak HTTP/1.1 (RFC 9112 section 6.1 knowledge)
+                    if (tls.negotiatedAlpn == "http/1.1") http11Routes.mark(key)
                     H1Connection(tcp, tls, tls.input, tls.output, key, clock(), orderly = { closeOrderly(tls, rawOut, tcp) })
                 } else {
                     H1Connection(tcp, null, rawIn, rawOut, key, clock())
@@ -1152,3 +1223,45 @@ internal val ORDERLY_CLOSE_TIMEOUT = 1.seconds
 private val PERMIT = Any()
 private val CHANGED = Any()
 private val MAX_ATTEMPT_DELAY = 2.seconds
+
+/**
+ * The routes known to handle HTTP/1.1 requests (RFC 9112 section 6.1: "such knowledge might be in the form of specific
+ * user configuration or by remembering the version of a prior received response"): an HTTP/1.1 response on the route, or
+ * ALPN `http/1.1` on one of its TLS connections; and the routes whose probe was answered with another version (HTTP/1.0),
+ * which are not probed again. Kept for the engine's lifetime, the most recent [MAX_ROUTES].
+ */
+internal class Http11Routes {
+    private val lock = SpinLock()
+    private val routes = LinkedHashMap<String, Boolean>()
+
+    /** [route] handles HTTP/1.1. */
+    fun mark(route: String) {
+        lock.withLock { put(route, true) }
+    }
+
+    /** [route]'s probe was answered, not with HTTP/1.1; an answer with HTTP/1.1 later still counts. */
+    fun markProbed(route: String) {
+        lock.withLock { if (routes[route] != true) put(route, false) }
+    }
+
+    /** Under [lock]. */
+    private fun put(
+        route: String,
+        http11: Boolean,
+    ) {
+        routes.remove(route)
+        routes[route] = http11
+        routes.evictEldest(MAX_ROUTES)
+    }
+
+    fun isKnown(route: String): Boolean = lock.withLock { routes[route] == true }
+
+    fun wasProbed(route: String): Boolean = lock.withLock { route in routes }
+
+    private companion object {
+        const val MAX_ROUTES = 1000
+    }
+}
+
+/** The server closed the connection after answering the first-contact probe ([H1Pool.probeVersion]). */
+internal class ProbeEndedConnection : Exception("the server closed the connection after the OPTIONS probe")

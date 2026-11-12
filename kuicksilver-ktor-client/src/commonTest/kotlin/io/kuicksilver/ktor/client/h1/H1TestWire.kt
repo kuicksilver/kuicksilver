@@ -67,6 +67,8 @@ internal suspend fun <T> TestScope.exchange(
     val selector = SelectorManager(Dispatchers.IO)
     val pool = H1Pool(KuicksilverEngineConfig(), selector, events)
     pool.cleartextPermitted = { true }
+    // the test plays an HTTP/1.1 server the client has met before: no first-contact probe (RFC 9112 section 6.1)
+    pool.knowsHttp11ForTest(data)
     val call = Job()
     try {
         val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "test")

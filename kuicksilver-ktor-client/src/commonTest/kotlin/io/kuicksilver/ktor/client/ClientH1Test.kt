@@ -34,6 +34,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.options
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.sse.ServerSentEvent
@@ -201,6 +202,43 @@ class ClientH1Test {
                 testClient().use { c ->
                     assertEquals("abcabc", c.post("https://127.0.0.1:$port/echo") { setBody("abc") }.bodyAsText())
                 }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * ALPN `http/1.1` is knowledge that the server handles HTTP/1.1 (RFC 9112 section 6.1): over TLS the first request with a
+     * body of unknown length goes out chunked at once, without the OPTIONS probe a route without that knowledge gets
+     * (ClientH1FramingTest).
+     */
+    @Test fun alpnHttp11AllowsChunkedOnFirstContact() =
+        clientTest {
+            var probes = 0
+            val (server, port) =
+                testServer {
+                    routing {
+                        options("/") {
+                            probes++
+                            call.respondText("")
+                        }
+                        post("/") {
+                            val te = call.request.headers["Transfer-Encoding"]
+                            call.respondText("${call.receiveText()} $te")
+                        }
+                    }
+                }
+            try {
+                testClient().use { c ->
+                    val body =
+                        object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                            override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
+                                channel.writeStringUtf8("abc")
+                            }
+                        }
+                    assertEquals("abc chunked", c.post("https://127.0.0.1:$port/") { setBody(body) }.bodyAsText())
+                }
+                assertEquals(0, probes)
             } finally {
                 server.stop(100, 500)
             }

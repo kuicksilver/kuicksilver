@@ -481,6 +481,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client, HTTP/1.1 request framing (RFC 9112 section 6.1 MUST NOT): Transfer-Encoding (a body of unknown length,
+  or a transfer coding the application applied) goes only to a server known to handle HTTP/1.1: an HTTP/1.1 response
+  on the route, or ALPN `http/1.1`. On first contact without that knowledge (cleartext, or TLS without ALPN) the engine
+  first sends an `OPTIONS` for the request's target on the same connection and reads the version of its answer. A
+  server that answers with HTTP/1.0 gets a body of unknown length framed by Content-Length from a buffer of at most
+  1 MiB; a longer body, or a transfer coding of the application, fails that request with IllegalStateException before
+  anything of it is sent.
+
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a
   rolling upgrade whose nodes share `SessionTicketConfig` keys, a client resuming across versions does one full handshake.
