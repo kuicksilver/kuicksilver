@@ -15,7 +15,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,8 +23,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * RFC 9218 sections 7 and 8 under real threads: the client's PRIORITY_UPDATEs arrive on the connection's dispatch while
- * the response chooses its priority from another thread. Once chosen, no update changes the scheduling, and the signals
- * reach the engine with their order, so the most recent one can win.
+ * the response chooses its priority from another thread. Once chosen, no update changes the scheduling.
  */
 class PriorityConcurrencyTest {
     @Test fun updatesNeverOverrideTheResponsesChoice() =
@@ -47,9 +45,7 @@ class PriorityConcurrencyTest {
                         )
                     val updates = 200
                     val seen = AtomicInteger()
-                    val lastSeq = AtomicLong(-1)
                     val all = CompletableDeferred<Unit>()
-                    val ordered = AtomicInteger() // signals whose seq grew: at least the last one carries the largest
                     val policy =
                         object : PriorityPolicy {
                             override fun parse(value: String): Int = value.removePrefix("u=").toInt() * 2
@@ -59,7 +55,6 @@ class PriorityConcurrencyTest {
                                 incremental: Boolean,
                                 seq: Long,
                             ) {
-                                if (lastSeq.getAndAccumulate(seq, ::maxOf) < seq) ordered.incrementAndGet()
                                 if (seen.incrementAndGet() == updates) all.complete(Unit)
                             }
                         }
@@ -78,7 +73,6 @@ class PriorityConcurrencyTest {
                     chooser.join()
                     withTimeout(10.seconds) { all.await() }
                     assertEquals(0 to true, r.urgency to r.incremental, "round $round")
-                    assertTrue(ordered.get() >= 1)
                     s.cancel()
                     s.release()
                     r.release()

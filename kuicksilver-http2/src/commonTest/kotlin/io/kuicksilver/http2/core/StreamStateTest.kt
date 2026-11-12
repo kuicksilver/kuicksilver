@@ -382,6 +382,21 @@ class StreamStateTest {
         assertTrue(!s.core.isClosed && s.goAway() == null)
     }
 
+    /**
+     * RFC 9218 section 7.1: "If a client receives a PRIORITY_UPDATE frame, it MUST respond with a connection error of type
+     * PROTOCOL_ERROR", whatever its length: one too short for a Prioritized Stream ID or above the server's 4096-byte
+     * value ceiling is no FRAME_SIZE_ERROR or ENHANCE_YOUR_CALM on a client.
+     */
+    @Test
+    fun negative_clientRejectsPriorityUpdateOfAnyLength() {
+        for (length in listOf(0, 2, 4, 4 + 4096 + 1, 9_000)) {
+            val c = RawH2Peer(Role.CLIENT)
+            c.handshake()
+            c.send(FrameEncoder.raw(FrameType.PRIORITY_UPDATE, 0, 0, ByteArray(length)))
+            c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        }
+    }
+
     @Test
     fun negative_frameInsideFieldBlockIsProtocolError() {
         val peer = RawH2Peer(Role.SERVER)

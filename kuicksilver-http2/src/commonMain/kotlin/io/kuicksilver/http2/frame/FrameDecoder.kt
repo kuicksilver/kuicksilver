@@ -18,6 +18,11 @@ import io.kuicksilver.http2.Http2ErrorCode
  */
 internal class FrameDecoder(
     var maxFrameSize: Int = H2.MIN_MAX_FRAME_SIZE,
+    /**
+     * A client's decoder: a PRIORITY_UPDATE is a PROTOCOL_ERROR whatever its length (RFC 9218 section 7.1: "If a client
+     * receives a PRIORITY_UPDATE frame, it MUST respond with a connection error of type PROTOCOL_ERROR").
+     */
+    private val rejectPriorityUpdate: Boolean = false,
 ) {
     private val head = ByteArray(H2.FRAME_HEADER_SIZE)
     private var headLen = 0
@@ -154,6 +159,7 @@ internal class FrameDecoder(
             }
 
             FrameType.PRIORITY_UPDATE -> {
+                if (rejectPriorityUpdate) connError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE from the server")
                 // RFC 9113 section 4.2: too small for its mandatory Prioritized Stream ID
                 if (length < 4) connError(Http2ErrorCode.FRAME_SIZE_ERROR, "PRIORITY_UPDATE length $length")
                 // a Priority Field Value is bounded as HTTP/3 bounds a control frame (4096 bytes), before anything is

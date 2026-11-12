@@ -56,7 +56,7 @@ internal class H2ConnectionCore(
     now: Long,
 ) {
     internal val client = role == Role.CLIENT
-    private val decoder = FrameDecoder(settings.maxFrameSize)
+    private val decoder = FrameDecoder(settings.maxFrameSize, rejectPriorityUpdate = client)
 
     // section 4.3.1: both tables start at 4096; our own value holds once the peer acknowledged it
     internal val hpackIn =

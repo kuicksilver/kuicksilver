@@ -28,7 +28,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
@@ -105,40 +105,6 @@ internal class H2Call(
         response.awaitContentSent()
     }
 
-    /**
-     * The client's PRIORITY_UPDATEs as the engine reads them (RFC 9218 section 7: "a complete set of all priority
-     * parameters", a parameter left out meaning its default; a value that fails to parse means the defaults, as on
-     * HTTP/3), and [flow], the signal the application sees: it keeps the most recent one however the calls interleave.
-     */
-    @OptIn(ExperimentalAtomicApi::class)
-    private class ClientSignal(
-        initial: StreamPriority,
-    ) : PriorityPolicy {
-        private val state = MutableStateFlow(initial)
-        val flow: StateFlow<StreamPriority> = state.asStateFlow()
-        private val busy = AtomicInt(0)
-        private var seq = -1L // under [busy]
-
-        override fun parse(value: String): Int = PriorityField.parse(value).let { it.urgency * 2 + if (it.incremental) 1 else 0 }
-
-        override fun signal(
-            urgency: Int,
-            incremental: Boolean,
-            seq: Long,
-        ) {
-            while (!busy.compareAndSet(0, 1)) {
-                // another signal is being recorded: a few instructions
-            }
-            try {
-                if (seq <= this.seq) return // a newer one is in already
-                this.seq = seq
-                state.value = StreamPriority(urgency, incremental)
-            } finally {
-                busy.store(0)
-            }
-        }
-    }
-
     companion object {
         /** A tunnel's scheduling without a signal from its client: the default urgency, incremental (as on HTTP/3). */
         private val TUNNEL_PRIORITY = StreamPriority(3, incremental = true)
@@ -155,5 +121,46 @@ internal class H2Call(
 
         /** The method of [r] as Ktor's. */
         fun method(r: H2ServerStream): HttpMethod = HttpMethod.parse(r.method)
+    }
+}
+
+/**
+ * The client's PRIORITY_UPDATEs as the HTTP/2 engine reads them (RFC 9218 section 7: "a complete set of all priority
+ * parameters", a parameter left out meaning its default; a value that fails to parse means the defaults, as on HTTP/3),
+ * and [flow], the signal the application sees: it ends on the most recent one (the highest seq) however the calls
+ * interleave.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+internal class ClientSignal(
+    initial: StreamPriority,
+) : PriorityPolicy {
+    private class Latest(
+        val seq: Long,
+        val priority: StreamPriority,
+    )
+
+    private val latest = AtomicReference(Latest(-1, initial))
+    private val state = MutableStateFlow(initial)
+    val flow: StateFlow<StreamPriority> = state.asStateFlow()
+
+    override fun parse(value: String): Int = PriorityField.parse(value).let { it.urgency * 2 + if (it.incremental) 1 else 0 }
+
+    override fun signal(
+        urgency: Int,
+        incremental: Boolean,
+        seq: Long,
+    ) {
+        val next = Latest(seq, StreamPriority(urgency, incremental))
+        while (true) {
+            val cur = latest.load()
+            if (cur.seq >= seq) return // a newer one is in already
+            if (latest.compareAndSet(cur, next)) break
+        }
+        // publish what is latest now; a newer signal that came in meanwhile is published again here or by its own call
+        while (true) {
+            val cur = latest.load()
+            state.value = cur.priority
+            if (latest.load() === cur) return
+        }
     }
 }
