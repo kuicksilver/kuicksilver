@@ -107,6 +107,15 @@ public interface QuicConnection : AutoCloseable {
     public val peerSupportsDatagrams: Boolean
 
     /**
+     * True once both sides advertised the `reset_stream_at` transport parameter (draft-ietf-quic-reliable-stream-reset
+     * section 3): ours with `QuicConfig.resetStreamAt` and the peer's. [QuicStream.resetAt] then sends RESET_STREAM_AT;
+     * otherwise it is a RESET_STREAM. False before the handshake has delivered the peer's parameters (or, for 0-RTT, the
+     * remembered ones). Implementations outside this library need not override it: the default is false.
+     */
+    @ExperimentalKuicksilverApi
+    public val resetStreamAtEnabled: Boolean get() = false
+
+    /**
      * Starts a key update (RFC 9001 section 6); suspends until one is allowed: handshake confirmed, the current phase
      * acknowledged (section 6.1) and, after an earlier update, three PTOs since that acknowledgment (section 6.5).
      */

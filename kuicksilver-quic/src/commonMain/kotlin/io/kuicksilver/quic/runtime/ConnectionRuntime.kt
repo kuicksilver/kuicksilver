@@ -373,6 +373,12 @@ internal class ConnectionRuntime(
 
     @ExperimentalKuicksilverApi
     override val peerSupportsDatagrams: Boolean get() = datagramLimit != NO_DATAGRAMS
+
+    /** The core's `reset_stream_at` negotiation (both sides) as last drained. */
+    @kotlin.concurrent.Volatile private var resetStreamAtBoth = false
+
+    @ExperimentalKuicksilverApi
+    override val resetStreamAtEnabled: Boolean get() = resetStreamAtBoth
     override val maxDatagramSize: StateFlow<Int> get() = maxDatagramSizeFlow
     private val datagramSignal = Channel<Unit>(Channel.CONFLATED)
 
@@ -492,6 +498,7 @@ internal class ConnectionRuntime(
         refreshPathRemotes()
         val limit = core.datagramPayloadLimit
         datagramLimit = if (core.peerAcceptsDatagrams) limit else NO_DATAGRAMS
+        resetStreamAtBoth = core.streams.peerResetStreamAt
         val max = maxOf(limit, 0)
         if (max != maxDatagramSizeFlow.value) maxDatagramSizeFlow.value = max
         core.datagramsDroppedSend = sendQueue.dropped
