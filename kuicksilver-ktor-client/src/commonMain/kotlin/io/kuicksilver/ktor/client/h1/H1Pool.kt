@@ -626,8 +626,8 @@ internal class H1Pool(
 
     /**
      * The remote hosts [data] may connect to, as [WebSocketConnecting] keys: the IP addresses of the origin, without the
-     * port, when the engine resolves its name (the request's own resolution, which the connection then uses, under the
-     * connect timeout), else (an HTTP proxy, a SOCKS5 proxy that resolves names) the origin's name; each in one form per
+     * port, when the engine resolves its name (the families of the request's own resolution that answered, the other
+     * waited for only during the Resolution Delay, under the connect timeout: [RequestDns.answered]), else (an HTTP proxy, a SOCKS5 proxy that resolves names) the origin's name; each in one form per
      * host ([WebSocketConnecting.addressKey], [WebSocketConnecting.nameKey]).
      */
     private suspend fun remoteHosts(
@@ -641,7 +641,9 @@ internal class H1Pool(
         }
         val addresses =
             try {
-                withTimeout(data.connectTimeoutMillis(config)) { dns.lookup(url.host, url.port) }
+                // the families that answered: one that stalls (dropped AAAA queries) holds back neither the keys nor the
+                // connection, which the race makes with what came (RFC 8305 section 3)
+                withTimeout(data.connectTimeoutMillis(config)) { dns.answered(url.host, url.port) }
             } catch (e: TimeoutCancellationException) {
                 throw ConnectTimeoutException(data, e)
             }

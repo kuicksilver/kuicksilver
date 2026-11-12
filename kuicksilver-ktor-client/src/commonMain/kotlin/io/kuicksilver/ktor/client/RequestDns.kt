@@ -6,6 +6,7 @@ package io.kuicksilver.ktor.client
 
 import io.kuicksilver.ktor.network.AddressResolution
 import io.kuicksilver.ktor.network.DestinationSort
+import io.kuicksilver.ktor.network.RESOLUTION_DELAY
 import io.kuicksilver.ktor.network.SourceInfo
 import io.kuicksilver.ktor.network.SystemResolution
 import io.kuicksilver.ktor.network.TcpAddress
@@ -15,12 +16,17 @@ import io.kuicksilver.ktor.network.resolveBoth
 import io.kuicksilver.ktor.network.resolveFamily
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The name resolution of one request: each family of each host is looked up once ([AddressResolution.addresses], RFC 8305
@@ -154,6 +160,49 @@ internal class RequestDns private constructor(
             }
         val found = resolveBoth(plain, name)
         return if (sorted) newSort().sort(found) else found
+    }
+
+    /**
+     * The addresses of [host] with [port] that have answered, for keys that name the host ([h1.WebSocketConnecting]): a
+     * literal itself; else the first family that answers with addresses, and the other one when it answers within the
+     * Resolution Delay (RFC 8305 section 3), never waiting for a family that stalls (a network that drops AAAA queries).
+     * A family that answers with none or fails is waited past. Fails only when both failed or neither has an address.
+     */
+    suspend fun answered(
+        host: String,
+        port: Int,
+    ): List<TcpAddress> {
+        if (endpoint != null) return root().answered(endpoint.first, endpoint.second)
+        val name = socketHost(host)
+        if (':' in name || parseIpv4Literal(name) != null) return resolveBoth(SystemResolution(name, port), name)
+        val got =
+            coroutineScope {
+                val answers = Channel<Result<List<TcpAddress>>>(2)
+                val lookups =
+                    listOf(true, false).map { v6 ->
+                        launch(start = CoroutineStart.UNDISPATCHED) {
+                            val r =
+                                try {
+                                    Result.success(family(name, v6))
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Throwable) {
+                                    Result.failure(e)
+                                }
+                            answers.send(r)
+                        }
+                    }
+                val first = answers.receive()
+                val positive = first.getOrNull().orEmpty().isNotEmpty()
+                val second = if (positive) withTimeoutOrNull(RESOLUTION_DELAY) { answers.receive() } else answers.receive()
+                lookups.forEach { it.cancel() }
+                listOfNotNull(first, second)
+            }
+        val found = got.flatMap { it.getOrNull().orEmpty() }.distinct().map { it.withPort(port) }
+        if (found.isNotEmpty()) return found
+        val failure = got.firstNotNullOfOrNull { it.exceptionOrNull() }
+        // a fresh exception: the lookups' failures are shared by the request (and kept for their negative TTL)
+        throw kotlinx.io.IOException("$name could not be resolved" + (failure?.message?.let { ": $it" } ?: ""), failure)
     }
 
     private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null)
