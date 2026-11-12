@@ -1,6 +1,6 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
-/* Certificate revocation (RFC 9325 section 7.5): stapled OCSP responses (RFC 6066 section 8, RFC 9846 section 4.4.2.1, RFC 6960)
+/* Certificate revocation (RFC 9325 section 7.5): stapled OCSP responses (RFC 6066 section 8, RFC 9846 section 4.5.1.1, RFC 6960)
  * checked by a client and stapled by a server, and application-supplied CRLs (RFC 5280) in a context's own trust store. */
 #include "ksl_internal.h"
 #include <limits.h>
@@ -211,7 +211,7 @@ static int client_status(SSL *ssl, ksl_ssl *s) {
    an SNI override's included). The response KSL_SET_OCSP_RESPONSE gave is stapled only when it is for the leaf being sent (its
    issuer the next certificate of the configured chain that issued it), verifies, and is inside its validity interval now: a
    stale or foreign response is never sent (RFC 6066 section 8: a server "MAY return a suitable certificate status response").
-   RFC 9846 section 4.4.2.1 puts it into the leaf's CertificateEntry in TLS 1.3; OpenSSL does that. */
+   RFC 9846 section 4.5.1.1 puts it into the leaf's CertificateEntry in TLS 1.3; OpenSSL does that. */
 static int server_status(SSL *ssl, ksl_ssl *s) {
     if (s->ocsp_staple == NULL)
         return SSL_TLSEXT_ERR_NOACK;

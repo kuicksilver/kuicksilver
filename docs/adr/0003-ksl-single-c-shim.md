@@ -124,6 +124,7 @@ certificate CRL" (an issuer without a configured CRL is not checked); handshakes
 thisUpdate and nextUpdate with 5 minutes of skew). The status callback of every context (`ksl_ocsp.c`) checks a client's
 stapled response (`KSL_OPT_REVOCATION`, `KSL_GET_OCSP_STATUS`) and staples a server's (`KSL_SET_OCSP_RESPONSE`) only when it
 is for the leaf sent and fresh. The OCSP half needs OpenSSL's ocsp module, which `no-http` in
-`tools/openssl/configure-flags.txt` turns off (Configure cascades http to ocsp): built without it, `ksl_ocsp_check` answers
-`KSL_ERROR` and the option and setter `KSL_E_NOT_SUPPORTED`. JNI `KslNative.ctxSetCrls` / `KslNative.ocspCheck`, cinterop
+`tools/openssl/configure-flags.txt` used to turn off (Configure cascades http to ocsp); the bundled OpenSSL keeps http and
+ocsp since this change, and a build without them (a system OpenSSL built `no-ocsp`) answers `KSL_ERROR` from
+`ksl_ocsp_check` and `KSL_E_NOT_SUPPORTED` from the option and the setter. JNI `KslNative.ctxSetCrls` / `KslNative.ocspCheck`, cinterop
 `ksl_ctx_set_crls` / `ksl_ocsp_check`, Kotlin `Ksl.ctxSetCrls` / `Ksl.ocspCheck`. 84 functions.
