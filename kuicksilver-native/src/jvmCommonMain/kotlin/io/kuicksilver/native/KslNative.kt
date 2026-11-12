@@ -82,6 +82,15 @@ internal object KslNative {
         at: Long,
     ): Int
 
+    /** The framed path when the chain passes (else null); out[0] = 0 / X509_V_ERR_* / -1 as [ctxVerifyChain]. */
+    @JvmStatic external fun ctxVerifyChainPath(
+        ctx: Long,
+        chain: ByteArray,
+        name: String?,
+        at: Long,
+        out: IntArray,
+    ): ByteArray?
+
     /** 0 = passes, X509_V_ERR_* = a weak key or signature, -1 = unusable input */
     @JvmStatic external fun chainLevel(
         chain: ByteArray,

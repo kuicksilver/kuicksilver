@@ -238,9 +238,31 @@ static void test_verify_cached_chain(void) {
     ksl_ctx *sc = server_ctx("server");
     blob r = chain_of(1, "test-ca");
     ksl_ctx_set_roots(sc, r.buf, r.len);
-    free(r.buf);
     CHECK(ksl_ctx_verify_chain(sc, cl.buf, cl.len, NULL, 0, &err) == KSL_OK,
           "a server verifies a cached client chain without a name");
+    /* the path the verifier built: the client certificate and the anchor, framed as the input */
+    size_t need = 0;
+    CHECK(ksl_ctx_verify_chain_path(sc, cl.buf, cl.len, NULL, 0, &err, NULL, 0, &need) == KSL_OK &&
+              need == cl.len + r.len,
+          "verify_chain_path: the size of the built path without a buffer");
+    uint8_t *path = malloc(need);
+    size_t got = 0;
+    CHECK(path && ksl_ctx_verify_chain_path(sc, cl.buf, cl.len, NULL, 0, &err, path, need, &got) == KSL_OK &&
+              got == need && memcmp(path, cl.buf, cl.len) == 0 && memcmp(path + cl.len, r.buf, r.len) == 0,
+          "verify_chain_path: leaf first, its trust anchor last");
+    free(path);
+    CHECK(ksl_ctx_verify_chain_path(other, leaf.buf, leaf.len, "server.test", 0, &err, NULL, 0, &need) == KSL_ERROR &&
+              err == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY && need == 0,
+          "negative: verify_chain_path fails as verify_chain does, with no path");
+    free(r.buf);
+    /* the security level, as a handshake applies it: an anchor with a 1024-bit RSA key no longer verifies */
+    ksl_ctx *weak = client_ctx("weak/rsa1024-root", KSL_VERIFY_OPENSSL);
+    blob wl = chain_of(1, "weak/leaf-under-rsa1024-root");
+    CHECK(ksl_ctx_verify_chain(weak, wl.buf, wl.len, "server.test", 0, &err) == KSL_ERROR &&
+              err == X509_V_ERR_CA_KEY_TOO_SMALL,
+          "negative: a cached chain to an anchor below the security level -> CA key too small");
+    free(wl.buf);
+    ksl_ctx_free(weak);
     free(leaf.buf);
     free(via.buf);
     free(cl.buf);

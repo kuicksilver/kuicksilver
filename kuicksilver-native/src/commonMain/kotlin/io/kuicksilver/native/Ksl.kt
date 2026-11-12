@@ -112,6 +112,18 @@ public expect object Ksl {
         atEpochSeconds: Long,
     ): Int
 
+    /**
+     * [ctxVerifyChain] that, when the chain passes, puts the path the verifier built into [path] (leaf first, its trust anchor
+     * last; `ksl_ctx_verify_chain_path`), so pins can be checked against it. Same return values.
+     */
+    public fun ctxVerifyChainPath(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        name: String?,
+        atEpochSeconds: Long,
+        path: MutableList<ByteArray>,
+    ): Int
+
     public fun ctxLastError(ctx: Long): KslError
 
     /**
@@ -518,6 +530,24 @@ public fun frameDerList(items: List<ByteArray>): ByteArray {
             d.size.toByte()
         d.copyInto(out, off + 4)
         off += 4 + d.size
+    }
+    return out
+}
+
+/** The items of a [frameDerList] framing; throws [IllegalArgumentException] for a framing that does not add up. */
+@InternalKuicksilverApi
+public fun unframeDerList(framed: ByteArray): List<ByteArray> {
+    val out = ArrayList<ByteArray>()
+    var off = 0
+    while (off < framed.size) {
+        require(framed.size - off >= 4) { "truncated framing" }
+        val n =
+            ((framed[off].toInt() and 0xff) shl 24) or ((framed[off + 1].toInt() and 0xff) shl 16) or
+                ((framed[off + 2].toInt() and 0xff) shl 8) or (framed[off + 3].toInt() and 0xff)
+        off += 4
+        require(n >= 0 && n <= framed.size - off) { "truncated framing" }
+        out += framed.copyOfRange(off, off + n)
+        off += n
     }
     return out
 }

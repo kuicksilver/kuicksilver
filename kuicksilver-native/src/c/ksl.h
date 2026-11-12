@@ -32,7 +32,8 @@ extern "C" {
    ksl_ticket_keys_register / ksl_ctx_use_ticket_keys (explicit keys copied in once, referred to by id) */
 /* 7: ICMP hints for DPLPMTUD (ADR-0006) — ksl_udp_take_ptb (Packet Too Big read from the Linux error queue, IP_RECVERR with DF) and
    ksl_udp_emsgsize (sends the kernel refused as too large); a queued ICMP error no longer fails ksl_udp_recv. The one ABI bump of 0.3.0:
-   later 0.3.0 additions go under 7; additive under 7: ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
+   later 0.3.0 additions go under 7; additive under 7: ksl_ctx_verify_chain_path (the path a re-verification built, for pins
+   checked against it); ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
    ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_sender (send-only clones
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
@@ -250,6 +251,12 @@ int ksl_ctx_freeze(ksl_ctx *);
    (ADR-0011). */
 int ksl_ctx_verify_chain(ksl_ctx *, const uint8_t *chain, size_t chain_len, const char *name, int64_t at,
                          int *x509_err);
+/* ksl_ctx_verify_chain that also hands out the path the verifier built (leaf first, its trust anchor last), framed as for
+   ksl_ctx_set_roots: on KSL_OK *path_len is the framed length, and the path is written to `path` when `cap` holds it (call again
+   with a larger buffer otherwise). Both run OpenSSL's security level of the context on the path (auth level, as a handshake does:
+   ssl_cert.c ssl_verify_internal). Safe on a frozen context from any thread (ABI 7, additive). */
+int ksl_ctx_verify_chain_path(ksl_ctx *, const uint8_t *chain, size_t chain_len, const char *name, int64_t at,
+                              int *x509_err, uint8_t *path, size_t cap, size_t *path_len);
 int ksl_ctx_last_error(ksl_ctx *, uint32_t *packed, char *buf, size_t len);
 /* OpenSSL's security level (the default, OPENSSL_TLS_SECURITY_LEVEL, 2: 112 bits; a ksl client context never changes it) on a
    chain framed as for ksl_ctx_set_roots, leaf first. built = 1: the path a verifier built, its trust anchor last, checked as

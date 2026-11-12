@@ -158,6 +158,40 @@ public actual object Ksl {
             }
         }
 
+    public actual fun ctxVerifyChainPath(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        name: String?,
+        atEpochSeconds: Long,
+        path: MutableList<ByteArray>,
+    ): Int =
+        memScoped {
+            val err = alloc<IntVar>()
+            val len = alloc<ULongVar>()
+            val framed = frameDerList(chainDer)
+
+            fun attempt(cap: Int): Pair<Int, ByteArray?> {
+                err.value = 0
+                val buf = allocArray<UByteVar>(cap)
+                val rc =
+                    framed.pin { p, n ->
+                        ksl_ctx_verify_chain_path(ctx(ctx), p, n, name, atEpochSeconds, err.ptr, buf, cap.toULong(), len.ptr)
+                    }
+                if (rc != KSL_OK) return (if (err.value != 0) err.value else -1) to null
+                val need = len.value.toInt()
+                return 0 to (if (need <= cap) buf.readBytes(need) else null)
+            }
+            // the path is the presented certificates plus an anchor: this room is enough unless the anchor is huge
+            var (rc, bytes) = attempt(framed.size + 65_536)
+            if (rc == 0 && bytes == null) {
+                val second = attempt(len.value.toInt())
+                rc = second.first
+                bytes = second.second
+            }
+            if (rc == 0) path += unframeDerList(bytes ?: return@memScoped -1)
+            rc
+        }
+
     public actual fun chainLevel(
         chainDer: List<ByteArray>,
         builtPath: Boolean,
