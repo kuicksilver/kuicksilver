@@ -325,6 +325,10 @@ internal class H1Pool(
     /** How long a WebSocket waits for the SETTINGS of a new HTTP/2 connection before it goes over HTTP/1.1 (tests lower it). */
     internal var h2WebSocketSettingsWaitMillis: Long = 1_000
 
+    /** Tests: each WebSocket-over-HTTP/2 session's output, as it is made. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal var h2WebSocketOutputForTest: (io.kuicksilver.http2.runtime.H2StreamOutput) -> Unit = {}
+
     /** A WebSocket's wait for its last frames and the server's END_STREAM after an orderly close (tests lower it). */
     internal var h2WebSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.h2.H2_WEBSOCKET_CLOSE_WAIT_MILLIS
 
@@ -762,6 +766,7 @@ internal class H1Pool(
                                 events,
                                 h2WebSocketCloseWaitMillis,
                                 config.webSocketMaxMessageSize,
+                                h2WebSocketOutputForTest,
                                 released,
                             )
                         }

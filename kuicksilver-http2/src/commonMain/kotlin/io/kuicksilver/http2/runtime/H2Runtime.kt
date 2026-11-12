@@ -57,6 +57,9 @@ internal class SpinLock {
     }
 }
 
+/** The size of a stream's send buffer: one DATA frame of the default size. */
+private const val SEND_BUFFER = 16_384
+
 /** One stream as the runtime sees it; its mutable state is guarded by the connection's lock. */
 internal class StreamRt(
     val conn: H2Runtime,
@@ -77,6 +80,9 @@ internal class StreamRt(
      * either way: one received is a stream error PROTOCOL_ERROR, and none is sent.
      */
     var tunnel = false
+
+    /** The sender's piece buffer, one per stream (one sender at a time): no allocation per sendBody call. */
+    val sendBuffer: ByteArray by lazy { ByteArray(SEND_BUFFER) }
 
     /** Completed with true at the peer's END_STREAM (after its content), with false when the stream fails first. */
     val remoteEnd = CompletableDeferred<Boolean>()
@@ -690,7 +696,7 @@ internal class H2Runtime(
     fun fail(
         s: StreamRt,
         cause: Throwable,
-    ) {
+    ): Boolean {
         val set =
             lock.withLock {
                 if (s.failure != null || (s.remoteEnded && s.localEnded)) {
@@ -700,7 +706,7 @@ internal class H2Runtime(
                     true
                 }
             }
-        if (!set) return
+        if (!set) return false
         s.remoteEnd.complete(false)
         s.failed.complete(cause)
         s.head.completeExceptionally(cause)
@@ -708,6 +714,7 @@ internal class H2Runtime(
         s.readable.trySend(Unit)
         s.writable.trySend(Unit)
         written.update { it + 1 } // a sender waiting to end its body looks again (and finds the failure)
+        return true
     }
 
     // ---- loops ----
@@ -954,7 +961,7 @@ internal class H2Runtime(
         stallError: () -> Throwable,
         end: Boolean = true,
     ) {
-        val buf = ByteArray(SEND_CHUNK)
+        val buf = s.sendBuffer
         try {
             while (true) {
                 val n = source.readAvailable(buf, 0, buf.size)
@@ -1319,7 +1326,10 @@ internal class H2Runtime(
         s: StreamRt,
         code: Http2ErrorCode,
     ) {
-        fail(s, Http2Exception.StreamReset(s.id, code, byPeer = false, notProcessed = false, "reset with $code"))
+        // RFC 9113 section 5.4.2: one RST_STREAM per stream, none in answer to the peer's: a stream that failed already (the
+        // peer's reset, a stream error of ours, a stalled sender) or ended both ways gets nothing more. Decided with the
+        // failure itself, so two resets that race cannot both go out
+        if (!fail(s, Http2Exception.StreamReset(s.id, code, byPeer = false, notProcessed = false, "reset with $code"))) return
         withCore { reset(s.id, code, clock()) }
     }
 
@@ -1408,7 +1418,6 @@ internal class H2Runtime(
         val IN_ORDER_CLOSE_BOUND = 2.seconds
         const val READ_BUFFER = 16_384
         const val WRITE_BUFFER = 65_536
-        const val SEND_CHUNK = 16_384
     }
 }
 

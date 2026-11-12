@@ -205,7 +205,9 @@ public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
  * past its limit is cut off there with 1009 after at most 64 KiB more than the limit was handed on; malformed compressed
  * data ends it with 1002.
  *
- * A failed [input] fails the returned channel with its cause, and the end of [input] ends it. The copy runs in [context]
+ * A failed [input] fails the returned channel with its cause, and the end of [input] ends it. [onEnd] runs once the
+ * returned channel has ended or failed for any of these reasons (with [untilClose], right after the peer's Close frame was
+ * handed on), or the copy was stopped. The copy runs in [context]
  * but outside its job, so it never holds a call open (a reader that gave up leaves it waiting for room); the end of
  * [context]'s job stops it.
  *
@@ -222,6 +224,7 @@ public fun guardWebSocketInput(
     perMessageDeflate: Boolean = inflate != null,
     maxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     checkText: Boolean = true,
+    onEnd: () -> Unit = {},
 ): ByteReadChannel {
     require(maxMessageSize >= 1) { "maxMessageSize $maxMessageSize is less than 1" }
     val out = ByteChannel()
@@ -241,6 +244,7 @@ public fun guardWebSocketInput(
             out.cancel(cause)
         } finally {
             guard.close()
+            onEnd()
         }
     }
     return out

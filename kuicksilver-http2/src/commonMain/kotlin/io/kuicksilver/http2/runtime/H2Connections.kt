@@ -242,8 +242,8 @@ public class H2ClientStream internal constructor(
      */
     public suspend fun sendBody(
         source: ByteReadChannel,
-        stallMillis: Long?,
         end: Boolean = true,
+        stallMillis: Long?,
         stallError: () -> Throwable,
     ): Unit = rt.sendBody(s, source, stallMillis, stallError, end)
 

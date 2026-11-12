@@ -85,12 +85,6 @@ internal object WebSocketOverH2 {
  * ... with the CANCEL error code").
  */
 
-/**
- * How far a WebSocket session's writer may be ahead of its HTTP/2 stream: the bytes it flushed that were not handed to the
- * stream yet (the stream holds at most the client's window more). Beyond it the writer waits (RFC 9113 section 5.2).
- */
-internal const val WEBSOCKET_OUTPUT_AHEAD: Int = 65_536
-
 internal class H2UpgradeResponse(
     call: PipelineCall,
     h2: H2ServerStream,
@@ -127,11 +121,11 @@ internal class H2UpgradeResponse(
         applyOwnPriority()
         h2.respond(200, fields().filter { it.first !in WebSocketOverH2.DROPPED }, endStream = false)
         markAnswered()
-        // the frames go out as DATA within the client's windows, at most WEBSOCKET_OUTPUT_AHEAD bytes ahead of the stream (the
+        // the frames go out as DATA within the client's windows, at most H2StreamOutput.DEFAULT_LIMIT ahead of the stream (the
         // session's writer waits beyond that: backpressure, RFC 9113 section 5.2); the channel's end is the stream's
         // END_STREAM, its failure (the session failed) a RST_STREAM CANCEL
         val output =
-            H2StreamOutput(CoroutineScope(call.coroutineContext), WEBSOCKET_OUTPUT_AHEAD) { source, end ->
+            H2StreamOutput(CoroutineScope(call.coroutineContext)) { source, end ->
                 h2.sendBody(source, end = end, stallMillis = sendStallMillis, stallError = {
                     IOException("the client took no WebSocket frames for $sendStallMillis ms")
                 })
@@ -168,7 +162,7 @@ internal class H2UpgradeResponse(
                 // stream failed already (the client's RST_STREAM, a stream error of ours such as a HEADERS on the tunnel, the
                 // send-stall deadline), which RFC 9113 section 5.4.2 answers with nothing more
                 output.cancel(output.closedCause ?: CancellationException("the call was cancelled"))
-                if (!h2.failed) runCatching { h2.reset(Http2ErrorCode.CANCEL) }
+                runCatching { h2.reset(Http2ErrorCode.CANCEL) }
             } else {
                 runCatching { output.flushAndClose() }
                 try {
@@ -176,7 +170,7 @@ internal class H2UpgradeResponse(
                     if (output.endedInOrder) withTimeoutOrNull(WebSocketOverH2.CLOSE_WAIT) { h2.awaitClientEnd() }
                 } catch (e: CancellationException) {
                     // cancelled while the last frames waited for window
-                    if (!h2.failed) withContext(NonCancellable) { runCatching { h2.reset(Http2ErrorCode.CANCEL) } }
+                    withContext(NonCancellable) { runCatching { h2.reset(Http2ErrorCode.CANCEL) } }
                     throw e
                 }
             }

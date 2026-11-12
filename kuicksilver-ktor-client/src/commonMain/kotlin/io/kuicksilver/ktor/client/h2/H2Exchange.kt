@@ -184,7 +184,7 @@ internal suspend fun h2Exchange(
                                 GlobalScope
                                     .launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-request-body")) {
                                         try {
-                                            stream.sendBody(counted, data.socketTimeoutMillis()) {
+                                            stream.sendBody(counted, stallMillis = data.socketTimeoutMillis()) {
                                                 io.ktor.client.plugins
                                                     .SocketTimeoutException(data, null)
                                             }

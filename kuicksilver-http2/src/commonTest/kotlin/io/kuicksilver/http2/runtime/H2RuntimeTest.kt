@@ -943,7 +943,7 @@ class H2RuntimeTest {
                     runCatching {
                         s.sendBody(
                             ByteReadChannel("x".encodeToByteArray()),
-                            null,
+                            stallMillis = null,
                         ) { error("stall") }
                     }
                 }

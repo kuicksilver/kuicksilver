@@ -24,6 +24,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.runtime.H2ServerStream
+import io.kuicksilver.http2.runtime.H2StreamOutput
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
@@ -468,6 +469,91 @@ class ClientH2WebSocketTest {
                     val reset = assertIs<Http2Exception.StreamReset>(withTimeout(10.seconds) { failure.await() })
                     assertEquals(Http2ErrorCode.CANCEL, reset.code)
                     assertEquals(0, engine(c).h1.h2.streamCount)
+                }
+            }
+        }
+
+    /**
+     * The same with a last frame far larger than the server's window and the engine's 64 KiB lead (300 000 bytes): the
+     * session's close does not wait for the lead (H2StreamOutput.flushAndClose hands the rest on and closes), so the close
+     * wait still bounds it and the stream is reset with CANCEL. Before, the close waited inside the call for room that
+     * never came.
+     */
+    @Test fun negative_closeWaitIsBoundedWithALastFrameBeyondTheLead() =
+        clientTest {
+            val failure = CompletableDeferred<Throwable>()
+            val sent = CompletableDeferred<Unit>()
+            tlsH2WithSilentUdp(
+                settings = Http2Settings(initialStreamWindow = 1_024),
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.invokeOnFailure { failure.complete(it) }
+                    r.respond(200)
+                    sent.await()
+                    // a Close 1000 of the server's, so the client's session closes at once; the stream stays open, and the
+                    // client's frames are never read: no WINDOW_UPDATE
+                    r.sendBody(ByteReadChannel(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte())), end = false)
+                    kotlinx.coroutines.awaitCancellation()
+                },
+            ) { port, _ ->
+                client().use { c ->
+                    engine(c).h1.h2WebSocketCloseWaitMillis = 200
+                    c.get("https://127.0.0.1:$port/")
+                    withTimeout(10.seconds) {
+                        c.webSocket("wss://127.0.0.1:$port/ws") {
+                            outgoing.send(Frame.Binary(true, ByteArray(300_000)))
+                            sent.complete(Unit)
+                            while (!incoming.receiveCatching().isClosed) { }
+                        }
+                    }
+                    val reset = assertIs<Http2Exception.StreamReset>(withTimeout(10.seconds) { failure.await() })
+                    assertEquals(Http2ErrorCode.CANCEL, reset.code)
+                    assertEquals(0, engine(c).h1.h2.streamCount)
+                }
+            }
+        }
+
+    /**
+     * The client's writer is held at the server's window plus the engine's lead (RFC 9113 section 5.2): against a server
+     * that reads nothing (a 64 KiB window), the session's output waits in its flush with at most 64 KiB and one piece
+     * flushed and not taken by the stream, however much the application sends.
+     */
+    @Test fun negative_clientWriterIsHeldAtTheWindowAndTheLead() =
+        clientTest {
+            tlsH2WithSilentUdp(
+                settings = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536),
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.respond(200)
+                    kotlinx.coroutines.awaitCancellation() // never reads: no WINDOW_UPDATE
+                },
+            ) { port, _ ->
+                client().use { c ->
+                    val output = CompletableDeferred<io.kuicksilver.http2.runtime.H2StreamOutput>()
+                    engine(c).h1.h2WebSocketOutputForTest = { output.complete(it) }
+                    c.get("https://127.0.0.1:$port/")
+                    coroutineScopeOf { scope ->
+                        scope.launch {
+                            runCatching {
+                                c.webSocket("wss://127.0.0.1:$port/ws") {
+                                    while (true) outgoing.send(Frame.Binary(true, ByteArray(16_384)))
+                                }
+                            }
+                        }
+                        val out = withTimeout(10.seconds) { output.await() }
+                        // the writer waits only with more than the lead flushed and not taken, and the stream only ever takes
+                        // more, so at a wait the lead is past 64 KiB by at most what that flush added (a piece of one frame)
+                        var lead = 0L
+                        withTimeout(10.seconds) {
+                            out.writerWaiting.first {
+                                lead = out.lead
+                                it && lead > H2StreamOutput.DEFAULT_LIMIT
+                            }
+                        }
+                        assertTrue(lead <= H2StreamOutput.DEFAULT_LIMIT + 16_388L, "lead $lead")
+                    }
                 }
             }
         }

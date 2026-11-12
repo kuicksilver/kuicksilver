@@ -54,12 +54,6 @@ private const val WEBSOCKET = "websocket"
 internal const val H2_WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
 
 /**
- * How far a WebSocket session's writer may be ahead of its HTTP/2 stream: the bytes it flushed that were not handed to the
- * stream yet (the stream holds at most the server's window more). Beyond it the writer waits (RFC 9113 section 5.2).
- */
-internal const val H2_WEBSOCKET_OUTPUT_AHEAD: Int = 65_536
-
-/**
  * A WebSocket over HTTP/2 (RFC 8441) on a stream of [conn], reserved by the caller on a connection whose server enabled
  * Extended CONNECT (section 3): CONNECT with `:protocol = websocket`, `:scheme` `https` (a `wss` URI, section 5), the
  * WebSocket URI's path and authority, and the handshake's other fields (Sec-WebSocket-Version, -Protocol, -Extensions,
@@ -85,6 +79,8 @@ internal suspend fun h2WebSocket(
     closeWaitMillis: Long = H2_WEBSOCKET_CLOSE_WAIT_MILLIS,
     /** The engine's `webSocketMaxMessageSize` (RFC 6455 section 10.4). */
     maxMessageSize: Long = io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
+    /** Tests: the session's output, once it exists. */
+    onOutput: (H2StreamOutput) -> Unit = {},
     onReleased: (kept: Boolean) -> Unit,
 ): HttpResponseData {
     val requestTime = GMTDate()
@@ -148,19 +144,17 @@ internal suspend fun h2WebSocket(
         fun values(name: String) = head.fields.filter { it.first == name }.map { it.second }
         val handshake =
             webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), callContext)
-        // the frames go out within the server's windows, at most H2_WEBSOCKET_OUTPUT_AHEAD bytes ahead of the stream (the
+        // the frames go out within the server's windows, at most H2StreamOutput.DEFAULT_LIMIT ahead of the stream (the
         // session's writer waits beyond that, RFC 9113 section 5.2); a stream that fails under the session (a reset, the
         // connection, the socket timeout while it waits for window) fails the session's writes with it
         val output =
-            H2StreamOutput(
-                CoroutineScope(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket")),
-                H2_WEBSOCKET_OUTPUT_AHEAD,
-            ) { source, end ->
-                stream.sendBody(source, data.socketTimeoutMillis(), end) {
+            H2StreamOutput(CoroutineScope(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket"))) { source, end ->
+                stream.sendBody(source, end, data.socketTimeoutMillis()) {
                     io.ktor.client.plugins
                         .SocketTimeoutException(data, null)
                 }
             }
+        onOutput(output)
         val sender = output.done
         job.invokeOnCompletion { cause ->
             // a session that ended in order closed its output: its last frames and END_STREAM go out, and the server's
@@ -186,6 +180,9 @@ internal suspend fun h2WebSocket(
         }
         val session =
             RawWebSocket(
+                // the input ends at the server's Close (or with the stream): the session is closing, and its last frames, its
+                // Close reply among them, must not wait for a window the server may never open again; the close wait bounds
+                // them from there (RFC 6455 section 7.1.1)
                 guardWebSocketInput(
                     stream.body,
                     handshake.allowedRsv,
@@ -196,6 +193,7 @@ internal suspend fun h2WebSocket(
                     perMessageDeflate = handshake.perMessageDeflate,
                     maxMessageSize = maxMessageSize,
                     checkText = handshake.checkText,
+                    onEnd = { output.releaseLead() },
                 ),
                 // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
                 guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression),

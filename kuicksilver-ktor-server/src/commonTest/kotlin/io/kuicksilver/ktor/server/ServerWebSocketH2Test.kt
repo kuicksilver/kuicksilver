@@ -535,7 +535,13 @@ class ServerWebSocketH2Test {
                     // the stream is done on the server: its call ended and released it. Ktor runs the route's handler only
                     // if its session was still alive when the handler's coroutine started: a stream that failed before
                     // (the HEADERS crossed the upgrade) cancels the session first, and the handler never runs
-                    withTimeout(10.seconds) { server.engine.h2Live.live().single().openRequests.first { it == 0 } }
+                    withTimeout(10.seconds) {
+                        server.engine.h2Live
+                            .live()
+                            .single()
+                            .openRequests
+                            .first { it == 0 }
+                    }
                     if (started.isCompleted) withTimeout(10.seconds) { ended.await() }
                     raw.headers(3, RawH2Client.get("/"), endStream = true)
                     assertNotNull(raw.await { it.stream == 3 && it.type == RawFrame.HEADERS }, "the connection goes on")
@@ -938,7 +944,7 @@ class ServerWebSocketH2Test {
     /**
      * Backpressure from the client to the server (RFC 9113 section 5.2): a client that reads nothing gives no credit, so
      * at most its stream window (64 KiB) reaches it and the upgrade's writer is held once it is 64 KiB more ahead of the
-     * stream (`WEBSOCKET_OUTPUT_AHEAD`): it never gets near the 4 MiB it wants to send. After the send-stall deadline
+     * stream (`H2StreamOutput.DEFAULT_LIMIT`): it never gets near the 4 MiB it wants to send. After the send-stall deadline
      * without window (here 300 ms, `sendStallTimeoutForTest`) the stream is reset with CANCEL and the session fails
      * (docs/guide/ktor.md, "WebSockets over HTTP/2").
      */
@@ -960,11 +966,11 @@ class ServerWebSocketH2Test {
                     val failure = withTimeout(10.seconds) { done.await() }
                     assertNotNull(failure, "the session cannot have sent everything: it failed with the stream")
                     // what the engine can have taken from the upgrade's writer: the client's window (64 KiB) on the stream,
-                    // the engine's lead over the stream (WEBSOCKET_OUTPUT_AHEAD), the frame whose flush went past that lead and
+                    // the engine's lead over the stream (H2StreamOutput.DEFAULT_LIMIT), the frame whose flush went past that lead and
                     // the piece the engine was handing to the stream when the window ran out. Before, a Ktor ByteChannel stood
                     // in front of the stream and took up to about 3 MiB (2.7 MB seen on Android, 2.0 MB on the JVM)
                     val frame = 16_384L + 4
-                    val bound = 65_536L + io.kuicksilver.ktor.server.h2.WEBSOCKET_OUTPUT_AHEAD + 2 * frame
+                    val bound = 65_536L + io.kuicksilver.http2.runtime.H2StreamOutput.DEFAULT_LIMIT + 2 * frame
                     println("server WebSocket over HTTP/2 stalled after ${sent.value} bytes (bound $bound)")
                     assertTrue(sent.value <= bound, "the session stopped at the window and the engine's lead: ${sent.value} > $bound")
                     // what reached the client is within the window it granted (it reads only now)
