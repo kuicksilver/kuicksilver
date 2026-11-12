@@ -11,6 +11,7 @@ import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.UByteVar
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
@@ -19,12 +20,16 @@ import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.toKString
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import platform.CoreCrypto.CCHmac
+import platform.CoreCrypto.CC_SHA256_DIGEST_LENGTH
+import platform.CoreCrypto.kCCHmacAlgSHA256
 import platform.Network.nw_endpoint_copy_address_string
 import platform.Network.nw_path_enumerate_gateways
 import platform.Network.nw_path_monitor_cancel
@@ -48,16 +53,17 @@ import platform.posix.sockaddr_in6
 
 /**
  * The identity of a network the default path runs over (iOS, macOS), from [nwPathIdentities]: equal for the same interface,
- * gateways and interface addresses. It holds local addresses, so its [toString] shows only a 64-bit hash of them keyed
- * with a random salt drawn once per process from the system's secure generator (`NwPathIdentity(#…)`): equal identities
- * give equal strings within a process, distinct ones distinct strings in practice, and without the salt the few private
- * gateway and address combinations cannot be enumerated back from a log line. Another process gives other strings.
+ * gateways and interface addresses. It holds local addresses, so its [toString] shows only the first 64 bits of an
+ * HMAC-SHA256 of them (CommonCrypto `CCHmac`) under a 32-byte key drawn once per process from `arc4random_buf`, the
+ * system's secure generator (`NwPathIdentity(#…)`): equal identities give equal strings within a process, distinct ones
+ * distinct strings in practice, and without the key, which never leaves the process, log lines say nothing about the
+ * addresses, however many of them are collected. Another process gives other strings.
  */
 @InternalKuicksilverApi
 public class NwPathIdentity internal constructor(
     private val text: String,
 ) {
-    private val digest: Long = fnv1a64(IDENTITY_SALT, text)
+    private val digest: Long = keyedDigest(text)
 
     /** Equal when the interface, gateways and addresses are. */
     override fun equals(other: Any?): Boolean = other is NwPathIdentity && other.text == text
@@ -65,33 +71,36 @@ public class NwPathIdentity internal constructor(
     /** Consistent with [equals]. */
     override fun hashCode(): Int = text.hashCode()
 
-    /** A salted hash, never the addresses. */
+    /** A keyed hash, never the addresses. */
     override fun toString(): String = "NwPathIdentity(#${digest.toULong().toString(16).padStart(16, '0')})"
 }
 
-/** The per-process key of [NwPathIdentity.toString]: 64 bits from `arc4random_buf`, the system's secure generator. */
-private val IDENTITY_SALT: Long =
-    memScoped {
-        val b = allocArray<UByteVar>(8)
-        arc4random_buf(b, 8u)
-        (0 until 8).fold(0L) { acc, i -> (acc shl 8) or b[i].toLong() }
-    }
+/** The per-process key of [NwPathIdentity.toString]: 32 bytes from `arc4random_buf`, the system's secure generator. */
+private val IDENTITY_KEY: ByteArray = ByteArray(32).also { k -> k.usePinned { arc4random_buf(it.addressOf(0), 32u) } }
 
-/** FNV-1a, 64 bits, over the 8 bytes of [salt], then the UTF-16 code units of [s]. */
-private fun fnv1a64(
-    salt: Long,
-    s: String,
-): Long {
-    var h = -0x340d631b7bdddcdbL // 0xcbf29ce484222325
-    for (i in 0 until 8) {
-        h = h xor ((salt ushr (8 * i)) and 0xff)
-        h *= 0x100000001b3L
+/** The first 64 bits (big-endian) of HMAC-SHA256 under [IDENTITY_KEY] of the UTF-8 bytes of [s]. */
+private fun keyedDigest(s: String): Long {
+    val data = s.encodeToByteArray()
+    val mac = ByteArray(CC_SHA256_DIGEST_LENGTH)
+    IDENTITY_KEY.usePinned { k ->
+        mac.usePinned { m ->
+            if (data.isEmpty()) {
+                CCHmac(kCCHmacAlgSHA256, k.addressOf(0), IDENTITY_KEY.size.toULong(), null, 0u, m.addressOf(0))
+            } else {
+                data.usePinned { d ->
+                    CCHmac(
+                        kCCHmacAlgSHA256,
+                        k.addressOf(0),
+                        IDENTITY_KEY.size.toULong(),
+                        d.addressOf(0),
+                        data.size.toULong(),
+                        m.addressOf(0),
+                    )
+                }
+            }
+        }
     }
-    for (c in s) {
-        h = h xor c.code.toLong()
-        h *= 0x100000001b3L
-    }
-    return h
+    return (0 until 8).fold(0L) { acc, i -> (acc shl 8) or (mac[i].toLong() and 0xff) }
 }
 
 /**
