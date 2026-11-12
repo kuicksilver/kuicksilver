@@ -40,8 +40,9 @@ The demo server, on your computer (from the repository root):
 ```
 
 `/bytes/{n}?rate=<bytes per second>` sends `n` bytes of a fixed pattern, at that rate when given (the Migration screen
-asks for 2 or 4 MiB/s, so that there is time to switch the network by hand); `Range: bytes=<first>-` gets a 206 from
-that byte on. `/stream?seconds=30&rate=1048576` sends the same pattern without a length. Every client checks every byte
+asks for 2 or 4 MiB/s, so that there is time to switch the network by hand; the server paces at 64 KiB/s at least);
+`Range: bytes=<first>-`, `bytes=<first>-<last>` or `bytes=-<suffix>` gets a 206, a range past the end a 416, and anything
+else is ignored (the whole body, 200). `/stream?seconds=30&rate=1048576` sends the same pattern without a length. Every client checks every byte
 against the pattern, so a download resumed with `Range` is proven whole.
 
 The Android app: `./gradlew -p samples/compose-demo :androidApp:installDebug`, or open `samples/compose-demo` in Android
@@ -53,9 +54,15 @@ The iOS app (iOS 18.5 or later: Compose Multiplatform 1.12.2 links objects built
 simulator the server is at 127.0.0.1, the default host. On an iPhone, select your team for the `ComposeDemo` target
 (Signing & Capabilities), and enter the server's address.
 
-Every engine trusts only the demo CA (`certs/gen.sh`) for the demo server and checks the certificate for the name
-`kuicksilver.local`, whatever address the URL has: Kuicksilver with `TrustConfig.ExpectedName` over
-`TrustConfig.AnchoredCa`, OkHttp with a trust manager and a host name check of its own, Darwin with `SecTrust` anchors.
+Every engine except CIO on iOS (plain `http://`, see below) trusts only the demo CA (`certs/gen.sh`) for the demo server
+and checks the certificate for the name `kuicksilver.local`, whatever address the URL has: Kuicksilver with
+`TrustConfig.ExpectedName` over `TrustConfig.AnchoredCa`, OkHttp with a trust manager and a host name check of its own,
+Darwin with `SecTrust` anchors.
+
+**The server's key is public**: it is in this repository (`server/.../DemoServerCerts.kt`), so anyone can impersonate a
+server that uses it to a client that trusts the demo CA. Before you run the server where others can reach it (a public
+address for the phone check), run `certs/gen.sh` (it needs an OpenSSL 3 CLI; `OPENSSL=...` picks one) to make your own
+CA and key, and build both the app and the server from them.
 
 ## What to look at
 
@@ -78,6 +85,12 @@ bash tools/interop/build-image.sh                          # once: the image wit
 samples/compose-demo/server/netem.sh 50 1                  # +50 ms round trip, 1 % of the server's packets lost
 ```
 
+`netem.sh [delay-ms] [loss-percent] [server options...]` starts the server with `--no-alt-svc` unless you give server
+options of your own: without `Alt-Svc`, URLSession (the Darwin column) stays on TCP, so every column but Kuicksilver's
+measures TCP. `netem.sh 50 1 --host 0.0.0.0` brings `Alt-Svc` back. The table gives, per engine, the median and p90 of
+the download time and of the time to the response head. The Kuicksilver lane asks for HTTP/3 only (`H3Only`): a
+download that cannot use HTTP/3 fails and is counted as failed, never as an HTTP/3 time.
+
 **Diagnostics.** With the default URL (the demo server's `/`) the first request goes over HTTP/1.1 with
 `NoAlternative` and learns `Alt-Svc`; the second goes over HTTP/3. Turn `http3Allowed` off: the next one says
 `Http3Disabled`. Point it at a public site with the system trust to see how that origin is served.
@@ -85,10 +98,11 @@ samples/compose-demo/server/netem.sh 50 1                  # +50 ms round trip, 
 ## How the comparison is kept fair, and where it is not
 
 - Both sides download the same bytes from the same server process at the same time, with the same certificate checks.
-  The Kuicksilver lane is never resumed: what it shows is the connection surviving, not a retry.
+  The Kuicksilver lane is never resumed: what it shows is the connection surviving, not a retry. It runs with
+  `Http3DiscoveryMode.H3Only`, so it cannot fall back to HTTP/1.1 and pass a TCP result off as HTTP/3's.
 - The TCP side is HTTP/1.1. The demo server does not offer HTTP/2; HTTP/2 runs over TCP too and would not move either.
 - **CIO on iOS uses plain `http://`** (port 8080): Ktor's CIO engine has no TLS on Kotlin/Native. That makes its
-  connection setup cheaper than a real HTTPS client's, which flatters it in the time to the first byte.
+  connection setup cheaper than a real HTTPS client's, which flatters it in the time to the response head.
 - **Darwin (URLSession) may itself use HTTP/3**: iOS's URLSession speaks HTTP/3 and takes it when the server announces
   it with `Alt-Svc`, and Ktor's Darwin engine reports `HTTP/1.1` whatever URLSession used. Its column is the closest to
   what a real iOS app gets, but it is not a guaranteed TCP baseline: start the server with `--no-alt-svc` to keep it on
@@ -114,28 +128,31 @@ From the repository root:
 ```sh
 ./gradlew -p samples/compose-demo :composeApp:allTests         # DemoLogicTest on the JVM (Android host) and the iOS simulator
 ./gradlew -p samples/compose-demo :composeApp:assembleAndroidMain :androidApp:assembleDebug :composeApp:linkDebugFrameworkIosSimulatorArm64
-./gradlew -p samples/compose-demo :server:compileKotlin
+./gradlew -p samples/compose-demo :server:test                 # the server's Range parsing
 xcodebuild -project samples/compose-demo/iosApp/ComposeDemo.xcodeproj -scheme ComposeDemo \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build   # the app, with the framework
 ```
 
 `DemoLogicTest` checks the screen models without UI: a download resumed with `Range` continues from the byte where it
 broke (and starts over when the server ignores `Range`, and refuses a `Content-Range` from another offset), the
-Migration screen resumes the TCP lane only, the diagnostics text for a fallback and for HTTP/3, and the median and p90.
+Migration screen resumes the TCP lane only, the Lossy screen leaves a non-HTTP/3 download of the Kuicksilver lane out of
+its statistics, a cancellation that is not the screen's own is a failure, the diagnostics text for a fallback and for
+HTTP/3, and the median and p90.
 
 `MigrationDemoAndroidTest` (`androidApp/src/androidTest`) is the release gate's emulator check: 20 MiB from the demo
 server on the host over HTTP/3 with connection migration and over OkHttp at once, the default network switched off at
 30 % (`svc wifi disable`, or `svc data disable` when mobile data is the default); the HTTP/3 download must complete after
-a `connectionMigrated(Migrated)` and the OkHttp one must fail. It needs an emulator with Wi-Fi and mobile data, the
-server on the host and its port:
+a `connectionMigrated(Migrated)` and the OkHttp one must fail (on the assumption, stated in its KDoc, that Android
+tears down the TCP sockets of a network that goes away). It needs an emulator with Wi-Fi and mobile data:
 
 ```sh
-./gradlew -p samples/compose-demo :server:run &
-./gradlew -p samples/compose-demo :androidApp:connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.demoServerPort=8443
+ANDROID_SERIAL=<emulator> ./gradlew -p samples/compose-demo :androidApp:migrationDemoDeviceTest
 ```
 
-Without the port it is skipped. It switches the network back on at the end.
+The task starts the demo server on the host's 127.0.0.1 (ports chosen by the system), installs the app and its tests,
+runs the test with `am instrument -e demoServerPort <port>` within 10 minutes, and fails unless the output says
+`OK (1 test)` with nothing skipped. `tools/ci/local-matrix.sh` runs it with the emulator. A plain
+`connectedDebugAndroidTest` skips the test, which needs the port. It switches the network back on at the end.
 
 ## On a phone (the manual check)
 

@@ -161,8 +161,10 @@ data class LossyRow(
     /** Time to the last byte of each download, ms. */
     val download: SeriesStats? = null,
     /** Time to the response head of each download, ms. */
-    val ttfb: SeriesStats? = null,
+    val head: SeriesStats? = null,
     val failures: Int = 0,
+    /** Downloads of the Kuicksilver lane that came over another protocol than HTTP/3: left out of the statistics. */
+    val notHttp3: Int = 0,
 )
 
 /** The Lossy network screen. */
@@ -198,6 +200,7 @@ class LossyModel(
                 val times = List(ls.size) { mutableListOf<Double>() }
                 val heads = List(ls.size) { mutableListOf<Double>() }
                 val failures = IntArray(ls.size)
+                val notHttp3 = IntArray(ls.size)
                 for (lane in ls) {
                     download(lane.client, lane.baseUrl + "/bytes/1", resume = false) // opens the connection; not counted
                 }
@@ -207,14 +210,19 @@ class LossyModel(
                         mutable.update { it.copy(progress = "run ${run + 1} of $runs: ${ls[i].name}") }
                         var head = -1.0
                         val r = download(ls[i].client, ls[i].baseUrl + "/bytes/$bytes", resume = false, onHead = { _, ms -> head = ms.toDouble() })
-                        if (r is DownloadResult.Completed) {
-                            times[i] += r.elapsedMs.toDouble()
-                            heads[i] += head
-                        } else {
-                            failures[i]++
+                        when {
+                            r !is DownloadResult.Completed -> failures[i]++
+
+                            // the lane is H3Only, so this does not happen; if it did, a TCP time must not count as HTTP/3's
+                            ls[i].isKuicksilver && !r.protocol.startsWith("HTTP/3") -> notHttp3[i]++
+
+                            else -> {
+                                times[i] += r.elapsedMs.toDouble()
+                                heads[i] += head
+                            }
                         }
                         mutable.update { s ->
-                            s.copy(rows = s.rows.mapIndexed { k, row -> row.copy(download = seriesStats(times[k]), ttfb = seriesStats(heads[k]), failures = failures[k]) })
+                            s.copy(rows = s.rows.mapIndexed { k, row -> row.copy(download = seriesStats(times[k]), head = seriesStats(heads[k]), failures = failures[k], notHttp3 = notHttp3[k]) })
                         }
                     }
                 }

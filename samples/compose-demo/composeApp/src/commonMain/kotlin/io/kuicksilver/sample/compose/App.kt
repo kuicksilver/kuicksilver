@@ -26,10 +26,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -187,8 +187,9 @@ private fun LossyScreen(app: DemoApp) {
                     Text(row.name, style = MaterialTheme.typography.titleSmall)
                     Text(row.note, style = MaterialTheme.typography.bodySmall)
                     Text("download: ${stats(row.download)}", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                    Text("first byte: ${stats(row.ttfb)}", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                    Text("time to response head: ${stats(row.head)}", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                     if (row.failures > 0) Text("failed: ${row.failures}", fontSize = 12.sp)
+                    if (row.notHttp3 > 0) Text("not over HTTP/3, left out: ${row.notHttp3}", fontSize = 12.sp)
                 }
             }
         }

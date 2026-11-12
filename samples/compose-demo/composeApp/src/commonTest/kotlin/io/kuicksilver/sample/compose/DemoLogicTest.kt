@@ -251,6 +251,40 @@ class DemoLogicTest {
             assertEquals(400, lane.received)
         }
 
+    /** A foreign CancellationException (the engine's, not this coroutine's) is a failed download, not a silent stop. */
+    @Test fun negative_foreignCancellationIsAFailure() =
+        runTest {
+            val c = HttpClient(MockEngine { throw kotlinx.coroutines.CancellationException("the engine gave up") })
+            val r = download(c, url, resume = false)
+            assertIs<DownloadResult.Failed>(r)
+            assertTrue("the engine gave up" in r.error, r.error)
+        }
+
+    /**
+     * The Lossy screen never counts a download of the Kuicksilver lane that came over HTTP/1.1 (a fallback) as HTTP/3: it
+     * is left out of the statistics and counted. The lane is H3Only, so this guards the screen, not the engine.
+     */
+    @Test fun negative_lossyLeavesOutNonHttp3SamplesOfTheKuicksilverLane() =
+        runTest {
+            fun mock() =
+                HttpClient(MockEngine { respond(ByteReadChannel(pattern(0, size)), HttpStatusCode.OK, headersOf(HttpHeaders.ContentLength, size.toString())) })
+            val model =
+                LossyModel(this) {
+                    listOf(
+                        Lane("h3", "", mock(), "https://demo.test", isKuicksilver = true), // MockEngine answers HTTP/1.1
+                        Lane("tcp", "", mock(), "https://demo.test", isKuicksilver = false),
+                    )
+                }
+            model.start(size, runs = 3)
+            model.join()
+            val (h3, tcp) = model.state.value.rows
+            assertEquals(3, h3.notHttp3)
+            assertNull(h3.download, "no HTTP/1.1 time in the HTTP/3 row")
+            assertEquals(0, tcp.notHttp3)
+            assertEquals(3, tcp.download?.n)
+            assertEquals(3, tcp.head?.n)
+        }
+
     @Test fun medianAndP90() {
         val s = seriesStats((1..20).map { it.toDouble() }.shuffled())!!
         assertEquals(20, s.n)

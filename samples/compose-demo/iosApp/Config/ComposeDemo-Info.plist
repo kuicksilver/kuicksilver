@@ -11,7 +11,11 @@ SPDX-License-Identifier: Apache-2.0
 	<!-- The demo server runs on a machine on the local network; iOS asks the user before the app talks to it. -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>The demo downloads from the Kuicksilver demo server on your local network.</string>
-	<!-- URLSession (the Darwin column) to the demo server's address on the local network. -->
+	<!--
+	URLSession (the Darwin column) dials the demo server by IP address. From iOS 17, App Transport Security refuses
+	connections to IP addresses unless this key is set (Apple's NSAllowsLocalNetworking documentation); it allows IP
+	addresses, unqualified and .local names, not arbitrary loads. CIO and Kuicksilver do not go through URLSession.
+	-->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

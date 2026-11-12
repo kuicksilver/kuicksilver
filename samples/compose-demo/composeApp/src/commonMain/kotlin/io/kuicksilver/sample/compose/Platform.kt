@@ -69,7 +69,7 @@ interface DemoPlatform {
 fun demoTrust(): TrustConfig = TrustConfig.ExpectedName(DEMO_SERVER_NAME, TrustConfig.AnchoredCa(Certificate.parsePem(DemoCerts.caPem)))
 
 /**
- * Kuicksilver's Ktor engine for the demo: [discovery] (Preferred: HTTP/3 by prior knowledge, HTTP/1.1 if it fails),
+ * Kuicksilver's Ktor engine for the demo: [discovery] (H3Only for the comparisons, Auto for the Diagnostics screen),
  * the demo CA or the platform's trust store, connection migration when [migration] is set, and the kill switch
  * [http3Allowed]. [listener] hears the engine's events (connectionMigrated among them).
  */
@@ -94,7 +94,11 @@ fun kuicksilverClient(
         }
     }
 
-/** The Kuicksilver lane of a comparison: HTTP/3 to the demo server, following the default network when [migrate]. */
+/**
+ * The Kuicksilver lane of a comparison: HTTP/3 only to the demo server (`H3Only`: a call that cannot go over HTTP/3 fails
+ * instead of falling back to HTTP/1.1, so a TCP result is never shown in the HTTP/3 column), following the default
+ * network when [migrate].
+ */
 fun kuicksilverLane(
     platform: DemoPlatform,
     server: DemoServer,
@@ -107,7 +111,7 @@ fun kuicksilverLane(
         client =
             kuicksilverClient(
                 trust = demoTrust(),
-                discovery = Http3DiscoveryMode.Preferred,
+                discovery = Http3DiscoveryMode.H3Only,
                 migration = if (migrate) platform.migration() else null,
                 networkId = if (migrate) platform::networkId else null,
                 listener = listener,

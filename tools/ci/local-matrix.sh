@@ -157,6 +157,7 @@ step "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.
 step "jvm: all module tests"                   $G $KSL_JVM_TESTS
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'
+step "sample: compose-demo (build, tests)"     $G -p samples/compose-demo :composeApp:allTests :composeApp:assembleAndroidMain :androidApp:assembleDebug :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test   # its own build, verified against gradle/verification-metadata.xml
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G "${KSL_SIM_ARGS[@]}"
 step "bench: allocation gate"                   $G :kuicksilver-bench:jvmTest
@@ -174,6 +175,7 @@ step "check: verify-release negative controls"   bash tools/verify/verify-releas
 if [ "$skip_android" = 0 ]; then
 step "android: device tests (emulator)"         $G androidConnectedCheck
 step "android: connection migration (emulator, host peer)" $G :kuicksilver-ktor-client:androidMigrationDeviceTest   # a server on the host, reached as 10.0.2.2 across the emulator's own network
+step "android: compose demo migration (emulator, host server)" $G -p samples/compose-demo :androidApp:migrationDemoDeviceTest   # HTTP/3 survives the switch, OkHttp breaks; a skip fails
 fi
 # shellcheck disable=SC2086
 step "native: macosArm64 tests"                 $G $KSL_MACOS_TESTS

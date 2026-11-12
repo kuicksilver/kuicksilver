@@ -13,7 +13,9 @@ import io.ktor.http.contentLength
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.ktor.client.kuicksilverDiagnostics
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 
@@ -50,7 +52,7 @@ data class ContentRange(
     val complete: Long?,
 )
 
-/** `bytes first-last/complete` or `bytes first-last/*`; null for anything else, `bytes */complete` (a 416) included. */
+/** `bytes first-last/complete`, the complete length may be `*`; null for anything else, the 416 form (no first-last) included. */
 fun parseContentRange(value: String): ContentRange? {
     val spec = value.trim().takeIf { it.startsWith("bytes ") }?.removePrefix("bytes ")?.trim() ?: return null
     val range = spec.substringBefore('/')
@@ -140,7 +142,10 @@ suspend fun download(
             total?.let { if (received < it) throw BodyMismatch("the body ended at $received of $it bytes") }
             return DownloadResult.Completed(received, start.elapsedNow().inWholeMilliseconds, protocol, resumes, restarts)
         } catch (e: CancellationException) {
-            throw e
+            // this download was cancelled (Stop, the screen closed): rethrown. Any other CancellationException is a
+            // failure of the call (an engine that cancels its own job, a timeout in the transport): a result like any other
+            currentCoroutineContext().ensureActive()
+            return DownloadResult.Failed(received, start.elapsedNow().inWholeMilliseconds, describe(e), resumes)
         } catch (e: Throwable) {
             val error = describe(e)
             if (e is BodyMismatch || !resume || resumes >= maxResumes) {

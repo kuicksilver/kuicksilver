@@ -19,7 +19,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (iOS) while the network switches, with the `connectionMigrated` events and an optional `Range` resume of the TCP
   download; a lossy-network screen against its server behind `tc netem` (`server/netem.sh`); and a diagnostics screen
   for any URL with the `http3Allowed` switch. Its JVM server (`server/`) serves `/bytes/{n}` with `Range` and `/stream`.
-  `DemoLogicTest` covers the screen models; `MigrationDemoAndroidTest` is the emulator check of the release gate. Its
+  The Kuicksilver lane asks for HTTP/3 only (`H3Only`), so a fallback can never be shown as HTTP/3. `DemoLogicTest`
+  covers the screen models and the server's tests its `Range` parsing; `MigrationDemoAndroidTest` is the emulator check
+  of the release gate, run by `:androidApp:migrationDemoDeviceTest` against the server on the host. Its
   build verifies every plugin and dependency against `gradle/verification-metadata.xml`, which now also covers Compose
   Multiplatform, the AndroidX libraries it brings, OkHttp 5.5.1 and Ktor's CIO, Darwin and mock engines.
 - SwiftPM: Kuicksilver is a Swift package, [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift),
