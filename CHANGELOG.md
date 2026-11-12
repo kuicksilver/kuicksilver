@@ -650,7 +650,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   rescheduled unless it set its own `Priority` field. The Ktor client's `HttpResponse.updatePriority` sends the frame
   over HTTP/2 (true) unless the server's SETTINGS left SETTINGS_NO_RFC7540_PRIORITIES at 0 (section 2.1.1). A client
   that receives the frame ends the connection with PROTOCOL_ERROR, as section 7.1 requires; before, both roles ignored
-  it as an unknown frame type.
+  it as an unknown frame type. A Priority Field Value above 4096 bytes is ENHANCE_YOUR_CALM (HTTP/3's ceiling for a
+  control frame), and a change of the peer's SETTINGS_NO_RFC7540_PRIORITIES after its first SETTINGS is PROTOCOL_ERROR
+  (section 2.1 allows it). Before the server's SETTINGS, and while it leaves the setting at 0, `updatePriority` also
+  sends an RFC 7540 PRIORITY frame, and the request's own DATA always follows the new priority.
 - HTTP/2 client (RFC 9218 section 2.1.1: "until the client receives the SETTINGS frame from the server, the client
   SHOULD send both the HTTP/2 priority signals and the signals of this prioritization scheme"): the client no longer
   sends SETTINGS_NO_RFC7540_PRIORITIES = 1, and its request HEADERS carry an RFC 7540 signal (dependency 0, not

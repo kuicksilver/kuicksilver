@@ -1287,8 +1287,9 @@ val client = HttpClient(Kuicksilver) {
 Both engines read and write RFC 9218 extensible priorities (the API is `@ExperimentalKuicksilverApi`). Over HTTP/3, and
 over HTTP/2 on the server, the priority decides the order in which the responses of one connection are sent: lower
 urgency first, responses of the same urgency one after another, or interleaved when incremental; within one urgency the
-incremental and the non-incremental ones take turns, and a CONNECT tunnel gets some bandwidth even behind more urgent
-responses (RFC 9218 sections 10, 10.1). Over HTTP/1.1 a connection carries one response at a time, so there the field is
+incremental and the non-incremental ones take turns, and a tunnel gets some bandwidth even behind more urgent responses
+(RFC 9218 sections 10, 10.1): over HTTP/3 a CONNECT stream such as a WebSocket, over HTTP/2 an Extended CONNECT stream
+such as a WebSocket over HTTP/2 (with RFC 8441 support). Over HTTP/1.1 a connection carries one response at a time, so there the field is
 only read and sent, never used for scheduling.
 
 On the server, `call.request.priority` is the client's current signal (urgency 3, not incremental, when it sent none; a
@@ -1313,10 +1314,10 @@ with it, a WebSocket over HTTP/3 included; over HTTP/2 the same, with an RFC 754
 the server's SETTINGS say it ignores those (RFC 9218 section 2.1.1); over HTTP/1.1 only the `Priority` field is sent. It
 replaces a `Priority` header set on the same request, so the server sees one signal.
 `response.updatePriority(urgency, incremental)` sends a PRIORITY_UPDATE while the response is still coming (RFC 9218
-section 7) and returns true; it returns false over HTTP/1.1, which has no such signal (also when a 421 or a failure sent
-the request again over HTTP/1.1), over HTTP/2 when the server did not say SETTINGS_NO_RFC7540_PRIORITIES = 1 (the frame
-would likely be ignored, section 2.1.1), once the call is over or the body was read to the end, and when the connection
-is gone. The server reschedules
+section 7), reschedules the request's own stream, and returns true; over HTTP/2 the signals follow section 2.1.1
+(PRIORITY_UPDATE unless the server left SETTINGS_NO_RFC7540_PRIORITIES at 0, an RFC 7540 PRIORITY frame unless it said
+1). It returns false over HTTP/1.1, which has no such signal (also when a 421 or a failure sent the request again over
+HTTP/1.1), once the call is over or the body was read to the end, and when the connection is gone. The server reschedules
 the rest of the response unless it set a priority of its own.
 
 ```kotlin

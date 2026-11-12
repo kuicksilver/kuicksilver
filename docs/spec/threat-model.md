@@ -474,10 +474,11 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   nghttp2's servers have no address bans. Turn it on only where the server sees each client's real address. 300 browser-style cancellations on one
   connection, and 25 a second for a minute, are not punished. Conformance: h2spec 2.6.0 (`tools/interop/h2spec.sh`) passes all 146 cases against the
   JVM and the macOS server (2026-11-06); the release gate runs it against the Linux server too. HTTP/2 on the server
-  stays opt-in and experimental in 0.3.0. RFC 9218 PRIORITY_UPDATE (0.3.0): each frame spends a glitch token, its payload
-  is bounded by SETTINGS_MAX_FRAME_SIZE like any frame, and the values kept for idle streams are bounded with the active
-  streams by our SETTINGS_MAX_CONCURRENT_STREAMS (above it PROTOCOL_ERROR, RFC 9218 §7.1); a value is kept per stream,
-  the latest one, and dropped once a newer stream closes its idle stream.
+  stays opt-in and experimental in 0.3.0. RFC 9218 PRIORITY_UPDATE (0.3.0): each frame spends a glitch token, its Priority
+  Field Value is at most 4096 bytes (above it ENHANCE_YOUR_CALM, checked on the header before anything is buffered,
+  whatever SETTINGS_MAX_FRAME_SIZE allows), and the values kept for idle streams are bounded with the active streams by
+  our SETTINGS_MAX_CONCURRENT_STREAMS (above it PROTOCOL_ERROR, RFC 9218 §7.1): at most 4 KiB per stream the client may
+  open; a value is kept per stream, the latest one, and dropped once a newer stream closes its idle stream.
 - **Verification:** `frame.FrameCodecTest.negative_frameAboveMaxFrameSizeIsFrameSizeError`, `.unknownFrameTypeSkippedStreaming`,
   `.negative_padLengthBeyondPayloadIsProtocolError`, `hpack.HpackLimitsTest.negative_hpackBomb`,
   `.negative_hugeStringLengthRejectedBeforeAllocation`, `.negative_integerOverflow`, `.negative_huffmanEosOrBadPadding`,
@@ -489,6 +490,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `.negative_madeYouResetCountsOurResets`, `.negative_resetStreamStillRunningCountsTowardConcurrency`,
   `.negative_priorityFloodCreatesNoState`, `.negative_interimResponseFloodBounded`, `.nothingIsReportedAfterClosed`,
   `core.PriorityUpdateTest.negative_tooManyPrioritizedIdleStreams`, `.negative_tooShort`,
+  `core.PriorityEdgeTest.negative_priorityUpdateAboveTheValueCeiling`,
   `.clientIsNotPunishedForServerResets`, `.resetBudgetRefills` (30 cancellations a second for a minute are not punished);
   `core.CompressionOrderTest.*`; `core.FlowControlTest.windowUpdateOnlyAfterConsumed`, `.negative_dataBeyondWindowIsFlowControlError`,
   `.zeroWindowSenderBlocksWithoutBuffering`; `core.SettingsTest.negative_settingsAckTimeoutIsSettingsTimeout`. Client side:
