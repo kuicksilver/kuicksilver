@@ -1300,12 +1300,23 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - Ktor client, WebSockets over HTTP/3 (RFC 6455 section 4.1 step 2: "There MUST be no more than one connection in a
   CONNECTING state"): the per-host lock HTTP/1.1 WebSockets take was not taken over HTTP/3, so two Extended CONNECT
   handshakes to one host ran at once. A WebSocket over HTTP/3 now holds the lock (shared with HTTP/1.1, keyed by the
-  addresses the host resolves to) from before its CONNECT until the server answered it or the attempt failed.
+  addresses the host resolves to) from before its CONNECT until the server answered it or the attempt failed; the
+  answer must come within the connect timeout (`ConnectTimeoutException`), as over HTTP/1.1.
 - Ktor engines, WebSockets (RFC 6455 section 5.2): a payload length not in its minimal encoding (126 with a 16-bit length
   below 126, 127 with a 64-bit length up to 65 535) was accepted; it now closes the connection with 1002.
 - Ktor engines, WebSockets (RFC 6455 sections 5.4 and 5.5): a fragmented or oversized control frame and a data frame out
   of sequence were left to Ktor's readers, whose Kotlin/Native reader closes the session's `incoming` before it queues its
   1002, so an application closing at that moment sent 1000 first. The engines' guard now closes with 1002 itself.
+- Ktor engines, WebSockets with Ktor's `WebSocketDeflateExtension` (RFC 7692 section 6.1): it compresses each fragment
+  of a message on its own and sets RSV1 on every fragment, so a fragmented compressed message it sent was refused by a
+  conforming peer. The engines now send such a message as an RFC 7692 one: each non-final fragment gets its
+  0x00 0x00 0xff 0xff back, which makes the fragments one DEFLATE stream, and the continuations lose RSV1. A message in
+  which Ktor's `compressCondition` left a fragment uncompressed cannot be sent so and fails with
+  `ProtocolViolationException`.
+- Ktor server, WebSockets: when the engine cannot read the `Sec-WebSocket-Extensions` of its own answer (an extension
+  that answers to `permessage-deflate` with a parameter RFC 7692 does not define), the session cannot be checked; the
+  client now gets a Close frame with 1011 and the application log a warning, instead of a connection that ends without a
+  word.
 - Ktor engines, WebSockets on Kotlin/Native (RFC 6455 section 5.4): Ktor 3.6.1's common writer sends every fragment of a
   message with the message's opcode, so a peer refused a fragmented message as a new message inside an unfinished one;
   the engines now send the later fragments as continuations.

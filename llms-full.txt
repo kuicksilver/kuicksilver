@@ -3786,9 +3786,11 @@ request now contains its own failure.
 **Other WebSocket peers.** The engines check every frame against the handshake (RFC 6455 sections 5.1 and 5.2, RFC
 7692 section 6.1), stricter than Ktor's own engines:
 
-- Ktor's `WebSocketDeflateExtension` sets RSV1 on every fragment of a compressed message, not only the first. A peer
-  that uses it and fragments a compressed message (a message larger than its frame size) is closed with 1002; unfragmented
-  messages, the common case, pass.
+- Ktor's `WebSocketDeflateExtension` compresses each fragment of a message on its own and sets RSV1 on every fragment,
+  not only the first. A peer that uses it and fragments a compressed message is closed with 1002 by Kuicksilver's
+  engines; unfragmented messages, the common case, pass. When Ktor's extension runs in Kuicksilver's engines, they send
+  such a message as an RFC 7692 one (RSV1 on the first frame only, the fragments one DEFLATE stream); a message in which
+  Ktor's `compressCondition` left a fragment uncompressed cannot be, and fails with `ProtocolViolationException`.
 - A client that does not mask its frames, or a server that masks them, is closed with 1002, as the RFC requires; Ktor's
   own frame readers accept either.
 - Ktor 3.6.1's WebSocket writer on Kotlin/Native (its common `RawWebSocket`) sends every fragment of a message with the
