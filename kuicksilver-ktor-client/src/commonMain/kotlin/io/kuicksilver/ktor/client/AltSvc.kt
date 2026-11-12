@@ -228,7 +228,7 @@ internal object AltSvcParser {
             // space, a control character, a bare IPv6 address) makes the alternative malformed. The host reaches
             // connection targets and the engine's diagnostics log line, so it is checked here, not trusted
             val rawHost = authority.substring(0, colon)
-            // a DNS name has at most 253 characters (RFC 1035), a bracketed IPv6 address fewer: longer is no connection target
+            // RFC 1035 section 2.3.4, "names 255 octets or less" (a bracketed IPv6 address is shorter): longer is no connection target
             if (rawHost.length > 255 || !isUriHost(rawHost) || !isConnectionTarget(rawHost)) continue
             val host =
                 rawHost
@@ -358,6 +358,12 @@ internal object AltSvcParser {
  * privileged origin port (as Chromium does), and expired entries are ignored. A 421 changes nothing here: it is not
  * authoritative for the origin (RFC 9110 section 15.5.20), so its `Alt-Svc` is not learned, and only a 421 from an
  * alternative removes that alternative (RFC 7838 section 6), which the engine does as it knows where the 421 came from.
+ *
+ * Freshness runs on the wall clock ([clock], epoch milliseconds), deliberately: an entry's expiry is
+ * [AltSvcEntry.expiresAtEpochMillis], which a store keeps across restarts ([FileAltSvcStore]), where only wall time
+ * means the same before and after; a monotonic clock starts over with each process. A step of the system clock therefore
+ * moves every entry's end of freshness by the step (a forward step expires entries early, the safe side; a backward one
+ * keeps them longer, by at most the step). Broken marks, which no store keeps, run on a monotonic clock ([BrokenAltSvc]).
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class AltSvcCache(
@@ -534,7 +540,9 @@ public suspend fun HttpClient.clearAlternativeServices(origin: Url? = null) {
 
 /**
  * Whether [origin], the Origin field of an ALTSVC frame on stream 0 (the ASCII serialization of an origin, RFC 6454 section
- * 6.2: scheme, `://`, host, and `:port` unless it is the scheme's default), names the origin of [url]: RFC 7838 section 4,
+ * 6.2: the scheme, then "Append the string "://" to result", "Append the host part of the origin triple to result", and
+ * "If the port part of the origin triple is different from the default port for the protocol given by the scheme part of
+ * the origin triple", ":" and the port), names the origin of [url]: RFC 7838 section 4,
  * "An association with an origin that the client does not consider authoritative for the current connection MUST be
  * ignored". The client's HTTP/2 connections serve one origin each (no coalescing), so only that one is authoritative.
  * Scheme and host compare case-insensitively; an explicit default port is taken too.

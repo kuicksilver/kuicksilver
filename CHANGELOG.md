@@ -457,6 +457,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   generation of the message", `ma` "the number of seconds since the response was generated"): the first valid member of
   `Age` plus the time from the request to the response is subtracted (RFC 9111 section 4.2.3, `corrected_age_value`).
   Before, freshness counted from receipt, so a copy a CDN had kept for a day stayed fresh for another day.
+- Ktor client: broken-alternative marks run on a monotonic clock instead of the wall clock, so a step of the system clock
+  neither extends nor cuts their backoff (they are kept in memory only). `Alt-Svc` freshness stays on the wall clock: its
+  expiry is epoch time that `FileAltSvcStore` keeps across restarts.
 - Ktor client: of the cached alternatives of an origin, the first fresh one that is not marked broken is used, in the
   server's order (RFC 7838 section 2.4). Before, a broken mark on the first one sent the call to TCP although a second
   fresh one was cached.

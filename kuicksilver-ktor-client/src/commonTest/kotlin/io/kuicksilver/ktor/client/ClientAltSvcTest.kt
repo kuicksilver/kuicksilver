@@ -561,4 +561,16 @@ class ClientAltSvcTest {
                 assertEquals(2, calls, "the next change was applied")
             }
         }
+
+    /**
+     * Broken marks live in memory only, so they run on a monotonic clock: a step of the wall clock can neither extend nor
+     * cut a mark's backoff. Before, the engine gave them the wall clock (epoch milliseconds).
+     */
+    @Test fun negative_brokenMarksRunOnAMonotonicClock() =
+        clientTest {
+            testClient(Http3DiscoveryMode.Auto).use { c ->
+                val clock = (c.engine as KuicksilverEngine).brokenAltSvc.clock
+                assertTrue(clock() < 3_600_000, "a monotonic clock from the engine's start, not epoch time: ${clock()}")
+            }
+        }
 }

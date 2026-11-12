@@ -8,11 +8,12 @@ package io.kuicksilver.ktor.client
  * changes. Also remembers the networks where QUIC was seen working (no HTTP/3 head start elsewhere). Both lists keep at
  * most [AltSvcCache.MAX_ORIGINS] keys, dropping the least recently marked (threat-model 3.18). A mark keeps why the
  * alternative broke as a [FallbackReason] (not the failure itself, which would outlive its call), for the diagnostics of
- * the calls it sends to HTTP/1.1.
+ * the calls it sends to HTTP/1.1. The engine gives it a monotonic [clock] (`monotonicMillis()`): the marks live in memory
+ * only, so a step of the wall clock neither extends nor cuts a mark's backoff.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal class BrokenAltSvc(
-    private val clock: () -> Long,
+    internal val clock: () -> Long,
 ) {
     private class Mark(
         val until: Long,

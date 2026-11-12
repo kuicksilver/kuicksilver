@@ -27,6 +27,7 @@ import io.kuicksilver.ktor.client.dns.HttpsRecords
 import io.kuicksilver.ktor.client.dns.HttpsResolution
 import io.kuicksilver.ktor.client.dns.httpsQueryName
 import io.kuicksilver.ktor.client.h1.H1Pool
+import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
 import io.kuicksilver.ktor.client.h3.H3Pool
@@ -171,7 +172,7 @@ internal class KuicksilverEngine(
     internal val altSvcWriteLock = Mutex()
 
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
-    internal val brokenAltSvc = BrokenAltSvc { getTimeMillis() }
+    internal val brokenAltSvc = BrokenAltSvc(monotonicMillis()) // in memory only: immune to wall-clock steps
     private val race = ProtocolRace(config.http3.hardDelay)
     private val srtt = LinkedHashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection; LRU-bounded
     private var lastNetwork: String? = null

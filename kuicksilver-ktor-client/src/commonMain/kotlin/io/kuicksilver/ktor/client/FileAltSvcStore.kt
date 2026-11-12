@@ -260,7 +260,10 @@ public class FileAltSvcStore(
             return runCatching { hex.hexToByteArray().decodeToString(throwOnInvalidSequence = true) }.getOrNull()
         }
 
-        /** The longest protocol id and host a record may have (RFC 7301: 255 bytes; RFC 1035: a name of at most 253). */
+        /**
+         * The longest protocol id and host a record may have: RFC 7301 section 3.1, `opaque ProtocolName<1..2^8-1>`; RFC 1035
+         * section 2.3.4, "names 255 octets or less" (the dotted text form of such a name is shorter).
+         */
         private const val MAX_FIELD = 255
 
         /** The most of a store file that is read: twice what 8000 records of bounded fields can take. */
