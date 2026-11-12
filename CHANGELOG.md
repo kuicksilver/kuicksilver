@@ -735,7 +735,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, WebSockets over HTTP/3: a route other than `webSocket` (a `get` on the same path) that answered the
   WebSocket CONNECT with a 2xx opened a tunnel nobody accepted (RFC 9110 section 9.3.6): a streamed response reached the
   client as an open WebSocket, one with `content-length` reset the stream. Such a 2xx is now answered 501, as an
-  unsupported protocol is (RFC 9220 section 3), the way a WebTransport CONNECT already was.
+  unsupported protocol is (RFC 9220 section 3), the way a WebTransport CONNECT already was. For both, and for the 400
+  that answers a WebTransport or WebSocket CONNECT the client could not make, `call.response.status()` now reports the
+  status that went out (before, the route's 200 or the upgrade's 101); an accepted upgrade still reports 101, Ktor's
+  model of the switch, which HTTP/3 carries as a 2xx.
 - Ktor server: `webSocketsOverHttp3 = false` did not turn WebSockets over HTTP/3 off when `webTransport = true`
   advertised Extended CONNECT: a WebSocket CONNECT still reached the `webSocket {}` routes. It is now answered 501.
 - HTTP/3: a reserved (GREASE) frame type on the peer's control stream spent a glitch token, while on a request stream it

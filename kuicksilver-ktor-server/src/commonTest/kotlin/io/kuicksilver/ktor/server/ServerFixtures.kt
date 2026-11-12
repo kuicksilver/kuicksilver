@@ -231,3 +231,16 @@ internal suspend fun quicServerSupported(): Boolean =
 
 /** A [serverTest] that needs the HTTP/3 listener: it passes without running where no QUIC server can run. */
 internal fun h3ServerTest(block: suspend () -> Unit) = serverTest { if (quicServerSupported()) block() }
+
+/** The status each call of this application reports (`call.response.status()`) once its pipeline is done, in call order. */
+internal fun Application.reportedStatuses(): kotlinx.coroutines.channels.Channel<io.ktor.http.HttpStatusCode?> {
+    val out = kotlinx.coroutines.channels.Channel<io.ktor.http.HttpStatusCode?>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    intercept(io.ktor.server.application.ApplicationCallPipeline.Monitoring) {
+        try {
+            proceed()
+        } finally {
+            out.trySend(context.response.status())
+        }
+    }
+    return out
+}

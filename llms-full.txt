@@ -2437,7 +2437,8 @@ upgrade request the `WebSockets` plugin knows — `GET` with `Connection: Upgrad
 Extended CONNECT with any other protocol is answered 501 (WebTransport aside when it is on, below), and so is a WebSocket
 with `webSocketsOverHttp3 = false`, also when `webTransport = true` advertises Extended CONNECT. A route other than
 `webSocket` that answers the WebSocket CONNECT with a 2xx (a `get` on the same path) gets 501 instead: a 2xx would open a
-tunnel nobody accepted (RFC 9110 section 9.3.6). A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
+tunnel nobody accepted (RFC 9110 section 9.3.6), and `call.response.status()` reports the 501. An accepted upgrade
+reports 101, as on HTTP/1.1, while `:status 200` goes out. A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
 section 4.5) and gets 501 too.
 
 #### WebTransport over HTTP/3 (experimental)

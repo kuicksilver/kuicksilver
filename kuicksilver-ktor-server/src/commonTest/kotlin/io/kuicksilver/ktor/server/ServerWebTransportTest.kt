@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.HttpStatusCode
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.route
@@ -20,6 +21,7 @@ import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
@@ -238,12 +240,43 @@ class ServerWebTransportTest {
     /** Another route that answers the WebTransport CONNECT with a 2xx would fake a session: it is turned into 501. */
     @Test fun negative_plainRouteCannotFakeASession() =
         h3ServerTest {
+            lateinit var reported: Channel<HttpStatusCode?>
             val (server, port) =
                 tlsServer({ webTransport = true }) {
+                    reported = reportedStatuses()
                     routing { route("/wt") { handle { call.respondText("not a session") } } }
                 }
             try {
                 h3(port) { c -> assertEquals(501, assertFailsWith<Http3Exception.ConnectRejected> { c.webTransport(wtReq()) }.status) }
+                // the call reports the status that went out, not the route's 200
+                assertEquals(HttpStatusCode.NotImplemented, withTimeout(5.seconds) { reported.receive() })
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /**
+     * A WebTransport CONNECT that rules out capsules (content-type, RFC 9297 section 3.2) is answered 400 by the library;
+     * the call reports that 400 rather than the upgrade's 101.
+     */
+    @Test fun negative_capsuleRuleBreakingSessionRequestReports400() =
+        h3ServerTest {
+            lateinit var reported: Channel<HttpStatusCode?>
+            val (server, port) =
+                tlsServer({ webTransport = true }) {
+                    reported = reportedStatuses()
+                    routing { webTransport("/wt") { } }
+                }
+            try {
+                h3(port) { c ->
+                    c.peerSettings.filterNotNull().first()
+                    val extra = listOf("origin" to "https://server.test", "content-type" to "text/plain")
+                    val st = rawExtendedConnect(c.quic, "webtransport-h3", "/wt", extra)
+                    val frames = rawFrames(withTimeout(5.seconds) { st.input.readFullBody() })
+                    // Required Insert Count 0, Base 0, then the static entry 67 `:status: 400` (RFC 9204 appendix A)
+                    assertContentEquals(byteArrayOf(0, 0, 0xFF.toByte(), 0x04), frames.first().second.copyOfRange(0, 4))
+                    assertEquals(HttpStatusCode.BadRequest, withTimeout(5.seconds) { reported.receive() })
+                }
             } finally {
                 server.stopSuspend(100, 1000)
             }

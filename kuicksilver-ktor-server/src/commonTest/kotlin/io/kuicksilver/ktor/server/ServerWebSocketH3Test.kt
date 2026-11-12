@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.application.install
@@ -31,6 +32,7 @@ import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -39,6 +41,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
@@ -276,8 +279,10 @@ class ServerWebSocketH3Test {
      */
     @Test fun negative_plainRouteAnswering2xxIsNoWebSocket() =
         h3ServerTest {
+            lateinit var reported: Channel<HttpStatusCode?>
             val (server, port) =
                 tlsServer {
+                    reported = reportedStatuses()
                     install(WebSockets)
                     routing {
                         get("/text") { call.respondText("not a websocket") }
@@ -291,6 +296,8 @@ class ServerWebSocketH3Test {
                         val rejected =
                             assertFailsWith<Http3Exception.ConnectRejected>(path) { withTimeout(5.seconds) { c.connect(req, "websocket") } }
                         assertEquals(501, rejected.status, path)
+                        // the call reports the status that went out, not the route's 200
+                        assertEquals(HttpStatusCode.NotImplemented, withTimeout(5.seconds) { reported.receive() }, path)
                     }
                 }
             } finally {
@@ -403,6 +410,42 @@ class ServerWebSocketH3Test {
                         }
                     val code = generateSequence(failure) { it.cause }.filterIsInstance<Http3Exception.Protocol>().firstOrNull()?.h3Code
                     assertEquals(Http3ErrorCode.REQUEST_CANCELLED, code, "the client's direction ended with $failure")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9297 section 3.2: a WebSocket CONNECT that announces capsules (`Capsule-Protocol: ?1`) with content-type is
+     * malformed. The library answers it 400 and stops it with H3_MESSAGE_ERROR (RFC 9114 section 4.1.2); the engine keeps
+     * that answer instead of resetting the stream with H3_REQUEST_CANCELLED as an unanswered call, logs no failure, and
+     * the call reports the 400.
+     */
+    @Test fun negative_capsuleRequestBreakingSection32Gets400() =
+        h3ServerTest {
+            val log = CapturedLog()
+            lateinit var reported: Channel<HttpStatusCode?>
+            val (server, port) =
+                tlsServer(log = log) {
+                    reported = reportedStatuses()
+                    install(WebSockets)
+                    routing { webSocket("/ws") { } }
+                }
+            try {
+                h3(port) { c ->
+                    c.peerSettings.filterNotNull().first()
+                    val extra = listOf("sec-websocket-version" to "13", "capsule-protocol" to "?1", "content-type" to "text/plain")
+                    val st = rawExtendedConnect(c.quic, "websocket", "/ws", extra)
+                    // the 400 and a FIN, not a reset: a reset could take the 400 away (RFC 9000 section 3.2)
+                    val frames = rawFrames(withTimeout(5.seconds) { st.input.readFullBody() })
+                    assertEquals(1L, frames.first().first, "the response starts with HEADERS")
+                    // Required Insert Count 0, Base 0, then the static entry 67 `:status: 400` (RFC 9204 appendix A)
+                    assertContentEquals(byteArrayOf(0, 0, 0xFF.toByte(), 0x04), frames.first().second.copyOfRange(0, 4))
+                    assertEquals(Http3ErrorCode.MESSAGE_ERROR, stopSendingCode(st))
+                    val status = withTimeout(5.seconds) { reported.receive() }
+                    assertTrue(log.lines.none { it.level == "ERROR" }, "${log.lines}")
+                    assertEquals(HttpStatusCode.BadRequest, status)
                 }
             } finally {
                 server.stop(100, 500)

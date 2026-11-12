@@ -45,6 +45,114 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
+/**
+ * A QPACK field section for [fields] that needs no table (RFC 9204 section 4.5.6: literal field lines with literal names,
+ * no Huffman), for requests the Kuicksilver client would refuse to send.
+ */
+internal fun rawFieldSection(fields: List<Pair<String, String>>): ByteArray {
+    fun int(
+        flags: Int,
+        prefix: Int,
+        v: Int,
+        out: kotlinx.io.Buffer,
+    ) {
+        val max = (1 shl prefix) - 1
+        if (v < max) {
+            out.writeByte((flags or v).toByte())
+            return
+        }
+        out.writeByte((flags or max).toByte())
+        var r = v - max
+        while (r >= 128) {
+            out.writeByte(((r and 0x7f) or 0x80).toByte())
+            r = r shr 7
+        }
+        out.writeByte(r.toByte())
+    }
+    val section = kotlinx.io.Buffer()
+    section.writeByte(0)
+    section.writeByte(0) // Required Insert Count 0, Base 0
+    for ((n, v) in fields) {
+        int(0x20, 3, n.length, section)
+        section.write(n.encodeToByteArray())
+        int(0x00, 7, v.length, section)
+        section.write(v.encodeToByteArray())
+    }
+    return section.readByteArray()
+}
+
+/** A HEADERS frame (type 0x01) carrying [block], with a two-byte varint length. */
+internal fun rawHeadersFrame(block: ByteArray): ByteArray {
+    check(block.size < 16384)
+    return byteArrayOf(0x01, (0x40 or (block.size shr 8)).toByte(), block.size.toByte()) + block
+}
+
+/** The frames of an HTTP/3 request stream's bytes, as (type, payload) pairs. */
+internal fun rawFrames(bytes: ByteArray): List<Pair<Long, ByteArray>> {
+    val frames = ArrayList<Pair<Long, ByteArray>>()
+    var i = 0
+
+    fun varint(): Long {
+        val len = 1 shl ((bytes[i].toInt() and 0xc0) shr 6)
+        var v = (bytes[i].toLong() and 0x3f)
+        for (k in 1 until len) v = (v shl 8) or (bytes[i + k].toLong() and 0xff)
+        i += len
+        return v
+    }
+    while (i < bytes.size) {
+        val type = varint()
+        val len = varint().toInt()
+        frames += type to bytes.copyOfRange(i, i + len)
+        i += len
+    }
+    return frames
+}
+
+/**
+ * An Extended CONNECT for [protocol] on [path], with [extra] fields, sent raw on a new stream of [quic]: no client-side
+ * checks, so a request the Kuicksilver client refuses to send can reach the server. The stream stays open.
+ */
+internal suspend fun rawExtendedConnect(
+    quic: io.kuicksilver.quic.QuicConnection,
+    protocol: String,
+    path: String,
+    extra: List<Pair<String, String>>,
+): io.kuicksilver.quic.QuicStream {
+    val fields =
+        listOf(
+            ":method" to "CONNECT",
+            ":protocol" to protocol,
+            ":scheme" to "https",
+            ":authority" to "server.test",
+            ":path" to path,
+        )
+    val st = quic.openBidi()
+    st.output.writeFully(rawHeadersFrame(rawFieldSection(fields + extra)))
+    st.output.flush()
+    return st
+}
+
+/**
+ * The code of the peer's STOP_SENDING for [st]: writes until the stop fails a write. Null when the writes failed for
+ * another reason.
+ */
+internal suspend fun stopSendingCode(st: io.kuicksilver.quic.QuicStream): Long? {
+    val failure =
+        kotlin
+            .runCatching {
+                kotlinx.coroutines.withTimeout(5.seconds) {
+                    while (true) {
+                        st.output.writeFully(ByteArray(1024))
+                        st.output.flush()
+                    }
+                }
+            }.exceptionOrNull()
+    return generateSequence(failure) { it.cause }
+        .filterIsInstance<io.kuicksilver.quic.QuicException.StreamError.Stopped>()
+        .firstOrNull()
+        ?.code
+}
+
 internal suspend fun ByteReadChannel.readFullBody(): ByteArray {
     val out = kotlinx.io.Buffer()
     val b = ByteArray(16384)
@@ -316,64 +424,18 @@ class ServerH3Test {
         method: String,
         path: String,
     ): List<Long> {
-        fun int(
-            flags: Int,
-            prefix: Int,
-            v: Int,
-            out: kotlinx.io.Buffer,
-        ) {
-            val max = (1 shl prefix) - 1
-            if (v < max) {
-                out.writeByte((flags or v).toByte())
-                return
-            }
-            out.writeByte((flags or max).toByte())
-            var r = v - max
-            while (r >= 128) {
-                out.writeByte(((r and 0x7f) or 0x80).toByte())
-                r = r shr 7
-            }
-            out.writeByte(r.toByte())
-        }
-        val section = kotlinx.io.Buffer()
-        section.writeByte(0)
-        section.writeByte(0) // Required Insert Count 0, Base 0
-        for ((n, v) in listOf(":method" to method, ":scheme" to "https", ":authority" to "server.test", ":path" to path)) {
-            int(0x20, 3, n.length, section) // literal field line with literal name, no Huffman (RFC 9204 section 4.5.6)
-            section.write(n.encodeToByteArray())
-            int(0x00, 7, v.length, section)
-            section.write(v.encodeToByteArray())
-        }
-        val block = section.readByteArray()
+        val block = rawFieldSection(listOf(":method" to method, ":scheme" to "https", ":authority" to "server.test", ":path" to path))
         val st = quic.openBidi()
-        check(block.size < 16384)
-        // HEADERS with a two-byte varint length
         // the server may answer and stop reading (STOP_SENDING with H3_NO_ERROR, RFC 9114 section 4.1) before our FIN leaves
         try {
-            st.output.writeFully(byteArrayOf(0x01, (0x40 or (block.size shr 8)).toByte(), block.size.toByte()) + block)
+            st.output.writeFully(rawHeadersFrame(block))
             st.output.flushAndClose()
         } catch (e: Throwable) {
             var c: Throwable? = e
             while (c != null && c !is io.kuicksilver.quic.QuicException.StreamError.Stopped) c = c.cause
             if (c?.code != 0x100L) throw e
         }
-        val resp = st.input.readFullBody()
-        val types = ArrayList<Long>()
-        var i = 0
-
-        fun varint(): Long {
-            val len = 1 shl ((resp[i].toInt() and 0xc0) shr 6)
-            var v = (resp[i].toLong() and 0x3f)
-            for (k in 1 until len) v = (v shl 8) or (resp[i + k].toLong() and 0xff)
-            i += len
-            return v
-        }
-        while (i < resp.size) {
-            types += varint()
-            val len = varint().toInt()
-            i += len
-        }
-        return types
+        return rawFrames(st.input.readFullBody()).map { it.first }
     }
 
     /**
