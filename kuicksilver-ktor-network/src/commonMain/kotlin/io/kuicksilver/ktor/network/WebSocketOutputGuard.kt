@@ -41,11 +41,13 @@ import kotlinx.io.readTo
  *   "subject to the constraints for the original data type again"), unless this library's `PerMessageDeflate`
  *   compressed it, which checks before it compresses.
  * - a message that breaks these rules is refused and nothing more is sent; the write fails with Ktor's
- *   `ProtocolViolationException`. At a frame boundary (a continuation that cannot be sent as RFC 7692 wants, refused
- *   before its header; a text message whose last frame ends inside a character) the connection is failed as RFC 6455
- *   section 7.1.7 asks: a Close with 1011, then the end of [output]. A byte that cannot be UTF-8 inside a frame whose
- *   header is already out leaves no frame boundary to put a Close at: [output] is cancelled (the connection is reset, as
- *   when the transport fails), so the peer never receives the message whole.
+ *   `ProtocolViolationException`, and the peer never receives the message whole: the last piece of a checked text
+ *   message (the last bytes of an uncompressed one, the last compressed piece of a compressed one) is held back until
+ *   the whole message, its decompression ended, is known to be UTF-8. A refusal before a frame's header (a continuation
+ *   that cannot be sent as RFC 7692 wants, an empty last frame of a text message that is not UTF-8) fails the
+ *   connection as RFC 6455 section 7.1.7 asks: a Close with 1011, then the end of [output]. One inside a frame whose
+ *   header is already out leaves no frame boundary to put a Close at: [output] is cancelled (the connection is reset,
+ *   as when the transport fails).
  *
  * The frames are rewritten as they pass, in the writer's own coroutine: what Ktor's writer flushed is on [output] when
  * its flush returns, so closing or resetting [output] after the session ended loses nothing. Only a frame header (at
@@ -229,6 +231,9 @@ private class OutputGuard(
             inflating = false
             appendTail = false
         }
+        // an empty last frame of a checked text message: the message is checked before its header goes out (a refusal here
+        // comes at a frame boundary, and the message never arrives whole)
+        if (length == 0L && dataFrame && fin && checkingText) endOfMessage()
         start(first, length + if (appendTail) TAIL.size else 0, length)
         if (payloadLeft < 0) endOfPayload()
     }
@@ -285,6 +290,9 @@ private class OutputGuard(
                 } else if (!text.feed(chunk, 0, n)) {
                     throw notUtf8()
                 }
+                // the last piece of a checked text message is held back until the message is known to be UTF-8 as a
+                // whole (RFC 6455 section 5.6): a message that is not never arrives whole
+                if (fin && n.toLong() == payloadLeft) endOfMessage()
             } catch (r: Refusal) {
                 throw Refusal(r.what, atBoundary = false) // the frame's header is out: only a reset ends it
             }
@@ -305,21 +313,38 @@ private class OutputGuard(
      * characters.
      */
     private suspend fun endOfPayload() {
-        // the frame is whole on the wire first: a refusal below comes at a frame boundary
+        // the frame is whole on the wire first: a refusal below comes at a frame boundary (the last frame of a checked text
+        // message was checked before its last bytes went out: endOfMessage)
         if (appendTail) {
             val tail = TAIL.copyOf()
             if (masking) unmask(tail, tail.size, wireMask, position)
             output.writeFully(tail)
         }
-        if (inflating && (fin || compression == SentCompression.PerFrame)) {
-            val i = sideInflater!!
-            guardSide {
-                i.endOfMessage()
-                drainSide(i)
-                i.messageDone()
-            }
+        if (messageChecked) {
+            messageChecked = false
+            return
         }
-        if (dataFrame && fin && checkingText && !text.complete) throw notUtf8()
+        // a non-final frame Ktor's extension compressed on its own ends its piece of the side inflation here
+        if (inflating && !fin && compression == SentCompression.PerFrame) endSideInflation()
+    }
+
+    /** The checks of a whole text message (its side inflation ended, UTF-8 to the end), done once per message. */
+    private fun endOfMessage() {
+        messageChecked = true
+        if (inflating) endSideInflation()
+        if (!text.complete) throw notUtf8()
+    }
+
+    // the last frame's end-of-message checks ran before its last bytes went out
+    private var messageChecked = false
+
+    private fun endSideInflation() {
+        val i = sideInflater!!
+        guardSide {
+            i.endOfMessage()
+            drainSide(i)
+            i.messageDone()
+        }
     }
 
     /** [length] compressed bytes of the frame: inflated on the side and their text checked; nothing of it is kept. */

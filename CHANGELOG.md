@@ -1312,9 +1312,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   conforming peer. The engines now send such a message as an RFC 7692 one: each non-final fragment gets its
   0x00 0x00 0xff 0xff back, which makes the fragments one DEFLATE stream, and the continuations lose RSV1. A message in
   which Ktor's `compressCondition` left a fragment uncompressed cannot be sent so and fails with
-  `ProtocolViolationException`; so do sent messages that break the rules at a frame boundary (such a fragment, a text
-  message ending inside a character), after which the connection ends with a Close 1011 (RFC 6455 section 7.1.7); a
-  byte that cannot be UTF-8 inside a frame already started resets the connection instead.
+  `ProtocolViolationException`; such a refusal before a frame's header ends the connection with a Close 1011 (RFC 6455
+  section 7.1.7), one inside a frame already started resets it. The last piece of a text message is held back until
+  the whole message is known to be UTF-8, so a peer never receives an invalid one whole.
 - Ktor server, WebSockets: when the engine cannot read the `Sec-WebSocket-Extensions` of its own answer (an extension
   that answers to `permessage-deflate` with a parameter RFC 7692 does not define), the session cannot be checked; the
   client now gets a Close frame with 1011 and the application log a warning, instead of a connection that ends without a

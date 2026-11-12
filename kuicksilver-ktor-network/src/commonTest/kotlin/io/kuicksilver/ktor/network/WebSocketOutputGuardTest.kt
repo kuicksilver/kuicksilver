@@ -321,14 +321,39 @@ class WebSocketOutputGuardTest {
         }
 
     /**
-     * A text message whose last frame ends inside a character is whole on the wire when that shows: the connection is
-     * failed with a Close 1011 after it (a frame boundary), not reset. A byte that cannot be UTF-8 inside a frame whose
-     * header is out leaves no boundary: that one resets (negative_textThatIsNotUtf8IsNotSent).
+     * RFC 6455 section 5.6: "the whole message MUST contain valid UTF-8". A text message whose last frame ends inside a
+     * character is caught before that frame's last bytes leave: the peer never receives the message whole (the frame
+     * is cut and the connection reset, its header being out).
      */
-    @Test fun negative_textEndingInsideACharacterClosesWith1011() =
+    @Test fun negative_textEndingInsideACharacterNeverArrivesWhole() =
         runTest {
-            val out = refusedAtABoundary(frame(0x81, bytes(0x61, 0xE2)), true, SentCompression.Checked)
-            assertEquals(listOf(0x81, 0x88), out.map { it.b0 })
+            val wire = ByteChannel()
+            val guarded = guardWebSocketOutput(wire, masking = true)
+            guarded.writeFully(frame(0x01, bytes(0x61)) + frame(0x80, bytes(0x62, 0xE2)))
+            assertFails { guarded.flush() }
+            assertNotNull(wire.closedCause, "reset inside the frame")
+            assertTrue(runCatching { frames(wire) }.getOrNull()?.any { it.fin } != true, "the message never arrives whole")
+        }
+
+    /** The same for a compressed text message: its decompression ends before its last compressed piece leaves. */
+    @Test fun negative_compressedTextEndingInsideACharacterNeverArrivesWhole() =
+        runTest {
+            val d = MessageDeflater(6, 15, noContextTakeover = false)
+            val data = d.compress(bytes(0x61, 0xE2), fin = true)
+            d.close()
+            val wire = ByteChannel()
+            val guarded = guardWebSocketOutput(wire, masking = false, compression = SentCompression.PerMessage)
+            guarded.writeFully(frame(0xC1, data))
+            assertFails { guarded.flush() }
+            assertNotNull(wire.closedCause)
+            assertTrue(runCatching { frames(wire) }.getOrNull()?.any { it.fin } != true, "the message never arrives whole")
+        }
+
+    /** An empty last frame of a text message that ends inside a character is refused before its header: Close 1011. */
+    @Test fun negative_emptyLastFrameOfInvalidTextClosesWith1011() =
+        runTest {
+            val out = refusedAtABoundary(frame(0x01, bytes(0x61, 0xE2)) + frame(0x80, ByteArray(0)), true, SentCompression.Checked)
+            assertEquals(listOf(0x01, 0x88), out.map { it.b0 }, "the message is never completed")
         }
 
     /**
