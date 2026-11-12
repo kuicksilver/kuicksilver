@@ -923,7 +923,8 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 - the name asked is the host for port 443, `_<port>._https.<host>` otherwise (section 9.1); AliasMode records are
   followed (one at random among several; at most 8 steps; a loop or a longer chain is treated as no record; an AliasMode
   "." is ignored); the ServiceMode records of the final name, by ascending priority and shuffled within a priority, are
-  the endpoints, each at its target (the record's own name for ".") and `port` (the origin's when absent); after an
+  the endpoints (at most 32, the lowest priorities first), each at its target (the record's own name for ".") and
+  `port` (the origin's when absent); after an
   AliasMode chain the last name with the origin's port is one more endpoint, last (section 3);
 - an endpoint is tried over the transports its ALPN set allows (section 7.1.2; the default set is `http/1.1`, so
   `alpn=h3` means QUIC and TCP, `alpn=h2` TCP, and `no-default-alpn` with `alpn=h3` QUIC only); QUIC and TCP race as for
@@ -950,9 +951,11 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   `HttpsRecordSource.followingPrivateDns(connectivity)` says so while strict Private DNS is on (the engine has no
   `Context`: with plain `System` strict Private DNS is not taken into account, so opt in with this builder). Elsewhere no public API
   tells whether the system's DNS is encrypted, so `System` treats failures as "no records";
-- answers are cached for their TTL, never longer (at most a day; "no records" for the negative TTL of the answer's SOA
-  record, RFC 2308, and not at all without one; at most 1000 names), together with the other HTTPS records and the
-  A/AAAA records the answer carried, which spare follow-up queries (RFC 9460 section 5), and forgotten when
+- answers are cached for their TTL, never longer (at most a day, on a monotonic clock; "no records" for the negative
+  TTL of the answer's SOA record, RFC 2308, no longer than a CNAME that led there, and not at all without one; at most
+  1000 names), together with the other HTTPS records and the A/AAAA records the answer carried, which spare follow-up
+  queries (RFC 9460 section 5; a name's addresses only when both its A and AAAA records came, else it is looked up as
+  usual), and forgotten when
   `networkId()` reports a new network; without `networkId` the engine cannot see a network change and keeps no answers
   of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
   asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at
@@ -963,7 +966,11 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 `DnsResolver.rawQuery` on the default network (Private DNS included) on Android from API 29. On Android API 24 to 28 there
 is no public way to ask for a record type (and a resolver of the engine's own would bypass Private DNS), so every lookup
 counts as failed there and requests behave as without records. At most four system lookups run at once per process.
-`HttpsRecordSource.Exchange` works everywhere.
+`HttpsRecordSource.Exchange` works everywhere. Its queries carry ID 0 (as RFC 8484 asks for DNS over HTTPS) and the
+engine checks the question of a response, not its ID, so the exchange must tie each response to its query: DNS over
+HTTPS and DNS over TLS do; an exchange over plain UDP or TCP sets a random ID of its own in the query (its first two
+bytes) and accepts only a response with that ID. An answer is read in time linear in its size, at most 65535 bytes, and
+a lookup's timeout stops the read: a hostile resolver cannot hold a thread with one answer.
 
 An `http://` request (not `ws://`, not through a proxy, not to an IP address) first looks up the records of the same URL
 with `https` (port 80 becomes 443), waiting for the answer as an `https` request does (while the origin's addresses

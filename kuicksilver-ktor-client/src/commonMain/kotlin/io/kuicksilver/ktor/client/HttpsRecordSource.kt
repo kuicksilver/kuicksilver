@@ -52,6 +52,13 @@ public sealed interface HttpsRecordSource {
      * DoH server with `Content-Type: application/dns-message`. The engine has no DoH client of its own. An exchange that
      * throws, or returns something that is not the response to the query, counts as a failed lookup; so does a response
      * over 65535 bytes, the DNS maximum.
+     *
+     * The engine checks that the response answers the question it asked, but not its ID: every query has ID 0, so the
+     * exchange must tie a response to its query itself. DNS over HTTPS does (the response is the one to its HTTP
+     * request), and so does DNS over TLS that matches responses to queries. An exchange over plain UDP or TCP must not
+     * send ID 0 as is: it sets a random ID of its own in the query (bytes 0 and 1), accepts only a response with that
+     * ID from the server it asked, and may hand it back with either ID; otherwise an off-path attacker who guesses the
+     * question can forge the answer.
      */
     public class Exchange(
         /**
