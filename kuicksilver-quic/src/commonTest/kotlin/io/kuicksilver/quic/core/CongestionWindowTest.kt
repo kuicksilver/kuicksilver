@@ -3,10 +3,14 @@
 package io.kuicksilver.quic.core
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.native.of
 import io.kuicksilver.quic.CongestionController
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionState
+import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.CorePair
+import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.quicConfig
@@ -196,6 +200,37 @@ class CongestionWindowTest {
             assertTrue(c.loss.bytesInFlight >= probe)
         } finally {
             batch.close()
+            p.close()
+        }
+    }
+
+    @Test fun aProbeDeclaredLostAndThenAcknowledgedRaisesTheMtu() {
+        // RFC 8899 section 5.2: a probe fails only when it is "not acknowledged within the period of the PROBE_TIMER"; one that loss
+        // detection declared lost (packet threshold) but whose ACK arrives within its PROBE_TIMER confirms its size, as any
+        // acknowledged probe does. The late ACK reached only the spurious-loss count: the probe failed at its timer and the size was lost
+        val p = confirmedPair { FixedWindow(100_000) }
+        try {
+            val c = p.client
+            var held: ByteArray? = null
+            p.filterToServer = { _, b ->
+                if (b.size > 1200 && held == null) held = b.copyOf()
+                b.size <= 1200
+            } // the first probe is held back, not lost
+            c.path.pmtud = Pmtud(upperBound = 1500)
+            assertTrue(p.runUntil(1.seconds) { held != null })
+            val size = held!!.size
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(5_000), 0, 5_000, true) // later packets get through, so the probe is declared lost
+            assertTrue(p.runUntil(3.seconds) { c.stats.lostPackets > 0 && c.stats.bytesInFlight == 0L }, "the probe was declared lost")
+            assertTrue(c.stats.pathMtu < size)
+            val b = PacketBuffer.of(held)
+            try {
+                p.server!!.handleDatagram(b, size, CoreFixtures.clientAddr, Ecn.NotEct, p.now)
+            } finally {
+                b.close()
+            }
+            assertTrue(p.runUntil(2.seconds) { c.stats.pathMtu >= size }, "the late ACK of the $size-byte probe: MTU ${c.stats.pathMtu}")
+        } finally {
             p.close()
         }
     }

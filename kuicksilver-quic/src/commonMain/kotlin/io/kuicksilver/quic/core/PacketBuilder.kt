@@ -220,6 +220,7 @@ internal class PacketBuilder(
                         c.bytesSent +=
                             n
                         c.pmtudProbesSentForTest++
+                        m.onProbeSent(c.loss.space(SpaceId.Application).nextPn - 1, n)
                     }
                 }
             }

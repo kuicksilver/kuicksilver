@@ -50,6 +50,19 @@ internal class Pmtud(
     private var probeLosses = 0
     private var probeInFlight = false
     private var probeDeadline: TimeMark = TimeMark.NEVER // when the probe in flight has failed unless acknowledged before
+
+    /**
+     * The packet numbers and sizes of the last [SENT_PROBES] probes sent ([onProbeSent]), and which of them loss detection declared
+     * lost ([onProbeDeclaredLost]), so an acknowledgment that comes after all is known ([takeLostProbeIn]).
+     */
+    private val sentPn = LongArray(SENT_PROBES) { -1L }
+    private val sentSize = IntArray(SENT_PROBES)
+    private val sentLost = BooleanArray(SENT_PROBES)
+    private var sentNext = 0
+    private var lostProbes = 0
+
+    /** Some probe of the last [SENT_PROBES] was declared lost and not acknowledged since. */
+    val hasLostProbes: Boolean get() = lostProbes > 0
     private var finalProbe = false
     var searchDone: Boolean = false
         private set
@@ -81,7 +94,7 @@ internal class Pmtud(
     /**
      * A validated Packet Too Big reporting [payload] bytes of UDP payload (already at least the base: the caller drops smaller
      * ones). At or above [current]: the probes above it are settled at once (RFC 8899 section 4.6.2), the one in flight included.
-     * Below [current]: nothing is lowered; probes of [current] confirm the size ([onProbeAcked], [onProbeLost]).
+     * Below [current]: nothing is lowered; probes of [current] confirm the size ([onProbeAcked]) or fail at their PROBE_TIMER.
      */
     fun onPtb(
         payload: Int,
@@ -215,6 +228,48 @@ internal class Pmtud(
             finish(now)
         } else if (high - low < step && high > current) {
         } // one more try at the top
+    }
+
+    /** The probe [nextProbeSize] gave went out as 1-RTT packet [pn] of [size] bytes. */
+    fun onProbeSent(
+        pn: Long,
+        size: Int,
+    ) {
+        if (sentLost[sentNext]) lostProbes--
+        sentPn[sentNext] = pn
+        sentSize[sentNext] = size
+        sentLost[sentNext] = false
+        sentNext = (sentNext + 1) % SENT_PROBES
+    }
+
+    /** Loss detection declared the probe sent as packet [pn] lost: it fails only at its PROBE_TIMER, and an ACK may still come. */
+    fun onProbeDeclaredLost(pn: Long) {
+        for (i in 0 until SENT_PROBES) {
+            if (sentPn[i] == pn && !sentLost[i]) {
+                sentLost[i] = true
+                lostProbes++
+            }
+        }
+    }
+
+    /**
+     * The size of a probe declared lost whose packet number is in [smallest]..[largest] (an ACK range), forgotten as lost; 0 when
+     * there is none. A probe declared lost leaves the sent-packet history, but its acknowledgment after all (RFC 9002 section 6.1)
+     * confirms its size ([onProbeAcked]): RFC 8899 section 5.2 fails only a probe "not acknowledged within the period of the
+     * PROBE_TIMER".
+     */
+    fun takeLostProbeIn(
+        smallest: Long,
+        largest: Long,
+    ): Int {
+        for (i in 0 until SENT_PROBES) {
+            if (sentLost[i] && sentPn[i] in smallest..largest) {
+                sentLost[i] = false
+                lostProbes--
+                return sentSize[i]
+            }
+        }
+        return 0
     }
 
     /**
@@ -405,6 +460,9 @@ internal class Pmtud(
         researchAt = now + research
     }
 }
+
+/** Probes whose packet numbers [Pmtud] keeps for their late acknowledgments: more than are sent within a PROBE_TIMER after one fails. */
+private const val SENT_PROBES = 4
 
 /** RFC 8899 section 5.1.1: PROBE_TIMER "MUST NOT be smaller than 1 second and SHOULD be larger than 15 seconds". */
 private val PROBE_TIMER: Duration = 16.seconds
