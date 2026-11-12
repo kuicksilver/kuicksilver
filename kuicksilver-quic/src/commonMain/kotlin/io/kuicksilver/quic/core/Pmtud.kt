@@ -9,11 +9,12 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * Datagram Packetization Layer PMTU Discovery of one path (RFC 8899; RFC 9000 section 14.3): a binary
  * search between the 1200-byte base and [upperBound] with PING+PADDING probes of [step]-byte granularity, [maxProbes]
- * attempts per size, one final probe of the top of the range; the search repeats every [research]. A probe has failed when
- * it is not acknowledged within [probeTimer] of being sent (RFC 8899 section 5.1.1: PROBE_TIMER "MUST NOT be smaller than 1
- * second and SHOULD be larger than 15 seconds"; at least 3 PTO, longer than an acknowledgment can take), however early QUIC's
- * loss detection declares it lost: only then does the next probe go (section 5.2), so a size above the path's MTU is given up
- * after [maxProbes] x [probeTimer]. Three lost packets
+ * attempts per size, one final probe of the top of the range; the search repeats every [research]. A probe fails when QUIC's
+ * loss detection declares it lost (RFC 9000 section 14.3: "DPLPMTUD relies on tracking loss or acknowledgment of QUIC packets
+ * that are carried in PMTU probes"), but never before [minProbeTimer] after it was sent (RFC 8899 section 5.1.1: PROBE_TIMER
+ * "MUST NOT be smaller than 1 second"), or when [probeTimer] passed with neither verdict; only then does the next probe go
+ * (section 5.2). The SHOULD of the same section ("larger than 15 seconds") is not followed for the loss-detection verdict:
+ * docs/spec/rfc/8899.md records why. An acknowledgment that comes after all still confirms the size. Three lost packets
  * larger than the base with no full-size packet sent after the first of them acknowledged mean a black hole: back to
  * 1200 and no probe for [blackHolePause]. The verdict waits for [takeBlackHole], after the whole ACK was processed:
  * loss detection reports the losses of an ACK before its newly acknowledged packets, and a congestion burst is exactly
@@ -35,8 +36,10 @@ internal class Pmtud(
     private val maxProbes: Int = 3,
     private val research: Duration = 600.seconds,
     private val blackHolePause: Duration = 60.seconds,
-    /** RFC 8899 section 5.1.1 PROBE_TIMER (at least 3 PTO, see [nextProbeSize]). */
+    /** RFC 8899 section 5.1.1 PROBE_TIMER for a probe loss detection never judged (at least 3 PTO, see [nextProbeSize]). */
     private val probeTimer: Duration = PROBE_TIMER,
+    /** The earliest a probe may fail after it was sent, whatever loss detection says (RFC 8899 section 5.1.1: at least 1 s). */
+    private val minProbeTimer: Duration = MIN_PROBE_TIMER,
     /** The size in use at the start: the base, or the MTU a NAT-rebound path inherited (black-hole detection covers it, RFC 8899 section 4.3). */
     start: Int = base,
 ) {
@@ -50,6 +53,8 @@ internal class Pmtud(
     private var probeLosses = 0
     private var probeInFlight = false
     private var probeDeadline: TimeMark = TimeMark.NEVER // when the probe in flight has failed unless acknowledged before
+    private var probeSentAt: TimeMark = TimeMark.NEVER
+    private var probePn = -1L // the packet number of the probe in flight, once sent
 
     /**
      * The packet numbers and sizes of the last [SENT_PROBES] probes sent ([onProbeSent]), and which of them loss detection declared
@@ -198,6 +203,8 @@ internal class Pmtud(
         pto: Duration,
     ) {
         probeInFlight = true
+        probeSentAt = now
+        probePn = -1L
         probeDeadline = now + maxOf(probeTimer, pto * 3)
     }
 
@@ -235,6 +242,7 @@ internal class Pmtud(
         pn: Long,
         size: Int,
     ) {
+        if (probeInFlight && size == probeSize) probePn = pn
         if (sentLost[sentNext]) lostProbes--
         sentPn[sentNext] = pn
         sentSize[sentNext] = size
@@ -242,8 +250,19 @@ internal class Pmtud(
         sentNext = (sentNext + 1) % SENT_PROBES
     }
 
-    /** Loss detection declared the probe sent as packet [pn] lost: it fails only at its PROBE_TIMER, and an ACK may still come. */
-    fun onProbeDeclaredLost(pn: Long) {
+    /**
+     * Loss detection declared the probe sent as packet [pn] lost at [now]: the probe in flight fails then, or [minProbeTimer] after it
+     * was sent when that is later ([onTimeout]); an acknowledgment may still come and confirm its size ([takeLostProbeIn]).
+     */
+    fun onProbeDeclaredLost(
+        pn: Long,
+        now: TimeMark,
+    ) {
+        if (probeInFlight && pn == probePn) {
+            val floor = probeSentAt + minProbeTimer
+            val at = if (floor > now) floor else now
+            if (at < probeDeadline) probeDeadline = at
+        }
         for (i in 0 until SENT_PROBES) {
             if (sentPn[i] == pn && !sentLost[i]) {
                 sentLost[i] = true
@@ -470,3 +489,6 @@ private const val SENT_PROBES = 4
 
 /** RFC 8899 section 5.1.1: PROBE_TIMER "MUST NOT be smaller than 1 second and SHOULD be larger than 15 seconds". */
 private val PROBE_TIMER: Duration = 16.seconds
+
+/** RFC 8899 section 5.1.1's floor: no probe fails earlier than this after it was sent. */
+private val MIN_PROBE_TIMER: Duration = 1.seconds

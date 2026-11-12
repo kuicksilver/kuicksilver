@@ -428,11 +428,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: a QUIC TLS config with a cipher suite other than TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384 or
   TLS_CHACHA20_POLY1305_SHA256 is refused with `TlsException.Config`. TLS_AES_128_CCM_SHA256 passed the check before and
   the handshake failed once it was chosen (QUIC packet protection has no AES-CCM).
-- QUIC, DPLPMTUD: a probe fails only when its PROBE_TIMER (16 s, or 3 x PTO when longer) expires unacknowledged, however
-  early loss detection declared it lost (RFC 8899 section 5.1.1: "MUST NOT be smaller than 1 second and SHOULD be larger
-  than 15 seconds"). A size above the path's MTU is now given up after about 48 s instead of a few round trips; a size a
-  Packet Too Big or EMSGSIZE settles is still given up at once, and a probe declared lost whose acknowledgment still comes
-  confirms its size.
+- QUIC, DPLPMTUD: a probe declared lost by loss detection fails no earlier than 1 s after it was sent (RFC 8899 section
+  5.1.1: the PROBE_TIMER "MUST NOT be smaller than 1 second"); it used to fail, and the next probe to go, within a few
+  round trips. A probe declared lost whose acknowledgment still comes now confirms its size. The section's 15 s SHOULD is
+  not followed (docs/spec/rfc/8899.md).
 - Native UDP sockets: every IPv6 socket asks the kernel for flow labels (`IPV6_AUTOFLOWLABEL`, RFC 9000 section 9.7), so a
   Linux host that labels only on request (`net.ipv6.auto_flowlabels` = 2) or a Darwin host with
   `net.inet6.ip6.auto_flowlabel` = 0 labels QUIC datagrams too. Linux labels per path, Darwin per socket.

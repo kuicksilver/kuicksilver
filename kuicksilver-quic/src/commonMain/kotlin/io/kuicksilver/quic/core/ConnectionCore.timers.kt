@@ -331,7 +331,7 @@ internal class ConnectionLossListener(
         }
         core.paths.byId(PathId(p.pathId))?.let { path ->
             path.pmtud?.let { m ->
-                if (p.frames.flags and SentFrames.PMTU_PROBE == 0) m.onPacketLost(p.size, p.pn) else m.onProbeDeclaredLost(p.pn)
+                if (p.frames.flags and SentFrames.PMTU_PROBE == 0) m.onPacketLost(p.size, p.pn) else m.onProbeDeclaredLost(p.pn, core.now)
             }
         } // RFC 8899: a lost probe is not congestion, and fails only when its PROBE_TIMER expires (Pmtud.onTimeout); the black-hole
         // verdict waits for the end of the ACK (checkPmtuBlackHoles)

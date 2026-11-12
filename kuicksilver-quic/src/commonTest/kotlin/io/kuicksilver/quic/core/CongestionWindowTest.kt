@@ -246,8 +246,8 @@ class CongestionWindowTest {
             assertTrue(c.cc.bytesInFlight >= 1340)
             val id = c.openStream(true)
             c.writeStream(id, ByteArray(5_000), 0, 5_000, true) // later packets get through, so the probe is declared lost
-            // the congestion window lets go of it once loss detection declares it lost; DPLPMTUD gives the probe up only when its
-            // PROBE_TIMER expires (RFC 8899 section 5.1.1)
+            // the congestion window lets go of it once loss detection declares it lost; DPLPMTUD fails it no earlier than a second
+            // after it was sent (RFC 8899 section 5.1.1) and then sends the next, smaller probe, so the probe in flight is not watched
             assertTrue(p.runUntil(3.seconds) { c.stats.lostPackets > 0 && c.stats.bytesInFlight == 0L })
             assertEquals(0L, c.cc.bytesInFlight, "the probe left flight")
             assertEquals(0, cc.losses, "a lost probe is no congestion signal")
