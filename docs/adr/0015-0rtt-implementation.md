@@ -107,7 +107,10 @@ a connection whose handshake does not complete. A replayer cannot complete the h
   and tickets are taken for single use. Before a cached ticket is used, the cached chain is verified again with the
   current trust (the TCP path does the same after the handshake). Each entry keeps the server's encoded transport
   parameters (RFC 9000 §7.4.1). The client does not store HTTP/3 SETTINGS: RFC 9114 §7.2.4.2 lets it use the defaults,
-  which our encoder already complies with (no dynamic table).
+  which our encoder already complies with (no dynamic table). *Amended 2026-11-11 (0.3.0):* the client stores the
+  server's SETTINGS with its tickets ("Clients SHOULD store the settings the server provided"), complies with them in
+  0-RTT, and ends a connection whose server accepted 0-RTT and then sent incompatible SETTINGS with H3_SETTINGS_ERROR;
+  `Http3Endpoint.connectEarly` throws that error when the SETTINGS arrive before it returns.
 
 ### Transport
 

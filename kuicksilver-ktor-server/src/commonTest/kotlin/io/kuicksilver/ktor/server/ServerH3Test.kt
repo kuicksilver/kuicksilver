@@ -811,7 +811,9 @@ class ServerH3Test {
                 kotlinx.coroutines.withTimeout(5.seconds) {
                     while (server.engine.h3ListenersForProbe.sumOf { it.size() } == 0) delay(10)
                 }
-                server.engine.stopSuspend(1000, 3000)
+                // a grace period under the three seconds the server used to wait, with room for a slow host (a CI runner
+                // with a debug Kotlin/Native build): the wait is now 625 ms of it
+                server.engine.stopSuspend(2500, 4000)
                 assertFalse(server.engine.stopWasForcedForTest, "the stop ran out its grace period")
             } finally {
                 idle.close()

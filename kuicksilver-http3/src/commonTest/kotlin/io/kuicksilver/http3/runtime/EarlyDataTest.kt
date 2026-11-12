@@ -668,11 +668,19 @@ class EarlyDataTest {
                         f.warmUp()
                         H3Session.createdForTest = { if (it.isServer) it.ourSettingsForTest = change }
                         try {
-                            val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
-                            val end = c.closed.await()
-                            assertEquals(true, c.quic.earlyDataAccepted)
+                            // the server's SETTINGS can arrive (in 0.5-RTT) while connectEarly is still starting the
+                            // session, which then fails with the connection error itself; otherwise the connection ends with it
+                            val end =
+                                try {
+                                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                                    c.closed.await().also { assertEquals(true, c.quic.earlyDataAccepted) }
+                                } catch (e: io.kuicksilver.http3.Http3Exception.Protocol) {
+                                    e
+                                }
                             val e = kotlin.test.assertIs<io.kuicksilver.http3.Http3Exception.Protocol>(end, "$end")
                             assertEquals(io.kuicksilver.http3.Http3ErrorCode.SETTINGS_ERROR, e.h3Code)
+                            // raised by the check of the SETTINGS stored for 0-RTT, which applies only once 0-RTT was accepted
+                            assertTrue("0-RTT" in e.message.orEmpty(), "$e")
                         } finally {
                             H3Session.createdForTest = null
                         }
