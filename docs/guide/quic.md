@@ -1056,7 +1056,11 @@ returns. `trySendDatagram` never enters the loop and allocates only the copy plu
 `maxDatagramSize` (a `StateFlow`, following the path MTU) gives `TooLarge` / `DatagramTooLarge`; without datagram support
 on either side you get `Unsupported` / `DatagramUnsupported`. `datagrams` reads the core's 128-entry queue directly, so
 what nobody collected in time is dropped there and counted in `stats.datagramsDropped` (beside the UDP datagrams the
-connection discarded unprocessed).
+connection discarded unprocessed). Datagrams go ahead of stream data; *experimental*: `sendDatagram(data, policy,
+priority)` and `trySendDatagram(data, policy, priority)` schedule one by RFC 9218 urgency instead, so it does not go
+ahead of strictly more urgent streams' data (the sans-IO hook is `DatagramSender.nextUrgency`); datagrams still leave in
+the order they were queued. HTTP/3 sends every HTTP datagram at its request stream's priority this way (WebTransport,
+draft-ietf-webtrans-http3-16 section 3.4).
 
 ## Testing your application
 

@@ -1055,7 +1055,11 @@ returns. `trySendDatagram` never enters the loop and allocates only the copy plu
 `maxDatagramSize` (a `StateFlow`, following the path MTU) gives `TooLarge` / `DatagramTooLarge`; without datagram support
 on either side you get `Unsupported` / `DatagramUnsupported`. `datagrams` reads the core's 128-entry queue directly, so
 what nobody collected in time is dropped there and counted in `stats.datagramsDropped` (beside the UDP datagrams the
-connection discarded unprocessed).
+connection discarded unprocessed). Datagrams go ahead of stream data; *experimental*: `sendDatagram(data, policy,
+priority)` and `trySendDatagram(data, policy, priority)` schedule one by RFC 9218 urgency instead, so it does not go
+ahead of strictly more urgent streams' data (the sans-IO hook is `DatagramSender.nextUrgency`); datagrams still leave in
+the order they were queued. HTTP/3 sends every HTTP datagram at its request stream's priority this way (WebTransport,
+draft-ietf-webtrans-http3-16 section 3.4).
 
 ### Testing your application
 
@@ -1987,7 +1991,11 @@ arrived (ten seconds at most; without them, without a WebTransport setting of th
 or, for draft-14 and later, without `reset_stream_at` on both sides, the request is answered with 400, stopped with
 `H3_MESSAGE_ERROR`, and `acceptWebTransport` throws `Http3Exception.Settings`), and a 4xx from `respond` refuses the
 session. A client throws `Http3Exception.Settings` before its CONNECT when the server lacks one of them; draft-02,
-which Chrome and Firefox speak, predates `reset_stream_at` and goes without it. The client waits
+which Chrome and Firefox speak, predates `reset_stream_at` and goes without it. The draft is the highest both sides
+announce (a client of ours announces draft-16 and draft-02); a peer that announces a newer draft without
+`reset_stream_at` but also draft-02 gets a draft-02 session, one that announces only the newer draft is refused.
+Interop note: Safari speaks draft-14, which needs `reset_stream_at`; WebKit bugs 303152 and 305006 suggest Safari 26.4
+and later sends it, but that is not verified here ([interop](https://github.com/kuicksilver/kuicksilver/blob/main/docs/spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)). The client waits
 ten seconds for the server's SETTINGS and ten more for the answer to its CONNECT (`WebTransportException.Timeout`). Check the `origin` field before accepting a browser's session. The client offers application
 protocols in `WT-Available-Protocols` and the server picks one of `availableProtocols`; a choice the client did not
 offer fails `webTransport` with `WebTransportException.Alpn` (a `WT-Protocol` that is not a valid Structured Field
@@ -2030,7 +2038,8 @@ session (section 4.4); a session of draft-14 or later exists only with `reset_st
 `Http3Endpoint` and the Ktor engines turn on with `webTransport` (a draft-02 browser without it gets a plain
 RESET_STREAM, as its draft has it). A session's streams are sent at the priority of its CONNECT stream (the request's
 `priority`, else its `priority` field, else urgency 3 incremental) and follow the client's PRIORITY_UPDATE for it
-(section 3.4).
+(section 3.4); its datagrams, like every HTTP datagram, go with the urgency of their request stream: never ahead of
+more urgent streams' data, ahead of the rest.
 
 ```kotlin
 // guide:http3:webtransport-echo (server)
