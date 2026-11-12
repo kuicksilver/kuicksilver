@@ -955,8 +955,8 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   neither a clock stepped back nor a device that slept keeps them longer; "no records" for the negative
   TTL of the answer's SOA record, RFC 2308 section 5, no longer than a CNAME that led there, and not at all without one; at most
   1000 names), together with the other HTTPS records and the A/AAAA records the answer carried, which spare follow-up
-  queries (RFC 9460 section 5; a name's addresses only when both its A and AAAA records came, else it is looked up as
-  usual), and forgotten when
+  queries (RFC 9460 section 5; when only the A or only the AAAA records came, those are used at once and the name is
+  still looked up, the other family joining when it answers within 50 ms), and forgotten when
   `networkId()` reports a new network; without `networkId` the engine cannot see a network change and keeps no answers
   of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
   asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at

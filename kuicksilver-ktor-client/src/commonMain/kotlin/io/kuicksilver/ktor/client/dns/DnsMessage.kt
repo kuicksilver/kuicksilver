@@ -9,9 +9,9 @@ package io.kuicksilver.ktor.client.dns
  * @property negativeTtl how long "none" may be cached (RFC 2308 section 5), null when the response gives no SOA.
  * @property related other HTTPS RRsets of the response, by TargetName (an alias target's, for example): the RRset of
  *   that name after its CNAMEs, as a query for it would answer.
- * @property addresses A and AAAA addresses of the response by owner, 4 or 16 bytes each, with their smallest TTL: only
- *   owners with both an A and an AAAA RRset in the response, which can stand in for an address lookup; also by a
- *   TargetName that is a CNAME to such an owner.
+ * @property addresses A and AAAA addresses of the response by owner, 4 or 16 bytes each, with their smallest TTL (one
+ *   family may be missing: [io.kuicksilver.ktor.client.RequestDns.seed] looks it up); also by a TargetName that is a
+ *   CNAME to such an owner.
  * @property cnames the CNAMEs a TargetName of [related] or [addresses] went through, by TargetName (none: not a CNAME).
  * @property chain the name asked and its CNAMEs: [related] and [addresses] of names at or under one of these may be cached
  *   beyond this resolution, the others serve it only (they are another zone's data).
@@ -282,14 +282,11 @@ internal object DnsMessage {
                 // section 2.2: that RRset is rejected; it does not spoil the one asked for
             }
         }
-        // an owner's addresses only when both families came: one alone may be an answer cut short (RFC 9460 section 5.2:
-        // a resolver may omit RRsets), so the lookup that asks for both is not skipped (section 3: AAAA "and/or" A); a
-        // TargetName that is a CNAME gets those at the end of its chain, no longer than the chain's TTL
+        // the addresses of the names the answer leads to, whichever families came (RequestDns.seed looks up a missing
+        // one); a TargetName that is a CNAME gets those at the end of its chain, no longer than the chain's TTL
         val addrs = LinkedHashMap<String, Pair<List<ByteArray>, Long>>()
         for ((owner, l) in addresses) {
-            if (owner in allowed && l.any { it.first.size == 4 } && l.any { it.first.size == 16 }) {
-                addrs[owner] = l.map { it.first } to l.minOf { it.second }
-            }
+            if (owner in allowed) addrs[owner] = l.map { it.first } to l.minOf { it.second }
         }
         for ((target, end) in chainEnd) {
             val (owner, ttl) = end

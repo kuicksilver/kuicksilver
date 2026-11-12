@@ -1281,9 +1281,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   UTF-8; RFC 9110 §5.5 has a recipient treat obs-text as opaque data. Such a value now arrives byte for byte, each byte
   as the char of the same code (ISO-8859-1); a value that is valid UTF-8 is decoded as UTF-8 as before.
 - Ktor client, HTTPS records (new in this release): the A or AAAA records of one family alone in an answer no longer
-  stand in for the address lookup of that name, which a resolver that omitted the other family's RRset (RFC 9460
-  section 5.2) left without it, IPv6 on an IPv6-only network say; a name's addresses are now used only when both came,
-  and looked up as usual otherwise. "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it
+  stand in for the whole address lookup of that name, which a resolver that omitted the other family's RRset (RFC 9460
+  section 5.2) left without it, IPv6 on an IPv6-only network say. That family is still used at once (section 5), and
+  the name is looked up as well: the other family's addresses join when they come within the 50 ms resolution delay
+  of Happy Eyeballs. "No records" reached through a CNAME is cached no longer than the CNAME's TTL (it
   was kept for the SOA's negative TTL, RFC 2308 section 5, although the negative answer is about "the data field of the
   last CNAME", RFC 2308 section 1, and a CNAME "may be cached" only for its TTL, RFC 1035 section 3.2.1). The record cache counts a TTL on both the monotonic and the
   wall clock and expires an entry once either has seen it pass: a wall clock stepped back no longer keeps a record, a

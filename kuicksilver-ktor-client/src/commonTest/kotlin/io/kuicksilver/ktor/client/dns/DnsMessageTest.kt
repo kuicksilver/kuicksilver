@@ -224,7 +224,7 @@ class DnsMessageTest {
         assertEquals(setOf("cdn.example"), a.addresses.keys)
     }
 
-    @Test fun negative_oneAddressFamilyAloneIsNotKept() { // RFC 9460 sections 3 and 5.2: the other family may be missing
+    @Test fun oneAddressFamilyAloneIsKept() { // RFC 9460 section 5: placed in cache before any follow-up query
         val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
         val service = SvcbTestEncoder.encode(SvcbRecord(1, "v4.example", listOf("h3"), false, null, emptyList(), emptyList(), 0, "x"))
         val msg =
@@ -232,9 +232,9 @@ class DnsMessageTest {
                 rr("cdn.example", 65, 300, service) + rr("cdn.example", 28, 30, hex("20010db8000000000000000000000001")) +
                 rr("v4.example", 1, 30, hex("c0000201"))
         val a = DnsMessage.read(msg, "a.example")
-        assertEquals(setOf("cdn.example"), a.related.keys)
-        // an A or AAAA RRset alone may be an answer cut short (a resolver may omit RRsets): the lookup asks for both
-        assertTrue(a.addresses.isEmpty(), "kept ${a.addresses.keys}")
+        // the family that came is kept; RequestDns.seed looks up the missing one (RequestDnsTest)
+        assertEquals(listOf(16), a.addresses["cdn.example"]?.first?.map { it.size })
+        assertEquals(listOf(4), a.addresses["v4.example"]?.first?.map { it.size })
     }
 
     @Test fun negative_noRecordsThroughACnameLastNoLongerThanTheCname() { // RFC 2308 section 5, RFC 1035 section 3.2.1
