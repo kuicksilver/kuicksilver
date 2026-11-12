@@ -4,6 +4,7 @@ package io.kuicksilver.http3.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
@@ -21,6 +22,7 @@ import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -158,17 +160,47 @@ class PriorityTest {
             }
         }
 
-    @Test fun oversizedPriorityUpdateIgnored() =
+    /** A Priority Field Value of 300 bytes (an extension parameter, RFC 9218 section 4.3): above 256, applied like any other. */
+    private val long = "u=1, x=\"" + "a".repeat(300) + "\""
+
+    /** RFC 9218 section 7: "Servers SHOULD buffer the most recently received PRIORITY_UPDATE frame and apply it". */
+    @Test fun longPriorityUpdateApplied() =
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
                 val raw = RawPeer(c)
                 raw.openControl()
-                raw.priorityUpdate(0, "u=1, x=\"" + "a".repeat(300) + "\"")
-                delay(100)
                 raw.request()
-                assertEquals(StreamPriority.Default, server.acceptRequest().priority.value)
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                raw.priorityUpdate(r.streamId, long)
+                withTimeout(5.seconds) { r.priority.first { it == u1 } }
+            }
+        }
+
+    /** RFC 9218 section 7.2: a PRIORITY_UPDATE for a non-request stream MUST be H3_ID_ERROR, however long its value. */
+    @Test fun negative_longPriorityUpdateForNonRequestStreamIsIdError() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                peerMayHaveClosed { raw.priorityUpdate(2, long) }
+                assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(c))
+            }
+        }
+
+    /** RFC 9218 section 7.2: a stream beyond the limit we granted is H3_ID_ERROR, however long the value. */
+    @Test fun negative_longPriorityUpdateBeyondStreamLimitIsIdError() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxBidiStreams = 10 }).use { q ->
+                val (c, s) = q.connect()
+                Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                peerMayHaveClosed { raw.priorityUpdate(40, long) }
+                assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(c))
             }
         }
 
@@ -327,6 +359,47 @@ class PriorityTest {
         }
 
     /**
+     * RFC 8941 section 4.2: a field that fails to parse "MUST be ignored (i.e., treated as if the field were not present in
+     * the section)". A response field with an uppercase key is no server choice: the client's later PRIORITY_UPDATEs still
+     * reschedule the response.
+     */
+    @Test fun negative_garbledResponseFieldKeepsClientUpdates() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val id = raw.request(GET + ("priority" to "u=5, i"))
+                val r = server.acceptRequest()
+                r.respond(200, Http3Headers.of("priority" to "U=1"))
+                assertEquals(StreamPriority(5, true), (r as ServerRequestImpl).stream.priority)
+                raw.priorityUpdate(id, "u=6")
+                withTimeout(5.seconds) { r.priority.first { it == StreamPriority(6) } }
+                assertEquals(StreamPriority(6), r.stream.priority)
+            }
+        }
+
+    /** A CONNECT whose `priority` field fails to parse carries no signal: it is scheduled as a tunnel on both sides. */
+    @Test fun negative_garbledConnectFieldStaysTunnel() =
+        h3Test {
+            H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                val accepted = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
+                launch {
+                    val r = p.server.acceptRequest()
+                    r.acceptConnect()
+                    accepted.complete(r)
+                }
+                val garbled = http3Request("CONNECT", "server.test", "/chat") { headers = Http3Headers.of("priority" to "U=1") }
+                val tunnel = p.client.connect(garbled, "echo")
+                assertEquals(StreamPriority(3, true), tunnel.priority)
+                val r = withTimeout(5.seconds) { accepted.await() }
+                assertEquals(StreamPriority.Default, r.priority.value)
+                assertEquals(StreamPriority(3, true), (r as ServerRequestImpl).stream.priority)
+            }
+        }
+
+    /**
      * Our control and QPACK streams go before every request stream whatever the peer's signal: a client that asks u=0
      * (non-incremental, stream 0 has the lowest id) for a large response must not hold back the QPACK insert its trailers
      * need behind the whole body. The server's packets are held while the body and then the trailers are queued, so what
@@ -376,6 +449,52 @@ class PriorityTest {
                 for ((to, b) in held) q.net.deliver(serverAddress, to, b)
                 val before = withTimeout(10.seconds) { encoder.first { it.first > capacitySent } }.second - base
                 assertTrue(before < body / 2, "$before bytes reached the client before the QPACK insert")
+            }
+        }
+
+    /**
+     * RFC 9218 section 10.1: "servers SHOULD allocate some amount of bandwidths to streams acting as tunnels". A tunnel
+     * the client put at u=7 still gets data through while a u=0 response has a large body queued. The server's packets are
+     * held while both are queued, so what follows is the scheduler's choice alone (as in the test above).
+     */
+    @Test fun tunnelGetsShareBehindUrgentResponse() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val serverAsync = async { Http3Connection.server(s, http3Settings { enableConnectProtocol = true }) }
+                val client = Http3Connection.client(c)
+                val server = serverAsync.await()
+                val tunnelOnServer = kotlinx.coroutines.CompletableDeferred<io.kuicksilver.http3.Http3Stream>()
+                val urgent = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
+                launch {
+                    tunnelOnServer.complete(server.acceptRequest().acceptConnect())
+                    urgent.complete(server.acceptRequest())
+                }
+                val u7 = http3Request("CONNECT", "server.test", "/chat") { headers = Http3Headers.of("priority" to "u=7") }
+                val tunnel = client.connect(u7, "echo")
+                val serverTunnel = withTimeout(5.seconds) { tunnelOnServer.await() }
+                val u0 = http3Request("GET", "server.test", "/big") { headers = Http3Headers.of("priority" to "u=0") }
+                val response = async { client.request(u0) }
+                val r = withTimeout(5.seconds) { urgent.await() }
+                val serverAddress = InetSocketAddress("10.0.0.2", 443)
+                val held = Channel<Pair<InetSocketAddress, ByteArray>>(Channel.UNLIMITED)
+                q.net.drop = { from, to, b -> from == serverAddress && held.trySend(to to b).isSuccess }
+                val body = 384 * 1024 // within the client's stream and connection windows: nothing but the scheduler stops it
+                val w = r.respond(200)
+                w.output.writeFully(ByteArray(body))
+                w.finish() // the whole body is the transport's before the tunnel's data
+                serverTunnel.output.writeFully(ByteArray(16))
+                serverTunnel.output.flush()
+                q.net.drop = null
+                val base = c.stats.bytesReceived
+                held.close()
+                for ((to, b) in held) q.net.deliver(serverAddress, to, b)
+                tunnel.input.readFully(ByteArray(16))
+                val before = c.stats.bytesReceived - base
+                assertTrue(before < body / 2, "$before bytes reached the client before the tunnel's data")
+                response.cancel()
+                client.close()
+                server.close()
             }
         }
 

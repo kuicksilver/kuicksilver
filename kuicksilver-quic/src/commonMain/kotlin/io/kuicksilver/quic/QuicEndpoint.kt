@@ -167,6 +167,17 @@ public suspend fun QuicStream.awaitFinished() {
 }
 
 /**
+ * Marks [this] stream as carrying a tunnel (an HTTP CONNECT): the transport sends at least a small share of its data even
+ * while more urgent streams have data (RFC 9218 section 10.1: "servers SHOULD allocate some amount of bandwidths to
+ * streams acting as tunnels"). Takes effect asynchronously, like [QuicStream.priority]; ignored for streams of other
+ * implementations.
+ */
+@InternalKuicksilverApi
+public fun QuicStream.markTunnel() {
+    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.markTunnel()
+}
+
+/**
  * Suspends until the peer sends STOP_SENDING for [this] stream (RFC 9000 section 19.5) and returns its error code; it does
  * not wait for a write to meet the stop. Never returns for a stream the peer does not stop, or for streams of other
  * implementations. HTTP/3 watches its critical streams with it (RFC 9114 section 6.2.1: closed "at any point").

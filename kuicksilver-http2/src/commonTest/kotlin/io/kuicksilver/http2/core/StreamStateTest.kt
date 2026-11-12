@@ -346,6 +346,57 @@ class StreamStateTest {
         peer.assertStreamError(3, Http2ErrorCode.PROTOCOL_ERROR)
     }
 
+    /**
+     * RFC 9218 section 2.1: "A server that receives SETTINGS_NO_RFC7540_PRIORITIES with a value of 1 MUST ignore HTTP/2
+     * priority signals." After that setting a self-dependent HEADERS or PRIORITY is accepted and ignored, not reset.
+     */
+    @Test
+    fun selfDependencyIgnoredAfterNoRfc7540Priorities() {
+        val peer = RawH2Peer(Role.SERVER)
+        peer.handshake(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(1)))
+        peer.send(peer.headers(1, endStream = false, dependency = 1), FrameEncoder.priority(1, 1))
+        peer.send(peer.headers(3, endStream = false), FrameEncoder.priority(3, 3))
+        peer.read()
+        assertTrue(peer.resets().isEmpty(), "resets: ${peer.resets().map { it.streamId }}")
+        assertEquals(listOf(1, 3), peer.events().filterIsInstance<H2Event.HeadersReceived>().map { it.streamId })
+    }
+
+    /**
+     * RFC 9218 section 7.1: "Servers MUST NOT send PRIORITY_UPDATE frames. If a client receives a PRIORITY_UPDATE frame,
+     * it MUST respond with a connection error of type PROTOCOL_ERROR." A server ignores it as a frame type it does not
+     * implement (RFC 9113 section 5.5).
+     */
+    @Test
+    fun negative_clientRejectsPriorityUpdate() {
+        val update = byteArrayOf(0, 0, 7, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 1, 'u'.code.toByte(), '='.code.toByte(), '1'.code.toByte())
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        c.core.openStream(GET, endStream = true)
+        c.read()
+        c.send(update)
+        c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake()
+        s.send(s.headers(1), update)
+        s.read()
+        assertTrue(!s.core.isClosed && s.goAway() == null)
+    }
+
+    /**
+     * RFC 9218 section 7.1: "If a client receives a PRIORITY_UPDATE frame, it MUST respond with a connection error of type
+     * PROTOCOL_ERROR", whatever its length: one too short for a Prioritized Stream ID or above the server's 4096-byte
+     * value ceiling is no FRAME_SIZE_ERROR or ENHANCE_YOUR_CALM on a client.
+     */
+    @Test
+    fun negative_clientRejectsPriorityUpdateOfAnyLength() {
+        for (length in listOf(0, 2, 4, 4 + 4096 + 1, 9_000)) {
+            val c = RawH2Peer(Role.CLIENT)
+            c.handshake()
+            c.send(FrameEncoder.raw(FrameType.PRIORITY_UPDATE, 0, 0, ByteArray(length)))
+            c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        }
+    }
+
     @Test
     fun negative_frameInsideFieldBlockIsProtocolError() {
         val peer = RawH2Peer(Role.SERVER)
@@ -440,7 +491,8 @@ class StreamStateTest {
         assertTrue(H2Event.SettingsChanged in s)
         val settings = assertIs<Frame.Settings>(peer.read().first())
         assertEquals(false, settings.ack) // the server's preface
-        // the client's SETTINGS: no push (section 6.5.2) and no RFC 7540 priorities (RFC 9218 section 2.1)
+        // the client's SETTINGS: no push (section 6.5.2); no SETTINGS_NO_RFC7540_PRIORITIES, since the client sends RFC
+        // 7540 signals until the server says it ignores them (RFC 9218 section 2.1.1)
         val decoded =
             io.kuicksilver.http2.frame
                 .FrameDecoder()
@@ -448,7 +500,7 @@ class StreamStateTest {
         val cs = assertIs<Frame.Settings>(decoded.next())
         val map = cs.ids.indices.associate { cs.ids[it] to cs.values[it] }
         assertEquals(0L, map[SettingId.ENABLE_PUSH])
-        assertEquals(1L, map[SettingId.NO_RFC7540_PRIORITIES])
+        assertEquals(null, map[SettingId.NO_RFC7540_PRIORITIES])
         assertEquals(524_288L, map[SettingId.INITIAL_WINDOW_SIZE])
         decoded.feed(out, 24 + 9 + cs.ids.size * 6, n - 24 - 9 - cs.ids.size * 6)
         assertEquals(786_432 - 65_535, assertIs<Frame.WindowUpdate>(decoded.next()).increment) // the connection window

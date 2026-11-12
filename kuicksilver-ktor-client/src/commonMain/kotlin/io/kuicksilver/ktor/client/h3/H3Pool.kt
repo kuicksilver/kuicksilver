@@ -36,9 +36,9 @@ import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
-import io.kuicksilver.ktor.client.H3ExchangeKey
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
+import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
@@ -46,6 +46,7 @@ import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.originKeyOf
 import io.kuicksilver.ktor.client.priority
+import io.kuicksilver.ktor.client.priorityUpdater
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
@@ -991,7 +992,7 @@ internal class H3Pool(
                     },
                 )
             }
-        data.attributes.put(H3ExchangeKey, response) // for HttpResponse.updatePriority
+        data.attributes.put(PriorityUpdaterKey, response.priorityUpdater()) // for HttpResponse.updatePriority
         callContext[Job]?.invokeOnCompletion { cause ->
             // the call is over: an unread rest of the body is abandoned (STOP_SENDING); a reader still waiting sees why
             // (the request timeout, the caller's exception), not the stream's cancellation (found by the vendored contract)

@@ -32,8 +32,27 @@ internal class H2Stream(
     /** What waits for [H2ConnectionCore.poll]: field lists and at most one DATA frame. */
     val out = ArrayDeque<OutItem>()
 
-    /** In one of the core's ready queues. */
+    /** In the core's queue of streams whose next item is a field list. */
     var scheduled = false
+
+    /** RFC 9218 urgency (0 most urgent) and incremental parameter the core sends this stream's DATA by ([DataScheduler]). */
+    var urgency = 3
+    var incremental = false
+
+    /** A CONNECT: it gets a share of the DATA whatever its urgency (RFC 9218 section 10.1). */
+    var tunnel = false
+
+    /** In the core's [DataScheduler]: a DATA frame is queued, or the writer was told to hand over its next one by [refillBy]. */
+    var dataReady = false
+
+    /** The [DataScheduler]'s count of frames sent when this stream last sent one (its round-robin position). */
+    var servedAt = 0L
+
+    /**
+     * Until when (nanoseconds, the core's clock) the other streams' DATA waits for this stream's writer, which was just
+     * woken with bytes in hand ([H2Event.WindowAvailable]) and hands over its next frame at once; after it the others go on.
+     */
+    var refillBy = -1L
 
     /** A DATA frame of this stream is queued: [H2ConnectionCore.sendData] accepts no more until it is written. */
     var dataQueued = false

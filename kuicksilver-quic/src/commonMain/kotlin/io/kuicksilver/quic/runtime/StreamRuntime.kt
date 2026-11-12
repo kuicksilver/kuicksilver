@@ -45,11 +45,21 @@ internal class StreamRuntime(
     override val output: ByteWriteChannel get() = outChannel ?: throw IllegalStateException("stream $id is receive-only")
     internal val readable = Channel<Unit>(Channel.CONFLATED)
     internal val ticker = conn.newTicker()
+
+    // the loop applies the value the property holds when its turn comes, not the one this setter wrote: setters on several
+    // threads may have their hand-overs run in another order than their writes, and the last one to run must leave the
+    // scheduler on the property's final value
+    @Volatile
     override var priority: StreamPriority = initialPriority
         set(v) {
             field = v
-            loop.scope.launch { if (live()) conn.core.setPriority(id, v) }
+            loop.scope.launch { if (live()) conn.core.setPriority(id, priority) }
         }
+
+    /** See [io.kuicksilver.quic.markTunnel]. */
+    internal fun markTunnel() {
+        loop.scope.launch { if (live()) conn.core.markTunnel(id) }
+    }
 
     internal fun signalReadable() {
         readable.trySend(Unit)

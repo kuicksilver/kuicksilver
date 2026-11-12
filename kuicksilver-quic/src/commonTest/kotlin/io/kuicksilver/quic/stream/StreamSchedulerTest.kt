@@ -47,16 +47,73 @@ class StreamSchedulerTest {
         assertEquals(listOf(0L, 4L, 0L, 4L), List(4) { sch.next()!!.also { s -> sch.rotate(s) }.id })
     }
 
+    /** Picks the next stream [n] times, reporting each as sent; the streams keep their data. */
+    private fun StreamScheduler.sends(n: Int): List<Long> = List(n) { next()!!.also { s -> onSent(s) }.id }
+
+    /**
+     * RFC 9218 section 10: "early non-incremental responses might prevent the serving of incremental responses issued
+     * later ... It is RECOMMENDED that servers avoid such starvation where possible." At one urgency the incremental
+     * streams and the non-incremental one take turns (as quic-go does); within each kind the order stays.
+     */
+    @Test fun incrementalAndNonIncrementalShareOneUrgency() {
+        val sch = StreamScheduler()
+        sch.add(stream(0))
+        sch.add(stream(4))
+        sch.add(stream(8, incremental = true))
+        sch.add(stream(12, incremental = true))
+        assertEquals(listOf(8L, 0L, 12L, 0L, 8L, 0L), sch.sends(6))
+    }
+
+    /**
+     * RFC 9218 section 10.1: "servers SHOULD allocate some amount of bandwidths to streams acting as tunnels". A tunnel
+     * behind a more urgent stream still gets one frame in [StreamScheduler.TUNNEL_TURN].
+     */
+    @Test fun tunnelGetsShareBehindMoreUrgentStream() {
+        val sch = StreamScheduler()
+        sch.add(stream(0, urgency = 0))
+        sch.add(stream(4, urgency = 5, incremental = true).also { it.tunnel = true })
+        val ids = sch.sends(3 * StreamScheduler.TUNNEL_TURN)
+        assertEquals(3, ids.count { it == 4L }, "tunnel frames in $ids")
+        assertEquals(StreamScheduler.TUNNEL_TURN, ids.indexOf(4L) + 1, "the tunnel's first frame: $ids")
+    }
+
+    /** Only a tunnel gets the share: an ordinary stream of a lower urgency waits (RFC 9218 section 10, urgency first). */
+    @Test fun negative_lessUrgentStreamGetsNoShare() {
+        val sch = StreamScheduler()
+        sch.add(stream(0, urgency = 0))
+        sch.add(stream(4, urgency = 5, incremental = true))
+        assertEquals(List(3 * StreamScheduler.TUNNEL_TURN) { 0L }, sch.sends(3 * StreamScheduler.TUNNEL_TURN))
+    }
+
+    /** The tunnel share never goes before the HTTP/3 control and QPACK streams. */
+    @Test fun negative_tunnelShareNeverPreemptsCriticalStreams() {
+        val sch = StreamScheduler()
+        sch.add(stream(3, critical = true))
+        sch.add(stream(4, urgency = 5, incremental = true).also { it.tunnel = true })
+        assertEquals(List(2 * StreamScheduler.TUNNEL_TURN) { 3L }, sch.sends(2 * StreamScheduler.TUNNEL_TURN))
+    }
+
+    /** A tunnel that leaves the scheduler (its data ran out) takes no turn and leaves no stale entry. */
+    @Test fun tunnelLeavingTheSchedulerLeavesNoTurn() {
+        val sch = StreamScheduler()
+        val tunnel = stream(4, urgency = 5).also { it.tunnel = true }
+        sch.add(stream(0, urgency = 0))
+        sch.add(tunnel)
+        sch.remove(tunnel)
+        assertEquals(List(2 * StreamScheduler.TUNNEL_TURN) { 0L }, sch.sends(2 * StreamScheduler.TUNNEL_TURN))
+    }
+
     @Test fun retransmissionsBeforeNewDataOnSameLevel() =
         assertEquals(listOf(8L, 0L, 4L), order(stream(0), stream(4), stream(8, retransmit = true)))
 
     /**
      * Streams opened with [StreamPriority.Critical] (the HTTP/3 control and QPACK streams) go before every other stream, a
      * peer's u=0 with a lower id included: a peer must not hold back our SETTINGS or QPACK instructions with its own signal.
+     * (At u=0 the incremental stream 8 takes its turn before the non-incremental stream 0.)
      */
     @Test fun criticalStreamsBeforeEveryUrgency() =
         assertEquals(
-            listOf(11L, 3L, 7L, 4L, 0L, 8L),
+            listOf(11L, 3L, 7L, 4L, 8L, 0L),
             order(
                 stream(0, urgency = 0),
                 stream(4, urgency = 0, retransmit = true),

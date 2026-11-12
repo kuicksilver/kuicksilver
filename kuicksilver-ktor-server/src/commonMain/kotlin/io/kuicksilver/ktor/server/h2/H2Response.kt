@@ -19,7 +19,9 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
+import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.server.h1.httpDateNow
+import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,6 +52,20 @@ internal open class H2Response(
     /** The head went out: the engine resets a stream left unanswered at the end of the call. */
     internal var answered: Boolean = false
         private set
+
+    /**
+     * RFC 9218 section 8: the response's own Priority field merges into the client's signal for the DATA that follows (a
+     * parameter it leaves out keeps the client's value); one that fails to parse is no choice (RFC 8941 section 4.2).
+     * Under the connection's lock, so a PRIORITY_UPDATE arriving meanwhile is merged first or no longer applies. Called
+     * right before the head goes out, also a WebSocket's.
+     */
+    protected fun applyOwnPriority() {
+        headersBuilder.getAll("Priority")?.joinToString(", ")?.takeIf { PriorityField.isSignal(it) }?.let { field ->
+            h2.choosePriority { urgency, incremental ->
+                PriorityField.merge(StreamPriority(urgency, incremental), field).let { it.urgency * 2 + if (it.incremental) 1 else 0 }
+            }
+        }
+    }
 
     /** A head went out by other means than [sendHead] (a WebSocket's `:status 200`). */
     protected fun markAnswered() {
@@ -113,6 +129,7 @@ internal open class H2Response(
         if (!headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
         dropFramingFieldsOfAResponseWithoutContent()
         declaredLength = if (endStream) -1 else declaredLengthOf()
+        applyOwnPriority()
         h2.respond(statusCode.value, fields(), endStream)
         answered = true
     }

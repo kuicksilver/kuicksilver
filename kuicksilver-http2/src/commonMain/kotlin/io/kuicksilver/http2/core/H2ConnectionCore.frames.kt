@@ -140,12 +140,16 @@ internal fun H2ConnectionCore.onHeaders(
             return
         }
         lastPeerStreamId = id
+        val early = takeEarlyPriority(id)
         if (goAwaySentLastId in 0 until id) {
             rememberClosed(id, weReset = true) // after our GOAWAY: discarded, its frames too; the block fed HPACK (section 6.8)
             return
         }
-        // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability; RFC 9113 section 5.3.2)
-        if (blockDependency == id) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+        // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability; RFC 9113 section 5.3.2), unless
+        // the peer said it sends no such signals: they are then ignored entirely (RFC 9218 section 2.1)
+        if (blockDependency == id && !peerNoRfc7540Priorities) {
+            return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+        }
         if (peerStreams >= settings.maxConcurrentStreams) {
             // section 5.1.2: REFUSED_STREAM; a peer that keeps opening past the limit is flooding (golang/go#63417: Go's
             // server.go scheduleHandler allows 4 x the limit of unstarted handlers)
@@ -163,9 +167,10 @@ internal fun H2ConnectionCore.onHeaders(
                 recv = RecvWindow(recvInitialWindow, settings.maxStreamWindow.toLong()),
             )
         ns.finalHeadersReceived = true
+        ns.tunnel = isConnect(fields)
         streams[id] = ns
         peerStreams++
-        emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true))
+        emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true, priorityUpdate = early))
         return
     }
     if (s.state == StreamState.CLOSED) {
@@ -257,8 +262,12 @@ internal fun H2ConnectionCore.onPriority(
     now: Long,
 ) {
     glitch(now, "PRIORITY") // deprecated (section 5.3.2): no state, but not for free (nghttp2 does the same)
-    // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability)
-    if (f.dependency == f.streamId) streamError(f.streamId, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+    // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability), unless the peer sent
+    // SETTINGS_NO_RFC7540_PRIORITIES = 1: "A server that receives [it] with a value of 1 MUST ignore HTTP/2 priority
+    // signals" (RFC 9218 section 2.1), and a check that resets the stream does not ignore the signal
+    if (f.dependency == f.streamId && !peerNoRfc7540Priorities) {
+        streamError(f.streamId, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
+    }
 }
 
 internal fun H2ConnectionCore.onRstStream(
@@ -363,11 +372,19 @@ internal fun H2ConnectionCore.onSettings(
 
             SettingId.NO_RFC7540_PRIORITIES -> {
                 if (v > 1) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_NO_RFC7540_PRIORITIES = $v")
+                // RFC 9218 section 2.1: "Senders MUST NOT change the SETTINGS_NO_RFC7540_PRIORITIES value after the first
+                // SETTINGS frame. Receivers that detect a change MAY treat it as a connection error of type PROTOCOL_ERROR";
+                // one the first SETTINGS left out is 0 from then on (as nghttp2 does)
+                if (peerNoRfc7540PrioritiesFixed && (v == 1L) != peerNoRfc7540Priorities) {
+                    throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_NO_RFC7540_PRIORITIES changed to $v")
+                }
+                peerNoRfc7540Priorities = v == 1L
             }
 
             else -> {} // section 6.5.2: unknown settings are ignored
         }
     }
+    peerNoRfc7540PrioritiesFixed = true
     queueSettingsAck(windowShrank) // section 6.5.3: immediately, behind DATA already taken from a larger window
     emit(H2Event.SettingsChanged)
 }
@@ -451,4 +468,51 @@ internal fun H2ConnectionCore.onWindowUpdate(
     s.sendWindow += f.increment
     if (s.sendWindow > H2.MAX_WINDOW) return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "stream window above 2^31 - 1", now)
     tryWake(s)
+}
+
+/**
+ * RFC 9218 section 7.1. A client "MUST respond with a connection error of type PROTOCOL_ERROR". A server checks the
+ * prioritized stream: 0 and push streams (we never push: every one is idle) are PROTOCOL_ERROR; an open request takes
+ * the value; an idle one keeps the latest (section 7: "Servers SHOULD buffer the most recently received PRIORITY_UPDATE
+ * frame and apply it once the referenced stream is opened") as long as those and the active streams stay within our
+ * SETTINGS_MAX_CONCURRENT_STREAMS, else PROTOCOL_ERROR; a stream that can send nothing more ("half-closed (local)" or
+ * "closed") drops it. Each frame spends a glitch token, as PRIORITY does. The frame's stream 0 and length were checked
+ * by the decoder.
+ */
+internal fun H2ConnectionCore.onPriorityUpdate(
+    f: Frame.PriorityUpdate,
+    now: Long,
+) {
+    if (client) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE from the server")
+    glitch(now, "PRIORITY_UPDATE")
+    val id = f.prioritizedStreamId
+    if (id == 0) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE for stream 0")
+    if (!peerInitiated(id)) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE for idle push stream $id")
+    val s = streams[id]
+    if (s != null) {
+        if (s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE) emit(H2Event.PriorityUpdate(id, f.value))
+        return
+    }
+    if (!isIdle(id)) return // closed
+    if (id !in earlyPriority) {
+        var active = 0
+        for (o in streams.values) if (!o.local && o.state != StreamState.CLOSED) active++
+        if (active + earlyPriority.size + 1 > settings.maxConcurrentStreams) {
+            throw H2ConnectionError(
+                Http2ErrorCode.PROTOCOL_ERROR,
+                "PRIORITY_UPDATE: ${earlyPriority.size + 1} prioritized idle and $active active streams above ${settings.maxConcurrentStreams}",
+            )
+        }
+    }
+    earlyPriority.remove(id) // the latest one, in the order of arrival
+    earlyPriority[id] = f.value
+}
+
+/** Server: stream [id] opened: its early PRIORITY_UPDATE value, and the idle streams below it are closed now (RFC 9113 section 5.1.1). */
+internal fun H2ConnectionCore.takeEarlyPriority(id: Int): String? {
+    if (earlyPriority.isEmpty()) return null
+    val v = earlyPriority.remove(id)
+    val it = earlyPriority.keys.iterator()
+    while (it.hasNext()) if (it.next() < id) it.remove()
+    return v
 }

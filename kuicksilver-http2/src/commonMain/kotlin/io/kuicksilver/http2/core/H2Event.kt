@@ -18,6 +18,17 @@ internal sealed interface H2Event {
         val endStream: Boolean,
         val tooLarge: Boolean,
         val opening: Boolean = false,
+        /**
+         * Server: the Priority Field Value of the latest PRIORITY_UPDATE that came for the stream before its request
+         * (RFC 9218 section 7: it overrides the request's `priority` field), or null.
+         */
+        val priorityUpdate: String? = null,
+    ) : H2Event
+
+    /** Server: the client's PRIORITY_UPDATE for open stream [streamId] (RFC 9218 section 7.1), its raw Priority Field Value. */
+    class PriorityUpdate(
+        val streamId: Int,
+        val value: String,
     ) : H2Event
 
     /** Content of [streamId]; the driver calls [H2ConnectionCore.consumed] once the application has read it. */

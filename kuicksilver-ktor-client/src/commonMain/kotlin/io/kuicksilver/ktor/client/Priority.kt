@@ -15,8 +15,24 @@ import kotlinx.coroutines.isActive
 /** The priority a request was given with [priority]. */
 internal val PriorityKey: AttributeKey<StreamPriority> = AttributeKey("io.kuicksilver.ktor.client.Priority")
 
-/** The HTTP/3 exchange of the call's latest attempt, for [updatePriority]; absent over HTTP/1.1. */
-internal val H3ExchangeKey: AttributeKey<Http3Response> = AttributeKey("io.kuicksilver.ktor.client.H3Exchange")
+/**
+ * Sends a PRIORITY_UPDATE on the stream of the call's latest attempt, for [updatePriority]: true when it went. Absent over
+ * HTTP/1.1, which has no such signal.
+ */
+internal fun interface PriorityUpdater {
+    suspend fun update(p: StreamPriority): Boolean
+}
+
+/** The [PriorityUpdater] of the call's latest attempt (HTTP/3 or HTTP/2); removed when an attempt goes over HTTP/1.1. */
+internal val PriorityUpdaterKey: AttributeKey<PriorityUpdater> = AttributeKey("io.kuicksilver.ktor.client.PriorityUpdater")
+
+/** The [PriorityUpdater] of an HTTP/3 exchange: false once its response is complete. */
+internal fun Http3Response.priorityUpdater(): PriorityUpdater =
+    PriorityUpdater { p ->
+        if (trailers.isCompleted) return@PriorityUpdater false
+        updatePriority(p)
+        true
+    }
 
 /** The request's own priority, if [priority] gave one. */
 internal val HttpRequestData.priority: StreamPriority? get() = attributes.getOrNull(PriorityKey)
@@ -25,7 +41,8 @@ internal val HttpRequestData.priority: StreamPriority? get() = attributes.getOrN
  * Gives this request an RFC 9218 priority: [urgency] 0 (most urgent) to 7, and whether its response may be [incremental]ly
  * interleaved with others of the same urgency. Over HTTP/3 the engine sends it as the `priority` field (none for the
  * default, u=3 non-incremental) and schedules the request's own stream with it; a WebSocket over HTTP/3 carries it too.
- * Over HTTP/1.1 only the `Priority` field is sent. A `Priority` header set on the request is dropped in its favour, so the
+ * Over HTTP/2 the same, and until the server's SETTINGS say it ignores them, the request's HEADERS also carry an RFC 7540
+ * weight from the urgency (RFC 9218 section 2.1.1). Over HTTP/1.1 only the `Priority` field is sent. A `Priority` header set on the request is dropped in its favour, so the
  * server sees one signal. Without this call a `Priority` header is sent as it is.
  *
  * @throws IllegalArgumentException when [urgency] is outside 0..7.
@@ -45,9 +62,11 @@ public val HttpRequestBuilder.priority: StreamPriority? get() = attributes.getOr
 
 /**
  * Sends a new priority for this response (a PRIORITY_UPDATE frame, RFC 9218 section 7) and applies it to the request's
- * own stream; the server reschedules the rest of the response unless it set a priority of its own. True when the frame
- * was sent; false over HTTP/1.1, which has no such signal, once the call is over or its body was read to the end, and when
- * the connection is gone.
+ * own stream; the server reschedules the rest of the response unless it set a priority of its own. Over HTTP/2 the
+ * signals follow section 2.1.1: PRIORITY_UPDATE unless the server's SETTINGS left SETTINGS_NO_RFC7540_PRIORITIES at 0, and
+ * an RFC 7540 PRIORITY frame unless they said 1 (both before those SETTINGS). True when a signal was sent; false over
+ * HTTP/1.1, which has no such signal, once the call is over or its body was read to the end, and when the connection is
+ * gone.
  *
  * @throws IllegalArgumentException when [urgency] is outside 0..7.
  */
@@ -57,11 +76,10 @@ public suspend fun HttpResponse.updatePriority(
     incremental: Boolean,
 ): Boolean {
     require(urgency in 0..7) { "urgency must be 0..7, was $urgency" }
-    val exchange = call.attributes.getOrNull(H3ExchangeKey) ?: return false
-    if (!this.coroutineContext.isActive || exchange.trailers.isCompleted) return false
+    val updater = call.attributes.getOrNull(PriorityUpdaterKey) ?: return false
+    if (!this.coroutineContext.isActive) return false
     return try {
-        exchange.updatePriority(StreamPriority(urgency, incremental))
-        true
+        updater.update(StreamPriority(urgency, incremental))
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {

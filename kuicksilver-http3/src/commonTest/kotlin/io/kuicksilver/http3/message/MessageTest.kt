@@ -14,6 +14,7 @@ import io.kuicksilver.quic.StreamPriority
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -389,6 +390,23 @@ class PseudoHeadersTest {
         )
         assertEquals("/up", PseudoHeaders.parseRequest(f, false).path)
     }
+
+    /**
+     * [Http3Request.priority] schedules the stream and is the signal the server gets: it replaces a `priority` field among
+     * the headers, so the wire and our own scheduling never disagree. The default sends no field at all.
+     */
+    @Test fun priorityReplacesThePriorityHeader() {
+        fun fields(p: StreamPriority) =
+            PseudoHeaders
+                .buildRequest(
+                    http3Request("GET", "example.com", "/") {
+                        headers = Http3Headers.of("priority" to "u=7", "x-a" to "1", "priority" to "i")
+                        priority = p
+                    },
+                ).filter { it.first == "priority" || it.first == "x-a" }
+        assertEquals(listOf("x-a" to "1", "priority" to "u=0"), fields(StreamPriority(0)))
+        assertEquals(listOf("x-a" to "1"), fields(StreamPriority.Default))
+    }
 }
 
 class PriorityFieldTest {
@@ -398,6 +416,15 @@ class PriorityFieldTest {
         assertEquals(StreamPriority.Default, PriorityField.parse(null))
         assertEquals(StreamPriority.Default, PriorityField.parse(""))
         assertNull(PriorityField.format(StreamPriority.Default))
+    }
+
+    /** RFC 8941 section 4.2: a value that fails to parse is no signal ("treated as if the field were not present"). */
+    @Test fun negative_unparseableValueIsNoSignal() {
+        assertFalse(PriorityField.isSignal(null))
+        assertFalse(PriorityField.isSignal("U=1"))
+        assertFalse(PriorityField.isSignal("u=1,"))
+        assertTrue(PriorityField.isSignal("u=1"))
+        assertTrue(PriorityField.isSignal("u=9, x")) // a valid dictionary whose `u` is out of range is still one
     }
 
     /** RFC 9218 section 8: a parameter the field leaves out keeps the value it had ("disinterest to change"). */

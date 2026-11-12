@@ -23,14 +23,15 @@ internal object FrameEncoder {
         endHeaders: Boolean,
         dependency: Int = -1,
         padLength: Int = 0,
+        weight: Int = 16,
     ): ByteArray {
         var flags = (if (endStream) FrameFlags.END_STREAM else 0) or (if (endHeaders) FrameFlags.END_HEADERS else 0)
         val prefix =
             if (dependency >= 0) {
                 flags = flags or FrameFlags.PRIORITY
                 ByteArray(5).also {
-                    putInt(it, 0, dependency)
-                    it[4] = 15 // weight 16, the default
+                    putInt(it, 0, dependency) // not exclusive
+                    it[4] = (weight - 1).toByte() // weight 1 to 256 as 0 to 255 (RFC 7540 section 6.2)
                 }
             } else {
                 ByteArray(0)
@@ -41,7 +42,24 @@ internal object FrameEncoder {
     fun priority(
         streamId: Int,
         dependency: Int,
-    ): ByteArray = frame(FrameType.PRIORITY, 0, streamId, 5).also { putInt(it, 9, dependency) }
+        weight: Int = 16,
+    ): ByteArray =
+        frame(FrameType.PRIORITY, 0, streamId, 5).also {
+            putInt(it, 9, dependency) // not exclusive
+            it[13] = (weight - 1).toByte()
+        }
+
+    /** PRIORITY_UPDATE (RFC 9218 section 7.1) on stream 0 for [prioritizedStreamId], with an ASCII Priority Field Value. */
+    fun priorityUpdate(
+        prioritizedStreamId: Int,
+        value: String,
+    ): ByteArray {
+        val v = value.encodeToByteArray()
+        return frame(FrameType.PRIORITY_UPDATE, 0, 0, 4 + v.size).also {
+            putInt(it, 9, prioritizedStreamId)
+            v.copyInto(it, 13)
+        }
+    }
 
     fun rstStream(
         streamId: Int,

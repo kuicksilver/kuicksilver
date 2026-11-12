@@ -6,8 +6,16 @@ import io.kuicksilver.quic.StreamPriority
 
 /**
  * Chooses the next stream to send from (RFC 9218 at the transport): streams opened with [StreamPriority.Critical] first
- * (retransmissions, then by ascending id), then strict urgency order; within a level retransmissions first, then
- * non-incremental streams by ascending id, then incremental streams round-robin.
+ * (retransmissions, then by ascending id), then strict urgency order; within a level retransmissions first, then new data,
+ * where non-incremental streams go by ascending id (section 10: "in ascending order of the stream ID") and incremental
+ * streams round-robin (section 10: "sharing bandwidth among them").
+ *
+ * Two exceptions keep a stream from starving. Within one level the incremental and the non-incremental streams take turns,
+ * frame by frame, as quic-go does: section 10 warns that "early non-incremental responses might prevent the serving of
+ * incremental responses issued later" and recommends that servers "avoid such starvation". And a stream marked as a
+ * [tunnel][SendStream.tunnel] gets one frame in [TUNNEL_TURN] whatever its urgency, once no critical stream has data
+ * (section 10.1: "servers SHOULD allocate some amount of bandwidths to streams acting as tunnels"); tunnels take that
+ * turn round-robin.
  *
  * The peer's stream limit decides how many streams can be live (RFC 9000 section 21.6), so nothing here walks them all: every
  * (urgency, retransmission, incremental) pair is a queue of its own — a binary min-heap by id for non-incremental streams, an
@@ -23,6 +31,16 @@ internal class StreamScheduler {
 
     /** Bit `q` is set while queue `q` is non-empty. */
     private var nonEmpty = 0L
+
+    /** Bit `p` is set when the last frame sent from the queue pair `2p`, `2p + 1` came from its incremental queue. */
+    private var lastIncremental = 0
+
+    /** The scheduled [tunnel][SendStream.tunnel] streams, in the order of their tunnel turns. */
+    private var tunnelHead: SendStream? = null
+    private var tunnelTail: SendStream? = null
+
+    /** Frames sent from other streams since a tunnel last sent one while a tunnel was scheduled. */
+    private var sinceTunnel = 0
 
     /** Stream comparisons made by the heaps, for the complexity tests. */
     internal var comparisonsForTest = 0L
@@ -52,8 +70,17 @@ internal class StreamScheduler {
 
     fun next(): SendStream? {
         while (nonEmpty != 0L) {
-            val q = nonEmpty.countTrailingZeroBits()
-            val s = if (q and 1 == 0) heaps[q]!![0] else heads[q]!!
+            var q = nonEmpty.countTrailingZeroBits()
+            val tunnel = tunnelHead
+            val s =
+                if (q >= CRITICAL_QUEUES && tunnel != null && sinceTunnel >= TUNNEL_TURN - 1) {
+                    q = tunnel.schedQueue
+                    tunnel
+                } else {
+                    // a level's incremental queue takes every other frame while its non-incremental one has data
+                    if (q and 1 == 0 && nonEmpty and (1L shl (q + 1)) != 0L && lastIncremental and (1 shl (q shr 1)) == 0) q++
+                    if (q and 1 == 0) heaps[q]!![0] else heads[q]!!
+                }
             if (!s.hasPending) {
                 detach(s)
                 continue
@@ -76,6 +103,37 @@ internal class StreamScheduler {
         insert(s, queueOf(s))
     }
 
+    /**
+     * [s], the stream [next] chose, sent a frame: it leaves when it has nothing more to send, an incremental stream goes to
+     * the back of its queue, and the turns between incremental and non-incremental streams and of the tunnels advance.
+     */
+    fun onSent(s: SendStream) {
+        val q = s.schedQueue
+        if (q < 0) return
+        lastIncremental = if (q and 1 != 0) lastIncremental or (1 shl (q shr 1)) else lastIncremental and (1 shl (q shr 1)).inv()
+        if (s.tunnel) {
+            sinceTunnel = 0
+            if (s !== tunnelTail) {
+                unlinkTunnel(s)
+                linkTunnel(s)
+            }
+        } else if (tunnelHead != null) {
+            sinceTunnel++
+        }
+        if (!s.hasPending) {
+            detach(s)
+        } else if (q and 1 != 0) {
+            rotate(s)
+        }
+    }
+
+    /** Marks [s] as a [tunnel][SendStream.tunnel] (RFC 9218 section 10.1); it keeps its place in its queue. */
+    fun markTunnel(s: SendStream) {
+        if (s.tunnel) return
+        s.tunnel = true
+        if (s.schedQueue >= 0) linkTunnel(s)
+    }
+
     /** Queues 0 and 2 (heaps) hold the critical streams; the eight urgencies follow from 4, four queues each. */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private fun queueOf(s: SendStream): Int =
@@ -90,6 +148,7 @@ internal class StreamScheduler {
         q: Int,
     ) {
         s.schedQueue = q
+        if (s.tunnel) linkTunnel(s)
         if (q and 1 == 0) {
             val h = heaps[q] ?: ArrayList<SendStream>().also { heaps[q] = it }
             h += s
@@ -107,6 +166,7 @@ internal class StreamScheduler {
     private fun detach(s: SendStream) {
         val q = s.schedQueue
         s.schedQueue = -1
+        if (s.tunnel) unlinkTunnel(s)
         if (q and 1 == 0) {
             val h = heaps[q]!!
             val i = s.schedIndex
@@ -127,6 +187,24 @@ internal class StreamScheduler {
             s.schedNext = null
             if (heads[q] == null) nonEmpty = nonEmpty and (1L shl q).inv()
         }
+    }
+
+    private fun linkTunnel(s: SendStream) {
+        s.tunnelPrev = tunnelTail
+        s.tunnelNext = null
+        tunnelTail?.tunnelNext = s
+        tunnelTail = s
+        if (tunnelHead == null) tunnelHead = s
+    }
+
+    private fun unlinkTunnel(s: SendStream) {
+        val p = s.tunnelPrev
+        val n = s.tunnelNext
+        if (p == null) tunnelHead = n else p.tunnelNext = n
+        if (n == null) tunnelTail = p else n.tunnelPrev = p
+        s.tunnelPrev = null
+        s.tunnelNext = null
+        if (tunnelHead == null) sinceTunnel = 0
     }
 
     private fun siftUp(
@@ -168,11 +246,17 @@ internal class StreamScheduler {
         s.schedIndex = i
     }
 
-    private companion object {
+    internal companion object {
         /** The critical streams' (retransmission, new data) heaps, with the two list slots between them unused. */
-        const val CRITICAL_QUEUES = 4
+        private const val CRITICAL_QUEUES = 4
 
         /** The critical queues, then eight urgencies times (retransmission, incremental); fits the Long mask. */
-        const val QUEUES = CRITICAL_QUEUES + 32
+        private const val QUEUES = CRITICAL_QUEUES + 32
+
+        /**
+         * A scheduled tunnel sends at least one frame in this many (about 6 %) while no critical stream has data, however
+         * urgent the other streams are: "some amount of bandwidths" (RFC 9218 section 10.1) that leaves urgency in charge.
+         */
+        const val TUNNEL_TURN = 16
     }
 }

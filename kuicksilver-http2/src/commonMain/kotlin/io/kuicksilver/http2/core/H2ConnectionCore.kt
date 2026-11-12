@@ -39,8 +39,11 @@ internal enum class Role { CLIENT, SERVER }
  * - Floods (section 10.5, threat model 3.23): field blocks are bounded in bytes, CONTINUATION frames and time before
  *   decoding; queued control frames, empty DATA frames, glitches and (on a server) the client's stream resets are bounded
  *   per connection; a stream the peer reset still counts toward our SETTINGS_MAX_CONCURRENT_STREAMS until [release].
- * - Order of output: control frames (PING answers first), stream credit, then field blocks, then DATA round-robin between
- *   streams. RFC 7540 priorities are parsed and ignored (section 5.3.2).
+ * - Order of output: control frames (PING answers first), stream credit, then field blocks, then DATA by RFC 9218 priority
+ *   ([setPriority], [DataScheduler]). A stream's writer hands over one frame at a time, so when that frame is written and
+ *   the writer still holds more ([H2Event.WindowAvailable]), the less urgent streams wait for its next frame, for at most
+ *   [REFILL_GRACE_NANOS]: one connection's DATA follows priority instead of taking a frame of every stream in turn, and a
+ *   writer that does not come back holds nobody up. RFC 7540 priorities are parsed and ignored (section 5.3.2).
  *
  * The driver's contract: drain [nextEvent] after every call; call [consumed] as the application reads; call [release]
  * for every stream once the application is done with it (both roles; unread content of a dropped stream is credited to
@@ -55,7 +58,7 @@ internal class H2ConnectionCore(
     val enableConnectProtocol: Boolean = false,
 ) {
     internal val client = role == Role.CLIENT
-    private val decoder = FrameDecoder(settings.maxFrameSize)
+    private val decoder = FrameDecoder(settings.maxFrameSize, rejectPriorityUpdate = client)
 
     // section 4.3.1: both tables start at 4096; our own value holds once the peer acknowledged it
     internal val hpackIn =
@@ -102,7 +105,10 @@ internal class H2ConnectionCore(
     internal var wroteSincePing = true
     internal val creditReady = ArrayDeque<H2Stream>()
     internal val headerReady = ArrayDeque<H2Stream>()
-    internal val dataReady = ArrayDeque<H2Stream>()
+    internal val dataReady = DataScheduler()
+
+    /** [poll] stopped for a writer's next frame ([H2Stream.refillBy]) until this time; -1 when it did not. */
+    private var refillWaitUntil = -1L
     internal val writers = LinkedHashSet<H2Stream>() // streams waiting for window
     internal val blockedOnConnection = LinkedHashSet<H2Stream>() // ... of which only the connection window holds back
     private var partial: ByteArray? = null
@@ -114,6 +120,18 @@ internal class H2ConnectionCore(
     internal var peerInitialWindow = H2.DEFAULT_WINDOW.toLong()
     internal var peerMaxFrameSize = H2.MIN_MAX_FRAME_SIZE
     internal var peerMaxHeaderListSize = Long.MAX_VALUE
+
+    /**
+     * Server: the latest Priority Field Value of PRIORITY_UPDATEs for client streams still idle (RFC 9218 section 7), handed
+     * to the request when it opens; with the active streams, never more than our SETTINGS_MAX_CONCURRENT_STREAMS (7.1).
+     */
+    internal val earlyPriority = LinkedHashMap<Int, String>()
+
+    /** The peer sent SETTINGS_NO_RFC7540_PRIORITIES = 1: it uses no RFC 7540 priority signals (RFC 9218 section 2.1). */
+    internal var peerNoRfc7540Priorities = false
+
+    /** The peer's first SETTINGS were processed: SETTINGS_NO_RFC7540_PRIORITIES may not change any more (section 2.1). */
+    internal var peerNoRfc7540PrioritiesFixed = false
 
     /** The peer allows Extended CONNECT (RFC 8441 section 3). */
     var peerEnableConnectProtocol: Boolean = false
@@ -214,7 +232,10 @@ internal class H2ConnectionCore(
         put(SettingId.INITIAL_WINDOW_SIZE, settings.initialStreamWindow.toLong())
         if (settings.maxFrameSize != H2.MIN_MAX_FRAME_SIZE) put(SettingId.MAX_FRAME_SIZE, settings.maxFrameSize.toLong())
         put(SettingId.MAX_HEADER_LIST_SIZE, settings.maxHeaderListSize.toLong())
-        put(SettingId.NO_RFC7540_PRIORITIES, 1)
+        // RFC 9218 section 2.1: a server says it ignores RFC 7540 priority signals. A client leaves the setting out (its
+        // initial value 0): it sends those signals next to the Priority field until the server's SETTINGS say they are
+        // ignored (section 2.1.1), and value 1 would declare that "they are not using HTTP/2 priority signals"
+        if (!client) put(SettingId.NO_RFC7540_PRIORITIES, 1)
         // RFC 8441 section 3: sent once, in our first SETTINGS, and never taken back ("A sender MUST NOT send a
         // SETTINGS_ENABLE_CONNECT_PROTOCOL parameter with the value of 0 after previously sending a value of 1")
         if (enableConnectProtocol) put(SettingId.ENABLE_CONNECT_PROTOCOL, 1)
@@ -313,6 +334,7 @@ internal class H2ConnectionCore(
             is Frame.Ping -> onPing(f, now)
             is Frame.GoAway -> onGoAway(f)
             is Frame.WindowUpdate -> onWindowUpdate(f, now)
+            is Frame.PriorityUpdate -> onPriorityUpdate(f, now)
             is Frame.Unknown -> glitch(now, "unknown frame type ${f.type}") // section 5.5: ignored, but not for free
         }
     }
@@ -346,7 +368,10 @@ internal class H2ConnectionCore(
     fun openStream(
         fields: List<Pair<String, String>>,
         endStream: Boolean,
+        urgency: Int = 3,
+        incremental: Boolean = false,
     ): Int {
+        require(urgency in 0..7) { "urgency must be 0..7" }
         check(client) { "only a client opens streams" }
         if (closed || goAwayReceived || goAwaySentLastId >= 0) throw H2ConnectionUnusable("the connection is going away")
         if (nextLocalId > H2.MAX_STREAM_ID || nextLocalId < 0) throw H2ConnectionUnusable("stream identifiers exhausted (section 5.1.1)")
@@ -362,6 +387,9 @@ internal class H2ConnectionCore(
                 sendWindow = peerInitialWindow,
                 recv = RecvWindow(recvInitialWindow, settings.maxStreamWindow.toLong()),
             )
+        s.tunnel = isConnect(fields)
+        s.urgency = urgency
+        s.incremental = incremental
         streams[id] = s
         localOpen++
         enqueue(s, OutItem.Fields(fields, endStream))
@@ -401,6 +429,8 @@ internal class H2ConnectionCore(
         }
         val n = minOf(len.toLong(), connSendWindow, s.sendWindow, H2.MIN_MAX_FRAME_SIZE.toLong()).toInt().coerceAtLeast(0)
         if (n == 0 && len > 0) {
+            // no window: the writer hands nothing over now, so the less urgent streams' frames must not wait for it
+            s.refillBy = -1
             want(s)
             tryWake(s) // file it as blocked on its own or on the connection window
             return 0
@@ -561,7 +591,7 @@ internal class H2ConnectionCore(
         get() =
             partial != null || initial.isNotEmpty() || pingAnswers.isNotEmpty() || control.isNotEmpty() || creditReady.isNotEmpty() ||
                 headerReady.isNotEmpty() ||
-                dataReady.isNotEmpty()
+                nextData(lastNow) != null
 
     /**
      * Ends the connection with SETTINGS_TIMEOUT (RFC 9113 section 6.5.3) when the peer's preface (section 3.4: its SETTINGS,
@@ -600,6 +630,7 @@ internal class H2ConnectionCore(
         if (!peerSettingsSeen && peerPrefaceDeadline >= 0) at(peerPrefaceDeadline)
         if (inBlock) at(blockStartedAt + settings.maxHeaderBlockTime.inWholeNanoseconds)
         if (gracefulPing >= 0) at(gracefulDeadline)
+        if (refillWaitUntil >= 0) at(refillWaitUntil)
         return t
     }
 
@@ -643,6 +674,15 @@ internal class H2ConnectionCore(
 
     internal fun canSend(s: H2Stream): Boolean = s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE
 
+    /** A CONNECT request (RFC 9113 section 8.5): its stream carries a tunnel ([H2Stream.tunnel]). */
+    internal fun isConnect(fields: List<Pair<String, String>>): Boolean {
+        for ((n, v) in fields) {
+            if (n == ":method") return v == "CONNECT"
+            if (!n.startsWith(':')) break
+        }
+        return false
+    }
+
     private fun checkListSize(fields: List<Pair<String, String>>) {
         var size = 0L
         for ((n, v) in fields) size += entrySize(n, v)
@@ -658,9 +698,75 @@ internal class H2ConnectionCore(
     }
 
     private fun schedule(s: H2Stream) {
-        if (s.scheduled || s.out.isEmpty()) return
-        s.scheduled = true
-        (if (s.out.first() is OutItem.Fields) headerReady else dataReady).addLast(s)
+        if (s.out.isEmpty()) return
+        if (s.out.first() is OutItem.Data) {
+            dataReady.add(s)
+        } else if (!s.scheduled) {
+            s.scheduled = true
+            headerReady.addLast(s)
+        }
+    }
+
+    /**
+     * The stream whose DATA frame goes next by priority, or null when there is none, or when the scheduler's choice is a
+     * stream whose writer is about to hand over its next frame ([H2Stream.refillBy] still ahead of [now]): [poll] then
+     * waits for that frame. Streams that cannot send any more, and writers that missed their moment, leave the set here.
+     */
+    private fun nextData(now: Long): H2Stream? {
+        while (true) {
+            val s = dataReady.next() ?: break
+            if (s.out.firstOrNull() is OutItem.Data) {
+                refillWaitUntil = -1
+                return s
+            }
+            if (s.out.isEmpty() && now < s.refillBy && canSend(s)) {
+                refillWaitUntil = s.refillBy
+                return null
+            }
+            s.refillBy = -1
+            dataReady.remove(s)
+        }
+        refillWaitUntil = -1
+        return null
+    }
+
+    /**
+     * Client: sends the new priority of [streamId], our request, as the server can use it (RFC 9218 section 2.1.1): a
+     * PRIORITY_UPDATE (section 7.1) with Priority Field Value [value] unless the server's SETTINGS left
+     * SETTINGS_NO_RFC7540_PRIORITIES at 0 ("it SHOULD stop sending PRIORITY_UPDATE frames"), and an RFC 7540 PRIORITY
+     * frame with the weight of [urgency] unless those SETTINGS said 1 (before them "the client SHOULD send both"). True
+     * when a signal went; false when the stream can receive nothing more (§7.1: the frame refers to a stream "where data
+     * might still be received") or the connection is ending.
+     */
+    fun priorityUpdate(
+        streamId: Int,
+        value: String,
+        urgency: Int,
+    ): Boolean {
+        check(client) { "only a client sends PRIORITY_UPDATE" }
+        require(urgency in 0..7) { "urgency must be 0..7" }
+        if (closed || goAwaySentLastId >= 0) return false
+        val s = streams[streamId] ?: return false
+        if (s.state != StreamState.OPEN && s.state != StreamState.HALF_CLOSED_LOCAL) return false
+        if (!peerSettingsSeen || peerNoRfc7540Priorities) queueControl(FrameEncoder.priorityUpdate(streamId, value))
+        if (!peerNoRfc7540Priorities) queueControl(FrameEncoder.priority(streamId, 0, rfc7540Weight(urgency)))
+        return !closed
+    }
+
+    /**
+     * Sets the RFC 9218 priority the DATA of [streamId] is sent with ([DataScheduler]): [urgency] 0 (most urgent) to 7,
+     * [incremental] to share bandwidth with the other incremental streams of its urgency. Streams start at urgency 3, not
+     * incremental (section 4). Ignored for a stream that is gone.
+     */
+    fun setPriority(
+        streamId: Int,
+        urgency: Int,
+        incremental: Boolean,
+    ) {
+        require(urgency in 0..7) { "urgency must be 0..7" }
+        val s = streams[streamId] ?: return
+        s.urgency = urgency
+        s.incremental = incremental
     }
 
     /** The next whole frame (or field block) to write; field lists are HPACK-encoded here, in wire order (section 4.3.1). */
@@ -684,14 +790,27 @@ internal class H2ConnectionCore(
         }
         var s: H2Stream
         while (true) {
-            s = headerReady.removeFirstOrNull() ?: dataReady.removeFirstOrNull() ?: return null
-            s.scheduled = false
-            if (s.out.isNotEmpty()) break // a stream whose queue was dropped (a reset) leaves its slot empty
+            val h = headerReady.removeFirstOrNull()
+            if (h == null) {
+                s = nextData(now) ?: return null
+                dataReady.remove(s)
+                dataReady.onServed(s)
+                break
+            }
+            h.scheduled = false
+            // a stream whose queue was dropped (a reset) leaves its slot empty; one whose DATA came first is the data's
+            if (h.out.firstOrNull() is OutItem.Fields) {
+                s = h
+                break
+            }
+            schedule(h)
         }
         val frame =
             when (val item = s.out.removeFirst()) {
                 is OutItem.Fields -> {
-                    encodeBlock(s.id, item)
+                    // RFC 9218 section 2.1.1: a request head carries an RFC 7540 signal until the server said it ignores them
+                    val signal = client && !s.headersSent && !peerNoRfc7540Priorities
+                    encodeBlock(s.id, item, if (signal) rfc7540Weight(s.urgency) else 0)
                 }
 
                 is OutItem.Data -> {
@@ -721,11 +840,20 @@ internal class H2ConnectionCore(
     private fun encodeBlock(
         id: Int,
         item: OutItem.Fields,
+        /** The RFC 7540 weight of a PRIORITY flag (dependency 0, not exclusive), 0 for none. */
+        weight: Int,
     ): ByteArray {
         val encoded = hpackOut.encode(item.fields)
         val max = minOf(peerMaxFrameSize, H2.MIN_MAX_FRAME_SIZE)
-        var out = FrameEncoder.headers(id, encoded.copyOfRange(0, minOf(max, encoded.size)), item.endStream, encoded.size <= max)
-        var at = max
+        val firstMax = max - (if (weight > 0) 5 else 0) // the priority fields count toward the frame's payload
+        val first = encoded.copyOfRange(0, minOf(firstMax, encoded.size))
+        var out =
+            if (weight > 0) {
+                FrameEncoder.headers(id, first, item.endStream, encoded.size <= firstMax, dependency = 0, weight = weight)
+            } else {
+                FrameEncoder.headers(id, first, item.endStream, encoded.size <= firstMax)
+            }
+        var at = firstMax
         while (at < encoded.size) {
             val end = minOf(at + max, encoded.size)
             out += FrameEncoder.continuation(id, encoded.copyOfRange(at, end), end == encoded.size)
@@ -820,6 +948,8 @@ internal class H2ConnectionCore(
         var refund = 0L
         for (item in s.out) if (item is OutItem.Data) refund += item.length
         s.out.clear()
+        dataReady.remove(s)
+        s.refillBy = -1
         s.dataQueued = false
         dataLeft(s)
         if (refund == 0L) return
@@ -853,6 +983,11 @@ internal class H2ConnectionCore(
         s.wantsWindow = false
         writers.remove(s)
         blockedOnConnection.remove(s)
+        // the writer holds its next bytes: the less urgent streams wait a moment for them (see nextData)
+        if (s.out.isEmpty()) {
+            s.refillBy = lastNow + REFILL_GRACE_NANOS
+            dataReady.add(s)
+        }
         emit(H2Event.WindowAvailable(s.id))
     }
 
@@ -866,8 +1001,22 @@ internal class H2ConnectionCore(
         closedReported = true
     }
 
-    private companion object {
-        const val MAX_PINGS_OUT = 16
-        val EMPTY = ByteArray(0)
+    internal companion object {
+        private const val MAX_PINGS_OUT = 16
+
+        /**
+         * How long the other streams' DATA waits for a more urgent stream's writer that was just told to hand over its
+         * next frame: the writer holds those bytes already, so it needs only a thread's turn.
+         */
+        const val REFILL_GRACE_NANOS = 2_000_000L
+        private val EMPTY = ByteArray(0)
     }
 }
+
+/**
+ * The RFC 7540 weight (1 to 256) a request of RFC 9218 [urgency] carries next to its Priority field (RFC 9218 section
+ * 2.1.1): Chromium's mapping of its eight priorities to HTTP/2 weights (`Spdy3PriorityToHttp2Weight`, 255.9 / 7 per
+ * step: 256, 220, 183, 147, 110, 74, 37, 1), urgency 0 the heaviest. The incremental parameter has no RFC 7540
+ * counterpart (every request depends on stream 0, so weights only share bandwidth among siblings) and is left out.
+ */
+internal fun rfc7540Weight(urgency: Int): Int = 2559 * (7 - urgency) / 70 + 1

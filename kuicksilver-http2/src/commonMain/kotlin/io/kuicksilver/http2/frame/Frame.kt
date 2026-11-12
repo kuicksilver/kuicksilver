@@ -26,12 +26,17 @@ internal sealed interface Frame {
         val endStream: Boolean,
         val endHeaders: Boolean,
         val dependency: Int = -1,
+        /** The RFC 7540 exclusive bit and weight (1 to 256) of the PRIORITY flag; false and 16 without it. */
+        val exclusive: Boolean = false,
+        val weight: Int = 16,
     ) : Frame
 
     /** PRIORITY (section 6.3): deprecated signal, checked and ignored. */
     class Priority(
         override val streamId: Int,
         val dependency: Int,
+        /** The RFC 7540 weight, 1 to 256. */
+        val weight: Int = 16,
     ) : Frame
 
     /** RST_STREAM (section 6.4); [errorCode] is the raw code (unknown codes stay as they came). */
@@ -86,6 +91,17 @@ internal sealed interface Frame {
         val fragment: ByteArray,
         val endHeaders: Boolean,
     ) : Frame
+
+    /**
+     * PRIORITY_UPDATE (RFC 9218 section 7.1, type 0x10, always on stream 0): the client's new Priority Field Value
+     * ([value], ASCII) for [prioritizedStreamId].
+     */
+    class PriorityUpdate(
+        val prioritizedStreamId: Int,
+        val value: String,
+    ) : Frame {
+        override val streamId: Int get() = 0
+    }
 
     /** A frame of an unknown type (section 5.5): its payload was skipped without being buffered. */
     class Unknown(

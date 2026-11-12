@@ -15,13 +15,20 @@ import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.response.respond
 import io.ktor.util.pipeline.PipelinePhase
 import io.kuicksilver.http2.runtime.H2ServerStream
+import io.kuicksilver.http2.runtime.PriorityPolicy
+import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.ReceivedEarlyKey
 import io.kuicksilver.ktor.server.RequestPriorityKey
 import io.kuicksilver.ktor.server.h1Priority
+import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.flow.FlowCollector
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 
@@ -69,8 +76,17 @@ internal class H2Call(
     init {
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
-        // the Priority field (RFC 9218 section 5) is end to end: read as on HTTP/1.1 (PRIORITY_UPDATE is not used on HTTP/2)
-        attributes.put(RequestPriorityKey, h1Priority(request.headers.getAll("Priority")))
+        // the client's signal (RFC 9218): the Priority field, then each PRIORITY_UPDATE (section 7.1), one that came before
+        // the request included (it overrides the field, section 7); the response's DATA goes by it (section 10) until the
+        // response chose its own (section 8, [H2Response]); a CONNECT without a signal is a tunnel, incremental as on
+        // HTTP/3 (sections 10.1, 11)
+        val field = request.headers.getAll("Priority")
+        val signal = ClientSignal(h1Priority(field).value)
+        attributes.put(RequestPriorityKey, signal.flow)
+        // an Extended CONNECT stream (a WebSocket over HTTP/2 with RFC 8441) carries a tunnel
+        val p =
+            if (h2.method == "CONNECT" && !PriorityField.isSignal(field?.joinToString(", "))) TUNNEL_PRIORITY else signal.flow.value
+        h2.schedule(p.urgency, p.incremental, signal)
         // a gateway forwarded it from early data (RFC 8470 section 5.1)
         if (h2.fields.any { it.first == EARLY_DATA_FIELD.lowercase() }) {
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -110,6 +126,9 @@ internal class H2Call(
     }
 
     companion object {
+        /** A tunnel's scheduling without a signal from its client: the default urgency, incremental (as on HTTP/3). */
+        private val TUNNEL_PRIORITY = StreamPriority(3, incremental = true)
+
         /** HTTP/2 fields as Ktor headers; `:authority` becomes `Host`, split `cookie` fields one (RFC 9113 section 8.2.3). */
         fun toKtorHeaders(r: H2ServerStream): Headers {
             val b = HeadersBuilder()
@@ -122,5 +141,58 @@ internal class H2Call(
 
         /** The method of [r] as Ktor's. */
         fun method(r: H2ServerStream): HttpMethod = HttpMethod.parse(r.method)
+    }
+}
+
+/**
+ * The client's PRIORITY_UPDATEs as the HTTP/2 engine reads them (RFC 9218 section 7: "a complete set of all priority
+ * parameters", a parameter left out meaning its default; a value that fails to parse means the defaults, as on HTTP/3),
+ * and [flow], the signal the application sees. One state flow holds the latest signal with its order (seq) and only ever
+ * moves to a newer one, so neither its value nor its collectors ever go back to an older signal, however the calls
+ * interleave.
+ */
+internal class ClientSignal(
+    initial: StreamPriority,
+) : PriorityPolicy {
+    internal class Latest(
+        val seq: Long,
+        val priority: StreamPriority,
+    )
+
+    internal val state = MutableStateFlow(Latest(-1, initial))
+    val flow: StateFlow<StreamPriority> = PriorityView(state)
+
+    override fun parse(value: String): Int = PriorityField.parse(value).let { it.urgency * 2 + if (it.incremental) 1 else 0 }
+
+    override fun signal(
+        urgency: Int,
+        incremental: Boolean,
+        seq: Long,
+    ) {
+        val next = Latest(seq, StreamPriority(urgency, incremental))
+        while (true) {
+            val cur = state.value
+            if (cur.seq >= seq) return // a newer one is in already
+            if (state.compareAndSet(cur, next)) return
+        }
+    }
+
+    /** [state]'s priorities: the value at once, collectors without repeats. */
+    @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+    private class PriorityView(
+        private val state: StateFlow<Latest>,
+    ) : StateFlow<StreamPriority> {
+        override val value: StreamPriority get() = state.value.priority
+        override val replayCache: List<StreamPriority> get() = listOf(value)
+
+        override suspend fun collect(collector: FlowCollector<StreamPriority>): Nothing {
+            var last: StreamPriority? = null
+            state.collect {
+                if (it.priority != last) {
+                    last = it.priority
+                    collector.emit(it.priority)
+                }
+            }
+        }
     }
 }

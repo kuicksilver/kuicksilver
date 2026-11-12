@@ -374,8 +374,14 @@ internal object PseudoHeaders {
         }
         r.authority?.let { out += ":authority" to it }
         if (r.method != "CONNECT" || r.protocol != null) r.path?.let { out += ":path" to it }
-        out += r.headers.fields
-        r.priority?.let { p -> PriorityField.format(p)?.let { if (r.headers["priority"] == null) out += "priority" to it } }
+        val p = r.priority
+        if (p == null) {
+            out += r.headers.fields
+        } else {
+            // the explicit priority is the signal: a `priority` header would tell the server something else than we schedule
+            for (f in r.headers.fields) if (f.first != "priority") out += f
+            PriorityField.format(p)?.let { out += "priority" to it }
+        }
         return out
     }
 
@@ -397,6 +403,12 @@ internal object PseudoHeaders {
 public object PriorityField {
     /** The priority [value] signals, the defaults (u=3, i=?0) for what it leaves out or does not say validly. */
     public fun parse(value: String?): StreamPriority = merge(StreamPriority.Default, value)
+
+    /**
+     * Whether [value] is a priority signal at all: present and a valid Structured Fields dictionary. A value that fails to
+     * parse counts as absent (RFC 8941 section 4.2: "treated as if the field were not present in the section").
+     */
+    public fun isSignal(value: String?): Boolean = value != null && PriorityDictionary.parse(value) != null
 
     /**
      * [base] with the parameters [value] gives (RFC 9218 section 8: a parameter left out keeps its value, "disinterest to

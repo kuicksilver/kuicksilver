@@ -30,6 +30,7 @@ import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.markTunnel
 import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -227,6 +228,8 @@ private suspend fun H3Session.requestOnDispatcher(
             } catch (e: QuicException) {
                 throw map(e)
             }
+        // a CONNECT carries a tunnel: some of its data goes out even behind more urgent streams (RFC 9218 section 10.1)
+        if (r.method == "CONNECT") st.markTunnel()
         goAwayReceived.value?.let {
             if (st.id >=
                 it
@@ -419,11 +422,15 @@ private suspend fun H3Session.exchange(
 
 /**
  * How our own sending on the request stream is scheduled (RFC 9218): the request's [Http3Request.priority], else the
- * `priority` field it carries as a header (the signal the server gets), else the defaults; a CONNECT without a signal is
- * a tunnel and goes incremental, so a long-lived one does not hold back every other stream (sections 10.1, 11).
+ * `priority` field it carries as a header (the signal the server gets) when it parses (RFC 8941 section 4.2: one that
+ * does not is "treated as if the field were not present"), else the defaults; a CONNECT without a signal is a tunnel and
+ * goes incremental, so a long-lived one does not hold back every other stream (sections 10.1, 11).
  */
 internal fun localPriority(r: Http3Request): StreamPriority =
-    r.priority ?: r.headers.priorityFieldValue()?.let { PriorityField.parse(it) }
+    r.priority ?: r.headers
+        .priorityFieldValue()
+        ?.takeIf { PriorityField.isSignal(it) }
+        ?.let { PriorityField.parse(it) }
         ?: if (r.method == "CONNECT") TUNNEL_PRIORITY else StreamPriority.Default
 
 /** A tunnel's scheduling without a signal from its client: the default urgency, incremental (h2o does the same). */

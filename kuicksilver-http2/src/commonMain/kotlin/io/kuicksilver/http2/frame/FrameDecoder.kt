@@ -18,6 +18,11 @@ import io.kuicksilver.http2.Http2ErrorCode
  */
 internal class FrameDecoder(
     var maxFrameSize: Int = H2.MIN_MAX_FRAME_SIZE,
+    /**
+     * A client's decoder: a PRIORITY_UPDATE is a PROTOCOL_ERROR whatever its length (RFC 9218 section 7.1: "If a client
+     * receives a PRIORITY_UPDATE frame, it MUST respond with a connection error of type PROTOCOL_ERROR").
+     */
+    private val rejectPriorityUpdate: Boolean = false,
 ) {
     private val head = ByteArray(H2.FRAME_HEADER_SIZE)
     private var headLen = 0
@@ -98,7 +103,7 @@ internal class FrameDecoder(
         }
         checkHeader()
         have = 0
-        skipping = type > FrameType.CONTINUATION
+        skipping = type > FrameType.CONTINUATION && type != FrameType.PRIORITY_UPDATE
         if (!skipping && length > 0) {
             val first = minOf(length, H2.MIN_MAX_FRAME_SIZE)
             payload = ByteArray(first)
@@ -127,7 +132,7 @@ internal class FrameDecoder(
                 if (streamId == 0) connError(Http2ErrorCode.PROTOCOL_ERROR, "frame type $type on stream 0")
             }
 
-            FrameType.SETTINGS, FrameType.PING, FrameType.GOAWAY -> {
+            FrameType.SETTINGS, FrameType.PING, FrameType.GOAWAY, FrameType.PRIORITY_UPDATE -> {
                 if (streamId != 0) connError(Http2ErrorCode.PROTOCOL_ERROR, "frame type $type on stream $streamId")
             }
         }
@@ -151,6 +156,17 @@ internal class FrameDecoder(
 
             FrameType.WINDOW_UPDATE -> {
                 if (length != 4) connError(Http2ErrorCode.FRAME_SIZE_ERROR, "WINDOW_UPDATE length $length")
+            }
+
+            FrameType.PRIORITY_UPDATE -> {
+                if (rejectPriorityUpdate) connError(Http2ErrorCode.PROTOCOL_ERROR, "PRIORITY_UPDATE from the server")
+                // RFC 9113 section 4.2: too small for its mandatory Prioritized Stream ID
+                if (length < 4) connError(Http2ErrorCode.FRAME_SIZE_ERROR, "PRIORITY_UPDATE length $length")
+                // a Priority Field Value is bounded as HTTP/3 bounds a control frame (4096 bytes), before anything is
+                // buffered: the values kept for idle streams stay small whatever SETTINGS_MAX_FRAME_SIZE allows
+                if (length > 4 + MAX_PRIORITY_FIELD_VALUE) {
+                    connError(Http2ErrorCode.ENHANCE_YOUR_CALM, "PRIORITY_UPDATE length $length above ${4 + MAX_PRIORITY_FIELD_VALUE}")
+                }
             }
         }
     }
@@ -199,12 +215,14 @@ internal class FrameDecoder(
                     flags and FrameFlags.END_STREAM != 0,
                     flags and FrameFlags.END_HEADERS != 0,
                     dep,
+                    exclusive = prio && p[start - 5].toInt() and 0x80 != 0,
+                    weight = if (prio) (p[start - 1].toInt() and 0xff) + 1 else 16,
                 )
             }
 
             FrameType.PRIORITY -> {
                 if (n != 5) throw H2StreamError(id, Http2ErrorCode.FRAME_SIZE_ERROR, "PRIORITY length $n")
-                Frame.Priority(id, readInt31(p, 0))
+                Frame.Priority(id, readInt31(p, 0), (p[4].toInt() and 0xff) + 1)
             }
 
             FrameType.RST_STREAM -> {
@@ -239,6 +257,10 @@ internal class FrameDecoder(
 
             FrameType.CONTINUATION -> {
                 Frame.Continuation(id, p.copyOfRange(0, n), flags and FrameFlags.END_HEADERS != 0)
+            }
+
+            FrameType.PRIORITY_UPDATE -> {
+                Frame.PriorityUpdate(readInt31(p, 0), p.decodeToString(4, n))
             }
 
             else -> {
@@ -288,3 +310,6 @@ internal class FrameDecoder(
                 (b[at + 3].toLong() and 0xff)
     }
 }
+
+/** The longest Priority Field Value a PRIORITY_UPDATE may carry (RFC 9218 section 7.1), as HTTP/3's 4096-byte control frames. */
+internal const val MAX_PRIORITY_FIELD_VALUE = 4096

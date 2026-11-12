@@ -702,8 +702,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `ProxyException` (`replyCode` 407 when it wants credentials) instead of a plain `IOException`. The
   `protocolSelected` reason for a request through a proxy is the new `ProtocolReason.Proxy` (was `NotSecure`).
 - HTTP/3 scheduling (RFC 9218): a CONNECT tunnel without a priority signal, a WebSocket over HTTP/3 among them, is now
-  scheduled incremental on both sides, so it shares bandwidth with the other streams instead of holding back every
-  response of the same urgency. A `priority` header on a request now schedules the client's own stream too, and a
+  scheduled incremental on both sides, so it shares bandwidth with the incremental streams of its urgency instead of
+  holding back every response of that urgency. Within one urgency the incremental and the non-incremental streams now
+  take turns frame by frame (section 10), where non-incremental streams used to go strictly first and could starve an
+  incremental stream or tunnel; and a CONNECT tunnel gets at least one frame in 16 while more urgent streams have data
+  (section 10.1: "servers SHOULD allocate some amount of bandwidths to streams acting as tunnels"). A `priority` header on a request now schedules the client's own stream too, and a
   `priority` field in a server's response is merged into the client's signal and applied to the response's scheduling.
 - QUIC client: a server's `preferred_address` is now followed (validated, then moved to) instead of ignored; set
   `QuicConfig.followPreferredAddress = false` to keep the old behaviour.
@@ -754,6 +757,45 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: a Stateless Reset was looked for only among connections whose active path leads to the datagram's source; one from
   the server's preferred address under validation, or from an old address being revalidated, was dropped and the
   connection waited for its timeout (RFC 9000 section 10.3.1). Every path's peer address is a candidate now.
+- QUIC: `QuicStream.priority` set from several threads at once could leave the scheduler on an older value than the
+  property read, since each setter handed its own value to the loop and those hand-overs could run in another order.
+  The loop now applies the property's current value.
+- HTTP/2 PRIORITY_UPDATE (RFC 9218 section 7.1): a server now reads the frame with every check of section 7.1 (stream
+  0 only, no prioritized stream 0, no push stream, idle prioritized streams plus active ones within our
+  SETTINGS_MAX_CONCURRENT_STREAMS, each a PROTOCOL_ERROR connection error) and keeps the latest one for a stream not
+  open yet (section 7); the Ktor server's `call.request.priorityUpdates` follows them over HTTP/2 and the response is
+  rescheduled unless it set its own `Priority` field. The Ktor client's `HttpResponse.updatePriority` sends the frame
+  over HTTP/2 (true) unless the server's SETTINGS left SETTINGS_NO_RFC7540_PRIORITIES at 0 (section 2.1.1). A client
+  that receives the frame ends the connection with PROTOCOL_ERROR, as section 7.1 requires; before, both roles ignored
+  it as an unknown frame type. A Priority Field Value above 4096 bytes is ENHANCE_YOUR_CALM (HTTP/3's ceiling for a
+  control frame), and a change of the peer's SETTINGS_NO_RFC7540_PRIORITIES after its first SETTINGS is PROTOCOL_ERROR
+  (section 2.1 allows it). Before the server's SETTINGS, and while it leaves the setting at 0, `updatePriority` also
+  sends an RFC 7540 PRIORITY frame, and the request's own DATA always follows the new priority.
+- HTTP/2 client (RFC 9218 section 2.1.1: "until the client receives the SETTINGS frame from the server, the client
+  SHOULD send both the HTTP/2 priority signals and the signals of this prioritization scheme"): the client no longer
+  sends SETTINGS_NO_RFC7540_PRIORITIES = 1, and its request HEADERS carry an RFC 7540 signal (dependency 0, not
+  exclusive, weight 256, 220, 183, 147, 110, 74, 37 or 1 for urgency 0 to 7, Chromium's mapping) next to the `priority`
+  field until the server's SETTINGS say SETTINGS_NO_RFC7540_PRIORITIES = 1. The request's own DATA is scheduled by its
+  priority too.
+- HTTP/2 (RFC 9218 section 10): the connection sent the DATA of its streams round-robin, whatever their priority, so a
+  u=0 response got no precedence over a u=7 one and two default responses were interleaved instead of sent in stream
+  order. DATA now goes by priority as on HTTP/3: urgency first, non-incremental streams of one urgency in ascending
+  stream order, incremental ones sharing, the two kinds taking turns, and a CONNECT getting one frame in 16 whatever its
+  urgency (section 10.1). When a more urgent stream's writer is about to hand over its next frame, the others wait for
+  it for at most 2 ms. The Ktor server feeds it the request's `Priority` field merged with the response's (section 8,
+  `call.response.priority`); a field that fails to parse is ignored.
+- HTTP/2: a HEADERS or PRIORITY frame whose stream depended on itself was reset with PROTOCOL_ERROR even after the peer
+  sent SETTINGS_NO_RFC7540_PRIORITIES = 1, when RFC 9218 section 2.1 says such a server "MUST ignore HTTP/2 priority
+  signals". The RFC 7540 self-dependency check now applies only to peers that did not send the setting.
+- HTTP/3 client: `Http3Request.priority` now replaces a `priority` field among the request's headers. The header went
+  out while the explicit priority scheduled the stream, so the server and the client used different priorities.
+- HTTP/3 (RFC 8941 section 4.2): a `priority` field that fails to parse now counts as absent wherever its presence
+  mattered. A CONNECT carrying one was not scheduled as a tunnel (on either side), and a server response carrying one
+  stopped the client's later PRIORITY_UPDATEs from rescheduling it, as if the server had chosen a priority.
+- HTTP/3 server: a PRIORITY_UPDATE whose payload was longer than 256 bytes was dropped before any check, so one naming
+  a non-request stream or a stream beyond our limit did not close the connection with H3_ID_ERROR (RFC 9218 section
+  7.2: "MUST be treated as a connection error of type H3_ID_ERROR"), and a valid long one (extension parameters) was
+  lost. Every PRIORITY_UPDATE within the 4096-byte ceiling of control frames is now checked and applied.
 - HTTP/3 client: `Http3Response.cancel(code)` and a client `Http3Stream`'s `reset`/`stopSending` sent H3_REQUEST_REJECTED
   when the application passed it, a code clients MUST NOT use (RFC 9114 section 4.1.1: it tells that the server did not
   process the request). It now goes out as H3_REQUEST_CANCELLED.

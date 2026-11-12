@@ -117,6 +117,7 @@ internal class H2UpgradeResponse(
 
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         if (!headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
+        applyOwnPriority()
         h2.respond(200, fields().filter { it.first !in WebSocketOverH2.DROPPED }, endStream = false)
         markAnswered()
         val output = ByteChannel()

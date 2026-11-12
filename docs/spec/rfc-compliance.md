@@ -77,7 +77,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 8899 | §3, §4.3, §4.6, §5.1.1 — probing, black holes, Packet Too Big, timers | 🔶 | 0.3.0 | Probe loss is no congestion signal, a probe fails on loss detection but not within 1 s of its sending, black holes fall back to 1200 bytes, Packet Too Big messages are validated hints, and the search repeats every 600 s. | [details](rfc/8899.md#s3-probing-black-holes-ptb-timers) |
 | draft-ietf-quic-reliable-stream-reset | RESET_STREAM_AT | 🔶 | 0.3.0 | An experimental, off-by-default RESET_STREAM_AT delivers a reliable prefix of a reset stream. | [details](rfc/draft-ietf-quic-reliable-stream-reset.md#reset-stream-at) |
 | RFC 9287 | grease bit | ✅ | 0.2.0 | The QUIC bit is greased only towards a peer that advertised `grease_quic_bit`. | [details](rfc/9287.md#grease-bit) |
-| RFC 9218 | priorities (transport part: the scheduler) | ✅ | 0.2.0 | The stream scheduler orders streams by urgency and the incremental flag. | [details](rfc/9218.md#priorities-transport-part-the-scheduler) |
+| RFC 9218 | priorities (transport part: the scheduler) | ✅ | 0.3.0 | The stream scheduler orders streams by urgency and the incremental flag, with turns that keep incremental streams and tunnels from starving. | [details](rfc/9218.md#priorities-transport-part-the-scheduler) |
 | draft-ietf-quic-qlog | qlog | ✅ | 0.2.0 | The endpoint writes qlog version 0.3 as JSON-SEQ. | [details](rfc/draft-ietf-quic-qlog.md#qlog) |
 | RFC 9368/9369 | compatible version negotiation, QUIC v2 | ✅ | 0.2.0 | QUIC v2 is opt-in on the wire, with compatible version negotiation and a downgrade check. | [details](rfc/9368-9369.md#compatible-version-negotiation-quic-v2) |
 | draft-ietf-quic-multipath | multipath | ⬜ | — | Multipath QUIC is planned after 0.3.x. | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
@@ -144,11 +144,15 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9204 | §2.1.3 — encoder instructions within flow-control credit | ✅ | 0.3.0 | The encoder makes an insert only when the encoder stream has the credit for the whole instruction. | [details](rfc/9204.md#s2-1-3-encoder-flow-control) |
 | RFC 9204 | §2.2.1 — blocked sections stay in the flow-control window | ✅ | 0.3.0 | A field section that waits for inserts is left unread in the stream's flow-control window. | [details](rfc/9204.md#s2-2-1-blocked-sections-in-the-window) |
 | RFC 9218 | priorities (HTTP part) | ✅ | 0.3.0 | HTTP/3 streams are scheduled by RFC 9218 urgency and incremental parameters. | [details](rfc/9218.md#priorities-http-part) |
-| RFC 9218 | §7–8 — PRIORITY_UPDATE | ✅ | 0.2.0 | The server applies the client's PRIORITY_UPDATE, and a server-set priority wins. | [details](rfc/9218.md#s7-priority-update) |
-| RFC 9218 | §4–5 — the `Priority` field | ✅ | 0.2.0 | The `Priority` field is parsed strictly as a Structured Fields dictionary. | [details](rfc/9218.md#s4-the-priority-field) |
-| RFC 9218 | §8, §10.1, §11 — local scheduling | 🔶 | 0.3.0 | The client schedules its streams by its own signal, and the server merges the client's field with its own. | [details](rfc/9218.md#s8-local-scheduling) |
-| RFC 9218 | Ktor server | 🔶 | 0.3.0 | The Ktor server exposes the client's priority signal and its updates to the application. | [details](rfc/9218.md#ktor-server) |
-| RFC 9218 | Ktor client | 🔶 | 0.3.0 | The Ktor client sets a request's priority over h3 and h1. | [details](rfc/9218.md#ktor-client) |
+| RFC 9218 | §7–8 — PRIORITY_UPDATE | ✅ | 0.3.0 | The server applies the client's PRIORITY_UPDATE, and a server-set priority wins. | [details](rfc/9218.md#s7-priority-update) |
+| RFC 9218 | §4–5 — the `Priority` field | ✅ | 0.3.0 | The `Priority` field is parsed strictly as a Structured Fields dictionary. | [details](rfc/9218.md#s4-the-priority-field) |
+| RFC 9218 | §8, §10.1, §11 — local scheduling | ✅ | 0.3.0 | The client schedules its streams by its own signal, and the server merges the client's field with its own. | [details](rfc/9218.md#s8-local-scheduling) |
+| RFC 9218 | Ktor server | ✅ | 0.3.0 | The Ktor server exposes the client's priority signal and its updates to the application and schedules h3 and h2 responses by them. | [details](rfc/9218.md#ktor-server) |
+| RFC 9218 | Ktor client | ✅ | 0.3.0 | The Ktor client sets a request's priority over h3, h2 and h1. | [details](rfc/9218.md#ktor-client) |
+| RFC 9218 | §10, §10.1 — server scheduling on HTTP/2 | ✅ | 0.3.0 | HTTP/2 DATA frames are sent by urgency and the incremental parameter, with a share for tunnels. | [details](rfc/9218.md#s10-http2-server-scheduling) |
+| RFC 9218 | §2.1 — SETTINGS_NO_RFC7540_PRIORITIES on HTTP/2 | ✅ | 0.3.0 | A server sends the setting with 1, both roles check the peer's value, and RFC 7540 signals after a 1 are ignored entirely. | [details](rfc/9218.md#s2-1-no-rfc7540-priorities) |
+| RFC 9218 | §2.1.1 — client signals before the server's SETTINGS | ✅ | 0.3.0 | The client sends an RFC 7540 weight with the `priority` field until the server says it ignores those signals. | [details](rfc/9218.md#s2-1-1-client-signals-before-settings) |
+| RFC 9218 | §7.1 — the HTTP/2 PRIORITY_UPDATE frame | ✅ | 0.3.0 | The server checks and applies the client's PRIORITY_UPDATE, early ones included, and the client sends it and refuses it. | [details](rfc/9218.md#s7-1-http2-priority-update) |
 | RFC 6455 | §4.1 step 5, §5.1, §5.2, §9.1; RFC 7692 §6.1; RFC 9220 §3 — WebSocket extensions in the Ktor engines | ✅ | 0.3.0 | The Ktor client engine negotiates WebSocket extensions over HTTP/1.1, HTTP/2 and HTTP/3, and both engines refuse RSV bits and opcodes the handshake did not allow. | [details](rfc/6455.md#s4-1-websocket-extensions-in-the-ktor-engines) |
 | RFC 6455 | §4.1 steps 2–6, §11.3 (client) — the server's opening handshake | ✅ | 0.3.0 | The client checks `Upgrade`, `Connection`, `Sec-WebSocket-Accept` and the subprotocol of the answer, with a new CSPRNG key for every connection. | [details](rfc/6455.md#s4-1-client-handshake) |
 | RFC 6455 | §4.2.1, §4.2.2, §11.3.1, §11.3.5 (server); RFC 8441 §5 — the client's opening handshake | ✅ | 0.3.0 | The server answers a handshake without one valid key or version 13 with 400 or 426 instead of upgrading. | [details](rfc/6455.md#s4-2-server-handshake) |
@@ -236,7 +240,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9112 | §9.6 — server staged close | ✅ | 0.2.1 | A response that ends the connection while the client may still send closes in stages. | [details](rfc/9112.md#s9-6-server-staged-close) |
 | RFC 9110 | §15.5.9; RFC 9112 §9.5 — server timeouts | ✅ | 0.2.1 | Incomplete request heads and stalled bodies time out. | [details](rfc/9110.md#s15-5-9-server-timeouts) |
 | RFC 9110 | §10.1.1 — `Expect: 100-continue` | ✅ | 0.3.0 | The server sends `100 Continue` at once unless the head alone determines the final status. | [details](rfc/9110.md#s10-1-1-expect-100-continue) |
-| RFC 8941 | §4.2 — Dictionary parsing of the Priority field | ✅ | 0.2.0 | The `Priority` field and PRIORITY_UPDATE values are parsed as RFC 8941 Dictionaries, and a failed parse means the defaults. | [details](rfc/8941.md#s4-2-dictionary-parsing) |
+| RFC 8941 | §4.2 — Dictionary parsing of the Priority field | ✅ | 0.3.0 | The `Priority` field and PRIORITY_UPDATE values are parsed as RFC 8941 Dictionaries, and a failed parse means the defaults. | [details](rfc/8941.md#s4-2-dictionary-parsing) |
 | RFC 9111 | §1.2.2 — delta-seconds in Alt-Svc `ma` | ✅ | 0.2.1 | An Alt-Svc `ma` too large to represent counts as 2147483648 seconds. | [details](rfc/9111.md#s1-2-2-delta-seconds) |
 
 ## How to update
