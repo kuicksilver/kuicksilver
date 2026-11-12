@@ -3204,6 +3204,11 @@ What does not survive a network change: HTTP/1.1 and HTTP/2 run over TCP, which 
 HTTP/1.1; a call on such a connection fails and the application repeats it. The dedicated connections of WebTransport
 sessions do not follow the network either.
 
+The Compose Multiplatform demo, [samples/compose-demo](https://github.com/kuicksilver/kuicksilver/blob/main/samples/compose-demo/README.md) (Android and iOS, not
+published), shows both sides: a download over HTTP/3 with `followDefaultNetwork` and the same download over OkHttp
+(Android) or CIO and Darwin (iOS), while Wi-Fi is turned off, with the `connectionMigrated` events, an optional resume of
+the TCP download with `Range`, and the limits of such a comparison on an emulator.
+
 #### Proxies
 
 Where a request's proxy comes from:

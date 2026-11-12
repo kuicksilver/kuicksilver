@@ -42,7 +42,7 @@ tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README and t
   local s="$1-SNAPSHOT" p="$2" f
   for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
       kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
-      samples/ios/kuicksilver-swift/build.gradle.kts; do
+      samples/ios/kuicksilver-swift/build.gradle.kts samples/compose-demo/build.gradle.kts; do
     [ "$f" = "${3:-}" ] && continue
     mkdir -p "$(dirname "$f")"; printf 'version = providers.gradleProperty("kuicksilver.version").getOrElse("%s")\n' "$s" > "$f"
   done
@@ -246,7 +246,7 @@ fi
 new_repo "$tmp/real"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
-    samples/ios/kuicksilver-swift/build.gradle.kts \
+    samples/ios/kuicksilver-swift/build.gradle.kts samples/compose-demo/build.gradle.kts \
     tools/check/consumer-smoke.sh README.md docs/guide/ios.md; do
   mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
 done

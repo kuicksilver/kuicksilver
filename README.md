@@ -45,7 +45,8 @@ embeddedServer(Kuicksilver) { /* ... */ }      // HTTP/1.1 over TLS and HTTP/3 o
 - **Drop-in Ktor engines.** `HttpClient(Kuicksilver)` discovers HTTP/3 through `Alt-Svc` and falls back to HTTP/2 or
   HTTP/1.1 over TLS; `embeddedServer(Kuicksilver)` serves HTTP/1.1 over TLS and HTTP/3 on one port.
 - **Connections that survive network changes.** QUIC connection migration, and `followDefaultNetwork` on Android and
-  Apple moves a connection when the phone switches from Wi-Fi to cellular.
+  Apple moves a connection when the phone switches from Wi-Fi to cellular. The [Compose Multiplatform
+  demo](samples/compose-demo/README.md) shows a download carrying on over HTTP/3 next to OkHttp and CIO.
 - **The rest of modern QUIC.** Datagrams (RFC 9221), path MTU discovery, QUIC v2, stream priorities, WebSockets and
   Extended CONNECT over HTTP/3, qlog; 0-RTT and BBR as opt-in, experimental features.
 - **Tested against the others.** The QUIC Interop Runner against msquic, ngtcp2, picoquic, quic-go, quiche and quinn,
