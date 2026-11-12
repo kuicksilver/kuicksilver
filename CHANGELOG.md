@@ -640,6 +640,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: a PRIORITY_UPDATE whose payload was longer than 256 bytes was dropped before any check, so one naming
+  a non-request stream or a stream beyond our limit did not close the connection with H3_ID_ERROR (RFC 9218 section
+  7.2: "MUST be treated as a connection error of type H3_ID_ERROR"), and a valid long one (extension parameters) was
+  lost. Every PRIORITY_UPDATE within the 4096-byte ceiling of control frames is now checked and applied.
 - HTTP/3 client: `Http3Response.cancel(code)` and a client `Http3Stream`'s `reset`/`stopSending` sent H3_REQUEST_REJECTED
   when the application passed it, a code clients MUST NOT use (RFC 9114 section 4.1.1: it tells that the server did not
   process the request). It now goes out as H3_REQUEST_CANCELLED.

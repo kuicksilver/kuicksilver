@@ -776,7 +776,6 @@ internal class H3Session(
 
         /** A peer that speaks HTTP/3 sends SETTINGS first thing (RFC 9114 section 6.2.1): ten seconds is plenty. */
         val WT_DEADLINE: Duration = 10.seconds
-        const val MAX_PRIORITY_UPDATE = 256
 
         fun transportCause(e: Throwable): QuicException? =
             generateSequence(e) {

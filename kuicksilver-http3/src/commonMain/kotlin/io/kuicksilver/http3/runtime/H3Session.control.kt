@@ -22,7 +22,6 @@ import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.qpack.entrySize
-import io.kuicksilver.http3.runtime.H3Session.Companion.MAX_PRIORITY_UPDATE
 import io.kuicksilver.http3.runtime.H3Session.Companion.beforeControlFrameForTest
 import io.kuicksilver.http3.runtime.H3Session.Companion.transportCause
 import io.kuicksilver.http3.webtransport.WtSettings
@@ -274,15 +273,13 @@ internal fun H3Session.onGoAway(id: Long) {
  * RFC 9218 section 7 on a server: the client's new signal for a request stream. An open request takes it at once; a
  * stream whose request is not open yet (not opened, or its HEADERS still on the way) keeps it (at most
  * `maxEarlyPriorityUpdates`) and applies it when it opens; a stream beyond the limit we granted is H3_ID_ERROR
- * (section 7.2); frames above 256 bytes and the excess are ignored and spend glitch tokens.
+ * (section 7.2); every frame spends a glitch token, and early ones beyond the buffer one more. A frame of any length the
+ * control stream accepts ([io.kuicksilver.http3.frame.FrameRules.MAX_CONTROL_PAYLOAD]) is checked and applied: a cap
+ * below it would skip the H3_ID_ERROR checks and drop the most recent signal section 7 asks servers to apply.
  */
 internal fun H3Session.onPriorityUpdate(payload: ByteArray) {
     priorityUpdatesForTest++
     glitch("PRIORITY_UPDATE")
-    if (payload.size > MAX_PRIORITY_UPDATE) {
-        glitch("oversized PRIORITY_UPDATE")
-        return
-    }
     val (id, value) = ControlFrames.parsePriorityUpdate(payload)
     if (id % 4 != 0L) throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "PRIORITY_UPDATE for stream $id, not a request stream")
     // a value that fails to parse carries no parameter (RFC 8941 section 4.2: "treated as if the field were not present"),

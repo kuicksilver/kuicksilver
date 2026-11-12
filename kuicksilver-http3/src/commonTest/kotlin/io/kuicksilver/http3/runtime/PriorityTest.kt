@@ -160,17 +160,47 @@ class PriorityTest {
             }
         }
 
-    @Test fun oversizedPriorityUpdateIgnored() =
+    /** A Priority Field Value of 300 bytes (an extension parameter, RFC 9218 section 4.3): above 256, applied like any other. */
+    private val long = "u=1, x=\"" + "a".repeat(300) + "\""
+
+    /** RFC 9218 section 7: "Servers SHOULD buffer the most recently received PRIORITY_UPDATE frame and apply it". */
+    @Test fun longPriorityUpdateApplied() =
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
                 val raw = RawPeer(c)
                 raw.openControl()
-                raw.priorityUpdate(0, "u=1, x=\"" + "a".repeat(300) + "\"")
-                delay(100)
                 raw.request()
-                assertEquals(StreamPriority.Default, server.acceptRequest().priority.value)
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                raw.priorityUpdate(r.streamId, long)
+                withTimeout(5.seconds) { r.priority.first { it == u1 } }
+            }
+        }
+
+    /** RFC 9218 section 7.2: a PRIORITY_UPDATE for a non-request stream MUST be H3_ID_ERROR, however long its value. */
+    @Test fun negative_longPriorityUpdateForNonRequestStreamIsIdError() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                peerMayHaveClosed { raw.priorityUpdate(2, long) }
+                assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(c))
+            }
+        }
+
+    /** RFC 9218 section 7.2: a stream beyond the limit we granted is H3_ID_ERROR, however long the value. */
+    @Test fun negative_longPriorityUpdateBeyondStreamLimitIsIdError() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxBidiStreams = 10 }).use { q ->
+                val (c, s) = q.connect()
+                Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                peerMayHaveClosed { raw.priorityUpdate(40, long) }
+                assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(c))
             }
         }
 
