@@ -508,12 +508,14 @@ class ServerWebSocketH2Test {
      */
     @Test fun negative_headersOnAWebSocketStreamAreAStreamError() =
         serverTest {
+            val started = CompletableDeferred<Unit>()
             val ended = CompletableDeferred<Unit>()
             val (server, port) =
                 h2TlsServer {
                     install(WebSockets)
                     routing {
                         webSocket("/ws") {
+                            started.complete(Unit)
                             try {
                                 for (frame in incoming) { }
                             } finally {
@@ -530,7 +532,11 @@ class ServerWebSocketH2Test {
                     raw.headers(1, listOf("x-trailer" to "1"), endStream = true)
                     val rst = assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.RST_STREAM })
                     assertEquals(Http2ErrorCode.PROTOCOL_ERROR.code, rst.errorCode)
-                    withTimeout(10.seconds) { ended.await() }
+                    // the stream is done on the server: its call ended and released it. Ktor runs the route's handler only
+                    // if its session was still alive when the handler's coroutine started: a stream that failed before
+                    // (the HEADERS crossed the upgrade) cancels the session first, and the handler never runs
+                    withTimeout(10.seconds) { server.engine.h2Live.live().single().openRequests.first { it == 0 } }
+                    if (started.isCompleted) withTimeout(10.seconds) { ended.await() }
                     raw.headers(3, RawH2Client.get("/"), endStream = true)
                     assertNotNull(raw.await { it.stream == 3 && it.type == RawFrame.HEADERS }, "the connection goes on")
                 }
