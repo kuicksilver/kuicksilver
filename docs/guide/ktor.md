@@ -350,7 +350,8 @@ request fields the client sent as literals never indexed, and `call.response.nev
 response fields so (neither into the HPACK table nor from it). An application that forwards a field it received never
 indexed must keep that representation: pass its name to `neverIndex` on the message it sends on, as the client's
 `neverIndex` and `neverIndexedHeaders` allow the other way. The engine sends `set-cookie` never indexed on its own.
-Over HTTP/1.1 and HTTP/3 the list is empty and `neverIndex` changes nothing.
+Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the list is empty and
+`neverIndex` changes nothing.
 
 `http2Settings` (`Http2Settings`) holds the windows, SETTINGS_MAX_CONCURRENT_STREAMS (100) and the field-section and
 flood limits of the core ([configuration reference](configuration.md#ktor-server-engine)). The engine's deadlines apply:
@@ -818,7 +819,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   builder sends the named fields as literals never indexed (the engine does so on its own for `authorization`,
   `proxy-authorization` and `cookie` values under 20 bytes), and `response.neverIndexedHeaders` lists the response fields
   the server sent so. A proxy built on both engines keeps the representation by passing those names to `neverIndex` on
-  the message it forwards. Over HTTP/1.1 and HTTP/3 the list is empty and `neverIndex` changes nothing.
+  the message it forwards. Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the
+  list is empty and `neverIndex` changes nothing.
 - **Responses** are checked against RFC 9113 section 8: a malformed one (an invalid field, a content-length that does
   not match the content) fails with `Http2Exception.MalformedMessage`. A response field section above
   `settings.maxHeaderListSize` (64 KiB) fails its call, not the connection.

@@ -239,10 +239,13 @@ public final class io/kuicksilver/http3/Http3Headers {
 	public final fun get (Ljava/lang/String;)Ljava/lang/String;
 	public final fun getAll (Ljava/lang/String;)Ljava/util/List;
 	public final fun getFields ()Ljava/util/List;
+	public final fun getNeverIndexNames ()Ljava/util/Set;
+	public final fun getNeverIndexed ()Ljava/util/List;
 	public final fun getSize ()I
 	public fun hashCode ()I
 	public final fun plus (Lio/kuicksilver/http3/Http3Headers;)Lio/kuicksilver/http3/Http3Headers;
 	public fun toString ()Ljava/lang/String;
+	public final fun withNeverIndexed ([Ljava/lang/String;)Lio/kuicksilver/http3/Http3Headers;
 }
 
 public final class io/kuicksilver/http3/Http3Headers$Companion {

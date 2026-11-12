@@ -477,7 +477,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `HttpResponse.neverIndexedHeaders` on the client) and send the fields an application names as such
   (`ApplicationResponse.neverIndex(...)`, `HttpRequestBuilder.neverIndex(...)`), so an application that proxies with
   both engines keeps the representation an intermediary must keep. Before, the bit was dropped on decoding and only the
-  engine's own list of credentials went out never indexed.
+  engine's own list of credentials went out never indexed. The same API carries QPACK's 'N' bit over HTTP/3 (RFC 9204
+  sections 4.5.4 and 7.1.3): the decoder reports it (`Http3Headers.neverIndexed`), and fields named with
+  `Http3Headers.withNeverIndexed(...)` (or the engines' `neverIndex`) go as literals with the bit, never inserted nor
+  referenced; a received section forwarded as it is keeps it. Before, the decoder dropped the bit.
 
 ### Changed
 

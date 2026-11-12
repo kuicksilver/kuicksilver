@@ -90,6 +90,13 @@ internal class H3Call(
         if (webTransport) attributes.put(WebTransportRequestKey, h3)
         attributes.put(PeerCertificatesKey, peerCertificates)
         attributes.put(RequestPriorityKey, h3.priority)
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        if (h3.headers.neverIndexed.isNotEmpty()) {
+            attributes.put(
+                io.kuicksilver.ktor.server.NeverIndexedReceivedKey,
+                h3.headers.neverIndexed,
+            )
+        }
         // in 0-RTT here, or forwarded from early data by a gateway (RFC 8470 section 5.1)
         val gatewayMarked = h3.headers[EARLY_DATA_FIELD.lowercase()] != null
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -248,7 +255,9 @@ internal open class H3Response(
             // on every response that does not carry its own Alt-Svc, a 421 excepted, as on HTTP/1.1
             if (headersBuilder["Alt-Svc"] == null && statusCode.value != 421) altSvc()?.let { headersBuilder.append("Alt-Svc", it) }
             dropFramingFieldsOfAResponseWithoutContent()
-            h3.respond(statusCode.value, h3Headers())
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            val marked = call.attributes.getOrNull(io.kuicksilver.ktor.server.NeverIndexKey).orEmpty()
+            h3.respond(statusCode.value, h3Headers().let { if (marked.isEmpty()) it else it.withNeverIndexed(*marked.toTypedArray()) })
         }.also {
             writer = it
             answered = true

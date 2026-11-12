@@ -58,11 +58,12 @@ internal class QpackRuntime(
     suspend fun encode(
         streamId: Long,
         fields: List<Pair<String, String>>,
+        neverIndexed: Set<String> = emptySet(),
     ): ByteArray =
         encLock.withLock {
             // the credit is asked of the transport (a hop onto its loop) only when an insert is possible at all
             val budget = if (encoder.capacity == 0L) 0L else encoderCredit()
-            val block = encoder.encode(streamId, fields, budget)
+            val block = encoder.encode(streamId, fields, budget, neverIndexed)
             val ins = encoder.drainEncoderStream()
             if (ins.isNotEmpty()) encoderOut(ins)
             lastEncodedSize = block.size + ins.size

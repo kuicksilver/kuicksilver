@@ -979,7 +979,12 @@ internal class H3Pool(
             withSocketInactivityTimeout(data, activity) {
                 conn.request(
                     http3Request(data.method.value, data.url.authority(), data.url.h3Path()) {
-                        headers = headersOf(data, body) + Http3Headers(extraHeaders)
+                        headers =
+                            (headersOf(data, body) + Http3Headers(extraHeaders)).let { h ->
+                                val marked = data.attributes.getOrNull(io.kuicksilver.ktor.client.NeverIndexKey).orEmpty()
+                                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                                if (marked.isEmpty()) h else h.withNeverIndexed(*marked.toTypedArray())
+                            }
                         this.body = bodyChannel(body, callContext)?.let { b -> activity?.let { ConsumedBody(b, it) } ?: b }
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         allowEarlyData = config.http3.earlyData
@@ -997,6 +1002,10 @@ internal class H3Pool(
         }
         val status = HttpStatusCode.fromValue(response.status)
         val headers = HeadersBuilder().apply { for ((n, v) in response.headers.fields) append(n, v) }.build()
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        response.headers.neverIndexed.takeIf { it.isNotEmpty() }?.let {
+            data.attributes.put(io.kuicksilver.ktor.client.NeverIndexedReceivedKey, it)
+        }
         val noBody = data.method == HttpMethod.Head || status == HttpStatusCode.NoContent || status == HttpStatusCode.NotModified
         val bodyChannel: ByteReadChannel = if (noBody) ByteReadChannel.Empty else response.body.withSocketTimeout(data)
         val responseBody: Any =

@@ -10,6 +10,8 @@ internal sealed interface DecodeResult {
     class Decoded(
         val fields: List<Pair<String, String>>,
         val decodedSize: Long,
+        /** The field lines of [fields] that came as literals with the 'N' bit set (RFC 9204 sections 4.5.4-4.5.6), in order. */
+        val neverIndexed: List<Pair<String, String>> = emptyList(),
     ) : DecodeResult
 
     /** References entries not yet received on the encoder stream; decode again once `insertCount >= requiredInsertCount`. */
@@ -181,6 +183,7 @@ internal class QpackDecoder(
             }
         if (ric > table.insertCount) return DecodeResult.Blocked(ric)
         val fields = ArrayList<Pair<String, String>>()
+        var neverIndexed: ArrayList<Pair<String, String>>? = null
         var size = 0L
 
         fun dynamic(abs: Long): Pair<String, String> {
@@ -217,10 +220,24 @@ internal class QpackDecoder(
                 return DecodeResult.TooLarge(valueTooLong = false)
             }
             fields += f
+            if (hasNeverIndexBit(b)) (neverIndexed ?: ArrayList<Pair<String, String>>().also { neverIndexed = it }) += f
         }
         acknowledge(streamId, ric)
-        return DecodeResult.Decoded(fields, size)
+        return DecodeResult.Decoded(fields, size, neverIndexed.orEmpty())
     }
+
+    /**
+     * Whether the field line starting with [b] is a literal with the 'N' bit (RFC 9204 section 4.5.4 `01NT`, 4.5.5 `0000N`,
+     * 4.5.6 `001N`): "an intermediary MUST use a literal representation to forward this field line".
+     */
+    private fun hasNeverIndexBit(b: Int): Boolean =
+        when {
+            b and 0x80 != 0 -> false
+            b and 0x40 != 0 -> b and 0x20 != 0
+            b and 0x20 != 0 -> b and 0x10 != 0
+            b and 0x10 != 0 -> false
+            else -> b and 0x08 != 0
+        }
 
     /** One field line (RFC 9204 sections 4.5.2-4.5.6) starting with byte [b]. */
     private fun fieldLine(

@@ -277,7 +277,7 @@ private suspend fun H3Session.exchange(
     val sendFailure = CompletableDeferred<Unit>()
     try {
         try {
-            st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildRequest(r)))
+            st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildRequest(r), r.headers.neverIndexNames()))
             afterRequestHeadersForTest?.invoke(st)
             if (keepOpen) {
                 st.output.flush() // Extended CONNECT: the stream carries data both ways after the response
@@ -333,7 +333,7 @@ private suspend fun H3Session.exchange(
                     val fields = decodeSection(st, f.block)
                     val (status, headers) =
                         try {
-                            PseudoHeaders.parseResponse(fields)
+                            PseudoHeaders.parseResponse(fields).let { (s, h) -> s to h.receivedNeverIndexed(fields) }
                         } catch (
                             e: MalformedMessage,
                         ) {
@@ -496,7 +496,7 @@ private suspend fun H3Session.sendBody(
                 // the request cannot be completed: the exchange is abandoned both ways and its caller gets this failure
                 return abandon(refused)
             }
-            st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, t.fields))
+            st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, t.fields, t.neverIndexNames()))
         }
         st.output.flushAndClose()
     } catch (e: CancellationException) {

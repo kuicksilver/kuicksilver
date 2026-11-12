@@ -159,7 +159,9 @@ internal suspend fun handleRequestStream(
             }
         val parsed =
             try {
-                PseudoHeaders.parseRequest(fields, settings.enableConnectProtocol)
+                PseudoHeaders.parseRequest(fields, settings.enableConnectProtocol).let { r ->
+                    PseudoHeaders.Request(r.method, r.scheme, r.authority, r.path, r.protocol, r.regular.receivedNeverIndexed(fields))
+                }
             } catch (
                 e: MalformedMessage,
             ) {
@@ -633,7 +635,7 @@ internal class ServerRequestImpl(
         val fields = PseudoHeaders.buildResponse(status, headers)
         session.checkPeerFieldLimit(st.id, fields)
         try {
-            st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, fields))
+            st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, fields, headers.neverIndexNames()))
         } catch (
             e: CancellationException,
         ) {
@@ -746,7 +748,7 @@ internal class ResponseWriterImpl(
             }
             try {
                 if (trailers != null) {
-                    st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, trailers.fields))
+                    st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, trailers.fields, trailers.neverIndexNames()))
                 }
                 st.output.flushAndClose()
             } catch (
