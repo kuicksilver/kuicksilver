@@ -1315,6 +1315,7 @@ internal fun TrustConfig.cacheKey(): String =
     when (this) {
         is TrustConfig.Platform -> "platform"
         is TrustConfig.AnchoredCa -> "ca:" + roots.joinToString(",") { it.spkiSha256.toString() }
+        is TrustConfig.ReloadableCa -> "reloadable:" + current.cacheKey() // contexts use the snapshot (withSnapshot) instead
         is TrustConfig.ExpectedName -> "name:$name/" + base.cacheKey()
         is TrustConfig.Pinned -> "pin:$scope:" + pins.map { it.toString() }.sorted().joinToString(",") + "/" + base.cacheKey()
         is TrustConfig.Tofu -> "tofu:${store.hashCode()}"

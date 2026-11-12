@@ -38,6 +38,11 @@ internal class KslContext private constructor(
     val identityTag: String?,
     private val quicTickets: Boolean,
     private val earlyData: Boolean,
+    /**
+     * The bundle a `TrustConfig.ReloadableCa` in [config] gave when this context was built (its roots are this context's
+     * client-certificate anchors), null for any other trust: a server's handshakes share a context only under the same bundle.
+     */
+    val trustSnapshot: TrustConfig.AnchoredCa?,
 ) {
     /** One holder's reference to [ctx]: [close] gives it back once, so a second close cannot take another holder's reference. */
     class Lease internal constructor(
@@ -77,6 +82,17 @@ internal class KslContext private constructor(
 
     /** Whether this context is the one [acquire] would build for these arguments. */
     fun serves(
+        config: TlsConfig,
+        quic: Boolean,
+        quicTickets: Boolean,
+        earlyData: Boolean,
+        trustSnapshot: TrustConfig.AnchoredCa?,
+    ): Boolean = sameKind(config, quic, quicTickets, earlyData) && this.trustSnapshot === trustSnapshot
+
+    /** Built for the same configuration and kind as [other], whatever the client CA bundle. */
+    fun sameKindAs(other: KslContext): Boolean = sameKind(other.config, other.quic, other.quicTickets, other.earlyData)
+
+    private fun sameKind(
         config: TlsConfig,
         quic: Boolean,
         quicTickets: Boolean,
@@ -131,7 +147,7 @@ internal class KslContext private constructor(
             quic: Boolean,
             quicTickets: Boolean = false,
             earlyData: Boolean = false,
-        ): Lease = Lease(build(config, quic, quicTickets, earlyData, null)!!)
+        ): Lease = Lease(build(config, quic, quicTickets, earlyData, null, config.trust.reloadableSnapshot())!!)
 
         /**
          * The context for one more session of [config], the caller's to close (one reference, its [Lease]). A server configuration with an
@@ -140,8 +156,10 @@ internal class KslContext private constructor(
          * `TlsIdentity.Reloadable` takes its [TlsIdentity.Reloadable.current] snapshot per handshake, as before, so a reload makes
          * the next handshake build a context from the new identity. A context is immutable once built (`ksl_ctx_freeze`), and
          * everything that differs per connection lives in the session (`ksl_ssl`); the process ticket keys are looked up per
-         * ticket, so they rotate under a shared context. Anything else (a client, an SNI override, a server without an identity)
-         * gets a context of its own ([create]).
+         * ticket, so they rotate under a shared context. A `TrustConfig.ReloadableCa` is read once per handshake as well: the
+         * context also carries the client CA bundle, so contexts are shared per identity snapshot and bundle, and the first
+         * handshake after a reload builds one with the new bundle. Anything else (a client, an SNI override, a server without an
+         * identity) gets a context of its own ([create]).
          *
          * @throws IllegalStateException when the identity is closed.
          */
@@ -152,10 +170,14 @@ internal class KslContext private constructor(
             earlyData: Boolean = false,
         ): Lease {
             if (config.role != TlsRole.Server) return create(config, quic, quicTickets, earlyData)
+            // the client CA bundle of this handshake, read once: a reload after this line is for the next handshake
+            val ca = config.trust.reloadableSnapshot()
             val ctx =
                 when (val id = config.identity) {
                     is TlsIdentity.InMemory -> {
-                        id.serverContexts.acquire(config, quic, quicTickets, earlyData) { build(config, quic, quicTickets, earlyData, id) }
+                        id.serverContexts.acquire(config, quic, quicTickets, earlyData, ca) {
+                            build(config, quic, quicTickets, earlyData, id, ca)
+                        }
                             ?: throw IllegalStateException("identity closed")
                     }
 
@@ -166,7 +188,8 @@ internal class KslContext private constructor(
                                 quic,
                                 quicTickets,
                                 earlyData,
-                            ) { build(config, quic, quicTickets, earlyData, cur) }
+                                ca,
+                            ) { build(config, quic, quicTickets, earlyData, cur, ca) }
                         }
                     }
 
@@ -181,6 +204,8 @@ internal class KslContext private constructor(
          * Builds and freezes a context. [snapshot]: the identity to configure instead of resolving `config.identity` (its key
          * taken with [TlsIdentity.InMemory.tryAcquire]); null is returned, and nothing is left behind, when that snapshot's key
          * is already gone (closed and released): the caller retries with the current one or reports the identity closed.
+         * [ca]: the bundle of a `TrustConfig.ReloadableCa` in `config.trust` this context verifies client certificates against
+         * (read once by the caller), null for any other trust.
          */
         private fun build(
             config: TlsConfig,
@@ -188,6 +213,7 @@ internal class KslContext private constructor(
             quicTickets: Boolean,
             earlyData: Boolean,
             snapshot: TlsIdentity.InMemory?,
+            ca: TrustConfig.AnchoredCa?,
         ): KslContext? {
             KslLoader.ensureLoaded()
             config.validateFor(quic)
@@ -200,15 +226,16 @@ internal class KslContext private constructor(
                 try {
                     val tag: String?
                     try {
-                        tag = configure(h, config, quic, snapshot)
-                        if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData)
+                        val trust = config.trust.withSnapshot(ca)
+                        tag = configure(h, config, quic, snapshot, trust)
+                        if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData, trust)
                     } catch (
                         e: KslException.Internal,
                     ) {
                         throw TlsException.Config("invalid TLS configuration: ${e.message}")
                     }
                     Ksl.ctxFreeze(h)
-                    return KslContext(h, config, quic, tag, quicTickets, earlyData)
+                    return KslContext(h, config, quic, tag, quicTickets, earlyData, ca)
                 } catch (t: Throwable) {
                     Ksl.ctxFree(h)
                     throw t
@@ -222,12 +249,16 @@ internal class KslContext private constructor(
         private fun certificateTag(leaf: Certificate): String =
             Ksl.sha2(256, leaf.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
-        /** Returns the [identityTag] of the identity it configured: [snapshot] (whose key the caller holds) when given. */
+        /**
+         * Returns the [identityTag] of the identity it configured: [snapshot] (whose key the caller holds) when given. [trust] is
+         * `config.trust` with a ReloadableCa replaced by the bundle this context was built for.
+         */
         private fun configure(
             h: Long,
             config: TlsConfig,
             quic: Boolean,
             snapshot: TlsIdentity.InMemory?,
+            trust: TrustConfig,
         ): String? {
             if (config.alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(config.alpn))
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
@@ -242,9 +273,9 @@ internal class KslContext private constructor(
             if (config.role ==
                 TlsRole.Client
             ) {
-                rootsOf(config.trust)?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
+                rootsOf(trust)?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
             } else {
-                rootsOf(config.trust)?.takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
+                rootsOf(trust)?.takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
             }
             if (config.role == TlsRole.Client) {
                 val mode = verifyModeFor(config)
@@ -276,7 +307,8 @@ internal class KslContext private constructor(
                     // tickets are issued explicitly after the pin verdict when client certificates are pinned (ADR-0012); with 0, ksl also
                     // suppresses the in-handshake TLS 1.2 ticket, which would precede the verdict
                     // a ticket resumes only under the trust configuration that issued it (and, for pinned clients, only after its verdict)
-                    Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "server|${config.clientAuth}|${config.trust.cacheKey()}".encodeToByteArray()))
+                    // and so, with a ReloadableCa, under the bundle it was authenticated with: a reload makes older tickets resume nothing
+                    Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "server|${config.clientAuth}|${trust.cacheKey()}".encodeToByteArray()))
                     Ksl.ctxSetOption(
                         h,
                         KslConst.OPT_NUM_TICKETS,
@@ -299,6 +331,7 @@ internal class KslContext private constructor(
             h: Long,
             config: TlsConfig,
             earlyData: Boolean,
+            trust: TrustConfig,
         ) {
             useTicketKeys(h, config.sessionTickets)
             Ksl.ctxSetOption(
@@ -308,7 +341,7 @@ internal class KslContext private constructor(
                     .toInt()
                     .coerceAtLeast(1),
             )
-            Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "quic|server|${config.clientAuth}|${config.trust.cacheKey()}".encodeToByteArray()))
+            Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "quic|server|${config.clientAuth}|${trust.cacheKey()}".encodeToByteArray()))
             Ksl.ctxSetOption(h, KslConst.OPT_NUM_TICKETS, 2)
             if (earlyData) Ksl.ctxSetOption(h, KslConst.OPT_EARLY_DATA, 1)
         }
@@ -364,10 +397,11 @@ internal class SharedServerContexts {
         quic: Boolean,
         quicTickets: Boolean,
         earlyData: Boolean,
+        ca: TrustConfig.AnchoredCa?,
         build: () -> KslContext?,
     ): KslContext? {
         val first = entries.load() ?: return null
-        find(first, config, quic, quicTickets, earlyData)?.let {
+        find(first, config, quic, quicTickets, earlyData, ca)?.let {
             touch(first, it)
             return it
         }
@@ -375,15 +409,20 @@ internal class SharedServerContexts {
         while (true) {
             // closed meanwhile: the context was built from a key still held, so this handshake goes on with it, unshared
             val list = entries.load() ?: return made
-            find(list, config, quic, quicTickets, earlyData)?.let {
+            find(list, config, quic, quicTickets, earlyData, ca)?.let {
                 made.release() // another session built one first: share that one
                 touch(list, it)
                 return it
             }
             check(made.tryRetain()) // the registry's reference
-            val grown = list + made
+            // a context of an older client CA bundle serves no new handshake: dropped when this one is of the current bundle
+            // (a handshake that read the bundle just before a reload must not push out the new one)
+            val stale =
+                if (ca != null && config.trust.reloadableSnapshot() === ca) list.filter { it.sameKindAs(made) } else emptyList()
+            val grown = list.filter { it !in stale } + made
             val evicted = if (grown.size > MAX) grown[0] else null
             if (entries.compareAndSet(list, if (evicted != null) grown.drop(1) else grown)) {
+                stale.forEach { it.release() }
                 evicted?.release()
                 return made
             }
@@ -397,8 +436,9 @@ internal class SharedServerContexts {
         quic: Boolean,
         quicTickets: Boolean,
         earlyData: Boolean,
+        ca: TrustConfig.AnchoredCa?,
     ): KslContext? {
-        for (c in list) if (c.serves(config, quic, quicTickets, earlyData) && c.tryRetain()) return c
+        for (c in list) if (c.serves(config, quic, quicTickets, earlyData, ca) && c.tryRetain()) return c
         return null
     }
 
@@ -425,6 +465,23 @@ internal class SharedServerContexts {
         const val MAX = 8
     }
 }
+
+/** The bundle a [TrustConfig.ReloadableCa] in this trust (alone or as the base of Pinned) holds now; null for any other trust. */
+internal fun TrustConfig.reloadableSnapshot(): TrustConfig.AnchoredCa? =
+    when (this) {
+        is TrustConfig.ReloadableCa -> current
+        is TrustConfig.Pinned -> (base as? TrustConfig.ReloadableCa)?.current
+        else -> null
+    }
+
+/** This trust with its [TrustConfig.ReloadableCa] replaced by [ca] (from [reloadableSnapshot]); unchanged when [ca] is null. */
+internal fun TrustConfig.withSnapshot(ca: TrustConfig.AnchoredCa?): TrustConfig =
+    when {
+        ca == null -> this
+        this is TrustConfig.ReloadableCa -> ca
+        this is TrustConfig.Pinned && base is TrustConfig.ReloadableCa -> TrustConfig.Pinned(pins, scope, ca)
+        else -> this
+    }
 
 /**
  * Session ticket keys stay in `ksl` (threat model 1, 3.7): the process-wide generated keys are made and rotated there (current +

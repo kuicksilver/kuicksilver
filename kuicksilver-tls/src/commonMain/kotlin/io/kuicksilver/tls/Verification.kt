@@ -157,7 +157,7 @@ internal class Verification(
                     tofu(base.store, presented, reference)
                 }
 
-                is TrustConfig.AnchoredCa -> {
+                is TrustConfig.AnchoredCa, is TrustConfig.ReloadableCa -> {
                     VerifyResult.Accepted(presented)
                 }
 

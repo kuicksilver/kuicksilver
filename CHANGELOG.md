@@ -228,6 +228,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (a buffer of its own, wiped), refuses PEM files above 1 MiB, and closes the identity it made when the server stops. The
   watcher reads the files again a second after a reload and refuses a chain file that also holds a private key (as
   `EngineMain` does at startup when reloading is on). A watcher read that never returns no longer holds up the stop.
+- TLS: client CA rotation without a restart (experimental `TrustConfig.ReloadableCa`, `TrustConfig.reloadable`;
+  `docs/guide/tls.md`, "Rotating the client CA"). A server's `trust` for client certificates may be a `ReloadableCa`
+  (alone or as the base of `Pinned`). `reload(next)` makes the `AnchoredCa` `next` the bundle of every handshake that
+  starts afterwards, over TCP and QUIC; handshakes in progress and established connections keep theirs. A bundle with no
+  certificate valid now is refused and the old one stays. A session authenticated under the old bundle is not resumed
+  (the server's session ID context covers the bundle), so a client of a dropped CA cannot come back with a ticket. Shared
+  server contexts are kept per identity snapshot and bundle; the old bundle's context is freed with its last connection. A
+  client configuration with a `ReloadableCa` throws `TlsException.Config`.
 - Ktor client: experimental `FileAltSvcStore(file: java.io.File)` on the JVM and Android, for an Android app's
   `File(context.filesDir, "altsvc.tsv")` (`docs/guide/ktor.md`, "Discovery and Alt-Svc"). It works on API 24 and 25 too:
   nothing on its path uses `java.nio.file` or `File.toPath()`, which arrived in API 26. The `kotlinx.io.files.Path`
@@ -550,6 +558,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
   a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
   `NoWhenBranchMatchedException` when it meets a `Reloadable`.
+- TLS: the sealed `TrustConfig` gains a member, `TrustConfig.ReloadableCa`, likewise: a `when` over it without an `else`
+  branch no longer compiles.
 - TLS: resumption is bounded on every server (RFC 9846 section 4.7.1). A ticket resumes only under the leaf certificate it
   was issued under, at most 7 days after the full handshake that authenticated the session (renewed tickets keep that
   time, as BoringSSL's `auth_timeout`) and not past the leaf's notAfter; otherwise the client runs a full handshake.

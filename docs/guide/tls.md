@@ -131,6 +131,46 @@ ticket, but a chain of renewals ends 7 days after the full handshake that authen
 
 The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](ktor.md#certificate-rotation).
 
+### Rotating the client CA
+
+The CA bundle a server verifies client certificates with (`clientAuth` `Optional` or `Required`) can also be replaced
+while the server runs (experimental, 0.3.0). Wrap the bundle with `TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
+and use the result as the server's `trust`, alone or as the `base` of `Pinned`. Call `reload(TrustConfig.AnchoredCa(newRoots))`
+when the bundle changes. It follows the rules of the identity above:
+
+- **One bundle per handshake.** Every handshake that starts after `reload` returns, over TCP and QUIC alike, verifies the
+  client's certificate against the new bundle. Handshakes in progress and established connections keep the bundle they
+  started with, so a client of a CA you dropped stays connected until its connection closes. Close such connections
+  yourself if the CA was compromised.
+- **Bad input never replaces the bundle in use.** `reload` refuses a bundle in which no certificate is valid now (each
+  expired, or not valid yet beyond 5 minutes of clock skew) with `TlsException.Config`, and the old bundle stays.
+- **Resumption.** A session resumes only under the bundle it was authenticated with. After a reload, a ticket from before
+  it resumes nothing (RFC 9846 section 4.7.1: "A server MAY treat a ticket as valid for a shorter period"). The client
+  runs a full handshake and its certificate is verified against the new bundle, so a ticket never lets a client of a
+  dropped CA back in.
+- **What the client sees.** The server sends no `certificate_authorities` extension in its CertificateRequest (RFC 9846
+  section 4.3.4: "The server MAY send it in the CertificateRequest message"), so clients pick their certificate without a
+  CA list from the server, before and after a reload.
+- **Servers only.** A client configuration with a `ReloadableCa` throws `TlsException.Config`; a client trusts its server
+  through `AnchoredCa`.
+
+```kotlin
+// guide:tls:client-ca-rotation
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+val mtlsServer = tlsConfig(TlsRole.Server) {
+    alpn = listOf("h3")
+    identity = serverIdentity
+    clientAuth = ClientAuth.Required
+    trust = clientCa
+}
+// later, when the bundle changes:
+clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+```
+
+The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tls.clientCa` with
+`kuicksilver.tls.reloadInterval` ([Certificate rotation](ktor.md#certificate-rotation)).
+
 ## Trust
 
 Host names are always checked (RFC 9525) and the check cannot be disabled; it can be redirected with `ExpectedName`

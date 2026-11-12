@@ -1,9 +1,13 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.io.encoding.Base64
 
 /**
@@ -116,8 +120,82 @@ public sealed interface TrustConfig {
         public val verifier: CertificateVerifier,
     ) : TrustConfig
 
-    /** Anchor for platform extensions such as `TrustConfig.fromTrustManager` on the JVM. */
-    public companion object
+    /**
+     * A server's client-certificate CA bundle that can be replaced at run time (made by [TrustConfig.reloadable]): the
+     * client CA rotates without a restart, as [TlsIdentity.Reloadable] rotates the server certificate. Servers only: wherever
+     * an [AnchoredCa] verifies client certificates (`clientAuth` Optional or Required), alone or as the base of [Pinned];
+     * a client configuration with one throws [TlsException.Config].
+     *
+     * **One bundle per handshake.** Every TLS handshake (TCP and QUIC alike) takes the [current] bundle when it starts and
+     * verifies the client's certificate against it, whatever [reload] does meanwhile; handshakes in progress and established
+     * connections keep the bundle they started with, and [reload] affects only handshakes that start after it returns. The
+     * handshakes of one server configuration share one OpenSSL context per identity and bundle; the first handshake after a
+     * [reload] builds one with the new bundle, and the old one is freed when its last connection is gone. The server's
+     * CertificateRequest carries no `certificate_authorities` extension (RFC 9846 section 4.3.4: "The server MAY send it"), so
+     * no CA list is announced that a reload would have to change.
+     *
+     * **Resumption.** A session resumes only under the bundle it was authenticated with: after a [reload] a ticket issued
+     * before it resumes nothing (RFC 9846 section 4.7.1: "A server MAY treat a ticket as valid for a shorter period"); the
+     * client runs a full handshake, and its certificate is verified against the new bundle. A client whose CA was dropped
+     * cannot get back in with a ticket.
+     *
+     * **Checks.** [reload] refuses a bundle in which no certificate is valid now (each expired, or not valid yet beyond 5
+     * minutes of clock skew): it could accept no client. A bundle with some expired certificates is accepted (they anchor
+     * nothing). The pins of a [Pinned] around this trust do not change with a reload.
+     */
+    @ExperimentalKuicksilverApi
+    public class ReloadableCa internal constructor(
+        initial: AnchoredCa,
+        private val now: () -> Long = ::nowSeconds,
+    ) : TrustConfig {
+        init {
+            validate(initial)
+        }
+
+        private val ref = AtomicReference(initial)
+
+        /** The bundle handshakes that start now verify client certificates against; a snapshot a later [reload] does not change. */
+        public val current: AnchoredCa get() = ref.load()
+
+        /**
+         * Makes [next] the bundle of every handshake that starts from now on; running handshakes and connections keep theirs.
+         *
+         * @throws TlsException.Config when no certificate of [next] is valid now; [current] stays.
+         */
+        public fun reload(next: AnchoredCa) {
+            validate(next)
+            ref.store(next)
+        }
+
+        private fun validate(bundle: AnchoredCa) {
+            val t = now() // read once; the message carries no time, so a watcher's repeated failure reads the same
+            if (bundle.roots.none { it.notAfterEpochSeconds >= t && it.notBeforeEpochSeconds <= t + NOT_BEFORE_SKEW_SECONDS }) {
+                throw TlsException.Config("no certificate of the CA bundle is valid now (each expired or not valid yet)")
+            }
+        }
+
+        /** For logs. */
+        override fun toString(): String = "ReloadableCa"
+
+        private companion object {
+            /** How far a certificate's notBefore may lie ahead of our clock, as for [TlsIdentity.Reloadable]: 5 minutes. */
+            const val NOT_BEFORE_SKEW_SECONDS: Long = 300
+        }
+    }
+
+    /**
+     * Anchor for platform extensions such as `TrustConfig.fromTrustManager` on the JVM, and [reloadable] for a client CA bundle
+     * that rotates.
+     */
+    public companion object {
+        /**
+         * A [ReloadableCa] that starts with [initial] (see [ReloadableCa] for what a reload changes and the checks).
+         *
+         * @throws TlsException.Config when no certificate of [initial] is valid now.
+         */
+        @ExperimentalKuicksilverApi
+        public fun reloadable(initial: AnchoredCa): ReloadableCa = ReloadableCa(initial)
+    }
 }
 
 /** Which link of the validated chain a pin may match (RFC 7469 section 2.6). */

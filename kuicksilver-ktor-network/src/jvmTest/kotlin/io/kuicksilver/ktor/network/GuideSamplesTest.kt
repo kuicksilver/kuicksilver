@@ -14,6 +14,7 @@ import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.PinScope
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TestCerts
@@ -91,6 +92,25 @@ class GuideSamplesTest {
         val roots = Certificate.parsePem(caPem) // every CERTIFICATE block, in order; TlsException.Config if none
         val trust = TrustConfig.AnchoredCa(roots)
         assertEquals(rootCertificate, trust.roots.single())
+    }
+
+    @Test fun clientCaRotationSample() {
+        val caBundlePem = TestCerts.toPem("CERTIFICATE", TestCerts.testCa)
+        val renewedBundlePem = TestCerts.toPem("CERTIFICATE", TestCerts.otherCa)
+        val serverIdentity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:tls:client-ca-rotation
+        val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+        val mtlsServer =
+            tlsConfig(TlsRole.Server) {
+                alpn = listOf("h3")
+                identity = serverIdentity
+                clientAuth = ClientAuth.Required
+                trust = clientCa
+            }
+        clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+        assertEquals(Certificate(TestCerts.otherCa), clientCa.current.roots.single())
+        assertTrue(mtlsServer.trust === clientCa)
+        serverIdentity.close()
     }
 
     @Test fun socketSample(): Unit =

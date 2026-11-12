@@ -226,6 +226,7 @@ type is experimental, so are its members.
 
 | API | Feature |
 |---|---|
+| `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`, `TrustConfig.ReloadableCa`, `TrustConfig.reloadable` | rotating the server certificate and the client CA bundle without a restart |
 | `EarlyDataState`, `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT: the client's mode and the plumbing between TLS and QUIC (ADR-0015) |
 
 ### `kuicksilver-quic`

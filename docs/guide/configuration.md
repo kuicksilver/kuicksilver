@@ -168,7 +168,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | 0.2.0 | TLS 1.3 is the default (RFC 9852); `Tls12And13` allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only); renegotiation is always refused, and on an `h2` connection a peer's attempt ends it (RFC 9113 section 9.2.1) |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) | at least one; QUIC refuses `TLS_AES_128_CCM_8_SHA256` | 0.2.0 | TLS 1.3 suites in preference order |
 | `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | 0.2.0 | certificate chain and key; `TlsIdentity.reloadable(...)` for one replaced at run time ([TLS guide](tls.md#rotating-the-server-certificate)) |
-| `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([TrustConfig](#trustconfig)) |
+| `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa` or `ReloadableCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([TrustConfig](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | 0.2.0 | `None`, `Optional` or `Required` client certificates |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
 | `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see [SessionTicketConfig](#sessionticketconfig) | 0.2.0 | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
@@ -200,7 +200,8 @@ Guide: [TLS: Trust](tls.md#trust).
 | Variant | Parameters (defaults) | Checks | What it does |
 |---|---|---|---|
 | `TrustConfig.Platform` | | Linux Native: a CA store must exist when the client config is built | the operating system's verifier ([Platform trust](tls.md#platform-trust)) |
-| `TrustConfig.AnchoredCa(roots)` | `roots: List<Certificate>` | at least one root | only these roots, verified inside `ksl`; the only trust for client certificates |
+| `TrustConfig.AnchoredCa(roots)` | `roots: List<Certificate>` | at least one root | only these roots, verified inside `ksl`; with `ReloadableCa`, the only trust for client certificates |
+| `TrustConfig.reloadable(initial)` (*experimental*) | `initial: AnchoredCa` | servers only; `reload` refuses a bundle with no certificate valid now | a `ReloadableCa`: client certificates verified against the `AnchoredCa` current when the handshake starts; `reload(next)` rotates it ([Rotating the client CA](tls.md#rotating-the-client-ca)) |
 | `TrustConfig.ExpectedName(name, base)` | `base = Platform` | non-blank `name`; `base` is `Platform`, `AnchoredCa` or `Custom` | verify another name than the one connected to (proxies) |
 | `TrustConfig.Pinned(pins, scope, base)` | `scope = PinScope.Leaf`, `base = Platform` | at least one pin; not around `Tofu`, `Custom` or another `Pinned` | SPKI pins checked on top of `base`; `PinScope.AnyInValidatedChain` matches any certificate of the validated chain |
 | `TrustConfig.Tofu(store)` | `store: TofuStore` | clients only | trust on first use |
