@@ -15,11 +15,13 @@ import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.response.respond
 import io.ktor.util.pipeline.PipelinePhase
 import io.kuicksilver.http2.runtime.H2ServerStream
+import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.ReceivedEarlyKey
 import io.kuicksilver.ktor.server.RequestPriorityKey
 import io.kuicksilver.ktor.server.h1Priority
+import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
 import kotlin.coroutines.CoroutineContext
@@ -49,7 +51,13 @@ internal class H2Call(
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
         // the Priority field (RFC 9218 section 5) is end to end: read as on HTTP/1.1 (PRIORITY_UPDATE is not used on HTTP/2)
-        attributes.put(RequestPriorityKey, h1Priority(request.headers.getAll("Priority")))
+        val field = request.headers.getAll("Priority")
+        val signal = h1Priority(field)
+        attributes.put(RequestPriorityKey, signal)
+        // the response's DATA goes by it (section 10); a CONNECT without one is a tunnel, incremental as on HTTP/3 (11)
+        val p =
+            if (h2.method == "CONNECT" && !PriorityField.isSignal(field?.joinToString(", "))) TUNNEL_PRIORITY else signal.value
+        if (p != StreamPriority.Default) h2.setPriority(p.urgency, p.incremental)
         // a gateway forwarded it from early data (RFC 8470 section 5.1)
         if (h2.fields.any { it.first == EARLY_DATA_FIELD.lowercase() }) {
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -89,6 +97,9 @@ internal class H2Call(
     }
 
     companion object {
+        /** A tunnel's scheduling without a signal from its client: the default urgency, incremental (as on HTTP/3). */
+        private val TUNNEL_PRIORITY = StreamPriority(3, incremental = true)
+
         /** HTTP/2 fields as Ktor headers; `:authority` becomes `Host`, split `cookie` fields one (RFC 9113 section 8.2.3). */
         fun toKtorHeaders(r: H2ServerStream): Headers {
             val b = HeadersBuilder()

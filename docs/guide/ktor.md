@@ -1284,17 +1284,19 @@ val client = HttpClient(Kuicksilver) {
 
 ## Priorities (experimental)
 
-Both engines read and write RFC 9218 extensible priorities (the API is `@ExperimentalKuicksilverApi`). Over HTTP/3 the
-priority decides the order in which response streams of one connection are sent: lower urgency first, streams of the
-same urgency one after another, or interleaved when incremental. Over HTTP/1.1 a connection carries one response at a
-time, so there the field is only read and sent, never used for scheduling.
+Both engines read and write RFC 9218 extensible priorities (the API is `@ExperimentalKuicksilverApi`). Over HTTP/3, and
+over HTTP/2 on the server, the priority decides the order in which the responses of one connection are sent: lower
+urgency first, responses of the same urgency one after another, or interleaved when incremental; within one urgency the
+incremental and the non-incremental ones take turns, and a CONNECT tunnel gets some bandwidth even behind more urgent
+responses (RFC 9218 sections 10, 10.1). Over HTTP/1.1 a connection carries one response at a time, so there the field is
+only read and sent, never used for scheduling.
 
 On the server, `call.request.priority` is the client's current signal (urgency 3, not incremental, when it sent none; a
 malformed parameter reads as its default), and `call.request.priorityUpdates` is the same as a `StateFlow` that follows
-the client's PRIORITY_UPDATE frames over HTTP/3 (over HTTP/1.1 it never changes). `call.response.priority(urgency,
-incremental)` sets the response's `Priority` field with only the parameters given: over HTTP/3 the engine merges them
-into the client's signal (a parameter left out keeps the client's value, RFC 9218 section 8) and schedules the response
-with the result, and later updates from the client no longer change it.
+the client's PRIORITY_UPDATE frames over HTTP/3 (over HTTP/2 and HTTP/1.1 it never changes). `call.response.priority(urgency,
+incremental)` sets the response's `Priority` field with only the parameters given: over HTTP/3 and HTTP/2 the engine
+merges them into the client's signal (a parameter left out keeps the client's value, RFC 9218 section 8) and schedules
+the response with the result, and over HTTP/3 later updates from the client no longer change it.
 
 ```kotlin
 // guide:ktor:priority-server

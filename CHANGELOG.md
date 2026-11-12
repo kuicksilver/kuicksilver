@@ -640,6 +640,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 (RFC 9218 section 10): the connection sent the DATA of its streams round-robin, whatever their priority, so a
+  u=0 response got no precedence over a u=7 one and two default responses were interleaved instead of sent in stream
+  order. DATA now goes by priority as on HTTP/3: urgency first, non-incremental streams of one urgency in ascending
+  stream order, incremental ones sharing, the two kinds taking turns, and a CONNECT getting one frame in 16 whatever its
+  urgency (section 10.1). When a more urgent stream's writer is about to hand over its next frame, the others wait for
+  it for at most 2 ms. The Ktor server feeds it the request's `Priority` field merged with the response's (section 8,
+  `call.response.priority`); a field that fails to parse is ignored.
 - HTTP/2: a HEADERS or PRIORITY frame whose stream depended on itself was reset with PROTOCOL_ERROR even after the peer
   sent SETTINGS_NO_RFC7540_PRIORITIES = 1, when RFC 9218 section 2.1 says such a server "MUST ignore HTTP/2 priority
   signals". The RFC 7540 self-dependency check now applies only to peers that did not send the setting.

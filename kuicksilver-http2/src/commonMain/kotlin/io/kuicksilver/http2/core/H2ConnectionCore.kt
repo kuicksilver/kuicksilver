@@ -39,8 +39,11 @@ internal enum class Role { CLIENT, SERVER }
  * - Floods (section 10.5, threat model 3.23): field blocks are bounded in bytes, CONTINUATION frames and time before
  *   decoding; queued control frames, empty DATA frames, glitches and (on a server) the client's stream resets are bounded
  *   per connection; a stream the peer reset still counts toward our SETTINGS_MAX_CONCURRENT_STREAMS until [release].
- * - Order of output: control frames (PING answers first), stream credit, then field blocks, then DATA round-robin between
- *   streams. RFC 7540 priorities are parsed and ignored (section 5.3.2).
+ * - Order of output: control frames (PING answers first), stream credit, then field blocks, then DATA by RFC 9218 priority
+ *   ([setPriority], [DataScheduler]). A stream's writer hands over one frame at a time, so when that frame is written and
+ *   the writer still holds more ([H2Event.WindowAvailable]), the less urgent streams wait for its next frame, for at most
+ *   [REFILL_GRACE_NANOS]: one connection's DATA follows priority instead of taking a frame of every stream in turn, and a
+ *   writer that does not come back holds nobody up. RFC 7540 priorities are parsed and ignored (section 5.3.2).
  *
  * The driver's contract: drain [nextEvent] after every call; call [consumed] as the application reads; call [release]
  * for every stream once the application is done with it (both roles; unread content of a dropped stream is credited to
@@ -100,7 +103,10 @@ internal class H2ConnectionCore(
     internal var wroteSincePing = true
     internal val creditReady = ArrayDeque<H2Stream>()
     internal val headerReady = ArrayDeque<H2Stream>()
-    internal val dataReady = ArrayDeque<H2Stream>()
+    internal val dataReady = DataScheduler()
+
+    /** [poll] stopped for a writer's next frame ([H2Stream.refillBy]) until this time; -1 when it did not. */
+    private var refillWaitUntil = -1L
     internal val writers = LinkedHashSet<H2Stream>() // streams waiting for window
     internal val blockedOnConnection = LinkedHashSet<H2Stream>() // ... of which only the connection window holds back
     private var partial: ByteArray? = null
@@ -357,6 +363,7 @@ internal class H2ConnectionCore(
                 sendWindow = peerInitialWindow,
                 recv = RecvWindow(recvInitialWindow, settings.maxStreamWindow.toLong()),
             )
+        s.tunnel = isConnect(fields)
         streams[id] = s
         localOpen++
         enqueue(s, OutItem.Fields(fields, endStream))
@@ -556,7 +563,7 @@ internal class H2ConnectionCore(
         get() =
             partial != null || initial.isNotEmpty() || pingAnswers.isNotEmpty() || control.isNotEmpty() || creditReady.isNotEmpty() ||
                 headerReady.isNotEmpty() ||
-                dataReady.isNotEmpty()
+                nextData(lastNow) != null
 
     /**
      * Ends the connection with SETTINGS_TIMEOUT (RFC 9113 section 6.5.3) when the peer's preface (section 3.4: its SETTINGS,
@@ -595,6 +602,7 @@ internal class H2ConnectionCore(
         if (!peerSettingsSeen && peerPrefaceDeadline >= 0) at(peerPrefaceDeadline)
         if (inBlock) at(blockStartedAt + settings.maxHeaderBlockTime.inWholeNanoseconds)
         if (gracefulPing >= 0) at(gracefulDeadline)
+        if (refillWaitUntil >= 0) at(refillWaitUntil)
         return t
     }
 
@@ -638,6 +646,15 @@ internal class H2ConnectionCore(
 
     internal fun canSend(s: H2Stream): Boolean = s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE
 
+    /** A CONNECT request (RFC 9113 section 8.5): its stream carries a tunnel ([H2Stream.tunnel]). */
+    internal fun isConnect(fields: List<Pair<String, String>>): Boolean {
+        for ((n, v) in fields) {
+            if (n == ":method") return v == "CONNECT"
+            if (!n.startsWith(':')) break
+        }
+        return false
+    }
+
     private fun checkListSize(fields: List<Pair<String, String>>) {
         var size = 0L
         for ((n, v) in fields) size += entrySize(n, v)
@@ -653,9 +670,52 @@ internal class H2ConnectionCore(
     }
 
     private fun schedule(s: H2Stream) {
-        if (s.scheduled || s.out.isEmpty()) return
-        s.scheduled = true
-        (if (s.out.first() is OutItem.Fields) headerReady else dataReady).addLast(s)
+        if (s.out.isEmpty()) return
+        if (s.out.first() is OutItem.Data) {
+            dataReady.add(s)
+        } else if (!s.scheduled) {
+            s.scheduled = true
+            headerReady.addLast(s)
+        }
+    }
+
+    /**
+     * The stream whose DATA frame goes next by priority, or null when there is none, or when the scheduler's choice is a
+     * stream whose writer is about to hand over its next frame ([H2Stream.refillBy] still ahead of [now]): [poll] then
+     * waits for that frame. Streams that cannot send any more, and writers that missed their moment, leave the set here.
+     */
+    private fun nextData(now: Long): H2Stream? {
+        while (true) {
+            val s = dataReady.next() ?: break
+            if (s.out.firstOrNull() is OutItem.Data) {
+                refillWaitUntil = -1
+                return s
+            }
+            if (s.out.isEmpty() && now < s.refillBy && canSend(s)) {
+                refillWaitUntil = s.refillBy
+                return null
+            }
+            s.refillBy = -1
+            dataReady.remove(s)
+        }
+        refillWaitUntil = -1
+        return null
+    }
+
+    /**
+     * Sets the RFC 9218 priority the DATA of [streamId] is sent with ([DataScheduler]): [urgency] 0 (most urgent) to 7,
+     * [incremental] to share bandwidth with the other incremental streams of its urgency. Streams start at urgency 3, not
+     * incremental (section 4). Ignored for a stream that is gone.
+     */
+    fun setPriority(
+        streamId: Int,
+        urgency: Int,
+        incremental: Boolean,
+    ) {
+        require(urgency in 0..7) { "urgency must be 0..7" }
+        val s = streams[streamId] ?: return
+        s.urgency = urgency
+        s.incremental = incremental
     }
 
     /** The next whole frame (or field block) to write; field lists are HPACK-encoded here, in wire order (section 4.3.1). */
@@ -679,9 +739,20 @@ internal class H2ConnectionCore(
         }
         var s: H2Stream
         while (true) {
-            s = headerReady.removeFirstOrNull() ?: dataReady.removeFirstOrNull() ?: return null
-            s.scheduled = false
-            if (s.out.isNotEmpty()) break // a stream whose queue was dropped (a reset) leaves its slot empty
+            val h = headerReady.removeFirstOrNull()
+            if (h == null) {
+                s = nextData(now) ?: return null
+                dataReady.remove(s)
+                dataReady.onServed(s)
+                break
+            }
+            h.scheduled = false
+            // a stream whose queue was dropped (a reset) leaves its slot empty; one whose DATA came first is the data's
+            if (h.out.firstOrNull() is OutItem.Fields) {
+                s = h
+                break
+            }
+            schedule(h)
         }
         val frame =
             when (val item = s.out.removeFirst()) {
@@ -815,6 +886,8 @@ internal class H2ConnectionCore(
         var refund = 0L
         for (item in s.out) if (item is OutItem.Data) refund += item.length
         s.out.clear()
+        dataReady.remove(s)
+        s.refillBy = -1
         s.dataQueued = false
         dataLeft(s)
         if (refund == 0L) return
@@ -848,6 +921,11 @@ internal class H2ConnectionCore(
         s.wantsWindow = false
         writers.remove(s)
         blockedOnConnection.remove(s)
+        // the writer holds its next bytes: the less urgent streams wait a moment for them (see nextData)
+        if (s.out.isEmpty()) {
+            s.refillBy = lastNow + REFILL_GRACE_NANOS
+            dataReady.add(s)
+        }
         emit(H2Event.WindowAvailable(s.id))
     }
 
@@ -861,8 +939,14 @@ internal class H2ConnectionCore(
         closedReported = true
     }
 
-    private companion object {
-        const val MAX_PINGS_OUT = 16
-        val EMPTY = ByteArray(0)
+    internal companion object {
+        private const val MAX_PINGS_OUT = 16
+
+        /**
+         * How long the other streams' DATA waits for a more urgent stream's writer that was just told to hand over its
+         * next frame: the writer holds those bytes already, so it needs only a thread's turn.
+         */
+        const val REFILL_GRACE_NANOS = 2_000_000L
+        private val EMPTY = ByteArray(0)
     }
 }

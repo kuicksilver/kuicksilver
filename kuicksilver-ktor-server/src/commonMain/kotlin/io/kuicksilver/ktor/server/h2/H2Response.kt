@@ -19,7 +19,9 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
+import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.server.h1.httpDateNow
+import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -108,6 +110,12 @@ internal class H2Response(
         if (!headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
         dropFramingFieldsOfAResponseWithoutContent()
         declaredLength = if (endStream) -1 else declaredLengthOf()
+        // RFC 9218 section 8: the response's own Priority field merges into the client's signal for the DATA that follows (a
+        // parameter it leaves out keeps the client's value); one that fails to parse is no choice (RFC 8941 section 4.2)
+        headersBuilder.getAll("Priority")?.joinToString(", ")?.takeIf { PriorityField.isSignal(it) }?.let {
+            val p = PriorityField.merge(StreamPriority(h2.urgency, h2.incremental), it)
+            h2.setPriority(p.urgency, p.incremental)
+        }
         h2.respond(statusCode.value, fields(), endStream)
         answered = true
     }

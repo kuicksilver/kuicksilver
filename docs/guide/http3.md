@@ -251,7 +251,8 @@ does); the server's choice then stays. A CONNECT tunnel without a
 signal is scheduled incremental on both sides (sections 10.1, 11), so a long-lived WebSocket shares bandwidth with the
 responses next to it instead of holding them back; its client's signal itself still reads as the default. The
 transport scheduler serves eight urgency levels in order and shares a level round-robin between incremental streams;
-the control and QPACK streams always go first. A PRIORITY_UPDATE that arrives before its stream is remembered (up to 32
+within a level the incremental and the non-incremental streams take turns frame by frame, and a CONNECT tunnel gets one
+frame in 16 even behind more urgent streams (sections 10, 10.1); the control and QPACK streams always go first. A PRIORITY_UPDATE that arrives before its stream is remembered (up to 32
 of them); one that arrives after the field replaces it.
 
 ## Extended CONNECT and datagrams

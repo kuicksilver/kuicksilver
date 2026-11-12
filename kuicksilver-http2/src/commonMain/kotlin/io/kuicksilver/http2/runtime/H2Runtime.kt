@@ -81,6 +81,11 @@ internal class StreamRt(
     /** Why the stream failed; the body and the sender throw it. */
     var failure: Throwable? = null
 
+    /** The RFC 9218 priority our DATA on this stream is sent with ([H2Runtime.setPriority]). */
+    @Volatile var urgency = 3
+
+    @Volatile var incremental = false
+
     /** The final field section arrived (on a client: the response head; on a server: the request head). */
     var headReceived = false
 
@@ -1114,6 +1119,19 @@ internal class H2Runtime(
     }
 
     /** Resets [s] with [code] (tests and the server's handlers). */
+
+    /** Sends the DATA of [s] with this RFC 9218 priority from now on (see the core's DataScheduler). */
+    fun setPriority(
+        s: StreamRt,
+        urgency: Int,
+        incremental: Boolean,
+    ) {
+        require(urgency in 0..7) { "urgency must be 0..7, was $urgency" }
+        s.urgency = urgency
+        s.incremental = incremental
+        withCore { setPriority(s.id, urgency, incremental) }
+    }
+
     fun reset(
         s: StreamRt,
         code: Http2ErrorCode,

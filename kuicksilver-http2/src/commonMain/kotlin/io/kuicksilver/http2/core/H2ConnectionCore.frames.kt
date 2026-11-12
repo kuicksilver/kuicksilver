@@ -166,6 +166,7 @@ internal fun H2ConnectionCore.onHeaders(
                 recv = RecvWindow(recvInitialWindow, settings.maxStreamWindow.toLong()),
             )
         ns.finalHeadersReceived = true
+        ns.tunnel = isConnect(fields)
         streams[id] = ns
         peerStreams++
         emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true))

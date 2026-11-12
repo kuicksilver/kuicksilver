@@ -222,6 +222,23 @@ public class H2ServerStream internal constructor(
         stallError: () -> Throwable = { kotlinx.io.IOException("the client took no content for $stallMillis ms") },
     ): Unit = rt.sendBody(s, source, stallMillis, stallError, end)
 
+    /** The RFC 9218 urgency (0 most urgent to 7) the response's DATA is sent with; 3 until [setPriority]. */
+    public val urgency: Int get() = s.urgency
+
+    /** Whether the response's DATA shares bandwidth with the other incremental responses of its urgency; false until [setPriority]. */
+    public val incremental: Boolean get() = s.incremental
+
+    /**
+     * Schedules the response's DATA with this RFC 9218 priority from now on: the more urgent responses of the connection
+     * first, non-incremental ones of one urgency in stream order, incremental ones sharing (section 10); a CONNECT gets
+     * a share whatever its urgency (section 10.1). The engine sets it from the request's `priority` field merged with the
+     * response's (section 8). IllegalArgumentException for an [urgency] outside 0..7.
+     */
+    public fun setPriority(
+        urgency: Int,
+        incremental: Boolean,
+    ): Unit = rt.setPriority(s, urgency, incremental)
+
     /** Sends trailers, which end the stream. */
     public fun trailers(fields: List<Pair<String, String>>): Unit = rt.respondTrailers(s, fields)
 
