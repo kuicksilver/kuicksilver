@@ -157,4 +157,55 @@ class FileAltSvcStoreTest {
         assertTrue(s.get("https://b:443").isEmpty())
         assertNull(s.get("https://a:443").firstOrNull { it.port == 8443 }, "the expired entry is gone")
     }
+
+    /**
+     * A store file is input like a header (threat-model 3.14, 3.18): written by an older version, edited by hand or by
+     * another program, it must not inject what the parser refuses. Every field is checked again on load — the origin's
+     * `https://host:port` form, the protocol token, the alternative's host (a connection target, no log-line text), the
+     * port's digits and range, the expiry's digits, the persist flag — and a record failing any check is dropped.
+     */
+    @Test fun negative_altSvcStoreRecordsRevalidatedOnLoad() {
+        val p = tmp()
+        val exp = now + 60_000
+        val bad =
+            listOf(
+                "http://a:443\th3\t\t443\t$exp\t0",
+                "https://a\th3\t\t443\t$exp\t0",
+                "https://a:0\th3\t\t443\t$exp\t0",
+                "https://a:+443\th3\t\t443\t$exp\t0",
+                "https://a b:443\th3\t\t443\t$exp\t0",
+                "https://a:443/x\th3\t\t443\t$exp\t0",
+                "https://a:443\th 3\t\t443\t$exp\t0",
+                "https://a:443\th3\ta b\t443\t$exp\t0",
+                "https://a:443\th3\tx\u0007y\t443\t$exp\t0",
+                "https://a:443\th3\tx),fallback=Other\t443\t$exp\t0",
+                "https://a:443\th3\t[::1]\t443\t$exp\t0",
+                "https://a:443\th3\tzz::1\t443\t$exp\t0",
+                "https://a:443\th3\t\t+443\t$exp\t0",
+                "https://a:443\th3\t\t70000\t$exp\t0",
+                "https://a:443\th3\t\t443\t+$exp\t0",
+                "https://a:443\th3\t\t443\t$exp\t2",
+                "https://a:443\th3\t\t443\t$exp\t",
+            )
+        val good = listOf("https://a:443\th3\talt.example\t444\t$exp\t1", "https://[2001:db8::1]:443\th3\t2001:db8::2\t445\t$exp\t0")
+        SystemFileSystem.sink(p).buffered().use { it.writeString((bad + good).joinToString("\n", postfix = "\n")) }
+        val s = FileAltSvcStore(p) { now }
+        assertEquals(listOf("alt.example" to 444), s.get("https://a:443").map { it.host to it.port })
+        assertEquals(listOf("2001:db8::2" to 445), s.get("https://[2001:db8::1]:443").map { it.host to it.port })
+        for (origin in listOf("http://a:443", "https://a", "https://a:0", "https://a:+443", "https://a b:443", "https://a:443/x")) {
+            assertTrue(s.get(origin).isEmpty(), origin)
+        }
+        assertEquals("https://[2001:db8::1]:443", originKeyOf(Url("https://[2001:db8::1]/")), "the form the engine writes")
+    }
+
+    /** A store file far larger than 1000 origins of 8 records can be is not read into memory: the store starts empty. */
+    @Test fun negative_oversizedAltSvcStoreFileIsNotLoaded() {
+        val p = tmp()
+        SystemFileSystem.sink(p).buffered().use { sink ->
+            sink.writeString("https://a:443\th3\t\t443\t${now + 60_000}\t0\n")
+            val junk = "x".repeat(1 shl 20)
+            repeat(FileAltSvcStore.MAX_FILE_BYTES / (1 shl 20) + 1) { sink.writeString(junk) }
+        }
+        assertTrue(FileAltSvcStore(p) { now }.get("https://a:443").isEmpty())
+    }
 }

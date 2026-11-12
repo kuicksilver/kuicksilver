@@ -144,6 +144,20 @@ internal object AltSvcParser {
     internal fun isConnectionTarget(h: String): Boolean =
         h.startsWith('[') || h.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' || it == '.' }
 
+    /**
+     * Whether [h] is a host an alternative may name, as the parser takes it ([isUriHost] and [isConnectionTarget]): a DNS
+     * name or IPv4 address of letters, digits, `-` and `.`, or an IPv6 address — in brackets when [bracketed] (an origin's
+     * host), without them otherwise (an entry's [AltSvcEntry.host]). Never empty.
+     */
+    internal fun isAltHost(
+        h: String,
+        bracketed: Boolean,
+    ): Boolean {
+        if (h.isEmpty()) return false
+        if (':' in h || h.startsWith('[')) return isUriHost(if (bracketed) h else "[$h]") && (!bracketed || h.startsWith('['))
+        return isUriHost(h) && isConnectionTarget(h)
+    }
+
     private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
     /**
@@ -338,11 +352,7 @@ internal class AltSvcCache(
                 }
             entries += parsed
         }
-        // RFC 9000 section 21.5: no alternative on the client's own networks unless the origin is there (AltSvcDestination)
-        val usable =
-            entries
-                .filter { !(url.port < 1024 && it.port >= 1024) && AltSvcDestination.allowed(url.host, it.host) }
-                .take(MAX_ENTRIES_PER_ORIGIN)
+        val usable = entries.filter { admissible(url, it) }.take(MAX_ENTRIES_PER_ORIGIN)
         if (usable.isEmpty()) store.remove(origin) else store.put(origin, usable)
     }
 
@@ -359,9 +369,28 @@ internal class AltSvcCache(
         usable: (AltSvcEntry) -> Boolean = { true },
     ): AltSvcEntry? {
         val now = clock()
-        val fresh = store.get(originOf(url)).filter { it.protocol == "h3" && it.expiresAtEpochMillis > now }
+        // a store kept elsewhere (a file, the application's own) is checked as the header was: what the parser and
+        // [admissible] refuse is never used, whoever wrote it
+        val fresh =
+            store.get(originOf(url)).filter {
+                it.protocol == "h3" &&
+                    it.expiresAtEpochMillis > now &&
+                    AltSvcParser.portOf(it.port.toString()) != null &&
+                    (it.host == null || AltSvcParser.isAltHost(it.host, bracketed = false)) &&
+                    admissible(url, it)
+            }
         return fresh.firstOrNull(usable) ?: fresh.firstOrNull()
     }
+
+    /**
+     * Whether [entry] may serve the origin of [url]: an unprivileged alternative port is refused for a privileged origin
+     * port (as Chromium does), and no alternative is on the client's own networks unless the origin is there (RFC 9000
+     * section 21.5, [AltSvcDestination]).
+     */
+    private fun admissible(
+        url: Url,
+        entry: AltSvcEntry,
+    ): Boolean = !(url.port < 1024 && entry.port >= 1024) && AltSvcDestination.allowed(url.host, entry.host)
 
     /** Forgets [entry] of the origin of [url] and keeps its other alternatives: a 421 from [entry] (RFC 7838 section 6). */
     fun removeAlternative(

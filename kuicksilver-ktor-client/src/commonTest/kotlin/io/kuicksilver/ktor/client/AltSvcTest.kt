@@ -241,4 +241,29 @@ class AltSvcTest {
         assertEquals("2001:db8::1", AltSvcParser.parse("h3=\"[2001:db8::1]:443\"", now)!!.single().host)
         assertEquals(null, AltSvcParser.parse("h3=\":443\"", now)!!.single().host)
     }
+
+    /**
+     * Entries a store hands back are checked as the header was (threat-model 3.14, 3.18): a store file written by an older
+     * version or by another program, or an application's own store, cannot aim the client at a local address, an
+     * unprivileged port of a privileged origin, a host the parser refuses or a port out of range.
+     */
+    @Test fun negative_storedAlternativeFailingTheParserRulesIsNotUsed() {
+        val o = cache.originOf(origin)
+        val exp = now + 60_000
+        for (bad in listOf(
+            AltSvcEntry("h3", null, 8443, exp, false),
+            AltSvcEntry("h3", "127.0.0.1", 443, exp, false),
+            AltSvcEntry("h3", "a b", 443, exp, false),
+            AltSvcEntry("h3", "x),fallback=Other", 443, exp, false),
+            AltSvcEntry("h3", "", 443, exp, false),
+            AltSvcEntry("h3", null, 0, exp, false),
+            AltSvcEntry("h3", null, 70_000, exp, false),
+            AltSvcEntry("h2", null, 443, exp, false),
+        )) {
+            store.put(o, listOf(bad))
+            assertNull(cache.h3For(origin), "$bad")
+            store.put(o, listOf(bad, AltSvcEntry("h3", "alt.example.com", 443, exp, false)))
+            assertEquals("alt.example.com", cache.h3For(origin)?.host, "$bad")
+        }
+    }
 }

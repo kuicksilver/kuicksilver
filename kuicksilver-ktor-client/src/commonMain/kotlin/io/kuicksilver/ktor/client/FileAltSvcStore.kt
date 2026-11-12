@@ -14,8 +14,11 @@ import kotlin.random.Random
 /**
  * An [AltSvcStore] kept in one text file (alternatives survive a restart, so the first request after a cold
  * start can already use HTTP/3). One record per line, tab-separated: origin, protocol, host (empty when the origin's),
- * port, expiry in epoch milliseconds, `1` when `persist=1`. The file is read once at construction (expired and
- * malformed records are dropped, at most 1000 origins of 8 alternatives are kept) and rewritten after every change
+ * port, expiry in epoch milliseconds, `1` when `persist=1`. The file is read once at construction: it is input like a
+ * header, so every field is checked again (the origin's `https://host:port` form, the protocol token, the host as the
+ * `Alt-Svc` parser takes it, the ports, the expiry, the persist flag) and a record failing a check is dropped, as is an
+ * expired one; at most 1000 origins of 8 alternatives are kept, and a file over 8 MiB is not read (an empty store). The
+ * engine also checks each entry it uses as it checks a header's. The file is rewritten after every change
  * through a uniquely named temporary file and an atomic move, so a crash leaves either the old or the new content
  * (on Android API 24-25, which lacks `java.nio.file`, the move is a `java.io.File.renameTo`, atomic on one filesystem).
  * A store that cannot be written keeps working in memory; the first failed write is logged as a warning.
@@ -128,6 +131,8 @@ public class FileAltSvcStore(
         val maxLines = AltSvcCache.MAX_ORIGINS * AltSvcCache.MAX_ENTRIES_PER_ORIGIN
         try {
             SystemFileSystem.source(path).buffered().use { src ->
+                // a file far larger than the store can hold is no store this engine wrote: it is not read into memory
+                if (src.request(MAX_FILE_BYTES + 1L)) return
                 while (lines.size < maxLines) {
                     lines += src.readLine() ?: break
                 }
@@ -136,14 +141,10 @@ public class FileAltSvcStore(
             return
         } // an unreadable file is an empty store
         for (line in lines) {
-            val f = line.split('\t')
-            if (f.size != 6 || f[0].isEmpty() || f[1].isEmpty()) continue
-            val port = f[3].toIntOrNull()?.takeIf { it in 1..65_535 } ?: continue
-            val expires = f[4].toLongOrNull() ?: continue
-            if (expires <= now) continue
-            val e = AltSvcEntry(f[1], f[2].ifEmpty { null }, port, expires, f[5] == "1")
-            val had = map.remove(f[0]).orEmpty()
-            map[f[0]] = if (had.size < AltSvcCache.MAX_ENTRIES_PER_ORIGIN) had + e else had
+            val (origin, e) = recordOf(line) ?: continue
+            if (e.expiresAtEpochMillis <= now) continue
+            val had = map.remove(origin).orEmpty()
+            map[origin] = if (had.size < AltSvcCache.MAX_ENTRIES_PER_ORIGIN) had + e else had
         }
         map.evictEldest(AltSvcCache.MAX_ORIGINS)
         persisted = LinkedHashMap(map)
@@ -174,8 +175,49 @@ public class FileAltSvcStore(
         }
     }
 
-    private companion object {
-        val LOG = KtorSimpleLogger("io.kuicksilver.ktor.client.FileAltSvcStore")
+    internal companion object {
+        private val LOG = KtorSimpleLogger("io.kuicksilver.ktor.client.FileAltSvcStore")
+
+        /**
+         * The origin and entry of one store record, or null when any field is not what the engine writes. The file is input
+         * like a header (threat-model 3.14, 3.18): written by an older version, edited by hand or by another program, it
+         * must not bring in what the `Alt-Svc` parser refuses. The origin is `https://host:port` (the engine's key,
+         * [originKeyOf]); the protocol an RFC 9110 token; the alternative's host empty (the origin's) or a connection
+         * target, an IPv6 address without its brackets; ports digits in 1..65535; the expiry digits; persist `0` or `1`.
+         * Where the engine may use an entry (the privileged-port and destination rules) is checked when it does
+         * ([AltSvcCache.h3For]), for every store.
+         */
+        internal fun recordOf(line: String): Pair<String, AltSvcEntry>? {
+            val f = line.split('\t')
+            if (f.size != 6) return null
+            val origin = f[0]
+            if (!origin.startsWith("https://")) return null
+            val authority = origin.removePrefix("https://")
+            val colon = authority.lastIndexOf(':')
+            if (colon <= 0) return null
+            AltSvcParser.portOf(authority.substring(colon + 1)) ?: return null
+            if (!AltSvcParser.isAltHost(authority.substring(0, colon), bracketed = true)) return null
+            val protocol = f[1]
+            if (protocol.isEmpty() || !protocol.all { it.isTchar() }) return null
+            val host = f[2]
+            if (host.isNotEmpty() && !AltSvcParser.isAltHost(host, bracketed = false)) return null
+            val port = AltSvcParser.portOf(f[3]) ?: return null
+            if (f[4].isEmpty() || f[4].length > 19 || f[4].any { it !in '0'..'9' }) return null
+            val expires = f[4].toLongOrNull() ?: return null
+            val persist =
+                when (f[5]) {
+                    "1" -> true
+                    "0" -> false
+                    else -> return null
+                }
+            return origin to AltSvcEntry(protocol, host.ifEmpty { null }, port, expires, persist)
+        }
+
+        /** RFC 9110 section 5.6.2 `tchar`. */
+        private fun Char.isTchar(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9' || this in "!#$%&'*+-.^_`|~"
+
+        /** The largest store file that is read. */
+        internal const val MAX_FILE_BYTES: Int = 8 shl 20
     }
 }
 
