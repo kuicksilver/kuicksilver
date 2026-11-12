@@ -8,7 +8,8 @@ package io.kuicksilver.ktor.client.dns
  * @property records the RRset of the name asked for, after CNAMEs (empty: none).
  * @property negativeTtl how long "none" may be cached (RFC 2308 section 5), null when the response gives no SOA.
  * @property related other HTTPS RRsets of the response, by owner (an alias target's, for example).
- * @property addresses A and AAAA addresses of the response by owner, 4 or 16 bytes each, with their smallest TTL.
+ * @property addresses A and AAAA addresses of the response by owner, 4 or 16 bytes each, with their smallest TTL: only
+ *   owners with both an A and an AAAA RRset in the response, which can stand in for an address lookup.
  * @property chain the name asked and its CNAMEs: [related] and [addresses] of names at or under one of these may be cached
  *   beyond this resolution, the others serve it only (they are another zone's data).
  */
@@ -251,8 +252,12 @@ internal object DnsMessage {
                 // section 2.2: that RRset is rejected; it does not spoil the one asked for
             }
         }
+        // an owner's addresses only when both families came: one alone may be an answer cut short (RFC 9460 section 5.2:
+        // a resolver may omit RRsets), so the lookup that asks for both is not skipped (section 3: AAAA "and/or" A)
         val addrs =
-            addresses.filterKeys { it in allowed }.mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
+            addresses
+                .filter { (owner, l) -> owner in allowed && l.any { it.first.size == 4 } && l.any { it.first.size == 16 } }
+                .mapValues { (_, l) -> l.map { it.first } to l.minOf { it.second } }
         return DnsAnswer(records, negativeTtl, related, addrs, chain)
     }
 

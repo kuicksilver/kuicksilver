@@ -183,12 +183,25 @@ class DnsMessageTest {
     @Test fun negative_recordsOfUnrelatedNamesAreNotKept() { // RFC 2181 section 5.4.1: only what the answer leads to
         val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
         val msg =
-            response("a.example", listOf(rr("a.example", 65, 300, alias))).let { it.copyOf().also { m -> m[11] = 3 } } +
+            response("a.example", listOf(rr("a.example", 65, 300, alias))).let { it.copyOf().also { m -> m[11] = 4 } } +
                 rr("victim.example", 65, 200, h3Here) + rr("victim.example", 1, 30, hex("c0000201")) +
-                rr("cdn.example", 1, 30, hex("c0000202"))
+                rr("cdn.example", 1, 30, hex("c0000202")) + rr("cdn.example", 28, 30, hex("20010db8000000000000000000000002"))
         val a = DnsMessage.read(msg, "a.example")
         assertTrue(a.related.isEmpty(), "kept ${a.related.keys}")
         assertEquals(setOf("cdn.example"), a.addresses.keys)
+    }
+
+    @Test fun negative_oneAddressFamilyAloneIsNotKept() { // RFC 9460 sections 3 and 5.2: the other family may be missing
+        val alias = SvcbTestEncoder.encode(SvcbRecord(0, "cdn.example", emptyList(), false, null, emptyList(), emptyList(), 0, "x"))
+        val service = SvcbTestEncoder.encode(SvcbRecord(1, "v4.example", listOf("h3"), false, null, emptyList(), emptyList(), 0, "x"))
+        val msg =
+            response("a.example", listOf(rr("a.example", 65, 300, alias))).let { it.copyOf().also { m -> m[11] = 3 } } +
+                rr("cdn.example", 65, 300, service) + rr("cdn.example", 28, 30, hex("20010db8000000000000000000000001")) +
+                rr("v4.example", 1, 30, hex("c0000201"))
+        val a = DnsMessage.read(msg, "a.example")
+        assertEquals(setOf("cdn.example"), a.related.keys)
+        // an A or AAAA RRset alone may be an answer cut short (a resolver may omit RRsets): the lookup asks for both
+        assertTrue(a.addresses.isEmpty(), "kept ${a.addresses.keys}")
     }
 
     // ---- bounded work on hostile answers (RFC 9460 section 9.2.2: the DNS is "an untrusted channel")
