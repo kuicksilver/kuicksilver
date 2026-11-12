@@ -57,14 +57,14 @@ public fun interface Http3ConnectionMigration {
      * without network information unless `networkId` is set. A source that fails or ends is logged at `Info` and no longer
      * followed: the engine then sees no network change, and drops and stops keeping HTTPS records (RFC 9460 section 12).
      *
-     * A value is only as good as the platform's handle, and none is a stable identity of the network: on Android a
-     * `Network` is a number the system gives each new connection (a switch is seen, but the number is reused after a
-     * reboot); on iOS and macOS an [io.kuicksilver.quic.NwPathKey] names the interface and its kind, so a move from one
-     * Wi-Fi network to another on the same interface is not seen. So a followed value is never stored with the
-     * alternatives ([AltSvcStore.networkId]): at its first value after a start the engine takes the network as changed,
-     * and what it learned before that value came (requests wait up to 200 ms for it) is treated the same way. Give
-     * `networkId` an identity of your own (from what your app knows about the network) for detection across restarts and
-     * between networks on one interface.
+     * The values are compared in memory and never stored with the alternatives ([AltSvcStore.networkId]), since none is an
+     * identity that survives a restart: on Android the factory's value is the `Network`, a number the system gives each new
+     * connection (every switch is seen; the number is reused after a reboot); on iOS and macOS it is the default path's
+     * interface, gateways and the interface's addresses (a move between two Wi-Fi networks on one interface is seen; a path
+     * that tells neither gateways nor addresses counts as a change at each update). At its first value after a start the
+     * engine takes the network as changed, and what it learned before that value came is treated the same way; requests
+     * wait for that first value until 200 ms after the client was created, not longer and not each. Give `networkId` an
+     * identity of your own for detection across restarts.
      */
     public val networks: Flow<Any?>? get() = null
 
