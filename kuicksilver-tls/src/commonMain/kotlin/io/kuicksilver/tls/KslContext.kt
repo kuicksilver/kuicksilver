@@ -87,37 +87,44 @@ internal class KslContext private constructor(
         quicTickets: Boolean,
         earlyData: Boolean,
         trustSnapshot: TrustConfig.AnchoredCa?,
-    ): Boolean = sameKind(config, quic, quicTickets, earlyData) && this.trustSnapshot === trustSnapshot
+    ): Boolean = sameKind(config, quic, quicTickets, earlyData) && sameBundle(this.trustSnapshot, trustSnapshot)
 
     /**
      * The client certificate check at the end of a server handshake under a `TrustConfig.ReloadableCa`: OpenSSL verified
      * [presented] (leaf first) against [trustSnapshot], the bundle current when the ClientHello arrived; when a reload has
-     * replaced that bundle since, the chain is verified again against the bundle current now, until the bundle it passed is
-     * still the current one. So after `reload` returns no handshake completes with a certificate only a removed CA vouches
-     * for, however its flights were timed. Returns null when it passes (and for a client without a certificate, any other
-     * trust, or a bundle still current), else why it failed. A resumed session (no Certificate message: [presented] holds
-     * the leaf its session kept) is checked the same way, so one resumed across a reload passes only if its leaf chains to
-     * the new bundle on its own.
+     * replaced that bundle with other certificates since, the chain is verified again (at the context's security level)
+     * against the bundle current now, and the pins of a `TrustConfig.Pinned` around it are checked on the path built under it,
+     * until the bundle it passed is still the current one. So after `reload` returns no handshake completes with a
+     * certificate only a removed CA vouches for, however its flights were timed. Returns null when it passes (and for a client
+     * without a certificate, any other trust, or a bundle whose certificates did not change), else why it failed. A resumed
+     * session (no Certificate message: [presented] holds only the leaf its session kept) whose bundle changed during its
+     * handshake passes only if that leaf chains to the new bundle without intermediates.
      */
     fun recheckClientChain(presented: List<Certificate>): VerifyReason? {
         var verifiedUnder = trustSnapshot ?: return null
         if (presented.isEmpty()) return null
         while (true) {
             val now = clientCaSnapshot(config) ?: return null
-            if (now === verifiedUnder) return null
+            if (sameBundle(now, verifiedUnder)) return null
+            // a context of its own, never registered: an SNI override's configuration is a copy per connection, and a rare
+            // recheck must not push the shared contexts out of their registry
             val lease =
                 try {
-                    acquire(config, quic, quicTickets, earlyData) // the context of the current identity and bundle
+                    create(config, quic, quicTickets, earlyData)
                 } catch (e: IllegalStateException) {
                     return VerifyReason.Custom("the client CA bundle changed and cannot be checked again: ${e.message}")
                 }
             try {
                 val under = lease.ctx.trustSnapshot ?: return null
-                val err = Ksl.ctxVerifyChain(lease.ctx.handle, presented.map { it.encoded }, null, 0)
+                val path = ArrayList<ByteArray>()
+                val err = Ksl.ctxVerifyChainPath(lease.ctx.handle, presented.map { it.encoded }, null, 0, path)
                 if (err != 0) {
                     return verifyReasonOf(if (err > 0) err else 0, 0, presented)
                         ?: VerifyReason.Custom("the client certificate does not pass the reloaded CA bundle")
                 }
+                // pins (CA scope too) hold on the path built under the new bundle, not on the one of the handshake
+                val pinned = Verification(config).pinCheck(path.map(::Certificate))
+                if (pinned is VerifyResult.Rejected) return pinned.reason
                 verifiedUnder = under
             } finally {
                 lease.close()
@@ -455,7 +462,7 @@ internal class SharedServerContexts {
             val list = entries.load() ?: return made
             // the bundle was reloaded while this context was built or since: it serves this handshake (which read the bundle
             // before the reload) and goes with it, unshared, so the registry never takes a context of a replaced bundle
-            if (ca != null && config.trust.reloadableSnapshot() !== ca) return made
+            if (ca != null && !sameBundle(config.trust.reloadableSnapshot(), ca)) return made
             find(list, config, quic, quicTickets, earlyData, ca)?.let {
                 made.release() // another session built one first: share that one
                 touch(list, it)
@@ -463,7 +470,7 @@ internal class SharedServerContexts {
             }
             check(made.tryRetain()) // the registry's reference
             // a context of an older client CA bundle serves no new handshake: the first context of the current one replaces it
-            val stale = if (ca != null) list.filter { it.sameKindAs(made) } else emptyList()
+            val stale = if (ca != null) list.filter { it.sameKindAs(made) && !sameBundle(it.trustSnapshot, ca) } else emptyList()
             val grown = list.filter { it !in stale } + made
             val evicted = if (grown.size > MAX) grown[0] else null
             if (entries.compareAndSet(list, if (evicted != null) grown.drop(1) else grown)) {
@@ -521,6 +528,15 @@ internal fun TrustConfig.reloadableSnapshot(): TrustConfig.AnchoredCa? =
         is TrustConfig.Pinned -> (base as? TrustConfig.ReloadableCa)?.current
         else -> null
     }
+
+/**
+ * Whether two client CA bundles are the same trust: one object, or the same certificates in the same order (a reload with
+ * unchanged content changes nothing: no other context, no recheck, the tickets stay).
+ */
+internal fun sameBundle(
+    a: TrustConfig.AnchoredCa?,
+    b: TrustConfig.AnchoredCa?,
+): Boolean = a === b || (a != null && b != null && a.derKey == b.derKey)
 
 /** This trust with its [TrustConfig.ReloadableCa] replaced by [ca] (from [reloadableSnapshot]); unchanged when [ca] is null. */
 internal fun TrustConfig.withSnapshot(ca: TrustConfig.AnchoredCa?): TrustConfig =

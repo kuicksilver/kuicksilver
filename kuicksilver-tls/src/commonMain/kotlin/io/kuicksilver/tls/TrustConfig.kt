@@ -138,9 +138,12 @@ public sealed interface TrustConfig {
      * TCP and QUIC alike and however the client times its flights; connections established before are not affected. A
      * handshake takes the [current] bundle when the client's ClientHello arrives (over TCP when its first bytes are there,
      * not at the accept; over QUIC with its first Initial) and OpenSSL verifies the client's certificate against it; when the
-     * handshake completes and a [reload] has replaced that bundle meanwhile, the certificate is verified again against the
-     * bundle current then, and the handshake fails unless it passes (a session resumed across a reload passes only if its
-     * leaf chains to the new bundle on its own). Close connections of a compromised CA yourself. The handshakes of one server
+     * handshake completes and a [reload] has replaced that bundle with other certificates meanwhile, the certificate is
+     * verified again against the bundle current then, as a handshake would (OpenSSL's security level included), the pins of
+     * a [Pinned] around this trust are checked on the path built under it, and the handshake fails unless both pass. A reload
+     * to the same certificates changes nothing. The one case this refuses that a fresh handshake would accept: a session
+     * resumed across a reload that changed the certificates carries only the client's leaf, so it passes only if that leaf
+     * chains to the new bundle without intermediates. Close connections of a compromised CA yourself. The handshakes of one server
      * configuration share one OpenSSL context per identity and bundle; the first handshake after a [reload] builds one with
      * the new bundle and drops the old one from the shared contexts, which is freed once that has happened and its last
      * connection is gone (a handshake that read the old bundle while the new one's context was built gets a context of its

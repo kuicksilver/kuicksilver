@@ -137,9 +137,13 @@ class SharedServerContextStressJvmTest {
                 TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.otherCa))),
                 TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa), Certificate(TestCerts.otherCa))),
             )
-        // every reload installs a bundle object of its own, numbered in reload order: a session reads which it got
+        // every reload installs a bundle object of its own, numbered in reload order, and [contents] keeps the certificates of
+        // each number: a session must get the certificates of a bundle current at some point while it was built (bundles with
+        // equal certificates are one trust, so a context of an earlier equal bundle may serve it)
         val order = Collections.synchronizedMap(IdentityHashMap<TrustConfig.AnchoredCa, Int>())
+        val contents = Collections.synchronizedList(ArrayList<String>())
         val first = TrustConfig.AnchoredCa(bundles[0].roots).also { order[it] = 0 }
+        contents += first.derKey
         val ca = TrustConfig.reloadable(first)
         val configs =
             List(10) { i ->
@@ -172,8 +176,11 @@ class SharedServerContextStressJvmTest {
                         while ((i < 400 || reloads.get() < 120) && running()) {
                             val atLeast = order.getValue(ca.current) // the bundle current before the handshake starts
                             val s = KslQuicCrypto.newSession(configs[(w * 7 + i) % configs.size]) as KslQuicTlsSession
-                            val got = order.getValue(s.context.trustSnapshot!!)
-                            check(got >= atLeast) { "a session built after reload $atLeast got the bundle of reload $got" }
+                            val atMost = order.getValue(ca.current)
+                            val got = s.context.trustSnapshot!!.derKey
+                            check((atLeast..atMost).any { contents[it] == got }) {
+                                "a session built between reloads $atLeast and $atMost got another bundle"
+                            }
                             seen += s.context
                             built.incrementAndGet()
                             open += s
@@ -198,6 +205,7 @@ class SharedServerContextStressJvmTest {
                                 r.reload(if (done % 4 == 0) identityB() else identityA())
                             } else {
                                 val next = TrustConfig.AnchoredCa(bundles[(done / 2 + 1) % bundles.size].roots)
+                                contents += next.derKey
                                 order[next] = done / 2 + 1
                                 ca.reload(next)
                             }
@@ -219,13 +227,13 @@ class SharedServerContextStressJvmTest {
         }
         assertEquals(emptyList(), failures.toList(), "no failure while the identity is open")
         assertEquals(120, reloads.get(), "all 120 reloads ran while the workers built sessions")
-        assertTrue(seen.map { it.trustSnapshot }.toSet().size > bundles.size, "the bundles of many reloads got contexts")
+        assertEquals(bundles.size, seen.map { it.trustSnapshot!!.derKey }.toSet().size, "every bundle's certificates got contexts")
         // registry retention: with the reloads over, one handshake per configuration under the current bundle leaves the
         // current identity's registry holding contexts of the current bundle only
         configs.forEach { (KslQuicCrypto.newSession(it) as KslQuicTlsSession).also { s -> seen += s.context }.close() }
         val kept = r.current.serverContexts.contextsForTest()
         assertTrue(kept.isNotEmpty())
-        assertEquals(emptyList(), kept.filter { it.trustSnapshot !== ca.current }, "no context of a replaced bundle is kept")
+        assertEquals(emptyList(), kept.filter { !sameBundle(it.trustSnapshot, ca.current) }, "no context of a replaced bundle is kept")
         r.close()
         assertEquals(emptyList(), seen.filter { !it.isFreed }, "every context is freed once its sessions and the identity are closed")
         val after = Ksl.liveObjects()

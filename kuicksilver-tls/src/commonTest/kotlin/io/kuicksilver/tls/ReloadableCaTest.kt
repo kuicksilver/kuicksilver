@@ -205,12 +205,13 @@ class ReloadableCaTest {
         forwarders: CoroutineScope,
         client: TlsConfig,
         server: TlsConfig,
+        cache: SessionCache = SessionCache(),
         between: () -> Unit,
     ): Pair<Result<TlsConnection>, Result<TlsConnection>> {
         val pair = GatedPair(forwarders)
         val sd = async { runCatching { TlsConnection.server(pair.serverIn, pair.serverOut, server) } }
         val cd =
-            async { runCatching { TlsConnection.client(pair.clientIn, pair.clientOut, client, EmptyCoroutineContext, SessionCache()) } }
+            async { runCatching { TlsConnection.client(pair.clientIn, pair.clientOut, client, EmptyCoroutineContext, cache) } }
         withTimeout(20.seconds) { pair.serverFlight.await() }
         between()
         pair.gate.complete(Unit)
@@ -245,6 +246,130 @@ class ReloadableCaTest {
             } finally {
                 fwd.cancel()
             }
+        }
+
+    /** Runs [block] with a scope for the gated transports' forwarders, cancelled afterwards. */
+    private fun withForwarders(block: suspend CoroutineScope.(CoroutineScope) -> Unit): Unit =
+        runBlocking(Dispatchers.Default) {
+            val fwd = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                block(fwd)
+            } finally {
+                fwd.cancel()
+            }
+        }
+
+    private fun crossClient() =
+        TcpFixtures.client {
+            identity =
+                TlsIdentity.fromDer(
+                    listOf(RecheckCerts.clientViaCross, RecheckCerts.intermediateByX),
+                    RecheckCerts.clientViaCrossKey.copyOf(),
+                )
+        }
+
+    private val rootX = TrustConfig.AnchoredCa(listOf(Certificate(RecheckCerts.rootX)))
+    private val crossSignedByY = TrustConfig.AnchoredCa(listOf(Certificate(RecheckCerts.intermediateByY)))
+
+    /**
+     * The recheck applies OpenSSL's security level as a handshake does: a bundle reloaded to a 1024-bit RSA root (below
+     * level 2) does not let in a client whose ClientHello came before the reload, as it would not a fresh one.
+     */
+    @Test fun negative_recheckRefusesAnAnchorBelowTheSecurityLevel(): Unit =
+        withForwarders { fwd ->
+            val leaf = Certificate(RecheckCerts.clientUnderWeakRoot)
+            val r = TrustConfig.reloadable(TrustConfig.AnchoredCa(listOf(leaf))) // the leaf itself as the anchor: passes at level 2
+            val server = server(r)
+            val client =
+                TcpFixtures.client {
+                    identity = TlsIdentity.fromDer(listOf(RecheckCerts.clientUnderWeakRoot), RecheckCerts.clientUnderWeakRootKey.copyOf())
+                }
+            val weak = TrustConfig.AnchoredCa(listOf(Certificate(RecheckCerts.weakRoot)))
+            val (c0, s0) = gated(fwd, client, server) {}
+            assertEquals(leaf, s0.getOrThrow().peerCertificates[0], "control: anchored at the leaf")
+            c0.getOrThrow().close()
+            s0.getOrThrow().close()
+            val (c1, s1) = gated(fwd, client, server) { r.reload(weak) }
+            assertIs<VerifyReason.WeakKey>(assertIs<TlsException.Verify>(s1.exceptionOrNull()).reason, "the recheck: CA key too small")
+            c1.getOrNull()?.close()
+            assertIs<VerifyReason.WeakKey>(refused(client, server), "a fresh handshake under the weak bundle is refused alike")
+        }
+
+    /**
+     * Pins over a ReloadableCa are checked on the path built under the new bundle: a client whose intermediate is signed by
+     * the pinned root X passes under {X}; a reload to the same intermediate cross-signed by Y (an unpinned CA, trusted as an
+     * anchor) gives a path without X, and the client is refused with PinMismatch although its chain verifies.
+     */
+    @Test fun negative_recheckChecksCaPinsOnTheNewPath(): Unit =
+        withForwarders { fwd ->
+            val r = TrustConfig.reloadable(rootX)
+            val pins = TrustConfig.Pinned(setOf(Certificate(RecheckCerts.rootX).spkiSha256), PinScope.AnyInValidatedChain, base = r)
+            val server = server(pins)
+            val (c0, s0) = gated(fwd, crossClient(), server) {}
+            assertEquals(Certificate(RecheckCerts.clientViaCross), s0.getOrThrow().peerCertificates[0], "control: the path through X")
+            c0.getOrThrow().close()
+            s0.getOrThrow().close()
+            val (c1, s1) = gated(fwd, crossClient(), server) { r.reload(crossSignedByY) }
+            assertIs<VerifyReason.PinMismatch>(assertIs<TlsException.Verify>(s1.exceptionOrNull()).reason, "the new path has no pin")
+            c1.getOrNull()?.close()
+            assertIs<VerifyReason.PinMismatch>(refused(crossClient(), server), "as a fresh handshake under the new bundle")
+        }
+
+    /**
+     * A reload to a bundle with the same certificates changes nothing, also for a resumed handshake running across it (which
+     * holds only the client's leaf, so a recheck through an intermediate could not pass). Its counterpart, documented: a
+     * resumption across a reload that changed the certificates fails unless the leaf chains to the new bundle on its own.
+     */
+    @Test fun reloadWithTheSameCertificatesLeavesHandshakesAlone(): Unit =
+        withForwarders { fwd ->
+            val r = TrustConfig.reloadable(rootX)
+            val server = server(r)
+            val cache = SessionCache()
+            val (c0, s0) = gated(fwd, crossClient(), server, cache) {}
+            exchange(c0.getOrThrow(), s0.getOrThrow()) // the tickets arrive before the data
+            c0.getOrThrow().close()
+            s0.getOrThrow().close()
+            val (c1, s1) =
+                gated(
+                    fwd,
+                    crossClient(),
+                    server,
+                    cache,
+                ) { r.reload(TrustConfig.AnchoredCa(listOf(Certificate(RecheckCerts.rootX)))) }
+            assertTrue(s1.getOrThrow().sessionReused, "resumed across a reload to the same certificates")
+            exchange(c1.getOrThrow(), s1.getOrThrow())
+            c1.getOrThrow().close()
+            s1.getOrThrow().close()
+            val ctxBefore = r.current
+            val (c2, s2) = gated(fwd, crossClient(), server, cache) {}
+            assertTrue(s2.getOrThrow().sessionReused, "the tickets stayed valid")
+            assertTrue(sameBundle(ctxBefore, s2.getOrThrow().contextForTest.trustSnapshot), "and the shared context too")
+            exchange(c2.getOrThrow(), s2.getOrThrow())
+            c2.getOrThrow().close()
+            s2.getOrThrow().close()
+            val (c3, s3) =
+                gated(fwd, crossClient(), server, cache) {
+                    r.reload(TrustConfig.AnchoredCa(listOf(Certificate(RecheckCerts.rootX), Certificate(TestCerts.otherCa))))
+                }
+            assertTrue(s3.isFailure, "documented fail-closed case: a resumption with an intermediate across a changed bundle")
+            c3.getOrNull()?.close()
+        }
+
+    /** The recheck of a connection under an SNI override builds its context unshared: the identity's registry stays empty. */
+    @Test fun recheckUnderAnSniOverrideRegistersNothing(): Unit =
+        withForwarders { fwd ->
+            val r = TrustConfig.reloadable(testCa)
+            val overrideIdentity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+            val server =
+                TcpFixtures.server {
+                    sniSelector = { ServerTlsOverride(overrideIdentity, clientAuth = ClientAuth.Required, trust = r) }
+                }
+            val (c, s) = gated(fwd, clientA(), server) { r.reload(both) }
+            assertEquals(Certificate(TestCerts.client), s.getOrThrow().peerCertificates[0], "the client's CA stays: accepted")
+            c.getOrThrow().close()
+            s.getOrThrow().close()
+            assertEquals(emptyList(), overrideIdentity.serverContexts.contextsForTest(), "nothing registered under the override identity")
+            overrideIdentity.close()
         }
 
     /** The same over QUIC: the server's flight is out (the ClientHello was processed) when the bundle is reloaded. */

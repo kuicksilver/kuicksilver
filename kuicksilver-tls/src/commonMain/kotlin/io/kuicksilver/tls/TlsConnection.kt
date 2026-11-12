@@ -356,7 +356,9 @@ public class TlsConnection private constructor(
                 val r = Verification(effective).pinCheck(validated())
                 if (r is VerifyResult.Rejected) abort(TlsException.Verify(r.reason, presented))
             }
-            // a ReloadableCa reloaded since the ClientHello: the certificate must pass the bundle current now (no tickets yet)
+            // a ReloadableCa reloaded since the ClientHello: the certificate must pass the bundle current now. Tickets OpenSSL
+            // already sent in the handshake (not with pinned clients) are bound to the old bundle's session context, so they
+            // resume nothing once it is replaced
             if (!anonymous) (overrideCtx?.ctx ?: ctx).recheckClientChain(presented)?.let { abort(TlsException.Verify(it, presented)) }
             // explicit tickets: after the pin verdict (never before), six after a full handshake as KslContext's count for the other
             // servers (RFC 9846 appendix C.4), and one after a resumption (client tickets are single-use). TLS 1.3 only: OpenSSL
