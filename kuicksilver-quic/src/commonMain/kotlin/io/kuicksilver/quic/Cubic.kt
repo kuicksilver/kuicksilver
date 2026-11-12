@@ -69,7 +69,7 @@ public class Cubic(
 
     /**
      * RFC 9406 section 4.3: "An implementation SHOULD use HyStart++ only for the initial slow start (when the ssthresh is at its
-     * initial value of arbitrarily high per [RFC5681]) and fall back to using standard slow start for the remainder of the
+     * initial value of arbitrarily high per RFC 5681) and fall back to using standard slow start for the remainder of the
      * connection lifetime." Every congestion event sets a finite ssthresh, so the slow start after persistent congestion is
      * plain slow start. The MAY of the same section (HyStart++ for the restart window after a long idle period) is not taken:
      * this controller keeps its window across idle periods.
