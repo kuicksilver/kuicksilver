@@ -347,7 +347,8 @@ internal fun httpsRecordsOf(
                             0,
                             it.rdata.size,
                             it.owner.trimEnd('.').lowercase(),
-                            it.ttlSeconds.coerceIn(0, Int.MAX_VALUE.toLong()),
+                            // RFC 2181 section 8: a TTL with the top bit set is 0, as in a message (DnsMessage.read)
+                            it.ttlSeconds.let { t -> if (t !in 0..Int.MAX_VALUE.toLong()) 0L else t },
                         )
                     }.let { DnsAnswer(it) } // no SOA reaches us this way: "none" is not cached (RFC 2308 section 5)
             }
