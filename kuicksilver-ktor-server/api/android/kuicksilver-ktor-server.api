@@ -175,12 +175,12 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun setSniSelector (Lkotlin/jvm/functions/Function2;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
 	public final fun setTrustedGateway (Z)V
+	public final fun setVersions (Lio/kuicksilver/tls/TlsVersions;)V
 }
 
 public final class io/kuicksilver/ktor/server/NeverIndexedKt {
 	public static final fun getNeverIndexedHeaders (Lio/ktor/server/request/ApplicationRequest;)Ljava/util/List;
 	public static final fun neverIndex (Lio/ktor/server/response/ApplicationResponse;[Ljava/lang/String;)V
-	public final fun setVersions (Lio/kuicksilver/tls/TlsVersions;)V
 }
 
 public final class io/kuicksilver/ktor/server/PeerCertificatesKt {
