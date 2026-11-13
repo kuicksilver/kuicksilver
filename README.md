@@ -260,7 +260,8 @@ defines every one of them, with a protocol of its own and datagrams. Datagrams, 
 | `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 (and opt-in HTTP/2) over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](docs/guide/ktor.md) |
 
 Each module depends only on the layer directly below it (ADR-0005). `kuicksilver-testing` (network simulator and
-in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repository but are not published.
+in-memory UDP), `kuicksilver-bench`, `kuicksilver-interop` and `kuicksilver-engine-interop` live in this repository but
+are not published.
 
 ## Platforms
 

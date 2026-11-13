@@ -19,6 +19,8 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.ipLiteral
+import io.kuicksilver.quic.sameIpAs
 import io.kuicksilver.tls.QuicCrypto
 import io.kuicksilver.tls.TlsConfig
 import kotlinx.coroutines.runBlocking
@@ -139,8 +141,9 @@ public class Simulator(
         port: Int? = null,
         host: String? = null,
     ) {
+        // the literal: `hostname` is a reverse DNS lookup on the JVM and Android, and the new address would carry its name
         clientAddress =
-            InetSocketAddress(host ?: clientAddress.hostname, port ?: clientAddress.port)
+            InetSocketAddress(host ?: clientAddress.ipLiteral(), port ?: clientAddress.port)
     }
 
     /** Adds a client path with its own local address and link impairments; returns its index (the first path is 0). Traffic moves there only when the core switches paths. */
@@ -309,7 +312,8 @@ public class Simulator(
             for (i in 0 until n) {
                 val bytes = batch.buffer(i).toByteArray(batch.length(i))
                 // a client datagram to the server's preferred address takes that address's link
-                (if (preferred != null && batch.address(i) == preferred) c2sPreferred else link).send(bytes, batch.ecn(i), now)
+                val toPreferred = preferred?.let { p -> batch.address(i)?.sameIpAs(p) } == true
+                (if (toPreferred) c2sPreferred else link).send(bytes, batch.ecn(i), now)
             }
         }
         batch.clear()
@@ -328,7 +332,7 @@ public class Simulator(
             for (i in 0 until n) {
                 val bytes = batch.buffer(i).toByteArray(batch.length(i))
                 if (batch.path(i) == preferredSocket) {
-                    if (batch.address(i) == clientAddress) s2cPreferred.send(bytes, batch.ecn(i), now) else misrouted++
+                    if (batch.address(i)!!.sameIpAs(clientAddress)) s2cPreferred.send(bytes, batch.ecn(i), now) else misrouted++
                 } else {
                     routeToClient(bytes, batch.ecn(i), batch.address(i)!!)
                 }
@@ -344,12 +348,12 @@ public class Simulator(
         ecn: Ecn,
         to: InetSocketAddress,
     ) {
-        if (to == clientAddress) {
+        if (to.sameIpAs(clientAddress)) {
             s2c.send(bytes, ecn, now)
             return
         }
         for (p in extraPaths) {
-            if (p.local == to) {
+            if (p.local.sameIpAs(to)) {
                 p.s2c.send(bytes, ecn, now)
                 return
             }

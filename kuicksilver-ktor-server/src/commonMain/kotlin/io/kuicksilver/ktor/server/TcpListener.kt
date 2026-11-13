@@ -18,7 +18,6 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.engine.handleFailure
 import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.response.respond
-import io.ktor.util.network.NetworkAddress
 import io.ktor.util.pipeline.PipelinePhase
 import io.ktor.util.pipeline.execute
 import io.ktor.utils.io.ByteWriteChannel
@@ -31,7 +30,9 @@ import io.kuicksilver.ktor.network.bytesSent
 import io.kuicksilver.ktor.network.engineSelector
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.network.setCloseTimeout
+import io.kuicksilver.ktor.network.stopAwaitingPeerCloseOn
 import io.kuicksilver.ktor.network.tlsServer
+import io.kuicksilver.ktor.server.h1.H1Address
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
 import io.kuicksilver.ktor.server.h1.H1RequestScope
@@ -40,6 +41,7 @@ import io.kuicksilver.ktor.server.h1.requestEndsConnection
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
 import io.kuicksilver.ktor.server.h1.splitAbsoluteForm
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
@@ -334,6 +336,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             return@launchOrElse
                                         } // a failed handshake ends only this connection
                                     t.setCloseTimeout(null)
+                                    // a stopping server sends its close_notify and closes without waiting up to 3 s for each
+                                    // client's (RFC 8446 section 6.1): a pooled idle HTTP/1.1 client never answers
+                                    t.stopAwaitingPeerCloseOn(draining)
                                     sock = t
                                     peer = t.peerCertificates
                                     own = t.localCertificates
@@ -369,8 +374,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         H1Connection(
                                             sock.openDeliveringReadChannel(),
                                             sock.openWriteChannel(),
-                                            sock.remoteAddress.toNetworkAddress(),
-                                            sock.localAddress.toNetworkAddress(),
+                                            sock.remoteAddress.toH1Address(),
+                                            sock.localAddress.toH1Address(),
                                         )
                                     startH1Pipeline(
                                         connection,
@@ -566,7 +571,13 @@ private fun addHandlerForExpectedHeader(call: H1Call) {
     }
 }
 
-private fun SocketAddress.toNetworkAddress(): NetworkAddress? = (this as? InetSocketAddress)?.let { NetworkAddress(it.hostname, it.port) }
+// the IP literal, as over HTTP/2 and HTTP/3: `hostname` is a reverse DNS lookup on the JVM and Android (per connection, on
+// the accept path); Ktor's Netty and CIO engines report the literal as remoteAddress too. Not a NetworkAddress ([H1Address])
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+private fun SocketAddress.toH1Address(): H1Address? =
+    (this as? InetSocketAddress)?.let {
+        H1Address(it.ipLiteral(), it.port)
+    }
 
 /** The pause after the first of consecutive failed accepts; it doubles per failure up to [ACCEPT_BACKOFF_MAX]. */
 internal val ACCEPT_BACKOFF_MIN: Duration = 5.milliseconds

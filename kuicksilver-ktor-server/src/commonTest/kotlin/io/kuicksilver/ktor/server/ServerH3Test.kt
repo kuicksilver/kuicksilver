@@ -960,6 +960,47 @@ class ServerH3Test {
         }
 
     /**
+     * Without `:authority` (allowed for a scheme without a mandatory authority, RFC 9114 section 4.3.1) `serverHost` is the
+     * local address as an authority writes it: an IPv6 literal in brackets (RFC 3986 section 3.2.2).
+     */
+    @Test fun serverHostWithoutAuthorityIsBracketedIpv6() =
+        h3ServerTest {
+            val started =
+                runCatching {
+                    tlsServer(connector = { host = "::1" }) {
+                        routing {
+                            get("/") {
+                                val l = call.request.local
+                                call.respondText("${l.serverHost}|${l.localHost}|${l.remoteHost}")
+                            }
+                        }
+                    }
+                }
+            val (server, port) =
+                started.getOrElse {
+                    println("serverHostWithoutAuthorityIsBracketedIpv6 skipped: needs an IPv6 loopback ($it)")
+                    return@h3ServerTest
+                }
+            try {
+                val ep = Http3Endpoint.bind(InetSocketAddress("::1", 0))
+                try {
+                    val c = ep.connect(InetSocketAddress("::1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                    try {
+                        val r = c.request(http3Request("GET", null, "/") { scheme = "foo" })
+                        assertEquals(200, r.status)
+                        assertEquals("[::1]|::1|::1", r.body.readFullBody().decodeToString())
+                    } finally {
+                        c.close()
+                    }
+                } finally {
+                    ep.close()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
      * `call.request.local.scheme` is the request's `:scheme`, and `serverPort` without a port in `:authority` is that
      * scheme's default port: an `http` request over HTTP/3 (RFC 9114 section 3.1.2, a gateway or an origin that is
      * authoritative for it) was reported as `https` on port 443.

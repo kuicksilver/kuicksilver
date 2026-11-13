@@ -471,6 +471,10 @@ jobs:
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G --continue $KSL_JVM_TESTS
+      - name: 'jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)'
+        # Kuicksilver's client and server engines against Ktor's Netty and CIO engines, OkHttp, the JDK's HttpClient and
+        # Netty's HTTP/2 and HTTP/3 codecs, in one JVM over loopback (docs/spec/interop.md, "Engine interop")
+        run: $G :kuicksilver-engine-interop:jvmTest
       - name: 'sample: realtime-telemetry'
         run: cd samples/realtime-telemetry && ../../gradlew --stacktrace jvmTest
       - name: 'fuzz: regression corpus'

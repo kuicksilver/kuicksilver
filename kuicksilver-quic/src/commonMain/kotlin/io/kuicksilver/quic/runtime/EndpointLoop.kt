@@ -489,14 +489,7 @@ internal class EndpointLoop private constructor(
      * InetSocketAddress compares strings, the loop compares addresses by bytes, and `hostname` would do a reverse DNS lookup (see
      * [ipLiteral]).
      */
-    private fun resolveOnce(remote: InetSocketAddress): InetSocketAddress =
-        if (remote.resolveAddress() ==
-            null
-        ) {
-            remote
-        } else {
-            remote.withLiteralHost()
-        }
+    private fun resolveOnce(remote: InetSocketAddress): InetSocketAddress = remote.withLiteralHost()
 
     private suspend fun connectResolved(
         remote: InetSocketAddress,

@@ -186,14 +186,15 @@ internal class RawH2Client private constructor(
     companion object {
         val PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".encodeToByteArray()
 
-        /** Connects to 127.0.0.1:[port] over TLS offering [alpn]. */
+        /** Connects to [host]:[port] (127.0.0.1 by default) over TLS offering [alpn]. */
         suspend fun connect(
             port: Int,
             alpn: List<String> = listOf("h2"),
+            host: String = "127.0.0.1",
         ): RawH2Client {
             val selector = SelectorManager(Dispatchers.Default)
             try {
-                val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                val tcp = connectTcp(selector, InetSocketAddress(host, port))
                 val t: TlsSocket = tcp.tls(ServerFixtures.clientTls(alpn = alpn))
                 return RawH2Client(selector, t, t.openReadChannel(), t.openWriteChannel(), t.negotiatedAlpn)
             } catch (e: Throwable) {
@@ -264,6 +265,7 @@ internal class RawH2Client private constructor(
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal suspend fun h2TlsServer(
     configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
+    connector: KuicksilverTlsConnector.Builder.() -> Unit = {},
     log: CapturedLog? = null,
     module: io.ktor.server.application.Application.() -> Unit,
 ): Pair<Server, Int> =
@@ -273,6 +275,7 @@ internal suspend fun h2TlsServer(
             http3 = false
             configure()
         },
+        connector = connector,
         log = log,
         module = module,
     )

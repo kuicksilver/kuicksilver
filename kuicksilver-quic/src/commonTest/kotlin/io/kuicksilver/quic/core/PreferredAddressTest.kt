@@ -3,6 +3,7 @@
 package io.kuicksilver.quic.core
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.util.PlatformUtils
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
@@ -17,6 +18,8 @@ import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.PreferredAddress
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.endpoint.EndpointPair
+import io.kuicksilver.quic.ipBytesNoDns
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlin.test.BeforeTest
@@ -60,7 +63,7 @@ class PreferredAddressTest {
             )
             assertTrue(!early, "no PATH_CHALLENGE to the preferred address before the handshake is confirmed")
             assertTrue(!nonProbingEarly, "the active path moved before the preferred one was validated")
-            assertTrue(c.remoteAddressForTest.let { it.port == 4433 && it.hostname == "10.0.0.3" }, "${c.remoteAddressForTest}")
+            assertTrue(c.remoteAddressForTest.let { it.port == 4433 && it.ipLiteral() == "10.0.0.3" }, "${c.remoteAddressForTest}")
             assertEquals(c.peerTp!!.preferredAddressCid, c.remoteCid, "the preferred path uses the sequence-1 ID")
             assertTrue(p.runUntil(5.seconds) { 0L !in c.cids.peerSeqsForTest() }, "sequence 0 retired: ${c.cids.peerSeqsForTest()}")
             assertEquals(1, c.pathCountForTest, "the original path is closed")
@@ -137,6 +140,41 @@ class PreferredAddressTest {
                 p.close()
             }
         }
+    }
+
+    /**
+     * An address of the wrong family is refused naming its literal: read through `hostname` it was a reverse DNS lookup on
+     * the JVM and Android (::1 and 127.0.0.1 read "localhost"). The loopback has a name on every usual host, so the old
+     * code fails here; the fixed one passes whatever the host's resolver says.
+     */
+    @Test fun negative_wrongFamilyNamesTheLiteral() {
+        val v6 = assertFailsWith<IllegalArgumentException> { PreferredAddress(InetSocketAddress("::1", 4433), null) }
+        assertEquals("ipv4 is not an IPv4 literal: ::1", v6.message)
+        val v4 = assertFailsWith<IllegalArgumentException> { PreferredAddress(null, InetSocketAddress("127.0.0.1", 4433)) }
+        assertEquals("ipv6 is not an IPv6 literal: 127.0.0.1", v4.message)
+    }
+
+    /**
+     * A host name is refused naming that name, on every platform, and never looked up for the message: on Kotlin/Native
+     * the literal was built with `resolveAddress()`, a `getaddrinfo` call that failed for a name that does not resolve.
+     * On the JVM and Android java.net resolves a name when the address is built (a real DNS query), so this test does not
+     * run there: `PreferredAddressJvmTest` builds an unresolved address instead. Where a Kotlin/Native resolver still made
+     * the name an address, the test says so and stops.
+     */
+    @Test fun negative_nameIsRefusedByItsName() {
+        if (PlatformUtils.IS_JVM) {
+            println("negative_nameIsRefusedByItsName skipped on the JVM: PreferredAddressJvmTest covers it without a lookup")
+            return
+        }
+        val name = InetSocketAddress("preferred.invalid", 4433)
+        if (name.ipBytesNoDns() != null) {
+            println("negative_nameIsRefusedByItsName skipped: this host's resolver answers for preferred.invalid")
+            return
+        }
+        val v4 = assertFailsWith<IllegalArgumentException> { PreferredAddress(name, null) }
+        assertEquals("ipv4 is not an IPv4 literal: preferred.invalid", v4.message)
+        val v6 = assertFailsWith<IllegalArgumentException> { PreferredAddress(null, name) }
+        assertEquals("ipv6 is not an IPv6 literal: preferred.invalid", v6.message)
     }
 
     @Test fun negative_preferredAddressUnspecifiedOrMulticastIgnored() {

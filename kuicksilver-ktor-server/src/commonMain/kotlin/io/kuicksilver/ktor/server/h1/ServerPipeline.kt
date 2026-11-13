@@ -24,7 +24,6 @@ import io.ktor.server.plugins.BadRequestException
 import io.ktor.util.cio.ChannelReadException
 import io.ktor.util.date.GMTDate
 import io.ktor.util.date.getTimeMillis
-import io.ktor.util.network.NetworkAddress
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
@@ -72,12 +71,23 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
+/**
+ * An end of an HTTP/1.1 connection as its connection point reports it: the IP literal (`ipLiteral()`: RFC 5952 text, an
+ * IPv6 zone ID kept, never a name lookup) and the port. Not Ktor's `NetworkAddress`: on the JVM and Android that is a
+ * `java.net.InetSocketAddress`, whose `hostname` is a reverse DNS lookup and whose `address` writes `::1` as
+ * `0:0:0:0:0:0:0:1`; on Kotlin/Native building one calls `getaddrinfo`.
+ */
+internal class H1Address(
+    val host: String,
+    val port: Int,
+)
+
 /** One accepted (TLS) TCP connection: its plaintext channels and addresses. */
 internal class H1Connection(
     val input: ByteReadChannel,
     val output: ByteWriteChannel,
-    val remoteAddress: NetworkAddress?,
-    val localAddress: NetworkAddress?,
+    val remoteAddress: H1Address?,
+    val localAddress: H1Address?,
 ) {
     /**
      * Set when the pipeline ended because the client took nothing of a response for the send-stall deadline: its close
@@ -95,8 +105,8 @@ internal class H1RequestScope(
     override val coroutineContext: kotlin.coroutines.CoroutineContext,
     val input: ByteReadChannel,
     val output: ByteWriteChannel,
-    val remoteAddress: NetworkAddress?,
-    val localAddress: NetworkAddress?,
+    val remoteAddress: H1Address?,
+    val localAddress: H1Address?,
     val upgraded: CompletableDeferred<Boolean>?,
     val closing: () -> Boolean = { false },
     /**

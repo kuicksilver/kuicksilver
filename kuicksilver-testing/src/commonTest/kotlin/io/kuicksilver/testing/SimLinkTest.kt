@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.TlsIdentity
 import kotlin.random.Random
 import kotlin.test.BeforeTest
@@ -81,9 +82,25 @@ class SimLinkTest {
             assertEquals(40000, sim.lastClientSourceSeenByServer!!.port)
             sim.rebindClient(port = 40001)
             assertEquals(40001, sim.clientAddress.port)
+            assertEquals("10.0.0.1", sim.clientAddress.ipLiteral(), "the same host")
             val r = SimScenario.transfer(sim, 64 shl 10, connection = conn) // traffic after the rebind
             assertTrue(r.finished, "${r.violations}")
             assertEquals(40001, sim.lastClientSourceSeenByServer!!.port, "the server now sees the new source port")
+        }
+    }
+
+    /**
+     * A port-only rebind keeps the client's literal: built from `hostname`, the new address took the name of a reverse DNS
+     * lookup on the JVM and Android (127.0.0.1 became "localhost/127.0.0.1"). The loopback has a name on every usual host,
+     * so the old code fails here; the fixed one passes whatever the host's resolver says.
+     */
+    @Test fun rebindKeepsTheLiteral() {
+        Simulator(seed = 13, LinkParams()).use { sim ->
+            sim.clientAddress = InetSocketAddress("127.0.0.1", 40000)
+            sim.rebindClient(port = 40001)
+            assertEquals(40001, sim.clientAddress.port)
+            assertEquals("127.0.0.1", sim.clientAddress.ipLiteral())
+            assertEquals(InetSocketAddress("127.0.0.1", 40001).toString(), sim.clientAddress.toString())
         }
     }
 

@@ -485,49 +485,10 @@ internal class KslDatagramIo private constructor(
         ): String =
             "${a[off].toInt() and 0xff}.${a[off + 1].toInt() and 0xff}.${a[off + 2].toInt() and 0xff}.${a[off + 3].toInt() and 0xff}"
 
-        /** RFC 5952 text: lower-case hex groups, the longest run of two or more zero groups collapsed to `::`. */
+        /** RFC 5952 text ([ipText]): lower-case hex groups, the longest run of two or more zero groups collapsed to `::`. */
         internal fun ipv6Text(
             a: ByteArray,
             off: Int,
-        ): String {
-            val g = IntArray(8) { ((a[off + 2 * it].toInt() and 0xff) shl 8) or (a[off + 2 * it + 1].toInt() and 0xff) }
-            var bestStart = -1
-            var bestLen = 0
-            var i = 0
-            while (i <
-                8
-            ) {
-                if (g[i] ==
-                    0
-                ) {
-                    var j = i
-                    while (j < 8 &&
-                        g[j] == 0
-                    ) {
-                        j++
-                    }
-                    if (j - i > bestLen && j - i >= 2) {
-                        bestStart = i
-                        bestLen = j - i
-                    }
-                    i = j
-                } else {
-                    i++
-                }
-            }
-            val sb = StringBuilder()
-            i = 0
-            while (i < 8) {
-                if (i == bestStart) {
-                    sb.append("::")
-                    i += bestLen
-                    continue
-                }
-                if (sb.isNotEmpty() && !sb.endsWith(':')) sb.append(':')
-                sb.append(g[i].toString(16))
-                i++
-            }
-            return sb.toString()
-        }
+        ): String = ipText(a, off, 16)
     }
 }

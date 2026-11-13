@@ -124,3 +124,12 @@ private fun parseIpv4(s: String): ByteArray? {
     }
     return out
 }
+
+/**
+ * A connection's IP literal as the host of a URI (`serverHost` without a Host field or `:authority`): an IPv6 address in
+ * brackets (RFC 3986 section 3.2.2 `IP-literal`, the `uri-host` of RFC 9110 section 7.2) without its zone ID, which that
+ * syntax has no place for (RFC 9844 obsoleted RFC 6874, which had added one, and reverted RFC 3986 to it); an IPv4 address
+ * or a name as it is. The zone stays in `localHost` and `localAddress`.
+ */
+internal fun uriHost(literal: String): String =
+    if (':' in literal && !literal.startsWith("[")) "[" + literal.substringBefore('%') + "]" else literal

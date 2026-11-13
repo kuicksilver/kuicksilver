@@ -17,6 +17,8 @@ val allowed = mapOf(
     "kuicksilver-ktor-server" to setOf("kuicksilver-http3", "kuicksilver-http2", "kuicksilver-ktor-network"),
     "kuicksilver-ktor-client" to setOf("kuicksilver-http3", "kuicksilver-http2", "kuicksilver-ktor-network"),
     "kuicksilver-soak" to setOf("kuicksilver-ktor-client", "kuicksilver-ktor-server"),   // the soak harness drives the whole stack (not published)
+    // the cross-engine interop bench (not published): test sources only, which the rule does not cover; no main dependencies
+    "kuicksilver-engine-interop" to emptySet(),
 )
 val checkLayerDependencies = tasks.register("checkLayerDependencies") {
     group = "verification"

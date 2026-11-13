@@ -12,6 +12,7 @@ import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.quicClientConfig
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.quicEndpointConfig
@@ -226,10 +227,104 @@ class MemoryNetworkTest {
         try {
             assertTrue(a.localAddress.port != 0, "port 0 binds an ephemeral port: ${a.localAddress}")
             assertTrue(a.localAddress.port != b.localAddress.port, "two sockets, two ports")
-            assertEquals("10.0.0.5", a.localAddress.hostname)
+            // the bytes: `hostname` is a reverse lookup on the JVM and Android
+            assertEquals("10.0.0.5", a.localAddress.ipLiteral())
         } finally {
             a.close()
             b.close()
+        }
+    }
+
+    /**
+     * The ephemeral address keeps the literal the socket was opened with: built from `hostname`, it took the name of a
+     * reverse DNS lookup on the JVM and Android (127.0.0.1 became "localhost/127.0.0.1", and a CI host named 10.0.0.5
+     * `ip-10-0-0-5.<region>.compute.internal`), a lookup per bind. The loopback has a name on every usual host, so the old
+     * code fails here; the fixed one passes whatever the host's resolver says.
+     */
+    @Test fun ephemeralPortKeepsTheLiteral() {
+        val net = MemoryNetwork()
+        val a = net.open(InetSocketAddress("127.0.0.1", 0))
+        try {
+            assertTrue(a.localAddress.port in 49152..65535, "an ephemeral port: ${a.localAddress}")
+            assertEquals("127.0.0.1", a.localAddress.ipLiteral())
+            assertEquals(InetSocketAddress("127.0.0.1", a.localAddress.port).toString(), a.localAddress.toString())
+        } finally {
+            a.close()
+        }
+    }
+
+    /**
+     * An address is its bytes, however its text is written: `::1` and `0:0:0:0:0:0:0:1` are one socket on every platform
+     * (Kotlin/Native's InetSocketAddress compares the text it was made with), for binding, delivery and [MemoryNetwork.cut].
+     */
+    @Test fun ipv6SpellingsAreOneAddress() {
+        val net = MemoryNetwork()
+        val rx = net.open(InetSocketAddress("2001:db8::1", 443))
+        val tx = net.open(InetSocketAddress("2001:db8::2", 0))
+        val batch = PacketBatch(1)
+        try {
+            assertEquals("2001:db8::2", tx.localAddress.ipLiteral())
+            assertFailsWith<IllegalStateException> { net.open(InetSocketAddress("2001:DB8:0:0:0:0:0:1", 443)) }
+            batch.buffer(0).copyFrom(ByteArray(10) { 7 }, 0, 0, 10)
+            batch.setLength(0, 10)
+            batch.setAddress(0, InetSocketAddress("2001:db8:0:0:0:0:0:1", 443))
+            assertEquals(1, tx.trySend(batch))
+            assertEquals(0L, net.dropped, "delivered to the socket at 2001:db8::1")
+            net.cut(InetSocketAddress("2001:0db8::1", 443))
+            assertEquals(1, tx.trySend(batch))
+            assertEquals(1L, net.dropped, "the cut address, in another spelling")
+        } finally {
+            batch.close()
+            rx.close()
+            tx.close()
+        }
+    }
+
+    /**
+     * `fe80::1%1` and `fe80::1%2` are two addresses (RFC 4007 section 6: one per zone), though java.net's equality leaves
+     * the zone out: each binds its own socket, a datagram reaches the one of its zone, and cut and restore act on one zone.
+     */
+    @Test fun ipv6ZonesAreDistinctAddresses() {
+        val z1 = InetSocketAddress("fe80::1%1", 443)
+        val z2 = InetSocketAddress("fe80::1%2", 443)
+        if ('%' !in z1.ipLiteral() || '%' !in z2.ipLiteral()) {
+            println("ipv6ZonesAreDistinctAddresses skipped: scoped addresses cannot be built here (${z1.ipLiteral()})")
+            return
+        }
+        val net = MemoryNetwork()
+        val a = net.open(z1)
+        val b = net.open(z2)
+        val tx = net.open(InetSocketAddress("fe80::9%1", 5000))
+        val batch = PacketBatch(1)
+
+        fun send(to: InetSocketAddress) {
+            batch.buffer(0).copyFrom(ByteArray(10) { 7 }, 0, 0, 10)
+            batch.setLength(0, 10)
+            batch.setAddress(0, to)
+            assertEquals(1, tx.trySend(batch))
+        }
+        try {
+            assertFailsWith<IllegalStateException> { net.open(InetSocketAddress("fe80:0:0:0:0:0:0:1%2", 443)) }
+            send(z2)
+            send(z1)
+            assertEquals(0L, net.dropped, "each zone has its socket")
+            net.cut(z1)
+            send(z2)
+            assertEquals(0L, net.dropped, "the other zone is not cut")
+            send(z1)
+            assertEquals(1L, net.dropped, "the cut zone")
+            net.restore(z1)
+            send(z1)
+            assertEquals(1L, net.dropped, "restored")
+            b.close()
+            send(z2)
+            assertEquals(2L, net.dropped, "no socket in zone 2 now, though zone 1 has one")
+            send(z1)
+            assertEquals(2L, net.dropped)
+        } finally {
+            batch.close()
+            a.close()
+            tx.close()
         }
     }
 

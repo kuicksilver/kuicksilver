@@ -167,8 +167,13 @@ internal suspend fun h2Exchange(
         release()
         throw IllegalStateException("a call without a Job")
     }
-    // in use until the call ends (its body read or abandoned), not just until the response head
-    job.invokeOnCompletion { release() }
+    // in use until the call ends (its body read or abandoned), not just until the response head. A reader still waiting
+    // sees why the call ended (the request timeout, the caller's exception), not the stream's own cancellation, as over
+    // HTTP/1.1 and HTTP/3 (found by the engine interop bench against Ktor's Netty server)
+    job.invokeOnCompletion { cause ->
+        if (cause != null) stream.body.cancel(cause)
+        release()
+    }
     val activity = data.socketTimeoutMillis()?.let { Activity() }
     var bodyStarted = false
     try {

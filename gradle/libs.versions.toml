@@ -42,6 +42,13 @@ jazzer-junit = { module = "com.code-intelligence:jazzer-junit", version.ref = "j
 netty-codec-http2 = { module = "io.netty:netty-codec-http2", version.ref = "netty" }
 # bench-only (kuicksilver-soak's why-QUIC client, tools/bench/why-quic.sh): a TCP client to compare against, never in a published module
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+# test-only: the peers of kuicksilver-engine-interop (not published), Ktor's other engines at the pinned Ktor version; the
+# Netty engine brings Netty 4.2 with its HTTP/3 codec (quiche), only on that test class path
+ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
+ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-java = { module = "io.ktor:ktor-client-java", version.ref = "ktor" }
 # plugin artifacts for build-logic
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }

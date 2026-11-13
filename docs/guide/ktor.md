@@ -217,6 +217,10 @@ server.start(wait = true)
   unset or `TLSv1.3` alone is TLS 1.3 only, `TLSv1.2` with `TLSv1.3` allows TLS 1.2 as well ([TLS 1.2 on the
   server](#tls-12-on-the-server)); anything else (TLS 1.2 alone, TLS 1.0 or 1.1) fails the start with
   `TlsException.Config`. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
+- `call.request.local.remoteAddress` and `remoteHost` (and `localAddress`, `localHost`) are IP literals over HTTP/1.1,
+  HTTP/2 and HTTP/3: the engine makes no reverse DNS lookup for a connection. `remoteAddress` and `localAddress` are
+  literals in Ktor's Netty and CIO engines as well; their `remoteHost` and `localHost` are host names looked up on first
+  use (`InetSocketAddress.getHostName()`), which this engine does not do.
 - `call.request.peerCertificates` is the client certificate chain as the TLS layer validated it (empty without client
   authentication). Ktor has no equivalent. Requiring client certificates, and presenting one from the client:
   [Mutual TLS](#mutual-tls-client-certificates).
@@ -2164,6 +2168,10 @@ and the HTTP/1.1 client sent a streamed request body completely before reading t
 first, then reads the body, deadlocked). On Linux Native the client contract found that a failed HTTP/3 request (a peer
 resetting a WebSocket stream) escaped as an uncaught coroutine exception, which aborts a Kotlin/Native process; each
 request now contains its own failure.
+
+**Other HTTP implementations.** The engine interop bench runs both engines against Ktor's Netty and CIO engines,
+OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs on the JVM; its pairs, scenarios and the peers'
+deviations are in [interop.md](../spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13).
 
 **Other WebSocket peers.** The engines check every frame against the handshake (RFC 6455 sections 5.1 and 5.2, RFC
 7692 section 6.1), stricter than Ktor's own engines:

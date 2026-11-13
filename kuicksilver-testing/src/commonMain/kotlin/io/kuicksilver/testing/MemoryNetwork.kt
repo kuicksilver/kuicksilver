@@ -11,6 +11,8 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.IoCapabilities
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.ipLiteral
+import io.kuicksilver.quic.sameIpAs
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,8 +53,12 @@ public class MemoryNetwork
             require(receiveBuffer >= 1) { "receiveBuffer must be at least 1" }
         }
 
-        private val sockets = AtomicReference<Map<InetSocketAddress, MemorySocket>>(emptyMap())
-        private val cutAddresses = AtomicReference<Set<InetSocketAddress>>(emptySet())
+        // addresses compare by their bytes and zone (find, isCut: sameIpAs): `::1` and `0:0:0:0:0:0:0:1` are one socket on
+        // every platform, though Kotlin/Native's InetSocketAddress compares the text it was made with, and `fe80::1%1` and
+        // `fe80::1%2` are two, though java.net's equality leaves the IPv6 zone out (so a map key holds a list, and the cut
+        // addresses are a list)
+        private val sockets = AtomicReference<Map<InetSocketAddress, List<MemorySocket>>>(emptyMap())
+        private val cutAddresses = AtomicReference<List<InetSocketAddress>>(emptyList())
         private val droppedCount = AtomicLong(0)
         private val nextEphemeral = AtomicLong(EPHEMERAL_FIRST.toLong())
 
@@ -67,25 +73,28 @@ public class MemoryNetwork
          * it. Port 0 binds a free ephemeral port of the same host when [assignEphemeralPorts] is true (the socket's `localAddress`
          * says which).
          */
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
         public fun open(local: InetSocketAddress): DatagramIo {
+            // the host as its literal: `hostname` is a reverse DNS lookup on the JVM and Android (the name, not the literal,
+            // would then name the bound address)
             while (true) {
                 val current = sockets.load()
-                val address = if (local.port == 0 && assignEphemeralPorts) ephemeral(local.hostname, current) else local
-                check(address !in current) { "$address is already bound on this MemoryNetwork" }
+                val address = if (local.port == 0 && assignEphemeralPorts) ephemeral(local.ipLiteral(), current) else local
+                check(find(current, address) == null) { "$address is already bound on this MemoryNetwork" }
                 val socket = MemorySocket(this, address, receiveBuffer)
-                if (sockets.compareAndSet(current, current + (address to socket))) return socket
+                if (sockets.compareAndSet(current, current + (address to (current[address].orEmpty() + socket)))) return socket
             }
         }
 
         /** The next free port of [host] in 49152..65535 (RFC 6335 dynamic ports), wrapping around. */
         private fun ephemeral(
             host: String,
-            bound: Map<InetSocketAddress, MemorySocket>,
+            bound: Map<InetSocketAddress, List<MemorySocket>>,
         ): InetSocketAddress {
             repeat(EPHEMERAL_COUNT) {
                 val port = EPHEMERAL_FIRST + (nextEphemeral.fetchAndIncrement() - EPHEMERAL_FIRST).mod(EPHEMERAL_COUNT.toLong()).toInt()
                 val candidate = InetSocketAddress(host, port)
-                if (candidate !in bound) return candidate
+                if (find(bound, candidate) == null) return candidate
             }
             throw IllegalStateException("no free ephemeral port on $host")
         }
@@ -96,8 +105,9 @@ public class MemoryNetwork
         }
 
         /** Undoes [cut]. */
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
         public fun restore(address: InetSocketAddress) {
-            update(cutAddresses) { it - address }
+            update(cutAddresses) { list -> list.filterNot { it.sameIpAs(address) } }
         }
 
         internal fun deliver(
@@ -106,8 +116,8 @@ public class MemoryNetwork
             bytes: ByteArray,
         ) {
             val cut = cutAddresses.load()
-            val target = sockets.load()[to]
-            if (from in cut || to in cut || bytes.size > mtu || target == null || !target.offer(bytes, from)) countDrop()
+            val target = find(sockets.load(), to)
+            if (isCut(cut, from) || isCut(cut, to) || bytes.size > mtu || target == null || !target.offer(bytes, from)) countDrop()
         }
 
         internal fun countDrop() {
@@ -116,15 +126,34 @@ public class MemoryNetwork
 
         internal fun unbind(socket: MemorySocket) {
             update(sockets) {
-                if (it[socket.localAddress] ===
-                    socket
-                ) {
-                    it - socket.localAddress
-                } else {
-                    it
+                val here = it[socket.localAddress].orEmpty()
+                when {
+                    socket !in here -> it
+                    here.size == 1 -> it - socket.localAddress
+                    else -> it + (socket.localAddress to here.filter { s -> s !== socket })
                 }
             }
         }
+
+        /**
+         * The socket bound at [a]: among the map's own hit first, else among all, each confirmed by [sameIpAs] (bytes and
+         * zone: the map's equality is java.net's on the JVM, which leaves the zone out, and the text on Kotlin/Native).
+         */
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        private fun find(
+            bound: Map<InetSocketAddress, List<MemorySocket>>,
+            a: InetSocketAddress,
+        ): MemorySocket? {
+            bound[a]?.firstOrNull { it.localAddress.sameIpAs(a) }?.let { return it }
+            for (list in bound.values) for (s in list) if (s.localAddress.sameIpAs(a)) return s
+            return null
+        }
+
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        private fun isCut(
+            cut: List<InetSocketAddress>,
+            a: InetSocketAddress,
+        ): Boolean = cut.isNotEmpty() && cut.any { it.sameIpAs(a) }
 
         private companion object {
             const val DEFAULT_RECEIVE_BUFFER = 256

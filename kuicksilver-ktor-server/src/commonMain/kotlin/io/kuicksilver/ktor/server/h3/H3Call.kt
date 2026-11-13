@@ -41,6 +41,7 @@ import io.kuicksilver.ktor.server.RequestPriorityKey
 import io.kuicksilver.ktor.server.WebTransportRequestKey
 import io.kuicksilver.ktor.server.WebTransportUpgrade
 import io.kuicksilver.ktor.server.copyContentFrom
+import io.kuicksilver.ktor.server.uriHost
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
@@ -196,7 +197,10 @@ internal class H3ConnectionPoint(
     override val localPort: Int get() = localAddr.port
     override val serverPort: Int get() = h3.authority?.let(::authorityPort) ?: defaultPort(h3.scheme)
     override val localHost: String get() = localAddr.ipLiteral()
-    override val serverHost: String get() = h3.authority?.let(::authorityHost) ?: localHost
+
+    // without an authority the connection's address, an IPv6 one in brackets as an authority writes it
+    override val serverHost: String get() = h3.authority?.let(::authorityHost) ?: uriHost(localHost)
+
     override val localAddress: String get() = localAddr.ipLiteral()
 
     /** The client's address on the current path: it changes when the client migrates (RFC 9000 section 9). */

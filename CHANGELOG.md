@@ -36,6 +36,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   of the release gate, run by `:androidApp:migrationDemoDeviceTest` against the server on the host. Its
   build verifies every plugin and dependency against `gradle/verification-metadata.xml`, which now also covers Compose
   Multiplatform, the AndroidX libraries it brings, OkHttp 5.5.1 and Ktor's CIO, Darwin and mock engines.
+- Engine interop bench (`kuicksilver-engine-interop`, not published; docs/spec/interop.md, "Engine interop"): the Ktor
+  client engine against Ktor's Netty server (HTTP/1.1, HTTP/2 and HTTP/3) and CIO server and a plain Netty server (1xx,
+  trailers, GOAWAY), and the Ktor server engine against Ktor's CIO, OkHttp and Java client engines, OkHttp and the JDK's
+  HttpClient on their own APIs and Netty's HTTP/3 client, in one JVM over loopback: bodies, fields, statuses, HEAD and
+  304, cancellation, timeouts, graceful stop, TLS trust and ALPN, and WebSockets (fragments, Ping, close codes,
+  permessage-deflate). It runs as the step `jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)` of the gate and
+  of CI.
 - SwiftPM: Kuicksilver is a Swift package, [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift),
   a repository without source code whose binary target is `Kuicksilver.xcframework.zip`, attached to every GitHub
   release from 0.3.0 and signed with the release key. A Swift-only app adds
@@ -434,7 +441,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `newTokensRejected`.
 - QUIC: clients keep NEW_TOKEN tokens and present them on their next connection (experimental
   `QuicClientConfig.tokenStore`, off by default because a token links the connections that use it; `QuicTokenStore`,
-  `MemoryTokenStore`). Tokens are keyed by server name and port, used once, replaced by a Retry token when a Retry comes,
+  `MemoryTokenStore`). Tokens are keyed by server name and port (without a server name, by the server's IP literal and
+  port, a link-local one with its zone ID), used once, replaced by a Retry token when a Retry comes,
   and bounded per connection (eight of at most 1024 bytes; more NEW_TOKEN frames spend glitch tokens).
 - HTTP/3 (*experimental*): the Capsule Protocol of RFC 9297 section 3 on Extended CONNECT streams whose protocol has
   datagram semantics (every one but `websocket`; on a WebSocket stream or a classic CONNECT it throws
@@ -973,6 +981,37 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: an HTTP/3 connection whose server sent GOAWAY no longer counts as one that can carry a WebSocket's
   Extended CONNECT (RFC 9114 section 5.2: no new requests on it; RFC 9220), so with `Preferred` a WebSocket is no longer
   sent to HTTP/3 on its strength (`ClientH3WebSocketTest.negative_goAwayConnectionDoesNotCountForExtendedConnect`).
+- Ktor client engine: over HTTP/2 a response body that a request timeout or the caller's exception cut short failed
+  with the stream's own `CancellationException` ("the call ended") instead of the call's cause
+  (`HttpRequestTimeoutException`), as HTTP/1.1 and HTTP/3 already reported it. Found by the engine interop bench.
+- Ktor server engine: over HTTP/1.1 the connection point's addresses came from a reverse DNS lookup made for every
+  accepted connection on the JVM and Android (`remoteAddress` and `remoteHost` read `localhost` for 127.0.0.1); they
+  are now the IP literals, as over HTTP/2 and HTTP/3, and no lookup is made. `remoteAddress` and `localAddress` are the
+  literals in Ktor's Netty and CIO engines too; their `remoteHost` and `localHost` are names (a reverse lookup on
+  first use), ours stay literals on every protocol, by decision. Found by the engine interop bench.
+- Ktor server engine: over HTTP/1.1 on the JVM and Android the connection point wrote an IPv6 address as java.net
+  does, `0:0:0:0:0:0:0:1`; it is now the RFC 5952 text (`::1`), as over HTTP/3. The deprecated `host` was a reverse DNS
+  lookup of the local address there; it and the deprecated `port` are now `serverHost` and `serverPort`, as over HTTP/3,
+  and `host` names its replacements as Ktor does ("Use localHost or serverHost instead"). The deprecated `port` thereby
+  differs on purpose from Ktor's Netty and CIO engines, where it is the local port: one meaning on every protocol here.
+  Without a Host field (HTTP/1.1) or `:authority` (HTTP/3), `serverHost` is the local address as a Host field writes it,
+  an IPv6 literal in brackets and without its zone ID (`[::1]`, `[fe80::1]`: the `IP-literal` of RFC 3986 section 3.2.2,
+  RFC 9110 section 7.2 `uri-host`, which has no zone since RFC 9844); it was the bare literal (a name over HTTP/1.1).
+- HTTP/3, Ktor server engine: the connection point's addresses never call a resolver; on Kotlin/Native each one called
+  `getaddrinfo`. An IPv6 zone ID is kept (`fe80::1%en0`, as java.net and Netty write it; it was dropped), and an
+  address with an embedded IPv4 address under a well-known prefix is written in mixed notation on every platform (RFC
+  5952 section 5: IPv4-mapped `::ffff:192.0.2.1`, IPv4-translated `::ffff:0:192.0.2.1`, IPv4-compatible `::192.0.2.1`);
+  it was hexadecimal.
+- Testing (`kuicksilver-testing`, not published): `MemoryNetwork` named an ephemeral-port socket after a reverse DNS
+  lookup of its host on the JVM and Android (a lookup per bind; `localAddress` carried the name), and
+  `Simulator.rebindClient` did the same to the client's address; both keep the literal now. Both compare addresses by
+  their bytes, so two spellings of one IPv6 address (`::1`, `0:0:0:0:0:0:0:1`) are one address on Kotlin/Native too.
+  Found when CI runners whose resolver names private addresses failed three tests.
+- Ktor server engine: a graceful stop took 3 s longer while an HTTP/1.1 client over TLS kept its connection in a pool,
+  reading nothing until its next request (OkHttp, the JDK's HttpClient), idle or just answered: after its own
+  close_notify the server waited up to 3 s for the client's. A stopping server now closes without waiting for it (RFC
+  8446 section 6.1 lets a closing side close its read side without the peer's close_notify). Found by the engine
+  interop bench.
 - TLS: `ksl_ctx_verify_chain`, which re-verifies a client's cached chain before it resumes (ADR-0011), now applies
   OpenSSL's security level as a handshake does; before, the re-verification was weaker than the handshake it stands for
   (a client's cached chains come from handshakes at the same level under the same trust, so no weaker chain could resume
