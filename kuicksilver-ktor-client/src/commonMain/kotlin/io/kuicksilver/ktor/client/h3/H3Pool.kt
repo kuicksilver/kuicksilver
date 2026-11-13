@@ -63,6 +63,7 @@ import io.kuicksilver.quic.MigrationEvent
 import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.activePath
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -96,6 +97,23 @@ internal class H3Target(
 
 /** The origin host of an [H3Target.key]. */
 private fun originOfKey(key: String): String = key.substringBefore('|')
+
+/**
+ * Where a pooled connection goes, as an address literal: [bytes] (an IPv4-mapped IPv6 address as its IPv4 one), [port]
+ * and the IPv6 zone [scopeId] (0: none). Two destinations are the same only with the same zone, so link-local addresses
+ * of different interfaces never match; a preferred address (RFC 9000 section 9.6) carries no zone and gets 0.
+ */
+internal class Destination(
+    val bytes: ByteArray,
+    val port: Int,
+    val scopeId: Int,
+) {
+    fun sameAs(o: Destination): Boolean = port == o.port && scopeId == o.scopeId && bytes.contentEquals(o.bytes)
+
+    companion object {
+        fun of(a: TcpAddress): Destination = Destination(unmapped(a.bytes), a.port, a.scopeId)
+    }
+}
 
 private fun unmapped(b: ByteArray): ByteArray =
     if (b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } && b[10] == 0xff.toByte() && b[11] == 0xff.toByte()) {
@@ -152,12 +170,13 @@ internal class H3Entry(
     val active = kotlin.concurrent.atomics.AtomicInt(0)
 
     /**
-     * The address (bytes, an IPv4-mapped IPv6 address as its IPv4 one) and port the pool's Happy Eyeballs race connected
-     * this connection to, as the race had it: a literal, so comparing it needs no lookup (the pool compares under its
-     * lock, and reading a socket address's host name can be a reverse lookup on the JVM). Null until the setup finished.
+     * Where this connection goes: the literal the pool's Happy Eyeballs race connected it to, then the server's preferred
+     * address once the connection moved there (RFC 9000 section 9.6, [H3Pool]'s path-change collector). A literal, so
+     * comparing it needs no lookup (the pool compares under its lock, and reading a socket address's host name can be a
+     * reverse lookup on the JVM). Null until the setup finished.
      */
     @kotlin.concurrent.Volatile
-    var connectedTo: Pair<ByteArray, Int>? = null
+    var connectedTo: Destination? = null
 
     val idleSince = kotlin.concurrent.atomics.AtomicLong(createdAt)
     private val retiredFlag = kotlin.concurrent.atomics.AtomicInt(0)
@@ -612,13 +631,13 @@ internal class H3Pool(
         c: Http3Connection,
     ): Http3Connection? {
         if (connections[t.key] !== e) return null
-        val (bytes, port) = e.connectedTo ?: return null
+        val here = e.connectedTo ?: return null
         val now = clock()
         for ((k, other) in connections) {
             if (other === e || originOfKey(k) != t.originHost || other.drained || other.pastLifetime(now)) continue
             val o = other.deferred.getCompletedOrNull()?.takeIf { it.usable() } ?: continue
-            val (b, p) = other.connectedTo ?: continue
-            if (p == port && b.contentEquals(bytes)) {
+            val there = other.connectedTo ?: continue
+            if (there.sameAs(here)) {
                 connections[t.key] = other
                 return o
             }
@@ -665,7 +684,7 @@ internal class H3Pool(
         if (candidates.isEmpty()) return
         val addresses =
             try {
-                dns.answeredDestinations(t.host, t.port).map { unmapped(it.bytes) to it.port }
+                dns.answeredDestinations(t.host, t.port).map(Destination::of)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
@@ -686,7 +705,7 @@ internal class H3Pool(
         val match =
             candidates.firstOrNull { e ->
                 val remote = e.shareable()?.let { e.connectedTo }
-                remote != null && addresses.any { (b, port) -> port == remote.second && b.contentEquals(remote.first) }
+                remote != null && addresses.any { it.sameAs(remote) }
             } ?: return
         lock.withLock {
             val existing = connections[t.key]
@@ -764,7 +783,7 @@ internal class H3Pool(
             var made: Http3Connection? = null
             val failures = ArrayList<Throwable>()
             // the connections the race's attempts made, with the literal each went to: the winner's is kept on the entry
-            val attempts = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, Pair<ByteArray, Int>>>())
+            val attempts = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, Destination>>())
             try {
                 beforeSetupForTest?.invoke()
                 withTimeout(data.connectTimeoutMillis(config)) {
@@ -773,7 +792,7 @@ internal class H3Pool(
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     made =
                         raceQuic(t.host, t.port, dns, failures, { won, a ->
-                            attempts.update { it + (won to (unmapped(a.bytes) to a.port)) }
+                            attempts.update { it + (won to Destination.of(a)) }
                         }) { remote ->
                             if (config.http3.earlyData) {
                                 // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
@@ -822,6 +841,7 @@ internal class H3Pool(
                     return e to kept
                 }
                 followNetwork(c, data)
+                followPreferredAddress(e, c)
             } catch (
                 x: TimeoutCancellationException,
             ) {
@@ -854,6 +874,57 @@ internal class H3Pool(
      * closes. The transport enforces the rest of section 9 (confirmation, `disable_active_migration`, zero-length IDs,
      * path validation): a refusal is a [MigrationEvent.Failed] that leaves [c] where it is.
      */
+
+    /** Test hook: preferred-address moves [followPreferredAddress] recorded. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val preferredMovesForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /**
+     * Keeps [e]'s [H3Entry.connectedTo] where [c] goes: when the server moves it to its preferred address (RFC 9000
+     * section 9.6, `followPreferredAddress`; the only way a client connection's remote address changes, a client migration
+     * changes the local side), the new path's address replaces the race's, so the comparisons of RFC 9114 section 3.3 see
+     * the address the connection uses. Collected outside the pool's lock in [migrationScope] until [c] ends: the active
+     * path as the collection starts (a move right after the handshake may come before it), then every path change. The
+     * path's address is the literal of the transport parameter; its bytes are read without a name lookup.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun followPreferredAddress(
+        e: H3Entry,
+        c: Http3Connection,
+    ) {
+        val scope = migrationScope ?: return
+
+        fun follow(path: io.kuicksilver.quic.QuicPath?) {
+            val r = path?.remoteAddress ?: return
+            val bytes = runCatching { r.resolveAddress() }.getOrNull()?.takeIf { it.size == 4 || it.size == 16 } ?: return
+            val now = e.connectedTo
+            val there =
+                Destination(
+                    unmapped(bytes),
+                    r.port,
+                    if (now != null &&
+                        now.bytes.contentEquals(unmapped(bytes))
+                    ) {
+                        now.scopeId
+                    } else {
+                        0
+                    },
+                )
+            if (now == null || !now.sameAs(there)) {
+                e.connectedTo = there
+                preferredMovesForTest.addAndFetch(1)
+            }
+        }
+        val job =
+            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    c.quic.pathEvents.collect { ev -> if (ev is io.kuicksilver.quic.PathEvent.Changed) follow(ev.new) }
+                }
+                follow(c.quic.activePath ?: c.quic.paths.firstOrNull())
+            }
+        c.closed.invokeOnCompletion { job.cancel() }
+    }
+
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun followNetwork(
         c: Http3Connection,

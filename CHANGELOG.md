@@ -552,7 +552,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   address and UDP port"): one origin reached under several names that resolve to one address and port (its host, an
   `Alt-Svc` alternative, an HTTPS-record target, an address literal) got a connection per name, all with the same
   configuration. Before a new connection, the pool now resolves the name and shares a connection of the same origin
-  whose address (the literal its Happy Eyeballs race connected to; the NAT64 synthesis counted) and port match,
+  whose address (the literal its Happy Eyeballs race connected to, or the server's preferred address it moved to; the
+  zone of a link-local address and the NAT64 synthesis counted) and port match,
   waiting for one still in its handshake for one `connectionAttemptDelay` at most; setups that ran past each other keep
   the older connection and close the newer before any request used it. WebTransport sessions still take a connection each (session pooling is
   separate work). Different origins still get a connection each, and `Alt-Svc` bookkeeping stays

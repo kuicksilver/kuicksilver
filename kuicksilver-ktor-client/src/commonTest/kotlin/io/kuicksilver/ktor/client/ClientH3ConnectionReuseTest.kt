@@ -8,17 +8,27 @@ import io.ktor.client.request.get
 import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.request.httpVersion
 import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.ktor.client.h3.H3Target
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.PreferredAddress
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
@@ -303,6 +313,123 @@ class ClientH3ConnectionReuseTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * A connection the server moved to its preferred address (RFC 9000 section 9.6) is compared by that address from then
+     * on: a new destination of the origin resolving there shares it.
+     */
+    @Test fun destinationAtTheServersPreferredAddressReusesTheMovedConnection() =
+        h3Test {
+            // a free UDP port number for the preferred address: bound once by a throwaway endpoint, then released
+            val prefPort =
+                Http3Endpoint
+                    .bind(InetSocketAddress("127.0.0.1", 0))
+                    .let { ep -> ep.localAddress.port.also { ep.closeAndJoin() } }
+            val tls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf(Http3Endpoint.H3)
+                    identity = ClientFixtures.identity()
+                }
+            val server =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig
+                                    .Builder(tls)
+                                    .apply {
+                                        preferredAddress =
+                                            PreferredAddress(
+                                                InetSocketAddress("127.0.0.1", prefPort),
+                                                null,
+                                            )
+                                    }.build()
+                        }.build(),
+                )
+            val port = server.localAddress.port
+            kotlinx.coroutines.coroutineScope {
+                val serving =
+                    launch {
+                        while (true) {
+                            val conn = server.accept()
+                            launch {
+                                runCatching {
+                                    while (true) {
+                                        val r = conn.acceptRequest()
+                                        r.respond(200, Http3Headers.of("content-length" to "2")).apply {
+                                            output.writeFully("ok".encodeToByteArray())
+                                            finish()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                try {
+                    client().use { c ->
+                        val h3 = (c.engine as KuicksilverEngine).h3
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("https://server.test:$port/").version)
+                        val conn = h3.connectionsForTest().single()
+                        withTimeout(10.seconds) {
+                            // the client moves after the handshake and the pool learns the new address from the path change
+                            while (h3.preferredMovesForTest.load() == 0) kotlinx.coroutines.yield()
+                        }
+                        assertEquals(
+                            prefPort,
+                            conn.quic.paths
+                                .single()
+                                .remoteAddress.port,
+                        )
+                        val data =
+                            io.ktor.client.request
+                                .HttpRequestBuilder()
+                                .apply { url("https://server.test:$port/") }
+                                .build()
+                        val shared = h3.connection(H3Target("server.test", "alias.test", prefPort), data)
+                        assertTrue(shared === conn, "the moved connection is shared")
+                        assertEquals(1, h3.connectionsForTest().size)
+                    }
+                } finally {
+                    serving.cancel()
+                    server.close()
+                }
+            }
+        }
+
+    /** The zone is part of a destination: one link-local address on two interfaces is two destinations. */
+    @Test fun negative_linkLocalAddressesOfTwoZonesDiffer() {
+        val ll =
+            ByteArray(16).also {
+                it[0] = 0xfe.toByte()
+                it[1] = 0x80.toByte()
+                it[15] = 1
+            }
+        val a =
+            io.kuicksilver.ktor.client.h3.Destination
+                .of(TcpAddress(ll, 443, scopeId = 1))
+        assertTrue(
+            a.sameAs(
+                io.kuicksilver.ktor.client.h3.Destination
+                    .of(TcpAddress(ll, 443, scopeId = 1)),
+            ),
+        )
+        assertTrue(
+            !a.sameAs(
+                io.kuicksilver.ktor.client.h3.Destination
+                    .of(TcpAddress(ll, 443, scopeId = 2)),
+            ),
+            "another interface",
+        )
+        assertTrue(
+            !a.sameAs(
+                io.kuicksilver.ktor.client.h3.Destination
+                    .of(TcpAddress(ll, 8443, scopeId = 1)),
+            ),
+            "another port",
+        )
+    }
 
     /** The pool's key still names the destination; the address comparison happens before a new connection is made. */
     @Test fun poolKeysByDestinationName() {
