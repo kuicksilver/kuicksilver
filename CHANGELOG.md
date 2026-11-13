@@ -181,6 +181,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   event)` reports each step (a failed move is also logged at `Info`, a server that does not allow migration at
   `Debug`). Off by default, so 0.2's behaviour is unchanged; `networkId` stays separate. HTTP/1.1, HTTP/2 and the
   connections of WebTransport sessions do not migrate.
+  A WebSocket over HTTP/3 (RFC 9220) moves with its connection: with the option and a server that allows active
+  migration, the session carries on across the switch with no reconnect, every message both ways arriving once and in
+  order (`ClientMigrationTest.webSocketSurvivesNetworkSwitch`); without the option it ends with the old network at the
+  idle timeout, `closeReason` 1006. WebSockets over HTTP/1.1 and HTTP/2 do not migrate.
 - QUIC: experimental `MigrationRefusedException` (an `IllegalStateException`, as before) with a `MigrationRefusal`
   reason (`NotConfirmed`, `DisabledByPeer`, `ZeroLengthConnectionId`) is what `QuicConnection.addPath`, `migrate` and a
   `NetworkMigrator` throw or report when the transport refuses a new path (RFC 9000 sections 9 and 9.5).
@@ -801,6 +805,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client: a request made right after a pooled HTTP/3 connection's QUIC transport ended (an idle timeout, a lost
+  network, a close) no longer goes to that dead connection in the moment before its HTTP/3 session takes note of the
+  end; it opens a new HTTP/3 connection instead of failing there and falling back to TCP. Found as the intermittent
+  failure of `ClientMigrationTest.negative_noMigrationWithoutConfig`; pinned by
+  `ClientPoolTest.negative_connectionWhoseTransportEndedIsNotReused`.
 - TLS: `ksl_ctx_verify_chain`, which re-verifies a client's cached chain before it resumes (ADR-0011), now applies
   OpenSSL's security level as a handshake does; before, the re-verification was weaker than the handshake it stands for
   (a client's cached chains come from handshakes at the same level under the same trust, so no weaker chain could resume

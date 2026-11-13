@@ -1338,9 +1338,21 @@ What the engine does:
   2.2) and flushes the HTTPS record cache, as a `networkId` change does, within the limits of the platform's handle
   ([Discovery and Alt-Svc](#discovery-and-alt-svc)). A `networkId` that is set wins.
 
+A WebSocket over HTTP/3 (RFC 9220) is one stream of a pooled connection, so it moves with it: the session carries on
+across the switch, with no reconnect, and every message arrives once and in order, in both directions, a fragmented
+message whose first half crossed the old network included, and so do pings and the closing handshake with its code
+and reason (`ClientMigrationTest.webSocketSurvivesNetworkSwitch`, `.webSocketSurvivesNetworkSwitchServerCloses`: over
+loopback, the old socket hears nothing once the connection moved). That needs the option and a server that allows
+active migration: without the option, or towards a server that sent `disable_active_migration`, the session ends with
+the old network, once the connection's idle timeout has passed: `incoming` fails and `closeReason` is 1006 (RFC 6455
+section 7.1.5; `.negative_webSocketEndsWithItsNetworkWithoutMigration`,
+`.negative_webSocketEndsWithItsNetworkWhenServerDisablesMigration`). A WebSocket goes over HTTP/3 only with `H3Only`
+or on a connection to its origin that is open already and whose server allows Extended CONNECT ([HTTP/3 on the
+client](#http3-on-the-client)); otherwise it opens over HTTP/1.1 or HTTP/2.
+
 What does not survive a network change: HTTP/1.1 and HTTP/2 run over TCP, which cannot move, and so do WebSockets over
-HTTP/1.1; a call on such a connection fails and the application repeats it. The dedicated connections of WebTransport
-sessions do not follow the network either.
+HTTP/1.1 and HTTP/2; a call on such a connection fails and the application repeats it. The dedicated connections of
+WebTransport sessions do not follow the network either.
 
 ### Proxies
 
