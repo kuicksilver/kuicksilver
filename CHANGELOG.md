@@ -495,11 +495,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`…Ex` included) in a context without network, file or timer APIs, each run limited to 2 seconds from its start and
   its DNS lookups within that (threat model 3.20.3). An answer naming only proxies the engine cannot use (`HTTPS`,
   `SOCKS4`) fails closed: the next setting, else the request fails, never a direct connection. A WPAD discovery that
-  finds no script is logged once at Info. The script gets the URL as Chrome builds it: a `ws://` URI whole, with its
-  resource name (RFC 6455 section 4.1), and `wss`, `https` and `http` as their origin only (`wss://host[:port]/`; see
-  Security); on the JVM and Android `ProxySelector.select` gets a WebSocket's resource name (`ws` as `http`, `wss` as
+  finds no script is logged once at Info. The script gets the URL as Chrome builds it (lower-case host, also as the
+  `host` argument): a `ws://` URI whole, with its resource name (RFC 6455 section 4.1); `wss` and `https` as their
+  origin only (`wss://host[:port]/`; see Security); `http` as its origin too, because the engine keeps answers per
+  scheme, host and port (Chrome and Android pass an `http` path); on the JVM and Android `ProxySelector.select` gets a WebSocket's resource name (`ws` as `http`, `wss` as
   `https`, the schemes selectors know), though Android's PAC selector keeps it for `http` URIs only and the JDK's
-  passes only the scheme and host to the OS. On Apple platforms a run resolves at most 20 distinct names, an answer is
+  passes only the scheme and host to the OS. On Apple platforms a run makes at most 20 distinct lookups (a name looked
+  up by both `dnsResolve` and `dnsResolveEx` counts twice), an answer is
   at most 64 KiB of ASCII, an answer entry that breaks the grammar is skipped (none left: the script failed), and a
   script given inline has the 1 MiB cap too. A lookup waits for the script at most 5 seconds (on Windows a WinHTTP call still running then, which
   cannot be cancelled, ends on its own thread and its answer is dropped); a script that cannot be fetched or run in
@@ -1432,7 +1434,8 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   which strip the same way since 2016; Firefox strips the path of every URL). This departs from RFC 6455 section 4.1,
   whose PAC rule asks for the resource name (an owner-approved security deviation; `ws://` URIs still reach the script
   whole). `engine { pacFullWebSocketUrl = true }` (*experimental*) gives the whole `wss` URI to the script the system
-  settings name (its URL or the script itself), never to one WPAD found
+  settings name, given inline or by an `https://` or `file:` URL, never to one WPAD found or one fetched over plain
+  `http://`
   ([Proxies](docs/guide/ktor.md#proxies), [RFC 6455 §4.1](docs/spec/rfc/6455.md#s4-1-connecting-through-a-proxy)).
   The development builds before this passed every script the whole `wss` URI.
 

