@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.get
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByteArray
@@ -290,6 +291,64 @@ class ClientH3WebSocketTest {
                     }
                     withTimeout(5.seconds) { served.await() }
                 } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * RFC 9114 section 5.2 with RFC 9220: after the server's GOAWAY a connection takes no new request, so it does not count
+     * as one that can carry a WebSocket's Extended CONNECT, even while it is still open (a request in flight) and its
+     * SETTINGS allow Extended CONNECT. Before, it counted, and the WebSocket was sent to HTTP/3 on its strength.
+     */
+    @Test fun negative_goAwayConnectionDoesNotCountForExtendedConnect() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply { this.server = QuicServerConfig.Builder(serverTls).build() }
+                        .build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            val release = CompletableDeferred<Unit>()
+            val requested = CompletableDeferred<Unit>()
+            coroutineScope {
+                val served =
+                    launch {
+                        val conn = ep.accept()
+                        val held = conn.acceptRequest() // in flight: the connection stays open after the GOAWAY
+                        requested.complete(Unit)
+                        conn.goAway()
+                        release.await()
+                        held.respond(200).finish()
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        val port = ep.localAddress.port
+                        val target =
+                            io.kuicksilver.ktor.client.h3
+                                .H3Target("127.0.0.1", "127.0.0.1", port)
+                        val held = async { c.get("https://127.0.0.1:$port/hold") }
+                        withTimeout(10.seconds) { requested.await() } // the request went out on the pooled connection
+                        val conn = engine.h3.connectionsForTest().single()
+                        withTimeout(10.seconds) { conn.goAwayReceived.first { it != null } }
+                        assertEquals(true, conn.peerSettings.value?.enableConnectProtocol, "the server allows Extended CONNECT")
+                        assertTrue(!conn.closed.isCompleted, "still open: a request is in flight")
+                        assertTrue(!engine.h3.canConnectProtocol(target), "a connection after GOAWAY carries no new Extended CONNECT")
+                        release.complete(Unit)
+                        assertEquals(200, withTimeout(10.seconds) { held.await() }.status.value)
+                    }
+                } finally {
+                    release.complete(Unit)
                     served.cancel()
                     ep.close()
                 }
