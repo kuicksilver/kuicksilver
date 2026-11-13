@@ -304,6 +304,41 @@ class H2RuntimeTest {
             assertTrue(client.isClosed, "the connection closes once its last stream is done")
         }
 
+    /**
+     * A body whose end is known with its last bytes (a source that is exhausted and closed once read, such as a byte array)
+     * ends on its last DATA frame: no empty DATA frame after it. A source whose end comes only later (a channel closed after
+     * its last write) still ends with an empty DATA frame carrying END_STREAM.
+     */
+    @Test fun negative_aKnownEndGoesOnTheLastDataFrame() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            assertTrue(client.tryReserve())
+            val a = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            a.sendBody(ByteReadChannel(ByteArray(40_000) { it.toByte() }), stallMillis = null) { error("stall") }
+            runCurrent()
+            val known = srv.read().filterIsInstance<Frame.Data>().filter { it.streamId == a.id }
+            assertEquals(listOf(16_384, 16_384, 7_232), known.map { it.data.size })
+            assertEquals(listOf(false, false, true), known.map { it.endStream })
+
+            assertTrue(client.tryReserve())
+            val b = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            val body = ByteChannel()
+            val sending = backgroundScope.async { b.sendBody(body, stallMillis = null) { error("stall") } }
+            body.writeFully("hello".encodeToByteArray())
+            body.flush()
+            runCurrent()
+            body.close()
+            sending.await()
+            runCurrent()
+            val later = srv.read().filterIsInstance<Frame.Data>().filter { it.streamId == b.id }
+            assertEquals(listOf(5, 0), later.map { it.data.size })
+            assertEquals(listOf(false, true), later.map { it.endStream })
+            a.release()
+            b.release()
+        }
+
     @Test fun negative_contentLengthMismatchIsMalformed() =
         runTest {
             val (client, server, _) = pair()
@@ -316,6 +351,40 @@ class H2RuntimeTest {
             // RFC 9113 section 8.1.1: the content does not match content-length: the response is malformed, not complete
             assertFailsWith<Http2Exception.MalformedMessage> { s.body.readAll() }
             s.release()
+        }
+
+    /**
+     * RFC 9113 section 5.4.2: one RST_STREAM per stream. A malformed response (content-length 3, 5 bytes) fails the stream
+     * and resets it with PROTOCOL_ERROR; the application's reset that lands between the two (its call ended meanwhile)
+     * sends nothing more. Before, the reset checked nothing and its CANCEL went out first, in place of the PROTOCOL_ERROR.
+     */
+    @Test fun negative_aResetBetweenAMalformedFailureAndItsRstSendsNothing() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            val s = client.get()
+            runCurrent()
+            srv.read()
+            var raced = 0
+            client.rt.afterMalformedFailForTest = {
+                client.rt.afterMalformedFailForTest = null
+                raced++
+                s.cancel()
+            }
+            srv.write(
+                srv.headers(s.id, listOf(":status" to "200", "content-length" to "3"), endStream = false),
+                FrameEncoder.data(s.id, "short".encodeToByteArray(), 0, 5, false),
+            )
+            runCurrent()
+            assertEquals(1, raced, "the malformed message was seen")
+            assertFailsWith<Http2Exception.MalformedMessage> { s.body.readAll() }
+            runCurrent()
+            val resets = srv.read().filterIsInstance<Frame.RstStream>().filter { it.streamId == s.id }
+            assertEquals(listOf(Http2ErrorCode.PROTOCOL_ERROR.code), resets.map { it.errorCode })
+            s.release()
+            runCurrent()
+            assertTrue(srv.read().none { it is Frame.RstStream }, "no second RST_STREAM at the release")
         }
 
     @Test fun negative_resetFailsTheBodyNotEndsIt() =
@@ -938,15 +1007,16 @@ class H2RuntimeTest {
                 client.rt.holdDispatchForTest()
                 client.rt.receiveWithoutDispatchForTest(FrameEncoder.rstStream(s.id, Http2ErrorCode.HTTP_1_1_REQUIRED.code))
             }
+            // a body whose end comes after its last bytes: it ends with the empty DATA frame, where the hook runs
+            val body = ByteChannel()
             val sending =
                 backgroundScope.async {
-                    runCatching {
-                        s.sendBody(
-                            ByteReadChannel("x".encodeToByteArray()),
-                            stallMillis = null,
-                        ) { error("stall") }
-                    }
+                    runCatching { s.sendBody(body, stallMillis = null) { error("stall") } }
                 }
+            body.writeFully("x".encodeToByteArray())
+            body.flush()
+            runCurrent()
+            body.close()
             runCurrent()
             client.rt.releaseDispatchForTest()
             runCurrent()

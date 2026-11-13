@@ -137,6 +137,40 @@ class WebSocketOutputGuardTest {
             assertNotNull(ok.single().mask)
         }
 
+    /**
+     * RFC 6455 section 5.5.1: "After sending a Close frame, the application MUST NOT send any more data frames". Data frames
+     * written after this side's Close are discarded, whatever their size and however they are split across flushes, and
+     * the write does not fail; a Ping still passes. The guard's onClose runs once, at the first Close.
+     */
+    @Test fun negative_dataFramesAfterTheOwnCloseAreDiscarded() =
+        runTest {
+            for (masking in listOf(false, true)) {
+                var closes = 0
+                val wire = ByteChannel()
+                val guarded = guardWebSocketOutput(wire, masking, onClose = { closes++ })
+                launch {
+                    guarded.writeFully(frame(0x81, "before".encodeToByteArray()))
+                    guarded.writeFully(close(1000))
+                    guarded.flush()
+                    guarded.writeFully(frame(0x82, ByteArray(300_000) { 7 }))
+                    guarded.flush()
+                    val split = frame(0x01, "after".encodeToByteArray())
+                    guarded.writeFully(split, 0, 3)
+                    guarded.flush()
+                    guarded.writeFully(split, 3, split.size - 3)
+                    guarded.writeFully(frame(0x80, "!".encodeToByteArray()))
+                    guarded.writeFully(frame(0x89, "ping".encodeToByteArray()))
+                    guarded.writeFully(frame(0x82, ByteArray(0)))
+                    guarded.flushAndClose()
+                }
+                val out = frames(wire as ByteReadChannel)
+                assertEquals(listOf(0x81, 0x88, 0x89), out.map { it.b0 }, "masking $masking")
+                assertEquals("before", out[0].payload.decodeToString())
+                assertEquals("ping", out[2].payload.decodeToString())
+                assertEquals(1, closes)
+            }
+        }
+
     /** RFC 6455 section 5.5.1: a reason is UTF-8; a Close whose reason is not keeps its code and loses the reason. */
     @Test fun negative_closeReasonNotUtf8IsDropped() =
         runTest {

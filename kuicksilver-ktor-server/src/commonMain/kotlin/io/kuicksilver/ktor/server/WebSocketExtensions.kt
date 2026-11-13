@@ -52,12 +52,16 @@ internal class ServerWebSocket(
     attributes: Attributes,
     context: CoroutineContext,
     maxMessageSize: Long,
+    onPeerClose: () -> Unit = {},
 ) {
     private val deflate: PerMessageDeflate? = attributes.perMessageDeflate()
     private val checkText: Boolean
     private val sentCompression: SentCompression
 
     val channel: ByteReadChannel
+
+    /** The client's Close arrived: the output starts no new message (RFC 6455 sections 1.4, 5.5.1 and 7.1.2). */
+    @kotlin.concurrent.Volatile private var clientClosed = false
 
     init {
         val offered = webSocketExtensionNames(request.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty())
@@ -79,11 +83,22 @@ internal class ServerWebSocket(
                 perMessageDeflate = perMessageDeflate,
                 maxMessageSize = maxMessageSize,
                 checkText = checkText,
+                onEnd = onPeerClose,
+                onClose = {
+                    clientClosed = true
+                    onPeerClose()
+                },
             )
     }
 
-    /** The upgrade's [output], as the frames must go out. */
-    fun output(output: ByteWriteChannel): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression)
+    /**
+     * The upgrade's [output], as the frames must go out; [onClose] runs once the server's own Close was written. After the
+     * client's Close the message in progress may finish, but no new one goes out.
+     */
+    fun output(
+        output: ByteWriteChannel,
+        onClose: () -> Unit = {},
+    ): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression, onClose) { clientClosed }
 
     fun done() {
         deflate?.dispose()
@@ -106,9 +121,10 @@ internal suspend fun startServerWebSocket(
     maxMessageSize: Long,
     output: ByteWriteChannel,
     log: io.ktor.util.logging.Logger,
+    onPeerClose: () -> Unit = {},
 ): ServerWebSocket? =
     try {
-        ServerWebSocket(input, request, response, attributes, context, maxMessageSize)
+        ServerWebSocket(input, request, response, attributes, context, maxMessageSize, onPeerClose)
     } catch (e: ProtocolViolationException) {
         log.warn("WebSocket upgrade: the answer's Sec-WebSocket-Extensions cannot be read (${e.message}); closing with 1011")
         output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xF3.toByte()))

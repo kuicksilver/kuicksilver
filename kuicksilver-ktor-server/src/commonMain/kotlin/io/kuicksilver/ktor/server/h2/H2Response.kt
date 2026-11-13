@@ -176,7 +176,8 @@ internal open class H2Response(
             }
             if (sent + n > declaredLength) mismatch("more content than its content-length $declaredLength")
             sent += n
-            // sendBody reads its source to the end before it returns: the buffer is free again then
+            // a ByteReadChannel over a range copies that range (at most one 16 KiB slice) into its own buffer, so the
+            // buffer is free again at once; sendBody reads that copy to its end before it returns
             h2.sendBody(ByteReadChannel(buf, 0, n), end = false, stallMillis = sendStallMillis, stallError = stall)
         }
         if (sent != declaredLength) mismatch("$sent bytes of content, content-length $declaredLength")
@@ -196,9 +197,11 @@ internal open class H2Response(
     }
 
     /**
-     * [send] for content in hand: it goes out in pieces of [SEND_CHUNK] straight from [bytes], never copied whole (a
-     * `ByteReadChannel` over the array copies it, so a response of 32 MiB took 64 MiB and ran a 48 MiB Android 10 heap
-     * out of memory). A content-length that does not match is caught before anything is sent (RFC 9113 section 8.1.1).
+     * [send] for content in hand: it goes out in pieces of [SEND_CHUNK] read from [bytes]. Each piece is copied once (a
+     * `ByteReadChannel` over a range copies that range, here at most a 16 KiB slice), never the whole array: a
+     * `ByteReadChannel` over the whole array copied it whole, so a response of 32 MiB took 64 MiB and ran a 48 MiB
+     * Android 10 heap out of memory. The last piece carries END_STREAM. A content-length that does not match is caught
+     * before anything is sent (RFC 9113 section 8.1.1).
      */
     private suspend fun sendBytes(bytes: ByteArray) {
         val stall = { IOException("the client took no response content for $sendStallMillis ms") }
@@ -212,12 +215,12 @@ internal open class H2Response(
             )
         }
         var off = 0
-        while (off < bytes.size) {
+        do {
             val n = minOf(SEND_CHUNK, bytes.size - off)
-            h2.sendBody(ByteReadChannel(bytes, off, n), end = false, stallMillis = sendStallMillis, stallError = stall)
+            // the last piece's end is known with it: END_STREAM goes on its last DATA frame, not on an empty one after it
+            h2.sendBody(ByteReadChannel(bytes, off, n), end = off + n == bytes.size, stallMillis = sendStallMillis, stallError = stall)
             off += n
-        }
-        h2.sendBody(ByteReadChannel.Empty, end = true, stallMillis = sendStallMillis, stallError = stall)
+        } while (off < bytes.size)
     }
 
     private fun declaredLengthOf(): Long = headersBuilder[HttpHeaders.ContentLength]?.toLongOrNull() ?: -1L

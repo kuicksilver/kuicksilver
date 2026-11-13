@@ -207,7 +207,8 @@ public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
  *
  * A failed [input] fails the returned channel with its cause, and the end of [input] ends it. [onEnd] runs once the
  * returned channel has ended or failed for any of these reasons (with [untilClose], right after the peer's Close frame was
- * handed on), or the copy was stopped. The copy runs in [context]
+ * handed on), or the copy was stopped. [onClose] runs when the peer's Close frame arrives (checked, before it is handed
+ * on), with [untilClose] or not: the session is closing. The copy runs in [context]
  * but outside its job, so it never holds a call open (a reader that gave up leaves it waiting for room); the end of
  * [context]'s job stops it.
  *
@@ -225,6 +226,7 @@ public fun guardWebSocketInput(
     maxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     checkText: Boolean = true,
     onEnd: () -> Unit = {},
+    onClose: () -> Unit = {},
 ): ByteReadChannel {
     require(maxMessageSize >= 1) { "maxMessageSize $maxMessageSize is less than 1" }
     val out = ByteChannel()
@@ -232,7 +234,7 @@ public fun guardWebSocketInput(
     context[Job]?.invokeOnCompletion { job.cancel() }
     val rules = InputRules(allowedRsv, untilClose, peerMasks, perMessageDeflate, maxMessageSize, checkText)
     CoroutineScope(context + job).launch(CoroutineName("ws-frame-guard")) {
-        val guard = InputGuard(input, out, rules, inflate)
+        val guard = InputGuard(input, out, rules, inflate, onClose)
         try {
             guard.run()
         } catch (_: EOFException) {
@@ -279,6 +281,7 @@ private class InputGuard(
     private val out: ByteChannel,
     private val rules: InputRules,
     inflate: WebSocketInflate?,
+    private val onClose: () -> Unit,
 ) {
     private val inflater =
         inflate?.let { MessageInflater(it.noContextTakeover, minOf(it.maxMessageSize, rules.maxMessageSize)) }
@@ -372,6 +375,7 @@ private class InputGuard(
             control.copyInto(closeBody, 0, 0, size)
             if (mask != null) unmask(closeBody, size, mask, 0)
             checkCloseBody(closeBody, size)
+            onClose()
         }
         out.writeFully(header, 0, headerLength)
         out.writeFully(control, 0, size)
