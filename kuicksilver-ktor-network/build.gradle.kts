@@ -35,5 +35,6 @@ kotlin.sourceSets {
 kotlin.mingwX64 {
     compilations.getByName("main").cinterops.create("kslwsa") {
         definitionFile.set(file("src/nativeInterop/cinterop/kslwsa.def"))
+        compilerOpts("-fdebug-compilation-dir=.")   // natives/cstubs.bc records no absolute compilation directory (kuicksilver-native)
     }
 }

@@ -19,6 +19,9 @@ kotlin {
             definitionFile.set(file("src/nativeInterop/cinterop/ksl.def"))
             includeDirs(file("src/c"), lib.resolve("include"))
             extraOpts("-libraryPath", lib.resolve("lib").absolutePath)
+            // the stubs cinterop compiles (natives/cstubs.bc, inside the published klib) record the compilation directory in
+            // their debug information (mingw_x64): "." instead of this checkout's absolute path
+            compilerOpts("-fdebug-compilation-dir=.")
         }
         tasks.matching { it.name == "cinteropKsl" + name.replaceFirstChar(Char::uppercase) }.configureEach { dependsOn(archive) }
     }
