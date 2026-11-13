@@ -10,9 +10,10 @@ src="$root/kuicksilver-native/src/testhooks/ksl_test_hooks.c"
 host=$( [ "$(uname)" = Darwin ] && { [ "$(uname -m)" = arm64 ] && echo macos-arm64 || echo macos-x64; } || { [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64; } )
 case "$kind" in jni) target=$host ;; macos-arm64) target=macos-arm64 ;; *) echo "unknown kind $kind" >&2; exit 2 ;; esac
 O="$root/build/openssl/$target"; [ -d "$O/include" ] || { echo "OpenSSL for $target not built" >&2; exit 2; }
-cflags="-std=c11 -O1 -fvisibility=hidden -Wall -Wextra -Werror -DKSL_TEST_HOOKS -I$O/include -I$root/kuicksilver-native/src/c -I$root/kuicksilver-native/src/testhooks"
+# no checkout path in the outputs: source paths relative to the repository, and (macOS) an @rpath install name
+cflags="-std=c11 -O1 -ffile-prefix-map=$root=. -fvisibility=hidden -Wall -Wextra -Werror -DKSL_TEST_HOOKS -I$O/include -I$root/kuicksilver-native/src/c -I$root/kuicksilver-native/src/testhooks"
 case "$kind:$(uname)" in
-  jni:Darwin) JH="${JAVA_HOME:-$(/usr/libexec/java_home)}"; clang $cflags -DKSL_TEST_HOOKS_JNI -I"$JH/include" -I"$JH/include/darwin" -dynamiclib "$src" -o "$out/libksl_test_hooks.dylib"; echo "$out/libksl_test_hooks.dylib" ;;
+  jni:Darwin) JH="${JAVA_HOME:-$(/usr/libexec/java_home)}"; clang $cflags -DKSL_TEST_HOOKS_JNI -I"$JH/include" -I"$JH/include/darwin" -dynamiclib -install_name @rpath/libksl_test_hooks.dylib "$src" -o "$out/libksl_test_hooks.dylib"; echo "$out/libksl_test_hooks.dylib" ;;
   jni:*) JH="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"; ${CC:-cc} $cflags -fPIC -DKSL_TEST_HOOKS_JNI -I"$JH/include" -I"$JH/include/linux" -shared "$src" -o "$out/libksl_test_hooks.so"; echo "$out/libksl_test_hooks.so" ;;
   macos-arm64:Darwin) clang $cflags -arch arm64 -mmacosx-version-min=11.0 -c "$src" -o "$out/ksl_test_hooks.o"; rm -f "$out/libksl_test_hooks.a"; ar qc "$out/libksl_test_hooks.a" "$out/ksl_test_hooks.o"; ranlib "$out/libksl_test_hooks.a"; echo "$out/libksl_test_hooks.a" ;;
   *) echo "$kind needs a macOS host" >&2; exit 2 ;;
