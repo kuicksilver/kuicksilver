@@ -156,6 +156,7 @@ step "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.
 # shellcheck disable=SC2086
 step "jvm: all module tests"                   $G $KSL_JVM_TESTS
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
+step "jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)" $G :kuicksilver-engine-interop:jvmTest   # docs/spec/interop.md "Engine interop"; about a minute
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G "${KSL_SIM_ARGS[@]}"
