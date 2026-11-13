@@ -41,7 +41,7 @@ draft-02 session has no `reset_stream_at` (its draft predates RESET_STREAM_AT), 
 `SETTINGS_ENABLE_WEBTRANSPORT` other than 0 or 1 is `H3_SETTINGS_ERROR`, as draft-02 §3.1 requires.
 
 **Peers.** Chrome 155 and Firefox 158 speak draft-02 ([interop.md](interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23),
-`ChromeWebTransportTest`, `tools/interop/wt-firefox-manual.sh`); Safari 26.4 speaks draft-14 (second-hand, not run here).
+`ChromeWebTransportTest`, `tools/interop/wt-firefox-manual.sh`); Safari speaks draft-14 (second-hand, not run or verified here).
 
 **Standard text.** draft-16 §7.1: "An endpoint that supports multiple draft versions sends a SETTINGS_WT_ENABLED value
 for each supported version, as each version uses a different setting identifier. The highest version supported by both
@@ -106,9 +106,8 @@ draft-14 without the transport parameter but also draft-02 gets a draft-02 sessi
 (`:protocol webtransport` with `sec-webtransport-http3-draft02: 1`); its draft-16 or draft-14 CONNECT is refused (400 and
 `H3_MESSAGE_ERROR`). Our client does the same against such a server: it sends a draft-02 CONNECT.
 
-**Peers.** Safari before 26.4, which by WebKit bugs 303152 and 305006 announces draft-14 without `reset_stream_at` and
-may announce draft-02 too (second-hand, not run here); any implementation that announces a newer draft before it has
-RESET_STREAM_AT.
+**Peers.** Any client that announces a newer draft before it has RESET_STREAM_AT, and draft-02 as well. Safari is
+expected to be one in some versions (second-hand; not run or verified here).
 
 **Standard text.** draft-16 §7.1, "The highest version supported by both endpoints is selected", read as the highest
 version both can actually run; §3.1, "both the client and the server enable the extension by sending an empty
@@ -154,11 +153,11 @@ codepoint), :132 (sent), :331 (accepted).
 **Risk.** Low: nine more bytes in the transport parameters, and RESET_STREAM_AT frames (type 0x24) toward a peer that
 announced only the old codepoint, which must then read them as that draft's frame.
 
-**Removal.** Once no peer is shown to need it (none is today; removal is not decided). The removal must mind
-remembered transport parameters: a client that remembered `reset_stream_at` from a server that sent only the old codepoint would take that server's next 0-RTT
-acceptance for a lowered capability and close with PROTOCOL_VIOLATION
-(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:267`); quic-go ties its own removal to a new
-ticket format for the same reason.
+**Removal.** Once no peer is shown to need it (none is today; removal is not decided). The removal must mind remembered
+transport parameters: a client that remembered `reset_stream_at` from a server that sent only the old codepoint would
+take that server's next 0-RTT acceptance for a lowered capability and close with PROTOCOL_VIOLATION
+(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:267`); quic-go ties its own removal to a
+new ticket format for the same reason.
 
 ## 5. msquic's provisional Initial SCID
 
@@ -172,17 +171,17 @@ copy is a duplicate, RFC 9000 §12.3) and it is acknowledged, at once when a PIN
 IsInitial source CID, `src/core/connection.c`), and takes its own SCID only when the listener accepts the connection
 (`QuicConnGenerateNewSourceCid` in `src/core/listener.c`): one connection, two SCIDs, every packet numbered from one
 counter (`Send.NextPacketNumber`), and every sent packet, ACK-only ones included, tracked as sent
-(`QuicLossDetectionOnPacketSent`), so recording and acknowledging the provisional packet changes nothing for msquic. After a Retry the same
-holds with the Retry SCID as the DCID: msquic makes the connection from the Initial that carries its Retry token
-(`QuicBindingCreateConnection`, `src/core/binding.c`) as from a first Initial. Any server that keeps its Retry SCID (ours
-by default) therefore gets the exception for an ACK-only Initial too; its SCID is the DCID already, so it changes nothing
-there.
+(`QuicLossDetectionOnPacketSent`), so recording and acknowledging the provisional packet changes nothing for msquic.
+After a Retry the same holds with the Retry SCID as the DCID: msquic makes the connection from the Initial that carries
+its Retry token (`QuicBindingCreateConnection`, `src/core/binding.c`) as from a first Initial. Any server that keeps its
+Retry SCID (ours by default) therefore gets the exception for an ACK-only Initial too: its SCID is the DCID already, so
+only the fixing of the SCID waits for its next Initial.
 
 **Standard text.** RFC 9000 §7.2: "Once a client has received a valid Initial packet from the server, it MUST discard
 any subsequent packet it receives on that connection with a different Source Connection ID." and "A client MUST change
 the Destination Connection ID it uses for sending packets in response to only the first received Initial or Retry
-packet." The provisional Initial is a valid Initial that does not fix the SCID, so both MUSTs are departed from for it. The
-owner keeps it for 0.3.0 as an approved deviation; the §7.2 row of the summary is 🔶 for it
+packet." The provisional Initial is a valid Initial that does not fix the SCID, so both MUSTs are departed from for it.
+It is kept for 0.3.0 as an accepted deviation, recorded in the CHANGELOG; the §7.2 row of the summary is 🔶 for it
 ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
 
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:380` (the decision, with
@@ -360,8 +359,8 @@ the data.
   fixed in OpenSSL 4.1): a fix of our own TLS library's behaviour so that we follow RFC 8446 §4.2.10, not a peer.
 - **The client's remembered RTT per server** (quic-go drops a silent half-open connection after 5 s): RFC 9002 §6.2.2,
   "MAY use the previous connection's final smoothed RTT".
-- **Following a client's NAT rebind during the handshake** (interop rebind cases, quiche): RFC 9000 §9 lets a server
-  "proceed with path validation and allow the peer to migrate".
+- **Following a client's NAT rebind during the handshake** (interop rebind cases with quiche and picoquic): RFC 9000 §9
+  lets a server "proceed with path validation and allow the peer to migrate".
 - **Probing the other packet number spaces on a PTO** (quic-go `handshakeloss` stalls): RFC 9002 §6.2.4 SHOULD.
 - **No glitch token for repeated MAX_STREAMS or DATA_BLOCKED** (quic-go, quiche): legal peer behaviour handled correctly.
 - **One lost range queued once** (quiche fails the handshake on bytes repeated in one packet): sending each byte once
