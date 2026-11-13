@@ -172,11 +172,18 @@ internal object SystemPacHost : PacHost {
 }
 
 /**
+ * The most distinct names (per function family: `dnsResolve` and `isResolvable`, or `dnsResolveEx` and `isResolvableEx`)
+ * one run of a script may resolve, Chromium's `kMaxUniqueResolveDnsPerExec`: later new names resolve to nothing.
+ */
+internal const val PAC_MAX_DNS_LOOKUPS: Int = 20
+
+/**
  * Name resolution for a script's `dnsResolve` and `dnsResolveEx`: during a run of [PacRunner] each lookup runs on one of
  * [PacDns.THREADS] threads of [Dispatchers.IO] and is waited for at most what remains of the run's DNS budget ([PacRun.remaining]); a
  * lookup that does not answer in time resolves to nothing (its thread ends with `getaddrinfo`, its answer dropped), so a
- * slow resolver cannot make a script overrun its limit. Answers are kept for the rest of the run. Outside a run (tests
- * of the utility functions) the lookup is made directly.
+ * slow resolver cannot make a script overrun its limit. Answers are kept for the rest of the run; a run resolves at most
+ * [PAC_MAX_DNS_LOOKUPS] distinct names (a name and its family), later new ones resolve to nothing without a lookup.
+ * Outside a run (tests of the utility functions) the lookup is made directly.
  */
 @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 internal object PacDns {
@@ -193,6 +200,7 @@ internal object PacDns {
     ): List<String> {
         if (PacRun.deadline == 0L) return PacHost.current.resolve(name, ipv4Only)
         PacRun.answers[name to ipv4Only]?.let { return it }
+        if (PacRun.answers.size >= PAC_MAX_DNS_LOOKUPS) return emptyList() // as Chromium: the run goes on, the name fails
         val remaining = PacRun.remaining()
         if (remaining <= 0) return emptyList()
         val host = PacHost.current

@@ -76,9 +76,13 @@ class PacEngineAppleTest {
             }
         }
 
-        /** A script calling `myIpAddress()` blocks until [release]: a run that overruns, and ends when released. */
+        /**
+         * A script calling `myIpAddress()` blocks until [release]: a run that overruns, and ends when released.
+         * `myIpAddressEx()` never blocks: it gives nothing until [release], so a script looping on it spins in JavaScript.
+         */
         override fun myAddresses(ipv4Only: Boolean): List<String> {
             entered.complete(Unit)
+            if (!ipv4Only) return if (release.isCompleted) listOf("192.168.1.2") else emptyList()
             runBlocking { release.await() }
             return listOf("192.168.1.2")
         }
@@ -456,6 +460,150 @@ class PacEngineAppleTest {
             )
             assertEquals(1, PacRunner.abandonedThreads.value)
         }
+
+    /**
+     * A script resolves at most [PAC_MAX_DNS_LOOKUPS] distinct names per run (Chromium's kMaxUniqueResolveDnsPerExec,
+     * 20): later new names resolve to nothing without reaching the resolver, names already resolved still answer, and
+     * the run goes on. Before, every name reached the resolver, a wider channel out and an oracle of the network.
+     */
+    @Test fun negative_dnsLookupsAreCappedPerRun() =
+        runBlocking {
+            val script =
+                "function FindProxyForURL(url, host) { var ok = 0; " +
+                    "for (var i = 0; i < 1000; i++) { if (dnsResolve('n' + i + '.test') !== null) ok++; } " +
+                    "if (isResolvable('n0.test')) ok += 1000; " +
+                    "if (dnsResolveEx('ex.test') === '') ok += 10000; " +
+                    "return 'PROXY c' + ok + '.test:1'; }"
+            val before = host.resolveCalls.value
+            assertEquals("PROXY c11020.test:1", PacRunner.findProxy("dns", script, "https://x.test/", "x.test", 2_000))
+            assertEquals(PAC_MAX_DNS_LOOKUPS, host.resolveCalls.value - before)
+            // the count is per run
+            assertEquals("PROXY c11020.test:1", PacRunner.findProxy("dns", script, "https://x.test/", "x.test", 2_000))
+            assertEquals(2 * PAC_MAX_DNS_LOOKUPS, host.resolveCalls.value - before)
+        }
+
+    /** An answer longer than [PAC_MAX_ANSWER_CHARS] is refused before it is copied out of the script's context. */
+    @Test fun negative_hugeAnswerIsRefused() =
+        runBlocking {
+            fun padded(n: Int) = "function FindProxyForURL(url, host) { return 'DIRECT' + ' '.repeat($n - 6); }"
+            assertEquals(
+                PAC_MAX_ANSWER_CHARS,
+                PacRunner.findProxy("fits", padded(PAC_MAX_ANSWER_CHARS), "https://x.test/", "x.test", 2_000)?.length,
+            )
+            assertNull(PacRunner.findProxy("over", padded(PAC_MAX_ANSWER_CHARS + 1), "https://x.test/", "x.test", 2_000))
+            val huge = "function FindProxyForURL(url, host) { return 'PROXY a.test:1;'.repeat(1000000); }"
+            assertNull(PacRunner.findProxy("huge", huge, "https://x.test/", "x.test", 2_000))
+            assertEquals("PROXY ok.test:1", PacRunner.findProxy("ok", ok, "https://x.test/", "x.test", 2_000))
+        }
+
+    /**
+     * Answers that are no PAC string fail the run, as in Chromium (no string; a string that is not ASCII), so the next
+     * setting counts; a string whose `toString` throws is no string either.
+     */
+    @Test fun negative_malformedAnswersFail() =
+        runBlocking {
+            for (value in listOf(
+                "42",
+                "null",
+                "undefined",
+                "{ toString: function() { throw 1; } }",
+                "['DIRECT']",
+                "'PROXY пример.test:1'",
+            )) {
+                val script = "function FindProxyForURL(url, host) { return $value; }"
+                assertNull(PacRunner.findProxy("bad-$value", script, "https://x.test/", "x.test", 2_000), value)
+            }
+            val warnings = ArrayList<String>()
+            val entry =
+                CfProxy(
+                    CfProxy.Type.AutoConfiguration,
+                    null,
+                    null,
+                    pacScript = "function FindProxyForURL(url, host) { return 'PROXY a b:1; PROXY ev/il.test:80'; }",
+                )
+            assertEquals(
+                ResolvedProxy.http("next.test", 3128),
+                pickCfProxyWithPac(
+                    listOf(entry, CfProxy(CfProxy.Type.Http, "next.test", 3128)),
+                    { evaluatePac(it, "https://x.test/", "x.test") },
+                ) {
+                    warnings += it
+                },
+            )
+            assertEquals(listOf(PAC_FAILED), warnings)
+        }
+
+    /** Entries of an answer that break the grammar are skipped, the valid ones kept in order (Chromium's ProxyList). */
+    @Test fun negative_malformedEntriesAreSkipped() {
+        val list =
+            parsePacResult(
+                "PROXY a b:1; PROXY ev/il.test:80; PROXY us@er.test:1; PROXY :80; PROXY a.test:; DIRECT x; BOGUS b.test:1; " +
+                    "PROXY ${"a".repeat(254)}:1; SOCKS [::1:1; PROXY good.test:8080; ; PROXY 2001:db8::1; DIRECT",
+            )
+        assertEquals(listOf("good.test", "2001:db8::1", null), list.map { it.host })
+        assertEquals(listOf(CfProxy.Type.Http, CfProxy.Type.Http, CfProxy.Type.None), list.map { it.type })
+    }
+
+    /** Deep recursion ends in JavaScriptCore's stack check: the run fails, nothing is abandoned, and PAC runs on. */
+    @Test fun negative_deepRecursionFailsAndPacRecovers() =
+        runBlocking {
+            val script = "function f(n) { return f(n + 1) + 1; } function FindProxyForURL(url, host) { return 'PROXY a' + f(0) + ':1'; }"
+            assertNull(PacRunner.findProxy("deep", script, "https://x.test/", "x.test", 2_000))
+            assertEquals(0, PacRunner.abandonedThreads.value)
+            assertEquals("PROXY ok.test:1", PacRunner.findProxy("ok", ok, "https://x.test/", "x.test", 2_000))
+        }
+
+    /**
+     * A string that doubles without end hits JavaScriptCore's string length limit (an out-of-memory error, before the
+     * memory is taken: concatenations are ropes): the run fails and PAC runs on. A bomb that really allocates (a
+     * growing array) is not bounded by JavaScriptCore's public API: only the run's time limit and the abandoned thread
+     * bound it (threat model 3.20.3); it is not run here, as it would take the test host's memory.
+     */
+    @Test fun negative_stringBombFailsAndPacRecovers() =
+        runBlocking {
+            val script = "function FindProxyForURL(url, host) { var s = 'x'; while (true) s = s + s; }"
+            assertNull(PacRunner.findProxy("bomb", script, "https://x.test/", "x.test", 2_000))
+            assertEquals(0, PacRunner.abandonedThreads.value)
+            assertEquals("PROXY ok.test:1", PacRunner.findProxy("ok", ok, "https://x.test/", "x.test", 2_000))
+        }
+
+    /**
+     * A script that loops in JavaScript (no native call blocking it) overruns: no answer, its thread is abandoned, and once
+     * the loop ends (here when the host lets it) the thread and its contexts go and PAC runs again.
+     */
+    @Test fun negative_busyLoopIsAbandonedAndPacRecovers() =
+        runBlocking {
+            val spin = "function FindProxyForURL(url, host) { while (myIpAddressEx() === '') {} return 'DIRECT'; }"
+            assertNull(PacRunner.findProxy("spin", spin, "https://x.test/", "x.test", 200))
+            assertEquals(1, PacRunner.abandonedThreads.value)
+            assertEquals("PROXY ok.test:1", PacRunner.findProxy("ok", ok, "https://x.test/", "x.test", 2_000))
+            host.release.complete(Unit)
+            withTimeout(10.seconds) { PacRunner.awaitNoneAbandoned() }
+        }
+
+    /** A script given inline in the settings is held to the same size cap as a downloaded one. */
+    @Test fun negative_oversizedInlineScriptIsRefused() =
+        runBlocking {
+            val body = "function FindProxyForURL(url, host) { return 'PROXY big.test:1'; }\n"
+
+            fun script(bytes: Int) = "//" + "x".repeat(bytes - 3 - body.length) + "\n" + body
+            val big = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = script(PAC_MAX_SCRIPT_BYTES + 1))
+            assertEquals(PacOutcome.Failed, evaluatePac(big, "https://x.test/", "x.test"))
+            val fits = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = script(PAC_MAX_SCRIPT_BYTES))
+            assertEquals(PAC_MAX_SCRIPT_BYTES, fits.pacScript!!.encodeToByteArray().size)
+            assertEquals(CfProxy.Type.Http, assertIs<PacOutcome.Answer>(evaluatePac(fits, "https://x.test/", "x.test")).proxies[0].type)
+        }
+
+    /** What a script throws is reported in a bounded message: a huge thrown string is not copied out whole. */
+    @Test fun negative_hugeThrownValueIsNotCopied() {
+        val ctx = PacContext("function FindProxyForURL(url, host) { throw 'e'.repeat(10000000); }")
+        try {
+            val e = assertFailsWith<PacScriptException> { ctx.findProxy("https://x.test/", "x.test") }
+            assertTrue((e.message?.length ?: 0) < 1_000, "${e.message?.length} characters")
+        } finally {
+            ctx.close()
+        }
+    }
 
     @Test fun answersAreParsed() {
         val list =

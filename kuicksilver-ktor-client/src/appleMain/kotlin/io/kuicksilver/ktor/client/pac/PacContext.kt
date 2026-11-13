@@ -48,6 +48,9 @@ import platform.JavaScriptCore.JSValueUnprotect
 import platform.JavaScriptCore.kJSPropertyAttributeDontDelete
 import platform.JavaScriptCore.kJSPropertyAttributeReadOnly
 
+/** The longest answer `FindProxyForURL` may give (64 KiB of characters); a longer one fails the run. */
+internal const val PAC_MAX_ANSWER_CHARS: Int = 64 * 1024
+
 /** A PAC script that cannot be loaded or run: its syntax, a throw, no `FindProxyForURL`, an answer that is no string. */
 internal class PacScriptException(
     message: String,
@@ -65,6 +68,11 @@ internal class PacContext(
     private val ctx: JSGlobalContextRef = JSGlobalContextCreate(null) ?: throw PacScriptException("no JavaScript context")
 
     init {
+        // a script given inline in the settings gets the cap of a downloaded one (PacScripts); characters <= UTF-8 bytes
+        if (script.length > PAC_MAX_SCRIPT_BYTES || script.encodeToByteArray().size > PAC_MAX_SCRIPT_BYTES) {
+            JSGlobalContextRelease(ctx)
+            throw PacScriptException("the script is larger than $PAC_MAX_SCRIPT_BYTES bytes")
+        }
         try {
             for ((name, fn) in NATIVES) define(name, fn)
             evaluate(PAC_UTILS_JS, "pac-utils.js")
@@ -97,13 +105,46 @@ internal class PacContext(
                 val args = allocArrayOf(u, h)
                 val exception = alloc<JSValueRefVar>()
                 val result = JSObjectCallAsFunction(ctx, fn, null, 2u, args, exception.ptr)
-                exception.value?.let { throw PacScriptException("FindProxyForURL threw: ${toText(it)}") }
+                exception.value?.let { throw PacScriptException("FindProxyForURL threw: ${errorText(it)}") }
                 if (result == null || !JSValueIsString(ctx, result)) throw PacScriptException("FindProxyForURL returned no string")
-                toText(result)
+                answerText(result)
             }
         } finally {
             JSValueUnprotect(ctx, u)
             JSValueUnprotect(ctx, h)
+        }
+    }
+
+    /**
+     * A string answer as text: at most [PAC_MAX_ANSWER_CHARS] characters, measured before it is copied out of the
+     * context, and ASCII only (Chromium fails a non-ASCII answer too; a proxy's name in an answer is ASCII).
+     */
+    private fun answerText(v: JSValueRef): String {
+        val js = JSValueToStringCopy(ctx, v, null) ?: throw PacScriptException("FindProxyForURL returned no string")
+        try {
+            val length = JSStringGetLength(js)
+            if (length > PAC_MAX_ANSWER_CHARS.toULong()) {
+                throw PacScriptException("FindProxyForURL returned $length characters, more than $PAC_MAX_ANSWER_CHARS")
+            }
+            val text = stringText(js)
+            if (text.any { it.code > 0x7F }) throw PacScriptException("FindProxyForURL returned a string that is not ASCII")
+            return text
+        } finally {
+            JSStringRelease(js)
+        }
+    }
+
+    /**
+     * A thrown value as text for a message: its string form (its `toString` runs once, within the run's limit) when
+     * that is short, else its length only.
+     */
+    private fun errorText(v: JSValueRef): String {
+        val js = JSValueToStringCopy(ctx, v, null) ?: return "a value without a string form"
+        try {
+            val length = JSStringGetLength(js)
+            return if (length > MAX_ERROR_CHARS.toULong()) "a value of $length characters" else stringText(js)
+        } finally {
+            JSStringRelease(js)
         }
     }
 
@@ -128,7 +169,7 @@ internal class PacContext(
             try {
                 val exception = alloc<JSValueRefVar>()
                 val v = JSEvaluateScript(ctx, s, null, url, 1, exception.ptr)
-                exception.value?.let { throw PacScriptException("$source: ${toText(it)}") }
+                exception.value?.let { throw PacScriptException("$source: ${errorText(it)}") }
                 v
             } finally {
                 JSStringRelease(s)
@@ -196,16 +237,23 @@ private fun jsText(
 ): String {
     val js = JSValueToStringCopy(ctx, v, null) ?: return ""
     try {
-        val size = JSStringGetMaximumUTF8CStringSize(js)
-        return memScoped {
-            val buf = allocArray<ByteVar>(size.toLong())
-            JSStringGetUTF8CString(js, buf, size)
-            buf.toKString()
-        }
+        return stringText(js)
     } finally {
         JSStringRelease(js)
     }
 }
+
+private fun stringText(js: JSStringRef): String {
+    val size = JSStringGetMaximumUTF8CStringSize(js)
+    return memScoped {
+        val buf = allocArray<ByteVar>(size.toLong())
+        JSStringGetUTF8CString(js, buf, size)
+        buf.toKString()
+    }
+}
+
+/** The longest thrown value whose text a [PacScriptException] message repeats. */
+private const val MAX_ERROR_CHARS = 512
 
 /** The longest argument a native function takes (a host name has at most 253 characters). */
 private const val MAX_NATIVE_ARGUMENT = 1024
@@ -219,11 +267,10 @@ private fun firstArgument(
     if (count == 0uL || args == null) return null
     val js = JSValueToStringCopy(ctx, args[0], null) ?: return null
     try {
-        if (JSStringGetLength(js) > MAX_NATIVE_ARGUMENT.toULong()) return null
+        return if (JSStringGetLength(js) > MAX_NATIVE_ARGUMENT.toULong()) null else stringText(js)
     } finally {
         JSStringRelease(js)
     }
-    return jsText(ctx, args[0])
 }
 
 private fun answer(
