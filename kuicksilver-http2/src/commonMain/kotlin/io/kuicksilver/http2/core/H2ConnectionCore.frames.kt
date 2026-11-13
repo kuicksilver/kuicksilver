@@ -144,7 +144,7 @@ internal fun H2ConnectionCore.onHeaders(
             rememberClosed(id, weReset = true) // after our GOAWAY: discarded, its frames too; the block fed HPACK (section 6.8)
             return
         }
-        // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability; RFC 9113 section 5.3.2)
+        // RFC 7540 section 5.3.1: a stream cannot depend on itself; RFC 9113 has no such rule, kept for h2spec (http2/5.3.1)
         if (blockDependency == id) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
         if (peerStreams >= settings.maxConcurrentStreams) {
             // section 5.1.2: REFUSED_STREAM; a peer that keeps opening past the limit is flooding (golang/go#63417: Go's
@@ -257,7 +257,7 @@ internal fun H2ConnectionCore.onPriority(
     now: Long,
 ) {
     glitch(now, "PRIORITY") // deprecated (section 5.3.2): no state, but not for free (nghttp2 does the same)
-    // RFC 7540 section 5.3.1: a stream cannot depend on itself (kept for interoperability)
+    // RFC 7540 section 5.3.1: a stream cannot depend on itself; RFC 9113 has no such rule, kept for h2spec (http2/5.3.1)
     if (f.dependency == f.streamId) streamError(f.streamId, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself", now)
 }
 

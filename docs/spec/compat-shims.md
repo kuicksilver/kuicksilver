@@ -27,6 +27,7 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 | 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
 | 7 | [HTTP/1.1 status line without the SP before an absent reason](#7-http11-status-line-without-the-sp-before-an-absent-reason) | servers that break RFC 9112 §4 | yes (client) | lenient parsing the RFC allows (borderline) |
 | 8 | [SOCKS5 username/password reply with VER 5](#8-socks5-usernamepassword-reply-with-ver-5) | some SOCKS5 proxies | yes (client) | accepts a value RFC 1929 does not define |
+| 9 | [HTTP/2: a stream that depends on itself is a stream error](#9-http2-a-stream-that-depends-on-itself-is-a-stream-error) | h2spec 2.6.0 (RFC 7540 checks) | yes (client and server) | stricter than RFC 9113 (borderline) |
 | T1 | [Interop client: request and FIN in one STREAM frame](#t1-interop-client-request-and-fin-in-one-stream-frame) | quiche's hq server | test only | not shipped in the library |
 
 ## 1. WebTransport draft-02 and draft-14
@@ -280,6 +281,36 @@ by STATUS.
 
 **Removal.** None planned; the proxies are not tracked.
 
+## 9. HTTP/2: a stream that depends on itself is a stream error
+
+Borderline: stricter, not lenient, and kept for a test tool built on the older RFC rather than for a peer; listed
+because it goes beyond RFC 9113 only to keep that check passing.
+
+**What it does.** A HEADERS frame whose priority fields make the stream depend on itself, or a PRIORITY frame that does,
+is a stream error of type PROTOCOL_ERROR; every other RFC 7540 priority signal is parsed and ignored.
+
+**Peers.** h2spec 2.6.0, whose http2/5.3.1 cases ("Sends HEADERS frame that depends on itself", "Sends PRIORITY frame
+that depend on itself") expect the RFC 7540 error
+([interop.md](interop.md#h2spec-the-http2-server-h2spec-260-2026-11-06): 146 of 146 cases must pass).
+
+**Standard text.** RFC 7540 §5.3.1 made it an error. RFC 9113 §5.3.2: "This update to HTTP/2 deprecates the priority
+signaling defined in RFC 7540 [RFC7540]. The bulk of the text related to priority signals is not included in this
+document. The description of frame fields and some of the mandatory handling is retained to ensure that implementations
+of this document remain interoperable with implementations that use the priority signaling described in RFC 7540." RFC
+9113 has no self-dependency rule (§6.3 keeps only the stream 0 and frame length errors).
+
+**Where.** `kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:148` (HEADERS
+opening a stream), :178 (HEADERS on an open stream), :261 (PRIORITY).
+
+**On by default.** Yes; no switch.
+
+**Tests.** `core.StreamStateTest.negative_selfDependencyIsStreamError`; h2spec (`tools/interop/h2spec.sh`).
+
+**Risk.** None for security: only the offending stream is reset. An RFC 9113 peer that sent such a signal (RFC 7540
+forbade it, so none should) would lose that stream.
+
+**Removal.** When h2spec drops its RFC 7540 §5.3.1 cases, or if a peer is found that sends such signals.
+
 ## Test-only
 
 ### T1. Interop client: request and FIN in one STREAM frame
@@ -317,9 +348,6 @@ the data.
 
 - **Discarding later long-header packets with another SCID** (msquic answers a repeated Initial from a second connection
   instance): the RFC 9000 §7.2 MUST itself.
-- **HTTP/2: a stream that depends on itself is a stream error** (RFC 7540 §5.3.1): RFC 9113 §5.3.2 retains "some of the
-  mandatory handling ... to ensure that implementations of this document remain interoperable", and the check is
-  stricter, not lenient.
 - **TLS 1.2** (`TlsVersions.Tls12And13`, for peers without 1.3 such as old Android and JDK stacks): off by default, and RFC
   9325 §3.1.1 says "Implementations MUST support TLS 1.2"; Extended Master Secret is required, so legacy peers are refused
   as RFC 7627 §5.2 allows. No cipher suite, version or renegotiation is relaxed for old stacks.
