@@ -13,12 +13,14 @@ import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.readBuffer
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.client.h3.H3Target
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -243,6 +245,59 @@ class ClientH3ConnectionReuseTest {
                         stalled.complete(Unit)
                         first.await()
                     }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Two destinations of one origin set up at once, each handshake slower than the Connection Attempt Delay, so neither
+     * finds the other's address in time: the setup that finishes second finds the first's connection at the same address
+     * and port, closes its own before any request used it, and hands its callers the first's. Both requests complete, on
+     * one connection.
+     */
+    @Test fun negative_concurrentSetupsToOneAddressEndOnOneConnection() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
+                    connectTimeout = 30.seconds
+                }).use { c ->
+                    val h3 = (c.engine as KuicksilverEngine).h3
+                    val setups = kotlin.concurrent.atomics.AtomicInt(0)
+                    val bothStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    h3.beforeSetupForTest = {
+                        if (setups.addAndFetch(1) == 2) bothStarted.complete(Unit)
+                        bothStarted.await() // each handshake waits until the other one started too
+                    }
+                    val data =
+                        io.ktor.client.request
+                            .HttpRequestBuilder()
+                            .apply { url("https://server.test:$port/") }
+                            .build()
+                    val bodies =
+                        kotlinx.coroutines.coroutineScope {
+                            listOf(H3Target("server.test", "server.test", port), H3Target("server.test", "alias.test", port))
+                                .map { t ->
+                                    async {
+                                        val call = kotlinx.coroutines.Job(coroutineContext[kotlinx.coroutines.Job])
+                                        try {
+                                            val r = h3.execute(t, data, coroutineContext + call)
+                                            (r.body as io.ktor.utils.io.ByteReadChannel)
+                                                .readBuffer()
+                                                .readByteArray()
+                                                .decodeToString()
+                                        } finally {
+                                            call.complete()
+                                        }
+                                    }
+                                }.map { it.await() }
+                        }
+                    assertEquals(listOf("ok", "ok"), bodies)
+                    assertEquals(2, setups.load(), "both destinations started a handshake")
+                    assertEquals(1, h3.connectionsForTest().size, "one connection to 127.0.0.1:$port")
                 }
             } finally {
                 server.stop(100, 500)

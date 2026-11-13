@@ -600,6 +600,33 @@ internal class H3Pool(
         e.retire()
     }
 
+    /**
+     * Under the lock, once [c] was set up for [t] as [e]: the connection of another live entry of the same origin (the same
+     * configuration) whose active path has [c]'s remote address and port, if any; [t] is then filed under that entry instead
+     * of [e], whose waiters are handed it too ([e] leaves the pool unused). The older connection is kept: it may carry
+     * requests already, [c] carries none yet.
+     */
+    private fun sameAddressAs(
+        t: H3Target,
+        e: H3Entry,
+        c: Http3Connection,
+    ): Http3Connection? {
+        if (connections[t.key] !== e) return null
+        val remote = c.quic.let { it.activePath ?: it.paths.firstOrNull() }?.remoteAddress ?: return null
+        val bytes = addressBytes(remote) ?: return null
+        val now = clock()
+        for ((k, other) in connections) {
+            if (other === e || originOfKey(k) != t.originHost || other.drained || other.pastLifetime(now)) continue
+            val o = other.deferred.getCompletedOrNull()?.takeIf { it.usable() } ?: continue
+            val r = o.quic.let { it.activePath ?: it.paths.firstOrNull() }?.remoteAddress ?: continue
+            if (r.port == remote.port && addressBytes(r)?.contentEquals(bytes) == true) {
+                connections[t.key] = other
+                return o
+            }
+        }
+        return null
+    }
+
     /** Test hook: the connections [shareSameAddress] let a destination share (one per sharing). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val sharedForTest = kotlin.concurrent.atomics.AtomicInt(0)
@@ -771,6 +798,15 @@ internal class H3Pool(
                         }
                 }
                 val c = made!!
+                // RFC 9114 section 3.3: a setup of the same origin to the same address that finished meanwhile (both ran
+                // past each other's wait) keeps that one; this connection is closed before any request used it
+                val kept = lock.withLock { sameAddressAs(t, e, c) }
+                if (kept != null) {
+                    sharedForTest.addAndFetch(1)
+                    withContext(NonCancellable) { runCatching { c.close() } }
+                    d.complete(kept)
+                    return e to kept
+                }
                 e.idleSince.store(clock())
                 if (events.enabled) {
                     lock.withLock {
