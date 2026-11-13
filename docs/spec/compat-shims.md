@@ -22,7 +22,7 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 | 1 | [WebTransport draft-02 and draft-14 codepoints](#1-webtransport-draft-02-and-draft-14) | Chrome, Firefox (draft-02); Safari (draft-14) | no (`webTransport`) | older drafts next to draft-16 |
 | 2 | [The draft-02 response field `sec-webtransport-http3-draft`](#2-the-draft-02-response-field) | Chrome | no (`webTransport`) | a field no draft defines |
 | 3 | [Draft-02 session when a newer draft lacks `reset_stream_at`](#3-draft-02-session-when-a-newer-draft-lacks-reset_stream_at) | Safari (expected), any client announcing draft-02 and a newer draft | no (`webTransport`) | our reading of draft-16 §7.1 (borderline) |
-| 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | older implementations of the draft | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
+| 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | none verified (quic-go sends both) | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
 | 5 | [msquic's provisional Initial SCID](#5-msquics-provisional-initial-scid) | msquic | yes (client) | departs from RFC 9000 §7.2 MUSTs |
 | 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
 | 7 | [HTTP/1.1 status line without the SP before an absent reason](#7-http11-status-line-without-the-sp-before-an-absent-reason) | servers that break RFC 9112 §4 | yes (client) | lenient parsing the RFC allows (borderline) |
@@ -131,17 +131,17 @@ transport parameter its §3.1 requires.
 0x17f7586d2cb571, the codepoint of earlier versions of the draft, and either one received enables RESET_STREAM_AT (a
 non-empty value of either is `TRANSPORT_PARAMETER_ERROR`).
 
-**Peers.** Implementations of the earlier drafts that know only the old codepoint. quic-go (2bb41ed) sends and accepts
-both, naming the old one as draft-07's; the source comment names Chrome and quiche, which this check could not confirm
-(no Chromium source here; Cloudflare quiche 4ebd213 implements neither codepoint).
+**Peers.** None verified. quic-go (2bb41ed) sends and accepts both codepoints, naming the old one draft-07's, so it
+works with 0x1d alone; Cloudflare quiche 4ebd213 implements neither codepoint; Chrome was not checked (no Chromium source
+here). Earlier notes named Chrome and quiche without evidence.
 
 **Standard text.** draft-ietf-quic-reliable-stream-reset-11 §3: "Support for receiving RESET_STREAM_AT frames is
 advertised by sending the reset_stream_at (0x1d) transport parameter (Section 7.4 of [RFC9000]) with an empty value." The
 old codepoint is not registered; RFC 9000 §7.4.2, "An endpoint MUST ignore transport parameters that it does not
 support", keeps it harmless to peers that do not know it.
 
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:40` (the
-codepoint), :129 (sent), :328 (accepted).
+**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:43` (the
+codepoint), :132 (sent), :331 (accepted).
 
 **On by default.** No: `QuicConfig.resetStreamAt` is false by default; WebTransport turns it on (server and client).
 
@@ -150,8 +150,8 @@ codepoint), :129 (sent), :328 (accepted).
 **Risk.** Low: nine more bytes in the transport parameters, and RESET_STREAM_AT frames (type 0x24) toward a peer that
 announced only the old codepoint, which must then read them as that draft's frame.
 
-**Removal.** When the peers above advertise 0x1d. The removal must mind remembered transport parameters: a client that
-remembered `reset_stream_at` from a server that sent only the old codepoint would take that server's next 0-RTT
+**Removal.** Once no peer is shown to need it (none is today; removal is not decided). The removal must mind
+remembered transport parameters: a client that remembered `reset_stream_at` from a server that sent only the old codepoint would take that server's next 0-RTT
 acceptance for a lowered capability and close with PROTOCOL_VIOLATION
 (`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:267`); quic-go ties its own removal to a new
 ticket format for the same reason.

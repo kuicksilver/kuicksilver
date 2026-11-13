@@ -36,7 +36,10 @@ internal object TransportParametersCodec {
     /** `reset_stream_at`: 0x1d (draft-ietf-quic-reliable-stream-reset-11 sections 3, 8.1). */
     private const val RESET_STREAM_AT = 0x1dL
 
-    /** The pre-IANA codepoint of earlier drafts, which Chrome and quiche still use; sent and accepted next to [RESET_STREAM_AT]. */
+    /**
+     * The unregistered codepoint of earlier drafts (quic-go names it draft-07's and also sends and accepts both); sent and
+     * accepted next to [RESET_STREAM_AT]. No peer is known to need it; it stays until that is shown either way.
+     */
     private const val RESET_STREAM_AT_LEGACY = 0x17f7586d2cb571L
 
     private fun fail(msg: String): Nothing = throw QuicWireException(TRANSPORT_PARAMETER_ERROR, 0, msg)
