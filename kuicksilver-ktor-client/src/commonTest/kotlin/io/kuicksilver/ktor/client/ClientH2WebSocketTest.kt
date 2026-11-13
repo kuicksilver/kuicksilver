@@ -43,6 +43,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -518,6 +519,13 @@ class ClientH2WebSocketTest {
      * The client's writer is held at the server's window plus the engine's lead (RFC 9113 section 5.2): against a server
      * that reads nothing (a 64 KiB window), the session's output waits in its flush with at most 64 KiB and one piece
      * flushed and not taken by the stream, however much the application sends.
+     *
+     * The application sends without end, so its session has a bounded outgoing channel ([OUTGOING_CAPACITY] frames, the
+     * sender suspends): with Ktor's default, an unlimited one, every frame the held writer did not take yet stays queued
+     * in the session, and a sender that never suspends queued ~1 GB/s (16 KiB frames, measured on a macOS host). That
+     * filled the 512 MiB heap of the test JVM whenever the check below came late by half a second (windows-jvm, 546d3f7f4:
+     * OutOfMemoryError, then a JVM that hung until the job's timeout). The sender is held too: it gets no further than the
+     * channels, the writer and the window hold.
      */
     @Test fun negative_clientWriterIsHeldAtTheWindowAndTheLead() =
         clientTest {
@@ -530,15 +538,22 @@ class ClientH2WebSocketTest {
                     kotlinx.coroutines.awaitCancellation() // never reads: no WINDOW_UPDATE
                 },
             ) { port, _ ->
-                client().use { c ->
+                testClient(block = {
+                    install(WebSockets) { channels { outgoing = bounded(OUTGOING_CAPACITY) } }
+                }).use { c ->
                     val output = CompletableDeferred<io.kuicksilver.http2.runtime.H2StreamOutput>()
                     engine(c).h1.h2WebSocketOutputForTest = { output.complete(it) }
                     c.get("https://127.0.0.1:$port/")
+                    val sent = AtomicInt(0)
                     coroutineScopeOf { scope ->
                         scope.launch {
                             runCatching {
                                 c.webSocket("wss://127.0.0.1:$port/ws") {
-                                    while (true) outgoing.send(Frame.Binary(true, ByteArray(16_384)))
+                                    val frame = ByteArray(16_384)
+                                    while (true) {
+                                        outgoing.send(Frame.Binary(true, frame))
+                                        sent.addAndFetch(1)
+                                    }
                                 }
                             }
                         }
@@ -553,6 +568,12 @@ class ClientH2WebSocketTest {
                             }
                         }
                         assertTrue(lead <= H2StreamOutput.DEFAULT_LIMIT + 16_388L, "lead $lead")
+                        // and so is the sender: past the window and the lead, Ktor's writer takes up to 1 024 frames into its
+                        // serializer, and its session and our outgoing channel hold some more (1 041 frames in all on a macOS
+                        // host); a sender that is not held is past 300 000 frames 300 ms on (one array shared by its frames,
+                        // so that costs the heap little)
+                        delay(300.milliseconds)
+                        assertTrue(sent.load() <= 2_048, "${sent.load()} frames sent")
                     }
                 }
             }
@@ -759,3 +780,6 @@ private suspend fun <T> coroutineScopeOf(block: suspend (CoroutineScope) -> T): 
 }
 
 private fun CoroutineScope.cancel() = coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+
+/** The outgoing channel of a session whose application sends without end: it suspends once this many frames wait. */
+private const val OUTGOING_CAPACITY = 4
