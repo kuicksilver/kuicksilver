@@ -11,6 +11,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
 import kotlin.jvm.JvmStatic
 import kotlin.time.Duration
@@ -22,6 +23,7 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files: the deployment port then serves TLS
  * and HTTP/3), `kuicksilver.tls.clientAuth` (`none`, `optional` or `required`: ask for a client certificate) and
  * `kuicksilver.tls.clientCa` (the PEM file of the CAs client certificates are verified against),
+ * `kuicksilver.tls.versions` (`tls13`, the default, or `tls12And13`: TLS 1.2 clients served too, under the RFC 9325 profile),
  * `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle, e.g. `1h`;
  * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
  * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
@@ -43,7 +45,8 @@ public object EngineMain {
      * The server [main] would run, not started yet. Throws [IllegalArgumentException] when only one of the two
      * `kuicksilver.tls.*` file keys is set, `kuicksilver.tls.reloadInterval` is set without them or is not a duration of
      * at least 1 second (or `0`), `kuicksilver.tls.clientAuth` is not `none`, `optional` or `required`, or is not `none`
-     * exactly when `kuicksilver.tls.clientCa` is set, `kuicksilver.tls.clientCa` is set without the identity files, a boolean key is not `true`/`false`, or `kuicksilver.maxTcpConnections`,
+     * exactly when `kuicksilver.tls.clientCa` is set, `kuicksilver.tls.clientCa` is set without the identity files,
+     * `kuicksilver.tls.versions` is not `tls13` or `tls12And13` or is set without the identity files, a boolean key is not `true`/`false`, or `kuicksilver.maxTcpConnections`,
      * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range. Throws
      * `kotlinx.io.IOException` when a PEM file (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`) cannot be read
      * or is larger than 1 MiB, and when the chain file (with `kuicksilver.tls.reloadInterval`) or the client CA file also holds
@@ -72,6 +75,9 @@ public object EngineMain {
         require((chain == null) == (key == null)) { "kuicksilver.tls.certificateChain and kuicksilver.tls.privateKey go together" }
         val reload = parseReloadInterval(config.propertyOrNull("kuicksilver.tls.reloadInterval")?.getString())
         require(reload == null || chain != null) { "kuicksilver.tls.reloadInterval needs kuicksilver.tls.certificateChain and privateKey" }
+        val versions = parseTlsVersions(config.propertyOrNull("kuicksilver.tls.versions")?.getString())
+        require(versions == null || chain != null) { "kuicksilver.tls.versions needs kuicksilver.tls.certificateChain and privateKey" }
+        versions?.let { tlsVersions = it }
         // before the identity: a refused client CA leaves no native key behind
         loadClientCa(config, chain != null, reload != null)
         if (chain != null && key != null) {
@@ -201,6 +207,19 @@ public object EngineMain {
         clientTrust = if (reload) TrustConfig.reloadable(bundle) else bundle
         clientCaFile = caFile
     }
+
+    /**
+     * `kuicksilver.tls.versions`: `tls13` or `tls12And13` (the names of `TlsVersions`, case ignored); null when absent. TLS 1.2
+     * alone is not a choice: RFC 9325 section 3.1.1, implementations "SHOULD support TLS 1.3 and, if implemented, MUST prefer
+     * to negotiate TLS 1.3 over earlier versions of TLS".
+     */
+    internal fun parseTlsVersions(value: String?): TlsVersions? =
+        when (value?.trim()?.lowercase()) {
+            null -> null
+            "tls13" -> TlsVersions.Tls13
+            "tls12and13" -> TlsVersions.Tls12And13
+            else -> throw IllegalArgumentException("kuicksilver.tls.versions: \"$value\" is not tls13 or tls12And13")
+        }
 
     /** `kuicksilver.tls.clientAuth`: `none` (or absent), `optional` or `required`. */
     internal fun parseClientAuth(value: String?): ClientAuth =

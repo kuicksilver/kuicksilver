@@ -545,8 +545,27 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   preflight and the mingw dll in Docker on every run (before, only when it was older than the C sources), so Docker
   must be running, and `--with-interop` builds the Linux
   OpenSSL of the host's architecture; a dry run's last line now says how many steps it listed, not that they passed.
+- Ktor server: TLS 1.2 on request (RFC 9325 section 3.1.1, "Implementations MUST support TLS 1.2"). The experimental
+  `versions` option of `tlsConnector(identity) { … }` (`TlsVersions.Tls13` by default, `TlsVersions.Tls12And13` to serve
+  TLS 1.2 clients over TCP), the `EngineMain` key `kuicksilver.tls.versions` (`tls13` or `tls12And13`, for the deployment
+  port; refused next to `-sslPort`) and, on the JVM, Ktor's own `enabledProtocols` on `sslConnector` (`TLSv1.2` with
+  `TLSv1.3`). TLS 1.2 runs under the RFC 9325 profile of the TLS layer (ECDHE with AES-GCM or ChaCha20-Poly1305,
+  Extended Master Secret required, no renegotiation, no compression); a client with TLS 1.3 still gets it, and HTTP/3 on
+  the same port stays TLS 1.3. With `http2`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2), and a client's
+  renegotiation attempt on an HTTP/2 connection ends it with GOAWAY PROTOCOL_ERROR (section 9.2.1). The default connector
+  still refuses a TLS 1.2 client with `protocol_version` (docs/guide/ktor.md, "TLS 1.2 on the server").
 
 ### Changed
+
+- TLS 1.2 cipher suite order (RFC 9325 section 4.2.1): a client now offers TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 first
+  (it offered the ECDSA variant first), and a TLS 1.2 server picks by its own order, AES-256-GCM, then ChaCha20-Poly1305,
+  then AES-128-GCM, keeping ChaCha20-Poly1305 for a client that puts it first (it took the client's order, so a client
+  that listed AES-128 before AES-256 got AES-128). TLS 1.3 is unchanged.
+- Ktor server on the JVM: the `enabledProtocols` of Ktor's `sslConnector` (`ktor.security.ssl.enabledProtocols`) were
+  ignored; now they choose the TLS versions, and a list other than `TLSv1.3` or `TLSv1.2` with `TLSv1.3` (TLS 1.2 alone,
+  TLS 1.0 or 1.1) fails the start with `TlsException.Config` instead of silently serving TLS 1.3 only.
+- `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
+  1.3-only one when `alpn` holds `h3`.
 
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a

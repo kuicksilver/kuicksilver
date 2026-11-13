@@ -26,6 +26,7 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -180,6 +181,9 @@ public class KuicksilverApplicationEngine(
         /** The PEM file [clientTrust] was read from, set by `EngineMain`; watched with [identityReloadInterval]. */
         internal var clientCaFile: String? = null
 
+        /** Set by `EngineMain` (`kuicksilver.tls.versions`): the TLS versions of the connectors [identity] serves. */
+        internal var tlsVersions: TlsVersions = TlsVersions.Tls13
+
         /**
          * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 and HTTP/2
          * responses, and on HTTP/2 also an ALTSVC frame per origin and value on each connection, refreshed every 12 hours
@@ -194,7 +198,8 @@ public class KuicksilverApplicationEngine(
          * Serve HTTP/2 (RFC 9113) on TLS connectors: ALPN offers `h2` before `http/1.1`, so a client that offers both gets
          * HTTP/2 (docs/guide/ktor.md, "HTTP/2 on the server"). Off by default in 0.3.0, so the ALPN of a TLS connector stays
          * `http/1.1` unless this is set. Plain connectors never serve HTTP/2 (no h2c: a client's `PRI *` preface is
-         * answered `505 HTTP Version Not Supported`, as before). Over TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
+         * answered `505 HTTP Version Not Supported`, as before). Over TLS 1.3, and over TLS 1.2 on a connector that allows it
+         * (`versions = TlsVersions.Tls12And13`; RFC 9113 section 9.2).
          * WebSockets come over HTTP/2 too (RFC 8441), unless [webSocketsOverHttp2] is turned off.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -592,6 +597,8 @@ public class KuicksilverApplicationEngine(
                                 c.port
                             clientAuth = configuration.clientAuth
                             trust = configuration.clientTrust
+                            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                            versions = configuration.tlsVersions
                         }.build()
                         .let { Listener(it, it) }
                 }
@@ -605,6 +612,13 @@ public class KuicksilverApplicationEngine(
                     throw TlsException.Config(
                         "kuicksilver.tls.clientAuth and kuicksilver.tls.clientCa apply to the port of kuicksilver.tls.certificateChain, " +
                             "not to $c: use ktor.security.ssl.trustStore there, or serve only the kuicksilver.tls port",
+                    )
+                }
+                // the same for the TLS versions: Ktor's own key for that connector is ktor.security.ssl.enabledProtocols
+                if (configuration.tlsVersions != TlsVersions.Tls13) {
+                    throw TlsException.Config(
+                        "kuicksilver.tls.versions applies to the port of kuicksilver.tls.certificateChain, not to $c: " +
+                            "use ktor.security.ssl.enabledProtocols there",
                     )
                 }
                 platformTlsConnector(c)?.let { Listener(it, it) }

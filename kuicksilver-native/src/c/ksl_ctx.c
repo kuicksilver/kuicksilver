@@ -11,8 +11,14 @@
 #include <ctype.h>
 #include <limits.h>
 
-#define TLS12_PROFILE                                                                                                  \
-    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
+/* The TLS 1.2 profile (RFC 9325 sections 4.1-4.2, RFC 10015): ECDHE, an AEAD, nothing else. RFC 9325 section 4.2.1: "Clients SHOULD
+   include TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 as the first proposal to any server", and a server "SHOULD prefer the stronger cipher
+   suite" when a client offers AES-256: a client offers that suite first, a server takes its own order in TLS 1.2 (server_name_cb),
+   the 256-bit suites first. ChaCha20-Poly1305 has a 256-bit key too; a client that puts it first (no AES hardware) keeps it. */
+#define TLS12_PROFILE_CLIENT                                                                                           \
+    "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-CHACHA20-POLY1305"
+#define TLS12_PROFILE_SERVER                                                                                           \
+    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
 #define TLS13_DEFAULT "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
 
 static int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in,
@@ -316,6 +322,10 @@ static int server_name_cb(SSL *ssl, int *al, void *arg) {
         *al = SSL_AD_HANDSHAKE_FAILURE;
         return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
+    /* RFC 9325 section 4.2.1 (TLS12_PROFILE_SERVER): in TLS 1.2 the server's order decides, unless the client put ChaCha20-Poly1305
+       first. The TLS 1.2 suite is chosen after this callback (tls_post_process_client_hello); TLS 1.3 keeps the client's order. */
+    if (SSL_version(ssl) < TLS1_3_VERSION)
+        SSL_set_options(ssl, SSL_OP_CIPHER_SERVER_PREFERENCE | SSL_OP_PRIORITIZE_CHACHA);
     return SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name) ? SSL_TLSEXT_ERR_OK : SSL_TLSEXT_ERR_NOACK;
 }
 /* A client extension that is never sent: its callback runs while OpenSSL builds a TLS 1.2 ClientHello, before any of it is written,
@@ -421,9 +431,10 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_max_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_options(c->ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
     SSL_CTX_clear_options(c->ctx, SSL_OP_LEGACY_SERVER_CONNECT);
-    SSL_CTX_set_cipher_list(c->ctx, TLS12_PROFILE);
+    const char *list12 = role == KSL_SERVER ? TLS12_PROFILE_SERVER : TLS12_PROFILE_CLIENT;
+    SSL_CTX_set_cipher_list(c->ctx, list12);
     SSL_CTX_set_ciphersuites(c->ctx, TLS13_DEFAULT);
-    snprintf(c->list12, sizeof c->list12, "%s", TLS12_PROFILE);
+    snprintf(c->list12, sizeof c->list12, "%s", list12);
     snprintf(c->suites13, sizeof c->suites13, "%s", TLS13_DEFAULT);
     /* One tuple of key-exchange groups: a server takes the client's X25519 key share instead of answering HelloRetryRequest for
        X25519MLKEM768 when the client supports it but sent no share for it (OpenSSL's default puts the hybrid alone in the first

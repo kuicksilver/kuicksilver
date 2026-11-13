@@ -2127,8 +2127,10 @@ static void test_client_keeps_every_ticket(void) {
     END();
 }
 
-#define TLS12_PROFILE_FOR_TEST                                                                                         \
-    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
+#define TLS12_CLIENT_PROFILE_FOR_TEST                                                                                  \
+    "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-CHACHA20-POLY1305"
+#define TLS12_SERVER_PROFILE_FOR_TEST                                                                                  \
+    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
 static void test_default_versions_and_tls12_profile(void) {
     SECTION("tcp_default_versions_and_tls12_profile");
     /* RFC 9852 section 4 (TLS 1.3 by default), RFC 9846 section 4.2.3 and App. E.5 (TLS 1.0 and 1.1 "MUST NOT be negotiated for any
@@ -2182,7 +2184,9 @@ static void test_default_versions_and_tls12_profile(void) {
         for (int k = 0; k < sk_SSL_CIPHER_num(after); k++)
             if (SSL_CIPHER_get_kx_nid(sk_SSL_CIPHER_value(after, k)) != NID_kx_any)
                 still++;
-        CHECK(still == 6 && !strcmp(c->list12, TLS12_PROFILE_FOR_TEST), "the refused lists changed nothing");
+        CHECK(still == 6 && !strcmp(c->list12, roles[i] == KSL_SERVER ? TLS12_SERVER_PROFILE_FOR_TEST
+                                                                      : TLS12_CLIENT_PROFILE_FOR_TEST),
+              "the refused lists changed nothing");
         CHECK(ksl_ctx_set_ciphers(c, NULL, "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-CCM") == KSL_OK,
               "control: ECDHE with an AEAD is accepted");
         ksl_ctx_free(c);
@@ -2313,6 +2317,94 @@ static void test_ticket_lifetime_clamped(void) {
     END();
 }
 
+/* The cipher suite a TLS 1.2 handshake of a client offering client_list (NULL: its own list) with server sc settled on; NULL when it
+   failed, with the alert the server sent in *alert. The client's list is set on its SSL_CTX directly, past ksl's profile check, to
+   play a peer that offers what ksl never would. */
+static const char *tls12_suite_with(ksl_ctx *sc, const char *client_list, int *alert) {
+    ksl_ctx *cc = client_ctx(NULL, KSL_VERIFY_NONE);
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    const char *name = NULL;
+    *alert = 0;
+    if (!client_list || SSL_CTX_set_cipher_list(cc->ctx, client_list) == 1) {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        if (tcp_pump(c, s, NULL, NULL) == KSL_OK && SSL_version(s->ssl) == TLS1_2_VERSION)
+            name =
+                SSL_CIPHER_get_name(SSL_get_current_cipher(s->ssl)); /* OpenSSL's static table: outlives the session */
+        else
+            last_code(s, alert);
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+    }
+    ERR_clear_error();
+    ksl_ctx_free(cc);
+    return name;
+}
+static int same(const char *a, const char *b) {
+    return a && b && !strcmp(a, b);
+}
+static void test_tls12_server_suite_choice(void) {
+    SECTION("tcp_tls12_server_suite_choice");
+    /* RFC 9325 section 4.2.1: "Servers MUST prefer this cipher suite [TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256] over weaker cipher suites
+       whenever it is proposed, even if it is not the first proposal. Clients are of course free to offer stronger cipher suites, e.g.,
+       using AES-256; when they do, the server SHOULD prefer the stronger cipher suite unless there are compelling reasons (e.g.,
+       seriously degraded performance) to choose otherwise." */
+    ksl_ctx *ec = server_ctx("server"), *rsa = ksl_ctx_new(KSL_SERVER);
+    blob ch = chain_of(1, "weak/leaf-rsa2048");
+    size_t kl;
+    uint8_t *k = key_of("weak/leaf-rsa2048", &kl);
+    CHECK(ksl_ctx_set_identity(rsa, ch.buf, ch.len, k, kl) == KSL_OK, "an RSA 2048 identity");
+    free(ch.buf);
+    free(k);
+    ksl_ctx_set_option(ec, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(rsa, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    int alert;
+    CHECK(same(tls12_suite_with(ec, "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384", &alert),
+               "ECDHE-ECDSA-AES256-GCM-SHA384"),
+          "AES-256 offered after AES-128: the server prefers the stronger suite");
+    CHECK(same(tls12_suite_with(rsa, NULL, &alert), "ECDHE-RSA-AES256-GCM-SHA384"),
+          "ksl's own client list against an RSA server: AES-256");
+    CHECK(same(tls12_suite_with(rsa, "ECDHE-RSA-AES128-GCM-SHA256", &alert), "ECDHE-RSA-AES128-GCM-SHA256"),
+          "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 alone is accepted");
+    CHECK(same(tls12_suite_with(
+                   ec, "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384",
+                   &alert),
+               "ECDHE-ECDSA-CHACHA20-POLY1305"),
+          "a client that puts ChaCha20-Poly1305 first (no AES hardware) keeps it");
+    /* RFC 9325 sections 4.1 and 4.2, RFC 10015 sections 2-4: no static RSA, no CBC, no SHA-1 MAC; the server refuses a client that offers
+       nothing else (handshake_failure, no shared suite) */
+    const char *refused[] = {"AES128-GCM-SHA256:AES256-GCM-SHA384", "ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384",
+                             "ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA", "AES128-SHA"};
+    int all = 1;
+    for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++)
+        all = all && tls12_suite_with(rsa, refused[i], &alert) == NULL && alert == SSL_AD_HANDSHAKE_FAILURE;
+    CHECK(all,
+          "negative: a TLS 1.2 client offering only static RSA, CBC or SHA-1 suites is refused with handshake_failure");
+    /* TLS 1.3 keeps the client's order (the suites are all AEAD; RFC 9325 section 4.3 states no server preference) */
+    ksl_ctx *cc = client_ctx(NULL, KSL_VERIFY_NONE);
+    ksl_ctx_set_ciphers(cc, "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384", NULL);
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(ec, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && SSL_version(s->ssl) == TLS1_3_VERSION &&
+              same(SSL_CIPHER_get_name(SSL_get_current_cipher(s->ssl)), "TLS_AES_128_GCM_SHA256"),
+          "control: TLS 1.3 takes the client's first suite");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    /* RFC 9325 section 4.2.1: "Clients SHOULD include TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 as the first proposal to any server." */
+    cc = ksl_ctx_new(KSL_CLIENT);
+    STACK_OF(SSL_CIPHER) *sk = SSL_CTX_get_ciphers(cc->ctx);
+    const char *first = NULL;
+    for (int i = 0; i < sk_SSL_CIPHER_num(sk) && !first; i++)
+        if (SSL_CIPHER_get_kx_nid(sk_SSL_CIPHER_value(sk, i)) != NID_kx_any)
+            first = SSL_CIPHER_get_name(sk_SSL_CIPHER_value(sk, i));
+    CHECK(same(first, "ECDHE-RSA-AES128-GCM-SHA256"),
+          "a client's first TLS 1.2 suite is TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256");
+    ksl_ctx_free(cc);
+    ksl_ctx_free(ec);
+    ksl_ctx_free(rsa);
+    END();
+}
+
 /* The security-level check of the presented chain runs over TCP too, in TLS 1.3 and TLS 1.2, before the pause (T.5). */
 static int count_pause(ksl_ssl *s, int rc, void *a) {
     if (rc != KSL_WANT_VERIFY)
@@ -2393,4 +2485,5 @@ void run_tcp(void) {
     test_read_waiting_for_room_says_so();
     test_client_keeps_every_ticket();
     test_default_versions_and_tls12_profile();
+    test_tls12_server_suite_choice();
 }

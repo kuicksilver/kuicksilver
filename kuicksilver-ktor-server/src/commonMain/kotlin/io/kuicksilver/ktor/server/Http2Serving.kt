@@ -133,6 +133,16 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                                 .let { m -> { m.elapsedNow().inWholeNanoseconds } },
                     ownResponseFields = { listOf("date" to httpDateNow()) }, // RFC 9110 section 6.6.1, on the 431
                     enableConnectProtocol = configuration.webSocketsOverHttp2, // RFC 8441 section 3
+                    // RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error (Section 5.4.1) of
+                    // type PROTOCOL_ERROR"; on a TLS 1.2 connection (versions = Tls12And13) the TLS layer refuses a client's
+                    // renegotiation ClientHello and ends the input of an h2 connection at it
+                    connectionErrorOf = {
+                        if ((sock as? io.kuicksilver.ktor.network.TlsSocket)?.tls?.renegotiationAttempted == true) {
+                            Http2ErrorCode.PROTOCOL_ERROR
+                        } else {
+                            null
+                        }
+                    },
                 )
             conn = c
             h2Live.add(c)
