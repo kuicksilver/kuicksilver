@@ -43,11 +43,13 @@ draft-02 session has no `reset_stream_at` (its draft predates RESET_STREAM_AT), 
 **Peers.** Chrome 155 and Firefox 158 speak draft-02 ([interop.md](interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23),
 `ChromeWebTransportTest`, `tools/interop/wt-firefox-manual.sh`); Safari 26.4 speaks draft-14 (second-hand, not run here).
 
-**Standard text.** draft-16 §7.1, "The highest version supported by both endpoints is selected", and §3.1, "For draft
-versions of WebTransport only, clients MUST also send SETTINGS_WT_ENABLED with the draft-specific codepoint" (quoted as in
-[the draft's details](rfc/draft-ietf-webtrans-http3.md#s3-1-settings)): the version mechanism lets an endpoint speak older
-drafts, but no draft defines a server that speaks draft-02 and draft-16 at once; the codepoints are those of the older
-drafts.
+**Standard text.** draft-16 §7.1: "An endpoint that supports multiple draft versions sends a SETTINGS_WT_ENABLED value
+for each supported version, as each version uses a different setting identifier. The highest version supported by both
+endpoints is selected." §3.1: "For draft versions of WebTransport only, clients MUST also send SETTINGS_WT_ENABLED with
+the draft-specific codepoint" (see also [the draft's details](rfc/draft-ietf-webtrans-http3.md#s3-1-settings)). Both
+older drafts predate `SETTINGS_WT_ENABLED` (draft-02 signals support with `SETTINGS_ENABLE_WEBTRANSPORT`, draft-14 with
+`SETTINGS_WT_MAX_SESSIONS`), so announcing them goes beyond what draft-16 describes, though in the spirit of its §7.1;
+the codepoints are those of the older drafts.
 
 **Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:12` (the versions,
 `offeredIn` at :38, `WtSettings.ours` at :133, `WtTokens.LEGACY` at :147),
@@ -70,7 +72,8 @@ may not tie the reset to the session (robustness, not security). None of the dra
 for any version: one session per connection, a second CONNECT is refused with `H3_REQUEST_REJECTED`.
 
 **Removal.** draft-02 when Chrome and Firefox ship draft-15 or later (`SETTINGS_WT_ENABLED`, `webtransport-h3`) by
-default; draft-14 when Safari does. The final RFC will retire all three draft codepoints.
+default; draft-14 when Safari does. Of the three settings, 0x2c7cf000 is draft-16's own `SETTINGS_WT_ENABLED` (its IANA
+section); only the two older codepoints, 0x2b603742 and 0x14e9cd29, go with this shim.
 
 ## 2. The draft-02 response field
 
